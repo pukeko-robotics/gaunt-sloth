@@ -16,8 +16,41 @@ import {
 } from '@gaunt-sloth/core/utils/llmUtils.js';
 import { HumanMessage, AIMessage, SystemMessage, ToolMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
+import { tool } from '@langchain/core/tools';
+import type { StructuredToolInterface } from '@langchain/core/tools';
 import type { BaseMessage } from '@langchain/core/messages';
 import { createResolvers } from '#src/resolvers.js';
+
+/**
+ * Spike 1 / C-a: a frontend tool as it arrives in the AG-UI run-input `tools`
+ * array (CopilotKit's `useFrontendTool` shape) — name + description + a JSON
+ * Schema for the parameters.
+ */
+interface RunInputTool {
+  name: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
+}
+
+/**
+ * Convert a run-input frontend tool into a client-fulfilled LangChain tool.
+ * Marking `metadata.client = true` is all that's required: the agent's
+ * `extractAndFlattenTools` already swaps such a tool's `invoke`/`call` for an
+ * `interrupt({ name })` stub, so the model can *call* the tool and the graph
+ * suspends for the browser to fulfil it — the exact mechanism Pukeko's
+ * server-side client tools use, now driven by client-declared tools.
+ */
+function buildClientToolStub(t: RunInputTool): StructuredToolInterface {
+  const stub = tool(async () => '', {
+    name: t.name,
+    description: t.description ?? '',
+    // The JSON Schema from the run-input is passed straight through so the model
+    // sees the real parameter shape. The stub body never runs (it interrupts).
+    schema: (t.parameters as never) ?? { type: 'object', properties: {} },
+  });
+  (stub as unknown as { metadata?: Record<string, unknown> }).metadata = { client: true };
+  return stub;
+}
 
 const initializedThreads = new Set<string>();
 
@@ -157,11 +190,46 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
 
   displayInfo(`AG-UI agent initialized`);
 
+  // C-a (spike): agents that additionally bind the client-declared run-input
+  // `tools`. Keyed by a stable signature of the toolset so the initial run and
+  // its resume share ONE compiled graph — LangGraph resumes from the
+  // checkpointer, but the graph shape must match the suspended one. Built lazily
+  // on first sighting of a given toolset.
+  const toolAgentCache = new Map<string, GthLangChainAgent>();
+
+  function toolSignature(tools: RunInputTool[]): string {
+    return JSON.stringify(
+      tools.map((t) => [t.name, t.parameters ?? {}]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+    );
+  }
+
+  async function getAgentForTools(tools: RunInputTool[]): Promise<GthLangChainAgent> {
+    const sig = toolSignature(tools);
+    const cached = toolAgentCache.get(sig);
+    if (cached) return cached;
+    const clientStubs = tools.map(buildClientToolStub);
+    const reqConfig = {
+      ...config,
+      tools: [...((config.tools as unknown[]) ?? []), ...clientStubs],
+    } as GthConfig;
+    const reqAgent = new GthLangChainAgent(defaultStatusCallback, createResolvers());
+    await reqAgent.init('api', reqConfig, checkpointSaver);
+    toolAgentCache.set(sig, reqAgent);
+    displayInfo(`AG-UI: bound ${clientStubs.length} client tool(s): ${tools.map((t) => t.name).join(', ')}`);
+    return reqAgent;
+  }
+
   // AG-UI endpoint — standard path per AG-UI protocol
   app.post('/agents/:agentId/run', async (req, res) => {
-    const { threadId, runId, messages, forwardedProps } = req.body;
+    const { threadId, runId, messages, forwardedProps, tools } = req.body;
     const effectiveThreadId = threadId || randomUUID();
     const effectiveRunId = runId || randomUUID();
+
+    // C-a (spike): if the client declared frontend tools in the run-input, serve
+    // this run from an agent that binds them as interrupt stubs. Otherwise use
+    // the server's statically-configured agent.
+    const hasClientTools = Array.isArray(tools) && tools.length > 0;
+    const activeAgent = hasClientTools ? await getAgentForTools(tools as RunInputTool[]) : agent;
 
     const encoder = new EventEncoder({ accept: req.headers.accept });
     res.setHeader('Content-Type', encoder.getContentType());
@@ -208,8 +276,26 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
       let textMessageStarted = false;
       let reasoningMessageId: string | null = null;
 
+      // C-a (spike): detect CopilotKit's resume shape. CopilotKit fulfils a
+      // frontend tool client-side and then RE-RUNS the agent with the full
+      // message history, the tool result appended as a trailing `tool` message
+      // — it does NOT send `forwardedProps.command.resume`. When that lands on a
+      // thread whose graph is suspended at our interrupt() stub, translate the
+      // trailing tool result into a graph resume so the suspended run continues
+      // (instead of starting a fresh run that just re-calls the tool).
+      const lastMsg =
+        Array.isArray(messages) && messages.length > 0 ? messages[messages.length - 1] : undefined;
+      const isCopilotToolResume =
+        hasClientTools &&
+        forwardedProps?.command?.resume === undefined &&
+        lastMsg?.role === 'tool';
+
       let eventStream;
-      if (forwardedProps?.command?.resume !== undefined) {
+      if (isCopilotToolResume) {
+        const resumeContent =
+          typeof lastMsg.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg.content);
+        eventStream = activeAgent.streamWithEventsResume(resumeContent, runConfig, [], ac.signal);
+      } else if (forwardedProps?.command?.resume !== undefined) {
         // Follow-up messages piggy-backed on the resume: deliver them to the
         // agent on its next decision turn via Command.update (see
         // GthLangChainAgent.streamWithEventsResume). Accepts plain strings or
@@ -224,7 +310,7 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
               )
               .filter((m): m is BaseMessage => Boolean(m))
           : [];
-        eventStream = agent.streamWithEventsResume(
+        eventStream = activeAgent.streamWithEventsResume(
           forwardedProps.command.resume,
           runConfig,
           queuedMessages,
@@ -238,7 +324,7 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
           langChainMessages.push(...buildSystemMessages(config, readChatPrompt(config)));
         }
         langChainMessages.push(...(messages || []).map(convertMessage));
-        eventStream = agent.streamWithEvents(langChainMessages, runConfig, ac.signal);
+        eventStream = activeAgent.streamWithEvents(langChainMessages, runConfig, ac.signal);
       }
 
       for await (const event of eventStream) {
