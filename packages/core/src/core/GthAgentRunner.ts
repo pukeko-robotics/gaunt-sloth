@@ -2,6 +2,7 @@ import { GthConfig } from '#src/config.js';
 import { BaseCheckpointSaver } from '@langchain/langgraph';
 import {
   AgentResolvers,
+  GthAgentFactory,
   GthAgentInterface,
   GthCommand,
   Message,
@@ -28,10 +29,23 @@ export class GthAgentRunner {
   private agent: GthAgentInterface | null = null;
   private config: GthConfig | null = null;
   private runConfig: RunnableConfig | null = null;
+  private agentFactory: GthAgentFactory;
 
-  constructor(statusUpdate: StatusUpdateCallback, resolvers?: AgentResolvers) {
+  /**
+   * @param agentFactory Produces the {@link GthAgentInterface} the runner drives.
+   *   Defaults to the lean {@link GthLangChainAgent} (core). `@gaunt-sloth/agent`
+   *   passes a factory returning a deep `GthDeepAgent` so the same runner can drive a
+   *   `createDeepAgent` graph without core depending on deepagents.
+   */
+  constructor(
+    statusUpdate: StatusUpdateCallback,
+    resolvers?: AgentResolvers,
+    agentFactory?: GthAgentFactory
+  ) {
     this.statusUpdate = statusUpdate;
     this.resolvers = resolvers;
+    this.agentFactory =
+      agentFactory ?? ((status, agentResolvers) => new GthLangChainAgent(status, agentResolvers));
   }
 
   /**
@@ -54,7 +68,7 @@ export class GthAgentRunner {
 
     debugLogObject('Runnable Config', this.runConfig);
 
-    this.agent = new GthLangChainAgent(this.statusUpdate, this.resolvers);
+    this.agent = this.agentFactory(this.statusUpdate, this.resolvers);
 
     // Initialize the agent
     debugLog('Initializing agent...');
