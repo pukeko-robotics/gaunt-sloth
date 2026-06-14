@@ -1,5 +1,7 @@
 import type { FilesystemPermission } from 'deepagents';
 
+export type { FilesystemPermission };
+
 /**
  * Tool names deepagents' filesystem middleware registers. This mirrors deepagents'
  * internal `FILESYSTEM_TOOL_NAMES` (which is declared in its types but not exported

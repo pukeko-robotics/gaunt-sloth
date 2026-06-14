@@ -217,6 +217,7 @@ export const isTTY = (): boolean => !!stdin.isTTY;
 export const exit = (code?: number): never => process.exit(code || 0);
 export const stdin = process.stdin;
 export const stdout = process.stdout;
+export const stderr = process.stderr;
 export const argv = process.argv;
 export const env = process.env;
 export const setExitCode = (code: number): void => {

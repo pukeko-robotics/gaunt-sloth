@@ -9,7 +9,32 @@ import type { StructuredToolInterface } from '@langchain/core/tools';
 import type { BaseCheckpointSaver } from '@langchain/langgraph';
 import { createMiddleware } from 'langchain';
 import { createDeepAgent, FilesystemBackend } from 'deepagents';
-import { buildPermissions, FILESYSTEM_TOOL_NAMES } from '#src/core/deepAgentPermissions.js';
+import {
+  buildPermissions,
+  FILESYSTEM_TOOL_NAMES,
+  type FilesystemPermission,
+} from '#src/core/deepAgentPermissions.js';
+
+/**
+ * The subset of `createDeepAgent` params that are independent of the transport
+ * (the local runner vs. the ACP server). Both {@link GthDeepAgent.init} (which adds the
+ * console-bound tool-call-status middleware + a virtual {@link FilesystemBackend} +
+ * checkpointer and calls `createDeepAgent`) and the ACP entry (deepagents-acp
+ * `startServer`, which supplies its own ACP-proxying backend, checkpointer and tool-call
+ * reporting) consume these.
+ *
+ * `middleware` here deliberately EXCLUDES the tool-call-status middleware: that one writes
+ * to stdout, which on the ACP path is the JSON-RPC channel and must stay clean. The runner
+ * path appends it in {@link GthDeepAgent.init}.
+ */
+export interface GthDeepAgentParams {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  model: any;
+  tools: StructuredToolInterface[];
+  permissions: FilesystemPermission[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  middleware: any[];
+}
 
 /**
  * Deep agent: builds a `createDeepAgent` graph (deepagents). All run/stream/event
@@ -24,6 +49,10 @@ import { buildPermissions, FILESYSTEM_TOOL_NAMES } from '#src/core/deepAgentPerm
  *   that reuses a deepagents filesystem-tool name is therefore superseded and dropped
  *   (`createDeepAgent` would otherwise throw on the collision).
  * - todos / subagents / summarization come from deepagents' standard middleware.
+ *
+ * The transport-agnostic param assembly lives in {@link buildDeepAgentParams} so the ACP
+ * entry (`deepagents-acp`) can reuse the exact same tool resolution, permission mapping and
+ * middleware hardening without re-running `createDeepAgent` locally.
  */
 export class GthDeepAgent extends GthAbstractAgent {
   async init(
@@ -31,8 +60,65 @@ export class GthDeepAgent extends GthAbstractAgent {
     configIn: GthConfig,
     checkpointer?: BaseCheckpointSaver | undefined
   ): Promise<void> {
+    const params = await this.buildDeepAgentParams(command, configIn);
+
+    // Runner-path only: surface requested tool calls to the console. This is intentionally
+    // NOT part of buildDeepAgentParams — it writes via statusUpdate (stdout) and the ACP
+    // server renders tool calls itself over its own protocol channel.
+    const statusUpdate = this.statusUpdate;
+    const toolCallStatusMiddleware = createMiddleware({
+      name: 'GthMiddlewareToolCallStatusUpdate',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      afterModel: (state: any) => {
+        debugLogObject('postModel state', state);
+        const lastMessage = state.messages[state.messages.length - 1];
+        if (
+          AIMessage.isInstance(lastMessage) &&
+          lastMessage.tool_calls &&
+          lastMessage.tool_calls?.length > 0
+        ) {
+          statusUpdate(
+            StatusLevel.INFO,
+            `\nRequested tools: ${formatToolCalls(lastMessage.tool_calls)}\n`
+          );
+        }
+        return state;
+      },
+    });
+
+    const middleware = [...params.middleware, toolCallStatusMiddleware];
+    this.statusUpdate(
+      StatusLevel.INFO,
+      `Loaded middleware: ${middleware.map((m) => m.name).join(', ')}`
+    );
+
+    const backend = new FilesystemBackend({ rootDir: getCurrentWorkDir(), virtualMode: true });
+
+    this.agent = createDeepAgent({
+      model: params.model,
+      tools: params.tools as StructuredToolInterface[],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      middleware: middleware as any,
+      backend,
+      permissions: params.permissions,
+      checkpointer,
+    });
+    debugLog('Deep agent created successfully');
+  }
+
+  /**
+   * Assemble the transport-agnostic {@link GthDeepAgentParams}: resolve tools (with the
+   * filesystem disabled so deepagents owns fs access), apply the allowedTools allow-list and
+   * the deepagents fs-name supersession safety-net, map `.aiignore` + filesystem mode onto
+   * deepagents permissions, and build the fs-denial-softening middleware. Shared by the local
+   * runner ({@link init}) and the `deepagents-acp` ACP entry.
+   */
+  async buildDeepAgentParams(
+    command: GthCommand | undefined,
+    configIn: GthConfig
+  ): Promise<GthDeepAgentParams> {
     this.command = command;
-    debugLog(`GthDeepAgent.init called with command: ${command || 'default'}`);
+    debugLog(`GthDeepAgent.buildDeepAgentParams called with command: ${command || 'default'}`);
 
     // Merge command-specific filesystem config if provided
     this.config = this.getEffectiveConfig(configIn, command);
@@ -160,35 +246,10 @@ export class GthDeepAgent extends GthAbstractAgent {
       },
     });
 
-    // Add tool call status update middleware
-    const statusUpdate = this.statusUpdate;
-    const toolCallStatusMiddleware = createMiddleware({
-      name: 'GthMiddlewareToolCallStatusUpdate',
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      afterModel: (state: any) => {
-        debugLogObject('postModel state', state);
-        const lastMessage = state.messages[state.messages.length - 1];
-        if (
-          AIMessage.isInstance(lastMessage) &&
-          lastMessage.tool_calls &&
-          lastMessage.tool_calls?.length > 0
-        ) {
-          statusUpdate(
-            StatusLevel.INFO,
-            `\nRequested tools: ${formatToolCalls(lastMessage.tool_calls)}\n`
-          );
-        }
-        return state;
-      },
-    });
-
     // fsDenialSoftening first so it is the outermost wrapToolCall — it must see the throw
-    // from deepagents' permission-enforcing fs tools.
-    const middleware = [fsDenialSoftening, ...configuredMiddleware, toolCallStatusMiddleware];
-    this.statusUpdate(
-      StatusLevel.INFO,
-      `Loaded middleware: ${middleware.map((m) => m.name).join(', ')}`
-    );
+    // from deepagents' permission-enforcing fs tools. The console-bound tool-call-status
+    // middleware is NOT added here (see GthDeepAgentParams.middleware); the runner appends it.
+    const middleware = [fsDenialSoftening, ...configuredMiddleware];
 
     // Map gsloth's .aiignore + filesystem mode onto deepagents permission rules.
     const permissions = buildPermissions({
@@ -197,17 +258,11 @@ export class GthDeepAgent extends GthAbstractAgent {
     });
     debugLogObject('Filesystem permissions', permissions);
 
-    const backend = new FilesystemBackend({ rootDir: getCurrentWorkDir(), virtualMode: true });
-
-    this.agent = createDeepAgent({
+    return {
       model: this.config.llm,
       tools: passThroughTools as StructuredToolInterface[],
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      middleware: middleware as any,
-      backend,
       permissions,
-      checkpointer,
-    });
-    debugLog('Deep agent created successfully');
+      middleware,
+    };
   }
 }
