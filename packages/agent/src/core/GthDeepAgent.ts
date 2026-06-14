@@ -4,7 +4,7 @@ import { type GthCommand, StatusLevel } from '@gaunt-sloth/core/core/types.js';
 import { debugLog, debugLogObject } from '@gaunt-sloth/core/utils/debugUtils.js';
 import { formatToolCalls } from '@gaunt-sloth/core/utils/llmUtils.js';
 import { getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
-import { AIMessage } from '@langchain/core/messages';
+import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import type { BaseCheckpointSaver } from '@langchain/langgraph';
 import { createMiddleware } from 'langchain';
@@ -60,11 +60,16 @@ export class GthDeepAgent extends GthAbstractAgent {
       );
     }
 
-    // Resolve tools via resolver or fall back to config tools only
-    debugLog('Resolving tools...');
+    // Resolve tools with filesystem access disabled. deepagents OWNS the filesystem
+    // (its fs middleware + the `permissions` built below); gsloth's filesystem toolkit
+    // must NOT be loaded here, because its non-colliding tools (read_multiple_files,
+    // delete_file, search_files, …) would otherwise bypass deepagents' permission
+    // enforcement entirely — a model could read an .aiignore-protected file through them.
+    debugLog('Resolving tools (filesystem disabled; deepagents provides fs)...');
+    const toolResolutionConfig = { ...this.config, filesystem: 'none' as const };
     const resolvedTools =
       !toolsDisabled && this.resolvers?.resolveTools
-        ? await this.resolvers.resolveTools(this.config, command)
+        ? await this.resolvers.resolveTools(toolResolutionConfig, command)
         : [];
     debugLog(`Resolved tools loaded: ${resolvedTools.length}`);
 
@@ -81,17 +86,18 @@ export class GthDeepAgent extends GthAbstractAgent {
       tools = tools.filter((tool) => !tool.name || allowed.has(tool.name));
     }
 
-    // deepagents owns the filesystem tools. Drop any resolved tool that reuses one of
-    // their names (e.g. gsloth's filesystem toolkit) so createDeepAgent does not throw
-    // on the collision; the deep agent provides equivalents via its fs middleware.
+    // Safety net: a custom/dev/MCP tool may still reuse a deepagents filesystem-tool
+    // name (createDeepAgent throws on such a collision). Drop the colliding tool — the
+    // deep agent's built-in fs tool wins. With filesystem disabled above this is normally
+    // empty; it only fires for a genuine user/MCP name clash.
     const reserved = new Set<string>(FILESYSTEM_TOOL_NAMES);
     const superseded = tools.filter((tool) => tool.name && reserved.has(tool.name));
     const passThroughTools = tools.filter((tool) => !tool.name || !reserved.has(tool.name));
     if (superseded.length > 0) {
       const names = superseded.map((tool) => tool.name).join(', ');
       this.statusUpdate(
-        StatusLevel.INFO,
-        `Deep agent provides built-in filesystem tools; superseding: ${names}`
+        StatusLevel.WARNING,
+        `Dropping tool(s) that collide with deepagents built-in filesystem tools: ${names}`
       );
     }
 
@@ -109,13 +115,50 @@ export class GthDeepAgent extends GthAbstractAgent {
 
     // Resolve middleware via resolver or fall back to empty. These are applied AFTER
     // deepagents' standard middleware (todos, subagents, summarization, filesystem).
-    const configuredMiddleware = this.resolvers?.resolveMiddleware
+    const resolvedMiddleware = this.resolvers?.resolveMiddleware
       ? await this.resolvers.resolveMiddleware(
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           this.config.middleware as any[] | undefined,
           this.config
         )
       : [];
+
+    // deepagents' standard middleware already summarizes long conversations; drop any
+    // gsloth-configured summarization middleware so the deep agent doesn't summarize twice.
+    const configuredMiddleware = resolvedMiddleware.filter((m) => {
+      const name = (m as { name?: string }).name ?? '';
+      if (/summar/i.test(name)) {
+        debugLog(`Dropping duplicate summarization middleware '${name}' (deepagents provides it)`);
+        return false;
+      }
+      return true;
+    });
+
+    // Soften deepagents' fail-hard filesystem permission denials. By default a denied
+    // read/write THROWS, which aborts the whole run; wrap tool calls so a denial becomes
+    // a recoverable ToolMessage instead, letting the model continue and report it. This
+    // preserves gsloth's recoverable-denial UX (the old GthFileSystemToolkit returned a
+    // message rather than throwing).
+    const fsDenialSoftening = createMiddleware({
+      name: 'GthDeepFsDenialSoftening',
+      wrapToolCall: async (request, handler) => {
+        try {
+          return await handler(request);
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          if (/permission denied for (read|write)/i.test(message)) {
+            debugLog(`Softened fs permission denial into a ToolMessage: ${message}`);
+            return new ToolMessage({
+              content: message,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              tool_call_id: (request.toolCall as any)?.id ?? '',
+              status: 'error',
+            });
+          }
+          throw e;
+        }
+      },
+    });
 
     // Add tool call status update middleware
     const statusUpdate = this.statusUpdate;
@@ -139,7 +182,9 @@ export class GthDeepAgent extends GthAbstractAgent {
       },
     });
 
-    const middleware = [...configuredMiddleware, toolCallStatusMiddleware];
+    // fsDenialSoftening first so it is the outermost wrapToolCall — it must see the throw
+    // from deepagents' permission-enforcing fs tools.
+    const middleware = [fsDenialSoftening, ...configuredMiddleware, toolCallStatusMiddleware];
     this.statusUpdate(
       StatusLevel.INFO,
       `Loaded middleware: ${middleware.map((m) => m.name).join(', ')}`

@@ -22,6 +22,7 @@ import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import { buildSystemMessages } from '@gaunt-sloth/core/utils/llmUtils.js';
 import { createResolvers } from '#src/resolvers.js';
+import { gthDeepAgentFactory } from '#src/core/gthDeepAgentFactory.js';
 
 export interface SessionConfig {
   mode: 'chat' | 'code';
@@ -44,7 +45,7 @@ export async function createInteractiveSession(
   if (logFileName) {
     initSessionLogging(logFileName, config.streamSessionInferenceLog);
   }
-  const runner = new GthAgentRunner(defaultStatusCallback, createResolvers());
+  const runner = new GthAgentRunner(defaultStatusCallback, createResolvers(), gthDeepAgentFactory);
 
   try {
     await runner.init(sessionConfig.mode, config, checkpointSaver);

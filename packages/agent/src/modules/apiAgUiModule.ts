@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEncoder } from '@ag-ui/encoder';
 import { EventType } from '@ag-ui/core';
 import { GthConfig } from '@gaunt-sloth/core/config.js';
-import { GthLangChainAgent } from '@gaunt-sloth/core/core/GthLangChainAgent.js';
+import { GthDeepAgent } from '#src/core/GthDeepAgent.js';
 import {
   defaultStatusCallback,
   displayInfo,
@@ -185,7 +185,7 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
   // Note this would need a refactoring if it is to be used for a public web server,
   // For connecting local WEB to local CLI agent, this is absolutely OK, since one thread is OK.
   const checkpointSaver = new MemorySaver();
-  const agent = new GthLangChainAgent(defaultStatusCallback, createResolvers());
+  const agent = new GthDeepAgent(defaultStatusCallback, createResolvers());
   await agent.init('api', config, checkpointSaver);
 
   displayInfo(`AG-UI agent initialized`);
@@ -195,7 +195,7 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
   // its resume share ONE compiled graph — LangGraph resumes from the
   // checkpointer, but the graph shape must match the suspended one. Built lazily
   // on first sighting of a given toolset.
-  const toolAgentCache = new Map<string, GthLangChainAgent>();
+  const toolAgentCache = new Map<string, GthDeepAgent>();
 
   function toolSignature(tools: RunInputTool[]): string {
     return JSON.stringify(
@@ -205,7 +205,7 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
     );
   }
 
-  async function getAgentForTools(tools: RunInputTool[]): Promise<GthLangChainAgent> {
+  async function getAgentForTools(tools: RunInputTool[]): Promise<GthDeepAgent> {
     const sig = toolSignature(tools);
     const cached = toolAgentCache.get(sig);
     if (cached) return cached;
@@ -214,7 +214,7 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
       ...config,
       tools: [...((config.tools as unknown[]) ?? []), ...clientStubs],
     } as GthConfig;
-    const reqAgent = new GthLangChainAgent(defaultStatusCallback, createResolvers());
+    const reqAgent = new GthDeepAgent(defaultStatusCallback, createResolvers());
     await reqAgent.init('api', reqConfig, checkpointSaver);
     toolAgentCache.set(sig, reqAgent);
     displayInfo(

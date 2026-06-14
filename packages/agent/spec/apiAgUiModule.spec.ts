@@ -24,18 +24,18 @@ vi.mock('@langchain/langgraph', () => ({
   MemorySaver: memorySaverMock,
 }));
 
-const gthLangChainAgentInitMock = vi.fn();
-const gthLangChainAgentStreamMock = vi.fn();
-const gthLangChainAgentStreamWithEventsMock = vi.fn();
-const gthLangChainAgentStreamWithEventsResumeMock = vi.fn();
-vi.mock('#src/core/GthLangChainAgent.js', () => {
-  const GthLangChainAgent = vi.fn();
-  GthLangChainAgent.prototype.init = gthLangChainAgentInitMock;
-  GthLangChainAgent.prototype.stream = gthLangChainAgentStreamMock;
-  GthLangChainAgent.prototype.streamWithEvents = gthLangChainAgentStreamWithEventsMock;
-  GthLangChainAgent.prototype.streamWithEventsResume = gthLangChainAgentStreamWithEventsResumeMock;
+const gthDeepAgentInitMock = vi.fn();
+const gthDeepAgentStreamMock = vi.fn();
+const gthDeepAgentStreamWithEventsMock = vi.fn();
+const gthDeepAgentStreamWithEventsResumeMock = vi.fn();
+vi.mock('#src/core/GthDeepAgent.js', () => {
+  const GthDeepAgent = vi.fn();
+  GthDeepAgent.prototype.init = gthDeepAgentInitMock;
+  GthDeepAgent.prototype.stream = gthDeepAgentStreamMock;
+  GthDeepAgent.prototype.streamWithEvents = gthDeepAgentStreamWithEventsMock;
+  GthDeepAgent.prototype.streamWithEventsResume = gthDeepAgentStreamWithEventsResumeMock;
   return {
-    GthLangChainAgent,
+    GthDeepAgent,
   };
 });
 
@@ -158,7 +158,7 @@ describe('apiAgUiModule', () => {
     // clearAllMocks keeps implementations intact (e.g. HumanMessage/AIMessage constructor mocks).
     // resetAllMocks would strip them, breaking `new HumanMessage()` calls inside the handler.
     vi.clearAllMocks();
-    gthLangChainAgentInitMock.mockResolvedValue(undefined);
+    gthDeepAgentInitMock.mockResolvedValue(undefined);
     mockListenFn.mockImplementation((_port: number, cb: () => void) => {
       cb();
     });
@@ -170,9 +170,9 @@ describe('apiAgUiModule', () => {
     EventEncoderMock.mockImplementation(function () {
       return mockEncoderInstance;
     });
-    gthLangChainAgentStreamMock.mockReturnValue(emptyStream());
-    gthLangChainAgentStreamWithEventsMock.mockReturnValue(emptyStream());
-    gthLangChainAgentStreamWithEventsResumeMock.mockReturnValue(emptyStream());
+    gthDeepAgentStreamMock.mockReturnValue(emptyStream());
+    gthDeepAgentStreamWithEventsMock.mockReturnValue(emptyStream());
+    gthDeepAgentStreamWithEventsResumeMock.mockReturnValue(emptyStream());
     // Reset to default so tests that override it don't bleed into the next test
     llmUtilsMock.buildSystemMessages.mockReturnValue([]);
   });
@@ -288,7 +288,7 @@ describe('apiAgUiModule', () => {
     }
 
     it('should emit RUN_STARTED, message events, and RUN_FINISHED for a successful run', async () => {
-      gthLangChainAgentStreamWithEventsMock.mockReturnValue(textStream('Hello', ' world'));
+      gthDeepAgentStreamWithEventsMock.mockReturnValue(textStream('Hello', ' world'));
 
       const handler = await getRunHandler();
       const req = makeRunReq({ threadId: 'run-success', runId: 'run-id-1' });
@@ -344,7 +344,7 @@ describe('apiAgUiModule', () => {
     });
 
     it('should emit RUN_ERROR and end response when stream throws', async () => {
-      gthLangChainAgentStreamWithEventsMock.mockImplementation(() => {
+      gthDeepAgentStreamWithEventsMock.mockImplementation(() => {
         throw new Error('Stream failed');
       });
 
@@ -362,7 +362,7 @@ describe('apiAgUiModule', () => {
     });
 
     it('should emit RUN_ERROR with string message for non-Error throws', async () => {
-      gthLangChainAgentStreamWithEventsMock.mockImplementation(() => {
+      gthDeepAgentStreamWithEventsMock.mockImplementation(() => {
         throw 'something went wrong';
       });
 
@@ -389,7 +389,7 @@ describe('apiAgUiModule', () => {
       // Must listen on the response, not the request: req 'close' fires as soon
       // as the POST body is consumed and would abort every run instantly.
       expect(res.on).toHaveBeenCalledWith('close', expect.any(Function));
-      const [, , signal] = gthLangChainAgentStreamWithEventsMock.mock.calls[0];
+      const [, , signal] = gthDeepAgentStreamWithEventsMock.mock.calls[0];
       expect(signal).toBeInstanceOf(AbortSignal);
       expect(signal.aborted).toBe(false);
     });
@@ -403,7 +403,7 @@ describe('apiAgUiModule', () => {
       // Connection closes after the response finished — must not abort.
       res.emitClose();
 
-      const [, , signal] = gthLangChainAgentStreamWithEventsMock.mock.calls[0];
+      const [, , signal] = gthDeepAgentStreamWithEventsMock.mock.calls[0];
       expect(signal.aborted).toBe(false);
     });
 
@@ -416,7 +416,7 @@ describe('apiAgUiModule', () => {
 
       await handler(req, makeMockRes());
 
-      const [, , , signal] = gthLangChainAgentStreamWithEventsResumeMock.mock.calls[0];
+      const [, , , signal] = gthDeepAgentStreamWithEventsResumeMock.mock.calls[0];
       expect(signal).toBeInstanceOf(AbortSignal);
     });
 
@@ -424,7 +424,7 @@ describe('apiAgUiModule', () => {
       const res = makeMockRes();
       // Simulate the client going away mid-stream: fire response 'close' (aborts
       // the signal) then surface the resulting AbortError out of the stream.
-      gthLangChainAgentStreamWithEventsMock.mockImplementation(() =>
+      gthDeepAgentStreamWithEventsMock.mockImplementation(() =>
         (async function* () {
           res.emitClose();
           const err = new Error('Aborted');
@@ -443,7 +443,7 @@ describe('apiAgUiModule', () => {
     });
 
     it('should emit TEXT_MESSAGE_CONTENT for each text event in the stream', async () => {
-      gthLangChainAgentStreamWithEventsMock.mockReturnValue(textStream('real', 'content'));
+      gthDeepAgentStreamWithEventsMock.mockReturnValue(textStream('real', 'content'));
 
       const handler = await getRunHandler();
       const req = makeRunReq({ threadId: 'text-events-thread' });
@@ -473,7 +473,7 @@ describe('apiAgUiModule', () => {
 
       await handler(req, res);
 
-      const [passedMessages] = gthLangChainAgentStreamWithEventsMock.mock.calls[0];
+      const [passedMessages] = gthDeepAgentStreamWithEventsMock.mock.calls[0];
       const roles = passedMessages.map((m: { role: string }) => m.role);
       expect(roles).toContain('user');
       expect(roles).toContain('assistant');
@@ -494,7 +494,7 @@ describe('apiAgUiModule', () => {
 
       await handler(req, res);
 
-      const [passedMessages] = gthLangChainAgentStreamWithEventsMock.mock.calls[0];
+      const [passedMessages] = gthDeepAgentStreamWithEventsMock.mock.calls[0];
       expect(passedMessages[0]).toMatchObject({ role: 'system' });
       expect(llmUtilsMock.buildSystemMessages).toHaveBeenCalledOnce();
     });
@@ -511,9 +511,9 @@ describe('apiAgUiModule', () => {
       await handler(req1, makeMockRes());
 
       // Reset call tracking for the second request
-      gthLangChainAgentStreamWithEventsMock.mockClear();
+      gthDeepAgentStreamWithEventsMock.mockClear();
       llmUtilsMock.buildSystemMessages.mockClear();
-      gthLangChainAgentStreamWithEventsMock.mockReturnValue(emptyStream());
+      gthDeepAgentStreamWithEventsMock.mockReturnValue(emptyStream());
 
       // Second request — system messages must NOT be injected again
       const req2 = makeRunReq({
@@ -523,14 +523,14 @@ describe('apiAgUiModule', () => {
       await handler(req2, makeMockRes());
 
       expect(llmUtilsMock.buildSystemMessages).not.toHaveBeenCalled();
-      const [passedMessages] = gthLangChainAgentStreamWithEventsMock.mock.calls[0];
+      const [passedMessages] = gthDeepAgentStreamWithEventsMock.mock.calls[0];
       expect(passedMessages[0]).toMatchObject({ role: 'user' });
     });
 
     // ─── Frontend-fulfilled tool resume ────────────────────────────────────
 
     it('should route to streamWithEventsResume when forwardedProps.command.resume is present', async () => {
-      gthLangChainAgentStreamWithEventsResumeMock.mockReturnValue(textStream('resumed'));
+      gthDeepAgentStreamWithEventsResumeMock.mockReturnValue(textStream('resumed'));
 
       const handler = await getRunHandler();
       const req = makeRunReq({
@@ -546,10 +546,10 @@ describe('apiAgUiModule', () => {
 
       await handler(req, res);
 
-      expect(gthLangChainAgentStreamWithEventsResumeMock).toHaveBeenCalledOnce();
-      const [resumeValue] = gthLangChainAgentStreamWithEventsResumeMock.mock.calls[0];
+      expect(gthDeepAgentStreamWithEventsResumeMock).toHaveBeenCalledOnce();
+      const [resumeValue] = gthDeepAgentStreamWithEventsResumeMock.mock.calls[0];
       expect(resumeValue).toBe('{"mimeType":"image/jpeg","data":"AAA"}');
-      expect(gthLangChainAgentStreamWithEventsMock).not.toHaveBeenCalled();
+      expect(gthDeepAgentStreamWithEventsMock).not.toHaveBeenCalled();
     });
 
     it('should skip message conversion and system prepend on resume', async () => {
@@ -570,8 +570,8 @@ describe('apiAgUiModule', () => {
       await handler(req, res);
 
       expect(llmUtilsMock.buildSystemMessages).not.toHaveBeenCalled();
-      expect(gthLangChainAgentStreamWithEventsMock).not.toHaveBeenCalled();
-      expect(gthLangChainAgentStreamWithEventsResumeMock).toHaveBeenCalledOnce();
+      expect(gthDeepAgentStreamWithEventsMock).not.toHaveBeenCalled();
+      expect(gthDeepAgentStreamWithEventsResumeMock).toHaveBeenCalledOnce();
     });
 
     it('should pass runConfig with thread_id to streamWithEventsResume', async () => {
@@ -583,7 +583,7 @@ describe('apiAgUiModule', () => {
 
       await handler(req, makeMockRes());
 
-      const [, runConfig] = gthLangChainAgentStreamWithEventsResumeMock.mock.calls[0];
+      const [, runConfig] = gthDeepAgentStreamWithEventsResumeMock.mock.calls[0];
       expect(runConfig.configurable).toMatchObject({ thread_id: 'resume-thread-42' });
     });
 
@@ -598,7 +598,7 @@ describe('apiAgUiModule', () => {
 
       await handler(req, makeMockRes());
 
-      const [, , queuedMessages] = gthLangChainAgentStreamWithEventsResumeMock.mock.calls[0];
+      const [, , queuedMessages] = gthDeepAgentStreamWithEventsResumeMock.mock.calls[0];
       expect(queuedMessages).toHaveLength(2);
       expect(queuedMessages[0]).toMatchObject({ role: 'user', content: 'turn around' });
       expect(queuedMessages[1]).toMatchObject({ role: 'user', content: 'go slower' });
@@ -613,7 +613,7 @@ describe('apiAgUiModule', () => {
 
       await handler(req, makeMockRes());
 
-      const [, , queuedMessages] = gthLangChainAgentStreamWithEventsResumeMock.mock.calls[0];
+      const [, , queuedMessages] = gthDeepAgentStreamWithEventsResumeMock.mock.calls[0];
       expect(queuedMessages).toEqual([]);
     });
   });

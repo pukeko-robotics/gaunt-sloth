@@ -73,8 +73,43 @@ describe('GthDeepAgent', () => {
     expect(params.tools.map((t: { name: string }) => t.name)).toEqual(['keep']);
     expect(statusUpdate).toHaveBeenCalledWith(
       expect.anything(),
-      expect.stringContaining('superseding: read_file')
+      expect.stringContaining('collide with deepagents built-in filesystem tools: read_file')
     );
+  });
+
+  it('resolves tools with filesystem disabled so gsloth fs toolkit is not loaded', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const resolveTools = vi.fn().mockResolvedValue([]);
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools });
+
+    await agent.init(undefined, makeConfig({ filesystem: 'all' }));
+
+    // deepagents owns the filesystem; tool resolution must see filesystem:'none' so the
+    // gsloth toolkit's permission-bypassing fs tools are never loaded. Permissions still
+    // reflect the real 'all' mode.
+    expect(resolveTools).toHaveBeenCalledWith(
+      expect.objectContaining({ filesystem: 'none' }),
+      undefined
+    );
+  });
+
+  it('drops a configured summarization middleware (deepagents provides it)', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const resolvers = {
+      resolveTools: vi.fn().mockResolvedValue([]),
+      resolveMiddleware: vi
+        .fn()
+        .mockResolvedValue([{ name: 'SummarizationMiddleware' }, { name: 'keep-mw' }]),
+    };
+    const agent = new GthDeepAgent(statusUpdate, resolvers);
+
+    await agent.init(undefined, makeConfig());
+
+    const names = createDeepAgentMock.mock.calls[0][0].middleware.map(
+      (m: { name: string }) => m.name
+    );
+    expect(names).not.toContain('SummarizationMiddleware');
+    expect(names).toContain('keep-mw');
   });
 
   it('maps .aiignore + filesystem mode onto permissions', async () => {
@@ -95,7 +130,7 @@ describe('GthDeepAgent', () => {
     expect(params.permissions[0].mode).toBe('deny');
   });
 
-  it('appends the tool-call status middleware after resolved middleware', async () => {
+  it('orders middleware: fs-denial-softening (outermost), resolved, then status', async () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const resolvers = {
       resolveTools: vi.fn().mockResolvedValue([]),
@@ -107,9 +142,43 @@ describe('GthDeepAgent', () => {
 
     const params = createDeepAgentMock.mock.calls[0][0];
     expect(params.middleware.map((m: { name: string }) => m.name)).toEqual([
+      'GthDeepFsDenialSoftening',
       'custom-mw',
       'GthMiddlewareToolCallStatusUpdate',
     ]);
+  });
+
+  it('fs-denial-softening converts a permission throw into an error ToolMessage', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+    await agent.init(undefined, makeConfig());
+
+    const softening = createDeepAgentMock.mock.calls[0][0].middleware.find(
+      (m: { name: string }) => m.name === 'GthDeepFsDenialSoftening'
+    );
+    const handler = vi
+      .fn()
+      .mockRejectedValue(new Error('permission denied for read on /secret.env'));
+
+    const result = await softening.wrapToolCall({ toolCall: { id: 'tc1' } }, handler);
+    expect(String(result.content)).toContain('permission denied for read on /secret.env');
+    expect(result.tool_call_id).toBe('tc1');
+    expect(result.status).toBe('error');
+  });
+
+  it('fs-denial-softening rethrows non-permission errors', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+    await agent.init(undefined, makeConfig());
+
+    const softening = createDeepAgentMock.mock.calls[0][0].middleware.find(
+      (m: { name: string }) => m.name === 'GthDeepFsDenialSoftening'
+    );
+    const handler = vi.fn().mockRejectedValue(new Error('boom'));
+
+    await expect(softening.wrapToolCall({ toolCall: { id: 'tc1' } }, handler)).rejects.toThrow(
+      'boom'
+    );
   });
 
   it('skips tool resolution entirely when allowedTools is an empty allow-list', async () => {
