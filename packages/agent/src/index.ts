@@ -9,3 +9,8 @@ export { createResolvers } from '#src/resolvers.js';
 // Tools + middleware (formerly @gaunt-sloth/tools)
 export * from '#src/builtInToolsConfig.js';
 export { resolveMiddleware } from '#src/middleware/registry.js';
+
+// Deep agent (createDeepAgent / deepagents) + the GthConfig→permission mapping
+export { GthDeepAgent } from '#src/core/GthDeepAgent.js';
+export * from '#src/core/deepAgentPermissions.js';
+export { gthDeepAgentFactory } from '#src/core/gthDeepAgentFactory.js';
