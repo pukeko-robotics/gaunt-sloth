@@ -1,18 +1,22 @@
 /**
  * @packageDocumentation
- * Thin wrapper over `deepagents-acp`'s `DeepAgentsServer` that honors the ACP per-session
- * project root.
+ * Thin wrapper over `deepagents-acp`'s `DeepAgentsServer` that fixes how its filesystem backend is
+ * rooted, since 0.1.12 gets both the location and the path semantics wrong for an IDE-hosted agent.
  *
- * deepagents-acp 0.1.12 roots its filesystem backend once at `workspaceRoot ?? process.cwd()`
- * and IGNORES the `cwd` carried by every ACP `session/new` request. An ACP host (Zed, JetBrains)
- * spawns the agent as a single long-lived subprocess whose process cwd is unrelated to the project
- * (Zed launches it at `/`), and passes the real project root per session via `session/new.cwd`.
- * Without honoring it, filesystem tools default to the wrong root (e.g. `ls` lists `/`).
+ * 1. **Per-session root.** deepagents-acp roots its backend once at `workspaceRoot ?? process.cwd()`
+ *    and IGNORES the `cwd` carried by every ACP `session/new` request. An ACP host (Zed, JetBrains)
+ *    spawns one long-lived agent subprocess and passes the real project root per session, so we
+ *    re-root the backend to `session/new.cwd`.
+ * 2. **Virtual-fs semantics.** deepagents-acp builds its backend WITHOUT `virtualMode`, so `/`
+ *    resolves to the OS root and `ls /` lists the whole machine — but deepagents' filesystem prompt
+ *    tells the model `/` is the workspace root (the convention the local runner uses via
+ *    `FilesystemBackend({ virtualMode: true })`). We switch the backend into virtual-fs mode so
+ *    `'/'`-rooted paths are workspace-relative.
  *
  * The server's connection handler dispatches `this.handleNewSession(params, conn)` dynamically, so
- * we patch that instance method before `start()` to re-root the (ACP) filesystem backend to the
- * session's `cwd`. If a future deepagents-acp honors session cwd itself, this becomes a harmless
- * no-op (it just re-asserts the same root).
+ * we patch that instance method before `start()`. Both fixes reach into deepagents-acp internals and
+ * are guarded so a shape change degrades to a no-op rather than throwing; if a future deepagents-acp
+ * honors session cwd / virtual mode itself, this becomes a harmless re-assert.
  */
 
 import { DeepAgentsServer, type DeepAgentsServerOptions } from 'deepagents-acp';
@@ -20,10 +24,13 @@ import { resolve } from 'node:path';
 import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
 
 // deepagents-acp keeps a private `acpBackends: Map<agentName, ACPFilesystemBackend>`; the backend
-// roots its local ls/glob/grep at `this.cwd` (deepagents' FilesystemBackend base). We re-root by
-// reaching those internals — guarded so a shape change degrades to a no-op rather than throwing.
+// roots its local ls/glob/grep at `this.cwd` (deepagents' FilesystemBackend base) and resolves
+// paths via `virtualMode` (ls/glob/grep) and its own `resolveAbsPath` (the ACP read/write proxy).
+// We reach those internals — guarded so a shape change degrades to a no-op rather than throwing.
 interface ReRootableBackend {
   cwd?: string;
+  virtualMode?: boolean;
+  resolveAbsPath?: (filePath: string) => string;
 }
 interface AcpServerInternals {
   acpBackends?: Map<string, ReRootableBackend>;
@@ -32,8 +39,23 @@ interface AcpServerInternals {
 }
 
 /**
- * Construct and start a deepagents-acp server that re-roots its filesystem backend to each ACP
- * session's `cwd`. Resolves once the stdio transport is listening.
+ * Put an ACP filesystem backend into deepagents' virtual-fs mode so `'/'`-rooted paths are
+ * workspace-relative (clamped under `cwd`), matching deepagents' prompt and the local runner.
+ *
+ * `virtualMode` covers the methods that route through `resolvePath` (ls) and the inline checks
+ * (glob/grep). The ACP read/write proxy uses its own `resolveAbsPath`, which ignores `virtualMode`,
+ * so override that too so proxied reads/writes hit the workspace, not the OS root.
+ */
+function configureVirtualFs(backend: ReRootableBackend): void {
+  backend.virtualMode = true;
+  backend.resolveAbsPath = (filePath: string): string =>
+    resolve(backend.cwd ?? process.cwd(), String(filePath).replace(/^\/+/, ''));
+}
+
+/**
+ * Construct and start a deepagents-acp server that roots its filesystem backend at each ACP
+ * session's `cwd` and runs it in virtual-fs mode (so `/` is the workspace, not the OS root).
+ * Resolves once the stdio transport is listening.
  */
 export async function startGthAcpServer(
   options: DeepAgentsServerOptions
@@ -47,25 +69,21 @@ export async function startGthAcpServer(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     internals.handleNewSession = async (params: any, conn: any) => {
       const result = await bound(params, conn);
-      const cwd = params?.cwd;
-      if (typeof cwd === 'string' && cwd.length > 0) {
-        const root = resolve(cwd);
-        const backends = internals.acpBackends;
-        if (backends && backends.size > 0) {
-          for (const backend of backends.values()) {
-            if (backend && typeof backend === 'object') {
-              backend.cwd = root;
-            }
-          }
-          debugLog(`ACP session re-rooted filesystem backend to ${root}`);
-        } else {
-          debugLog(`ACP session cwd ${root} (no ACP filesystem backend to re-root)`);
+      const backends = internals.acpBackends;
+      const cwd =
+        typeof params?.cwd === 'string' && params.cwd.length > 0 ? resolve(params.cwd) : undefined;
+      if (backends && backends.size > 0) {
+        for (const backend of backends.values()) {
+          if (!backend || typeof backend !== 'object') continue;
+          if (cwd) backend.cwd = cwd;
+          configureVirtualFs(backend);
         }
+        debugLog(`ACP session: virtual fs, root ${cwd ?? '[startup workspace]'}`);
       }
       return result;
     };
   } else {
-    debugLog('deepagents-acp handleNewSession not found to patch; session cwd re-rooting disabled');
+    debugLog('deepagents-acp handleNewSession not found to patch; session fs rooting disabled');
   }
 
   await server.start();
