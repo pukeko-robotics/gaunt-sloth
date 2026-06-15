@@ -204,9 +204,21 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
     const cached = toolAgentCache.get(sig);
     if (cached) return cached;
     const clientStubs = tools.map(buildClientToolStub);
+    // Run-input client tools are authoritative. Drop any config.tools entry that
+    // collides by name so we never register two client-tool instances of the
+    // same name: LangChain v1's AgentNode rejects a same-name/different-instance
+    // client tool ("You have modified a tool ..."). This lets a server config
+    // also declare the (client-fulfilled) tools — as pukeko's robot tools do —
+    // without breaking; the run-input stub is the one actually used.
+    const clientStubNames = new Set(
+      clientStubs.map((t) => (t as { name?: string }).name).filter(Boolean) as string[]
+    );
+    const baseTools = ((config.tools as { name?: string }[] | undefined) ?? []).filter(
+      (t) => !(t?.name && clientStubNames.has(t.name))
+    ) as unknown[];
     const reqConfig = {
       ...config,
-      tools: [...((config.tools as unknown[]) ?? []), ...clientStubs],
+      tools: [...baseTools, ...clientStubs],
     } as GthConfig;
     const reqAgent = new GthDeepAgent(defaultStatusCallback, createResolvers());
     await reqAgent.init('api', reqConfig, checkpointSaver);

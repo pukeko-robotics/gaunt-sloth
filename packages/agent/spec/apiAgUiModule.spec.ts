@@ -585,6 +585,85 @@ describe('apiAgUiModule', () => {
     });
   });
 
+  // ─── Client-tool dedup (run-input tools are authoritative) ─────────────────
+  //
+  // A server config may declare the same (client-fulfilled) tools the browser
+  // sends as run-input — pukeko's robot tools do exactly this. Registering two
+  // same-name client-tool instances makes LangChain v1's AgentNode throw
+  // ("You have modified a tool ..."). getAgentForTools must drop the colliding
+  // config.tools entry and keep only the run-input stub.
+
+  describe('client-tool dedup', () => {
+    async function startWithConfig(config: GthConfig) {
+      const { startAgUiServer } = await import('#src/modules/apiAgUiModule.js');
+      await startAgUiServer(config, 3000);
+      return mockPostFn.mock.calls[0][1] as (_req: unknown, _res: unknown) => Promise<void>;
+    }
+
+    // The per-toolset agent's init receives the merged config; find that call by
+    // its tools array containing a client stub (flagged metadata.client). The
+    // startup agent's init carries the raw config.tools (no client flag) and is skipped.
+    function mergedToolsFromInit(): Array<{ name?: string; metadata?: { client?: boolean } }> {
+      const reqInit = gthDeepAgentInitMock.mock.calls.find(
+        ([, cfg]) =>
+          Array.isArray((cfg as { tools?: unknown[] })?.tools) &&
+          (cfg as { tools: Array<{ metadata?: { client?: boolean } }> }).tools.some(
+            (t) => t?.metadata?.client
+          )
+      );
+      expect(reqInit).toBeDefined();
+      return (reqInit![1] as { tools: Array<{ name?: string; metadata?: { client?: boolean } }> })
+        .tools;
+    }
+
+    it('drops the config.tools entry that collides with a run-input client tool', async () => {
+      const config = {
+        commands: { api: { port: 3000 } },
+        tools: [
+          { name: 'move_forward', description: 'server-declared' },
+          { name: 'read_status', description: 'server-only' },
+        ],
+      } as unknown as GthConfig;
+
+      const handler = await startWithConfig(config);
+      const req = makeRunReq({
+        threadId: 'dedup-thread',
+        tools: [{ name: 'move_forward', parameters: { type: 'object', properties: {} } }],
+      });
+
+      await handler(req, makeMockRes());
+
+      const merged = mergedToolsFromInit();
+      const names = merged.map((t) => t.name);
+
+      // move_forward survives exactly once — the colliding server entry was dropped.
+      expect(names.filter((n) => n === 'move_forward')).toHaveLength(1);
+      // …and the survivor is the client stub, not the server-declared object.
+      expect(merged.find((t) => t.name === 'move_forward')?.metadata?.client).toBe(true);
+      // The non-colliding server tool is retained.
+      expect(names).toContain('read_status');
+    });
+
+    it('keeps all server tools when the run-input tools do not collide', async () => {
+      const config = {
+        commands: { api: { port: 3000 } },
+        tools: [{ name: 'read_status', description: 'server-only' }],
+      } as unknown as GthConfig;
+
+      const handler = await startWithConfig(config);
+      const req = makeRunReq({
+        threadId: 'no-collision-thread',
+        tools: [{ name: 'capture_image', parameters: { type: 'object', properties: {} } }],
+      });
+
+      await handler(req, makeMockRes());
+
+      const names = mergedToolsFromInit().map((t) => t.name);
+      expect(names).toEqual(expect.arrayContaining(['read_status', 'capture_image']));
+      expect(names).toHaveLength(2);
+    });
+  });
+
   // ─── express.json body limit ─────────────────────────────────────────────
 
   it('should configure express.json with 5mb body limit', async () => {
