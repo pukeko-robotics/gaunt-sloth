@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Create git tags for the synced @gaunt-sloth/* packages (core, tools, api, review).
+# Create git tags for the synced @gaunt-sloth/* packages (core, agent, review).
 #
-# The user-facing CLI (gaunt-sloth-assistant) is intentionally EXCLUDED — it
-# carries its own version and already uses the repo's v<MAJOR.MINOR.PATCH> tags.
+# The user-facing CLI (`gaunt-sloth`, dir packages/assistant) is intentionally
+# EXCLUDED — it carries its own version and already uses the repo's
+# v<MAJOR.MINOR.PATCH> tags.
 #
 # Tags are annotated and named "@gaunt-sloth/<pkg>@<version>" (npm monorepo
 # convention) so they never collide with the assistant's v* tags. Versions are
@@ -17,7 +18,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Synced packages only — same set as bump.mjs / publish-all.sh, minus assistant.
-PACKAGES=(core agent tools api review)
+PACKAGES=(core agent review)
 
 PUSH="${PUSH:-0}"
 [[ "${1:-}" == "--push" ]] && PUSH=1

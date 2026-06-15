@@ -14,11 +14,10 @@ set -euo pipefail
 REGISTRY="${REGISTRY:-http://localhost:4873}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Topological order: tools → core (depends on tools? no, but bundled together) → api → review.
-# core is published first since everything depends on it, then agent (the merged
-# tools+api runtime), then the deprecated tools/api forwarding shims (which depend
-# on agent), then review.
-ORDER=(core agent tools api review)
+# Topological order: core is published first (everything depends on it), then
+# agent (the merged tools+api runtime; depends on core), then review (depends on
+# core). The former tools/api forwarding shims were removed in the 2.0 break.
+ORDER=(core agent review)
 
 echo "Publishing @gaunt-sloth/* to ${REGISTRY}"
 for pkg in "${ORDER[@]}"; do

@@ -6,10 +6,10 @@
 // `npm run release:bump -- 0.0.7`       — set 0.0.7 (re-syncs without bumping if already current), then sync
 // `npm run release:bump-and-commit`     — same, then refresh package-lock.json and git-commit
 //
-// SYNCED packages (core, tools, api, review) all carry the same version and
+// SYNCED packages (core, agent, review) all carry the same version and
 // pin each other exactly; packages/core/package.json is the source of truth.
-// The user-facing assistant CLI keeps its own version — only its dep pins on
-// the synced set are rewritten.
+// The user-facing `gaunt-sloth` CLI (dir: packages/assistant) keeps its own
+// version — only its dep pins on the synced set are rewritten.
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const SCOPE = '@gaunt-sloth';
-const SYNCED = ['core', 'agent', 'tools', 'api', 'review'];
+const SYNCED = ['core', 'agent', 'review'];
 
 const args = process.argv.slice(2);
 const commit = args.includes('--commit');

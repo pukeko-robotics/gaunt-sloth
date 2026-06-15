@@ -58,8 +58,9 @@ export async function review(
     config.middleware = [...middlewareWithoutReviewRate, reviewRateMiddleware];
   }
 
-  // When no resolvers are provided (e.g. standalone CLI without @gaunt-sloth/tools),
-  // supply a minimal middleware resolver that passes through already-resolved middleware.
+  // When no resolvers are provided (e.g. standalone review CLI, without @gaunt-sloth/agent's
+  // resolvers), supply a minimal middleware resolver that passes through already-resolved
+  // middleware. The full `gaunt-sloth` CLI injects @gaunt-sloth/agent's resolvers instead.
   const effectiveResolvers: AgentResolvers = resolvers ?? {
     resolveMiddleware: async (middleware) => middleware ?? [],
   };

@@ -36,14 +36,6 @@
   "dependencies": {
     "@gaunt-sloth/core": "0.1.8"
   },
-  "peerDependencies": {
-    "@gaunt-sloth/tools": "0.1.8"
-  },
-  "peerDependenciesMeta": {
-    "@gaunt-sloth/tools": {
-      "optional": true
-    }
-  },
   "files": [
     "./dist/*",
     "cli.js"

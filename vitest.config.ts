@@ -25,7 +25,7 @@ function resolveWorkspaceImports() {
         const relative = id.replace('#src/', '').replace(/\.js$/, '.ts');
 
         // Try each package in dependency order
-        for (const pkg of ['core', 'agent', 'tools', 'review', 'api', 'assistant']) {
+        for (const pkg of ['core', 'agent', 'review', 'assistant']) {
           const tsPath = resolve(__dirname, `packages/${pkg}/src/${relative}`);
           if (existsSync(tsPath)) {
             // Skip re-export stubs (files that just re-export from @gaunt-sloth/)
@@ -42,7 +42,7 @@ function resolveWorkspaceImports() {
       }
 
       // Handle @gaunt-sloth/X/path.js -> packages/X/src/path.ts
-      const scopedMatch = id.match(/^@gaunt-sloth\/(core|agent|tools|review|api)\/(.+)\.js$/);
+      const scopedMatch = id.match(/^@gaunt-sloth\/(core|agent|review)\/(.+)\.js$/);
       if (scopedMatch) {
         const [, pkg, path] = scopedMatch;
         const tsPath = resolve(__dirname, `packages/${pkg}/src/${path}.ts`);
