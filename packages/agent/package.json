@@ -48,7 +48,7 @@
     "deepagents-acp": "^0.1.12",
     "diff": "^9.0.0",
     "express": "^5.2.1",
-    "langchain": "^1.4.4"
+    "langchain": "^1.4.5"
   },
   "files": [
     "./dist/*",
