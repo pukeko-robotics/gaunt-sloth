@@ -479,52 +479,25 @@ describe('apiAgUiModule', () => {
       expect(roles).toContain('assistant');
     });
 
-    // ─── Thread management ─────────────────────────────────────────────────
+    // ─── System prompt lives in the graph, not the request ─────────────────
 
-    it('should prepend system messages on first request for a new thread', async () => {
-      const systemMsg = { role: 'system', content: 'You are Gaunt Sloth.' };
-      llmUtilsMock.buildSystemMessages.mockReturnValue([systemMsg]);
-
+    it('should NOT prepend a system message — the prompt lives in the deep-agent graph', async () => {
+      // The system prompt (backstory + guidelines + mode prompt + identity) is set on the
+      // deep-agent graph via createDeepAgent({ systemPrompt }); AG-UI must not inject a second,
+      // non-first SystemMessage (Anthropic rejects that). The module no longer calls
+      // buildSystemMessages at all.
       const handler = await getRunHandler();
       const req = makeRunReq({
         threadId: 'fresh-thread-abc',
         messages: [{ role: 'user', content: 'Hey', id: '1' }],
       });
-      const res = makeMockRes();
 
-      await handler(req, res);
+      await handler(req, makeMockRes());
 
-      const [passedMessages] = gthDeepAgentStreamWithEventsMock.mock.calls[0];
-      expect(passedMessages[0]).toMatchObject({ role: 'system' });
-      expect(llmUtilsMock.buildSystemMessages).toHaveBeenCalledOnce();
-    });
-
-    it('should NOT prepend system messages on subsequent requests for the same thread', async () => {
-      const systemMsg = { role: 'system', content: 'You are Gaunt Sloth.' };
-      llmUtilsMock.buildSystemMessages.mockReturnValue([systemMsg]);
-
-      const handler = await getRunHandler();
-      const threadId = 'repeat-thread-xyz';
-
-      // First request — system messages should be injected
-      const req1 = makeRunReq({ threadId, messages: [{ role: 'user', content: 'Hi', id: '1' }] });
-      await handler(req1, makeMockRes());
-
-      // Reset call tracking for the second request
-      gthDeepAgentStreamWithEventsMock.mockClear();
-      llmUtilsMock.buildSystemMessages.mockClear();
-      gthDeepAgentStreamWithEventsMock.mockReturnValue(emptyStream());
-
-      // Second request — system messages must NOT be injected again
-      const req2 = makeRunReq({
-        threadId,
-        messages: [{ role: 'user', content: 'Follow-up', id: '2' }],
-      });
-      await handler(req2, makeMockRes());
-
-      expect(llmUtilsMock.buildSystemMessages).not.toHaveBeenCalled();
       const [passedMessages] = gthDeepAgentStreamWithEventsMock.mock.calls[0];
       expect(passedMessages[0]).toMatchObject({ role: 'user' });
+      expect(passedMessages.some((m: { role?: string }) => m.role === 'system')).toBe(false);
+      expect(llmUtilsMock.buildSystemMessages).not.toHaveBeenCalled();
     });
 
     // ─── Frontend-fulfilled tool resume ────────────────────────────────────
@@ -552,16 +525,11 @@ describe('apiAgUiModule', () => {
       expect(gthDeepAgentStreamWithEventsMock).not.toHaveBeenCalled();
     });
 
-    it('should skip message conversion and system prepend on resume', async () => {
-      llmUtilsMock.buildSystemMessages.mockReturnValue([
-        { role: 'system', content: 'You are Gaunt Sloth.' },
-      ]);
-
+    it('should skip message conversion on resume (routes straight to resume)', async () => {
       const handler = await getRunHandler();
       const req = makeRunReq({
         threadId: 'fresh-resume-thread',
-        // Even though messages and a fresh thread imply system-prepend on the normal path,
-        // the resume branch should not call buildSystemMessages.
+        // Even though messages are present, the resume branch must not convert/stream them.
         messages: [{ role: 'user', content: 'should be ignored', id: '1' }],
         forwardedProps: { command: { resume: 'value', interruptEvent: { toolCallId: 'tc-2' } } },
       });
@@ -569,7 +537,6 @@ describe('apiAgUiModule', () => {
 
       await handler(req, res);
 
-      expect(llmUtilsMock.buildSystemMessages).not.toHaveBeenCalled();
       expect(gthDeepAgentStreamWithEventsMock).not.toHaveBeenCalled();
       expect(gthDeepAgentStreamWithEventsResumeMock).toHaveBeenCalledOnce();
     });

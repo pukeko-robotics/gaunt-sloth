@@ -18,7 +18,6 @@ import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import type { GthCommand, StatusUpdateCallback } from '@gaunt-sloth/core/core/types.js';
 import { StatusLevel } from '@gaunt-sloth/core/core/types.js';
 import { getProcessCwd, stderr } from '@gaunt-sloth/core/utils/systemUtils.js';
-import { buildSystemMessages, readCodePrompt } from '@gaunt-sloth/core/utils/llmUtils.js';
 import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
 import { GthDeepAgent } from '#src/core/GthDeepAgent.js';
 import { startGthAcpServer } from '#src/core/gthAcpServer.js';
@@ -61,12 +60,10 @@ export async function startAcpServer(
   const agent = new GthDeepAgent(acpStatusUpdate, createResolvers());
   const params = await agent.buildDeepAgentParams(command, config);
 
-  // Compose gsloth's system prompt (backstory + guidelines + code-mode prompt + system prompt)
-  // so the ACP agent honors `.gsloth.*.md`. On the runner path these are sent as SystemMessages
-  // with the first turn; ACP has no per-turn hook, so set the agent's `systemPrompt` instead.
-  const systemMessages = buildSystemMessages(config, readCodePrompt(config));
-  const systemPrompt =
-    typeof systemMessages[0]?.content === 'string' ? systemMessages[0].content : undefined;
+  // gsloth's composed system prompt (backstory + guidelines + per-command mode prompt + system
+  // prompt) comes back on `params.systemPrompt` — the SAME prompt the local runner passes to
+  // createDeepAgent. ACP has no per-turn hook, so it sets the agent's `systemPrompt` here.
+  const systemPrompt = params.systemPrompt;
 
   // workspaceRoot is only the startup default: startGthAcpServer re-roots the filesystem backend
   // to each ACP session's `cwd` (the IDE's project root). Use the raw process cwd, not

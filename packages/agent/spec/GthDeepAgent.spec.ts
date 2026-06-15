@@ -15,6 +15,18 @@ vi.mock('deepagents', () => ({
   FilesystemBackend: FilesystemBackendStub,
 }));
 
+// Stub the prompt readers (they otherwise hit the gsloth config path on disk) so the composed
+// systemPrompt is deterministic. buildSystemMessages returns a single SystemMessage-shaped object.
+const buildSystemMessagesMock = vi.fn();
+const readChatPromptMock = vi.fn();
+const readCodePromptMock = vi.fn();
+vi.mock('@gaunt-sloth/core/utils/llmUtils.js', () => ({
+  buildSystemMessages: buildSystemMessagesMock,
+  readChatPrompt: readChatPromptMock,
+  readCodePrompt: readCodePromptMock,
+  formatToolCalls: vi.fn(() => ''),
+}));
+
 function fakeTool(name: string, metadata?: Record<string, unknown>): any {
   const invoke = vi.fn();
   return { name, description: name, metadata, invoke, call: invoke, schema: {} };
@@ -35,6 +47,9 @@ describe('GthDeepAgent', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     createDeepAgentMock.mockReturnValue({ invoke: vi.fn(), stream: vi.fn() });
+    readChatPromptMock.mockReturnValue('chat-mode-prompt');
+    readCodePromptMock.mockReturnValue('code-mode-prompt');
+    buildSystemMessagesMock.mockReturnValue([{ content: 'SYSTEM PROMPT' }]);
   });
 
   it('builds a deep agent with model, FilesystemBackend, permissions and checkpointer', async () => {
@@ -58,6 +73,42 @@ describe('GthDeepAgent', () => {
     expect((params.backend as FilesystemBackendStub).options).toMatchObject({ virtualMode: true });
     expect(params.permissions).toEqual(buildPermissions({ filesystem: 'none' }));
     expect(params.tools.map((t: { name: string }) => t.name)).toEqual(['foo']);
+  });
+
+  it('passes the composed gsloth system prompt to createDeepAgent (chat prompt by default)', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+    const config = makeConfig();
+
+    await agent.init('chat', config);
+
+    // 'code' uses the code-mode prompt; everything else (chat/api/…) uses the chat-mode prompt.
+    expect(readChatPromptMock).toHaveBeenCalledWith(config);
+    expect(readCodePromptMock).not.toHaveBeenCalled();
+    expect(buildSystemMessagesMock).toHaveBeenCalledWith(config, 'chat-mode-prompt');
+    expect(createDeepAgentMock.mock.calls[0][0].systemPrompt).toBe('SYSTEM PROMPT');
+  });
+
+  it('uses the code-mode prompt for the code command', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+    const config = makeConfig();
+
+    await agent.init('code', config);
+
+    expect(readCodePromptMock).toHaveBeenCalledWith(config);
+    expect(buildSystemMessagesMock).toHaveBeenCalledWith(config, 'code-mode-prompt');
+    expect(createDeepAgentMock.mock.calls[0][0].systemPrompt).toBe('SYSTEM PROMPT');
+  });
+
+  it('leaves systemPrompt undefined when no prompt content is composed', async () => {
+    buildSystemMessagesMock.mockReturnValue([]);
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+
+    await agent.init('code', makeConfig());
+
+    expect(createDeepAgentMock.mock.calls[0][0].systemPrompt).toBeUndefined();
   });
 
   it('drops resolved tools that collide with deepagents filesystem tool names', async () => {

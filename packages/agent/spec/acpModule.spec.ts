@@ -23,13 +23,6 @@ vi.mock('#src/resolvers.js', () => ({
   createResolvers: createResolversMock,
 }));
 
-const buildSystemMessagesMock = vi.fn();
-const readCodePromptMock = vi.fn();
-vi.mock('@gaunt-sloth/core/utils/llmUtils.js', () => ({
-  buildSystemMessages: buildSystemMessagesMock,
-  readCodePrompt: readCodePromptMock,
-}));
-
 const getProcessCwdMock = vi.fn();
 const stderrWriteMock = vi.fn();
 vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => ({
@@ -50,6 +43,7 @@ const PARAMS = {
   tools: [{ name: 'foo' }],
   permissions: [{ operations: ['read'], paths: ['/x'], mode: 'deny' }],
   middleware: [{ name: 'GthDeepFsDenialSoftening' }],
+  systemPrompt: 'SYSTEM PROMPT',
 };
 
 describe('acpModule.startAcpServer', () => {
@@ -57,8 +51,6 @@ describe('acpModule.startAcpServer', () => {
     vi.resetAllMocks();
     createResolversMock.mockReturnValue({ resolveTools: vi.fn() });
     buildDeepAgentParamsMock.mockResolvedValue(PARAMS);
-    buildSystemMessagesMock.mockReturnValue([{ content: 'SYSTEM PROMPT' }]);
-    readCodePromptMock.mockReturnValue('code-mode-prompt');
     getProcessCwdMock.mockReturnValue('/work/dir');
     startServerMock.mockResolvedValue(undefined);
   });
@@ -99,18 +91,18 @@ describe('acpModule.startAcpServer', () => {
     });
   });
 
-  it('composes the system prompt from buildSystemMessages(config, readCodePrompt(config))', async () => {
+  it('forwards the system prompt composed by buildDeepAgentParams to the ACP server', async () => {
+    // The composed prompt now comes back on params.systemPrompt (built inside GthDeepAgent,
+    // shared with the local runner path), not composed locally in acpModule.
     const { startAcpServer } = await import('#src/modules/acpModule.js');
-    const config = makeConfig();
 
-    await startAcpServer(config);
+    await startAcpServer(makeConfig());
 
-    expect(readCodePromptMock).toHaveBeenCalledWith(config);
-    expect(buildSystemMessagesMock).toHaveBeenCalledWith(config, 'code-mode-prompt');
+    expect(startServerMock.mock.calls[0][0].agents.systemPrompt).toBe('SYSTEM PROMPT');
   });
 
-  it('leaves systemPrompt undefined when no system messages are composed', async () => {
-    buildSystemMessagesMock.mockReturnValue([]);
+  it('forwards an undefined systemPrompt when buildDeepAgentParams composes none', async () => {
+    buildDeepAgentParamsMock.mockResolvedValue({ ...PARAMS, systemPrompt: undefined });
     const { startAcpServer } = await import('#src/modules/acpModule.js');
 
     await startAcpServer(makeConfig());

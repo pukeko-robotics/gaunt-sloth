@@ -20,7 +20,6 @@ import {
 } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
-import { buildSystemMessages } from '@gaunt-sloth/core/utils/llmUtils.js';
 import { createResolvers } from '#src/resolvers.js';
 import { gthDeepAgentFactory } from '#src/core/gthDeepAgentFactory.js';
 
@@ -50,7 +49,6 @@ export async function createInteractiveSession(
   try {
     await runner.init(sessionConfig.mode, config, checkpointSaver);
     const rl = createInterface({ input, output });
-    let isFirstMessage = true;
     let shouldExit = false;
 
     if (logFileName) {
@@ -63,15 +61,13 @@ export async function createInteractiveSession(
         appendToFile(logFileName, logEntry);
       }
       flushSessionLog(); // Ensure user input is immediately written to file
-      const messages: BaseMessage[] = [];
-      if (isFirstMessage) {
-        messages.push(...buildSystemMessages(config, sessionConfig.readModePrompt(config)));
-      }
-      messages.push(new HumanMessage(userInput));
+      // The system prompt (backstory + guidelines + mode prompt + identity) now lives in the
+      // deep-agent graph via createDeepAgent({ systemPrompt }) — see GthDeepAgent — so it is no
+      // longer injected here as a per-turn SystemMessage (which yielded a second, non-first system
+      // message that Anthropic rejects).
+      const messages: BaseMessage[] = [new HumanMessage(userInput)];
 
       await runner.processMessages(messages);
-
-      isFirstMessage = false;
     };
 
     const askQuestion = async () => {
@@ -105,7 +101,6 @@ export async function createInteractiveSession(
               'Do you want to try again with the same prompt? (y/n): '
             );
             shouldRetry = retryResponse.toLowerCase().trim().startsWith('y');
-            isFirstMessage = false; // To make sure we don't resend system prompt if the first message failed
 
             if (!shouldRetry) {
               display('\nSkipping to next prompt...');

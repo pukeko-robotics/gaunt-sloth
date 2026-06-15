@@ -2,7 +2,12 @@ import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import { GthAbstractAgent } from '@gaunt-sloth/core/core/GthAbstractAgent.js';
 import { type GthCommand, StatusLevel } from '@gaunt-sloth/core/core/types.js';
 import { debugLog, debugLogObject } from '@gaunt-sloth/core/utils/debugUtils.js';
-import { formatToolCalls } from '@gaunt-sloth/core/utils/llmUtils.js';
+import {
+  buildSystemMessages,
+  formatToolCalls,
+  readChatPrompt,
+  readCodePrompt,
+} from '@gaunt-sloth/core/utils/llmUtils.js';
 import { getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import type { StructuredToolInterface } from '@langchain/core/tools';
@@ -34,6 +39,15 @@ export interface GthDeepAgentParams {
   permissions: FilesystemPermission[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   middleware: any[];
+  /**
+   * gsloth's composed system prompt (backstory + guidelines + per-command mode prompt +
+   * system prompt). Passed to `createDeepAgent({ systemPrompt })`, where deepagents combines
+   * it ADDITIVELY with its own base + filesystem prompts into ONE system message. This replaces
+   * the previous per-turn `SystemMessage` injection by the runner/AG-UI callers — two system
+   * messages (deepagents' own + gsloth's, not first) are rejected by Anthropic. `undefined` when
+   * no prompt content is composed (lets deepagents use only its base prompt).
+   */
+  systemPrompt: string | undefined;
 }
 
 /**
@@ -97,6 +111,9 @@ export class GthDeepAgent extends GthAbstractAgent {
     this.agent = createDeepAgent({
       model: params.model,
       tools: params.tools as StructuredToolInterface[],
+      // gsloth's composed prompt, combined ADDITIVELY by deepagents with its base + fs prompts
+      // into a single system message (avoids the two-system-message Anthropic rejection).
+      systemPrompt: params.systemPrompt,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       middleware: middleware as any,
       backend,
@@ -258,11 +275,24 @@ export class GthDeepAgent extends GthAbstractAgent {
     });
     debugLogObject('Filesystem permissions', permissions);
 
+    // Compose gsloth's system prompt (backstory + guidelines + per-command mode prompt +
+    // system prompt) so identity profiles (Gaunt Sloth, sorcerer, fisher-alt, …) and
+    // `.gsloth.*.md` are honored. This is passed to createDeepAgent as `systemPrompt` — combined
+    // additively with deepagents' base + fs prompts into ONE system message — rather than injected
+    // as a separate SystemMessage per turn (which produced a non-first system message that
+    // Anthropic rejects). 'code' uses the code-mode prompt; chat/api/others use the chat prompt.
+    const modePrompt =
+      this.command === 'code' ? readCodePrompt(this.config) : readChatPrompt(this.config);
+    const systemMessages = buildSystemMessages(this.config, modePrompt);
+    const systemPrompt =
+      typeof systemMessages[0]?.content === 'string' ? systemMessages[0].content : undefined;
+
     return {
       model: this.config.llm,
       tools: passThroughTools as StructuredToolInterface[],
       permissions,
       middleware,
+      systemPrompt,
     };
   }
 }

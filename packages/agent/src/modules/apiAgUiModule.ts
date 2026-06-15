@@ -9,11 +9,7 @@ import {
   displayInfo,
   displayWarning,
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
-import {
-  getNewRunnableConfig,
-  buildSystemMessages,
-  readChatPrompt,
-} from '@gaunt-sloth/core/utils/llmUtils.js';
+import { getNewRunnableConfig } from '@gaunt-sloth/core/utils/llmUtils.js';
 import { HumanMessage, AIMessage, SystemMessage, ToolMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import { tool } from '@langchain/core/tools';
@@ -51,8 +47,6 @@ function buildClientToolStub(t: RunInputTool): StructuredToolInterface {
   (stub as unknown as { metadata?: Record<string, unknown> }).metadata = { client: true };
   return stub;
 }
-
-const initializedThreads = new Set<string>();
 
 /**
  * Return the first complete JSON value at the start of `s`, ignoring any
@@ -319,13 +313,10 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
           ac.signal
         );
       } else {
-        // Build LangChain messages, prepending system prompt for new threads
-        const langChainMessages: BaseMessage[] = [];
-        if (!initializedThreads.has(effectiveThreadId)) {
-          initializedThreads.add(effectiveThreadId);
-          langChainMessages.push(...buildSystemMessages(config, readChatPrompt(config)));
-        }
-        langChainMessages.push(...(messages || []).map(convertMessage));
+        // The system prompt (backstory + guidelines + mode prompt + identity) lives in the
+        // deep-agent graph via createDeepAgent({ systemPrompt }) — see GthDeepAgent — so it is no
+        // longer prepended here. A separate, non-first SystemMessage would be rejected by Anthropic.
+        const langChainMessages: BaseMessage[] = (messages || []).map(convertMessage);
         eventStream = activeAgent.streamWithEvents(langChainMessages, runConfig, ac.signal);
       }
 
