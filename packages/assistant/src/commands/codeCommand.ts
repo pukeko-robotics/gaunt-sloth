@@ -1,8 +1,6 @@
 import { Command } from 'commander';
-import {
-  createInteractiveSession,
-  SessionConfig,
-} from '@gaunt-sloth/agent/modules/interactiveSessionModule.js';
+import type { SessionConfig } from '@gaunt-sloth/agent/modules/interactiveSessionModule.js';
+import { startSession } from '#src/modules/startSession.js';
 import { CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
 import { readCodePrompt } from '@gaunt-sloth/core/utils/llmUtils.js';
 
@@ -26,6 +24,6 @@ export function codeCommand(
         exitMessage: "Type 'exit' or hit Ctrl+C to exit code session\n",
       };
 
-      await createInteractiveSession(sessionConfig, commandLineConfigOverrides, message);
+      await startSession(sessionConfig, commandLineConfigOverrides, message);
     });
 }

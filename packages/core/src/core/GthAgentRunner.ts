@@ -2,6 +2,7 @@ import { GthConfig } from '#src/config.js';
 import { BaseCheckpointSaver } from '@langchain/langgraph';
 import {
   AgentResolvers,
+  AgentStreamEvent,
   GthAgentFactory,
   GthAgentInterface,
   GthCommand,
@@ -142,6 +143,29 @@ export class GthAgentRunner {
         error instanceof Error ? { cause: error } : undefined
       );
     }
+  }
+
+  /**
+   * Event-stream counterpart to {@link processMessages}: drives the agent's typed
+   * {@link AgentStreamEvent} path using the runner's own thread-bound `runConfig`, so a
+   * renderer (the Ink TUI) can present the same run the readline path renders via
+   * `consoleUtils` while sharing the checkpointer thread for cross-turn memory.
+   *
+   * Cancellation is via the supplied `signal` (the TUI's Esc → `AbortController`); the
+   * underlying `streamWithEvents` ends cleanly on abort or `interrupt()`. The string
+   * path's empty-stream retry/`invoke` fallback is intentionally NOT duplicated here — the
+   * TUI renders the live event stream directly; revisit if empty-stream retries are needed.
+   */
+  async *processMessagesWithEvents(
+    messages: Message[],
+    signal?: AbortSignal
+  ): AsyncGenerator<AgentStreamEvent> {
+    if (!this.agent || !this.config || !this.runConfig) {
+      throw new Error('AgentRunner not initialized. Call init() first.');
+    }
+    debugLog('Processing messages (event stream)...');
+    debugLogObject('Input Messages', messages);
+    yield* this.agent.streamWithEvents(messages, this.runConfig, signal);
   }
 
   // noinspection JSUnusedGlobalSymbols

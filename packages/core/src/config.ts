@@ -534,6 +534,15 @@ export interface CommandLineConfigOverrides {
    * in the case if some prompt files are missing - a file from the installation directory will be used.
    */
   identityProfile?: string;
+  /**
+   * Interactive TUI activation override for chat/code sessions.
+   * - `true` (`--tui`): force the Ink TUI on where the terminal supports it (also overrides
+   *   the CI auto-off heuristic).
+   * - `false` (`--no-tui`): force the plain readline session.
+   * - `undefined` (default): auto-detect from the terminal.
+   * The decision itself lives in `gaunt-sloth`'s `shouldUseTui`; this only carries the flag.
+   */
+  tui?: boolean;
 }
 
 /**

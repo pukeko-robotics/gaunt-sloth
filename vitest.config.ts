@@ -20,33 +20,41 @@ function resolveWorkspaceImports() {
     enforce: 'pre' as const,
 
     resolveId(id: string, _importer: string | undefined): any {
+      // Resolve a base path (no extension) to a .ts or .tsx source file if present.
+      // .tsx support is required for the Ink TUI components in `gaunt-sloth`.
+      const resolveSource = (base: string): string | undefined => {
+        for (const ext of ['.ts', '.tsx']) {
+          if (existsSync(base + ext)) return base + ext;
+        }
+        return undefined;
+      };
+
       // Handle #src/ imports -> find the actual source in packages
       if (id.startsWith('#src/')) {
-        const relative = id.replace('#src/', '').replace(/\.js$/, '.ts');
+        const relative = id.replace('#src/', '').replace(/\.js$/, '');
 
         // Try each package in dependency order
         for (const pkg of ['core', 'agent', 'review', 'assistant']) {
-          const tsPath = resolve(__dirname, `packages/${pkg}/src/${relative}`);
-          if (existsSync(tsPath)) {
+          const found = resolveSource(resolve(__dirname, `packages/${pkg}/src/${relative}`));
+          if (found) {
             // Skip re-export stubs (files that just re-export from @gaunt-sloth/)
-            // by checking if the file is a re-export stub in review
+            // by preferring the canonical core module when review only re-exports it.
             if (pkg === 'review') {
-              const corePath = resolve(__dirname, `packages/core/src/${relative}`);
-              if (existsSync(corePath)) {
+              const corePath = resolveSource(resolve(__dirname, `packages/core/src/${relative}`));
+              if (corePath) {
                 return corePath;
               }
             }
-            return tsPath;
+            return found;
           }
         }
       }
 
-      // Handle @gaunt-sloth/X/path.js -> packages/X/src/path.ts
+      // Handle @gaunt-sloth/X/path.js -> packages/X/src/path.{ts,tsx}
       const scopedMatch = id.match(/^@gaunt-sloth\/(core|agent|review)\/(.+)\.js$/);
       if (scopedMatch) {
         const [, pkg, path] = scopedMatch;
-        const tsPath = resolve(__dirname, `packages/${pkg}/src/${path}.ts`);
-        if (existsSync(tsPath)) return tsPath;
+        return resolveSource(resolve(__dirname, `packages/${pkg}/src/${path}`));
       }
     },
   };
@@ -54,8 +62,10 @@ function resolveWorkspaceImports() {
 
 export default defineConfig({
   plugins: [resolveWorkspaceImports()],
+  // Ink .tsx components/specs compile via vitest's default transformer (oxc), which uses
+  // the React 19 automatic JSX runtime out of the box; no extra jsx config needed.
   test: {
-    include: ['packages/*/spec/**/*.ts'],
+    include: ['packages/*/spec/**/*.{ts,tsx}'],
     environment: 'node',
     coverage: {
       provider: 'v8',

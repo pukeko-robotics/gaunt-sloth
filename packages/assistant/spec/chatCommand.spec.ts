@@ -171,7 +171,8 @@ describe('chatCommand', () => {
         readyMessage: '\nGaunt Sloth is ready to chat. Type your prompt.',
         exitMessage: "Type 'exit' or hit Ctrl+C to exit chat\n",
       }),
-      {}
+      {},
+      undefined
     );
   });
 });
@@ -215,7 +216,8 @@ describe('Default Chat Behavior (no arguments)', () => {
         readyMessage: '\nGaunt Sloth is ready to chat. Type your prompt.',
         exitMessage: "Type 'exit' or hit Ctrl+C to exit chat\n",
       }),
-      {}
+      {},
+      undefined
     );
   });
 
@@ -230,7 +232,8 @@ describe('Default Chat Behavior (no arguments)', () => {
         readyMessage: '\nGaunt Sloth is ready to chat. Type your prompt.',
         exitMessage: "Type 'exit' or hit Ctrl+C to exit chat\n",
       }),
-      {}
+      {},
+      undefined
     );
   });
 

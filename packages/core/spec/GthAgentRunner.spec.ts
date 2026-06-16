@@ -10,6 +10,7 @@ const mockAgent = {
   setVerbose: vi.fn(),
   invoke: vi.fn(),
   stream: vi.fn(),
+  streamWithEvents: vi.fn(),
   cleanup: vi.fn(),
 };
 
@@ -68,6 +69,7 @@ describe('GthAgentRunner', () => {
     mockAgent.setVerbose.mockClear();
     mockAgent.invoke.mockClear();
     mockAgent.stream.mockClear();
+    mockAgent.streamWithEvents.mockClear();
     mockAgent.cleanup.mockClear();
 
     statusUpdateCallback = vi.fn();
@@ -270,6 +272,45 @@ describe('GthAgentRunner', () => {
         const message = error instanceof Error ? error.message : String(error);
         expect(message).not.toMatch(/gcloud auth application-default login/);
       }
+    });
+  });
+
+  describe('processMessagesWithEvents', () => {
+    it('should throw error if not initialized', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+
+      const gen = runner.processMessagesWithEvents([new HumanMessage('test')]);
+      await expect(gen.next()).rejects.toThrow('AgentRunner not initialized. Call init() first.');
+    });
+
+    it('should delegate to the agent streamWithEvents with the thread-bound runConfig and signal', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.streamWithEvents.mockImplementation(async function* () {
+        yield { type: 'text', delta: 'Hel' };
+        yield { type: 'text', delta: 'lo' };
+      });
+
+      await runner.init(undefined, { ...mockConfig, streamOutput: true });
+
+      const messages = [new HumanMessage('hi')];
+      const controller = new AbortController();
+      const collected = [];
+      for await (const event of runner.processMessagesWithEvents(messages, controller.signal)) {
+        collected.push(event);
+      }
+
+      expect(mockAgent.streamWithEvents).toHaveBeenCalledWith(
+        messages,
+        expect.objectContaining({
+          recursionLimit: 1000,
+          configurable: { thread_id: expect.any(String) },
+        }),
+        controller.signal
+      );
+      expect(collected).toEqual([
+        { type: 'text', delta: 'Hel' },
+        { type: 'text', delta: 'lo' },
+      ]);
     });
   });
 

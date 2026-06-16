@@ -30,6 +30,8 @@ program
     '-w, --write-output-to-file <value>',
     'Write output to file. Accepts true/false or a filename. Shortcuts: -wn or -w0 for false.'
   )
+  .option('--tui', 'Force the interactive Ink TUI for chat/code sessions (overrides CI auto-off)')
+  .option('--no-tui', 'Force the plain readline session for chat/code (disable the TUI)')
   .addOption(new Option('--nopipe').hideHelp(true));
 
 const cliConfigOverrides: CommandLineConfigOverrides = {};
@@ -50,6 +52,13 @@ if (program.getOptionValue('config')) {
 }
 if (program.getOptionValue('identityProfile')) {
   cliConfigOverrides.identityProfile = program.getOptionValue('identityProfile');
+}
+
+// Tri-state TUI flag: leave `tui` undefined (auto-detect) unless the user explicitly passed
+// `--tui` or `--no-tui`. Commander's `--no-tui` defaults the value to `true`, so we key off
+// the value *source* rather than the value to tell "auto" from an explicit choice.
+if (program.getOptionValueSource('tui') === 'cli') {
+  cliConfigOverrides.tui = program.getOptionValue('tui');
 }
 
 const writeToFile = program.getOptionValue('writeOutputToFile');
