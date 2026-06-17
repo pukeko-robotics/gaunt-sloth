@@ -1,4 +1,5 @@
 import type { GthConfig, RatingConfig } from '@gaunt-sloth/core/config.js';
+import type { StructuredToolInterface } from '@langchain/core/tools';
 import {
   defaultStatusCallback,
   displayDebug,
@@ -23,6 +24,7 @@ import {
 import { deleteArtifact, getArtifact } from '@gaunt-sloth/core/state/artifactStore.js';
 import { setExitCode } from '@gaunt-sloth/core/utils/systemUtils.js';
 import type { AgentResolvers } from '@gaunt-sloth/core/core/types.js';
+import { get as getGhReadFileTool, GTH_GH_READ_FILE_TOOL_NAME } from '#src/tools/ghReadFileTool.js';
 
 export async function review(
   source: string,
@@ -34,6 +36,12 @@ export async function review(
 ): Promise<void> {
   const progressIndicator = config.streamOutput ? undefined : new ProgressIndicator('Reviewing.');
   const messages = [new SystemMessage(preamble), new HumanMessage(diff)];
+
+  // REL-2: optionally give the review agent a `gh api` file-read tool so it can fetch the FULL
+  // contents of a file when the PR diff truncates large changes. Only added in a GitHub PR
+  // context (the content source resolves to GitHub); a graceful no-op otherwise. Reads through
+  // the GitHub API rather than the workspace filesystem, so it is safe under pull_request_target.
+  maybeAddGhReadFileTool(config, command);
 
   // Prepare logging path (if enabled by config)
   const filePath = getCommandOutputFilePath(config, source);
@@ -95,6 +103,46 @@ export async function review(
   }
 
   deleteArtifact(REVIEW_RATE_ARTIFACT_KEY);
+}
+
+/**
+ * REL-2: conditionally inject the optional `gh api` file-read tool into the review agent's tools.
+ *
+ * Guarded so it is only active in a GitHub PR context, i.e. when the command's content source
+ * resolves to GitHub. For local/file/text reviews this is a no-op, keeping the tool optional and
+ * avoiding adding a GitHub-only capability where it cannot apply.
+ *
+ * The tool reads file contents via the GitHub API (`gh api`), never the workspace filesystem, so
+ * it remains safe under `pull_request_target` CI where the untrusted PR head is not checked out.
+ */
+function maybeAddGhReadFileTool(config: GthConfig, command: 'pr' | 'review'): void {
+  const commandConfig = config.commands?.[command];
+  // Honor deprecated alias too: contentProvider.
+  const contentSource =
+    commandConfig?.contentSource ??
+    commandConfig?.contentProvider ??
+    config.contentSource ??
+    config.contentProvider;
+
+  if (contentSource !== 'github') {
+    return;
+  }
+
+  // config.tools is a union (StructuredToolInterface[] | BaseToolkit[] | ServerTool[]); the
+  // gh read-file tool is a StructuredToolInterface, so we only append into a structured-tool list.
+  const existingTools = (
+    Array.isArray(config.tools) ? config.tools : []
+  ) as StructuredToolInterface[];
+  // Avoid duplicate registration if the tool is already present (e.g. via custom config).
+  const alreadyPresent = existingTools.some(
+    (t) =>
+      typeof t === 'object' && t !== null && 'name' in t && t.name === GTH_GH_READ_FILE_TOOL_NAME
+  );
+  if (alreadyPresent) {
+    return;
+  }
+
+  config.tools = [...existingTools, getGhReadFileTool(config)];
 }
 
 function handleRatingResult(rateConfig: RatingConfig | undefined, command: 'pr' | 'review'): void {
