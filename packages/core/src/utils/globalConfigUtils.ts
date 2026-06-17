@@ -27,6 +27,33 @@ export function ensureGlobalGslothDir(): string {
 }
 
 /**
+ * Gets the read path for a global gsloth config file (e.g. `.gsloth.config.json`)
+ * inside the global `~/.gsloth` directory. Reuses the same global folder as MCP auth.
+ *
+ * This is a plain path resolver: it does NOT check for existence and does NOT create
+ * the directory. Callers should guard with `existsSync` before reading.
+ *
+ * @param filename The configuration filename (e.g. `.gsloth.config.json`)
+ * @returns The resolved path where the global configuration file would live
+ */
+export function getGlobalGslothConfigReadPath(filename: string): string {
+  return resolve(getGlobalGslothDir(), filename);
+}
+
+/**
+ * Gets the write path for a global gsloth config file (e.g. `.gsloth.config.json`)
+ * inside the global `~/.gsloth` directory, ensuring the directory exists.
+ *
+ * Intended for first-run setup flows (CFG-2) that need to persist global settings.
+ *
+ * @param filename The configuration filename (e.g. `.gsloth.config.json`)
+ * @returns The resolved path where the global configuration file should be written
+ */
+export function getGlobalGslothConfigWritePath(filename: string): string {
+  return resolve(ensureGlobalGslothDir(), filename);
+}
+
+/**
  * Gets the global auth directory path
  * @returns The resolved path to the global auth directory
  */
