@@ -101,6 +101,7 @@ export async function createTuiSession(
       <App
         agent={tuiAgent}
         mode={sessionConfig.mode}
+        modelDisplayName={config.modelDisplayName}
         readyMessage={sessionConfig.readyMessage}
         exitMessage={sessionConfig.exitMessage}
         initialMessage={message}

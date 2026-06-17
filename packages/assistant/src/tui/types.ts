@@ -21,6 +21,8 @@ export type TranscriptItem =
 export interface TuiAppProps {
   agent: TuiAgent;
   mode: string;
+  /** Model/provider display name for the status bar and `/model` (from `config.modelDisplayName`). */
+  modelDisplayName?: string;
   /** Greeting shown before the first prompt (mirrors the readline `readyMessage`). */
   readyMessage: string;
   /** Hint shown in the status bar / on start (mirrors the readline `exitMessage`). */

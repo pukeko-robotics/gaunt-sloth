@@ -3,25 +3,42 @@ import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
 
 /**
- * One-line status: a spinner + interrupt hint while a turn is running, otherwise a dim
- * idle line. Streaming progress itself is shown by the live turn, not here.
+ * Session status bar. While a turn is running it shows a spinner + interrupt hint;
+ * otherwise it surfaces useful session context — the mode, the model/provider display name,
+ * and a turn counter — on a single dim line. Streaming progress itself is shown by the live
+ * turn, not here, so this bar stays stable (one line) and does not flicker.
  */
 export function StatusBar({
   running,
   mode,
+  modelDisplayName,
+  turnCount,
 }: {
   running: boolean;
   mode: string;
+  modelDisplayName?: string;
+  turnCount?: number;
 }): React.ReactElement {
-  return (
-    <Box>
-      {running ? (
+  if (running) {
+    return (
+      <Box>
         <Text color="yellow">
           <Spinner type="dots" /> Thinking… (Esc to interrupt)
         </Text>
-      ) : (
-        <Text dimColor>{mode} — ready</Text>
-      )}
+      </Box>
+    );
+  }
+
+  const segments = [
+    mode,
+    modelDisplayName ? `model: ${modelDisplayName}` : null,
+    `turns: ${turnCount ?? 0}`,
+    'ready',
+  ].filter(Boolean);
+
+  return (
+    <Box>
+      <Text dimColor>{segments.join('  ·  ')}</Text>
     </Box>
   );
 }

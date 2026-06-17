@@ -54,15 +54,75 @@ describe('tui <App>', () => {
 
   it('returns to the ready prompt after a turn completes', async () => {
     const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
-    const { lastFrame, unmount } = render(
-      <App {...baseProps} agent={agent} initialMessage="go" />
-    );
+    const { lastFrame, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
     await vi.waitFor(() => {
       // Once idle the status bar shows the ready line and the prompt is back.
       expect(lastFrame()).toContain('ready');
       expect(lastFrame()).toContain('>');
     });
+
+    unmount();
+  });
+
+  it('shows mode, model name and a turn counter in the idle status bar', async () => {
+    const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
+    const { lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} modelDisplayName="claude-opus-4" initialMessage="go" />
+    );
+
+    await vi.waitFor(() => {
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('chat'); // mode
+      expect(frame).toContain('claude-opus-4'); // model display name
+      expect(frame).toContain('turns: 1'); // counter after one completed turn
+      expect(frame).toContain('ready');
+    });
+
+    unmount();
+  });
+
+  it('dispatches /help as a system line instead of running a turn', async () => {
+    let turnsRun = 0;
+    const agent: TuiAgent = {
+      async *runTurn() {
+        turnsRun += 1;
+        yield { type: 'text', delta: 'should not run' };
+      },
+    };
+    const { stdin, frames, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    stdin.write('/help');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/help'));
+    stdin.write('\r');
+
+    await vi.waitFor(() => {
+      expect(frames.join('\n')).toContain('/clear');
+      expect(frames.join('\n')).toContain('/exit');
+    });
+    expect(turnsRun).toBe(0);
+
+    unmount();
+  });
+
+  it('shows a friendly hint for an unknown slash command and does not call the agent', async () => {
+    let turnsRun = 0;
+    const agent: TuiAgent = {
+      async *runTurn() {
+        turnsRun += 1;
+        yield { type: 'text', delta: 'nope' };
+      },
+    };
+    const { stdin, frames, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    stdin.write('/bogus');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/bogus'));
+    stdin.write('\r');
+
+    await vi.waitFor(() => expect(frames.join('\n')).toContain('Unknown command: /bogus'));
+    expect(turnsRun).toBe(0);
 
     unmount();
   });
