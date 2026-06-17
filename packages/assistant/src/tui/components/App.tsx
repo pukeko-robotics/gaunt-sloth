@@ -6,6 +6,7 @@ import { Transcript } from '#src/tui/components/Transcript.js';
 import { LiveTurn } from '#src/tui/components/LiveTurn.js';
 import { StatusBar } from '#src/tui/components/StatusBar.js';
 import { PromptInput } from '#src/tui/components/PromptInput.js';
+import { Rule } from '#src/tui/components/Rule.js';
 import {
   createCommandRegistry,
   dispatchSlashCommand,
@@ -145,11 +146,18 @@ export function App(props: TuiAppProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The greeting is an intro, not a permanent fixture: show it only before the first
+  // exchange, so it stops padding the bottom dock once the conversation is underway.
+  const showIntro = !initialMessage && transcript.length === 0 && !live;
+
   return (
     <Box flexDirection="column">
       <Transcript items={transcript} />
-      {!initialMessage ? <Text dimColor>{readyMessage.trim()}</Text> : null}
+      {showIntro ? <Text dimColor>{readyMessage.trim()}</Text> : null}
       {live ? <LiveTurn turn={live} /> : null}
+      {/* Input dock: bracketed top and bottom by rules so the status bar, prompt and hint
+          read as a distinct control zone rather than blending into the scrollback. */}
+      <Rule />
       <StatusBar
         running={running}
         mode={mode}
@@ -157,7 +165,8 @@ export function App(props: TuiAppProps): React.ReactElement {
         turnCount={turnCount}
       />
       {!running ? <PromptInput onSubmit={handleSubmit} /> : null}
-      {!running ? <Text dimColor>{exitMessage.trim()}</Text> : null}
+      <Text dimColor>{exitMessage.trim()}</Text>
+      <Rule />
     </Box>
   );
 }

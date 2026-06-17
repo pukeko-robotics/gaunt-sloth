@@ -2,11 +2,7 @@ import React from 'react';
 import { Box, Static, Text } from 'ink';
 import type { TranscriptItem } from '#src/tui/types.js';
 import { LiveTurn } from '#src/tui/components/LiveTurn.js';
-
-/** A dim horizontal rule drawn between committed turns so long sessions stay scannable. */
-function Separator(): React.ReactElement {
-  return <Text dimColor>{'─'.repeat(40)}</Text>;
-}
+import { Rule } from '#src/tui/components/Rule.js';
 
 /**
  * Committed scrollback. Ink's `<Static>` writes each item exactly once, above the live
@@ -27,7 +23,7 @@ export function Transcript({ items }: { items: TranscriptItem[] }): React.ReactE
         const separator = item.kind === 'user' && index !== firstUserIndex;
         return (
           <Box key={item.id} flexDirection="column">
-            {separator ? <Separator /> : null}
+            {separator ? <Rule /> : null}
             {renderItem(item)}
           </Box>
         );
