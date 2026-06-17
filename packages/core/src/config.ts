@@ -24,6 +24,7 @@ import {
   setConsoleLevel,
 } from '#src/utils/consoleUtils.js';
 import { getGslothConfigReadPath, importExternalFile } from '#src/utils/fileUtils.js';
+import { getGlobalGslothConfigReadPath } from '#src/utils/globalConfigUtils.js';
 import { error, exit, isTTY, setUseColour } from '#src/utils/systemUtils.js';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import type { BaseToolkit, StructuredToolInterface } from '@langchain/core/tools';
@@ -638,6 +639,70 @@ export const DEFAULT_CONFIG = {
 DEFAULT_CONFIG as GthConfig;
 
 /**
+ * Loads the global gsloth config (if present) from the global `~/.gsloth` folder.
+ *
+ * Precedence support: the returned raw config is intended to act as the BASE that the
+ * project config (and CLI overrides) merge on top of, so any value here is the lowest
+ * user-controlled layer (still above {@link DEFAULT_CONFIG}).
+ *
+ * Lookup order within the global folder, first match wins:
+ *   `.gsloth.config.json` -> `.gsloth.config.js` -> `.gsloth.config.mjs`
+ *
+ * Absence of every variant is a no-op: returns `undefined` so behaviour is unchanged.
+ *
+ * NOTE: secrets (API keys) may live in this file; this function must never log its
+ * contents. Only non-sensitive diagnostics (the resolved path / parse failure) are emitted.
+ *
+ * @returns The raw global config object, or `undefined` when no global config exists.
+ */
+export async function loadGlobalRawConfig(): Promise<Partial<RawGthConfig> | undefined> {
+  // JSON first (the must-have format).
+  const jsonPath = getGlobalGslothConfigReadPath(USER_PROJECT_CONFIG_JSON);
+  if (existsSync(jsonPath)) {
+    try {
+      return JSON.parse(readFileSync(jsonPath, 'utf8')) as Partial<RawGthConfig>;
+    } catch (e) {
+      displayDebug(e instanceof Error ? e : String(e));
+      displayWarning(`Failed to read global config from ${jsonPath}, ignoring it.`);
+      return undefined;
+    }
+  }
+
+  // Then JS / MJS variants (dynamic import of a `configure()` module).
+  for (const filename of [USER_PROJECT_CONFIG_JS, USER_PROJECT_CONFIG_MJS]) {
+    const modulePath = getGlobalGslothConfigReadPath(filename);
+    if (existsSync(modulePath)) {
+      try {
+        const imported = await importExternalFile(modulePath);
+        const configured = await imported.configure();
+        return configured as Partial<RawGthConfig>;
+      } catch (e) {
+        displayDebug(e instanceof Error ? e : String(e));
+        displayWarning(`Failed to read global config from ${modulePath}, ignoring it.`);
+        return undefined;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Deep-merges a loaded global raw config UNDER the given project raw config, so the
+ * project config wins on conflicting keys. When no global config exists this is a no-op
+ * and the original project config is returned unchanged.
+ */
+async function applyGlobalConfigBase<T extends Record<string, unknown>>(
+  projectRawConfig: T
+): Promise<T> {
+  const globalRawConfig = await loadGlobalRawConfig();
+  if (!globalRawConfig) {
+    return projectRawConfig;
+  }
+  return deepMerge(globalRawConfig as Partial<T>, projectRawConfig) as T;
+}
+
+/**
  * Initialize configuration by loading from available config files
  * @returns The loaded GthConfig
  */
@@ -661,7 +726,11 @@ export async function initConfig(
   if (jsonConfigPath.endsWith('.json') && existsSync(jsonConfigPath)) {
     try {
       // TODO makes sense to employ ZOD to validate config
-      const jsonConfig = JSON.parse(readFileSync(jsonConfigPath, 'utf8')) as RawGthConfig;
+      const projectJsonConfig = JSON.parse(readFileSync(jsonConfigPath, 'utf8')) as RawGthConfig;
+      // Apply global config as the base layer (project config wins on conflicts).
+      const jsonConfig = (await applyGlobalConfigBase(
+        projectJsonConfig as unknown as Record<string, unknown>
+      )) as unknown as RawGthConfig;
       // If the config has an LLM with a type, create the appropriate LLM instance
       if (jsonConfig.llm && typeof jsonConfig.llm === 'object' && 'type' in jsonConfig.llm) {
         return await tryJsonConfig(jsonConfig, commandLineConfigOverrides);
@@ -698,7 +767,8 @@ async function tryJsConfig(
     try {
       const i = await importExternalFile(jsConfigPath);
       const customConfig = await i.configure();
-      return await mergeConfig(customConfig, commandLineConfigOverrides);
+      const mergedWithGlobal = await applyGlobalConfigBase(customConfig as Record<string, unknown>);
+      return await mergeConfig(mergedWithGlobal, commandLineConfigOverrides);
     } catch (e) {
       displayDebug(e instanceof Error ? e : String(e));
       displayError(`Failed to read config from ${USER_PROJECT_CONFIG_JS}, will try other formats.`);
@@ -722,7 +792,8 @@ async function tryMjsConfig(
     try {
       const i = await importExternalFile(mjsConfigPath);
       const customConfig = await i.configure();
-      return await mergeConfig(customConfig, commandLineConfigOverrides);
+      const mergedWithGlobal = await applyGlobalConfigBase(customConfig as Record<string, unknown>);
+      return await mergeConfig(mergedWithGlobal, commandLineConfigOverrides);
     } catch (e) {
       displayDebug(e instanceof Error ? e : String(e));
       displayError(`Failed to read config from ${USER_PROJECT_CONFIG_MJS}.`);
