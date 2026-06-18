@@ -7,6 +7,7 @@ import {
   formatToolCalls,
   readChatPrompt,
   readCodePrompt,
+  readExecPrompt,
 } from '@gaunt-sloth/core/utils/llmUtils.js';
 import { getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
@@ -317,9 +318,14 @@ export class GthDeepAgent extends GthAbstractAgent {
     // `.gsloth.*.md` are honored. This is passed to createDeepAgent as `systemPrompt` — combined
     // additively with deepagents' base + fs prompts into ONE system message — rather than injected
     // as a separate SystemMessage per turn (which produced a non-first system message that
-    // Anthropic rejects). 'code' uses the code-mode prompt; chat/api/others use the chat prompt.
+    // Anthropic rejects). 'code' uses the code-mode prompt; 'exec' uses the prompt-as-script
+    // exec-mode prompt; chat/api/others use the chat prompt.
     const modePrompt =
-      this.command === 'code' ? readCodePrompt(this.config) : readChatPrompt(this.config);
+      this.command === 'code'
+        ? readCodePrompt(this.config)
+        : this.command === 'exec'
+          ? readExecPrompt(this.config)
+          : readChatPrompt(this.config);
     const systemMessages = buildSystemMessages(this.config, modePrompt);
     const systemPrompt =
       typeof systemMessages[0]?.content === 'string' ? systemMessages[0].content : undefined;

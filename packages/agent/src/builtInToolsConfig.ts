@@ -44,7 +44,11 @@ export async function getDefaultTools(
     config.binaryFormats
   );
   const builtInTools = await getBuiltInTools(config);
-  const devTools = await filterDevTools(command, config.commands?.code?.devTools);
+  // Dev tools (run commands etc.) are available to the interactive `code` command and to the
+  // scripted `exec` command — both are "do-the-job" runs — each via its own per-command config.
+  const devToolConfig =
+    command === 'exec' ? config.commands?.exec?.devTools : config.commands?.code?.devTools;
+  const devTools = await filterDevTools(command, devToolConfig);
   const customTools = getCustomTools(config, command);
   return [...filesystemTools, ...devTools, ...customTools, ...builtInTools];
 }
@@ -53,7 +57,7 @@ async function filterDevTools(
   command: GthCommand | undefined,
   devToolConfig: GthDevToolsConfig | undefined
 ): Promise<StructuredToolInterface[]> {
-  if (command !== 'code' || !devToolConfig) {
+  if ((command !== 'code' && command !== 'exec') || !devToolConfig) {
     return [];
   }
   const toolkit = new GthDevToolkit(devToolConfig);

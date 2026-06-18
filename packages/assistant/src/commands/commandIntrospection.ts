@@ -10,13 +10,14 @@ import {
   readBackstory,
   readChatPrompt,
   readCodePrompt,
+  readExecPrompt,
   readGuidelines,
   readReviewInstructions,
   readSystemPrompt,
 } from '@gaunt-sloth/core/utils/llmUtils.js';
 import { readPrDiscoveryPrompt } from '#src/commands/prDiscovery.js';
 
-export type PromptCommandType = 'ask' | 'review' | 'pr' | 'pr-discovery' | 'chat' | 'code';
+export type PromptCommandType = 'ask' | 'review' | 'pr' | 'pr-discovery' | 'chat' | 'code' | 'exec';
 export type ProviderCommandType = 'review' | 'pr';
 export type ProviderInputType = 'content' | 'requirements';
 
@@ -27,6 +28,10 @@ export function getAskSystemPrompt(config: GthConfig): string {
     parts.push(systemPrompt);
   }
   return parts.join('\n');
+}
+
+export function getExecSystemPrompt(config: GthConfig): string {
+  return flattenSystemMessageContent(config, readExecPrompt(config));
 }
 
 export function getReviewSystemPrompt(config: GthConfig): string {
@@ -41,6 +46,9 @@ export function getReviewSystemPrompt(config: GthConfig): string {
 export function getCommandSystemPrompt(command: PromptCommandType, config: GthConfig): string {
   if (command === 'ask') {
     return getAskSystemPrompt(config);
+  }
+  if (command === 'exec') {
+    return getExecSystemPrompt(config);
   }
   if (command === 'review' || command === 'pr') {
     return getReviewSystemPrompt(config);

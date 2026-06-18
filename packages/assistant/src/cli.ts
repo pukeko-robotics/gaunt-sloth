@@ -1,5 +1,6 @@
 import { Command, Option } from 'commander';
 import { askCommand } from '#src/commands/askCommand.js';
+import { execCommand } from '#src/commands/execCommand.js';
 import { initCommand } from '#src/commands/initCommand.js';
 import { reviewCommand } from '#src/commands/reviewCommand.js';
 import { prCommand } from '#src/commands/prCommand.js';
@@ -76,6 +77,7 @@ initCommand(program);
 reviewCommand(program, cliConfigOverrides);
 prCommand(program, cliConfigOverrides);
 askCommand(program, cliConfigOverrides);
+execCommand(program, cliConfigOverrides);
 chatCommand(program, cliConfigOverrides);
 codeCommand(program, cliConfigOverrides);
 apiCommand(program, cliConfigOverrides);

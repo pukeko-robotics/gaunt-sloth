@@ -176,6 +176,7 @@ describe('config', async () => {
             },
           },
           code: { filesystem: 'all' },
+          exec: { filesystem: 'all' },
           ask: { filesystem: 'read' },
           chat: { filesystem: 'read' },
           api: {
@@ -276,6 +277,7 @@ describe('config', async () => {
             },
           },
           code: { filesystem: 'all' },
+          exec: { filesystem: 'all' },
           ask: { filesystem: 'read' },
           chat: { filesystem: 'read' },
           api: {
@@ -409,6 +411,7 @@ describe('config', async () => {
             },
           },
           code: { filesystem: 'all' },
+          exec: { filesystem: 'all' },
           ask: { filesystem: 'read' },
           chat: { filesystem: 'read' },
           api: {
@@ -1107,6 +1110,7 @@ describe('config', async () => {
             },
           },
           code: { filesystem: 'all' },
+          exec: { filesystem: 'all' },
           ask: { filesystem: 'read' },
           chat: { filesystem: 'read' },
           api: {
@@ -1443,6 +1447,7 @@ describe('config', async () => {
             },
           },
           code: { filesystem: 'all' },
+          exec: { filesystem: 'all' },
           ask: { filesystem: 'read' },
           chat: { filesystem: 'read' },
           api: {
@@ -1527,6 +1532,7 @@ describe('config', async () => {
             },
           },
           code: { filesystem: 'all' },
+          exec: { filesystem: 'all' },
           ask: { filesystem: 'read' },
           chat: { filesystem: 'read' },
           api: {
@@ -1611,6 +1617,7 @@ describe('config', async () => {
             },
           },
           code: { filesystem: 'all' },
+          exec: { filesystem: 'all' },
           ask: { filesystem: 'read' },
           chat: { filesystem: 'read' },
           api: {

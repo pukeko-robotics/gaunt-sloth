@@ -23,7 +23,7 @@ export enum StatusLevel {
   ERROR = 5,
   STREAM = 6,
 }
-export type GthCommand = 'ask' | 'pr' | 'review' | 'chat' | 'code' | 'api';
+export type GthCommand = 'ask' | 'pr' | 'review' | 'chat' | 'code' | 'api' | 'exec';
 
 /**
  * Typed events emitted by the agent's {@link GthAgentInterface#streamWithEvents} path.

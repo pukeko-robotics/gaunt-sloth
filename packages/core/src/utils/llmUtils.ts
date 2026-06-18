@@ -4,6 +4,7 @@ import {
   GSLOTH_BACKSTORY,
   GSLOTH_CHAT_PROMPT,
   GSLOTH_CODE_PROMPT,
+  GSLOTH_EXEC_PROMPT,
   GSLOTH_SYSTEM_PROMPT,
 } from '#src/constants.js';
 import { getGslothConfigReadPath, readFileFromInstallDir } from '#src/utils/fileUtils.js';
@@ -124,6 +125,12 @@ export function readCodePrompt(
   config: Pick<GthConfig, 'identityProfile' | 'noDefaultPrompts'>
 ): string {
   return readPromptFile(GSLOTH_CODE_PROMPT, config.identityProfile, config.noDefaultPrompts);
+}
+
+export function readExecPrompt(
+  config: Pick<GthConfig, 'identityProfile' | 'noDefaultPrompts'>
+): string {
+  return readPromptFile(GSLOTH_EXEC_PROMPT, config.identityProfile, config.noDefaultPrompts);
 }
 
 /**

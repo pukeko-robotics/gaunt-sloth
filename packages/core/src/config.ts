@@ -269,6 +269,19 @@ export interface GthConfig {
       devTools?: GthDevToolsConfig;
       binaryFormats?: false | BinaryFormatConfig[];
     };
+    /**
+     * `gth exec` — prompt-as-script runtime. Like `code`, an exec run may need to actually
+     * do the job (read/write files, run commands), so it carries the same tool/filesystem knobs.
+     */
+    exec?: {
+      filesystem?: string[] | 'all' | 'read' | 'none';
+      builtInTools?: string[];
+      customTools?: CustomToolsConfig | false;
+      /** See {@link GthConfig.allowedTools}. */
+      allowedTools?: string[];
+      devTools?: GthDevToolsConfig;
+      binaryFormats?: false | BinaryFormatConfig[];
+    };
     api?: {
       filesystem?: string[] | 'all' | 'read' | 'none';
       builtInTools?: string[];
@@ -607,6 +620,9 @@ export const DEFAULT_CONFIG = {
       filesystem: 'read',
     },
     code: {
+      filesystem: 'all',
+    },
+    exec: {
       filesystem: 'all',
     },
     api: {
@@ -973,6 +989,10 @@ async function mergeConfig(
     code: deepMerge(
       DEFAULT_CONFIG.commands.code as Record<string, unknown>,
       config?.commands?.code as Record<string, unknown> | undefined
+    ) as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+    exec: deepMerge(
+      DEFAULT_CONFIG.commands.exec as Record<string, unknown>,
+      config?.commands?.exec as Record<string, unknown> | undefined
     ) as any, // eslint-disable-line @typescript-eslint/no-explicit-any
     ask: deepMerge(
       DEFAULT_CONFIG.commands.ask as Record<string, unknown>,

@@ -13,21 +13,32 @@ import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
 import { MemorySaver } from '@langchain/langgraph';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { ProgressIndicator } from '@gaunt-sloth/core/utils/ProgressIndicator.js';
-import type { AgentResolvers } from '@gaunt-sloth/core/core/types.js';
+import type { AgentResolvers, GthCommand } from '@gaunt-sloth/core/core/types.js';
 
 /**
- * Ask a question and get an answer from the LLM
+ * Ask a question and get an answer from the LLM.
+ *
+ * This is the shared, non-interactive single-shot runtime behind both the conversational
+ * `ask` command and the scripted `exec` command (prompt-as-script). The `command` argument
+ * is forwarded to the agent so it can pick the right mode prompt (e.g. exec-mode for `exec`).
+ *
  * @param source - The source of the question (used for file naming)
  * @param preamble - The preamble to send to the LLM
  * @param content - The content of the question
+ * @param config - The resolved config
+ * @param resolvers - Optional agent resolvers (tools/middleware)
+ * @param command - The originating command (defaults to `ask`); selects the agent mode prompt
+ * @returns `true` when the run completed without error, `false` when it failed (so callers
+ *   such as `exec` can set a non-zero exit code).
  */
 export async function askQuestion(
   source: string,
   preamble: string,
   content: string,
   config: GthConfig,
-  resolvers?: AgentResolvers
-): Promise<void> {
+  resolvers?: AgentResolvers,
+  command: GthCommand = 'ask'
+): Promise<boolean> {
   const progressIndicator = config.streamOutput ? undefined : new ProgressIndicator('Thinking.');
   const messages = [new SystemMessage(preamble), new HumanMessage(content)];
 
@@ -39,10 +50,12 @@ export async function askQuestion(
 
   // Run via Agent Runner (consistent with interactive session)
   const runner = new GthAgentRunner(defaultStatusCallback, resolvers);
+  let succeeded = true;
   try {
-    await runner.init('ask', config, new MemorySaver());
+    await runner.init(command, config, new MemorySaver());
     await runner.processMessages(messages);
   } catch (err) {
+    succeeded = false;
     displayError(`Failed to get answer: ${err instanceof Error ? err.message : String(err)}`);
   } finally {
     await runner.cleanup();
@@ -63,4 +76,6 @@ export async function askQuestion(
       displayError(error instanceof Error ? error.message : String(error));
     }
   }
+
+  return succeeded;
 }
