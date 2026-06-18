@@ -1,17 +1,30 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
-import { foldEvents, initialTurnViewModel, type TurnViewModel } from '#src/tui/viewModel.js';
+import {
+  foldEvents,
+  foldSubagentEvents,
+  initialSubagentTree,
+  initialTurnViewModel,
+  type SubagentTreeViewModel,
+  type TurnViewModel,
+} from '#src/tui/viewModel.js';
 import type { TranscriptItem, TuiAppProps } from '#src/tui/types.js';
 import { Transcript } from '#src/tui/components/Transcript.js';
 import { LiveTurn } from '#src/tui/components/LiveTurn.js';
 import { StatusBar } from '#src/tui/components/StatusBar.js';
 import { PromptInput } from '#src/tui/components/PromptInput.js';
 import { Rule } from '#src/tui/components/Rule.js';
+import { DebugPanel, DEBUG_TABS, type DebugTab } from '#src/tui/components/DebugPanel.js';
 import {
   createCommandRegistry,
   dispatchSlashCommand,
   parseSlashCommand,
 } from '#src/tui/slashCommands.js';
+
+/** Rows of clipping viewport in the docked debug panel. */
+const DEBUG_VIEWPORT_HEIGHT = 8;
+/** PageUp/PageDown step (rows) when the panel is focused. */
+const DEBUG_PAGE_STEP = DEBUG_VIEWPORT_HEIGHT - 1;
 
 type DistributiveOmitId<T> = T extends unknown ? Omit<T, 'id'> : never;
 
@@ -30,10 +43,22 @@ export function App(props: TuiAppProps): React.ReactElement {
   const [live, setLive] = useState<TurnViewModel | null>(null);
   const [running, setRunning] = useState(false);
   const [turnCount, setTurnCount] = useState(0);
+  // Subagent tree (deepagents `task` calls) folded from the live event stream.
+  const [subagents, setSubagents] = useState<SubagentTreeViewModel>(initialSubagentTree);
+  // Docked debug panel state (toggled by /debug).
+  const [debugVisible, setDebugVisible] = useState(false);
+  const [debugFocused, setDebugFocused] = useState(false);
+  const [debugTab, setDebugTab] = useState<DebugTab>(DEBUG_TABS[0]);
+  const [debugScroll, setDebugScroll] = useState(0);
+  const [debugHistory, setDebugHistory] = useState<string[]>([]);
+  const [debugResponse, setDebugResponse] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const idRef = useRef(0);
   const runningRef = useRef(false);
   const turnCountRef = useRef(0);
+  // Per-turn args buffers for the subagent fold (mirrors foldSubagentTree's internal map).
+  const subagentBuffersRef = useRef<Map<string, string>>(new Map());
+  const debugFocusedRef = useRef(false);
   const { exit } = useApp();
 
   // Built once per session; a plain array so later layers (EXT-5) could append commands.
@@ -54,10 +79,14 @@ export function App(props: TuiAppProps): React.ReactElement {
       setRunning(true);
       let vm = initialTurnViewModel();
       setLive(vm);
+      // Fresh args-buffer map per turn so partial `task` JSON from a prior turn never bleeds in.
+      subagentBuffersRef.current = new Map();
       try {
         for await (const event of agent.runTurn(userInput, ac.signal)) {
           vm = foldEvents(vm, event);
           setLive(vm);
+          // Fold subagent (`task`) tool calls into the tree for the debug panel.
+          setSubagents((tree) => foldSubagentEvents(tree, event, subagentBuffersRef.current));
         }
       } catch (err) {
         push({
@@ -106,7 +135,26 @@ export function App(props: TuiAppProps): React.ReactElement {
           modelDisplayName: modelDisplayName ?? '',
           turnCount: turnCountRef.current,
         });
-        if (result.clearTranscript) setTranscript([]);
+        if (result.clearTranscript) {
+          setTranscript([]);
+          setSubagents(initialSubagentTree());
+          setDebugHistory([]);
+          setDebugResponse([]);
+        }
+        if (result.toggleDebug) {
+          setDebugVisible((v) => {
+            const next = !v;
+            // Reset scroll + focus each time the panel is shown, so it opens at the top and
+            // focus never lingers on a hidden panel.
+            if (next) {
+              setDebugScroll(0);
+            } else {
+              setDebugFocused(false);
+              debugFocusedRef.current = false;
+            }
+            return next;
+          });
+        }
         if (result.message) {
           push({ kind: 'system', level: result.level ?? 'info', text: result.message });
         }
@@ -120,11 +168,43 @@ export function App(props: TuiAppProps): React.ReactElement {
     [runTurn, quit, registry, mode, modelDisplayName]
   );
 
-  // Esc aborts the in-flight turn (stdin is uncontended here — the event-stream path does
-  // not register gsloth's readline Esc handler, so Ink owns raw mode cleanly).
+  // Keyboard handling, in priority order:
+  //  1. Esc while running → abort the in-flight turn (stdin is uncontended here — the event
+  //     path never registers gsloth's readline Esc handler, so Ink owns raw mode cleanly).
+  //  2. Tab while the panel is visible and idle → focus/cycle the panel.
+  //  3. While the panel is focused → Tab cycles section, PageUp/PageDown scroll, Esc unfocuses.
   useInput((_input, key) => {
     if (key.escape && runningRef.current) {
       abortRef.current?.abort();
+      return;
+    }
+
+    if (debugFocusedRef.current) {
+      if (key.escape) {
+        setDebugFocused(false);
+        debugFocusedRef.current = false;
+        return;
+      }
+      if (key.tab) {
+        setDebugTab((t) => DEBUG_TABS[(DEBUG_TABS.indexOf(t) + 1) % DEBUG_TABS.length]);
+        setDebugScroll(0);
+        return;
+      }
+      if (key.pageUp) {
+        setDebugScroll((s) => Math.max(0, s - DEBUG_PAGE_STEP));
+        return;
+      }
+      if (key.pageDown) {
+        setDebugScroll((s) => s + DEBUG_PAGE_STEP);
+        return;
+      }
+      return;
+    }
+
+    // Tab focuses the docked panel when it is visible and no turn is running.
+    if (key.tab && debugVisible && !runningRef.current) {
+      setDebugFocused(true);
+      debugFocusedRef.current = true;
     }
   });
 
@@ -146,6 +226,18 @@ export function App(props: TuiAppProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Capture debug payloads (full history sent to the model + the raw resolved response) from
+  // the deep agent's wrapModelCall middleware, for the `/debug` panel. Routed into local state
+  // — never to stdout — and split into lines for the panel's bounded viewport.
+  useEffect(() => {
+    if (!props.subscribeDebug) return;
+    return props.subscribeDebug((capture) => {
+      if (capture.kind === 'request') setDebugHistory(capture.text.split('\n'));
+      else setDebugResponse(capture.text.split('\n'));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // The greeting is an intro, not a permanent fixture: show it only before the first
   // exchange, so it stops padding the bottom dock once the conversation is underway.
   const showIntro = !initialMessage && transcript.length === 0 && !live;
@@ -155,6 +247,20 @@ export function App(props: TuiAppProps): React.ReactElement {
       <Transcript items={transcript} />
       {showIntro ? <Text dimColor>{readyMessage.trim()}</Text> : null}
       {live ? <LiveTurn turn={live} /> : null}
+      {/* Docked debug/subagent panel: full-width, below the transcript / live turn and above
+          the input dock. Lives in the live (non-static) frame, so it coexists with the
+          <Static> scrollback. Toggled by /debug; Tab focuses it for PageUp/PageDown scrolling. */}
+      {debugVisible ? (
+        <DebugPanel
+          subagents={subagents}
+          historyLines={debugHistory}
+          responseLines={debugResponse}
+          activeTab={debugTab}
+          scrollOffset={debugScroll}
+          focused={debugFocused}
+          viewportHeight={DEBUG_VIEWPORT_HEIGHT}
+        />
+      ) : null}
       {/* Input dock: bracketed top and bottom by rules so the status bar, prompt and hint
           read as a distinct control zone rather than blending into the scrollback. */}
       <Rule />
@@ -164,7 +270,7 @@ export function App(props: TuiAppProps): React.ReactElement {
         modelDisplayName={modelDisplayName}
         turnCount={turnCount}
       />
-      {!running ? <PromptInput onSubmit={handleSubmit} /> : null}
+      {!running && !debugFocused ? <PromptInput onSubmit={handleSubmit} /> : null}
       <Text dimColor>{exitMessage.trim()}</Text>
       <Rule />
     </Box>

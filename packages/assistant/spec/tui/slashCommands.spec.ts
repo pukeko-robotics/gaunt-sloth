@@ -55,6 +55,14 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     expect(result.clearTranscript).toBe(true);
   });
 
+  it('/debug requests a debug-panel toggle', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const result = dispatchSlashCommand(parseSlashCommand('/debug')!, createCommandRegistry(), ctx);
+    expect(result.toggleDebug).toBe(true);
+    expect(result.exit).toBeUndefined();
+  });
+
   it('/exit requests an app quit', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('#src/tui/slashCommands.js');

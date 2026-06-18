@@ -97,3 +97,95 @@ describe('tui/viewModel foldEvents', () => {
     expect(start.toolCalls).toHaveLength(0);
   });
 });
+
+describe('tui/viewModel foldSubagentTree', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('starts empty', async () => {
+    const { initialSubagentTree } = await import('#src/tui/viewModel.js');
+    expect(initialSubagentTree()).toEqual({ nodes: [] });
+  });
+
+  it('folds a `task` tool call into a subagent node (type + description + result)', async () => {
+    const { foldSubagentTree } = await import('#src/tui/viewModel.js');
+    const tree = foldSubagentTree([
+      { type: 'tool_start', id: 's1', name: 'task' },
+      { type: 'tool_args', id: 's1', delta: '{"subagent_type":"researcher",' },
+      { type: 'tool_args', id: 's1', delta: '"description":"dig into X"}' },
+      { type: 'tool_end', id: 's1' },
+      { type: 'tool_result', id: 's1', content: 'found it' },
+    ]);
+    expect(tree.nodes).toEqual([
+      {
+        id: 's1',
+        type: 'researcher',
+        description: 'dig into X',
+        status: 'done',
+        result: 'found it',
+      },
+    ]);
+  });
+
+  it('ignores non-task tool calls entirely (only subagents land in the tree)', async () => {
+    const { foldSubagentTree } = await import('#src/tui/viewModel.js');
+    const tree = foldSubagentTree([
+      { type: 'tool_start', id: 'r1', name: 'read_file' },
+      { type: 'tool_args', id: 'r1', delta: '{"path":"a.ts"}' },
+      { type: 'tool_end', id: 'r1' },
+      { type: 'tool_result', id: 'r1', content: 'body' },
+      { type: 'text', delta: 'hello' },
+    ]);
+    expect(tree.nodes).toEqual([]);
+  });
+
+  it('tracks multiple subagents in first-spawned order, marking running vs done', async () => {
+    const { foldSubagentTree } = await import('#src/tui/viewModel.js');
+    const tree = foldSubagentTree([
+      { type: 'tool_start', id: 'a', name: 'task' },
+      { type: 'tool_args', id: 'a', delta: '{"subagent_type":"alpha","description":"first"}' },
+      { type: 'tool_start', id: 'b', name: 'task' },
+      { type: 'tool_args', id: 'b', delta: '{"subagent_type":"beta","description":"second"}' },
+      { type: 'tool_end', id: 'a' },
+    ]);
+    expect(tree.nodes.map((n) => n.id)).toEqual(['a', 'b']);
+    expect(tree.nodes[0]).toMatchObject({ type: 'alpha', description: 'first', status: 'done' });
+    expect(tree.nodes[1]).toMatchObject({ type: 'beta', description: 'second', status: 'running' });
+  });
+
+  it('tolerates partial/invalid JSON args without throwing (defensive parse)', async () => {
+    const { foldSubagentTree } = await import('#src/tui/viewModel.js');
+    const tree = foldSubagentTree([
+      { type: 'tool_start', id: 's1', name: 'task' },
+      // half-streamed JSON: not yet parseable
+      { type: 'tool_args', id: 's1', delta: '{"subagent_type":"res' },
+    ]);
+    expect(tree.nodes).toHaveLength(1);
+    expect(tree.nodes[0]).toMatchObject({
+      id: 's1',
+      type: 'subagent',
+      description: '',
+      status: 'running',
+    });
+  });
+
+  it('fills type/description as soon as the streamed args buffer becomes valid JSON', async () => {
+    const { foldSubagentTree } = await import('#src/tui/viewModel.js');
+    const tree = foldSubagentTree([
+      { type: 'tool_start', id: 's1', name: 'task' },
+      { type: 'tool_args', id: 's1', delta: '{"subagent_type":"res' },
+      { type: 'tool_args', id: 's1', delta: 'earcher","description":"go"}' },
+    ]);
+    expect(tree.nodes[0]).toMatchObject({ type: 'researcher', description: 'go' });
+  });
+
+  it('does not mutate prior state (immutability for React ref-equality)', async () => {
+    const { initialSubagentTree, foldSubagentTree } = await import('#src/tui/viewModel.js');
+    const start = initialSubagentTree();
+    const next = foldSubagentTree([{ type: 'tool_start', id: 's1', name: 'task' }], start);
+    expect(start.nodes).toHaveLength(0);
+    expect(next.nodes).toHaveLength(1);
+    expect(next.nodes).not.toBe(start.nodes);
+  });
+});

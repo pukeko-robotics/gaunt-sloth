@@ -11,6 +11,15 @@ export interface TuiAgent {
   runTurn(userInput: string, signal: AbortSignal): AsyncGenerator<AgentStreamEvent>;
 }
 
+/**
+ * One debug capture from the deep agent's `wrapModelCall` middleware. `kind: 'request'`
+ * carries the full message history sent to the model; `kind: 'response'` carries the resolved
+ * raw model response. Both arrive pre-rendered as a JSON string so the panel just slices lines.
+ */
+export type TuiDebugCapture =
+  | { kind: 'request'; text: string }
+  | { kind: 'response'; text: string };
+
 /** A committed line in the scrollback (rendered via Ink `<Static>`). */
 export type TranscriptItem =
   | { kind: 'user'; id: number; text: string }
@@ -31,6 +40,12 @@ export interface TuiAppProps {
   initialMessage?: string;
   /** Subscribe to agent status updates (warnings/info routed out of the event stream). */
   subscribeStatus?: (cb: (level: string, message: string) => void) => () => void;
+  /**
+   * Subscribe to debug captures from the deep agent's `wrapModelCall` middleware: the full
+   * history sent to the model and the resolved raw response, for the `/debug` panel. Optional
+   * so the readline/AG-UI paths and the fixture agent (which have no such sink) simply omit it.
+   */
+  subscribeDebug?: (cb: (capture: TuiDebugCapture) => void) => () => void;
   /** Called once a turn finishes, with the user input and the final assistant text. */
   onTurnComplete?: (userInput: string, assistantText: string) => void;
   /** Called on `exit`/`/exit` (or quit) for cleanup before the app unmounts. */
