@@ -158,6 +158,31 @@ describe('tui <App>', () => {
     unmount();
   });
 
+  it('advertises Tab in the status bar while the debug panel is open but unfocused', async () => {
+    const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
+    const { stdin, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    // No panel, no hint.
+    expect(lastFrame()).not.toContain('Tab: focus debug panel');
+
+    // Open the panel: status bar now tells the user how to step into it.
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Tab: focus debug panel'));
+
+    // Focusing the panel replaces the status-bar hint with the panel's own focused hint.
+    stdin.write(TAB);
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).toContain('Tab: section');
+      expect(f).not.toContain('Tab: focus debug panel');
+    });
+
+    unmount();
+  });
+
   it('renders the subagent tree in the panel from `task` tool-call events', async () => {
     const agent = scriptedAgent([
       { type: 'tool_start', id: 's1', name: 'task' },

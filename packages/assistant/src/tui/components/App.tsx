@@ -269,6 +269,7 @@ export function App(props: TuiAppProps): React.ReactElement {
         mode={mode}
         modelDisplayName={modelDisplayName}
         turnCount={turnCount}
+        debugHint={debugVisible && !debugFocused}
       />
       {!running && !debugFocused ? <PromptInput onSubmit={handleSubmit} /> : null}
       <Text dimColor>{exitMessage.trim()}</Text>
