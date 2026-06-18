@@ -1,7 +1,7 @@
 {
   "llm": {
-    "type": "openrouter",
-    "model": "anthropic/claude-fable-5"
+    "type": "google-genai",
+    "model": "gemini-3.1-pro-preview"
   },
   "filesystem": "none",
   "useColour": false,
