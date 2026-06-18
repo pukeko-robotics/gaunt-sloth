@@ -45,7 +45,7 @@ test.describe('gth chat TUI — greeting fixture', () => {
   // (1) launch -> a real Ink frame paints (banner, prompt, status bar all visible).
   test('launches and paints the ready frame', async ({ terminal }) => {
     await expect(terminal.getByText('ready to chat')).toBeVisible();
-    await expect(terminal.getByText('chat — ready')).toBeVisible();
+    await expect(terminal.getByText('chat  ·  turns: 0  ·  ready')).toBeVisible();
     await expect(terminal.getByText('>')).toBeVisible();
   });
 
@@ -59,8 +59,8 @@ test.describe('gth chat TUI — greeting fixture', () => {
     terminal.submit();
     await expect(terminal.getByText('read_file', { full: true })).toBeVisible();
     await expect(terminal.getByText('fixture agent', { full: true })).toBeVisible();
-    // After the turn the prompt returns to the ready state.
-    await expect(terminal.getByText('chat — ready')).toBeVisible();
+    // After the turn the prompt returns to the ready state, with the turn counter bumped.
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
   });
 
   // Spike check: Ink repaints on SIGWINCH and the frame stays addressable after a reflow,
@@ -68,7 +68,7 @@ test.describe('gth chat TUI — greeting fixture', () => {
   test('reflows on terminal resize and keeps streaming', async ({ terminal }) => {
     await expect(terminal.getByText('ready to chat')).toBeVisible();
     terminal.resize(60, 20);
-    await expect(terminal.getByText('chat — ready')).toBeVisible();
+    await expect(terminal.getByText('chat  ·  turns: 0  ·  ready')).toBeVisible();
     terminal.write('hello');
     await expect(terminal.getByText('> hello')).toBeVisible();
     terminal.submit();
@@ -111,6 +111,6 @@ test.describe('gth chat TUI — slow fixture (interrupt)', () => {
     terminal.keyEscape();
     await expect(terminal.getByText('Interrupted', { full: true })).toBeVisible();
     // ...and the app recovers to the ready prompt rather than crashing.
-    await expect(terminal.getByText('chat — ready')).toBeVisible();
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
   });
 });
