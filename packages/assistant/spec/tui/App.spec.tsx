@@ -24,6 +24,9 @@ const baseProps = {
 };
 
 const ESC = String.fromCharCode(27); // Escape key byte
+const TAB = '\t'; // Tab key (char 9)
+const PAGE_DOWN = '\x1b[6~'; // PageDown CSI sequence
+const PAGE_UP = '\x1b[5~'; // PageUp CSI sequence
 
 describe('tui <App>', () => {
   beforeEach(() => {
@@ -123,6 +126,130 @@ describe('tui <App>', () => {
 
     await vi.waitFor(() => expect(frames.join('\n')).toContain('Unknown command: /bogus'));
     expect(turnsRun).toBe(0);
+
+    unmount();
+  });
+
+  it('toggles the docked debug panel on /debug (shows then hides the section tabs)', async () => {
+    const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
+    const { stdin, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    // Panel hidden initially.
+    expect(lastFrame()).not.toContain('Subagents');
+
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+    stdin.write('\r');
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).toContain('Subagents');
+      expect(f).toContain('Raw model response');
+    });
+
+    // Toggle off.
+    stdin.write('/debug');
+    await vi.waitFor(() =>
+      expect((lastFrame() ?? '').match(/\/debug/g)?.length).toBeGreaterThan(0)
+    );
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).not.toContain('Subagents'));
+
+    unmount();
+  });
+
+  it('advertises Tab in the status bar while the debug panel is open but unfocused', async () => {
+    const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
+    const { stdin, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    // No panel, no hint.
+    expect(lastFrame()).not.toContain('Tab: focus debug panel');
+
+    // Open the panel: status bar now tells the user how to step into it.
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Tab: focus debug panel'));
+
+    // Focusing the panel replaces the status-bar hint with the panel's own focused hint.
+    stdin.write(TAB);
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).toContain('Tab: section');
+      expect(f).not.toContain('Tab: focus debug panel');
+    });
+
+    unmount();
+  });
+
+  it('renders the subagent tree in the panel from `task` tool-call events', async () => {
+    const agent = scriptedAgent([
+      { type: 'tool_start', id: 's1', name: 'task' },
+      { type: 'tool_args', id: 's1', delta: '{"subagent_type":"researcher","description":"dig"}' },
+      { type: 'tool_end', id: 's1' },
+      { type: 'tool_result', id: 's1', content: 'done digging' },
+      { type: 'text', delta: 'ok' },
+    ]);
+    const { stdin, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} initialMessage="go" />
+    );
+
+    // Wait for the turn to complete (the tool-call line is committed), then open the panel.
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+    stdin.write('\r');
+
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).toContain('Subagents');
+      expect(f).toContain('researcher'); // subagent type
+      expect(f).toContain('dig'); // description
+    });
+
+    unmount();
+  });
+
+  it('scrolls the panel viewport with Tab-to-focus then PageDown/PageUp', async () => {
+    // A subagent whose multi-line result overflows the 8-row viewport, so scrolling moves it.
+    const longResult = Array.from({ length: 40 }, (_, i) => `line-${i}`).join('\n');
+    const agent = scriptedAgent([
+      { type: 'tool_start', id: 's1', name: 'task' },
+      { type: 'tool_args', id: 's1', delta: '{"subagent_type":"worker","description":"big"}' },
+      { type: 'tool_end', id: 's1' },
+      { type: 'tool_result', id: 's1', content: longResult },
+      { type: 'text', delta: 'ok' },
+    ]);
+    const { stdin, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} initialMessage="go" />
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('worker'));
+
+    // Early lines visible, later lines clipped by the bounded viewport.
+    expect(lastFrame()).toContain('line-0');
+    expect(lastFrame()).not.toContain('line-30');
+
+    // Focus the panel (Tab), then scroll down two pages (viewport=8, step=7 → offset 14).
+    stdin.write(TAB);
+    await vi.waitFor(() => expect(lastFrame()).toContain('Tab: section')); // focused hint
+    stdin.write(PAGE_DOWN);
+    stdin.write(PAGE_DOWN);
+
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).toContain('line-12'); // a later line is now in view
+      expect(f).not.toContain('line-0'); // the top scrolled out (offset moved past it)
+    });
+
+    // Scroll back up to the top.
+    for (let i = 0; i < 5; i++) stdin.write(PAGE_UP);
+    await vi.waitFor(() => expect(lastFrame()).toContain('line-0'));
 
     unmount();
   });

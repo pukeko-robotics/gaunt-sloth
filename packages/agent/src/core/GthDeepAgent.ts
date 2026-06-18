@@ -19,6 +19,7 @@ import {
   FILESYSTEM_TOOL_NAMES,
   type FilesystemPermission,
 } from '#src/core/deepAgentPermissions.js';
+import type { DebugCapture } from '#src/core/debugCapture.js';
 
 /**
  * The subset of `createDeepAgent` params that are independent of the transport
@@ -69,6 +70,14 @@ export interface GthDeepAgentParams {
  * middleware hardening without re-running `createDeepAgent` locally.
  */
 export class GthDeepAgent extends GthAbstractAgent {
+  /**
+   * Opt-in debug sink for the TUI `/debug` panel. Set AFTER {@link init} via
+   * `runner.getAgent()`; read lazily inside the `wrapModelCall` middleware so that when it
+   * is `undefined` (the normal path) the middleware is a transparent pass-through. Never
+   * touched by the lean agent or the AG-UI server, so those contracts are unchanged.
+   */
+  public debugCapture: DebugCapture | undefined;
+
   async init(
     command: GthCommand | undefined,
     configIn: GthConfig,
@@ -100,7 +109,35 @@ export class GthDeepAgent extends GthAbstractAgent {
       },
     });
 
-    const middleware = [...params.middleware, toolCallStatusMiddleware];
+    // Debug-capture middleware (TUI `/debug` panel). Always installed but lazy: it reads
+    // `this.debugCapture` per call, so until the TUI attaches a sink it is a transparent
+    // pass-through (one extra await around the handler — the normal path pays nothing).
+    // `request.messages` is the real history at call time (post-summarization/middleware),
+    // and `handler(request)` resolves to the AIMessage response (decision (a): whole
+    // resolved message, not per-chunk — the streaming core stays untouched).
+    const getDebugCapture = () => this.debugCapture;
+    const debugCaptureMiddleware = createMiddleware({
+      name: 'GthMiddlewareDebugCapture',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      wrapModelCall: async (request: any, handler: any) => {
+        const capture = getDebugCapture();
+        if (!capture) return handler(request);
+        try {
+          capture.onRequest?.(request.messages);
+        } catch {
+          /* a debug sink must never break the run */
+        }
+        const response = await handler(request);
+        try {
+          capture.onResponse?.(response);
+        } catch {
+          /* a debug sink must never break the run */
+        }
+        return response;
+      },
+    });
+
+    const middleware = [...params.middleware, toolCallStatusMiddleware, debugCaptureMiddleware];
     this.statusUpdate(
       StatusLevel.INFO,
       `Loaded middleware: ${middleware.map((m) => m.name).join(', ')}`

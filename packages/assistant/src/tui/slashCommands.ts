@@ -29,6 +29,8 @@ export interface SlashCommandResult {
   level?: string;
   /** When true, the component clears the transcript. */
   clearTranscript?: boolean;
+  /** When true, the component toggles the docked debug panel (subagents + debug views). */
+  toggleDebug?: boolean;
   /** When true, the component quits the app (runs `onExit`). */
   exit?: boolean;
 }
@@ -79,6 +81,11 @@ export function createCommandRegistry(): SlashCommand[] {
       name: 'clear',
       description: 'Clear the transcript',
       run: () => ({ clearTranscript: true, message: 'Transcript cleared.' }),
+    },
+    {
+      name: 'debug',
+      description: 'Toggle the docked subagents + debug panel',
+      run: () => ({ toggleDebug: true }),
     },
     {
       name: 'exit',

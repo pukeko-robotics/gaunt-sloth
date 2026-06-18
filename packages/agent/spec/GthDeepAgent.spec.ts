@@ -196,7 +196,78 @@ describe('GthDeepAgent', () => {
       'GthDeepFsDenialSoftening',
       'custom-mw',
       'GthMiddlewareToolCallStatusUpdate',
+      'GthMiddlewareDebugCapture',
     ]);
+  });
+
+  it('debug-capture middleware is a transparent pass-through when no sink is attached', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+    await agent.init(undefined, makeConfig());
+    // No debugCapture set → the normal path.
+
+    const debugMw = createDeepAgentMock.mock.calls[0][0].middleware.find(
+      (m: { name: string }) => m.name === 'GthMiddlewareDebugCapture'
+    );
+    const request = { messages: [{ content: 'hi' }] };
+    const response = { content: 'yo' };
+    const handler = vi.fn().mockResolvedValue(response);
+
+    const result = await debugMw.wrapModelCall(request, handler);
+
+    expect(handler).toHaveBeenCalledWith(request);
+    expect(result).toBe(response);
+  });
+
+  it('debug-capture middleware reports request history and the resolved response to the sink', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+    await agent.init(undefined, makeConfig());
+
+    const onRequest = vi.fn();
+    const onResponse = vi.fn();
+    agent.debugCapture = { onRequest, onResponse };
+
+    const debugMw = createDeepAgentMock.mock.calls[0][0].middleware.find(
+      (m: { name: string }) => m.name === 'GthMiddlewareDebugCapture'
+    );
+    const messages = [{ content: 'system' }, { content: 'user turn' }];
+    const response = { content: 'assistant reply' };
+    const handler = vi.fn().mockResolvedValue(response);
+
+    const result = await debugMw.wrapModelCall({ messages }, handler);
+
+    // Sink saw the real request messages (at call time) and the resolved response.
+    expect(onRequest).toHaveBeenCalledWith(messages);
+    expect(onResponse).toHaveBeenCalledWith(response);
+    // Order: request captured before the handler runs, response after.
+    expect(onRequest).toHaveBeenCalledBefore(onResponse);
+    // The middleware is transparent: the handler's response flows through unchanged.
+    expect(result).toBe(response);
+  });
+
+  it('debug-capture sink errors never break the run', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+    await agent.init(undefined, makeConfig());
+
+    agent.debugCapture = {
+      onRequest: () => {
+        throw new Error('sink boom');
+      },
+      onResponse: () => {
+        throw new Error('sink boom 2');
+      },
+    };
+
+    const debugMw = createDeepAgentMock.mock.calls[0][0].middleware.find(
+      (m: { name: string }) => m.name === 'GthMiddlewareDebugCapture'
+    );
+    const response = { content: 'ok' };
+    const handler = vi.fn().mockResolvedValue(response);
+
+    await expect(debugMw.wrapModelCall({ messages: [] }, handler)).resolves.toBe(response);
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 
   it('fs-denial-softening converts a permission throw into an error ToolMessage', async () => {

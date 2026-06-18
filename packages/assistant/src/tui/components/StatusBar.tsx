@@ -13,11 +13,14 @@ export function StatusBar({
   mode,
   modelDisplayName,
   turnCount,
+  debugHint,
 }: {
   running: boolean;
   mode: string;
   modelDisplayName?: string;
   turnCount?: number;
+  /** When the docked debug panel is open but unfocused, surface how to step into it. */
+  debugHint?: boolean;
 }): React.ReactElement {
   if (running) {
     return (
@@ -39,6 +42,7 @@ export function StatusBar({
   return (
     <Box>
       <Text dimColor>{segments.join('  ·  ')}</Text>
+      {debugHint ? <Text dimColor>{'  ·  Tab: focus debug panel'}</Text> : null}
     </Box>
   );
 }

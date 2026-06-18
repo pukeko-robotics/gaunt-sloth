@@ -14,9 +14,12 @@ import { HumanMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import { createResolvers } from '@gaunt-sloth/agent/resolvers.js';
 import { gthDeepAgentFactory } from '@gaunt-sloth/agent/core/gthDeepAgentFactory.js';
+import { GthDeepAgent } from '@gaunt-sloth/agent/core/GthDeepAgent.js';
 import type { SessionConfig } from '@gaunt-sloth/agent/modules/interactiveSessionModule.js';
+import type { BaseMessage } from '@langchain/core/messages';
 import { App } from '#src/tui/components/App.js';
-import type { TuiAgent } from '#src/tui/types.js';
+import type { TuiAgent, TuiDebugCapture } from '#src/tui/types.js';
+import { renderHistory, renderResponse } from '#src/tui/debugRender.js';
 
 type StatusListener = (level: string, message: string) => void;
 
@@ -33,6 +36,29 @@ function createStatusBridge() {
       return () => {
         listeners.delete(cb);
       };
+    },
+  };
+}
+
+type DebugListener = (capture: TuiDebugCapture) => void;
+
+/** Fan-out so the deep agent's wrapModelCall debug sink can reach the mounted React app. */
+function createDebugBridge() {
+  const listeners = new Set<DebugListener>();
+  const emit = (capture: TuiDebugCapture) => {
+    for (const l of listeners) l(capture);
+  };
+  return {
+    subscribe: (cb: DebugListener) => {
+      listeners.add(cb);
+      return () => {
+        listeners.delete(cb);
+      };
+    },
+    capture: {
+      onRequest: (messages: BaseMessage[]) =>
+        emit({ kind: 'request', text: renderHistory(messages) }),
+      onResponse: (response: unknown) => emit({ kind: 'response', text: renderResponse(response) }),
     },
   };
 }
@@ -80,10 +106,20 @@ export async function createTuiSession(
   }
 
   const bridge = createStatusBridge();
+  const debugBridge = createDebugBridge();
   const runner = new GthAgentRunner(bridge.emit, createResolvers(), gthDeepAgentFactory);
 
   try {
     await runner.init(sessionConfig.mode, config, checkpointSaver);
+
+    // Attach the debug sink to the live deep agent (opt-in; the wrapModelCall middleware reads
+    // it lazily, so this only enables capture for the TUI's /debug panel — the lean/AG-UI
+    // contracts are untouched). Guarded by an instanceof so a non-deep agent simply has no
+    // debug capture rather than failing.
+    const agent = runner.getAgent();
+    if (agent instanceof GthDeepAgent) {
+      agent.debugCapture = debugBridge.capture;
+    }
 
     const logTurn = (userInput: string, assistantText: string) => {
       if (!logFileName) return;
@@ -106,6 +142,7 @@ export async function createTuiSession(
         exitMessage={sessionConfig.exitMessage}
         initialMessage={message}
         subscribeStatus={bridge.subscribe}
+        subscribeDebug={debugBridge.subscribe}
         onTurnComplete={logTurn}
         onExit={async () => {
           await runner.cleanup();
