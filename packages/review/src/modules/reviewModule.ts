@@ -26,13 +26,20 @@ import { setExitCode } from '@gaunt-sloth/core/utils/systemUtils.js';
 import type { AgentResolvers } from '@gaunt-sloth/core/core/types.js';
 import { get as getGhReadFileTool, GTH_GH_READ_FILE_TOOL_NAME } from '#src/tools/ghReadFileTool.js';
 
+/** Extra context about the review, used to bind GitHub-only tools to the PR under review. */
+export interface ReviewContext {
+  /** PR number under review; undefined in `gth pr` discovery mode (current branch's PR). */
+  prId?: string;
+}
+
 export async function review(
   source: string,
   preamble: string,
   diff: string,
   config: GthConfig,
   command: 'pr' | 'review' = 'review',
-  resolvers?: AgentResolvers
+  resolvers?: AgentResolvers,
+  reviewContext?: ReviewContext
 ): Promise<void> {
   const progressIndicator = config.streamOutput ? undefined : new ProgressIndicator('Reviewing.');
   const messages = [new SystemMessage(preamble), new HumanMessage(diff)];
@@ -41,7 +48,7 @@ export async function review(
   // contents of a file when the PR diff truncates large changes. Only added in a GitHub PR
   // context (the content source resolves to GitHub); a graceful no-op otherwise. Reads through
   // the GitHub API rather than the workspace filesystem, so it is safe under pull_request_target.
-  maybeAddGhReadFileTool(config, command);
+  maybeAddGhReadFileTool(config, command, reviewContext?.prId);
 
   // Prepare logging path (if enabled by config)
   const filePath = getCommandOutputFilePath(config, source);
@@ -115,7 +122,11 @@ export async function review(
  * The tool reads file contents via the GitHub API (`gh api`), never the workspace filesystem, so
  * it remains safe under `pull_request_target` CI where the untrusted PR head is not checked out.
  */
-function maybeAddGhReadFileTool(config: GthConfig, command: 'pr' | 'review'): void {
+function maybeAddGhReadFileTool(
+  config: GthConfig,
+  command: 'pr' | 'review',
+  prId: string | undefined
+): void {
   const commandConfig = config.commands?.[command];
   // Honor deprecated alias too: contentProvider.
   const contentSource =
@@ -142,7 +153,7 @@ function maybeAddGhReadFileTool(config: GthConfig, command: 'pr' | 'review'): vo
     return;
   }
 
-  config.tools = [...existingTools, getGhReadFileTool(config)];
+  config.tools = [...existingTools, getGhReadFileTool(config, prId)];
 }
 
 function handleRatingResult(rateConfig: RatingConfig | undefined, command: 'pr' | 'review'): void {

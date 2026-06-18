@@ -165,7 +165,11 @@ export function prCommand(
         content.join('\n'),
         config,
         'pr',
-        createResolvers()
+        createResolvers(),
+        // Bind GitHub-only review tools (gth_gh_read_file) to this PR's repo/ref, so they read
+        // the PR under review rather than letting the model guess owner/repo. Undefined prId =
+        // discovery mode (current branch's PR), which `gh pr view` resolves on its own.
+        { prId }
       );
 
       if (

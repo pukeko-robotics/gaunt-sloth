@@ -157,7 +157,8 @@ describe('prCommand', () => {
         projectReviewInstructions: '.gsloth.review.md',
       }),
       'pr',
-      expect.any(Object)
+      expect.any(Object),
+      { prId: undefined }
     );
   });
 
@@ -257,7 +258,8 @@ describe('prCommand', () => {
         projectReviewInstructions: '.gsloth.review.md',
       }),
       'pr',
-      expect.any(Object)
+      expect.any(Object),
+      { prId: '123' }
     );
   });
 
@@ -345,7 +347,8 @@ describe('prCommand', () => {
         projectReviewInstructions: '.gsloth.review.md',
       }),
       'pr',
-      expect.any(Object)
+      expect.any(Object),
+      { prId: '123' }
     );
   });
 
@@ -470,7 +473,8 @@ describe('prCommand', () => {
         projectReviewInstructions: '.gsloth.review.md',
       }),
       'pr',
-      expect.any(Object)
+      expect.any(Object),
+      { prId: '123' }
     );
   });
 
@@ -517,7 +521,8 @@ describe('prCommand', () => {
         projectReviewInstructions: '.gsloth.review.md',
       }),
       'pr',
-      expect.any(Object)
+      expect.any(Object),
+      { prId: '123' }
     );
   });
 });
