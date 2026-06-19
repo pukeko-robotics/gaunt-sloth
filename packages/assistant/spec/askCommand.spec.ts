@@ -16,14 +16,14 @@ const resolversMock = {
 };
 vi.mock('@gaunt-sloth/agent/resolvers.js', () => resolversMock);
 
-const askQuestion = vi.fn();
+const runSingleShot = vi.fn();
 const prompt = {
   readBackstory: vi.fn(),
   readGuidelines: vi.fn(),
   readSystemPrompt: vi.fn(),
 };
 
-const questionAnsweringModule = { askQuestion };
+const singleShotModule = { runSingleShot };
 
 const utilsMock = {
   ProgressIndicator: vi.fn(),
@@ -72,7 +72,7 @@ vi.mock('#src/utils/llmUtils.js', async () => {
     readSystemPrompt: prompt.readSystemPrompt,
   };
 });
-vi.mock('#src/modules/questionAnsweringModule.js', () => questionAnsweringModule);
+vi.mock('@gaunt-sloth/core/runtime/singleShot.js', () => singleShotModule);
 vi.mock('#src/utils/systemUtils.js', () => ({
   getStringFromStdin: vi.fn().mockReturnValue(''),
 }));
@@ -115,13 +115,13 @@ describe('askCommand', () => {
     utilsMock.ProgressIndicator.mockImplementation(() => progressIndicator);
   });
 
-  it('Should call askQuestion with message', async () => {
+  it('Should call runSingleShot with message', async () => {
     const { askCommand } = await import('#src/commands/askCommand.js');
     const program = new Command();
     askCommand(program, {});
     await program.parseAsync(['na', 'na', 'ask', 'test message']);
     // With deterministic UUID, the block id will be message-1234567
-    expect(askQuestion).toHaveBeenCalledWith(
+    expect(runSingleShot).toHaveBeenCalledWith(
       'ASK',
       'INTERNAL PREAMBLE\nPROJECT GUIDELINES',
       '\nProvided user message follows within message-1234567 block\n<message-1234567>\ntest message\n</message-1234567>\n',
@@ -130,12 +130,12 @@ describe('askCommand', () => {
     );
   });
 
-  it('Should call askQuestion with message and file content', async () => {
+  it('Should call runSingleShot with message and file content', async () => {
     const { askCommand } = await import('#src/commands/askCommand.js');
     const program = new Command();
     askCommand(program, {});
     await program.parseAsync(['na', 'na', 'ask', 'test message', '-f', 'test.file']);
-    expect(askQuestion).toHaveBeenCalledWith(
+    expect(runSingleShot).toHaveBeenCalledWith(
       'ASK',
       'INTERNAL PREAMBLE\nPROJECT GUIDELINES',
       'test.file:\n```\nFILE CONTENT\n```\n' +
@@ -145,7 +145,7 @@ describe('askCommand', () => {
     );
   });
 
-  it('Should call askQuestion with message and multiple file contents', async () => {
+  it('Should call runSingleShot with message and multiple file contents', async () => {
     const { askCommand } = await import('#src/commands/askCommand.js');
     const program = new Command();
     askCommand(program, {});
@@ -156,7 +156,7 @@ describe('askCommand', () => {
       return '';
     });
     await program.parseAsync(['na', 'na', 'ask', 'test message', '-f', 'test.file', 'test2.file']);
-    expect(askQuestion).toHaveBeenCalledWith(
+    expect(runSingleShot).toHaveBeenCalledWith(
       'ASK',
       'INTERNAL PREAMBLE\nPROJECT GUIDELINES',
       'test.file:\n```\nFILE CONTENT\n```\n\ntest2.file:\n```\nFILE2 CONTENT\n```\n' +
@@ -174,12 +174,12 @@ describe('askCommand', () => {
     expect(program.commands[0].description()).toEqual('Ask a question');
   });
 
-  it('Should call askQuestion with file content only (no message)', async () => {
+  it('Should call runSingleShot with file content only (no message)', async () => {
     const { askCommand } = await import('#src/commands/askCommand.js');
     const program = new Command();
     askCommand(program, {});
     await program.parseAsync(['na', 'na', 'ask', '-f', 'test.file']);
-    expect(askQuestion).toHaveBeenCalledWith(
+    expect(runSingleShot).toHaveBeenCalledWith(
       'ASK',
       'INTERNAL PREAMBLE\nPROJECT GUIDELINES',
       'test.file:\n```\nFILE CONTENT\n```',
@@ -188,7 +188,7 @@ describe('askCommand', () => {
     );
   });
 
-  it('Should call askQuestion with stdin content only (no message)', async () => {
+  it('Should call runSingleShot with stdin content only (no message)', async () => {
     const { getStringFromStdin } = await import('#src/utils/systemUtils.js');
     vi.mocked(getStringFromStdin).mockReturnValue('STDIN CONTENT');
 
@@ -197,7 +197,7 @@ describe('askCommand', () => {
     askCommand(program, {});
     await program.parseAsync(['na', 'na', 'ask']);
     // With deterministic UUID, the block id will be stdin-content-1234567
-    expect(askQuestion).toHaveBeenCalledWith(
+    expect(runSingleShot).toHaveBeenCalledWith(
       'ASK',
       'INTERNAL PREAMBLE\nPROJECT GUIDELINES',
       '\nProvided content follows within stdin-content-1234567 block\n<stdin-content-1234567>\nSTDIN CONTENT\n</stdin-content-1234567>\n',
@@ -219,7 +219,7 @@ describe('askCommand', () => {
     );
   });
 
-  it('Should pass writeOutputToFile config parameter through to askQuestion module', async () => {
+  it('Should pass writeOutputToFile config parameter through to runSingleShot module', async () => {
     // Create a config with writeOutputToFile set to false
     const configWithWriteOutputDisabled = {
       ...mockConfig,
@@ -234,8 +234,8 @@ describe('askCommand', () => {
     askCommand(program, {});
     await program.parseAsync(['na', 'na', 'ask', 'integration test message']);
 
-    // Verify that askQuestion was called with the config containing writeOutputToFile: false
-    expect(askQuestion).toHaveBeenCalledWith(
+    // Verify that runSingleShot was called with the config containing writeOutputToFile: false
+    expect(runSingleShot).toHaveBeenCalledWith(
       'ASK',
       'INTERNAL PREAMBLE\nPROJECT GUIDELINES',
       '\nProvided user message follows within message-1234567 block\n<message-1234567>\nintegration test message\n</message-1234567>\n',
@@ -244,7 +244,7 @@ describe('askCommand', () => {
     );
 
     // Specifically verify the writeOutputToFile parameter was passed through
-    const calledConfig = askQuestion.mock.calls[0][3];
+    const calledConfig = runSingleShot.mock.calls[0][3];
     expect(calledConfig.writeOutputToFile).toBe(false);
   });
 });

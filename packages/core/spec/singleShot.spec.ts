@@ -112,7 +112,7 @@ const llmUtilsMock = {
 };
 vi.mock('#src/utils/llmUtils.js', () => llmUtilsMock);
 
-describe('questionAnsweringModule', () => {
+describe('singleShot', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     gthAgentRunnerMock.mockClear();
@@ -154,10 +154,10 @@ describe('questionAnsweringModule', () => {
     gthAgentRunnerInstanceMock.cleanup.mockResolvedValue(undefined);
 
     // Import the module after setting up mocks
-    const { askQuestion } = await import('#src/modules/questionAnsweringModule.js');
+    const { runSingleShot } = await import('#src/runtime/singleShot.js');
 
-    // Call askQuestion with config (prop drilling)
-    await askQuestion('test-source', 'test-preamble', 'test-content', testConfig);
+    // Call runSingleShot with config (prop drilling)
+    await runSingleShot('test-source', 'test-preamble', 'test-content', testConfig);
 
     // Verify that runner was called with correct parameters
     expect(gthAgentRunnerInstanceMock.processMessages).toHaveBeenCalledWith([
@@ -198,10 +198,10 @@ describe('questionAnsweringModule', () => {
     gthAgentRunnerInstanceMock.cleanup.mockResolvedValue(undefined);
 
     // Import the module after setting up mocks
-    const { askQuestion } = await import('#src/modules/questionAnsweringModule.js');
+    const { runSingleShot } = await import('#src/runtime/singleShot.js');
 
-    // Call askQuestion with the different config to prove prop drilling works
-    await askQuestion('test-source', 'test-preamble', 'test-content', differentConfig);
+    // Call runSingleShot with the different config to prove prop drilling works
+    await runSingleShot('test-source', 'test-preamble', 'test-content', differentConfig);
 
     // Verify the different config was used
     expect(gthAgentRunnerInstanceMock.processMessages).toHaveBeenCalledWith([

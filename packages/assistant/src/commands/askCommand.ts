@@ -46,10 +46,9 @@ export function askCommand(
         throw new Error('At least one of the following is required: file, stdin, or message');
       }
 
-      const { askQuestion } =
-        await import('@gaunt-sloth/review/modules/questionAnsweringModule.js');
+      const { runSingleShot } = await import('@gaunt-sloth/core/runtime/singleShot.js');
       const { createResolvers } = await import('@gaunt-sloth/agent/resolvers.js');
-      await askQuestion(
+      await runSingleShot(
         'ASK',
         getAskSystemPrompt(config),
         content.join('\n'),

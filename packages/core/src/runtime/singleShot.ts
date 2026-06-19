@@ -1,4 +1,4 @@
-import type { GthConfig } from '@gaunt-sloth/core/config.js';
+import type { GthConfig } from '#src/config.js';
 import {
   defaultStatusCallback,
   display,
@@ -7,13 +7,13 @@ import {
   flushSessionLog,
   initSessionLogging,
   stopSessionLogging,
-} from '@gaunt-sloth/core/utils/consoleUtils.js';
+} from '#src/utils/consoleUtils.js';
 import { getCommandOutputFilePath } from '#src/utils/fileUtils.js';
-import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
+import { GthAgentRunner } from '#src/core/GthAgentRunner.js';
 import { MemorySaver } from '@langchain/langgraph';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
-import { ProgressIndicator } from '@gaunt-sloth/core/utils/ProgressIndicator.js';
-import type { AgentResolvers, GthCommand } from '@gaunt-sloth/core/core/types.js';
+import { ProgressIndicator } from '#src/utils/ProgressIndicator.js';
+import type { AgentResolvers, GthCommand } from '#src/core/types.js';
 
 /**
  * Ask a question and get an answer from the LLM.
@@ -31,7 +31,7 @@ import type { AgentResolvers, GthCommand } from '@gaunt-sloth/core/core/types.js
  * @returns `true` when the run completed without error, `false` when it failed (so callers
  *   such as `exec` can set a non-zero exit code).
  */
-export async function askQuestion(
+export async function runSingleShot(
   source: string,
   preamble: string,
   content: string,

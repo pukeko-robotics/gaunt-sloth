@@ -106,13 +106,12 @@ export function execCommand(
 
       const execConfig = buildExecConfig(config, options);
 
-      const { askQuestion } =
-        await import('@gaunt-sloth/review/modules/questionAnsweringModule.js');
+      const { runSingleShot } = await import('@gaunt-sloth/core/runtime/singleShot.js');
       const { createResolvers } = await import('@gaunt-sloth/agent/resolvers.js');
 
       let ok = false;
       try {
-        ok = await askQuestion(
+        ok = await runSingleShot(
           'EXEC',
           getExecSystemPrompt(execConfig),
           content.join('\n'),

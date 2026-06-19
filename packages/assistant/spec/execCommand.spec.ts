@@ -15,9 +15,9 @@ const resolversMock = {
 };
 vi.mock('@gaunt-sloth/agent/resolvers.js', () => resolversMock);
 
-const askQuestion = vi.fn();
-const questionAnsweringModule = { askQuestion };
-vi.mock('@gaunt-sloth/review/modules/questionAnsweringModule.js', () => questionAnsweringModule);
+const runSingleShot = vi.fn();
+const singleShotModule = { runSingleShot };
+vi.mock('@gaunt-sloth/core/runtime/singleShot.js', () => singleShotModule);
 
 const prompt = {
   readExecPrompt: vi.fn(),
@@ -77,7 +77,7 @@ describe('execCommand', () => {
     vi.resetModules();
 
     configMock.initConfig.mockResolvedValue({ ...mockConfig, llm: { ...mockConfig.llm } });
-    askQuestion.mockResolvedValue(true);
+    runSingleShot.mockResolvedValue(true);
     resolversMock.createResolvers.mockReturnValue({ resolveTools: vi.fn(), cleanupTools: vi.fn() });
 
     // The introspection prompt is built via buildSystemMessages (flattened to a string).
@@ -100,14 +100,14 @@ describe('execCommand', () => {
     expect(program.commands[0].description()).toContain('prompt-executable');
   });
 
-  it('runs a .md script file via askQuestion with the exec command and prompt', async () => {
+  it('runs a .md script file via runSingleShot with the exec command and prompt', async () => {
     const { execCommand } = await import('#src/commands/execCommand.js');
     const program = new Command();
     execCommand(program, {});
     await program.parseAsync(['na', 'na', 'exec', 'script.md']);
 
-    expect(askQuestion).toHaveBeenCalledTimes(1);
-    const [source, preamble, content, , , command] = askQuestion.mock.calls[0];
+    expect(runSingleShot).toHaveBeenCalledTimes(1);
+    const [source, preamble, content, , , command] = runSingleShot.mock.calls[0];
     expect(source).toEqual('EXEC');
     expect(preamble).toEqual('EXEC SYSTEM PROMPT');
     expect(command).toEqual('exec');
@@ -124,8 +124,8 @@ describe('execCommand', () => {
     execCommand(program, {});
     await program.parseAsync(['na', 'na', 'exec']);
 
-    expect(askQuestion).toHaveBeenCalledTimes(1);
-    const content = askQuestion.mock.calls[0][2];
+    expect(runSingleShot).toHaveBeenCalledTimes(1);
+    const content = runSingleShot.mock.calls[0][2];
     expect(content).toContain('PIPED SCRIPT');
   });
 
@@ -135,7 +135,7 @@ describe('execCommand', () => {
     execCommand(program, {});
     await program.parseAsync(['na', 'na', 'exec', 'script.md', '-f', 'context.md']);
 
-    const content = askQuestion.mock.calls[0][2];
+    const content = runSingleShot.mock.calls[0][2];
     expect(content.indexOf('CONTEXT BODY')).toBeLessThan(content.indexOf('SCRIPT BODY'));
   });
 
@@ -145,7 +145,7 @@ describe('execCommand', () => {
     execCommand(program, {});
     await program.parseAsync(['na', 'na', 'exec', 'script.md']);
 
-    const passedConfig = askQuestion.mock.calls[0][3];
+    const passedConfig = runSingleShot.mock.calls[0][3];
     // Result goes to stdout for piping, not a md report, by default.
     expect(passedConfig.writeOutputToFile).toBe(false);
     // Non-interactive: ESC interrupt disabled.
@@ -158,12 +158,12 @@ describe('execCommand', () => {
     execCommand(program, {});
     await program.parseAsync(['na', 'na', 'exec', 'script.md', '--temperature', '0']);
 
-    const passedConfig = askQuestion.mock.calls[0][3];
+    const passedConfig = runSingleShot.mock.calls[0][3];
     expect(passedConfig.llm.temperature).toBe(0);
   });
 
   it('sets a non-zero exit code when the run fails', async () => {
-    askQuestion.mockResolvedValue(false);
+    runSingleShot.mockResolvedValue(false);
     const { execCommand } = await import('#src/commands/execCommand.js');
     const program = new Command();
     execCommand(program, {});
@@ -173,7 +173,7 @@ describe('execCommand', () => {
   });
 
   it('sets a non-zero exit code when the run throws', async () => {
-    askQuestion.mockRejectedValue(new Error('boom'));
+    runSingleShot.mockRejectedValue(new Error('boom'));
     const { execCommand } = await import('#src/commands/execCommand.js');
     const program = new Command();
     execCommand(program, {});
