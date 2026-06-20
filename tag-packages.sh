@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# Create git tags for the synced @gaunt-sloth/* packages (core, agent, review).
+# Create git tags for the locked Gaunt Sloth packages — all FOUR:
+# @gaunt-sloth/{core,agent,review} and the fat CLI `gaunt-sloth` (dir assistant).
 #
-# The user-facing CLI (`gaunt-sloth`, dir packages/assistant) is intentionally
-# EXCLUDED — it carries its own version and already uses the repo's
-# v<MAJOR.MINOR.PATCH> tags.
-#
-# Tags are annotated and named "@gaunt-sloth/<pkg>@<version>" (npm monorepo
-# convention) so they never collide with the assistant's v* tags. Versions are
+# Tags are annotated and named "<package-name>@<version>" (npm monorepo
+# convention): "@gaunt-sloth/core@<v>", …, and "gaunt-sloth@<v>" for the fat
+# CLI. The fat package's "gaunt-sloth@<v>" tag is distinct from the repo's
+# historical "v<MAJOR.MINOR.PATCH>" tags, so they don't collide. Versions are
 # read straight from each package.json — run `npm run release:bump` first so the
-# synced set is at the version you want to tag.
+# locked set is at the version you want to tag.
 #
 # Local only by default. Push with:  PUSH=1 ./tag-packages.sh
 #                               or:  ./tag-packages.sh --push
@@ -17,8 +16,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Synced packages only — same set as bump.mjs / publish-all.sh, minus assistant.
-PACKAGES=(core agent review)
+# All locked packages, by DIRECTORY — same set as bump.mjs / publish-all.sh,
+# including the fat CLI (dir assistant, name gaunt-sloth).
+PACKAGES=(core agent review assistant)
 
 PUSH="${PUSH:-0}"
 [[ "${1:-}" == "--push" ]] && PUSH=1

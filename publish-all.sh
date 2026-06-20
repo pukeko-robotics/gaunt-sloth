@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Publish the synced @gaunt-sloth/* packages in topological order.
+# Publish the locked Gaunt Sloth packages in topological order.
 #
 # Defaults to the local Verdaccio at http://localhost:4873.
 # To publish to npmjs:  REGISTRY=https://registry.npmjs.org ./publish-all.sh
@@ -14,18 +14,20 @@ set -euo pipefail
 REGISTRY="${REGISTRY:-http://localhost:4873}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Topological order: core is published first (everything depends on it), then
-# agent (the merged tools+api runtime; depends on core), then review (depends on
-# core). The former tools/api forwarding shims were removed in the 2.0 break.
-ORDER=(core agent review)
+# Topological order, by package DIRECTORY: core first (everything depends on it),
+# then agent (the merged tools+api runtime; depends on core) and review (depends
+# on core), then the fat CLI `gaunt-sloth` (dir: assistant) LAST — it depends on
+# all three. The former tools/api forwarding shims were removed in the 2.0 break.
+ORDER=(core agent review assistant)
 
-echo "Publishing @gaunt-sloth/* to ${REGISTRY}"
-for pkg in "${ORDER[@]}"; do
-  version="$(node -p "require('${ROOT}/packages/${pkg}/package.json').version")"
-  echo "==> @gaunt-sloth/${pkg}@${version}"
+echo "Publishing Gaunt Sloth packages to ${REGISTRY}"
+for dir in "${ORDER[@]}"; do
+  name="$(node -p "require('${ROOT}/packages/${dir}/package.json').name")"
+  version="$(node -p "require('${ROOT}/packages/${dir}/package.json').version")"
+  echo "==> ${name}@${version}"
   # NPM_PUBLISH_ARGS is intentionally left unquoted so multiple flags split into
   # separate arguments; it defaults to empty for the plain local Verdaccio path.
   # shellcheck disable=SC2086
-  (cd "${ROOT}/packages/${pkg}" && npm publish --registry "${REGISTRY}" ${NPM_PUBLISH_ARGS:-})
+  (cd "${ROOT}/packages/${dir}" && npm publish --registry "${REGISTRY}" ${NPM_PUBLISH_ARGS:-})
 done
 echo "Done."
