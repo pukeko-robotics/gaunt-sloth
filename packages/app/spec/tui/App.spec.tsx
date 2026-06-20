@@ -254,6 +254,89 @@ describe('tui <App>', () => {
     unmount();
   });
 
+  it('maximises and restores the focused debug panel with the "m" key', async () => {
+    // A subagent result long enough to overflow the default 8-row viewport but fit a maximised one.
+    const longResult = Array.from({ length: 20 }, (_, i) => `row-${i}`).join('\n');
+    const agent = scriptedAgent([
+      { type: 'tool_start', id: 's1', name: 'task' },
+      { type: 'tool_args', id: 's1', delta: '{"subagent_type":"worker","description":"big"}' },
+      { type: 'tool_end', id: 's1' },
+      { type: 'tool_result', id: 's1', content: longResult },
+      { type: 'text', delta: 'ok' },
+    ]);
+    const { stdin, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} initialMessage="go" />
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('worker'));
+
+    // Default 8-row viewport clips the later rows.
+    expect(lastFrame()).toContain('row-0');
+    expect(lastFrame()).not.toContain('row-13');
+
+    // Focus the panel, then maximise: the hint flips and previously-clipped rows appear.
+    stdin.write(TAB);
+    await vi.waitFor(() => expect(lastFrame()).toContain('maximise'));
+    stdin.write('m');
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).toContain('row-13'); // grown viewport now shows further down
+      expect(f).toContain('restore'); // hint flipped to the restore affordance
+    });
+
+    // Restore: tail clipped again, hint flips back.
+    stdin.write('m');
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).not.toContain('row-13');
+      expect(f).toContain('maximise');
+    });
+
+    unmount();
+  });
+
+  it('shows the "Sent to model (request)" tab with captured request details', async () => {
+    const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
+    let emit: ((c: import('#src/tui/types.js').TuiDebugCapture) => void) | undefined;
+    const subscribeDebug = (cb: (c: import('#src/tui/types.js').TuiDebugCapture) => void) => {
+      emit = cb;
+      return () => {};
+    };
+    const { stdin, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} subscribeDebug={subscribeDebug} />
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    // Feed a request capture (history + the new request details).
+    emit?.({
+      kind: 'request',
+      text: '[]',
+      details: '=== MODEL PARAMS ===\n{"model":"claude-opus-4"}',
+    });
+
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Sent to model (request)'));
+
+    // Step to the request tab (subagents -> history -> request) and read its content.
+    stdin.write(TAB); // focus
+    await vi.waitFor(() => expect(lastFrame()).toContain('Tab: section'));
+    stdin.write(TAB); // -> history
+    stdin.write(TAB); // -> request
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).toContain('MODEL PARAMS');
+      expect(f).toContain('claude-opus-4');
+    });
+
+    unmount();
+  });
+
   it('aborts the in-flight turn when Esc is pressed', async () => {
     let aborted = false;
     const agent: TuiAgent = {

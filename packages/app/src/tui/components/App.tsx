@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Text, useApp, useInput } from 'ink';
+import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import {
   foldEvents,
   foldSubagentEvents,
@@ -21,10 +21,21 @@ import {
   parseSlashCommand,
 } from '#src/tui/slashCommands.js';
 
-/** Rows of clipping viewport in the docked debug panel. */
+/** Rows of clipping viewport in the docked debug panel (default / restored size). */
 const DEBUG_VIEWPORT_HEIGHT = 8;
-/** PageUp/PageDown step (rows) when the panel is focused. */
-const DEBUG_PAGE_STEP = DEBUG_VIEWPORT_HEIGHT - 1;
+/** Rows of chrome around the debug viewport we leave for when it is maximised (panel
+ *  border, tab row, the input dock's rules/status/prompt). The maximised viewport is the
+ *  terminal height minus this, clamped so it never collapses on a tiny terminal. */
+const DEBUG_MAX_CHROME_ROWS = 8;
+/** Floor for the maximised viewport so a short terminal still shows something usable. */
+const DEBUG_MAX_MIN_HEIGHT = 6;
+
+/** The clipping-viewport height for the docked panel given the terminal height + maximise state. */
+function debugViewportHeight(maximized: boolean, terminalRows: number | undefined): number {
+  if (!maximized) return DEBUG_VIEWPORT_HEIGHT;
+  const rows = terminalRows && terminalRows > 0 ? terminalRows : 24;
+  return Math.max(DEBUG_MAX_MIN_HEIGHT, rows - DEBUG_MAX_CHROME_ROWS);
+}
 
 type DistributiveOmitId<T> = T extends unknown ? Omit<T, 'id'> : never;
 
@@ -50,7 +61,9 @@ export function App(props: TuiAppProps): React.ReactElement {
   const [debugFocused, setDebugFocused] = useState(false);
   const [debugTab, setDebugTab] = useState<DebugTab>(DEBUG_TABS[0]);
   const [debugScroll, setDebugScroll] = useState(0);
+  const [debugMaximized, setDebugMaximized] = useState(false);
   const [debugHistory, setDebugHistory] = useState<string[]>([]);
+  const [debugRequest, setDebugRequest] = useState<string[]>([]);
   const [debugResponse, setDebugResponse] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const idRef = useRef(0);
@@ -60,6 +73,12 @@ export function App(props: TuiAppProps): React.ReactElement {
   const subagentBuffersRef = useRef<Map<string, string>>(new Map());
   const debugFocusedRef = useRef(false);
   const { exit } = useApp();
+  // Terminal height drives the maximised viewport size; useStdout keeps it resize-aware.
+  const { stdout } = useStdout();
+  const terminalRows = stdout?.rows;
+  const debugViewport = debugViewportHeight(debugMaximized, terminalRows);
+  // PageUp/PageDown step tracks the live viewport so maximise pages by (almost) a full screen.
+  const debugPageStep = Math.max(1, debugViewport - 1);
 
   // Built once per session; a plain array so later layers (EXT-5) could append commands.
   const registry = useMemo(() => createCommandRegistry(), []);
@@ -139,6 +158,7 @@ export function App(props: TuiAppProps): React.ReactElement {
           setTranscript([]);
           setSubagents(initialSubagentTree());
           setDebugHistory([]);
+          setDebugRequest([]);
           setDebugResponse([]);
         }
         if (result.toggleDebug) {
@@ -151,6 +171,7 @@ export function App(props: TuiAppProps): React.ReactElement {
             } else {
               setDebugFocused(false);
               debugFocusedRef.current = false;
+              setDebugMaximized(false);
             }
             return next;
           });
@@ -173,7 +194,7 @@ export function App(props: TuiAppProps): React.ReactElement {
   //     path never registers gsloth's readline Esc handler, so Ink owns raw mode cleanly).
   //  2. Tab while the panel is visible and idle → focus/cycle the panel.
   //  3. While the panel is focused → Tab cycles section, PageUp/PageDown scroll, Esc unfocuses.
-  useInput((_input, key) => {
+  useInput((input, key) => {
     if (key.escape && runningRef.current) {
       abortRef.current?.abort();
       return;
@@ -190,12 +211,18 @@ export function App(props: TuiAppProps): React.ReactElement {
         setDebugScroll(0);
         return;
       }
+      // 'm' toggles maximise: grow the pane to (most of) the terminal height so long
+      // captures (full request / full response) are readable, and back.
+      if (input === 'm') {
+        setDebugMaximized((m) => !m);
+        return;
+      }
       if (key.pageUp) {
-        setDebugScroll((s) => Math.max(0, s - DEBUG_PAGE_STEP));
+        setDebugScroll((s) => Math.max(0, s - debugPageStep));
         return;
       }
       if (key.pageDown) {
-        setDebugScroll((s) => s + DEBUG_PAGE_STEP);
+        setDebugScroll((s) => s + debugPageStep);
         return;
       }
       return;
@@ -232,8 +259,10 @@ export function App(props: TuiAppProps): React.ReactElement {
   useEffect(() => {
     if (!props.subscribeDebug) return;
     return props.subscribeDebug((capture) => {
-      if (capture.kind === 'request') setDebugHistory(capture.text.split('\n'));
-      else setDebugResponse(capture.text.split('\n'));
+      if (capture.kind === 'request') {
+        setDebugHistory(capture.text.split('\n'));
+        setDebugRequest(capture.details.split('\n'));
+      } else setDebugResponse(capture.text.split('\n'));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -254,11 +283,13 @@ export function App(props: TuiAppProps): React.ReactElement {
         <DebugPanel
           subagents={subagents}
           historyLines={debugHistory}
+          requestLines={debugRequest}
           responseLines={debugResponse}
           activeTab={debugTab}
           scrollOffset={debugScroll}
           focused={debugFocused}
-          viewportHeight={DEBUG_VIEWPORT_HEIGHT}
+          viewportHeight={debugViewport}
+          maximized={debugMaximized}
         />
       ) : null}
       {/* Input dock: bracketed top and bottom by rules so the status bar, prompt and hint

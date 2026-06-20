@@ -3,12 +3,13 @@ import { Box, Text } from 'ink';
 import type { SubagentTreeViewModel } from '#src/tui/viewModel.js';
 
 /** The selectable sections of the docked panel, in tab order. */
-export const DEBUG_TABS = ['subagents', 'history', 'response'] as const;
+export const DEBUG_TABS = ['subagents', 'history', 'request', 'response'] as const;
 export type DebugTab = (typeof DEBUG_TABS)[number];
 
 const TAB_LABELS: Record<DebugTab, string> = {
   subagents: 'Subagents',
   history: 'Sent to model (full history)',
+  request: 'Sent to model (request)',
   response: 'Raw model response',
 };
 
@@ -17,6 +18,8 @@ export interface DebugPanelProps {
   subagents: SubagentTreeViewModel;
   /** Rendered lines for "Sent to model (full history)" (already split on newlines). */
   historyLines: string[];
+  /** Rendered lines for "Sent to model (request)" — tools/system/params (split on newlines). */
+  requestLines: string[];
   /** Rendered lines for "Raw model response" (already split on newlines). */
   responseLines: string[];
   /** Which tab is shown. */
@@ -27,6 +30,8 @@ export interface DebugPanelProps {
   focused: boolean;
   /** Height (in rows) of the bounded, clipping viewport. */
   viewportHeight: number;
+  /** Whether the pane is maximised (grown to most of the terminal height). */
+  maximized: boolean;
 }
 
 /** Flatten the subagent tree into renderable lines for the bounded viewport. */
@@ -55,11 +60,13 @@ function subagentLines(tree: SubagentTreeViewModel): string[] {
 export function DebugPanel({
   subagents,
   historyLines,
+  requestLines,
   responseLines,
   activeTab,
   scrollOffset,
   focused,
   viewportHeight,
+  maximized,
 }: DebugPanelProps): React.ReactElement {
   const lines =
     activeTab === 'subagents'
@@ -68,9 +75,13 @@ export function DebugPanel({
         ? historyLines.length
           ? historyLines
           : ['(no model call captured yet)']
-        : responseLines.length
-          ? responseLines
-          : ['(no model response captured yet)'];
+        : activeTab === 'request'
+          ? requestLines.length
+            ? requestLines
+            : ['(no request details captured yet)']
+          : responseLines.length
+            ? responseLines
+            : ['(no model response captured yet)'];
 
   // Clamp the window into range so an offset left over from a longer section never blanks
   // the viewport when switching to a shorter one.
@@ -99,10 +110,18 @@ export function DebugPanel({
               </Text>
             );
           })}
-          <Text dimColor>
-            {focused ? '  [Tab: section · PgUp/PgDn: scroll · Esc: unfocus]' : '  [/debug to hide]'}
-            {scrollHint}
-          </Text>
+        </Text>
+      </Box>
+      {/* Hint on its own row so it never competes with the (now four) tab labels for width
+          and wraps mid-phrase. */}
+      <Box>
+        <Text dimColor>
+          {focused
+            ? `[Tab: section · PgUp/PgDn: scroll · m: ${
+                maximized ? 'restore' : 'maximise'
+              } · Esc: unfocus]`
+            : '[/debug to hide]'}
+          {scrollHint}
         </Text>
       </Box>
       <Box height={viewportHeight} overflow="hidden" flexDirection="column">
