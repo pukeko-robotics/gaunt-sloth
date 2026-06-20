@@ -12,12 +12,14 @@ import {
   displaySuccess,
   displayWarning,
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
-import { createInterface, stdin, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { createInterface, env, stdin, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
 import {
   getGslothConfigWritePath,
   writeFileIfNotExistsWithMessages,
 } from '@gaunt-sloth/review/utils/fileUtils.js';
 import { ensureGslothDir, writeProjectReviewPreamble } from '#src/commands/configSetup.js';
+import { shouldUseTui } from '#src/tui/shouldUseTui.js';
+import { isInkAvailable } from '#src/tui/loadInk.js';
 
 /**
  * Where the first-run dialog (CFG-2) persists the chosen provider/model config.
@@ -28,6 +30,14 @@ import { ensureGslothDir, writeProjectReviewPreamble } from '#src/commands/confi
 export type ConfigScope = 'project' | 'global';
 
 type AskFn = (question: string) => Promise<string>;
+
+/**
+ * CFG-11 — picks one option from a labelled list. In an interactive TUI this is the Ink
+ * arrow-key selector; in non-TTY runs it is the readline number menu. The dialog routes
+ * provider / model / scope choices through this seam so the same flow drives both UIs and
+ * stays unit-testable (tests inject a deterministic `select`).
+ */
+export type SelectFn = (title: string, options: string[], defaultIndex: number) => Promise<number>;
 
 /**
  * Injectable side effects, so the dialog can be unit-tested without touching the
@@ -43,6 +53,8 @@ export interface FirstRunDialogDeps {
   writeConfig: (scope: ConfigScope, content: string) => string;
   /** Prompts the user and resolves with their (untrimmed) answer. */
   ask: AskFn;
+  /** CFG-11 — list selection (Ink arrow-keys in a TUI, readline number menu otherwise). */
+  select: SelectFn;
 }
 
 /**
@@ -79,6 +91,17 @@ export function resolveConfigWritePath(scope: ConfigScope): string {
   return scope === 'global'
     ? getGlobalGslothConfigWritePath(USER_PROJECT_CONFIG_JSON)
     : getGslothConfigWritePath(USER_PROJECT_CONFIG_JSON);
+}
+
+/**
+ * CFG-9 — an explicit, readable readiness label for a provider in the menu. The old bare
+ * `✓`/blank mark read like a selection checkbox; this spells the state out instead.
+ */
+export function providerReadinessLabel(provider: DetectedProvider): string {
+  if (provider.available) {
+    return provider.apiKeyEnvironmentVariable ? 'API Key Available' : 'Ready';
+  }
+  return provider.requiresExternalAuth ? 'Needs External Auth' : 'No API Key';
 }
 
 /**
@@ -119,6 +142,54 @@ function defaultWriteConfig(scope: ConfigScope, content: string): string {
 }
 
 /**
+ * CFG-11 — true when the current environment can drive the Ink arrow-key selector. Reuses the
+ * same TUI-activation policy as the chat/code dispatcher ({@link shouldUseTui}) so behaviour
+ * is consistent: a real interactive TTY with Ink installed and no opt-out.
+ */
+async function canUseInkSelect(): Promise<boolean> {
+  if (
+    !shouldUseTui({
+      stdoutIsTTY: !!stdout.isTTY,
+      stdinIsTTY: !!stdin.isTTY,
+      noTuiFlag: false,
+      tuiFlag: false,
+      term: env.TERM,
+      ci: !!env.CI,
+      gthNoTui: !!env.GTH_NO_TUI,
+      inkAvailable: true,
+    })
+  ) {
+    return false;
+  }
+  return await isInkAvailable();
+}
+
+/**
+ * Default {@link SelectFn}: the Ink keyboard selector when the environment supports it,
+ * otherwise the readline number menu via {@link ask}. The Ink module is imported lazily so
+ * a readline-only run never loads React/Ink.
+ */
+function makeDefaultSelect(ask: AskFn): SelectFn {
+  return async (title, options, defaultIndex) => {
+    if (await canUseInkSelect()) {
+      const { runInkSelect } = await import('#src/tui/components/SelectList.js');
+      return await runInkSelect(
+        title,
+        options.map((label) => ({ label })),
+        defaultIndex
+      );
+    }
+    // Readline fallback: render the numbered list, then prompt.
+    displayInfo(title);
+    options.forEach((label, index) => {
+      const isDefault = index === defaultIndex ? ' (default)' : '';
+      displayInfo(`  ${index + 1}. ${label}${isDefault}`);
+    });
+    return await promptMenu(ask, `\nChoice [${defaultIndex + 1}]: `, options.length, defaultIndex);
+  };
+}
+
+/**
  * CFG-2 — the first-run configuration dialog.
  *
  * Walks the user through: (1) picking a provider (usable ones first, detected via
@@ -131,13 +202,15 @@ export async function runFirstRunDialog(
   overrides: Partial<FirstRunDialogDeps> = {}
 ): Promise<void> {
   const rl = overrides.ask ? null : createInterface({ input: stdin, output: stdout });
+  const ask: AskFn = overrides.ask ?? ((q) => rl!.question(q));
   const deps: FirstRunDialogDeps = {
     detectProviders,
     listModels,
     ensureGslothDir,
     writeProjectReviewPreamble,
     writeConfig: defaultWriteConfig,
-    ask: overrides.ask ?? ((q) => rl!.question(q)),
+    ask,
+    select: makeDefaultSelect(ask),
     ...overrides,
   };
 
@@ -148,12 +221,10 @@ export async function runFirstRunDialog(
       displayWarning('No providers are known to Gaunt Sloth. Cannot configure.');
       return;
     }
-    displayInfo('Select a provider:');
-    providers.forEach((provider, index) => {
-      const mark = provider.available ? '✓' : ' ';
-      displayInfo(`  ${index + 1}. [${mark}] ${provider.label} (${providerStatus(provider)})`);
-    });
-    const provider = providers[await promptMenu(deps.ask, '\nProvider number: ', providers.length)];
+    const providerOptions = providers.map(
+      (p) => `${p.label} [${providerReadinessLabel(p)}] (${providerStatus(p)})`
+    );
+    const provider = providers[await deps.select('Select a provider:', providerOptions, 0)];
 
     if (!provider.available) {
       displayWarning(
@@ -177,24 +248,21 @@ export async function runFirstRunDialog(
       }
     } else {
       const fallback = defaultModelIndex(models);
-      displayInfo(`\nSelect a model for ${provider.label}:`);
-      models.forEach((m, index) => {
-        const star = m.preferred ? '⭐ ' : '   ';
-        const isDefault = index === fallback ? ' (default)' : '';
-        displayInfo(`  ${index + 1}. ${star}${m.id}${isDefault}`);
-      });
+      const modelOptions = models.map((m) => `${m.preferred ? '⭐ ' : '   '}${m.id}`);
       model =
-        models[
-          await promptMenu(deps.ask, `\nModel number [${fallback + 1}]: `, models.length, fallback)
-        ].id;
+        models[await deps.select(`Select a model for ${provider.label}:`, modelOptions, fallback)]
+          .id;
     }
 
     // 3. Scope.
-    displayInfo('\nWhere should this configuration be stored?');
-    displayInfo('  1. This project only (.gsloth/.gsloth-settings/)');
-    displayInfo('  2. Globally for all projects (~/.gsloth/)');
     const scope: ConfigScope =
-      (await promptMenu(deps.ask, '\nStorage choice [1]: ', 2, 0)) === 1 ? 'global' : 'project';
+      (await deps.select(
+        'Where should this configuration be stored?',
+        ['This project only (.gsloth/.gsloth-settings/)', 'Globally for all projects (~/.gsloth/)'],
+        0
+      )) === 1
+        ? 'global'
+        : 'project';
 
     // 4. Scaffold (project only) + write.
     if (scope === 'project') {
