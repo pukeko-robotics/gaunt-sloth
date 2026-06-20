@@ -8,6 +8,20 @@ export function codeCommand(
   program: Command,
   commandLineConfigOverrides: CommandLineConfigOverrides
 ): void {
+  const sessionConfig: SessionConfig = {
+    mode: 'code',
+    readModePrompt: readCodePrompt,
+    description:
+      'Interactively write code with sloth (has full file system access within your project)',
+    readyMessage: '\nGaunt Sloth is ready to code. Type your prompt.',
+    exitMessage: "Type 'exit' or hit Ctrl+C to exit code session\n",
+  };
+
+  // REL-3: bare `gth` (no subcommand) now defaults to the agentic code session.
+  program.action(async () => {
+    await startSession(sessionConfig, commandLineConfigOverrides);
+  });
+
   program
     .command('code')
     .description(
@@ -15,15 +29,6 @@ export function codeCommand(
     )
     .argument('[message]', 'Initial message to start the code session')
     .action(async (message: string) => {
-      const sessionConfig: SessionConfig = {
-        mode: 'code',
-        readModePrompt: readCodePrompt,
-        description:
-          'Interactively write code with sloth (has full file system access within your project)',
-        readyMessage: '\nGaunt Sloth is ready to code. Type your prompt.',
-        exitMessage: "Type 'exit' or hit Ctrl+C to exit code session\n",
-      };
-
       await startSession(sessionConfig, commandLineConfigOverrides, message);
     });
 }

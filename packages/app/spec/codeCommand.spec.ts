@@ -134,6 +134,23 @@ describe('codeCommand', () => {
     );
   });
 
+  it('REL-3: bare gth (no subcommand) defaults to the code session', async () => {
+    const mockReadline = {
+      question: vi.fn().mockResolvedValue('exit'),
+      close: vi.fn(),
+    };
+    vi.mocked(createInterface).mockReturnValue(mockReadline as unknown as ReadlineInterface);
+
+    codeCommand(program, {});
+    await program.parseAsync(['na', 'na']); // no subcommand
+
+    expect(gthAgentRunnerInstanceMock.init).toHaveBeenCalledWith(
+      'code',
+      expect.any(Object),
+      expect.any(MemorySaver)
+    );
+  });
+
   it('Should process initial message if provided', async () => {
     const mockReadline = {
       question: vi.fn().mockResolvedValue('exit'),

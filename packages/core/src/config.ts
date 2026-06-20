@@ -719,6 +719,40 @@ async function applyGlobalConfigBase<T extends Record<string, unknown>>(
 }
 
 /**
+ * Returns true when a project-level config file (json/js/mjs) exists for the given
+ * overrides. Honours `customConfigPath` and the active identity profile so the check
+ * matches exactly what {@link initConfig} would attempt to load.
+ *
+ * This is the project half of CFG-10's "is any config present?" detection; the global
+ * half is {@link loadGlobalRawConfig} (used by {@link hasAnyConfig}).
+ */
+export function hasProjectConfig(commandLineConfigOverrides: CommandLineConfigOverrides): boolean {
+  if (commandLineConfigOverrides.customConfigPath) {
+    return existsSync(commandLineConfigOverrides.customConfigPath);
+  }
+  return [USER_PROJECT_CONFIG_JSON, USER_PROJECT_CONFIG_JS, USER_PROJECT_CONFIG_MJS].some(
+    (filename) =>
+      existsSync(getGslothConfigReadPath(filename, commandLineConfigOverrides.identityProfile))
+  );
+}
+
+/**
+ * CFG-10 — true when ANY usable configuration is present, either a project config file
+ * (json/js/mjs) or a standalone global config (`~/.gsloth/.gsloth.config.*`). When this
+ * returns false the caller should run the first-run dialog instead of erroring.
+ *
+ * Reuses CFG-8's project + global detection so the two paths can never disagree.
+ */
+export async function hasAnyConfig(
+  commandLineConfigOverrides: CommandLineConfigOverrides
+): Promise<boolean> {
+  if (hasProjectConfig(commandLineConfigOverrides)) {
+    return true;
+  }
+  return (await loadGlobalRawConfig()) !== undefined;
+}
+
+/**
  * Initialize configuration by loading from available config files
  * @returns The loaded GthConfig
  */
@@ -737,6 +771,29 @@ export async function initConfig(
   const jsonConfigPath =
     commandLineConfigOverrides.customConfigPath ??
     getGslothConfigReadPath(USER_PROJECT_CONFIG_JSON, commandLineConfigOverrides.identityProfile);
+
+  // CFG-8 — when no project config file of any format exists, fall back to a standalone
+  // global config (loaded alone) before erroring. Project config still takes precedence:
+  // this branch only runs when there is no project file to apply the global config under.
+  if (!hasProjectConfig(commandLineConfigOverrides)) {
+    const globalRawConfig = await loadGlobalRawConfig();
+    if (globalRawConfig) {
+      if (
+        globalRawConfig.llm &&
+        typeof globalRawConfig.llm === 'object' &&
+        'type' in globalRawConfig.llm
+      ) {
+        // Route the global config through the same path the project JSON uses.
+        return await tryJsonConfig(globalRawConfig as RawGthConfig, commandLineConfigOverrides);
+      }
+      displayError(
+        'Global configuration found but it is not in valid format. Should at least define llm.type'
+      );
+      exit(1);
+      // Unreachable past exit(1) in production; keeps TS happy and prevents test exit.
+      throw new Error('Unexpected error occurred.');
+    }
+  }
 
   // Try loading the JSON config file first
   if (jsonConfigPath.endsWith('.json') && existsSync(jsonConfigPath)) {

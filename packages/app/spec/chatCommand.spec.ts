@@ -159,21 +159,19 @@ describe('chatCommand', () => {
     );
   });
 
-  it('Should handle program action for no arguments', async () => {
+  it('REL-3: chat does NOT register a no-subcommand default action', async () => {
+    // The bare-`gth` default is now the agentic code session (registered in codeCommand),
+    // so chatCommand must not start a chat session when no subcommand is given.
     const { chatCommand } = await import('#src/commands/chatCommand.js');
     chatCommand(program, {});
-    await program.parseAsync(['na', 'na']);
+    program.exitOverride(); // commander would otherwise call process.exit when it shows help
+    try {
+      await program.parseAsync(['na', 'na']);
+    } catch {
+      // With no default action and no subcommand, commander shows help and exits — expected.
+    }
 
-    expect(interactiveSessionModuleMock.createInteractiveSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mode: 'chat',
-        description: 'Start an interactive chat session with Gaunt Sloth',
-        readyMessage: '\nGaunt Sloth is ready to chat. Type your prompt.',
-        exitMessage: "Type 'exit' or hit Ctrl+C to exit chat\n",
-      }),
-      {},
-      undefined
-    );
+    expect(interactiveSessionModuleMock.createInteractiveSession).not.toHaveBeenCalled();
   });
 });
 
@@ -202,39 +200,6 @@ describe('Default Chat Behavior (no arguments)', () => {
     fsMock.existsSync.mockReturnValue(true);
 
     llmUtilsMock.invoke.mockResolvedValue('Mock response');
-  });
-
-  it('Should start chat session when called directly via createInteractiveSession', async () => {
-    const { chatCommand } = await import('#src/commands/chatCommand.js');
-    chatCommand(program, {});
-    await program.parseAsync(['na', 'na']);
-
-    expect(interactiveSessionModuleMock.createInteractiveSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mode: 'chat',
-        description: 'Start an interactive chat session with Gaunt Sloth',
-        readyMessage: '\nGaunt Sloth is ready to chat. Type your prompt.',
-        exitMessage: "Type 'exit' or hit Ctrl+C to exit chat\n",
-      }),
-      {},
-      undefined
-    );
-  });
-
-  it('Should display welcome message when no initial message provided', async () => {
-    const { chatCommand } = await import('#src/commands/chatCommand.js');
-    chatCommand(program, {});
-    await program.parseAsync(['na', 'na']);
-
-    expect(interactiveSessionModuleMock.createInteractiveSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mode: 'chat',
-        readyMessage: '\nGaunt Sloth is ready to chat. Type your prompt.',
-        exitMessage: "Type 'exit' or hit Ctrl+C to exit chat\n",
-      }),
-      {},
-      undefined
-    );
   });
 
   it('Should create session config with correct mode and prompts', async () => {

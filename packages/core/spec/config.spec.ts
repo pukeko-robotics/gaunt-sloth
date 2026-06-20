@@ -610,6 +610,114 @@ describe('config', async () => {
     });
   });
 
+  describe('global-only config (CFG-8)', () => {
+    const GLOBAL_JSON_PATH = '/mock/global/.gsloth.config.json';
+    const PROJECT_JSON_MARKER = '.gsloth.config.json';
+
+    /** Serve a global JSON config while NO project config file of any format exists. */
+    function setupGlobalOnly(globalConfig: Record<string, unknown> | undefined) {
+      globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation((filename: string) => {
+        if (filename === PROJECT_JSON_MARKER) return GLOBAL_JSON_PATH;
+        return `/mock/global-absent/${filename}`;
+      });
+      fileUtilsMock.getGslothConfigReadPath.mockImplementation(
+        (filename: string) => `/mock/read/${filename}`
+      );
+      // Only the global JSON path exists; every project path is absent.
+      fsMock.existsSync.mockImplementation((path: string) => {
+        if (path === GLOBAL_JSON_PATH) return globalConfig !== undefined;
+        return false;
+      });
+      fsMock.readFileSync.mockImplementation((path: string) => {
+        if (path === GLOBAL_JSON_PATH) return JSON.stringify(globalConfig ?? {});
+        return '';
+      });
+      vi.doMock('#src/providers/vertexai.js', () => ({
+        processJsonConfig: vi.fn().mockImplementation((llm: Record<string, unknown>) => ({
+          type: 'vertexai',
+          ...llm,
+        })),
+        postProcessJsonConfig: undefined,
+      }));
+    }
+
+    it('Should load a standalone global config when no project config exists', async () => {
+      setupGlobalOnly({
+        llm: { type: 'vertexai', model: 'global-model' },
+        projectGuidelines: 'GLOBAL.md',
+      });
+
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({});
+
+      expect((config.llm as unknown as Record<string, unknown>).type).toBe('vertexai');
+      expect((config.llm as unknown as Record<string, unknown>).model).toBe('global-model');
+      expect(config.projectGuidelines).toBe('GLOBAL.md');
+      // Must NOT error when a usable global config is the only config present.
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+    });
+
+    it('Should error when a global config exists but lacks llm.type', async () => {
+      setupGlobalOnly({ projectGuidelines: 'GLOBAL.md' });
+
+      const { initConfig } = await import('#src/config.js');
+      try {
+        await initConfig({});
+      } catch {
+        // mock exit() does not stop execution.
+      }
+
+      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+        expect.stringContaining('not in valid format')
+      );
+      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('Should still error "No configuration file found" when neither project nor global exists', async () => {
+      setupGlobalOnly(undefined);
+
+      const { initConfig } = await import('#src/config.js');
+      try {
+        await initConfig({});
+      } catch {
+        // mock exit() does not stop execution.
+      }
+
+      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+        'No configuration file found. Please create one of: ' +
+          '.gsloth.config.json, .gsloth.config.js, or .gsloth.config.mjs ' +
+          'in your project directory.'
+      );
+      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('hasAnyConfig returns false when neither project nor global config exists', async () => {
+      setupGlobalOnly(undefined);
+      const { hasAnyConfig } = await import('#src/config.js');
+      expect(await hasAnyConfig({})).toBe(false);
+    });
+
+    it('hasAnyConfig returns true when only a global config exists', async () => {
+      setupGlobalOnly({ llm: { type: 'vertexai' } });
+      const { hasAnyConfig } = await import('#src/config.js');
+      expect(await hasAnyConfig({})).toBe(true);
+    });
+
+    it('hasAnyConfig returns true when a project config exists', async () => {
+      globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
+        () => '/mock/global-absent/no-such-config'
+      );
+      fileUtilsMock.getGslothConfigReadPath.mockImplementation(
+        (filename: string) => `/mock/read/${filename}`
+      );
+      fsMock.existsSync.mockImplementation(
+        (path: string) => path === `/mock/read/${PROJECT_JSON_MARKER}`
+      );
+      const { hasAnyConfig } = await import('#src/config.js');
+      expect(await hasAnyConfig({})).toBe(true);
+    });
+  });
+
   describe('writeOutputToFile configuration', () => {
     it('Should set writeOutputToFile to true by default in config', async () => {
       // Create a test config
