@@ -13,11 +13,13 @@ export interface TuiAgent {
 
 /**
  * One debug capture from the deep agent's `wrapModelCall` middleware. `kind: 'request'`
- * carries the full message history sent to the model; `kind: 'response'` carries the resolved
- * raw model response. Both arrive pre-rendered as a JSON string so the panel just slices lines.
+ * carries the full message history sent to the model plus, in `details`, the non-message
+ * request parts (system prompt, tool definitions, model params) rendered for the dedicated
+ * "Sent to model (request)" tab; `kind: 'response'` carries the resolved raw model response.
+ * All arrive pre-rendered as strings so the panel just slices lines.
  */
 export type TuiDebugCapture =
-  | { kind: 'request'; text: string }
+  | { kind: 'request'; text: string; details: string }
   | { kind: 'response'; text: string };
 
 /** A committed line in the scrollback (rendered via Ink `<Static>`). */

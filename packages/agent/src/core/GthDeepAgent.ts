@@ -20,7 +20,7 @@ import {
   FILESYSTEM_TOOL_NAMES,
   type FilesystemPermission,
 } from '#src/core/deepAgentPermissions.js';
-import type { DebugCapture } from '#src/core/debugCapture.js';
+import type { DebugCapture, DebugRequestExtras, DebugToolDef } from '#src/core/debugCapture.js';
 
 /**
  * The subset of `createDeepAgent` params that are independent of the transport
@@ -124,7 +124,7 @@ export class GthDeepAgent extends GthAbstractAgent {
         const capture = getDebugCapture();
         if (!capture) return handler(request);
         try {
-          capture.onRequest?.(request.messages);
+          capture.onRequest?.(request.messages, extractDebugRequestExtras(request));
         } catch {
           /* a debug sink must never break the run */
         }
@@ -338,4 +338,89 @@ export class GthDeepAgent extends GthAbstractAgent {
       systemPrompt,
     };
   }
+}
+
+/**
+ * Scalar model-param fields worth surfacing in the `/debug` panel. Deliberately an
+ * allowlist (NOT a whole-object dump) so no credential field (`apiKey`, `accessToken`, …)
+ * can ever leak into the rendered debug view.
+ */
+const DEBUG_MODEL_PARAM_KEYS = [
+  'model',
+  'modelName',
+  'modelId',
+  'deploymentName',
+  'temperature',
+  'topP',
+  'topK',
+  'maxTokens',
+  'maxOutputTokens',
+  'maxReasoningTokens',
+  'reasoningEffort',
+  'thinkingBudget',
+  'stop',
+  'streaming',
+  'provider',
+] as const;
+
+/** Pull the key-free scalar model params from the (provider-specific) model instance. */
+function extractModelParams(model: unknown): Record<string, unknown> | undefined {
+  if (!model || typeof model !== 'object') return undefined;
+  const src = model as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of DEBUG_MODEL_PARAM_KEYS) {
+    const value = src[key];
+    if (value === undefined || value === null) continue;
+    // Only scalars / scalar arrays — never nested objects that could carry credentials.
+    if (typeof value === 'object' && !Array.isArray(value)) continue;
+    out[key] = value;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Best-effort tool definition (name + description + schema) for the debug view. */
+function extractToolDefs(tools: unknown): DebugToolDef[] | undefined {
+  if (!Array.isArray(tools) || tools.length === 0) return undefined;
+  const defs: DebugToolDef[] = [];
+  for (const tool of tools) {
+    if (!tool || typeof tool !== 'object') continue;
+    const t = tool as Record<string, unknown>;
+    const name = typeof t.name === 'string' ? t.name : undefined;
+    if (!name) continue;
+    const description = typeof t.description === 'string' ? t.description : undefined;
+    // LangChain StructuredTools expose a Zod/JSON `schema`; some carry it on `lc_kwargs`.
+    const schema = (t.schema as unknown) ?? undefined;
+    defs.push({ name, description, schema });
+  }
+  return defs.length > 0 ? defs : undefined;
+}
+
+/**
+ * Assemble the non-message request parts ({@link DebugRequestExtras}) for the `/debug`
+ * panel from a `wrapModelCall` request, defensively and key-free. Never throws (the caller
+ * already guards, but a debug sink must never break a run) and never dumps the raw model.
+ */
+export function extractDebugRequestExtras(request: unknown): DebugRequestExtras | undefined {
+  if (!request || typeof request !== 'object') return undefined;
+  const req = request as Record<string, unknown>;
+  const systemMessage = req.systemMessage as { content?: unknown } | undefined;
+  const systemPrompt =
+    typeof req.systemPrompt === 'string' && req.systemPrompt
+      ? req.systemPrompt
+      : typeof systemMessage?.content === 'string'
+        ? systemMessage.content
+        : undefined;
+  const extras: DebugRequestExtras = {
+    systemPrompt,
+    tools: extractToolDefs(req.tools),
+    modelParams: extractModelParams(req.model),
+    toolChoice: req.toolChoice,
+  };
+  // Return undefined when nothing useful was captured so the renderer can show a clear empty state.
+  const hasAny =
+    extras.systemPrompt !== undefined ||
+    extras.tools !== undefined ||
+    extras.modelParams !== undefined ||
+    extras.toolChoice !== undefined;
+  return hasAny ? extras : undefined;
 }

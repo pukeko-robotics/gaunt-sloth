@@ -19,7 +19,8 @@ import type { SessionConfig } from '@gaunt-sloth/agent/modules/interactiveSessio
 import type { BaseMessage } from '@langchain/core/messages';
 import { App } from '#src/tui/components/App.js';
 import type { TuiAgent, TuiDebugCapture } from '#src/tui/types.js';
-import { renderHistory, renderResponse } from '#src/tui/debugRender.js';
+import { renderHistory, renderRequestDetails, renderResponse } from '#src/tui/debugRender.js';
+import type { DebugRequestExtras } from '@gaunt-sloth/agent/core/debugCapture.js';
 
 type StatusListener = (level: string, message: string) => void;
 
@@ -56,8 +57,12 @@ function createDebugBridge() {
       };
     },
     capture: {
-      onRequest: (messages: BaseMessage[]) =>
-        emit({ kind: 'request', text: renderHistory(messages) }),
+      onRequest: (messages: BaseMessage[], extras?: DebugRequestExtras) =>
+        emit({
+          kind: 'request',
+          text: renderHistory(messages),
+          details: renderRequestDetails(extras),
+        }),
       onResponse: (response: unknown) => emit({ kind: 'response', text: renderResponse(response) }),
     },
   };

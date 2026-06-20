@@ -237,8 +237,10 @@ describe('GthDeepAgent', () => {
 
     const result = await debugMw.wrapModelCall({ messages }, handler);
 
-    // Sink saw the real request messages (at call time) and the resolved response.
-    expect(onRequest).toHaveBeenCalledWith(messages);
+    // Sink saw the real request messages (at call time) and the resolved response. The second
+    // onRequest arg is the request extras (tools/system/params); undefined here since this
+    // minimal request carries none.
+    expect(onRequest).toHaveBeenCalledWith(messages, undefined);
     expect(onResponse).toHaveBeenCalledWith(response);
     // Order: request captured before the handler runs, response after.
     expect(onRequest).toHaveBeenCalledBefore(onResponse);
