@@ -24,6 +24,7 @@ import {
   setConsoleLevel,
 } from '#src/utils/consoleUtils.js';
 import { getGslothConfigReadPath, importExternalFile } from '#src/utils/fileUtils.js';
+import { getGlobalGslothConfigReadPath } from '#src/utils/globalConfigUtils.js';
 import { error, exit, isTTY, setUseColour } from '#src/utils/systemUtils.js';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import type { BaseToolkit, StructuredToolInterface } from '@langchain/core/tools';
@@ -260,6 +261,19 @@ export interface GthConfig {
       binaryFormats?: false | BinaryFormatConfig[];
     };
     code?: {
+      filesystem?: string[] | 'all' | 'read' | 'none';
+      builtInTools?: string[];
+      customTools?: CustomToolsConfig | false;
+      /** See {@link GthConfig.allowedTools}. */
+      allowedTools?: string[];
+      devTools?: GthDevToolsConfig;
+      binaryFormats?: false | BinaryFormatConfig[];
+    };
+    /**
+     * `gth exec` — prompt-as-script runtime. Like `code`, an exec run may need to actually
+     * do the job (read/write files, run commands), so it carries the same tool/filesystem knobs.
+     */
+    exec?: {
       filesystem?: string[] | 'all' | 'read' | 'none';
       builtInTools?: string[];
       customTools?: CustomToolsConfig | false;
@@ -534,6 +548,15 @@ export interface CommandLineConfigOverrides {
    * in the case if some prompt files are missing - a file from the installation directory will be used.
    */
   identityProfile?: string;
+  /**
+   * Interactive TUI activation override for chat/code sessions.
+   * - `true` (`--tui`): force the Ink TUI on where the terminal supports it (also overrides
+   *   the CI auto-off heuristic).
+   * - `false` (`--no-tui`): force the plain readline session.
+   * - `undefined` (default): auto-detect from the terminal.
+   * The decision itself lives in `gaunt-sloth`'s `shouldUseTui`; this only carries the flag.
+   */
+  tui?: boolean;
 }
 
 /**
@@ -599,6 +622,9 @@ export const DEFAULT_CONFIG = {
     code: {
       filesystem: 'all',
     },
+    exec: {
+      filesystem: 'all',
+    },
     api: {
       filesystem: 'read',
       port: 3000,
@@ -629,6 +655,104 @@ export const DEFAULT_CONFIG = {
 DEFAULT_CONFIG as GthConfig;
 
 /**
+ * Loads the global gsloth config (if present) from the global `~/.gsloth` folder.
+ *
+ * Precedence support: the returned raw config is intended to act as the BASE that the
+ * project config (and CLI overrides) merge on top of, so any value here is the lowest
+ * user-controlled layer (still above {@link DEFAULT_CONFIG}).
+ *
+ * Lookup order within the global folder, first match wins:
+ *   `.gsloth.config.json` -> `.gsloth.config.js` -> `.gsloth.config.mjs`
+ *
+ * Absence of every variant is a no-op: returns `undefined` so behaviour is unchanged.
+ *
+ * NOTE: secrets (API keys) may live in this file; this function must never log its
+ * contents. Only non-sensitive diagnostics (the resolved path / parse failure) are emitted.
+ *
+ * @returns The raw global config object, or `undefined` when no global config exists.
+ */
+export async function loadGlobalRawConfig(): Promise<Partial<RawGthConfig> | undefined> {
+  // JSON first (the must-have format).
+  const jsonPath = getGlobalGslothConfigReadPath(USER_PROJECT_CONFIG_JSON);
+  if (existsSync(jsonPath)) {
+    try {
+      return JSON.parse(readFileSync(jsonPath, 'utf8')) as Partial<RawGthConfig>;
+    } catch (e) {
+      displayDebug(e instanceof Error ? e : String(e));
+      displayWarning(`Failed to read global config from ${jsonPath}, ignoring it.`);
+      return undefined;
+    }
+  }
+
+  // Then JS / MJS variants (dynamic import of a `configure()` module).
+  for (const filename of [USER_PROJECT_CONFIG_JS, USER_PROJECT_CONFIG_MJS]) {
+    const modulePath = getGlobalGslothConfigReadPath(filename);
+    if (existsSync(modulePath)) {
+      try {
+        const imported = await importExternalFile(modulePath);
+        const configured = await imported.configure();
+        return configured as Partial<RawGthConfig>;
+      } catch (e) {
+        displayDebug(e instanceof Error ? e : String(e));
+        displayWarning(`Failed to read global config from ${modulePath}, ignoring it.`);
+        return undefined;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Deep-merges a loaded global raw config UNDER the given project raw config, so the
+ * project config wins on conflicting keys. When no global config exists this is a no-op
+ * and the original project config is returned unchanged.
+ */
+async function applyGlobalConfigBase<T extends Record<string, unknown>>(
+  projectRawConfig: T
+): Promise<T> {
+  const globalRawConfig = await loadGlobalRawConfig();
+  if (!globalRawConfig) {
+    return projectRawConfig;
+  }
+  return deepMerge(globalRawConfig as Partial<T>, projectRawConfig) as T;
+}
+
+/**
+ * Returns true when a project-level config file (json/js/mjs) exists for the given
+ * overrides. Honours `customConfigPath` and the active identity profile so the check
+ * matches exactly what {@link initConfig} would attempt to load.
+ *
+ * This is the project half of CFG-10's "is any config present?" detection; the global
+ * half is {@link loadGlobalRawConfig} (used by {@link hasAnyConfig}).
+ */
+export function hasProjectConfig(commandLineConfigOverrides: CommandLineConfigOverrides): boolean {
+  if (commandLineConfigOverrides.customConfigPath) {
+    return existsSync(commandLineConfigOverrides.customConfigPath);
+  }
+  return [USER_PROJECT_CONFIG_JSON, USER_PROJECT_CONFIG_JS, USER_PROJECT_CONFIG_MJS].some(
+    (filename) =>
+      existsSync(getGslothConfigReadPath(filename, commandLineConfigOverrides.identityProfile))
+  );
+}
+
+/**
+ * CFG-10 — true when ANY usable configuration is present, either a project config file
+ * (json/js/mjs) or a standalone global config (`~/.gsloth/.gsloth.config.*`). When this
+ * returns false the caller should run the first-run dialog instead of erroring.
+ *
+ * Reuses CFG-8's project + global detection so the two paths can never disagree.
+ */
+export async function hasAnyConfig(
+  commandLineConfigOverrides: CommandLineConfigOverrides
+): Promise<boolean> {
+  if (hasProjectConfig(commandLineConfigOverrides)) {
+    return true;
+  }
+  return (await loadGlobalRawConfig()) !== undefined;
+}
+
+/**
  * Initialize configuration by loading from available config files
  * @returns The loaded GthConfig
  */
@@ -648,11 +772,38 @@ export async function initConfig(
     commandLineConfigOverrides.customConfigPath ??
     getGslothConfigReadPath(USER_PROJECT_CONFIG_JSON, commandLineConfigOverrides.identityProfile);
 
+  // CFG-8 — when no project config file of any format exists, fall back to a standalone
+  // global config (loaded alone) before erroring. Project config still takes precedence:
+  // this branch only runs when there is no project file to apply the global config under.
+  if (!hasProjectConfig(commandLineConfigOverrides)) {
+    const globalRawConfig = await loadGlobalRawConfig();
+    if (globalRawConfig) {
+      if (
+        globalRawConfig.llm &&
+        typeof globalRawConfig.llm === 'object' &&
+        'type' in globalRawConfig.llm
+      ) {
+        // Route the global config through the same path the project JSON uses.
+        return await tryJsonConfig(globalRawConfig as RawGthConfig, commandLineConfigOverrides);
+      }
+      displayError(
+        'Global configuration found but it is not in valid format. Should at least define llm.type'
+      );
+      exit(1);
+      // Unreachable past exit(1) in production; keeps TS happy and prevents test exit.
+      throw new Error('Unexpected error occurred.');
+    }
+  }
+
   // Try loading the JSON config file first
   if (jsonConfigPath.endsWith('.json') && existsSync(jsonConfigPath)) {
     try {
       // TODO makes sense to employ ZOD to validate config
-      const jsonConfig = JSON.parse(readFileSync(jsonConfigPath, 'utf8')) as RawGthConfig;
+      const projectJsonConfig = JSON.parse(readFileSync(jsonConfigPath, 'utf8')) as RawGthConfig;
+      // Apply global config as the base layer (project config wins on conflicts).
+      const jsonConfig = (await applyGlobalConfigBase(
+        projectJsonConfig as unknown as Record<string, unknown>
+      )) as unknown as RawGthConfig;
       // If the config has an LLM with a type, create the appropriate LLM instance
       if (jsonConfig.llm && typeof jsonConfig.llm === 'object' && 'type' in jsonConfig.llm) {
         return await tryJsonConfig(jsonConfig, commandLineConfigOverrides);
@@ -689,7 +840,8 @@ async function tryJsConfig(
     try {
       const i = await importExternalFile(jsConfigPath);
       const customConfig = await i.configure();
-      return await mergeConfig(customConfig, commandLineConfigOverrides);
+      const mergedWithGlobal = await applyGlobalConfigBase(customConfig as Record<string, unknown>);
+      return await mergeConfig(mergedWithGlobal, commandLineConfigOverrides);
     } catch (e) {
       displayDebug(e instanceof Error ? e : String(e));
       displayError(`Failed to read config from ${USER_PROJECT_CONFIG_JS}, will try other formats.`);
@@ -713,7 +865,8 @@ async function tryMjsConfig(
     try {
       const i = await importExternalFile(mjsConfigPath);
       const customConfig = await i.configure();
-      return await mergeConfig(customConfig, commandLineConfigOverrides);
+      const mergedWithGlobal = await applyGlobalConfigBase(customConfig as Record<string, unknown>);
+      return await mergeConfig(mergedWithGlobal, commandLineConfigOverrides);
     } catch (e) {
       displayDebug(e instanceof Error ? e : String(e));
       displayError(`Failed to read config from ${USER_PROJECT_CONFIG_MJS}.`);
@@ -893,6 +1046,10 @@ async function mergeConfig(
     code: deepMerge(
       DEFAULT_CONFIG.commands.code as Record<string, unknown>,
       config?.commands?.code as Record<string, unknown> | undefined
+    ) as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+    exec: deepMerge(
+      DEFAULT_CONFIG.commands.exec as Record<string, unknown>,
+      config?.commands?.exec as Record<string, unknown> | undefined
     ) as any, // eslint-disable-line @typescript-eslint/no-explicit-any
     ask: deepMerge(
       DEFAULT_CONFIG.commands.ask as Record<string, unknown>,

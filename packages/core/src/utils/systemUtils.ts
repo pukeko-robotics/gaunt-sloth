@@ -187,6 +187,13 @@ process.on('SIGTERM', () => {
  * since they are likely to juggle the process.cwd(), where it is unavailable process.cwd() is used.
  */
 export const getCurrentWorkDir = (): string => process.env?.INIT_CWD ?? process.cwd();
+/**
+ * The raw process working directory, ignoring `INIT_CWD`. {@link getCurrentWorkDir} prefers
+ * npm's `INIT_CWD` (correct for a CLI invoked via an npm bin), but that leaks into long-lived
+ * subprocesses (e.g. an ACP agent spawned by an IDE), so server entry points that get their
+ * real workspace from the protocol should use this instead.
+ */
+export const getProcessCwd = (): string => process.cwd();
 export const getInstallDir = (): string => {
   if (innerState.installDir) {
     return innerState.installDir;
@@ -217,6 +224,7 @@ export const isTTY = (): boolean => !!stdin.isTTY;
 export const exit = (code?: number): never => process.exit(code || 0);
 export const stdin = process.stdin;
 export const stdout = process.stdout;
+export const stderr = process.stderr;
 export const argv = process.argv;
 export const env = process.env;
 export const setExitCode = (code: number): void => {

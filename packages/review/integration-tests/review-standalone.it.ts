@@ -79,7 +79,7 @@ describe('Standalone @gaunt-sloth/review integration test', () => {
 
     // Copy a test file to review
     fs.copyFileSync(
-      path.join(rootDir, 'packages/assistant/integration-tests/workdir/filewithgoodcode.js'),
+      path.join(rootDir, 'packages/app/integration-tests/workdir/filewithgoodcode.js'),
       path.join(tempDir, 'filewithgoodcode.js')
     );
 

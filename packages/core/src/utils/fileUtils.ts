@@ -9,6 +9,7 @@ import {
   displaySuccess,
   displayWarning,
 } from '#src/utils/consoleUtils.js';
+import { wrapContent } from '#src/utils/llmUtils.js';
 import url from 'node:url';
 
 /**
@@ -159,6 +160,24 @@ export function readFileFromProjectDir(fileName: string): string {
   const filePath = resolve(currentDir, fileName);
   displayInfo(`Reading file ${filePath}...`);
   return readFileSyncWithMessages(filePath);
+}
+
+/**
+ * Reads multiple files from the current directory and returns their contents
+ * @param fileNames - Array of file names to read
+ * @returns Combined content of all files with proper formatting, each file is wrapped in random block like <file-abvesde>
+ */
+export function readMultipleFilesFromProjectDir(fileNames: string | string[]): string {
+  if (!Array.isArray(fileNames)) {
+    return wrapContent(readFileFromProjectDir(fileNames), 'file', `file ${fileNames}`, true);
+  }
+
+  return fileNames
+    .map((fileName) => {
+      const content = readFileFromProjectDir(fileName);
+      return `${wrapContent(content, 'file', `file ${fileName}`, true)}`;
+    })
+    .join('\n\n');
 }
 
 const corePackageDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');

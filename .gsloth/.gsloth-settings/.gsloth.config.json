@@ -1,7 +1,7 @@
 {
   "llm": {
-    "type": "openrouter",
-    "model": "anthropic/claude-sonnet-4.6"
+    "type": "google-genai",
+    "model": "gemini-3.1-pro-preview"
   },
   "commands": {
     "code": {

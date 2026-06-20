@@ -6,10 +6,12 @@ import {
   ensureGlobalAuthDir,
   ensureGlobalGslothDir,
   getGlobalAuthDir,
+  getGlobalGslothConfigReadPath,
+  getGlobalGslothConfigWritePath,
   getGlobalGslothDir,
   getOAuthStoragePath,
 } from '#src/utils/globalConfigUtils.js';
-import { GSLOTH_AUTH, GSLOTH_DIR } from '#src/constants.js';
+import { GSLOTH_AUTH, GSLOTH_DIR, USER_PROJECT_CONFIG_JSON } from '#src/constants.js';
 
 vi.mock('node:fs');
 vi.mock('node:os');
@@ -50,6 +52,29 @@ describe('globalConfigUtils', () => {
 
       expect(mkdirSync).not.toHaveBeenCalled();
       expect(result).toBe(resolve(mockHomeDir, GSLOTH_DIR));
+    });
+  });
+
+  describe('getGlobalGslothConfigReadPath', () => {
+    it('should resolve a config filename inside the global .gsloth directory', () => {
+      const result = getGlobalGslothConfigReadPath(USER_PROJECT_CONFIG_JSON);
+      expect(result).toBe(resolve(mockHomeDir, GSLOTH_DIR, USER_PROJECT_CONFIG_JSON));
+    });
+
+    it('should not create the directory (read-only resolver)', () => {
+      getGlobalGslothConfigReadPath(USER_PROJECT_CONFIG_JSON);
+      expect(mkdirSync).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getGlobalGslothConfigWritePath', () => {
+    it('should ensure the global directory exists and resolve the filename', () => {
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      const result = getGlobalGslothConfigWritePath(USER_PROJECT_CONFIG_JSON);
+
+      expect(mkdirSync).toHaveBeenCalledWith(resolve(mockHomeDir, GSLOTH_DIR), { recursive: true });
+      expect(result).toBe(resolve(mockHomeDir, GSLOTH_DIR, USER_PROJECT_CONFIG_JSON));
     });
   });
 

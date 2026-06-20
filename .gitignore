@@ -7,13 +7,13 @@
 /packages/*/tsconfig.tsbuildinfo
 /req/
 /gth_*
-/packages/assistant/integration-tests/workdir/gth_*
-/packages/assistant/integration-tests/workdir/testreview.md
-/packages/assistant/integration-tests/workdir/.gsloth.config.json
-/packages/assistant/integration-tests/workdir-with-profiles/.gsloth/gth_*
-/packages/assistant/integration-tests/workdir-with-profiles/testreview.md
-/packages/assistant/integration-tests/workdir-with-profiles/.gsloth.config.json
-/packages/assistant/integration-tests/workdir-with-profiles/**/.gsloth.config.json
+/packages/app/integration-tests/workdir/gth_*
+/packages/app/integration-tests/workdir/testreview.md
+/packages/app/integration-tests/workdir/.gsloth.config.json
+/packages/app/integration-tests/workdir-with-profiles/.gsloth/gth_*
+/packages/app/integration-tests/workdir-with-profiles/testreview.md
+/packages/app/integration-tests/workdir-with-profiles/.gsloth.config.json
+/packages/app/integration-tests/workdir-with-profiles/**/.gsloth.config.json
 /docs-generated
 .junie
 .idea
@@ -31,3 +31,6 @@ out/*
 briefs/*
 req
 readonly
+
+# tui-test (Stage D PTY e2e) transpiled cache
+packages/*/tui-e2e/.tui-test/

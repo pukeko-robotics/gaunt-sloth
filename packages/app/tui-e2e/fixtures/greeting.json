@@ -1,0 +1,18 @@
+{
+  "defaultDelayMs": 15,
+  "turns": [
+    {
+      "events": [
+        { "type": "tool_start", "id": "t1", "name": "read_file" },
+        { "type": "tool_args", "id": "t1", "delta": "{\"path\":\"README.md\"}" },
+        { "type": "tool_end", "id": "t1" },
+        { "type": "tool_result", "id": "t1", "content": "# Readme" },
+        { "type": "text", "delta": "Hello" },
+        { "type": "text", "delta": " from" },
+        { "type": "text", "delta": " the" },
+        { "type": "text", "delta": " fixture" },
+        { "type": "text", "delta": " agent." }
+      ]
+    }
+  ]
+}

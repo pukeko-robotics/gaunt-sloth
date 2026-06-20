@@ -1,5 +1,5 @@
 {
-  "//1": "Root workspace package — not published. Publishable packages live in packages/* (assistant, api, core, review, tools).",
+  "//1": "Root workspace package — not published. Publishable packages live in packages/* (gaunt-sloth [dir: app], agent, core, review).",
   "name": "gaunt-sloth-workspace",
   "version": "0.0.0",
   "private": true,
@@ -9,7 +9,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant.git"
+    "url": "git+https://github.com/Galvanized-Pukeko/gaunt-sloth.git"
   },
   "engines": {
     "node": ">=24.0.0",
@@ -20,30 +20,31 @@
   ],
   "scripts": {
     "clean": "npm run clean --workspaces --if-present",
-    "build": "npm run build -w @gaunt-sloth/core && npm run build -w @gaunt-sloth/tools && npm run build -w @gaunt-sloth/api && npm run build -w @gaunt-sloth/review && npm run build -w gaunt-sloth-assistant",
+    "build": "npm run build -w @gaunt-sloth/core && npm run build -w @gaunt-sloth/agent && npm run build -w @gaunt-sloth/review && npm run build -w gaunt-sloth",
     "unit": "vitest run",
     "test": "npm run build && vitest run",
     "it": "npm run build && node it.js",
     "it-verbose": "npm run build && GSLOTH_IT_VERBOSE=1 node it.js",
+    "it-tui": "npm run build && node packages/app/run-tui-e2e.js",
     "lint": "eslint . --ext .js,.ts",
     "lint-n-fix": "eslint . --ext .js,.ts --fix",
     "format": "prettier --write 'packages/*/src/**/*.{js,ts}'",
     "prepare": "echo 'skipping prepare'",
     "typedoc": "typedoc",
-    "chat": "node packages/assistant/cli.js",
+    "chat": "node packages/app/cli.js",
     "release:bump": "node bump.mjs",
     "release:bump-and-commit": "node bump.mjs --commit",
     "release:tag": "./tag-packages.sh",
     "release:publish": "./publish-all.sh"
   },
-  "//2": "Root workspace package — not published, holds dev dependencies. Publishable packages live in packages/* (assistant, api, core, review, tools).",
+  "//2": "Root workspace package — not published, holds dev dependencies. Publishable packages live in packages/* (gaunt-sloth [dir: app], agent, core, review).",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/express": "^5.0.6",
     "@types/node": "^22.19.21",
     "@typescript-eslint/eslint-plugin": "^8.61.0",
     "@typescript-eslint/parser": "^8.61.0",
-    "eslint": "^10.4.1",
+    "eslint": "^10.5.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.6",
     "globals": "^17.6.0",
@@ -51,7 +52,7 @@
     "prettier": "^3.8.4",
     "typedoc": "^0.28.19",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.9"
   },
   "overrides": {
     "rimraf": "^6.1.0",

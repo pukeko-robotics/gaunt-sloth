@@ -54,6 +54,19 @@ const systemUtilsMock = {
 };
 vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
 
+// Global config layer (CFG-3). By default the global path is a sentinel that the
+// fs mocks below treat as non-existent, so existing tests see no global config.
+// Individual tests override getGlobalGslothConfigReadPath to point at a real path.
+const globalConfigUtilsMock = {
+  getGlobalGslothConfigReadPath: vi
+    .fn()
+    .mockImplementation(() => '/mock/global-absent/no-such-config'),
+  getGlobalGslothConfigWritePath: vi
+    .fn()
+    .mockImplementation((filename: string) => `/mock/global-write/${filename}`),
+};
+vi.mock('#src/utils/globalConfigUtils.js', () => globalConfigUtilsMock);
+
 describe('config', async () => {
   beforeEach(async () => {
     // Reset mocks
@@ -64,6 +77,13 @@ describe('config', async () => {
     systemUtilsMock.getCurrentWorkDir.mockReturnValue('/mock/current/dir');
     systemUtilsMock.getInstallDir.mockReturnValue('/mock/install/dir');
     systemUtilsMock.isTTY.mockReturnValue(true);
+    // Default: global config path is absent (sentinel never matched by fs mocks).
+    globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
+      () => '/mock/global-absent/no-such-config'
+    );
+    globalConfigUtilsMock.getGlobalGslothConfigWritePath.mockImplementation(
+      (filename: string) => `/mock/global-write/${filename}`
+    );
   });
 
   const customPathPrefix =
@@ -156,6 +176,7 @@ describe('config', async () => {
             },
           },
           code: { filesystem: 'all' },
+          exec: { filesystem: 'all' },
           ask: { filesystem: 'read' },
           chat: { filesystem: 'read' },
           api: {
@@ -256,6 +277,7 @@ describe('config', async () => {
             },
           },
           code: { filesystem: 'all' },
+          exec: { filesystem: 'all' },
           ask: { filesystem: 'read' },
           chat: { filesystem: 'read' },
           api: {
@@ -389,6 +411,7 @@ describe('config', async () => {
             },
           },
           code: { filesystem: 'all' },
+          exec: { filesystem: 'all' },
           ask: { filesystem: 'read' },
           chat: { filesystem: 'read' },
           api: {
@@ -432,6 +455,266 @@ describe('config', async () => {
       );
 
       expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe('global config layer (CFG-3)', () => {
+    const GLOBAL_JSON_PATH = '/mock/global/.gsloth.config.json';
+    const PROJECT_JSON_MARKER = '.gsloth.config.json';
+
+    /**
+     * Wire the global config path to a distinct location and serve the supplied
+     * global + project JSON. Project JSON is served for any project-relative path
+     * (`/mock/read/...`), global JSON only for the global path.
+     */
+    function setupGlobalAndProject(
+      globalConfig: Record<string, unknown> | undefined,
+      projectConfig: Record<string, unknown>
+    ) {
+      globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation((filename: string) => {
+        if (filename === PROJECT_JSON_MARKER) return GLOBAL_JSON_PATH;
+        // JS/MJS global variants resolve to non-existent sentinel paths.
+        return `/mock/global-absent/${filename}`;
+      });
+
+      fileUtilsMock.getGslothConfigReadPath.mockImplementation(
+        (filename: string) => `/mock/read/${filename}`
+      );
+
+      fsMock.existsSync.mockImplementation((path: string) => {
+        if (path === GLOBAL_JSON_PATH) return globalConfig !== undefined;
+        // Project JSON lives under /mock/read/ and is the only project format present.
+        return path === `/mock/read/${PROJECT_JSON_MARKER}`;
+      });
+
+      fsMock.readFileSync.mockImplementation((path: string) => {
+        if (path === GLOBAL_JSON_PATH) return JSON.stringify(globalConfig ?? {});
+        if (path === `/mock/read/${PROJECT_JSON_MARKER}`) return JSON.stringify(projectConfig);
+        return '';
+      });
+
+      vi.doMock('#src/providers/vertexai.js', () => ({
+        processJsonConfig: vi.fn().mockImplementation((llm: Record<string, unknown>) => ({
+          type: 'vertexai',
+          ...llm,
+        })),
+        postProcessJsonConfig: undefined,
+      }));
+    }
+
+    it('Should apply global-only config when project does not set the key', async () => {
+      setupGlobalAndProject(
+        { projectGuidelines: 'GLOBAL.md', streamOutput: false },
+        { llm: { type: 'vertexai' } }
+      );
+
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({});
+
+      // Global value flows through where the project config is silent.
+      expect(config.projectGuidelines).toBe('GLOBAL.md');
+      expect(config.streamOutput).toBe(false);
+    });
+
+    it('Should let project config override global on a conflicting key', async () => {
+      setupGlobalAndProject(
+        { projectGuidelines: 'GLOBAL.md', streamOutput: false },
+        { llm: { type: 'vertexai' }, projectGuidelines: 'PROJECT.md' }
+      );
+
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({});
+
+      // Project wins on the conflicting key, global still wins where project is silent.
+      expect(config.projectGuidelines).toBe('PROJECT.md');
+      expect(config.streamOutput).toBe(false);
+    });
+
+    it('Should deep-merge global llm under project llm (project type wins)', async () => {
+      setupGlobalAndProject(
+        { llm: { type: 'anthropic', apiKeyEnvironmentVariable: 'GLOBAL_KEY_ENV' } },
+        { llm: { type: 'vertexai', model: 'project-model' } }
+      );
+
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({});
+
+      // Project llm.type wins; global-only llm sub-key is inherited.
+      expect((config.llm as unknown as Record<string, unknown>).type).toBe('vertexai');
+      expect((config.llm as unknown as Record<string, unknown>).model).toBe('project-model');
+      expect((config.llm as unknown as Record<string, unknown>).apiKeyEnvironmentVariable).toBe(
+        'GLOBAL_KEY_ENV'
+      );
+      expect(config.modelDisplayName).toBe('project-model');
+    });
+
+    it('Should fall back to defaults when neither global nor project sets a key', async () => {
+      setupGlobalAndProject({ projectGuidelines: 'GLOBAL.md' }, { llm: { type: 'vertexai' } });
+
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({});
+
+      // writeOutputToFile is set by neither layer -> DEFAULT_CONFIG default of true.
+      expect(config.writeOutputToFile).toBe(true);
+      expect(config.useColour).toBe(true);
+    });
+
+    it('Should be a no-op (unchanged behaviour) when no global config exists', async () => {
+      setupGlobalAndProject(undefined, {
+        llm: { type: 'vertexai' },
+        projectGuidelines: 'PROJECT.md',
+      });
+
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({});
+
+      expect(config.projectGuidelines).toBe('PROJECT.md');
+      // Defaults intact, no global influence.
+      expect(config.writeOutputToFile).toBe(true);
+      expect(config.streamOutput).toBe(true);
+      // Absent global must not warn.
+      expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+    });
+
+    it('Should ignore (and warn about) malformed global JSON without breaking project load', async () => {
+      globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation((filename: string) => {
+        if (filename === PROJECT_JSON_MARKER) return GLOBAL_JSON_PATH;
+        return `/mock/global-absent/${filename}`;
+      });
+      fileUtilsMock.getGslothConfigReadPath.mockImplementation(
+        (filename: string) => `/mock/read/${filename}`
+      );
+      fsMock.existsSync.mockImplementation((path: string) => {
+        if (path === GLOBAL_JSON_PATH) return true;
+        return path === `/mock/read/${PROJECT_JSON_MARKER}`;
+      });
+      fsMock.readFileSync.mockImplementation((path: string) => {
+        if (path === GLOBAL_JSON_PATH) return '{ this is not valid json';
+        if (path === `/mock/read/${PROJECT_JSON_MARKER}`)
+          return JSON.stringify({ llm: { type: 'vertexai' }, projectGuidelines: 'PROJECT.md' });
+        return '';
+      });
+      vi.doMock('#src/providers/vertexai.js', () => ({
+        processJsonConfig: vi.fn().mockResolvedValue({ type: 'vertexai' }),
+        postProcessJsonConfig: undefined,
+      }));
+
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({});
+
+      // Project config still loads; bad global is ignored with a warning (no secrets logged).
+      expect(config.projectGuidelines).toBe('PROJECT.md');
+      expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to read global config')
+      );
+    });
+  });
+
+  describe('global-only config (CFG-8)', () => {
+    const GLOBAL_JSON_PATH = '/mock/global/.gsloth.config.json';
+    const PROJECT_JSON_MARKER = '.gsloth.config.json';
+
+    /** Serve a global JSON config while NO project config file of any format exists. */
+    function setupGlobalOnly(globalConfig: Record<string, unknown> | undefined) {
+      globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation((filename: string) => {
+        if (filename === PROJECT_JSON_MARKER) return GLOBAL_JSON_PATH;
+        return `/mock/global-absent/${filename}`;
+      });
+      fileUtilsMock.getGslothConfigReadPath.mockImplementation(
+        (filename: string) => `/mock/read/${filename}`
+      );
+      // Only the global JSON path exists; every project path is absent.
+      fsMock.existsSync.mockImplementation((path: string) => {
+        if (path === GLOBAL_JSON_PATH) return globalConfig !== undefined;
+        return false;
+      });
+      fsMock.readFileSync.mockImplementation((path: string) => {
+        if (path === GLOBAL_JSON_PATH) return JSON.stringify(globalConfig ?? {});
+        return '';
+      });
+      vi.doMock('#src/providers/vertexai.js', () => ({
+        processJsonConfig: vi.fn().mockImplementation((llm: Record<string, unknown>) => ({
+          type: 'vertexai',
+          ...llm,
+        })),
+        postProcessJsonConfig: undefined,
+      }));
+    }
+
+    it('Should load a standalone global config when no project config exists', async () => {
+      setupGlobalOnly({
+        llm: { type: 'vertexai', model: 'global-model' },
+        projectGuidelines: 'GLOBAL.md',
+      });
+
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({});
+
+      expect((config.llm as unknown as Record<string, unknown>).type).toBe('vertexai');
+      expect((config.llm as unknown as Record<string, unknown>).model).toBe('global-model');
+      expect(config.projectGuidelines).toBe('GLOBAL.md');
+      // Must NOT error when a usable global config is the only config present.
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+    });
+
+    it('Should error when a global config exists but lacks llm.type', async () => {
+      setupGlobalOnly({ projectGuidelines: 'GLOBAL.md' });
+
+      const { initConfig } = await import('#src/config.js');
+      try {
+        await initConfig({});
+      } catch {
+        // mock exit() does not stop execution.
+      }
+
+      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+        expect.stringContaining('not in valid format')
+      );
+      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('Should still error "No configuration file found" when neither project nor global exists', async () => {
+      setupGlobalOnly(undefined);
+
+      const { initConfig } = await import('#src/config.js');
+      try {
+        await initConfig({});
+      } catch {
+        // mock exit() does not stop execution.
+      }
+
+      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+        'No configuration file found. Please create one of: ' +
+          '.gsloth.config.json, .gsloth.config.js, or .gsloth.config.mjs ' +
+          'in your project directory.'
+      );
+      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('hasAnyConfig returns false when neither project nor global config exists', async () => {
+      setupGlobalOnly(undefined);
+      const { hasAnyConfig } = await import('#src/config.js');
+      expect(await hasAnyConfig({})).toBe(false);
+    });
+
+    it('hasAnyConfig returns true when only a global config exists', async () => {
+      setupGlobalOnly({ llm: { type: 'vertexai' } });
+      const { hasAnyConfig } = await import('#src/config.js');
+      expect(await hasAnyConfig({})).toBe(true);
+    });
+
+    it('hasAnyConfig returns true when a project config exists', async () => {
+      globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
+        () => '/mock/global-absent/no-such-config'
+      );
+      fileUtilsMock.getGslothConfigReadPath.mockImplementation(
+        (filename: string) => `/mock/read/${filename}`
+      );
+      fsMock.existsSync.mockImplementation(
+        (path: string) => path === `/mock/read/${PROJECT_JSON_MARKER}`
+      );
+      const { hasAnyConfig } = await import('#src/config.js');
+      expect(await hasAnyConfig({})).toBe(true);
     });
   });
 
@@ -935,6 +1218,7 @@ describe('config', async () => {
             },
           },
           code: { filesystem: 'all' },
+          exec: { filesystem: 'all' },
           ask: { filesystem: 'read' },
           chat: { filesystem: 'read' },
           api: {
@@ -1271,6 +1555,7 @@ describe('config', async () => {
             },
           },
           code: { filesystem: 'all' },
+          exec: { filesystem: 'all' },
           ask: { filesystem: 'read' },
           chat: { filesystem: 'read' },
           api: {
@@ -1355,6 +1640,7 @@ describe('config', async () => {
             },
           },
           code: { filesystem: 'all' },
+          exec: { filesystem: 'all' },
           ask: { filesystem: 'read' },
           chat: { filesystem: 'read' },
           api: {
@@ -1439,6 +1725,7 @@ describe('config', async () => {
             },
           },
           code: { filesystem: 'all' },
+          exec: { filesystem: 'all' },
           ask: { filesystem: 'read' },
           chat: { filesystem: 'read' },
           api: {

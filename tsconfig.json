@@ -10,10 +10,9 @@
   },
   "references": [
     { "path": "packages/core" },
-    { "path": "packages/tools" },
-    { "path": "packages/api" },
+    { "path": "packages/agent" },
     { "path": "packages/review" },
-    { "path": "packages/assistant" }
+    { "path": "packages/app" }
   ],
   "files": [],
   "exclude": ["node_modules"]

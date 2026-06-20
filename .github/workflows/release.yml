@@ -1,0 +1,272 @@
+name: Release
+
+# Consolidated, manually-dispatched release pipeline for ALL FOUR locked Gaunt
+# Sloth packages: @gaunt-sloth/{core,agent,review} and the fat CLI `gaunt-sloth`
+# (dir packages/app). Replaces both publish.yml and publish-packages.yml.
+#
+# Triggered from the Actions "Run workflow" button (workflow_dispatch) — NOT
+# `release: published`, because that would create the GitHub Release object
+# before the gates run. Here the tag + GitHub Release + npm publish are the LAST
+# job, reached only after every quality gate is green:
+#
+#   lint+unit  ->  integration-tests (big provider)
+#              ->  integration-tests-platforms (mac + win)
+#              ->  release   (ship CURRENT version, THEN post-bump to next)
+#
+# RELEASE-VERSIONING MODEL B — "release CURRENT, then post-bump to next".
+# Invariant: `main` HEAD always carries the *next* version to publish. A run
+# ships whatever version is currently in package.json, and ONLY AFTER a
+# successful publish does it bump to the next version and commit/push. This makes
+# the run idempotent at the version level: if publish fails, the version is
+# unchanged and a re-dispatch retries the SAME version; if it succeeds, the
+# version has moved so it can't be re-shipped.
+#
+# The dispatch inputs therefore describe the POST-bump (the increment applied
+# AFTER this release), NOT the version being shipped.
+#
+# Publishing uses npm Trusted Publishing (OIDC) — no NPM_TOKEN, just
+# `id-token: write`. The npm dist-tag is DERIVED from the CURRENT version
+# (prerelease -> alpha/beta/rc, else latest); publishConfig.tag (written by
+# bump.mjs) is belt-and-suspenders for the same guarantee.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'POST-bump verb applied to main AFTER this release (sets the NEXT version to publish). Not the version shipped now.'
+        type: choice
+        required: true
+        default: prerelease
+        options:
+          - patch
+          - minor
+          - major
+          - prepatch
+          - preminor
+          - premajor
+          - prerelease
+          - explicit
+      preid:
+        description: 'Prerelease channel for the POST-bump — only used by the pre*/prerelease verbs'
+        type: choice
+        required: false
+        default: alpha
+        options:
+          - alpha
+          - beta
+          - rc
+      explicit_version:
+        description: 'Exact NEXT version (e.g. 2.0.0-alpha.0) for the POST-bump — only used when bump = explicit'
+        type: string
+        required: false
+        default: ''
+
+jobs:
+  # Fail-fast gate: reject a bad dispatch BEFORE any gate runs and before
+  # anything irreversible (tag / GitHub Release / npm publish). The post-bump
+  # step still re-checks, but this is the authoritative early guard so a bad
+  # input can never reach publish and leave main un-bumped.
+  validate-inputs:
+    name: Validate dispatch inputs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Validate bump / preid / explicit_version
+        env:
+          BUMP: ${{ inputs.bump }}
+          PREID: ${{ inputs.preid }}
+          EXPLICIT_VERSION: ${{ inputs.explicit_version }}
+        run: |
+          set -euo pipefail
+          # bump=explicit must carry a non-empty explicit_version.
+          if [ "$BUMP" = "explicit" ] && [ -z "$EXPLICIT_VERSION" ]; then
+            echo "::error::bump=explicit requires a non-empty explicit_version (e.g. 2.0.0-alpha.0)" >&2
+            exit 1
+          fi
+          # preid (only consumed by the pre*/prerelease verbs) must be a known channel.
+          case "$PREID" in
+            alpha|beta|rc) ;;
+            *)
+              echo "::error::preid must be one of: alpha, beta, rc (got '$PREID')" >&2
+              exit 1
+              ;;
+          esac
+          echo "Dispatch inputs OK (bump=$BUMP preid=$PREID explicit_version='$EXPLICIT_VERSION')"
+
+  lint-and-unit:
+    name: Lint and unit tests
+    needs: validate-inputs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        node-version: [24.x]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run ESLint
+        run: npm run lint
+      - name: Run Tests
+        run: npm test
+
+  integration-tests:
+    name: Integration tests
+    needs: lint-and-unit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment: integration tests
+    strategy:
+      matrix:
+        node-version: [24.x]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run Integration
+        run: npm run it $BIG_TEST_PROVIDER
+        env:
+          BIG_TEST_PROVIDER: ${{ vars.BIG_TEST_PROVIDER }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+  integration-tests-platforms:
+    name: Integration tests platforms
+    needs: integration-tests
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    environment: integration tests
+    strategy:
+      fail-fast: false
+      matrix:
+        # only test macOS and Windows, linux is covered by the integration-tests job
+        os: [macos-latest, windows-latest]
+        node-version: [24.x, latest]
+        provider: [openrouter]
+      max-parallel: 2
+    steps:
+      - uses: actions/checkout@v6
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run lite integration tests with ${{ matrix.provider }}
+        run: npm run it ${{ matrix.provider }} simple
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          INCEPTION_API_KEY: ${{ secrets.INCEPTION_API_KEY }}
+          OPEN_ROUTER_API_KEY: ${{ secrets.OPEN_ROUTER_API_KEY }}
+
+  release:
+    name: Ship current version, then post-bump main to next (all four)
+    needs: integration-tests-platforms
+    runs-on: ubuntu-latest
+    # Must match the Environment name in npm's Trusted Publisher config (OIDC
+    # only mints a token for a job running in this exact environment).
+    environment: release
+    permissions:
+      contents: write # push the <pkg>@<version> git tags + the post-bump commit
+      id-token: write # npm Trusted Publishing (OIDC) + provenance
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          # full history + tags so tag-packages.sh can skip already-tagged versions
+          fetch-depth: 0
+      - name: Use Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.x'
+          # no registry-url: it writes an .npmrc referencing ${NODE_AUTH_TOKEN},
+          # which is unset under Trusted Publishing and breaks every npm command;
+          # publish-all.sh passes --registry "$REGISTRY" explicitly instead
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Read CURRENT version to ship (and derive its dist-tag)
+        id: current
+        run: |
+          set -euo pipefail
+          # main HEAD always carries the next-to-publish version — that's what we ship.
+          VERSION="$(node -p "require('./packages/core/package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # Derive npm dist-tag from the CURRENT version (same rule as bump.mjs):
+          # prerelease -> its preid (alpha/beta/rc); stable -> latest.
+          DIST_TAG="$(node -p "const s=require('semver');const v=require('./packages/core/package.json').version;const p=s.prerelease(v);p?(p.find(x=>typeof x==='string')||'latest'):'latest'")"
+          echo "dist_tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
+          if [ -n "$(node -p "require('semver').prerelease('$VERSION')?1:''")" ]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Shipping version=$VERSION dist_tag=$DIST_TAG"
+      - name: Build
+        run: npm run build
+      - name: Tag packages (all four) at current version and push
+        # tag-packages.sh skips already-existing tags, so a re-dispatch of the
+        # same version is safe here.
+        run: ./tag-packages.sh --push
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.current.outputs.version }}
+          IS_PRERELEASE: ${{ steps.current.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          PRE_FLAG=""
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            PRE_FLAG="--prerelease"
+          fi
+          gh release create "v${VERSION}" --title "v${VERSION}" --generate-notes $PRE_FLAG
+      - name: Publish all four to npmjs (current version)
+        env:
+          REGISTRY: https://registry.npmjs.org
+          # Explicit --tag (belt-and-suspenders alongside each package's
+          # publishConfig.tag) so a prerelease never lands on `latest`.
+          NPM_PUBLISH_ARGS: --access public --provenance --tag ${{ steps.current.outputs.dist_tag }}
+        run: npm run release:publish
+      # ----- Only after a successful publish: move main to the NEXT version -----
+      - name: Post-bump main to the next version (drives bump.mjs from dispatch inputs)
+        id: postbump
+        env:
+          BUMP: ${{ inputs.bump }}
+          PREID: ${{ inputs.preid }}
+          EXPLICIT_VERSION: ${{ inputs.explicit_version }}
+        run: |
+          set -euo pipefail
+          if [ "$BUMP" = "explicit" ]; then
+            if [ -z "$EXPLICIT_VERSION" ]; then
+              echo "bump=explicit requires explicit_version" >&2
+              exit 1
+            fi
+            npm run release:bump-and-commit -- "$EXPLICIT_VERSION"
+          else
+            npm run release:bump-and-commit -- "$BUMP" "$PREID"
+          fi
+          NEXT="$(node -p "require('./packages/core/package.json').version")"
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "main now carries next version=$NEXT"
+      - name: Push post-bump commit to main
+        run: git push origin HEAD:main

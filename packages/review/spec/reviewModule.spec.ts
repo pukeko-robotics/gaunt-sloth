@@ -486,4 +486,61 @@ describe('reviewModule', () => {
       );
     });
   });
+
+  describe('REL-2 gh api file-read tool injection', () => {
+    it('injects the gh read-file tool when the pr content source is github', async () => {
+      const config = {
+        ...mockConfig,
+        tools: undefined,
+        commands: { pr: { contentSource: 'github' } },
+      } as unknown as GthConfig;
+
+      const { review } = await import('#src/modules/reviewModule.js');
+      await review('PR-1', 'preamble', 'diff', config, 'pr');
+
+      expect(config.tools).toBeDefined();
+      expect(
+        (config.tools ?? []).some(
+          (t) => typeof t === 'object' && t !== null && 'name' in t && t.name === 'gth_gh_read_file'
+        )
+      ).toBe(true);
+    });
+
+    it('does NOT inject the tool for non-github (file) reviews', async () => {
+      const config = {
+        ...mockConfig,
+        tools: undefined,
+        contentSource: 'file',
+        contentProvider: 'file',
+        commands: { review: { contentSource: 'file' } },
+      } as unknown as GthConfig;
+
+      const { review } = await import('#src/modules/reviewModule.js');
+      await review('test-source', 'preamble', 'diff', config, 'review');
+
+      const tools = config.tools ?? [];
+      expect(
+        tools.some(
+          (t) => typeof t === 'object' && t !== null && 'name' in t && t.name === 'gth_gh_read_file'
+        )
+      ).toBe(false);
+    });
+
+    it('does not register the tool twice', async () => {
+      const config = {
+        ...mockConfig,
+        tools: undefined,
+        commands: { pr: { contentSource: 'github' } },
+      } as unknown as GthConfig;
+
+      const { review } = await import('#src/modules/reviewModule.js');
+      await review('PR-1', 'preamble', 'diff', config, 'pr');
+      await review('PR-1', 'preamble', 'diff', config, 'pr');
+
+      const count = (config.tools ?? []).filter(
+        (t) => typeof t === 'object' && t !== null && 'name' in t && t.name === 'gth_gh_read_file'
+      ).length;
+      expect(count).toBe(1);
+    });
+  });
 });

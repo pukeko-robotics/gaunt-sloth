@@ -1,0 +1,20 @@
+{
+  "defaultDelayMs": 250,
+  "turns": [
+    {
+      "events": [
+        { "type": "text", "delta": "streaming " },
+        { "type": "text", "delta": "one " },
+        { "type": "text", "delta": "two " },
+        { "type": "text", "delta": "three " },
+        { "type": "text", "delta": "four " },
+        { "type": "text", "delta": "five " },
+        { "type": "text", "delta": "six " },
+        { "type": "text", "delta": "seven " },
+        { "type": "text", "delta": "eight " },
+        { "type": "text", "delta": "nine " },
+        { "type": "text", "delta": "ten" }
+      ]
+    }
+  ]
+}

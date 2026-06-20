@@ -125,5 +125,37 @@ describe('utils', () => {
       });
       expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(expect.stringContaining(fileName));
     });
+
+    it('should read a single file and wrap its content', async () => {
+      fsUtilsMock.readFileSync.mockReturnValue('SINGLE FILE CONTENT');
+
+      const { readMultipleFilesFromProjectDir } = await import('#src/utils/fileUtils.js');
+
+      const result = readMultipleFilesFromProjectDir('one.file');
+
+      expect(result).toContain('SINGLE FILE CONTENT');
+      expect(result).toContain('file one.file');
+      expect(fsUtilsMock.readFileSync).toHaveBeenCalledTimes(1);
+    });
+
+    it('should read multiple files and join their wrapped contents', async () => {
+      fsUtilsMock.readFileSync.mockImplementation((filePath: string) => {
+        if (filePath.includes('a.file')) return 'A CONTENT';
+        if (filePath.includes('b.file')) return 'B CONTENT';
+        return '';
+      });
+
+      const { readMultipleFilesFromProjectDir } = await import('#src/utils/fileUtils.js');
+
+      const result = readMultipleFilesFromProjectDir(['a.file', 'b.file']);
+
+      expect(result).toContain('A CONTENT');
+      expect(result).toContain('B CONTENT');
+      expect(result).toContain('file a.file');
+      expect(result).toContain('file b.file');
+      // A comes before B in the joined output
+      expect(result.indexOf('A CONTENT')).toBeLessThan(result.indexOf('B CONTENT'));
+      expect(fsUtilsMock.readFileSync).toHaveBeenCalledTimes(2);
+    });
   });
 });

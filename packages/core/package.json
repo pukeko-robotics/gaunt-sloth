@@ -1,18 +1,18 @@
 {
   "name": "@gaunt-sloth/core",
-  "version": "0.1.8",
+  "version": "2.0.0-alpha.0",
   "description": "Core utilities and types for Gaunt Sloth",
   "license": "MIT",
   "author": "Andrew Kondratev",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant.git",
+    "url": "git+https://github.com/Galvanized-Pukeko/gaunt-sloth.git",
     "directory": "packages/core"
   },
   "bugs": {
-    "url": "https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/issues"
+    "url": "https://github.com/Galvanized-Pukeko/gaunt-sloth/issues"
   },
-  "homepage": "https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/tree/main/packages/core#readme",
+  "homepage": "https://github.com/Galvanized-Pukeko/gaunt-sloth/tree/main/packages/core#readme",
   "keywords": [
     "ai",
     "agent",
@@ -33,12 +33,12 @@
     "#src/*.js": "./dist/*.js"
   },
   "dependencies": {
-    "@langchain/core": "^1.1.48",
-    "@langchain/langgraph": "^1.4.1",
-    "langchain": "^1.4.4"
+    "@langchain/core": "^1.1.49",
+    "@langchain/langgraph": "^1.4.2",
+    "langchain": "^1.4.5"
   },
   "peerDependencies": {
-    "@langchain/anthropic": "^1.4.0",
+    "@langchain/anthropic": "^1.4.1",
     "@langchain/deepseek": "^1.0.27",
     "@langchain/google": "^0.1.12",
     "@langchain/groq": "^1.2.1",
@@ -68,5 +68,8 @@
   "files": [
     "./dist/*",
     ".gsloth.*.md"
-  ]
+  ],
+  "publishConfig": {
+    "tag": "alpha"
+  }
 }

@@ -10,4 +10,5 @@ export const PROJECT_REVIEW_INSTRUCTIONS = '.gsloth.review.md';
 export const GSLOTH_SYSTEM_PROMPT = '.gsloth.system.md';
 export const GSLOTH_CHAT_PROMPT = '.gsloth.chat.md';
 export const GSLOTH_CODE_PROMPT = '.gsloth.code.md';
+export const GSLOTH_EXEC_PROMPT = '.gsloth.exec.md';
 export const AIIGNORE_FILE = '.aiignore';

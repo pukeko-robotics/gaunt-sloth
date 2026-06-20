@@ -54,8 +54,9 @@ function pkgSourceConfig(pkg) {
 const globalIgnores = [
   '**/node_modules/**',
   '**/dist/**',
-  'packages/assistant/integration-tests/workdir',
-  'packages/assistant/integration-tests/workdir-with-profiles',
+  'packages/app/integration-tests/workdir',
+  'packages/app/integration-tests/workdir-with-profiles',
+  'packages/*/tui-e2e/.tui-test/**',
   'docs-generated/**',
   'readonly/**',
   'coverage/**',
@@ -93,15 +94,15 @@ export default defineConfig([
   },
   // Workspace package TypeScript files
   pkgSourceConfig('core'),
-  pkgSourceConfig('tools'),
-  pkgSourceConfig('api'),
+  pkgSourceConfig('agent'),
   pkgSourceConfig('review'),
-  pkgSourceConfig('assistant'),
+  pkgSourceConfig('app'),
   // Test TypeScript files with separate project reference
   {
     files: [
       'packages/*/spec/**/*.ts',
       'packages/*/integration-tests/**/*.ts',
+      'packages/*/tui-e2e/**/*.ts',
       'vitest.config.ts',
       'vitest-it.config.ts',
     ],

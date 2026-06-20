@@ -351,24 +351,26 @@ for example `Partial<RawGthConfig>`
 and later cast them to RawGthConfig when providing them as argument to function
 which expects full interface. Even better option is to provide all properties.
 
-## Releasing the Synced Packages
+## Releasing the Packages
 
-The four publishable packages — `@gaunt-sloth/{core,tools,api,review}` — share
-a single version; `packages/core/package.json` is the source of truth. The
-`assistant` workspace has its own user-facing version (1.5.x) and only its
-`@gaunt-sloth/*` dep pins are rewritten by the release script.
+All FOUR packages are version-locked and released together — the scoped set
+`@gaunt-sloth/{core,agent,review}` plus the fat `gaunt-sloth` CLI (dir
+`packages/app`). `packages/core/package.json` is the version source of
+truth and the others are kept in lockstep (the old separate `tools`/`api`
+packages were merged into `agent` long ago; the assistant is no longer excluded
+or published on its own).
 
-```
-npm run release:bump                # patch-increment core's version + sync everything
-npm run release:bump -- minor       # increment (patch | minor | major) + sync
-npm run release:bump -- 0.0.7       # set explicit version + sync
-npm run release:bump-and-commit     # same, then refresh lockfile + git commit
-npm run release:publish             # publish core → tools → api → review
-```
+Releases run through a single manually-dispatched GitHub Actions pipeline
+(`.github/workflows/release.yml`, `workflow_dispatch`) that gates on
+lint+unit → integration tests → platform integration tests before it ships.
+It follows versioning Model B — **ship the version currently in
+`packages/core/package.json`, then post-bump `main` to the next version** — so
+the dispatch inputs (`bump`/`preid`/`explicit_version`) describe the *next*
+version, not the one being published.
 
-Defaults to a local Verdaccio at `http://localhost:4873`. To target npmjs:
-`REGISTRY=https://registry.npmjs.org npm run release:publish`. Full setup is in
-[CONTRIBUTING.md](./CONTRIBUTING.md#local-development-registry-optional).
+Don't drive the publish steps (`release:bump`, `release:publish`, etc.) by hand;
+use the pipeline. For the full procedure see
+[docs/RELEASE-HOWTO.md](./docs/RELEASE-HOWTO.md).
 
 ## Development Workflow
 

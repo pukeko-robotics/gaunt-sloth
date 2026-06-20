@@ -128,7 +128,7 @@ npm run release:publish    # publishes core → tools → api → review to Verd
 `release:bump` writes the new version into `packages/{tools,core,api,review}`,
 pins their internal `@gaunt-sloth/*` deps to that exact version (no caret —
 the lock-stepped set has no useful range semantics), and rewrites
-`packages/assistant`'s `@gaunt-sloth/*` pins to match without touching
+`packages/app`'s `@gaunt-sloth/*` pins to match without touching
 assistant's own version (1.5.x is its independent user-facing semver).
 
 Then in any downstream repo, bump its `@gaunt-sloth/*` pins to the new version

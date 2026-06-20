@@ -1,18 +1,18 @@
 {
   "name": "@gaunt-sloth/review",
-  "version": "0.1.8",
+  "version": "2.0.0-alpha.0",
   "description": "Review functionality for Gaunt Sloth",
   "license": "MIT",
   "author": "Andrew Kondratev",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant.git",
+    "url": "git+https://github.com/Galvanized-Pukeko/gaunt-sloth.git",
     "directory": "packages/review"
   },
   "bugs": {
-    "url": "https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/issues"
+    "url": "https://github.com/Galvanized-Pukeko/gaunt-sloth/issues"
   },
-  "homepage": "https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/tree/main/packages/review#readme",
+  "homepage": "https://github.com/Galvanized-Pukeko/gaunt-sloth/tree/main/packages/review#readme",
   "keywords": [
     "ai",
     "agent",
@@ -34,15 +34,7 @@
     "#src/*.js": "./dist/*.js"
   },
   "dependencies": {
-    "@gaunt-sloth/core": "0.1.8"
-  },
-  "peerDependencies": {
-    "@gaunt-sloth/tools": "0.1.8"
-  },
-  "peerDependenciesMeta": {
-    "@gaunt-sloth/tools": {
-      "optional": true
-    }
+    "@gaunt-sloth/core": "2.0.0-alpha.0"
   },
   "files": [
     "./dist/*",
@@ -50,5 +42,8 @@
   ],
   "scripts": {
     "build": "tsc"
+  },
+  "publishConfig": {
+    "tag": "alpha"
   }
 }

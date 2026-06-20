@@ -12,7 +12,7 @@ if (process.env.HTTPS_PROXY || process.env.HTTP_PROXY) {
   }
 }
 
-execSync('node packages/assistant/integration-tests/setup-config.js ' + process.argv[2], {
+execSync('node packages/app/integration-tests/setup-config.js ' + process.argv[2], {
   stdio: [process.stdin, process.stdout, process.stderr],
 });
 try {
