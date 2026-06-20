@@ -15,11 +15,7 @@ export function chatCommand(
     readyMessage: '\nGaunt Sloth is ready to chat. Type your prompt.',
     exitMessage: "Type 'exit' or hit Ctrl+C to exit chat\n",
   };
-  // Start chat when no command typed
-  program.action(async () => {
-    await startSession(sessionConfig, commandLineConfigOverrides);
-  });
-  // Chat command
+  // Chat command (REL-3: the no-subcommand default is now `code`, registered in codeCommand)
   program
     .command('chat')
     .description('Start an interactive chat session with Gaunt Sloth')
