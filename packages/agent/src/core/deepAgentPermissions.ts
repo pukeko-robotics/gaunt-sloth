@@ -26,6 +26,21 @@ export interface PermissionConfigSlice {
 }
 
 /**
+ * Strip a single leading "./" or "/" and any trailing slashes, using linear string
+ * ops rather than regex. The previous `/\/+$/` trailing-slash regex was flagged by
+ * CodeQL as a polynomial ReDoS (the `$` anchor makes the greedy `\/+` retry from every
+ * start position → quadratic on a long run of slashes); plain slicing is O(n) and safe.
+ */
+function normalizePathFragment(p: string): string {
+  let start = 0;
+  if (p.startsWith('./')) start = 2;
+  else if (p.startsWith('/')) start = 1;
+  let end = p.length;
+  while (end > start && p[end - 1] === '/') end--;
+  return p.slice(start, end);
+}
+
+/**
  * Convert `.aiignore` patterns (relative, .gitignore-ish) into deepagents deny rules.
  *
  * deepagents matches the path argument the model passes to a fs tool — resolved by the
@@ -39,7 +54,7 @@ export interface PermissionConfigSlice {
 export function aiignoreToPermissions(patterns: string[]): FilesystemPermission[] {
   const rules: FilesystemPermission[] = [];
   for (const raw of patterns) {
-    const clean = raw.replace(/^\.?\//, '').replace(/\/+$/, '');
+    const clean = normalizePathFragment(raw);
     if (clean.length === 0) continue;
     const paths = clean.includes('/')
       ? [`/${clean}`, `/${clean}/**`]
@@ -61,7 +76,7 @@ export function filesystemModeToPermissions(
   const allow: FilesystemPermission[] = fs
     .filter((d) => d !== 'all' && d !== 'read')
     .map((d) => {
-      const dir = `/${d.replace(/^\.?\//, '').replace(/\/+$/, '')}`;
+      const dir = `/${normalizePathFragment(d)}`;
       return { operations: ['read', 'write'], paths: [`${dir}/**`, dir], mode: 'allow' };
     });
   return [...allow, { operations: ['read', 'write'], paths: ['/**'], mode: 'deny' }];
