@@ -62,8 +62,41 @@ on:
         default: ''
 
 jobs:
+  # Fail-fast gate: reject a bad dispatch BEFORE any gate runs and before
+  # anything irreversible (tag / GitHub Release / npm publish). The post-bump
+  # step still re-checks, but this is the authoritative early guard so a bad
+  # input can never reach publish and leave main un-bumped.
+  validate-inputs:
+    name: Validate dispatch inputs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Validate bump / preid / explicit_version
+        env:
+          BUMP: ${{ inputs.bump }}
+          PREID: ${{ inputs.preid }}
+          EXPLICIT_VERSION: ${{ inputs.explicit_version }}
+        run: |
+          set -euo pipefail
+          # bump=explicit must carry a non-empty explicit_version.
+          if [ "$BUMP" = "explicit" ] && [ -z "$EXPLICIT_VERSION" ]; then
+            echo "::error::bump=explicit requires a non-empty explicit_version (e.g. 2.0.0-alpha.0)" >&2
+            exit 1
+          fi
+          # preid (only consumed by the pre*/prerelease verbs) must be a known channel.
+          case "$PREID" in
+            alpha|beta|rc) ;;
+            *)
+              echo "::error::preid must be one of: alpha, beta, rc (got '$PREID')" >&2
+              exit 1
+              ;;
+          esac
+          echo "Dispatch inputs OK (bump=$BUMP preid=$PREID explicit_version='$EXPLICIT_VERSION')"
+
   lint-and-unit:
     name: Lint and unit tests
+    needs: validate-inputs
     runs-on: ubuntu-latest
     permissions:
       contents: read
