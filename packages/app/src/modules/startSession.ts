@@ -1,9 +1,9 @@
-import type { CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
+import { hasAnyConfig, type CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
 import {
   createInteractiveSession,
   type SessionConfig,
 } from '@gaunt-sloth/agent/modules/interactiveSessionModule.js';
-import { displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import { displayInfo, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { env, stdin, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { shouldUseTui } from '#src/tui/shouldUseTui.js';
 import { isInkAvailable } from '#src/tui/loadInk.js';
@@ -23,6 +23,28 @@ export async function startSession(
   commandLineConfigOverrides: CommandLineConfigOverrides,
   message?: string
 ): Promise<void> {
+  // CFG-10 — when no configuration exists anywhere (no project AND no global config),
+  // run the interactive first-run setup instead of letting initConfig die with
+  // "No configuration file found". CFG-8 guarantees a valid global-only config is NOT
+  // treated as "no config", so this only fires on a genuinely unconfigured machine.
+  //
+  // Only do this on an interactive TTY: piped / non-TTY runs (the integration tests, CI,
+  // scripts) must NOT block waiting on stdin — they fall through to the normal initConfig
+  // path, which surfaces the existing error.
+  if (stdin.isTTY && stdout.isTTY && !(await hasAnyConfig(commandLineConfigOverrides))) {
+    displayInfo('No configuration found — starting first-run setup.');
+    // Imported lazily so the first-run dialog (and its provider-discovery/Ink deps) never
+    // load on the normal configured path.
+    const { runFirstRunDialog } = await import('#src/commands/firstRunDialog.js');
+    await runFirstRunDialog();
+    if (!(await hasAnyConfig(commandLineConfigOverrides))) {
+      // The user aborted the dialog without writing a config; nothing to run.
+      displayWarning('Setup was not completed. Re-run gth once a configuration exists.');
+      return;
+    }
+    displayInfo('Setup complete — continuing.');
+  }
+
   // Cheap gates first (TTY/flags/env). Only probe the optional Ink deps when the
   // environment actually favours the TUI, so we never load React/Ink for a readline run.
   const environmentFavoursTui = shouldUseTui({
