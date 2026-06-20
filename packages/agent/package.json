@@ -6,13 +6,13 @@
   "author": "Andrew Kondratev",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant.git",
+    "url": "git+https://github.com/Galvanized-Pukeko/gaunt-sloth.git",
     "directory": "packages/agent"
   },
   "bugs": {
-    "url": "https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/issues"
+    "url": "https://github.com/Galvanized-Pukeko/gaunt-sloth/issues"
   },
-  "homepage": "https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/tree/main/packages/agent#readme",
+  "homepage": "https://github.com/Galvanized-Pukeko/gaunt-sloth/tree/main/packages/agent#readme",
   "keywords": [
     "ai",
     "agent",
