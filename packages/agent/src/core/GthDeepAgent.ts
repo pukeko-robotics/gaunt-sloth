@@ -344,6 +344,10 @@ export class GthDeepAgent extends GthAbstractAgent {
  * Scalar model-param fields worth surfacing in the `/debug` panel. Deliberately an
  * allowlist (NOT a whole-object dump) so no credential field (`apiKey`, `accessToken`, …)
  * can ever leak into the rendered debug view.
+ *
+ * `streaming` is intentionally NOT here: it is the model instance's static flag, which is
+ * usually `false` even when the turn streams — the GthAgentRunner decides streaming by calling
+ * `.stream()` vs `.invoke()`, not by this property — so surfacing it just misleads.
  */
 const DEBUG_MODEL_PARAM_KEYS = [
   'model',
@@ -359,7 +363,6 @@ const DEBUG_MODEL_PARAM_KEYS = [
   'reasoningEffort',
   'thinkingBudget',
   'stop',
-  'streaming',
   'provider',
 ] as const;
 
@@ -375,6 +378,13 @@ function extractModelParams(model: unknown): Record<string, unknown> | undefined
     if (typeof value === 'object' && !Array.isArray(value)) continue;
     out[key] = value;
   }
+  // `model` / `modelName` / `modelId` are langchain aliases for the same value; collapse the
+  // duplicates so the panel shows the model id once instead of two identical lines.
+  if (typeof out.model !== 'string' && typeof out.modelName === 'string') {
+    out.model = out.modelName;
+  }
+  if (out.modelName === out.model) delete out.modelName;
+  if (out.modelId === out.model) delete out.modelId;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 

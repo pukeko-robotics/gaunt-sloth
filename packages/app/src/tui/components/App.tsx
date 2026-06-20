@@ -24,9 +24,10 @@ import {
 /** Rows of clipping viewport in the docked debug panel (default / restored size). */
 const DEBUG_VIEWPORT_HEIGHT = 8;
 /** Rows of chrome around the debug viewport we leave for when it is maximised (panel
- *  border, tab row, the input dock's rules/status/prompt). The maximised viewport is the
- *  terminal height minus this, clamped so it never collapses on a tiny terminal. */
-const DEBUG_MAX_CHROME_ROWS = 8;
+ *  border, tab row, hint row, the bottom scroll-status row, the input dock's
+ *  rules/status/prompt). The maximised viewport is the terminal height minus this, clamped
+ *  so it never collapses on a tiny terminal. */
+const DEBUG_MAX_CHROME_ROWS = 9;
 /** Floor for the maximised viewport so a short terminal still shows something usable. */
 const DEBUG_MAX_MIN_HEIGHT = 6;
 

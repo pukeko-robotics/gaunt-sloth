@@ -89,10 +89,18 @@ export function DebugPanel({
   const top = Math.min(Math.max(0, scrollOffset), maxOffset);
   const visible = lines.slice(top, top + viewportHeight);
 
-  const more = lines.length > viewportHeight;
-  const scrollHint = more
-    ? ` ${top + 1}-${Math.min(top + viewportHeight, lines.length)}/${lines.length}`
-    : '';
+  const overflow = lines.length > viewportHeight;
+  const bottom = Math.min(top + viewportHeight, lines.length);
+  const hasAbove = top > 0;
+  const hasBelow = bottom < lines.length;
+  // Bottom-of-pane status so it is always clear whether more content lies beyond the window —
+  // a short last page (trailing blank space) otherwise reads as "this is the end". Shows the
+  // line range, an "N more below" / "— end —" marker, and an "▲ above" marker when scrolled.
+  const footer = overflow
+    ? `${top + 1}-${bottom}/${lines.length}` +
+      (hasBelow ? `  ▼ ${lines.length - bottom} more below (PgDn)` : '  — end —') +
+      (hasAbove ? '  ▲ above (PgUp)' : '')
+    : `${lines.length} line${lines.length === 1 ? '' : 's'}`;
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={focused ? 'cyan' : 'gray'}>
@@ -121,13 +129,16 @@ export function DebugPanel({
                 maximized ? 'restore' : 'maximise'
               } · Esc: unfocus]`
             : '[/debug to hide]'}
-          {scrollHint}
         </Text>
       </Box>
       <Box height={viewportHeight} overflow="hidden" flexDirection="column">
         {visible.map((line, i) => (
           <Text key={top + i}>{line}</Text>
         ))}
+      </Box>
+      {/* Always-present bottom status: makes "is there more below?" unambiguous. */}
+      <Box>
+        <Text dimColor>{footer}</Text>
       </Box>
     </Box>
   );

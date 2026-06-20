@@ -42,6 +42,28 @@ describe('extractDebugRequestExtras', () => {
     expect(extras?.modelParams).toEqual({ model: 'gpt-x' });
   });
 
+  it('collapses model/modelName/modelId aliases and omits the misleading streaming flag', async () => {
+    const { extractDebugRequestExtras } = await import('#src/core/GthDeepAgent.js');
+    const extras = extractDebugRequestExtras({
+      model: {
+        model: 'claude-sonnet-4-5',
+        modelName: 'claude-sonnet-4-5',
+        modelId: 'claude-sonnet-4-5',
+        maxTokens: 16384,
+        streaming: false,
+      },
+    });
+    // One model line, not three identical aliases; `streaming` is intentionally not surfaced
+    // (it is the model's static flag, not whether the turn actually streams).
+    expect(extras?.modelParams).toEqual({ model: 'claude-sonnet-4-5', maxTokens: 16384 });
+  });
+
+  it('derives `model` from `modelName` when only the alias is set', async () => {
+    const { extractDebugRequestExtras } = await import('#src/core/GthDeepAgent.js');
+    const extras = extractDebugRequestExtras({ model: { modelName: 'legacy-name' } });
+    expect(extras?.modelParams).toEqual({ model: 'legacy-name' });
+  });
+
   it('falls back to systemMessage.content when systemPrompt is absent', async () => {
     const { extractDebugRequestExtras } = await import('#src/core/GthDeepAgent.js');
     const extras = extractDebugRequestExtras({

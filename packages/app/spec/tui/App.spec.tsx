@@ -276,7 +276,7 @@ describe('tui <App>', () => {
 
     // Default 8-row viewport clips the later rows.
     expect(lastFrame()).toContain('row-0');
-    expect(lastFrame()).not.toContain('row-13');
+    expect(lastFrame()).not.toContain('row-10');
 
     // Focus the panel, then maximise: the hint flips and previously-clipped rows appear.
     stdin.write(TAB);
@@ -284,7 +284,7 @@ describe('tui <App>', () => {
     stdin.write('m');
     await vi.waitFor(() => {
       const f = lastFrame() ?? '';
-      expect(f).toContain('row-13'); // grown viewport now shows further down
+      expect(f).toContain('row-10'); // grown viewport now shows further down
       expect(f).toContain('restore'); // hint flipped to the restore affordance
     });
 
@@ -292,7 +292,7 @@ describe('tui <App>', () => {
     stdin.write('m');
     await vi.waitFor(() => {
       const f = lastFrame() ?? '';
-      expect(f).not.toContain('row-13');
+      expect(f).not.toContain('row-10');
       expect(f).toContain('maximise');
     });
 
