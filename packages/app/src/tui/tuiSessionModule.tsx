@@ -136,6 +136,11 @@ export async function createTuiSession(
       async *runTurn(userInput, signal) {
         yield* runner.processMessagesWithEvents([new HumanMessage(userInput)], signal);
       },
+      // `/clear` rotates the runner's thread_id so the model context truly matches the
+      // cleared transcript (the checkpointer otherwise replays the whole prior conversation).
+      resetThread() {
+        runner.resetThread();
+      },
     };
 
     const instance = render(

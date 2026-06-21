@@ -314,6 +314,40 @@ describe('GthAgentRunner', () => {
     });
   });
 
+  describe('resetThread', () => {
+    it('rotates the thread_id so subsequent turns run against a fresh checkpointer thread', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.streamWithEvents.mockImplementation(async function* () {
+        yield { type: 'text', delta: 'ok' };
+      });
+
+      await runner.init(undefined, { ...mockConfig, streamOutput: true });
+
+      const messages = [new HumanMessage('hi')];
+
+      // First turn: capture the thread_id the agent was driven with.
+      for await (const _e of runner.processMessagesWithEvents(messages)) {
+        void _e;
+      }
+      const firstConfig = mockAgent.streamWithEvents.mock.calls[0][1];
+      const firstThreadId = firstConfig.configurable.thread_id;
+      expect(firstThreadId).toEqual(expect.any(String));
+
+      // Reset the thread, then run another turn.
+      runner.resetThread();
+      for await (const _e of runner.processMessagesWithEvents(messages)) {
+        void _e;
+      }
+      const secondConfig = mockAgent.streamWithEvents.mock.calls[1][1];
+      const secondThreadId = secondConfig.configurable.thread_id;
+
+      expect(secondThreadId).toEqual(expect.any(String));
+      // The whole point of TUI-C8: the second turn uses a different thread, so the model
+      // no longer retrieves the prior conversation from the checkpointer.
+      expect(secondThreadId).not.toBe(firstThreadId);
+    });
+  });
+
   describe('cleanup', () => {
     it('should delegate to agent cleanup and reset state', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);

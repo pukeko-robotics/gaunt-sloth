@@ -9,6 +9,12 @@ import type { TurnViewModel } from '#src/tui/viewModel.js';
 export interface TuiAgent {
   /** Run one user turn, yielding typed events; aborts when `signal` fires (Esc). */
   runTurn(userInput: string, signal: AbortSignal): AsyncGenerator<AgentStreamEvent>;
+  /**
+   * Reset the agent's conversation thread so subsequent turns start from an empty model
+   * context — wired to the TUI's `/clear`, which only clears the on-screen transcript.
+   * Optional so the fixture agent (no real checkpointer thread) may omit it.
+   */
+  resetThread?(): void;
 }
 
 /**

@@ -70,6 +70,9 @@ export function App(props: TuiAppProps): React.ReactElement {
   // summary lines) so the transcript stays readable; Ctrl+T flips the whole turn's detail,
   // mirroring the docked debug panel's single-key detail toggle.
   const [toolsExpanded, setToolsExpanded] = useState(false);
+  // Mirror of toolsExpanded for the slash-command handler (memoized without it in deps), so
+  // /tools can compute the next state without a stale closure or a side effect in the updater.
+  const toolsExpandedRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const idRef = useRef(0);
   const runningRef = useRef(false);
@@ -165,9 +168,25 @@ export function App(props: TuiAppProps): React.ReactElement {
           setDebugHistory([]);
           setDebugRequest([]);
           setDebugResponse([]);
+          // Clearing only the on-screen transcript would leave the model's conversation
+          // thread intact (the LangGraph checkpointer replays it on the next turn), so the
+          // model would still "remember" everything. Reset the agent's thread too so the
+          // model context truly matches the now-empty transcript (TUI-C8).
+          agent.resetThread?.();
         }
         if (result.toggleTools) {
-          setToolsExpanded((e) => !e);
+          // Committed turns are frozen in Ink's <Static> and never re-fold, so toggling while
+          // idle has no visible effect on the existing scrollback. Flip the mode for the live /
+          // next turn and emit an immediate system line confirming the new state so the command
+          // is not a silent no-op (TUI-C9).
+          const next = !toolsExpandedRef.current;
+          toolsExpandedRef.current = next;
+          setToolsExpanded(next);
+          push({
+            kind: 'system',
+            level: 'info',
+            text: `Tool call details: ${next ? 'expanded' : 'collapsed'} — applies to new turns.`,
+          });
         }
         if (result.toggleDebug) {
           setDebugVisible((v) => {
@@ -213,7 +232,9 @@ export function App(props: TuiAppProps): React.ReactElement {
     // because the prompt's <TextInput> (mounted only when idle) would otherwise also receive
     // the keystroke and insert a stray 't'. The `/tools` slash command covers the idle case.
     if (key.ctrl && input === 't' && runningRef.current) {
-      setToolsExpanded((e) => !e);
+      const next = !toolsExpandedRef.current;
+      toolsExpandedRef.current = next;
+      setToolsExpanded(next);
       return;
     }
 

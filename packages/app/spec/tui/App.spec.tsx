@@ -337,6 +337,85 @@ describe('tui <App>', () => {
     unmount();
   });
 
+  it('/clear resets the agent conversation thread, not just the transcript (TUI-C8)', async () => {
+    // The on-screen reset is already covered by the transcript state; the bug was that the
+    // model's checkpointer thread was left intact. Assert /clear calls the agent's
+    // resetThread so the next turn starts from an empty model context.
+    let resetCount = 0;
+    const agent: TuiAgent = {
+      async *runTurn() {
+        yield { type: 'text', delta: 'hi there' };
+      },
+      resetThread() {
+        resetCount += 1;
+      },
+    };
+    const { stdin, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} initialMessage="remember this" />
+    );
+
+    // First turn commits, then issue /clear.
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+    expect(resetCount).toBe(0); // not reset yet
+
+    stdin.write('/clear');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/clear'));
+    stdin.write('\r');
+
+    // The agent thread was reset exactly once by the /clear.
+    await vi.waitFor(() => expect(resetCount).toBe(1));
+
+    unmount();
+  });
+
+  it('/clear does not throw when the agent has no resetThread (fixture agent)', async () => {
+    // The fixture agent omits resetThread; the optional-chaining call must be a safe no-op —
+    // the app must keep running (prompt returns, no error system line).
+    const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
+    const { stdin, lastFrame, frames, unmount } = render(
+      <App {...baseProps} agent={agent} initialMessage="hello world" />
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+    stdin.write('/clear');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/clear'));
+    stdin.write('\r');
+
+    // The command consumes cleanly (its echoed text clears from the prompt) and no error line
+    // surfaced — i.e. the optional resetThread call did not blow up the run.
+    await vi.waitFor(() => expect(lastFrame()).not.toContain('> /clear'));
+    expect(frames.join('\n')).not.toContain('[error]');
+
+    unmount();
+  });
+
+  it('/tools emits a system line confirming the new fold state while idle (TUI-C9)', async () => {
+    // Committed turns are frozen in <Static> and cannot re-fold, so /tools while idle would be
+    // a silent no-op; instead it must confirm the new state via a system line.
+    const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
+    const { stdin, lastFrame, frames, unmount } = render(<App {...baseProps} agent={agent} />);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+
+    // First /tools turns detail on.
+    stdin.write('/tools');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/tools'));
+    stdin.write('\r');
+    await vi.waitFor(() =>
+      expect(frames.join('\n')).toContain('Tool call details: expanded — applies to new turns.')
+    );
+
+    // Second /tools toggles back to collapsed, again with a confirming line.
+    stdin.write('/tools');
+    await vi.waitFor(() => expect((lastFrame() ?? '').match(/\/tools/g)?.length).toBeGreaterThan(0));
+    stdin.write('\r');
+    await vi.waitFor(() =>
+      expect(frames.join('\n')).toContain('Tool call details: collapsed — applies to new turns.')
+    );
+
+    unmount();
+  });
+
   it('/tools sets the tool-call detail mode applied to the (live) turn that follows', async () => {
     // A blocking agent so the turn stays live for the assertion. Committed turns live in
     // Ink's <Static> and are frozen once written, so the collapsible affordance is a

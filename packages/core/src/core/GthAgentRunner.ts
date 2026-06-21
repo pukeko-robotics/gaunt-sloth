@@ -173,6 +173,20 @@ export class GthAgentRunner {
     return this.agent;
   }
 
+  /**
+   * Rotate the thread the runner drives by minting a fresh `runConfig` (new `thread_id`),
+   * so subsequent turns start from an empty checkpointer thread rather than retrieving the
+   * prior conversation. Used by the TUI's `/clear`, which clears the on-screen transcript;
+   * without this the model would still see the full history persisted under the old thread.
+   *
+   * Rotating the thread_id (rather than deleting from the checkpointer) keeps this independent
+   * of any checkpointer-specific delete API, mirroring how `init()` mints the initial config.
+   */
+  public resetThread(): void {
+    this.runConfig = getNewRunnableConfig();
+    debugLogObject('Reset Runnable Config', this.runConfig);
+  }
+
   async cleanup(): Promise<void> {
     debugLog('Cleaning up GthAgentRunner...');
     if (this.agent && 'cleanup' in this.agent && typeof this.agent.cleanup === 'function') {
