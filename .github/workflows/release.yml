@@ -105,17 +105,21 @@ jobs:
         node-version: [24.x]
     steps:
       - uses: actions/checkout@v6
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'npm'
+          cache: 'pnpm'
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       - name: Run ESLint
-        run: npm run lint
+        run: pnpm run lint
       - name: Run Tests
-        run: npm test
+        run: pnpm test
 
   integration-tests:
     name: Integration tests
@@ -129,15 +133,19 @@ jobs:
         node-version: [24.x]
     steps:
       - uses: actions/checkout@v6
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'npm'
+          cache: 'pnpm'
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       - name: Run Integration
-        run: npm run it $BIG_TEST_PROVIDER
+        run: pnpm run it $BIG_TEST_PROVIDER
         env:
           BIG_TEST_PROVIDER: ${{ vars.BIG_TEST_PROVIDER }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -162,15 +170,19 @@ jobs:
       max-parallel: 2
     steps:
       - uses: actions/checkout@v6
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'npm'
+          cache: 'pnpm'
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       - name: Run lite integration tests with ${{ matrix.provider }}
-        run: npm run it ${{ matrix.provider }} simple
+        run: pnpm run it ${{ matrix.provider }} simple
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -203,6 +215,10 @@ jobs:
           # pushes; the GitHub Release (gh) and npm publish use the API/registry
           # and are unaffected.
           ssh-key: ${{ secrets.RELEASE_SSH_KEY }}
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
       - name: Use Node.js
         uses: actions/setup-node@v6
         with:
@@ -210,9 +226,9 @@ jobs:
           # no registry-url: it writes an .npmrc referencing ${NODE_AUTH_TOKEN},
           # which is unset under Trusted Publishing and breaks every npm command;
           # publish-all.sh passes --registry "$REGISTRY" explicitly instead
-          cache: 'npm'
+          cache: 'pnpm'
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       - name: Configure git identity
         run: |
           git config user.name "github-actions[bot]"
@@ -235,7 +251,7 @@ jobs:
           fi
           echo "Shipping version=$VERSION dist_tag=$DIST_TAG"
       - name: Build
-        run: npm run build
+        run: pnpm run build
       - name: Tag packages (all four) at current version and push
         # tag-packages.sh skips already-existing tags, so a re-dispatch of the
         # same version is safe here.
@@ -258,7 +274,7 @@ jobs:
           # Explicit --tag (belt-and-suspenders alongside each package's
           # publishConfig.tag) so a prerelease never lands on `latest`.
           NPM_PUBLISH_ARGS: --access public --provenance --tag ${{ steps.current.outputs.dist_tag }}
-        run: npm run release:publish
+        run: pnpm run release:publish
       # ----- Only after a successful publish: move main to the NEXT version -----
       - name: Post-bump main to the next version (drives bump.mjs from dispatch inputs)
         id: postbump
@@ -273,9 +289,9 @@ jobs:
               echo "bump=explicit requires explicit_version" >&2
               exit 1
             fi
-            npm run release:bump-and-commit -- "$EXPLICIT_VERSION"
+            pnpm run release:bump-and-commit -- "$EXPLICIT_VERSION"
           else
-            npm run release:bump-and-commit -- "$BUMP" "$PREID"
+            pnpm run release:bump-and-commit -- "$BUMP" "$PREID"
           fi
           NEXT="$(node -p "require('./packages/core/package.json').version")"
           echo "next=$NEXT" >> "$GITHUB_OUTPUT"
