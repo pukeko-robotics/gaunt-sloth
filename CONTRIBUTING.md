@@ -176,6 +176,18 @@ npm run it <provider> simple
 
 See [integration-tests/README.md](./integration-tests/README.md) for details.
 
+Integration tests run in CI on demand only. You can trigger them either from the
+**Actions** tab (the "Run workflow" button, via `workflow_dispatch`) or directly
+from a pull request by adding a label (a maintainer must apply it):
+
+| Label | Workflow |
+| --- | --- |
+| `run-integration-tests` | Integration tests (big single provider) |
+| `run-integration-tests-small` | Integration tests small (multi-provider, lite) |
+| `run-integration-tests-platforms` | Integration tests platforms (macOS/Windows) |
+
+The run executes against the PR's head commit. To re-run, remove and re-add the label.
+
 ## Test Conventions
 
 When working in `spec/`:

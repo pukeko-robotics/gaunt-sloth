@@ -2,9 +2,14 @@ name: Integration tests platforms
 
 on:
   workflow_dispatch:
+  # Manually schedulable from a PR by adding the `run-integration-tests-platforms` label.
+  # Re-add the label (remove then add) to re-run.
+  pull_request:
+    types: [labeled]
 
 jobs:
   integration-tests:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-integration-tests-platforms' }}
     runs-on: ubuntu-latest
     environment: integration tests
     permissions:
