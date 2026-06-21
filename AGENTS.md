@@ -15,6 +15,14 @@ Please refer to package.json to check exact versions
 
 Vendor and system abstractions and wrappers should be used in most cases.
 
+### UX / TUI guidelines
+
+Any change to the terminal UI (`packages/app/src/tui/`) or user-facing CLI feedback must follow
+the **[TUI / CLI UX Guidelines](docs/ux-guidelines.md)** — the code-grounded ruleset for command
+notices, `/clear` behaviour, tool-call panels, markdown, layout, the keyboard model, and colour
+semantics. It implements Project TAKAHĒ's cross-surface Design Language (the `DL-n` principles).
+When you add or change a user-facing behaviour, cite the DL principle it serves and update that doc.
+
 ### Imports
 
 Project uses import alias with `#src/*.js` pointing to `src/` and after build resolving to generated `dist/`.
