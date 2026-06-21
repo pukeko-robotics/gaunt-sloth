@@ -1,5 +1,6 @@
 import type { AgentStreamEvent } from '@gaunt-sloth/core/core/types.js';
 import type { TurnViewModel } from '#src/tui/viewModel.js';
+import type { CommandNoticeTone } from '#src/tui/components/CommandNotice.js';
 
 /**
  * The minimal agent surface the Ink `<App>` drives. Decoupling the component from
@@ -32,7 +33,10 @@ export type TuiDebugCapture =
 export type TranscriptItem =
   | { kind: 'user'; id: number; text: string }
   | { kind: 'assistant'; id: number; turn: TurnViewModel }
-  | { kind: 'system'; id: number; level: string; text: string };
+  | { kind: 'system'; id: number; level: string; text: string }
+  // A structured command-feedback notice (TUI-C14), rendered via <CommandNotice>: a coloured
+  // title that states WHAT happened plus body lines explaining HOW it affects the user.
+  | { kind: 'notice'; id: number; title: string; lines: string[]; tone: CommandNoticeTone };
 
 /** Props for the root `<App>`; the real session wires these to a `GthAgentRunner`. */
 export interface TuiAppProps {

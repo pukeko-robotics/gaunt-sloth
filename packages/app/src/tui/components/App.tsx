@@ -20,6 +20,7 @@ import {
   createCommandRegistry,
   dispatchSlashCommand,
   parseSlashCommand,
+  toolsToggleNotice,
 } from '#src/tui/slashCommands.js';
 import { viewportBumpSequence } from '#src/tui/terminal.js';
 
@@ -80,6 +81,9 @@ export function App(props: TuiAppProps): React.ReactElement {
   // Mirror of toolsExpanded for the slash-command handler (memoized without it in deps), so
   // /tools can compute the next state without a stale closure or a side effect in the updater.
   const toolsExpandedRef = useRef(false);
+  // Likewise a mirror of debugVisible, so the slash dispatch can pass the current panel state
+  // into the command context (for state-aware /debug copy) without a stale closure.
+  const debugVisibleRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const idRef = useRef(0);
   const runningRef = useRef(false);
@@ -152,6 +156,19 @@ export function App(props: TuiAppProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exit]);
 
+  // Flip the tool-detail mode and commit the matching notice. Single-sourced so the `/tools`
+  // command and the Ctrl+T key handler give the user identical, state-aware feedback (TUI-C14).
+  // Committed turns are frozen in Ink's <Static> and never re-fold, so this only affects the
+  // live / next turn — the notice copy says exactly that.
+  const toggleTools = useCallback(() => {
+    const next = !toolsExpandedRef.current;
+    toolsExpandedRef.current = next;
+    setToolsExpanded(next);
+    const { title, lines, tone } = toolsToggleNotice(next);
+    push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleSubmit = useCallback(
     (value: string) => {
       if (runningRef.current) return;
@@ -171,6 +188,8 @@ export function App(props: TuiAppProps): React.ReactElement {
           mode,
           modelDisplayName: modelDisplayName ?? '',
           turnCount: turnCountRef.current,
+          toolsExpanded: toolsExpandedRef.current,
+          debugVisible: debugVisibleRef.current,
         });
         if (result.clearTranscript) {
           setTranscript([]);
@@ -199,22 +218,15 @@ export function App(props: TuiAppProps): React.ReactElement {
           setTurnCount(0);
         }
         if (result.toggleTools) {
-          // Committed turns are frozen in Ink's <Static> and never re-fold, so toggling while
-          // idle has no visible effect on the existing scrollback. Flip the mode for the live /
-          // next turn and emit an immediate system line confirming the new state so the command
-          // is not a silent no-op (TUI-C9).
-          const next = !toolsExpandedRef.current;
-          toolsExpandedRef.current = next;
-          setToolsExpanded(next);
-          push({
-            kind: 'system',
-            level: 'info',
-            text: `Tool call details: ${next ? 'expanded' : 'collapsed'} — applies to new turns.`,
-          });
+          // Flip the fold mode and commit the notice via the shared helper (single-sourced with
+          // Ctrl+T). The command's own `result.notice` is intentionally not pushed for /tools —
+          // toggleTools owns the notice so the copy matches the state actually applied.
+          toggleTools();
         }
         if (result.toggleDebug) {
           setDebugVisible((v) => {
             const next = !v;
+            debugVisibleRef.current = next;
             // Reset scroll + focus each time the panel is shown, so it opens at the top and
             // focus never lingers on a hidden panel.
             if (next) {
@@ -227,6 +239,12 @@ export function App(props: TuiAppProps): React.ReactElement {
             return next;
           });
         }
+        // Commit a structured notice (TUI-C14). /tools owns its notice via toggleTools above, so
+        // skip the result.notice in that case to avoid a duplicate.
+        if (result.notice && !result.toggleTools) {
+          const { title, lines, tone } = result.notice;
+          push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
+        }
         if (result.message) {
           push({ kind: 'system', level: result.level ?? 'info', text: result.message });
         }
@@ -237,7 +255,7 @@ export function App(props: TuiAppProps): React.ReactElement {
       void runTurn(value);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [runTurn, quit, registry, mode, modelDisplayName]
+    [runTurn, quit, registry, mode, modelDisplayName, toggleTools]
   );
 
   // Keyboard handling, in priority order:
@@ -256,9 +274,8 @@ export function App(props: TuiAppProps): React.ReactElement {
     // because the prompt's <TextInput> (mounted only when idle) would otherwise also receive
     // the keystroke and insert a stray 't'. The `/tools` slash command covers the idle case.
     if (key.ctrl && input === 't' && runningRef.current) {
-      const next = !toolsExpandedRef.current;
-      toolsExpandedRef.current = next;
-      setToolsExpanded(next);
+      // Share the /tools helper so the same state-aware notice is committed (TUI-C14).
+      toggleTools();
       return;
     }
 

@@ -5,6 +5,8 @@ const ctx: SlashCommandContext = {
   mode: 'chat',
   modelDisplayName: 'claude-opus-4',
   turnCount: 3,
+  toolsExpanded: false,
+  debugVisible: false,
 };
 
 describe('tui/slashCommands parseSlashCommand', () => {
@@ -36,39 +38,70 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     vi.resetAllMocks();
   });
 
-  it('/help lists every registered command', async () => {
+  it('/help renders a notice listing every registered command', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('#src/tui/slashCommands.js');
     const registry = createCommandRegistry();
     const result = dispatchSlashCommand(parseSlashCommand('/help')!, registry, ctx);
-    expect(result.message).toContain('Available commands');
+    expect(result.notice?.title).toBe('Slash commands');
     for (const c of registry) {
-      expect(result.message).toContain(`/${c.name}`);
-      expect(result.message).toContain(c.description);
+      expect(result.notice?.lines).toContain(`/${c.name} — ${c.description}`);
     }
   });
 
-  it('/clear requests a transcript clear', async () => {
+  it('/clear requests a transcript clear (banner is the visible feedback)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('#src/tui/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/clear')!, createCommandRegistry(), ctx);
     expect(result.clearTranscript).toBe(true);
   });
 
-  it('/debug requests a debug-panel toggle', async () => {
+  it('/debug requests a debug-panel toggle with a state-aware notice (showing when hidden)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('#src/tui/slashCommands.js');
-    const result = dispatchSlashCommand(parseSlashCommand('/debug')!, createCommandRegistry(), ctx);
+    const result = dispatchSlashCommand(parseSlashCommand('/debug')!, createCommandRegistry(), {
+      ...ctx,
+      debugVisible: false,
+    });
     expect(result.toggleDebug).toBe(true);
+    expect(result.notice?.title).toBe('Debug panel: shown');
+    expect(result.notice?.lines[0]).toContain('subagent tree');
     expect(result.exit).toBeUndefined();
   });
 
-  it('/tools requests a tool-call detail toggle', async () => {
+  it('/debug reports the hiding notice when the panel is currently shown', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('#src/tui/slashCommands.js');
-    const result = dispatchSlashCommand(parseSlashCommand('/tools')!, createCommandRegistry(), ctx);
+    const result = dispatchSlashCommand(parseSlashCommand('/debug')!, createCommandRegistry(), {
+      ...ctx,
+      debugVisible: true,
+    });
+    expect(result.notice?.title).toBe('Debug panel: hidden');
+    expect(result.notice?.lines[0]).toContain('closed');
+  });
+
+  it('/tools requests a toggle with the ON notice when detail is currently off', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const result = dispatchSlashCommand(parseSlashCommand('/tools')!, createCommandRegistry(), {
+      ...ctx,
+      toolsExpanded: false,
+    });
     expect(result.toggleTools).toBe(true);
+    expect(result.notice?.title).toBe('Tool details: on');
+    expect(result.notice?.lines[0]).toContain('full inputs and results');
     expect(result.exit).toBeUndefined();
+  });
+
+  it('/tools reports the OFF notice when detail is currently on', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const result = dispatchSlashCommand(parseSlashCommand('/tools')!, createCommandRegistry(), {
+      ...ctx,
+      toolsExpanded: true,
+    });
+    expect(result.notice?.title).toBe('Tool details: off');
+    expect(result.notice?.lines[0]).toContain('single summary line');
   });
 
   it('/exit requests an app quit', async () => {
@@ -78,18 +111,19 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     expect(result.exit).toBe(true);
   });
 
-  it('/mode surfaces the current mode', async () => {
+  it('/mode surfaces the current mode as a notice', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('#src/tui/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/mode')!, createCommandRegistry(), ctx);
-    expect(result.message).toBe('mode: chat');
+    expect(result.notice?.title).toBe('Session mode: chat');
+    expect(result.notice?.lines.length).toBeGreaterThan(0);
   });
 
-  it('/model surfaces the model display name', async () => {
+  it('/model surfaces the model display name as a notice', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('#src/tui/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/model')!, createCommandRegistry(), ctx);
-    expect(result.message).toBe('model: claude-opus-4');
+    expect(result.notice?.title).toBe('Model: claude-opus-4');
   });
 
   it('/model falls back to "unknown" when no display name is set', async () => {
@@ -99,16 +133,16 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
       ...ctx,
       modelDisplayName: '',
     });
-    expect(result.message).toBe('model: unknown');
+    expect(result.notice?.title).toBe('Model: unknown');
   });
 
-  it('an unknown command yields a friendly hint at warn level, never throws', async () => {
+  it('an unknown command yields a friendly warn-tone notice, never throws', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('#src/tui/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/foo')!, createCommandRegistry(), ctx);
-    expect(result.message).toContain('Unknown command: /foo');
-    expect(result.message).toContain('/help');
-    expect(result.level).toBe('warn');
+    expect(result.notice?.title).toBe('Unknown command: /foo');
+    expect(result.notice?.tone).toBe('warn');
+    expect(result.notice?.lines.join(' ')).toContain('/help');
     expect(result.exit).toBeUndefined();
   });
 

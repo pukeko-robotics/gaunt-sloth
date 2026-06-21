@@ -138,7 +138,11 @@ describe('tui <App>', () => {
     await vi.waitFor(() => expect(lastFrame()).toContain('/bogus'));
     stdin.write('\r');
 
-    await vi.waitFor(() => expect(frames.join('\n')).toContain('Unknown command: /bogus'));
+    await vi.waitFor(() => {
+      const all = frames.join('\n');
+      expect(all).toContain('Unknown command: /bogus'); // warn-tone notice title
+      expect(all).toContain('Run /help to see everything available.'); // explanatory body
+    });
     expect(turnsRun).toBe(0);
 
     unmount();
@@ -465,9 +469,9 @@ describe('tui <App>', () => {
     unmount();
   });
 
-  it('/tools emits a system line confirming the new fold state while idle (TUI-C9)', async () => {
+  it('/tools commits a state-aware notice confirming the new fold state while idle (TUI-C9/C14)', async () => {
     // Committed turns are frozen in <Static> and cannot re-fold, so /tools while idle would be
-    // a silent no-op; instead it must confirm the new state via a system line.
+    // a silent no-op; instead it must confirm the new state via a visible notice.
     const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
     const { stdin, lastFrame, frames, unmount } = render(<App {...baseProps} agent={agent} />);
 
@@ -477,17 +481,65 @@ describe('tui <App>', () => {
     stdin.write('/tools');
     await vi.waitFor(() => expect(lastFrame()).toContain('/tools'));
     stdin.write('\r');
-    await vi.waitFor(() =>
-      expect(frames.join('\n')).toContain('Tool call details: expanded — applies to new turns.')
-    );
+    await vi.waitFor(() => {
+      const all = frames.join('\n');
+      expect(all).toContain('Tool details: on'); // notice title
+      expect(all).toContain('full inputs and results'); // explanatory body
+    });
 
-    // Second /tools toggles back to collapsed, again with a confirming line.
+    // Second /tools toggles back to off, again with a confirming notice.
     stdin.write('/tools');
     await vi.waitFor(() => expect((lastFrame() ?? '').match(/\/tools/g)?.length).toBeGreaterThan(0));
     stdin.write('\r');
-    await vi.waitFor(() =>
-      expect(frames.join('\n')).toContain('Tool call details: collapsed — applies to new turns.')
+    await vi.waitFor(() => expect(frames.join('\n')).toContain('Tool details: off'));
+
+    unmount();
+  });
+
+  it('/mode and /model commit explanatory notices, not silent one-liners (TUI-C14)', async () => {
+    const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
+    const { stdin, lastFrame, frames, unmount } = render(
+      <App {...baseProps} agent={agent} modelDisplayName="claude-opus-4" />
     );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+
+    stdin.write('/mode');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/mode'));
+    stdin.write('\r');
+    await vi.waitFor(() => {
+      const all = frames.join('\n');
+      expect(all).toContain('Session mode: chat'); // notice title
+      expect(all).toContain('how the agent handles your messages'); // explanation
+    });
+
+    stdin.write('/model');
+    await vi.waitFor(() => expect((lastFrame() ?? '').match(/\/model/g)?.length).toBeGreaterThan(0));
+    stdin.write('\r');
+    await vi.waitFor(() => {
+      const all = frames.join('\n');
+      expect(all).toContain('Model: claude-opus-4'); // notice title
+      expect(all).toContain('model answering your messages'); // explanation
+    });
+
+    unmount();
+  });
+
+  it('/debug commits a state-aware notice as visible feedback (TUI-C14)', async () => {
+    const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
+    const { stdin, lastFrame, frames, unmount } = render(<App {...baseProps} agent={agent} />);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(frames.join('\n')).toContain('Debug panel: shown'));
+
+    stdin.write('/debug');
+    await vi.waitFor(() => expect((lastFrame() ?? '').match(/\/debug/g)?.length).toBeGreaterThan(0));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(frames.join('\n')).toContain('Debug panel: hidden'));
 
     unmount();
   });
@@ -517,8 +569,13 @@ describe('tui <App>', () => {
     stdin.write('/tools');
     await vi.waitFor(() => expect(lastFrame()).toContain('/tools'));
     stdin.write('\r');
-    // Wait for the prompt to clear (the /tools line consumed) before typing the next prompt.
-    await vi.waitFor(() => expect(lastFrame()).not.toContain('/tools'));
+    // Wait for the command to be consumed: the notice commits (so detail is now on) and the
+    // prompt is back to empty (the echoed "/tools" cleared from the input line).
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).toContain('Tool details: on'); // notice committed
+      expect(f).not.toContain('> /tools'); // prompt line cleared
+    });
 
     // Now run a turn: the live tool call shows its args/result body because /tools is on.
     stdin.write('hello');

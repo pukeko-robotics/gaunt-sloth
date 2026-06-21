@@ -3,6 +3,7 @@ import { Box, Static, Text } from 'ink';
 import type { TranscriptItem } from '#src/tui/types.js';
 import { LiveTurn } from '#src/tui/components/LiveTurn.js';
 import { Rule } from '#src/tui/components/Rule.js';
+import { CommandNotice } from '#src/tui/components/CommandNotice.js';
 
 /**
  * Committed scrollback. Ink's `<Static>` writes each item exactly once, above the live
@@ -63,5 +64,8 @@ function renderItem(item: TranscriptItem, toolsExpanded: boolean): React.ReactEl
           </Text>
         </Box>
       );
+    case 'notice':
+      // Structured command feedback (TUI-C14): a noticeable title + explanatory body lines.
+      return <CommandNotice title={item.title} lines={item.lines} tone={item.tone} />;
   }
 }
