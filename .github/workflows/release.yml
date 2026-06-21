@@ -191,6 +191,16 @@ jobs:
           ref: main
           # full history + tags so tag-packages.sh can skip already-tagged versions
           fetch-depth: 0
+          # Push via a write-enabled deploy key (private half in the `release`
+          # environment secret) so the post-bump push to main authenticates as a
+          # Deploy Key — the one actor allowed to bypass the "Code QL" branch
+          # ruleset. The default GITHUB_TOKEN identity (github-actions[bot]) is
+          # NOT a bypass actor, so its push is rejected with "Code scanning is
+          # waiting for results from CodeQL" (a fresh commit can never already
+          # have results — a deadlock). Sets origin to SSH for the tag + branch
+          # pushes; the GitHub Release (gh) and npm publish use the API/registry
+          # and are unaffected.
+          ssh-key: ${{ secrets.RELEASE_SSH_KEY }}
       - name: Use Node.js
         uses: actions/setup-node@v6
         with:
