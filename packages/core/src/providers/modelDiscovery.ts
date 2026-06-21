@@ -218,7 +218,7 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'xai',
     label: 'xAI (Grok)',
     apiKeyEnvironmentVariables: ['XAI_API_KEY'],
-    preferredModels: ['grok-4.3', 'grok-4.20-multi-agent-0309', 'grok-build-0.1'],
+    preferredModels: ['grok-4.3', 'grok-build-0.1'],
     discovery: {
       kind: 'openai',
       modelsUrl: () => 'https://api.x.ai/v1/models',
