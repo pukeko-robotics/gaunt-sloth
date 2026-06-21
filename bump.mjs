@@ -112,6 +112,11 @@ function rewriteSyncedDeps(deps) {
   for (const k of Object.keys(deps)) {
     if (!k.startsWith(`${SCOPE}/`)) continue;
     const internal = k.slice(SCOPE.length + 1);
+    // Cross-deps use pnpm's `workspace:` protocol (workspace:*). Those are
+    // version-agnostic and pnpm rewrites them to the concrete version at
+    // pack/publish time, so leave them untouched — overwriting them with a
+    // literal version would break local workspace resolution.
+    if (typeof deps[k] === 'string' && deps[k].startsWith('workspace:')) continue;
     if (SYNCED.includes(internal) && deps[k] !== target) {
       deps[k] = target;
       changed = true;

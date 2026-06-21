@@ -34,7 +34,11 @@
     "#src/*.js": "./dist/*.js"
   },
   "dependencies": {
-    "@gaunt-sloth/core": "2.0.0-alpha.2"
+    "@gaunt-sloth/core": "workspace:*",
+    "@langchain/core": "^1.2.0",
+    "@langchain/langgraph": "^1.4.4",
+    "langchain": "^1.5.0",
+    "zod": "^3.25.0 || ^4.0.0"
   },
   "files": [
     "./dist/*",

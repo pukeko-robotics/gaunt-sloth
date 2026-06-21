@@ -1,0 +1,12 @@
+packages:
+  - 'packages/*'
+
+# Dependencies with install/build scripts pnpm is allowed to run (the pnpm
+# equivalent of npm's allow-scripts approval). These are transitive dev/test
+# deps: node-pty + @swc/core come from @microsoft/tui-test (the TUI e2e harness).
+# Without this, pnpm skips their postinstall/native-build steps and aborts with
+# ERR_PNPM_IGNORED_BUILDS. pnpm 11.3.0 uses the `allowBuilds` map; it is written
+# by `pnpm approve-builds`.
+allowBuilds:
+  '@swc/core': true
+  node-pty: true

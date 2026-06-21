@@ -58,7 +58,14 @@ for dir in "${ORDER[@]}"; do
   # TAG_ARG + NPM_PUBLISH_ARGS are intentionally left unquoted so multiple flags
   # split into separate arguments; both default to empty for the plain local
   # Verdaccio path (where everything is a prerelease → tag follows the version).
+  #
+  # We publish with `pnpm publish`, NOT `npm publish`: internal cross-deps use the
+  # `workspace:*` protocol, and ONLY pnpm rewrites `workspace:*` to the concrete
+  # version (e.g. 2.0.0-alpha.2) in the published tarball. `npm publish` would ship
+  # the literal "workspace:*" specifier — an unresolvable, broken package.
+  # `--no-git-checks` is required because pnpm otherwise refuses to publish from a
+  # non-release branch / dirty tree (we gate releases via the CI pipeline instead).
   # shellcheck disable=SC2086
-  (cd "${ROOT}/packages/${dir}" && npm publish --registry "${REGISTRY}" ${TAG_ARG} ${NPM_PUBLISH_ARGS:-})
+  (cd "${ROOT}/packages/${dir}" && pnpm publish --registry "${REGISTRY}" --no-git-checks ${TAG_ARG} ${NPM_PUBLISH_ARGS:-})
 done
 echo "Done."

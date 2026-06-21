@@ -15,17 +15,15 @@
     "node": ">=24.0.0",
     "npm": ">=11.0.0"
   },
-  "workspaces": [
-    "packages/*"
-  ],
+  "packageManager": "pnpm@11.3.0",
   "scripts": {
-    "clean": "npm run clean --workspaces --if-present",
-    "build": "npm run build -w @gaunt-sloth/core && npm run build -w @gaunt-sloth/agent && npm run build -w @gaunt-sloth/review && npm run build -w gaunt-sloth",
+    "clean": "pnpm -r --if-present run clean",
+    "build": "pnpm --filter @gaunt-sloth/core run build && pnpm --filter @gaunt-sloth/agent run build && pnpm --filter @gaunt-sloth/review run build && pnpm --filter gaunt-sloth run build",
     "unit": "vitest run",
-    "test": "npm run build && vitest run",
-    "it": "npm run build && node it.js",
-    "it-verbose": "npm run build && GSLOTH_IT_VERBOSE=1 node it.js",
-    "it-tui": "npm run build && node packages/app/run-tui-e2e.js",
+    "test": "pnpm run build && vitest run",
+    "it": "pnpm run build && node it.js",
+    "it-verbose": "pnpm run build && GSLOTH_IT_VERBOSE=1 node it.js",
+    "it-tui": "pnpm run build && node packages/app/run-tui-e2e.js",
     "lint": "eslint . --ext .js,.ts",
     "lint-n-fix": "eslint . --ext .js,.ts --fix",
     "format": "prettier --write 'packages/*/src/**/*.{js,ts}'",
@@ -49,7 +47,10 @@
     "eslint-plugin-prettier": "^5.5.6",
     "globals": "^17.6.0",
     "jiti": "^2.7.0",
+    "commander": "^15.0.0",
     "prettier": "^3.8.4",
+    "semver": "^7.8.5",
+    "strip-ansi": "^7.2.0",
     "typedoc": "^0.28.19",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9"

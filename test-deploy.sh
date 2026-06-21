@@ -14,13 +14,20 @@ PEER_DEPS=(
 )
 
 echo "==> Building workspace..."
-npm run build --prefix "$SCRIPT_DIR"
+pnpm --dir "$SCRIPT_DIR" run build
 
+# Pack with `pnpm pack`, NOT `npm pack`: internal deps use the `workspace:*`
+# protocol, and only pnpm rewrites `workspace:*` to the concrete version in the
+# tarball. (No tarball here actually carries a workspace dep — review→core is
+# installed separately below — but staying on pnpm keeps the flow consistent and
+# future-proof.) `pnpm pack` runs per package dir rather than via an `-w` flag.
 echo "==> Packing @gaunt-sloth/core..."
-CORE_TGZ=$(npm pack --pack-destination "$SCRIPT_DIR" -w @gaunt-sloth/core --prefix "$SCRIPT_DIR" 2>/dev/null | tail -1)
+CORE_TGZ=$(cd "$SCRIPT_DIR/packages/core" && pnpm pack --pack-destination "$SCRIPT_DIR" 2>/dev/null | tail -1)
+CORE_TGZ=$(basename "$CORE_TGZ")
 
 echo "==> Packing @gaunt-sloth/review..."
-REVIEW_TGZ=$(npm pack --pack-destination "$SCRIPT_DIR" -w @gaunt-sloth/review --prefix "$SCRIPT_DIR" 2>/dev/null | tail -1)
+REVIEW_TGZ=$(cd "$SCRIPT_DIR/packages/review" && pnpm pack --pack-destination "$SCRIPT_DIR" 2>/dev/null | tail -1)
+REVIEW_TGZ=$(basename "$REVIEW_TGZ")
 
 echo "==> Preparing $DEPLOY_DIR..."
 mkdir -p "$DEPLOY_DIR"
@@ -28,9 +35,6 @@ rm -rf "$DEPLOY_DIR/node_modules" "$DEPLOY_DIR/package.json" "$DEPLOY_DIR/packag
 
 cp "$SCRIPT_DIR/$CORE_TGZ" "$DEPLOY_DIR/"
 cp "$SCRIPT_DIR/$REVIEW_TGZ" "$DEPLOY_DIR/"
-
-# Copy the workspace lock so dependency resolution is deterministic
-cp "$SCRIPT_DIR/package-lock.json" "$DEPLOY_DIR/"
 
 cd "$DEPLOY_DIR"
 
