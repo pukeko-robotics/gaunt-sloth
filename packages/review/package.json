@@ -1,6 +1,6 @@
 {
   "name": "@gaunt-sloth/review",
-  "version": "2.0.0-alpha.0",
+  "version": "2.0.0-alpha.1",
   "description": "Review functionality for Gaunt Sloth",
   "license": "MIT",
   "author": "Andrew Kondratev",
@@ -34,7 +34,7 @@
     "#src/*.js": "./dist/*.js"
   },
   "dependencies": {
-    "@gaunt-sloth/core": "2.0.0-alpha.0"
+    "@gaunt-sloth/core": "2.0.0-alpha.1"
   },
   "files": [
     "./dist/*",
