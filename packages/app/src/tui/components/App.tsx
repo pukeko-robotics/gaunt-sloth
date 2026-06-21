@@ -14,6 +14,7 @@ import { LiveTurn } from '#src/tui/components/LiveTurn.js';
 import { StatusBar } from '#src/tui/components/StatusBar.js';
 import { PromptInput } from '#src/tui/components/PromptInput.js';
 import { Rule } from '#src/tui/components/Rule.js';
+import { ClearBanner } from '#src/tui/components/ClearBanner.js';
 import { DebugPanel, DEBUG_TABS, type DebugTab } from '#src/tui/components/DebugPanel.js';
 import {
   createCommandRegistry,
@@ -36,6 +37,23 @@ function debugViewportHeight(maximized: boolean, terminalRows: number | undefine
   if (!maximized) return DEBUG_VIEWPORT_HEIGHT;
   const rows = terminalRows && terminalRows > 0 ? terminalRows : 24;
   return Math.max(DEBUG_MAX_MIN_HEIGHT, rows - DEBUG_MAX_CHROME_ROWS);
+}
+
+/**
+ * The terminal sequence that makes `/clear` "bump up" the screen like `clear`/Ctrl+L while
+ * *preserving* scrollback. We deliberately do NOT emit the clear-scrollback escape `ESC[3J`
+ * (which would destroy history and defeat the point):
+ *  - First push a screenful of newlines so the prior conversation scrolls up and out of the
+ *    visible viewport — but stays reachable by scrolling/wheeling up (it lives in scrollback).
+ *  - Then home the cursor (`ESC[H`) and clear from the cursor to the end of the *visible*
+ *    screen (`ESC[J`, i.e. `ESC[0J`) so Ink re-renders cleanly at the top with no artifacts.
+ * `rows` is the live terminal height; we fall back to a sensible default when it is unknown.
+ */
+function viewportBumpSequence(rows: number | undefined): string {
+  const height = rows && rows > 0 ? rows : 24;
+  // newlines (bump prior content into scrollback) + cursor home + clear-to-end-of-visible-screen.
+  // NOTE: `\x1b[J` is clear-to-end-of-screen (NOT `\x1b[3J`, which would erase scrollback).
+  return '\n'.repeat(height) + '\x1b[H' + '\x1b[J';
 }
 
 type DistributiveOmitId<T> = T extends unknown ? Omit<T, 'id'> : never;
@@ -70,6 +88,11 @@ export function App(props: TuiAppProps): React.ReactElement {
   // summary lines) so the transcript stays readable; Ctrl+T flips the whole turn's detail,
   // mirroring the docked debug panel's single-key detail toggle.
   const [toolsExpanded, setToolsExpanded] = useState(false);
+  // Whether to show the post-`/clear` "history cleared" banner. Lives in the live (non-Static)
+  // frame so it is reliably visible — pushing a system line right after setTranscript([]) is
+  // swallowed because clearing <Static>'s items resets its internal index (TUI-C12). Hidden
+  // again the moment the next user turn starts so it doesn't linger above a fresh conversation.
+  const [clearedBanner, setClearedBanner] = useState(false);
   // Mirror of toolsExpanded for the slash-command handler (memoized without it in deps), so
   // /tools can compute the next state without a stale closure or a side effect in the updater.
   const toolsExpandedRef = useRef(false);
@@ -99,6 +122,9 @@ export function App(props: TuiAppProps): React.ReactElement {
 
   const runTurn = useCallback(
     async (userInput: string) => {
+      // A new exchange supersedes the post-/clear banner; drop it so it doesn't sit above
+      // the fresh conversation.
+      setClearedBanner(false);
       push({ kind: 'user', text: userInput });
       const ac = new AbortController();
       abortRef.current = ac;
@@ -168,6 +194,16 @@ export function App(props: TuiAppProps): React.ReactElement {
           setDebugHistory([]);
           setDebugRequest([]);
           setDebugResponse([]);
+          // Show visible feedback for the clear. Rendered outside <Static> (see clearedBanner)
+          // so the known index-reset swallow quirk can't eat it (TUI-C12).
+          setClearedBanner(true);
+          // "Bump up" the screen the clear/Ctrl+L way: scroll the prior conversation up and out
+          // of the visible viewport (it stays in scrollback — we never emit ESC[3J), so the
+          // session restarts at the top. We write the sequence ourselves and then reset Ink's
+          // frame accounting (onResetFrame → instance.clear()) so the next render lands cleanly
+          // at the top with no leftover artifacts.
+          stdout?.write(viewportBumpSequence(stdout?.rows));
+          props.onResetFrame?.();
           // Clearing only the on-screen transcript would leave the model's conversation
           // thread intact (the LangGraph checkpointer replays it on the next turn), so the
           // model would still "remember" everything. Reset the agent's thread too so the
@@ -312,6 +348,7 @@ export function App(props: TuiAppProps): React.ReactElement {
   return (
     <Box flexDirection="column">
       <Transcript items={transcript} toolsExpanded={toolsExpanded} />
+      {clearedBanner ? <ClearBanner /> : null}
       {showIntro ? <Text dimColor>{readyMessage.trim()}</Text> : null}
       {live ? <LiveTurn turn={live} toolsExpanded={toolsExpanded} streaming /> : null}
       {/* Docked debug/subagent panel: full-width, below the transcript / live turn and above

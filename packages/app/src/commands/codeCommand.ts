@@ -14,7 +14,7 @@ export function codeCommand(
     description:
       'Interactively write code with sloth (has full file system access within your project)',
     readyMessage: '\nGaunt Sloth is ready to code. Type your prompt.',
-    exitMessage: "Type 'exit' or hit Ctrl+C to exit code session\n",
+    exitMessage: "Type 'exit' or Ctrl+C to exit code session · /help for commands\n",
   };
 
   // REL-3: bare `gth` (no subcommand) now defaults to the agentic code session.

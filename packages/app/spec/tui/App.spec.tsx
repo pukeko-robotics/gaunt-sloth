@@ -20,7 +20,7 @@ function scriptedAgent(events: AgentStreamEvent[]): TuiAgent {
 const baseProps = {
   mode: 'chat',
   readyMessage: '\nGaunt Sloth is ready to chat. Type your prompt.',
-  exitMessage: "Type 'exit' or hit Ctrl+C to exit chat\n",
+  exitMessage: "Type 'exit' or Ctrl+C to exit chat · /help for commands\n",
 };
 
 const ESC = String.fromCharCode(27); // Escape key byte
@@ -63,6 +63,20 @@ describe('tui <App>', () => {
       // Once idle the status bar shows the ready line and the prompt is back.
       expect(lastFrame()).toContain('ready');
       expect(lastFrame()).toContain('>');
+    });
+
+    unmount();
+  });
+
+  it('surfaces /help in the idle exit hint (TUI-C12)', async () => {
+    // The idle hint is the exitMessage; it now also points at /help for command discovery.
+    const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
+    const { lastFrame, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
+
+    await vi.waitFor(() => {
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('exit'); // keeps the exit affordance
+      expect(frame).toContain('/help for commands'); // new command-discovery hint
     });
 
     unmount();
@@ -364,6 +378,66 @@ describe('tui <App>', () => {
 
     // The agent thread was reset exactly once by the /clear.
     await vi.waitFor(() => expect(resetCount).toBe(1));
+
+    unmount();
+  });
+
+  it('/clear shows the "history cleared" banner as visible feedback (TUI-C12)', async () => {
+    // The old one-line "Transcript cleared." was swallowed because clearing <Static>'s items
+    // resets its internal index. The banner now renders outside <Static>, so it must be present
+    // in the live frame after a /clear.
+    const agent = scriptedAgent([{ type: 'text', delta: 'hi there' }]);
+    const { stdin, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} initialMessage="remember this" />
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+    // No banner before the clear.
+    expect(lastFrame()).not.toContain('History cleared');
+
+    stdin.write('/clear');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/clear'));
+    stdin.write('\r');
+
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).toContain('History cleared'); // banner line 1
+      expect(f).toContain('Scroll up'); // banner hint line
+    });
+
+    unmount();
+  });
+
+  it('/clear bumps the viewport (scroll + clear) without erasing scrollback, and resets the Ink frame (TUI-C12)', async () => {
+    // /clear must scroll the prior conversation up + clear the *visible* screen (ESC[H / ESC[J)
+    // but never emit ESC[3J (which would destroy scrollback), and must reset Ink's frame
+    // accounting via onResetFrame so the re-render lands cleanly at the top.
+    let resetFrameCalls = 0;
+    const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
+    const { stdin, stdout, lastFrame, unmount } = render(
+      <App
+        {...baseProps}
+        agent={agent}
+        initialMessage="go"
+        onResetFrame={() => {
+          resetFrameCalls += 1;
+        }}
+      />
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+
+    stdin.write('/clear');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/clear'));
+    stdin.write('\r');
+
+    await vi.waitFor(() => expect(resetFrameCalls).toBe(1));
+
+    const written = stdout.frames.join('');
+    expect(written).toContain('\x1b[H'); // cursor home
+    expect(written).toContain('\x1b[J'); // clear to end of *visible* screen
+    expect(written).toContain('\n'); // newlines that bump prior content into scrollback
+    expect(written).not.toContain('\x1b[3J'); // must NOT erase scrollback
 
     unmount();
   });

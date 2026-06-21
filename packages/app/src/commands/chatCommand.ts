@@ -13,7 +13,7 @@ export function chatCommand(
     readModePrompt: readChatPrompt,
     description: 'Start an interactive chat session with Gaunt Sloth',
     readyMessage: '\nGaunt Sloth is ready to chat. Type your prompt.',
-    exitMessage: "Type 'exit' or hit Ctrl+C to exit chat\n",
+    exitMessage: "Type 'exit' or Ctrl+C to exit chat · /help for commands\n",
   };
   // Chat command (REL-3: the no-subcommand default is now `code`, registered in codeCommand)
   program

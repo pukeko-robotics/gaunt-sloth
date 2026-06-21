@@ -90,6 +90,9 @@ export async function createTuiSession(
   const fixturePath = env.GTH_TUI_E2E_FIXTURE;
   if (fixturePath) {
     const { createFixtureTuiAgent } = await import('#src/tui/fixtureAgent.js');
+    // Holder so `onResetFrame` can reach the not-yet-created render instance (App writes the
+    // /clear scroll/clear escapes itself, then asks Ink to forget its last frame — TUI-C12).
+    let resetFrame: (() => void) | undefined;
     const instance = render(
       <App
         agent={createFixtureTuiAgent(fixturePath)}
@@ -97,8 +100,10 @@ export async function createTuiSession(
         readyMessage={sessionConfig.readyMessage}
         exitMessage={sessionConfig.exitMessage}
         initialMessage={message}
+        onResetFrame={() => resetFrame?.()}
       />
     );
+    resetFrame = () => instance.clear();
     await instance.waitUntilExit();
     return;
   }
@@ -143,6 +148,10 @@ export async function createTuiSession(
       },
     };
 
+    // Holder so `onResetFrame` can reach the not-yet-created render instance: on /clear the App
+    // writes the scroll/viewport-clear escapes, then calls this to make Ink forget its last
+    // frame so the re-render lands cleanly at the top (TUI-C12).
+    let resetFrame: (() => void) | undefined;
     const instance = render(
       <App
         agent={tuiAgent}
@@ -154,12 +163,14 @@ export async function createTuiSession(
         subscribeStatus={bridge.subscribe}
         subscribeDebug={debugBridge.subscribe}
         onTurnComplete={logTurn}
+        onResetFrame={() => resetFrame?.()}
         onExit={async () => {
           await runner.cleanup();
           stopSessionLogging();
         }}
       />
     );
+    resetFrame = () => instance.clear();
 
     await instance.waitUntilExit();
   } catch (err) {
