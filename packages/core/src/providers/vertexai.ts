@@ -19,7 +19,7 @@ import { writeFileIfNotExistsWithMessages } from '#src/utils/fileUtils.js';
 const jsonContent = `{
   "llm": {
     "type": "vertexai",
-    "model": "gemini-2.5-pro"
+    "model": "gemini-3.5-flash"
   }
 }`;
 
@@ -42,7 +42,7 @@ export async function processJsonConfig(
   const { ChatGoogle } = await import('@langchain/google/node');
   const configFields = {
     ...llmConfig,
-    model: llmConfig.model || 'gemini-2.5-pro',
+    model: llmConfig.model || 'gemini-3.5-flash',
     vertexai: true,
   };
   delete configFields.type;

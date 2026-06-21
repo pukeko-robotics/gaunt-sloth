@@ -20,14 +20,14 @@ export async function processJsonConfig(
   return new anthropic.ChatAnthropic({
     ...llmConfig,
     apiKey: anthropicApiKey,
-    model: llmConfig.model || 'claude-sonnet-4-5',
+    model: llmConfig.model || 'claude-sonnet-4-6',
   });
 }
 
 const jsonContent = `{
   "llm": {
     "type": "anthropic",
-    "model": "claude-sonnet-4-5"
+    "model": "claude-sonnet-4-6"
   }
 }`;
 

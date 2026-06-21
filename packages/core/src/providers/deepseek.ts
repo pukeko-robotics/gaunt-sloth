@@ -18,14 +18,14 @@ export async function processJsonConfig(
   return new deepseek.ChatDeepSeek({
     ...llmConfig,
     apiKey: deepseekApiKey,
-    model: llmConfig.model || 'deepseek-reasoner',
+    model: llmConfig.model || 'deepseek-v4-pro',
   });
 }
 
 const jsonContent = `{
   "llm": {
     "type": "deepseek",
-    "model": "deepseek-reasoner"
+    "model": "deepseek-v4-pro"
   }
 }`;
 

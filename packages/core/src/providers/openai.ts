@@ -20,7 +20,7 @@ export async function processJsonConfig(
   const configFields = {
     ...llmConfig,
     apiKey: openaiApiKey,
-    model: llmConfig.model || 'gpt-4o',
+    model: llmConfig.model || 'gpt-5.5',
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   delete (configFields as any).type;
@@ -42,7 +42,7 @@ function getApiKey(llmConfig: OpenAIChatInput & ChatOpenAIFields & BaseChatModel
 const jsonContent = `{
   "llm": {
     "type": "openai",
-    "model": "gpt-4o"
+    "model": "gpt-5.5"
   }
 }`;
 

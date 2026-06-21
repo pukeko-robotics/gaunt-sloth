@@ -148,7 +148,7 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'anthropic',
     label: 'Anthropic (Claude)',
     apiKeyEnvironmentVariables: ['ANTHROPIC_API_KEY'],
-    preferredModels: ['claude-sonnet-4-5', 'claude-opus-4-1', 'claude-haiku-4-5'],
+    preferredModels: ['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-haiku-4-5'],
     discovery: {
       kind: 'anthropic',
       modelsUrl: () => 'https://api.anthropic.com/v1/models',
@@ -159,7 +159,7 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'openai',
     label: 'OpenAI',
     apiKeyEnvironmentVariables: ['OPENAI_API_KEY'],
-    preferredModels: ['gpt-4o', 'gpt-4o-mini', 'o3-mini'],
+    preferredModels: ['gpt-5.5', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.4-nano'],
     discovery: {
       kind: 'openai',
       modelsUrl: () => 'https://api.openai.com/v1/models',
@@ -171,14 +171,21 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'google-genai',
     label: 'Google AI Studio (Gemini)',
     apiKeyEnvironmentVariables: ['GOOGLE_API_KEY'],
-    preferredModels: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+    // AI Studio exposes the 3.1 Pro tier only as a `-preview` slug.
+    preferredModels: [
+      'gemini-3.5-flash',
+      'gemini-3.1-pro-preview',
+      'gemini-2.5-pro',
+      'gemini-2.5-flash',
+    ],
     discovery: { kind: 'none' },
   },
   {
     id: 'vertexai',
     label: 'Google Vertex AI (Gemini)',
     apiKeyEnvironmentVariables: [],
-    preferredModels: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+    // Vertex publishes the same family under bare (non-preview) slugs.
+    preferredModels: ['gemini-3.5-flash', 'gemini-3.1-pro', 'gemini-2.5-pro', 'gemini-2.5-flash'],
     discovery: { kind: 'none' },
     requiresExternalAuth: true,
   },
@@ -186,7 +193,7 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'groq',
     label: 'Groq',
     apiKeyEnvironmentVariables: ['GROQ_API_KEY'],
-    preferredModels: ['openai/gpt-oss-120b', 'moonshotai/kimi-k2-instruct'],
+    preferredModels: ['openai/gpt-oss-120b', 'qwen/qwen3.6-27b', 'openai/gpt-oss-20b'],
     discovery: {
       kind: 'openai',
       // Groq's OpenAI-compatible surface lives under /openai/v1.
@@ -199,7 +206,7 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'deepseek',
     label: 'DeepSeek',
     apiKeyEnvironmentVariables: ['DEEPSEEK_API_KEY'],
-    preferredModels: ['deepseek-reasoner', 'deepseek-chat'],
+    preferredModels: ['deepseek-v4-pro', 'deepseek-v4-flash'],
     discovery: {
       kind: 'openai',
       modelsUrl: () => 'https://api.deepseek.com/v1/models',
@@ -211,7 +218,7 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'xai',
     label: 'xAI (Grok)',
     apiKeyEnvironmentVariables: ['XAI_API_KEY'],
-    preferredModels: ['grok-4-1-fast', 'grok-4'],
+    preferredModels: ['grok-4.3', 'grok-4.20-multi-agent-0309', 'grok-build-0.1'],
     discovery: {
       kind: 'openai',
       modelsUrl: () => 'https://api.x.ai/v1/models',
@@ -225,7 +232,7 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     // OPENROUTER_API_KEY is accepted as an alias.
     label: 'OpenRouter',
     apiKeyEnvironmentVariables: ['OPEN_ROUTER_API_KEY', 'OPENROUTER_API_KEY'],
-    preferredModels: ['qwen/qwen3-coder', 'anthropic/claude-sonnet-4-5'],
+    preferredModels: ['qwen/qwen3-coder', 'anthropic/claude-sonnet-4.6', 'openai/gpt-5.5'],
     discovery: {
       kind: 'openai',
       modelsUrl: () => 'https://openrouter.ai/api/v1/models',
