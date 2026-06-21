@@ -28,7 +28,23 @@ ORDER=(core agent review app)
 # hijack the stable channel. The explicit flag is the real guard (publishConfig
 # stays as defence-in-depth). If the caller already passed `--tag` via
 # NPM_PUBLISH_ARGS (the CI workflow does), we don't add a second one.
-DIST_TAG="$(node -p "const s=require('semver');const v=require('${ROOT}/packages/core/package.json').version;const p=s.prerelease(v);p?(p.find(x=>typeof x==='string')||'latest'):'latest'")"
+#
+# The derivation is a tiny INLINE parse — no `semver` (REL-4). `semver` is only a
+# *transitive* dep, so `require('semver')` could fail to hoist and, under
+# `set -euo pipefail`, abort the whole publish before anything ships. Reading the
+# version from the package's own package.json (its own file, not a transitive dep)
+# is safe; the prerelease id is the part after the first `-`, up to the first `.`.
+# A plain release, a numeric-only id, or an empty parse all fall back to `latest`.
+CORE_VERSION="$(node -p "require('${ROOT}/packages/core/package.json').version")"
+DIST_TAG="latest"
+if [[ "${CORE_VERSION}" == *-* ]]; then
+  pre="${CORE_VERSION#*-}"   # 2.0.0-alpha.0 -> alpha.0
+  pre="${pre%%.*}"          #              -> alpha
+  # a real channel is a non-empty, non-numeric identifier; else stay on latest
+  if [[ -n "${pre}" && ! "${pre}" =~ ^[0-9]+$ ]]; then
+    DIST_TAG="${pre}"
+  fi
+fi
 TAG_ARG=""
 if [[ "${NPM_PUBLISH_ARGS:-}" != *"--tag"* ]]; then
   TAG_ARG="--tag ${DIST_TAG}"
