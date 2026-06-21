@@ -12,7 +12,14 @@ import { Rule } from '#src/tui/components/Rule.js';
  * user/assistant exchange is visually delimited. Separators are a pure render concern here —
  * the view-model event contract is untouched.
  */
-export function Transcript({ items }: { items: TranscriptItem[] }): React.ReactElement {
+export function Transcript({
+  items,
+  toolsExpanded = false,
+}: {
+  items: TranscriptItem[];
+  /** Whether committed tool-call panels show their args/result body (App-level Ctrl+T). */
+  toolsExpanded?: boolean;
+}): React.ReactElement {
   // Index of the first 'user' item; we suppress the separator above it so the transcript
   // does not open with a stray rule.
   const firstUserIndex = items.findIndex((i) => i.kind === 'user');
@@ -24,7 +31,7 @@ export function Transcript({ items }: { items: TranscriptItem[] }): React.ReactE
         return (
           <Box key={item.id} flexDirection="column">
             {separator ? <Rule /> : null}
-            {renderItem(item)}
+            {renderItem(item, toolsExpanded)}
           </Box>
         );
       }}
@@ -32,7 +39,7 @@ export function Transcript({ items }: { items: TranscriptItem[] }): React.ReactE
   );
 }
 
-function renderItem(item: TranscriptItem): React.ReactElement {
+function renderItem(item: TranscriptItem, toolsExpanded: boolean): React.ReactElement {
   switch (item.kind) {
     case 'user':
       return (
@@ -42,9 +49,10 @@ function renderItem(item: TranscriptItem): React.ReactElement {
         </Box>
       );
     case 'assistant':
+      // Committed turns are complete, so they render markdown (streaming=false default).
       return (
         <Box flexDirection="column">
-          <LiveTurn turn={item.turn} />
+          <LiveTurn turn={item.turn} toolsExpanded={toolsExpanded} />
         </Box>
       );
     case 'system':

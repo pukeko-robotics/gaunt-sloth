@@ -337,6 +337,103 @@ describe('tui <App>', () => {
     unmount();
   });
 
+  it('/tools sets the tool-call detail mode applied to the (live) turn that follows', async () => {
+    // A blocking agent so the turn stays live for the assertion. Committed turns live in
+    // Ink's <Static> and are frozen once written, so the collapsible affordance is a
+    // live-turn concern; /tools sets the mode that the next live turn picks up.
+    const agent: TuiAgent = {
+      async *runTurn(_input, signal) {
+        yield { type: 'tool_start', id: 't1', name: 'read_file' };
+        yield { type: 'tool_args', id: 't1', delta: '{"path":"after.ts"}' };
+        yield { type: 'tool_end', id: 't1' };
+        yield { type: 'tool_result', id: 't1', content: 'after-body' };
+        yield { type: 'text', delta: 'working' };
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) return resolve();
+          signal.addEventListener('abort', () => resolve());
+        });
+      },
+    };
+    const { stdin, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+
+    // Turn on expanded detail while idle, before sending a prompt.
+    stdin.write('/tools');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/tools'));
+    stdin.write('\r');
+    // Wait for the prompt to clear (the /tools line consumed) before typing the next prompt.
+    await vi.waitFor(() => expect(lastFrame()).not.toContain('/tools'));
+
+    // Now run a turn: the live tool call shows its args/result body because /tools is on.
+    stdin.write('hello');
+    await vi.waitFor(() => expect(lastFrame()).toContain('hello'));
+    stdin.write('\r');
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).toContain('read_file');
+      expect(f).toContain('after.ts'); // args visible (expanded mode)
+      expect(f).toContain('after-body'); // result visible
+    });
+
+    stdin.write(String.fromCharCode(27)); // Esc to end the run
+    unmount();
+  });
+
+  it('Ctrl+T toggles tool-call detail while a turn is streaming', async () => {
+    const CTRL_T = '\x14'; // Ctrl+T control byte
+    // Agent that streams a tool result then blocks, so the turn stays running for the toggle.
+    const agent: TuiAgent = {
+      async *runTurn(_input, signal) {
+        yield { type: 'tool_start', id: 't1', name: 'read_file' };
+        yield { type: 'tool_args', id: 't1', delta: '{"path":"live.ts"}' };
+        yield { type: 'tool_end', id: 't1' };
+        yield { type: 'tool_result', id: 't1', content: 'live-body' };
+        yield { type: 'text', delta: 'working' };
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) return resolve();
+          signal.addEventListener('abort', () => resolve());
+        });
+      },
+    };
+    const { stdin, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} initialMessage="go" />
+    );
+
+    // Live (running) tool call: collapsed summary, body hidden.
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).toContain('read_file');
+      expect(f).not.toContain('live-body');
+    });
+
+    // Ctrl+T while running expands the live tool's body.
+    stdin.write(CTRL_T);
+    await vi.waitFor(() => expect(lastFrame()).toContain('live-body'));
+
+    stdin.write(String.fromCharCode(27)); // Esc to end the run cleanly
+    unmount();
+  });
+
+  it('renders completed assistant markdown as formatted output in the transcript', async () => {
+    const agent = scriptedAgent([
+      { type: 'text', delta: '# Heading\n' },
+      { type: 'text', delta: '- bullet point' },
+    ]);
+    const { lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} initialMessage="go" />
+    );
+
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      // Markdown applied once the turn committed: list bullet glyph present, raw '- ' gone.
+      expect(f).toContain('Heading');
+      expect(f).toContain('• bullet point');
+    });
+
+    unmount();
+  });
+
   it('aborts the in-flight turn when Esc is pressed', async () => {
     let aborted = false;
     const agent: TuiAgent = {

@@ -91,6 +91,36 @@ test.describe('gth chat TUI — greeting fixture', () => {
   });
 });
 
+test.describe('gth chat TUI — markdown + collapsible tool calls (markdown fixture)', () => {
+  test.use({
+    program: { file: 'node', args: [cli, 'chat', '--tui'] },
+    env: envFor('markdown.json'),
+    columns: 100,
+    rows: 30,
+  });
+
+  // Assistant markdown is rendered as terminal formatting once the turn completes: the
+  // heading text and list bullets appear (the bullet glyph proves markdown was applied),
+  // and the tool call shows as a collapsed summary line with its result body hidden.
+  test('renders markdown and a collapsed tool-call summary', async ({ terminal }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+    terminal.write('go');
+    await expect(terminal.getByText('> go')).toBeVisible();
+    terminal.submit();
+
+    // Tool-call summary line (collapsed): name + status, but NOT the result body.
+    await expect(terminal.getByText('read_file', { full: true })).toBeVisible();
+    // Markdown list bullet renders (proves the markdown path ran, not raw "- ").
+    await expect(terminal.getByText('first item', { full: true })).toBeVisible();
+    await expect(terminal.getByText('second item', { full: true })).toBeVisible();
+    await expect(terminal.getByText('Summary', { full: true })).toBeVisible();
+    // The turn completed and returned to ready.
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+    // The collapsed tool call hides its result body in the readable transcript.
+    await expect(terminal.getByText('secret-tool-result-body')).not.toBeVisible();
+  });
+});
+
 test.describe('gth chat TUI — slow fixture (interrupt)', () => {
   test.use({
     program: { file: 'node', args: [cli, 'chat', '--tui'] },

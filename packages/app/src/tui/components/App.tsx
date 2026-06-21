@@ -66,6 +66,10 @@ export function App(props: TuiAppProps): React.ReactElement {
   const [debugHistory, setDebugHistory] = useState<string[]>([]);
   const [debugRequest, setDebugRequest] = useState<string[]>([]);
   const [debugResponse, setDebugResponse] = useState<string[]>([]);
+  // Whether tool-call panels show their args/result body. Collapsed by default (compact
+  // summary lines) so the transcript stays readable; Ctrl+T flips the whole turn's detail,
+  // mirroring the docked debug panel's single-key detail toggle.
+  const [toolsExpanded, setToolsExpanded] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const idRef = useRef(0);
   const runningRef = useRef(false);
@@ -162,6 +166,9 @@ export function App(props: TuiAppProps): React.ReactElement {
           setDebugRequest([]);
           setDebugResponse([]);
         }
+        if (result.toggleTools) {
+          setToolsExpanded((e) => !e);
+        }
         if (result.toggleDebug) {
           setDebugVisible((v) => {
             const next = !v;
@@ -198,6 +205,15 @@ export function App(props: TuiAppProps): React.ReactElement {
   useInput((input, key) => {
     if (key.escape && runningRef.current) {
       abortRef.current?.abort();
+      return;
+    }
+
+    // Ctrl+T toggles tool-call detail (compact summary ⇄ expanded args/result) while a turn
+    // is streaming — the moment a live tool watch is most useful. We gate it on `running`
+    // because the prompt's <TextInput> (mounted only when idle) would otherwise also receive
+    // the keystroke and insert a stray 't'. The `/tools` slash command covers the idle case.
+    if (key.ctrl && input === 't' && runningRef.current) {
+      setToolsExpanded((e) => !e);
       return;
     }
 
@@ -274,9 +290,9 @@ export function App(props: TuiAppProps): React.ReactElement {
 
   return (
     <Box flexDirection="column">
-      <Transcript items={transcript} />
+      <Transcript items={transcript} toolsExpanded={toolsExpanded} />
       {showIntro ? <Text dimColor>{readyMessage.trim()}</Text> : null}
-      {live ? <LiveTurn turn={live} /> : null}
+      {live ? <LiveTurn turn={live} toolsExpanded={toolsExpanded} streaming /> : null}
       {/* Docked debug/subagent panel: full-width, below the transcript / live turn and above
           the input dock. Lives in the live (non-static) frame, so it coexists with the
           <Static> scrollback. Toggled by /debug; Tab focuses it for PageUp/PageDown scrolling. */}

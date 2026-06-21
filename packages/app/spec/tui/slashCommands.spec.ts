@@ -63,6 +63,14 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     expect(result.exit).toBeUndefined();
   });
 
+  it('/tools requests a tool-call detail toggle', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const result = dispatchSlashCommand(parseSlashCommand('/tools')!, createCommandRegistry(), ctx);
+    expect(result.toggleTools).toBe(true);
+    expect(result.exit).toBeUndefined();
+  });
+
   it('/exit requests an app quit', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('#src/tui/slashCommands.js');
