@@ -13,19 +13,19 @@
   },
   "customTools": {
     "run_build": {
-      "command": "npm run build > out/build-out.txt",
+      "command": "pnpm run build > out/build-out.txt",
       "description": "Run build (npm run build). Results will be saved to `out/build-out.txt` file, only respond with details of errors; Respond OK otherwise."
     },
     "run_unit_tests": {
-      "command": "npm run test > out/tests-out.txt",
+      "command": "pnpm run test > out/tests-out.txt",
       "description": "Run unit tests (npm run test). Results will be saved to `out/tests-out.txt` file, only respond with details of failures, Respond OK otherwise."
     },
     "run_lint": {
-      "command": "npm run lint-n-fix > out/lint-out.txt",
+      "command": "pnpm run lint-n-fix > out/lint-out.txt",
       "description": "Run lint with autofix. Results will be saved to `out/lint-out.txt` file, only respond with details of errors; Respond OK otherwise."
     },
     "run_single_unit_test": {
-      "command": "npm run test ${testFileName} > out/tests-out.txt",
+      "command": "pnpm run test ${testFileName} > out/tests-out.txt",
       "description": "Run single unit test. Results will be saved to `out/tests-out.txt` file, only respond with details of failures, Respond OK otherwise.",
       "parameters": {
         "testFileName": {
@@ -34,7 +34,7 @@
       }
     },
     "run_single_integration_test": {
-      "command": "npm run it ${provider} ${testFileName} > out/integration-tests-out.txt",
+      "command": "pnpm run it ${provider} ${testFileName} > out/integration-tests-out.txt",
       "description": "Run single integration test from `integration-tests` dir. Results will be saved to `out/integration-tests-out.txt` file. Only respond with details of failures, Respond OK otherwise.",
       "parameters": {
         "provider": {

@@ -7,10 +7,10 @@
     "code": {
       "filesystem": "all",
       "devTools": {
-        "run_build": "npm run build",
-        "run_tests": "npm test",
-        "run_lint": "npm run lint-n-fix",
-        "run_single_test": "npm test"
+        "run_build": "pnpm run build",
+        "run_tests": "pnpm test",
+        "run_lint": "pnpm run lint-n-fix",
+        "run_single_test": "pnpm test"
       }
     }
   },

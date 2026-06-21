@@ -7,10 +7,10 @@
     "code": {
       "filesystem": "all",
       "devTools": {
-        "run_build": "npm run build",
-        "run_tests": "npm test",
-        "run_lint": "npm run lint-n-fix",
-        "run_single_test": "npm test"
+        "run_build": "pnpm run build",
+        "run_tests": "pnpm test",
+        "run_lint": "pnpm run lint-n-fix",
+        "run_single_test": "pnpm test"
       }
     }
   },
@@ -20,7 +20,7 @@
       "description": "Run build with index.ts as entry-point"
     },
     "run_single_integration_test": {
-      "command": "npm run it ${provider} ${testFileName}",
+      "command": "pnpm run it ${provider} ${testFileName}",
       "description": "Run single integration test from `integration-tests` dir",
       "parameters": {
         "provider": {
