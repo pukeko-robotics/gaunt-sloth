@@ -22,7 +22,7 @@ The example includes a `custom_logger` tool similar to the built-in `gth_status_
 1. **Copy this directory** to your project root or use it as reference
 2. **Install dependencies** (if not already installed):
    ```bash
-   npm install
+   pnpm install
    ```
 3. **Run Gaunt Sloth** from this directory:
    ```bash

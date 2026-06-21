@@ -27,12 +27,12 @@ well in workspaces for scoped packages, so use the bump script. Version computat
 `semver.inc(current, releaseType, preid)` — the same engine npm uses:
 
 ```bash
-npm run release:bump                          # patch-increment core's version AND sync all four
-npm run release:bump -- minor                 # patch | minor | major AND sync
-npm run release:bump -- prerelease alpha      # walk the prerelease counter on the alpha channel
-npm run release:bump -- preminor alpha        # open the next minor's alpha line
-npm run release:bump -- 2.0.0-alpha.0         # set an explicit version AND sync
-npm run release:bump-and-commit -- <args>     # same, then refresh package-lock.json and commit
+pnpm run release:bump                          # patch-increment core's version AND sync all four
+pnpm run release:bump minor                    # patch | minor | major AND sync
+pnpm run release:bump prerelease alpha         # walk the prerelease counter on the alpha channel
+pnpm run release:bump preminor alpha           # open the next minor's alpha line
+pnpm run release:bump 2.0.0-alpha.0            # set an explicit version AND sync
+pnpm run release:bump-and-commit <args>        # same, then refresh pnpm-lock.yaml and commit
 ```
 
 Release types: `patch | minor | major | prepatch | preminor | premajor | prerelease`, plus an
@@ -44,8 +44,8 @@ and the fat CLI's `@gaunt-sloth/*` dependency pins. It also writes `publishConfi
 four** package.jsons, derived from the new version: a prerelease (`2.0.0-alpha.0`) gets its preid
 (`alpha`/`beta`/`rc`) as the tag; a stable version gets `latest`. This is the `latest`-hijack
 guard (see below). Commit the result before publishing — `release:bump-and-commit` does that for
-you, including the lockfile refresh (`npm install --package-lock-only`) that keeps the next
-`npm ci` happy.
+you, including the lockfile refresh (`pnpm install --lockfile-only`) that keeps the next
+`pnpm install --frozen-lockfile` happy.
 
 ### Prereleases never take `latest`
 
@@ -86,15 +86,15 @@ This makes a run **idempotent at the version level**:
 
 Step order inside the `release` job:
 
-1. Checkout `main` (`fetch-depth: 0`), setup Node, `npm ci`, configure git identity.
+1. Checkout `main` (`fetch-depth: 0`), setup Node + pnpm (`pnpm/action-setup`), `pnpm install --frozen-lockfile`, configure git identity.
 2. **Read the CURRENT version** from `packages/core/package.json` — this is what ships.
 3. **Derive the dist-tag** from the *current* version (prerelease suffix → its preid; else `latest`).
-4. `npm run build`.
+4. `pnpm run build`.
 5. `./tag-packages.sh --push` — tags the current version (skips already-existing tags, so a
    re-dispatch of the same version is safe).
 6. `gh release create v<current>` (`--prerelease` when the current version has a prerelease suffix).
 7. **Publish all four** at the current version with `--tag <derived>`.
-8. **Only after publish succeeds:** post-bump — `npm run release:bump-and-commit` driven by the
+8. **Only after publish succeeds:** post-bump — `pnpm run release:bump-and-commit` driven by the
    dispatch inputs, then `git push origin HEAD:main`.
 
 #### The dispatch inputs describe the POST-bump, not the version shipped
@@ -114,7 +114,7 @@ Because a run ships the *current* version, `main` must already carry a version t
 **once**, locally, before the first dispatch:
 
 ```bash
-npm run release:bump-and-commit -- 2.0.0-alpha.0   # then push main
+pnpm run release:bump-and-commit 2.0.0-alpha.0   # then push main
 ```
 
 `premajor` from `0.1.8` would yield `1.0.0-alpha.0`, not `2.0.0` — we're skipping a whole major
@@ -156,7 +156,7 @@ remaining stragglers by hand at the same current version, e.g.
 ```bash
 REGISTRY=https://registry.npmjs.org \
   NPM_PUBLISH_ARGS="--access public --provenance --tag <derived>" \
-  npm publish -w <straggler-package>
+  bash -c 'cd packages/<straggler-package> && pnpm publish --registry "$REGISTRY" --no-git-checks $NPM_PUBLISH_ARGS'
 ```
 
 then re-create the tag/release/post-bump steps as needed. This trade-off (manual straggler
@@ -182,10 +182,10 @@ Existing tags are skipped, so it's safe to re-run:
 Preview what will be included in each package:
 
 ```bash
-npm pack --dry-run -w @gaunt-sloth/core
-npm pack --dry-run -w @gaunt-sloth/agent
-npm pack --dry-run -w @gaunt-sloth/review
-npm pack --dry-run -w gaunt-sloth
+pnpm --filter @gaunt-sloth/core pack --dry-run
+pnpm --filter @gaunt-sloth/agent pack --dry-run
+pnpm --filter @gaunt-sloth/review pack --dry-run
+pnpm --filter gaunt-sloth pack --dry-run
 ```
 
 Publish all four in dependency order (core → agent → review → `gaunt-sloth`). The script defaults
@@ -194,7 +194,7 @@ to a local Verdaccio at `http://localhost:4873`
 target npmjs:
 
 ```bash
-REGISTRY=https://registry.npmjs.org npm run release:publish
+REGISTRY=https://registry.npmjs.org pnpm run release:publish
 ```
 
 Note: the first ever publish of a scoped package requires `--access public` (pass it via

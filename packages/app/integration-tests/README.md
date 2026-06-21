@@ -32,11 +32,11 @@ integration-tests/
 Some tests intentionally contain `simple` in their name to indicate that fast models with lower intelligence, such as mercury, can run them without failing. Moreover, they take fewer tokens, which means they may be run in CI matrix.
 
 ```bash
-npm run it inception simple
+pnpm run it inception simple
 ```
 
 ```bash
-npm run it groq simple
+pnpm run it groq simple
 ```
 
 ## Running the Tests
@@ -51,24 +51,24 @@ To run the integration tests:
 2. Build
 
   ```
-  npm run build
+  pnpm run build
   ```
 
 3. Navigate to the project root directory and run:
    ```
-   npm run it anthropic
+   pnpm run it anthropic
    ```
 
-Or `npm run it vertexai` or `npm run it groq simple`,
+Or `pnpm run it vertexai` or `pnpm run it groq simple`,
 
 please note if you are on free tier of Groq review and PR tests are likely to fail,
 because tokens limit has been hit.
 
    Or run a specific test file:
    ```
-   npm run it anthropic askCommand.it.ts
-   npm run it anthropic reviewCommand.it.ts
-   npm run it anthropic prCommand.it.ts
+   pnpm run it anthropic askCommand.it.ts
+   pnpm run it anthropic reviewCommand.it.ts
+   pnpm run it anthropic prCommand.it.ts
    ```
 
 ## Working Directory

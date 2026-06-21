@@ -17,28 +17,22 @@ Keep changes focused. Large or ambiguous changes should start with an Issue so t
 
 ## Development Setup
 
-The repository currently targets Node.js 24 and npm 11 or newer.
+The repository currently targets Node.js 24 and pnpm 11 or newer.
 
 ```bash
-npm ci
-npm run build
+pnpm install
+pnpm run build
 ```
 
-If you need to regenerate `package-lock.json`, use the `--workspaces --include-workspace-root` flags:
-
-```bash
-npm install --workspaces --include-workspace-root
-```
-
-Plain `npm install` may omit workspace entries from the lockfile, which causes `npm ci` to fail with "Missing from lock file" errors.
+`pnpm install` resolves the whole workspace from `pnpm-lock.yaml` and links `packages/*` together. If a dependency rebuild prompts for build-script approval, run `pnpm approve-builds`.
 
 Useful commands:
 
 ```bash
-npm test
-npm run lint
-npm run lint-n-fix
-npm run format
+pnpm test
+pnpm run lint
+pnpm run lint-n-fix
+pnpm run format
 ```
 
 ## Local Development Registry (optional)
@@ -114,15 +108,15 @@ routing those scopes to localhost:
 ```bash
 # Bump like `npm version` — patch | minor | major or an explicit version;
 # no argument means patch:
-npm run release:bump
-npm run release:bump -- minor
-npm run release:bump -- 0.0.7   # passing the current version re-syncs without bumping
+pnpm run release:bump
+pnpm run release:bump minor
+pnpm run release:bump 0.0.7   # passing the current version re-syncs without bumping
 
-# Same as above, but also refreshes package-lock.json and commits the result:
-npm run release:bump-and-commit
+# Same as above, but also refreshes pnpm-lock.yaml and commits the result:
+pnpm run release:bump-and-commit
 
-npm run build
-npm run release:publish    # publishes core → tools → api → review to Verdaccio
+pnpm run build
+pnpm run release:publish    # publishes core → tools → api → review to Verdaccio
 ```
 
 `release:bump` writes the new version into `packages/{tools,core,api,review}`,
@@ -132,13 +126,13 @@ the lock-stepped set has no useful range semantics), and rewrites
 assistant's own version (1.5.x is its independent user-facing semver).
 
 Then in any downstream repo, bump its `@gaunt-sloth/*` pins to the new version
-and run `npm install` — Verdaccio serves the local copy via the per-repo
+and run `pnpm install` — Verdaccio serves the local copy via the per-repo
 `.npmrc` scope routing.
 
 To publish to the public registry instead of Verdaccio:
 
 ```bash
-REGISTRY=https://registry.npmjs.org npm run release:publish
+REGISTRY=https://registry.npmjs.org pnpm run release:publish
 ```
 
 ## Development Expectations
@@ -163,15 +157,15 @@ Tests are required for pull requests that change behavior, fix bugs, or add feat
 Before opening a pull request, run:
 
 ```bash
-npm test
-npm run lint
+pnpm test
+pnpm run lint
 ```
 
 Integration tests are available when relevant:
 
 ```bash
-npm run it <provider>
-npm run it <provider> simple
+pnpm run it <provider>
+pnpm run it <provider> simple
 ```
 
 See [integration-tests/README.md](./integration-tests/README.md) for details.
@@ -203,8 +197,8 @@ Reasonable PR checklist:
 - The branch is up to date with the target branch
 - The change is scoped to one problem or feature
 - Tests are included when behavior changes
-- `npm test` passes locally
-- `npm run lint` passes locally
+- `pnpm test` passes locally
+- `pnpm run lint` passes locally
 - Documentation is updated if user-facing behavior changed
 
 Small, targeted pull requests are preferred over large mixed changes.

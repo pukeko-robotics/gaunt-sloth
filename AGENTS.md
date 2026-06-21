@@ -129,45 +129,45 @@ every time you use a bash command that is not in allow-list, it needs approval a
 Running all integration tests (takes ~10 minutes):
 
 ```bash
-npm run it vertexai
+pnpm run it vertexai
 ```
 
 Command accepts another argument which is a partial file name to filter tests,
 
-for example `npm run it vertexai review` will run all tests that contain `review` in the file name.
+for example `pnpm run it vertexai review` will run all tests that contain `review` in the file name.
 
 Faster integration tests have `simple` suffix, which allows running a subset of tests quickly,
 this also helps with less intelligent models:
 
 ```bash
-npm run it vertexai simple
+pnpm run it vertexai simple
 ```
 
 Run multiple integration test patterns:
 ```bash
-npm run it vertexai prCommand reviewCommand
+pnpm run it vertexai prCommand reviewCommand
 ```
 
 ### Building and Testing
 
 ```bash
 # Build the project
-npm run build
+pnpm run build
 
 # Run tests
-npm test
+pnpm test
 
 # Run linting
-npm run lint
+pnpm run lint
 
 # Auto-fix simple lint issues
-npm run lint-n-fix
+pnpm run lint-n-fix
 
 # Format code
-npm run format
+pnpm run format
 
 # Install globally for development
-npm install -g ./
+pnpm install -g ./
 ```
 
 ## Release Notes
@@ -386,9 +386,9 @@ Please follow this workflow:
 
 - Analyze requirements.
 - Develop changes.
-- Make sure all tests pass `npm run test` and fix if possible.
+- Make sure all tests pass `pnpm run test` and fix if possible.
     - Request relevant documentation if some of the test failures are unclear.
-- Once all tests are green check lint with `npm run lint`.
-    - If any lint failures are present try fixing them with `npm run lint-n-fix`.
+- Once all tests are green check lint with `pnpm run lint`.
+    - If any lint failures are present try fixing them with `pnpm run lint-n-fix`.
     - If autofix didn't help, try fixing them yourself.
     - Prefer testing all user outputs, including testing the absence of unexpected outputs.
