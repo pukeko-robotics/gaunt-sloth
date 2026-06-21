@@ -378,6 +378,8 @@ describe('tui <App>', () => {
 
     // The agent thread was reset exactly once by the /clear.
     await vi.waitFor(() => expect(resetCount).toBe(1));
+    // The status-bar turn counter is part of the cleared conversation state, so it resets to 0.
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 0'));
 
     unmount();
   });

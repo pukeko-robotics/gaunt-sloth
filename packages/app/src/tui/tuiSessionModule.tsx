@@ -9,7 +9,7 @@ import {
   stopSessionLogging,
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
-import { env } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { env, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { HumanMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import { createResolvers } from '@gaunt-sloth/agent/resolvers.js';
@@ -20,6 +20,7 @@ import type { BaseMessage } from '@langchain/core/messages';
 import { App } from '#src/tui/components/App.js';
 import type { TuiAgent, TuiDebugCapture } from '#src/tui/types.js';
 import { renderHistory, renderRequestDetails, renderResponse } from '#src/tui/debugRender.js';
+import { viewportBumpSequence } from '#src/tui/terminal.js';
 import type { DebugRequestExtras } from '@gaunt-sloth/agent/core/debugCapture.js';
 
 type StatusListener = (level: string, message: string) => void;
@@ -147,6 +148,15 @@ export async function createTuiSession(
         runner.resetThread();
       },
     };
+
+    // "Bump up" the screen on launch the clear/Ctrl+L way (TUI-C13): scroll whatever was on
+    // screen before `gth`/`gsloth` ran up and out of the visible viewport (it stays in
+    // scrollback — we never emit ESC[3J) so the session opens at a clean top. We write this
+    // BEFORE render() so Ink paints its first frame at the top with no frame accounting to
+    // reset. Guarded on isTTY so piped/redirected/non-TTY runs (and tests) are not polluted.
+    if (stdout.isTTY) {
+      stdout.write(viewportBumpSequence(stdout.rows));
+    }
 
     // Holder so `onResetFrame` can reach the not-yet-created render instance: on /clear the App
     // writes the scroll/viewport-clear escapes, then calls this to make Ink forget its last

@@ -21,6 +21,7 @@ import {
   dispatchSlashCommand,
   parseSlashCommand,
 } from '#src/tui/slashCommands.js';
+import { viewportBumpSequence } from '#src/tui/terminal.js';
 
 /** Rows of clipping viewport in the docked debug panel (default / restored size). */
 const DEBUG_VIEWPORT_HEIGHT = 8;
@@ -37,23 +38,6 @@ function debugViewportHeight(maximized: boolean, terminalRows: number | undefine
   if (!maximized) return DEBUG_VIEWPORT_HEIGHT;
   const rows = terminalRows && terminalRows > 0 ? terminalRows : 24;
   return Math.max(DEBUG_MAX_MIN_HEIGHT, rows - DEBUG_MAX_CHROME_ROWS);
-}
-
-/**
- * The terminal sequence that makes `/clear` "bump up" the screen like `clear`/Ctrl+L while
- * *preserving* scrollback. We deliberately do NOT emit the clear-scrollback escape `ESC[3J`
- * (which would destroy history and defeat the point):
- *  - First push a screenful of newlines so the prior conversation scrolls up and out of the
- *    visible viewport — but stays reachable by scrolling/wheeling up (it lives in scrollback).
- *  - Then home the cursor (`ESC[H`) and clear from the cursor to the end of the *visible*
- *    screen (`ESC[J`, i.e. `ESC[0J`) so Ink re-renders cleanly at the top with no artifacts.
- * `rows` is the live terminal height; we fall back to a sensible default when it is unknown.
- */
-function viewportBumpSequence(rows: number | undefined): string {
-  const height = rows && rows > 0 ? rows : 24;
-  // newlines (bump prior content into scrollback) + cursor home + clear-to-end-of-visible-screen.
-  // NOTE: `\x1b[J` is clear-to-end-of-screen (NOT `\x1b[3J`, which would erase scrollback).
-  return '\n'.repeat(height) + '\x1b[H' + '\x1b[J';
 }
 
 type DistributiveOmitId<T> = T extends unknown ? Omit<T, 'id'> : never;
@@ -209,6 +193,10 @@ export function App(props: TuiAppProps): React.ReactElement {
           // model would still "remember" everything. Reset the agent's thread too so the
           // model context truly matches the now-empty transcript (TUI-C8).
           agent.resetThread?.();
+          // The status-bar turn counter is part of the conversation state we just wiped, so
+          // reset it too — a cleared session starts back at "turns: 0".
+          turnCountRef.current = 0;
+          setTurnCount(0);
         }
         if (result.toggleTools) {
           // Committed turns are frozen in Ink's <Static> and never re-fold, so toggling while
