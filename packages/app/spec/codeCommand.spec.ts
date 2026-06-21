@@ -295,7 +295,7 @@ describe('codeCommand', () => {
       '\nGaunt Sloth is ready to code. Type your prompt.'
     );
     expect(vi.mocked(displayInfo)).toHaveBeenCalledWith(
-      "Type 'exit' or hit Ctrl+C to exit code session\n"
+      "Type 'exit' or Ctrl+C to exit code session · /help for commands\n"
     );
     expect(mockReadline.close).toHaveBeenCalled();
   });

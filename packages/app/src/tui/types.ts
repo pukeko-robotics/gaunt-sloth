@@ -56,6 +56,13 @@ export interface TuiAppProps {
   subscribeDebug?: (cb: (capture: TuiDebugCapture) => void) => () => void;
   /** Called once a turn finishes, with the user input and the final assistant text. */
   onTurnComplete?: (userInput: string, assistantText: string) => void;
+  /**
+   * Reset Ink's frame accounting after `/clear` has scrolled the viewport (production wires this
+   * to the `render()` instance's `clear()`). The app writes the scroll/clear escapes itself, then
+   * calls this so Ink forgets its last-rendered output and re-renders cleanly at the top — without
+   * it Ink would diff against a now-stale frame and leave artifacts. Optional (tests / fixtures).
+   */
+  onResetFrame?: () => void;
   /** Called on `exit`/`/exit` (or quit) for cleanup before the app unmounts. */
   onExit?: () => void | Promise<void>;
 }
