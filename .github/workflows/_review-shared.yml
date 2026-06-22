@@ -43,17 +43,19 @@ jobs:
 
       - uses: actions/checkout@v6
 
-      - name: Enable Corepack
-        run: corepack enable
-
       - name: Use Node.js 24.x
         uses: actions/setup-node@v6
         with:
           node-version: 24.x
-          cache: 'pnpm'
 
-      - name: Install dependencies
-        run: pnpm add -g @gaunt-sloth/review@0.1.8 @langchain/google && gaunt-sloth-review --version
+      # Install the PUBLISHED review CLI globally. Keep this on npm, not pnpm:
+      # `pnpm add -g` drops bins in pnpm's global bin dir, which is not on PATH
+      # without `pnpm setup` (not run on CI runners) — so `gaunt-sloth-review`
+      # was not found post-OPS-6. npm's global bin is on PATH by default. There
+      # is no repo/workspace install here (published package only), so corepack
+      # and the pnpm cache are unnecessary.
+      - name: Install gaunt-sloth-review
+        run: npm i -g @gaunt-sloth/review@0.1.8 @langchain/google && gaunt-sloth-review --version
 
       - name: Extract issue number from PR title
         id: extract_issue
