@@ -11,14 +11,16 @@ vi.mock('child_process', () => childProcessMock);
 const consoleUtilsMock = {
   displayInfo: vi.fn(),
   displayError: vi.fn(),
+  displayWarning: vi.fn(),
 };
 vi.mock('#src/utils/consoleUtils.js', () => consoleUtilsMock);
 
-// Mock systemUtils
+// Mock systemUtils (env is consumed by the shell credential-scrub helper).
 const systemUtilsMock = {
   stdout: {
     write: vi.fn(),
   },
+  env: { PATH: '/usr/bin', HOME: '/home/test' },
 };
 vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
 
@@ -143,7 +145,10 @@ describe('GthDevToolkit - Basic Tests', () => {
       // but the shell tool must pass it through (confirmation, not filtering, is the guardrail).
       const result = await shellTool.invoke({ command: 'echo $HOME | cat' });
       expect(result).toContain("Command 'echo $HOME | cat' completed successfully");
-      expect(childProcessMock.spawn).toHaveBeenCalledWith('echo $HOME | cat', { shell: true });
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        'echo $HOME | cat',
+        expect.objectContaining({ shell: true, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+      );
     });
   });
 
@@ -179,7 +184,10 @@ describe('GthDevToolkit - Basic Tests', () => {
       expect(consoleUtilsMock.displayInfo).toHaveBeenCalledWith(
         '\n🔧 Executing test_tool: echo test'
       );
-      expect(childProcessMock.spawn).toHaveBeenCalledWith('echo test', { shell: true });
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        'echo test',
+        expect.objectContaining({ shell: true, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+      );
     });
 
     it('should handle command failure', async () => {

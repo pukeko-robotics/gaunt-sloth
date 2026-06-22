@@ -5,9 +5,52 @@ import { BaseToolkit, StructuredToolInterface, tool } from '@langchain/core/tool
 import { z } from 'zod';
 import { spawn } from 'child_process';
 import path from 'node:path';
-import { displayInfo, displayError } from '@gaunt-sloth/core/utils/consoleUtils.js';
-import { GthDevToolsConfig, isShellToolEnabled } from '@gaunt-sloth/core/config.js';
+import { displayInfo, displayError, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import {
+  GthDevToolsConfig,
+  getShellMaxOutputBytes,
+  getShellTimeoutMs,
+  isShellToolEnabled,
+} from '@gaunt-sloth/core/config.js';
 import { stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { checkHardline } from '#src/tools/shell/hardline.js';
+import { buildScrubbedEnv } from '#src/tools/shell/env.js';
+import { OutputBuffer } from '#src/tools/shell/outputBuffer.js';
+
+// Grace period (ms) between SIGTERM and the escalation to SIGKILL when a command
+// exceeds its timeout. Mirrors opencode's `forceKillAfter` (3s).
+const KILL_GRACE_MS = 3_000;
+
+/**
+ * Kill the child AND its descendants. Because the child is spawned `detached`, it
+ * leads its own process group, so signalling the NEGATIVE pid (`-pid`) delivers
+ * to the whole group — otherwise a shell's children (e.g. a spawned server) would
+ * be orphaned and keep running after a timeout. Swallows the EPERM/ESRCH races
+ * that occur when the process has already exited.
+ */
+function killProcessGroup(
+  child: { pid?: number; kill: (signal?: NodeJS.Signals) => boolean },
+  signal: NodeJS.Signals
+): void {
+  try {
+    if (typeof child.pid === 'number') {
+      // Negative pid → signal the entire process group.
+      process.kill(-child.pid, signal);
+      return;
+    }
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException)?.code;
+    // ESRCH: already gone. EPERM: group-kill not permitted — fall through to the
+    // direct child kill below. Anything else: also fall back rather than throw.
+    if (code === 'ESRCH') return;
+  }
+  // Fallback: kill just the child (best effort).
+  try {
+    child.kill(signal);
+  } catch {
+    // Already exited — nothing to do.
+  }
+}
 
 // Helper function to create a tool with dev type
 function createGthTool<T extends z.ZodSchema>(
@@ -120,22 +163,73 @@ export default class GthDevToolkit extends BaseToolkit {
     }
   }
 
+  /**
+   * Execute a shell command with the EXT-9 Tier-1 hardening applied:
+   *  1. stdin closed + timeout + process-group kill (no hang on interactive
+   *     commands; runaway commands are killed group-wide on timeout),
+   *  2. output capped with a head/tail window + temp-file spillover,
+   *  3. provider/LLM credentials scrubbed from the child env,
+   *  4. an unbypassable hardline blocklist (refuses catastrophic commands BEFORE
+   *     spawn — fires even when confirmation is bypassed by yolo).
+   *
+   * Resolves with a model-facing string. Timeouts resolve (not reject) so the
+   * model sees the killed-after-N message and can continue.
+   */
   private async executeCommand(command: string, toolName: string): Promise<string> {
     displayInfo(`\n🔧 Executing ${toolName}: ${command}`);
+
+    // (4) Hardline blocklist — checked here so it fires regardless of yolo,
+    // allow-lists, or any confirmation path. Refuse WITHOUT executing.
+    const hardline = checkHardline(command);
+    if (hardline) {
+      const refusal =
+        `Refusing to execute '${command}': blocked by hardline safety policy ` +
+        `(${hardline.description}). This is a catastrophic, non-recoverable command ` +
+        `and is blocked even when command confirmation is disabled.`;
+      displayWarning(`\n⛔ ${refusal}`);
+      return refusal;
+    }
+
+    const timeoutMs = getShellTimeoutMs(this.commands);
+    const maxOutputBytes = getShellMaxOutputBytes(this.commands);
 
     return new Promise((resolve, reject) => {
       const child = spawn(command, {
         shell: true,
+        // (1) Never let the child block on stdin (e.g. git commit opening $EDITOR).
+        stdio: ['ignore', 'pipe', 'pipe'],
+        // (1) Own process group so we can kill the whole tree on timeout.
+        detached: true,
+        // (3) Child env with provider/LLM credentials removed.
+        env: buildScrubbedEnv(),
       });
 
-      let output = '';
+      // (2) Bounded capture for the returned message; live streaming is uncapped.
+      const buffer = new OutputBuffer(maxOutputBytes);
+      let timedOut = false;
+      let settled = false;
+      let killTimer: NodeJS.Timeout | undefined;
 
-      // Capture output if available (when stdio is not 'inherit')
+      const timeoutTimer = setTimeout(() => {
+        timedOut = true;
+        killProcessGroup(child, 'SIGTERM');
+        // Escalate to SIGKILL after a short grace if it didn't die.
+        killTimer = setTimeout(() => killProcessGroup(child, 'SIGKILL'), KILL_GRACE_MS);
+        // killTimer must not keep the event loop alive on its own.
+        killTimer.unref?.();
+      }, timeoutMs);
+      timeoutTimer.unref?.();
+
+      const clearTimers = (): void => {
+        clearTimeout(timeoutTimer);
+        if (killTimer) clearTimeout(killTimer);
+      };
+
       if (child.stdout) {
         child.stdout.on('data', (data) => {
           const chunk = data.toString();
           stdout.write(chunk);
-          output += chunk;
+          buffer.append(chunk);
         });
       }
 
@@ -143,31 +237,44 @@ export default class GthDevToolkit extends BaseToolkit {
         child.stderr.on('data', (data) => {
           const chunk = data.toString();
           stdout.write(chunk);
-          output += chunk;
+          buffer.append(chunk);
         });
       }
 
       child.on('close', (code) => {
+        if (settled) return;
+        settled = true;
+        clearTimers();
+
+        const captured = buffer.finalize();
+        const body =
+          `Executing '${command}'...\n\n` +
+          `<COMMAND_OUTPUT>\n` +
+          captured.text +
+          `</COMMAND_OUTPUT>\n`;
+
+        if (timedOut) {
+          resolve(
+            body +
+              `\n\nCommand '${command}' was killed after exceeding the ${Math.round(
+                timeoutMs / 1000
+              )}s timeout. ` +
+              `If it legitimately needs longer, increase the shell timeout in config.`
+          );
+          return;
+        }
+
         if (code === 0) {
-          resolve(
-            `Executing '${command}'...\n\n` +
-              `<COMMAND_OUTPUT>\n` +
-              output +
-              `</COMMAND_OUTPUT>\n` +
-              `\n\nCommand '${command}' completed successfully`
-          );
+          resolve(body + `\n\nCommand '${command}' completed successfully`);
         } else {
-          resolve(
-            `Executing '${command}'...\n\n` +
-              `<COMMAND_OUTPUT>\n` +
-              output +
-              `</COMMAND_OUTPUT>\n` +
-              `\n\nCommand '${command}' exited with code ${code}`
-          );
+          resolve(body + `\n\nCommand '${command}' exited with code ${code}`);
         }
       });
 
       child.on('error', (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimers();
         const errorMsg = `Failed to execute command '${command}': ${error.message}`;
         displayError(errorMsg);
         reject(new Error(errorMsg));

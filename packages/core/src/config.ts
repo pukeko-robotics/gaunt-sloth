@@ -530,9 +530,23 @@ export interface GthDevToolsConfig {
    * The confirmation — not string-filtering — is the guardrail, so the command
    * is passed through verbatim (pipes / `$` / `;` are all legitimate).
    *
-   * Example: `{ "shell": true }` or `{ "shell": { "enabled": true } }`.
+   * The object form also tunes the EXT-9 Tier-1 hardening applied to every run
+   * (these have safe defaults so bare `shell: true` is already hardened):
+   * - `timeout`: per-command wall-clock limit in MILLISECONDS before the child
+   *   (and its process group) is killed. Default {@link SHELL_DEFAULT_TIMEOUT_MS}.
+   * - `maxOutputBytes`: byte budget for the captured output returned to the model
+   *   (head + tail window; the middle is dropped and the full output spilled to a
+   *   temp file). Default {@link SHELL_DEFAULT_MAX_OUTPUT_BYTES}. Live terminal
+   *   streaming is never capped.
+   *
+   * A hardcoded hardline blocklist of catastrophic commands (rm -rf /, mkfs, dd
+   * to a block device, fork bomb, shutdown/reboot, …) is refused even under
+   * {@link shellYolo}; that floor is not configurable.
+   *
+   * Example: `{ "shell": true }`,
+   * `{ "shell": { "enabled": true, "timeout": 300000, "maxOutputBytes": 200000 } }`.
    */
-  shell?: boolean | { enabled?: boolean };
+  shell?: boolean | { enabled?: boolean; timeout?: number; maxOutputBytes?: number };
   /**
    * Opt-out of the per-command confirmation dialog for {@link shell}
    * (`run_shell_command`) — the explicit "yolo" bypass. When `true` AND `shell`
@@ -545,15 +559,57 @@ export interface GthDevToolsConfig {
 }
 
 /**
- * Normalize the {@link GthDevToolsConfig.shell} opt-in (bare boolean or `{ enabled }`)
- * to a plain boolean. Centralized so the toolkit (tool emission) and the deep agent
- * (interrupt wiring) agree on what "shell enabled" means.
+ * Default per-command shell timeout (ms) when {@link GthDevToolsConfig.shell}
+ * does not specify one. ~120s suits typical build/test/git steps without
+ * hanging the agent forever on a stuck command.
+ */
+export const SHELL_DEFAULT_TIMEOUT_MS = 120_000;
+
+/**
+ * Default byte budget for shell output captured into the ToolMessage returned to
+ * the model (head + tail window). ~100KB keeps a noisy log from blowing the
+ * context window; the full output is spilled to a temp file when this is exceeded.
+ */
+export const SHELL_DEFAULT_MAX_OUTPUT_BYTES = 100_000;
+
+/**
+ * Normalize the {@link GthDevToolsConfig.shell} opt-in (bare boolean or
+ * `{ enabled }`) to a plain boolean. Centralized so the toolkit (tool emission)
+ * and the deep agent (interrupt wiring) agree on what "shell enabled" means.
  */
 export function isShellToolEnabled(devTools: GthDevToolsConfig | undefined): boolean {
   const shell = devTools?.shell;
   if (typeof shell === 'boolean') return shell;
   if (shell && typeof shell === 'object') return shell.enabled === true;
   return false;
+}
+
+/**
+ * Resolve the per-command shell timeout (ms) from config, falling back to
+ * {@link SHELL_DEFAULT_TIMEOUT_MS}. Only the object form can override it; a bare
+ * `shell: true` uses the default. Non-positive / non-finite values are ignored.
+ */
+export function getShellTimeoutMs(devTools: GthDevToolsConfig | undefined): number {
+  const shell = devTools?.shell;
+  if (shell && typeof shell === 'object' && typeof shell.timeout === 'number') {
+    if (Number.isFinite(shell.timeout) && shell.timeout > 0) return shell.timeout;
+  }
+  return SHELL_DEFAULT_TIMEOUT_MS;
+}
+
+/**
+ * Resolve the captured-output byte budget from config, falling back to
+ * {@link SHELL_DEFAULT_MAX_OUTPUT_BYTES}. Only the object form can override it.
+ * Non-positive / non-finite values are ignored.
+ */
+export function getShellMaxOutputBytes(devTools: GthDevToolsConfig | undefined): number {
+  const shell = devTools?.shell;
+  if (shell && typeof shell === 'object' && typeof shell.maxOutputBytes === 'number') {
+    if (Number.isFinite(shell.maxOutputBytes) && shell.maxOutputBytes > 0) {
+      return shell.maxOutputBytes;
+    }
+  }
+  return SHELL_DEFAULT_MAX_OUTPUT_BYTES;
 }
 
 export interface LLMConfig extends Record<string, unknown> {
