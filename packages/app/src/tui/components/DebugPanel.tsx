@@ -34,6 +34,42 @@ export interface DebugPanelProps {
   maximized: boolean;
 }
 
+/** The data a debug section needs to resolve into renderable lines. */
+export interface DebugPanelLinesInput {
+  subagents: SubagentTreeViewModel;
+  historyLines: string[];
+  requestLines: string[];
+  responseLines: string[];
+  activeTab: DebugTab;
+}
+
+/**
+ * The exact lines the active section renders, including the empty-state placeholders. Exported
+ * (and pure) so `<App>` can compute the active section's length to clamp the scroll offset to
+ * its real maximum — keeping keyboard scrolling and the rendered viewport in agreement (TUI-C11).
+ */
+export function debugPanelLines({
+  subagents,
+  historyLines,
+  requestLines,
+  responseLines,
+  activeTab,
+}: DebugPanelLinesInput): string[] {
+  return activeTab === 'subagents'
+    ? subagentLines(subagents)
+    : activeTab === 'history'
+      ? historyLines.length
+        ? historyLines
+        : ['(no model call captured yet)']
+      : activeTab === 'request'
+        ? requestLines.length
+          ? requestLines
+          : ['(no request details captured yet)']
+        : responseLines.length
+          ? responseLines
+          : ['(no model response captured yet)'];
+}
+
 /** Flatten the subagent tree into renderable lines for the bounded viewport. */
 function subagentLines(tree: SubagentTreeViewModel): string[] {
   if (tree.nodes.length === 0) return ['(no subagents spawned yet)'];
@@ -68,20 +104,13 @@ export function DebugPanel({
   viewportHeight,
   maximized,
 }: DebugPanelProps): React.ReactElement {
-  const lines =
-    activeTab === 'subagents'
-      ? subagentLines(subagents)
-      : activeTab === 'history'
-        ? historyLines.length
-          ? historyLines
-          : ['(no model call captured yet)']
-        : activeTab === 'request'
-          ? requestLines.length
-            ? requestLines
-            : ['(no request details captured yet)']
-          : responseLines.length
-            ? responseLines
-            : ['(no model response captured yet)'];
+  const lines = debugPanelLines({
+    subagents,
+    historyLines,
+    requestLines,
+    responseLines,
+    activeTab,
+  });
 
   // Clamp the window into range so an offset left over from a longer section never blanks
   // the viewport when switching to a shorter one.
@@ -98,8 +127,8 @@ export function DebugPanel({
   // line range, an "N more below" / "— end —" marker, and an "▲ above" marker when scrolled.
   const footer = overflow
     ? `${top + 1}-${bottom}/${lines.length}` +
-      (hasBelow ? `  ▼ ${lines.length - bottom} more below (PgDn)` : '  — end —') +
-      (hasAbove ? '  ▲ above (PgUp)' : '')
+      (hasBelow ? `  ▼ ${lines.length - bottom} more below (↓)` : '  — end —') +
+      (hasAbove ? '  ▲ above (↑)' : '')
     : `${lines.length} line${lines.length === 1 ? '' : 's'}`;
 
   return (
@@ -125,7 +154,7 @@ export function DebugPanel({
       <Box>
         <Text dimColor>
           {focused
-            ? `[Tab: section · PgUp/PgDn: scroll · m: ${
+            ? `[Tab: section · ↑/↓: scroll · m: ${
                 maximized ? 'restore' : 'maximise'
               } · Esc: unfocus]`
             : '[/debug to hide]'}

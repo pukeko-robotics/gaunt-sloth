@@ -15,7 +15,12 @@ import { StatusBar } from '#src/tui/components/StatusBar.js';
 import { PromptInput } from '#src/tui/components/PromptInput.js';
 import { Rule } from '#src/tui/components/Rule.js';
 import { ClearBanner } from '#src/tui/components/ClearBanner.js';
-import { DebugPanel, DEBUG_TABS, type DebugTab } from '#src/tui/components/DebugPanel.js';
+import {
+  DebugPanel,
+  debugPanelLines,
+  DEBUG_TABS,
+  type DebugTab,
+} from '#src/tui/components/DebugPanel.js';
 import {
   createCommandRegistry,
   dispatchSlashCommand,
@@ -98,6 +103,25 @@ export function App(props: TuiAppProps): React.ReactElement {
   const debugViewport = debugViewportHeight(debugMaximized, terminalRows);
   // PageUp/PageDown step tracks the live viewport so maximise pages by (almost) a full screen.
   const debugPageStep = Math.max(1, debugViewport - 1);
+  // The active section's line count drives the real maximum scroll offset, so neither the page
+  // step nor the arrow step can push the offset past the end (the over-scroll bug that left
+  // PgUp/↑ burning through phantom offset before anything moved — TUI-C11). Single-sourced with
+  // DebugPanel via the exported `debugPanelLines` so the clamp matches exactly what is rendered.
+  const debugLineCount = useMemo(
+    () =>
+      debugPanelLines({
+        subagents,
+        historyLines: debugHistory,
+        requestLines: debugRequest,
+        responseLines: debugResponse,
+        activeTab: debugTab,
+      }).length,
+    [subagents, debugHistory, debugRequest, debugResponse, debugTab]
+  );
+  const debugMaxOffset = Math.max(0, debugLineCount - debugViewport);
+  // Clamp helper shared by every downward scroll (page + arrow) so the offset never exceeds the
+  // real maximum; the upward floor stays Math.max(0, …).
+  const clampDebugScroll = (next: number) => Math.min(Math.max(0, next), debugMaxOffset);
 
   // Built once per session; a plain array so later layers (EXT-5) could append commands.
   const registry = useMemo(() => createCommandRegistry(), []);
@@ -262,7 +286,8 @@ export function App(props: TuiAppProps): React.ReactElement {
   //  1. Esc while running → abort the in-flight turn (stdin is uncontended here — the event
   //     path never registers gsloth's readline Esc handler, so Ink owns raw mode cleanly).
   //  2. Tab while the panel is visible and idle → focus/cycle the panel.
-  //  3. While the panel is focused → Tab cycles section, PageUp/PageDown scroll, Esc unfocuses.
+  //  3. While the panel is focused → Tab/Shift+Tab cycle sections, ↑/↓ scroll one line,
+  //     PageUp/PageDown page-step, m maximises, Esc unfocuses.
   useInput((input, key) => {
     if (key.escape && runningRef.current) {
       abortRef.current?.abort();
@@ -285,8 +310,13 @@ export function App(props: TuiAppProps): React.ReactElement {
         debugFocusedRef.current = false;
         return;
       }
+      // Tab cycles sections forward; Shift+Tab steps back to the previous section (Ink reports
+      // a back-tab as key.tab with key.shift). Both reset the scroll to the top of the new section.
       if (key.tab) {
-        setDebugTab((t) => DEBUG_TABS[(DEBUG_TABS.indexOf(t) + 1) % DEBUG_TABS.length]);
+        const step = key.shift ? -1 : 1;
+        setDebugTab(
+          (t) => DEBUG_TABS[(DEBUG_TABS.indexOf(t) + step + DEBUG_TABS.length) % DEBUG_TABS.length]
+        );
         setDebugScroll(0);
         return;
       }
@@ -296,12 +326,24 @@ export function App(props: TuiAppProps): React.ReactElement {
         setDebugMaximized((m) => !m);
         return;
       }
+      // ↑/↓ scroll one line for fine control; PgUp/PgDn page-step for coarse. Arrows exist on
+      // every keyboard, so they are the universal scroll keys (Mac/compact keyboards lack
+      // dedicated PgUp/PgDn) — that is why the hint and overflow markers advertise the arrows
+      // (TUI-C11). Every downward move is clamped to the real maximum (see clampDebugScroll).
+      if (key.upArrow) {
+        setDebugScroll((s) => Math.max(0, s - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setDebugScroll((s) => clampDebugScroll(s + 1));
+        return;
+      }
       if (key.pageUp) {
         setDebugScroll((s) => Math.max(0, s - debugPageStep));
         return;
       }
       if (key.pageDown) {
-        setDebugScroll((s) => s + debugPageStep);
+        setDebugScroll((s) => clampDebugScroll(s + debugPageStep));
         return;
       }
       return;
