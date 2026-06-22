@@ -110,8 +110,10 @@ Tool calls render as **collapsible panels** (`tui/components/LiveTurn.tsx`):
 - **`Esc`** — abort the in-flight turn (only while running).
 - **`Ctrl+C`** — exit the app. (The bare `exit` keyword and `/exit` also quit.)
 - **`Ctrl+T`** — toggle tool-call detail mid-turn (mirrors `/tools`).
-- **`Tab`** — focus the docked debug panel when visible/idle; once focused, `Tab` cycles its views,
-  `PageUp`/`PageDown` scroll, `m` maximises, `Esc` unfocuses.
+- **`Tab`** — focus the docked debug panel when visible/idle; once focused, `Tab` cycles its views
+  (`Shift+Tab` reverses), `↑`/`↓` scroll one line and `PageUp`/`PageDown` page-step (arrows are the
+  documented scroll keys since Mac/compact keyboards lack dedicated `PageUp`/`PageDown` — DL-9, DL-5,
+  DL-7), `m` maximises, `Esc` unfocuses.
 - **arrows / Enter** — select / submit in the prompt.
 
 Defaults are beginner-safe (DL-9): tool detail collapsed, debug panel hidden — the expert opts into

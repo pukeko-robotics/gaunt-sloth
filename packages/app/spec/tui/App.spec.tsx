@@ -27,6 +27,9 @@ const ESC = String.fromCharCode(27); // Escape key byte
 const TAB = '\t'; // Tab key (char 9)
 const PAGE_DOWN = '\x1b[6~'; // PageDown CSI sequence
 const PAGE_UP = '\x1b[5~'; // PageUp CSI sequence
+const ARROW_DOWN = '\x1b[B'; // Down-arrow CSI sequence
+const ARROW_UP = '\x1b[A'; // Up-arrow CSI sequence
+const SHIFT_TAB = '\x1b[Z'; // Shift+Tab (back-tab) CSI sequence
 
 describe('tui <App>', () => {
   beforeEach(() => {
@@ -272,6 +275,136 @@ describe('tui <App>', () => {
     unmount();
   });
 
+  it('scrolls one line at a time with the ↑/↓ arrow keys while focused (TUI-C11)', async () => {
+    // Arrows give fine control (one line) on top of PgUp/PgDn's coarse page-step — and exist on
+    // every keyboard, unlike dedicated PgUp/PgDn on Mac/compact keyboards.
+    const longResult = Array.from({ length: 40 }, (_, i) => `line-${i}`).join('\n');
+    const agent = scriptedAgent([
+      { type: 'tool_start', id: 's1', name: 'task' },
+      { type: 'tool_args', id: 's1', delta: '{"subagent_type":"worker","description":"big"}' },
+      { type: 'tool_end', id: 's1' },
+      { type: 'tool_result', id: 's1', content: longResult },
+      { type: 'text', delta: 'ok' },
+    ]);
+    const { stdin, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} initialMessage="go" />
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('worker'));
+
+    // The hint advertises the arrows as the scroll keys.
+    stdin.write(TAB);
+    await vi.waitFor(() => expect(lastFrame()).toContain('↑/↓: scroll'));
+
+    // Top of the list visible. Arrow-down a few lines: the top line scrolls out one at a time.
+    expect(lastFrame()).toContain('line-0');
+    for (let i = 0; i < 3; i++) stdin.write(ARROW_DOWN);
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).not.toContain('line-0'); // top scrolled out by three single-line steps
+      expect(f).toContain('line-3'); // new top line
+    });
+
+    // Arrow-up returns toward the top one line at a time.
+    for (let i = 0; i < 3; i++) stdin.write(ARROW_UP);
+    await vi.waitFor(() => expect(lastFrame()).toContain('line-0'));
+
+    unmount();
+  });
+
+  it('clamps down-scroll to the end so PgUp/↑ recover immediately (no phantom offset) (TUI-C11)', async () => {
+    // Bug: PageDown had no upper clamp, so paging past the end inflated the offset; afterwards
+    // PgUp/↑ had to burn through that phantom offset before anything moved. The clamp pins the
+    // offset to its real max, so a single PgUp/↑ visibly scrolls back from the end.
+    const longResult = Array.from({ length: 40 }, (_, i) => `row-${i}`).join('\n');
+    const agent = scriptedAgent([
+      { type: 'tool_start', id: 's1', name: 'task' },
+      { type: 'tool_args', id: 's1', delta: '{"subagent_type":"worker","description":"big"}' },
+      { type: 'tool_end', id: 's1' },
+      { type: 'tool_result', id: 's1', content: longResult },
+      { type: 'text', delta: 'ok' },
+    ]);
+    const { stdin, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} initialMessage="go" />
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('worker'));
+
+    stdin.write(TAB);
+    await vi.waitFor(() => expect(lastFrame()).toContain('↑/↓: scroll'));
+
+    // Over-page well past the end. With the clamp the offset pins to its real maximum, so the
+    // footer reads "— end —" (last line in view) and never a phantom range beyond the content.
+    for (let i = 0; i < 20; i++) stdin.write(PAGE_DOWN);
+    const lastLine = `row-${40 - 1}`;
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).toContain(lastLine); // the genuine last line is in view
+      expect(f).toContain('— end —'); // footer marks the real end (no over-scroll)
+    });
+
+    // A single PgUp moves immediately (no phantom offset to burn through): the last line leaves
+    // view and the "more below" marker returns.
+    stdin.write(PAGE_UP);
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).not.toContain(lastLine);
+      expect(f).toContain('more below');
+    });
+
+    unmount();
+  });
+
+  it('cycles debug sections backward with Shift+Tab (TUI-C11)', async () => {
+    // Plain Tab steps forward (subagents → history → request → response); Shift+Tab steps back.
+    // From the first section, one Shift+Tab wraps to the last (response).
+    const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
+    let emit: ((c: import('#src/tui/types.js').TuiDebugCapture) => void) | undefined;
+    const subscribeDebug = (cb: (c: import('#src/tui/types.js').TuiDebugCapture) => void) => {
+      emit = cb;
+      return () => {};
+    };
+    const { stdin, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} subscribeDebug={subscribeDebug} />
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    // Distinct content per section so we can tell which tab's body is shown.
+    emit?.({ kind: 'request', text: 'HISTORY_BODY', details: 'REQUEST_BODY' });
+    emit?.({ kind: 'response', text: 'RESPONSE_BODY' });
+
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Subagents'));
+
+    stdin.write(TAB); // focus (starts on the subagents section)
+    await vi.waitFor(() => expect(lastFrame()).toContain('Tab: section'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('(no subagents spawned yet)'));
+
+    // Shift+Tab from the first section wraps backward to the last (response).
+    stdin.write(SHIFT_TAB);
+    await vi.waitFor(() => expect(lastFrame()).toContain('RESPONSE_BODY'));
+
+    // Shift+Tab again steps back one more to the request section.
+    stdin.write(SHIFT_TAB);
+    await vi.waitFor(() => expect(lastFrame()).toContain('REQUEST_BODY'));
+
+    // Plain Tab still goes forward — back to the response section.
+    stdin.write(TAB);
+    await vi.waitFor(() => expect(lastFrame()).toContain('RESPONSE_BODY'));
+
+    unmount();
+  });
+
   it('maximises and restores the focused debug panel with the "m" key', async () => {
     // A subagent result long enough to overflow the default 8-row viewport but fit a maximised one.
     const longResult = Array.from({ length: 20 }, (_, i) => `row-${i}`).join('\n');
@@ -489,7 +622,9 @@ describe('tui <App>', () => {
 
     // Second /tools toggles back to off, again with a confirming notice.
     stdin.write('/tools');
-    await vi.waitFor(() => expect((lastFrame() ?? '').match(/\/tools/g)?.length).toBeGreaterThan(0));
+    await vi.waitFor(() =>
+      expect((lastFrame() ?? '').match(/\/tools/g)?.length).toBeGreaterThan(0)
+    );
     stdin.write('\r');
     await vi.waitFor(() => expect(frames.join('\n')).toContain('Tool details: off'));
 
@@ -514,7 +649,9 @@ describe('tui <App>', () => {
     });
 
     stdin.write('/model');
-    await vi.waitFor(() => expect((lastFrame() ?? '').match(/\/model/g)?.length).toBeGreaterThan(0));
+    await vi.waitFor(() =>
+      expect((lastFrame() ?? '').match(/\/model/g)?.length).toBeGreaterThan(0)
+    );
     stdin.write('\r');
     await vi.waitFor(() => {
       const all = frames.join('\n');
@@ -537,7 +674,9 @@ describe('tui <App>', () => {
     await vi.waitFor(() => expect(frames.join('\n')).toContain('Debug panel: shown'));
 
     stdin.write('/debug');
-    await vi.waitFor(() => expect((lastFrame() ?? '').match(/\/debug/g)?.length).toBeGreaterThan(0));
+    await vi.waitFor(() =>
+      expect((lastFrame() ?? '').match(/\/debug/g)?.length).toBeGreaterThan(0)
+    );
     stdin.write('\r');
     await vi.waitFor(() => expect(frames.join('\n')).toContain('Debug panel: hidden'));
 
@@ -632,9 +771,7 @@ describe('tui <App>', () => {
       { type: 'text', delta: '# Heading\n' },
       { type: 'text', delta: '- bullet point' },
     ]);
-    const { lastFrame, unmount } = render(
-      <App {...baseProps} agent={agent} initialMessage="go" />
-    );
+    const { lastFrame, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
     await vi.waitFor(() => {
       const f = lastFrame() ?? '';
