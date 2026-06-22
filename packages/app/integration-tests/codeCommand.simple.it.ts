@@ -10,12 +10,13 @@ describe('Code Command Integration Tests', () => {
       ' >'
     );
 
-    // Check for expected content in the response
-    expect(checkOutputForExpectedContent(output, ['help', 'assist', 'code'])).toBe(true);
-
-    // Check that the response mentions the file path
-    expect(checkOutputForExpectedContent(output, 'gth_')).toBe(true);
-    expect(checkOutputForExpectedContent(output, '_CODE.md')).toBe(true);
+    // Assert on the string itself (not a boolean wrapper) so a flake prints the
+    // model's actual reply. The agent acknowledges and offers help; small models
+    // phrase that tersely ("What do you need?"), so accept any opener.
+    expect(output.toLowerCase()).toMatch(/help|assist|code|what do you need|how can i/);
+    // Session is logged to gth_<timestamp>_CODE.md
+    expect(output).toContain('gth_');
+    expect(output).toContain('_CODE.md');
   });
 
   it('should start interactive session without initial message', async () => {

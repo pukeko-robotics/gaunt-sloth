@@ -10,13 +10,16 @@ describe('Chat Command Integration Tests', () => {
       ' >'
     );
 
-    // Check for expected content in the response
-    expect(checkOutputForExpectedContent(output, ['help', 'assist', 'hello'])).toBe(true);
-    // Check that the response mentions the file path
-    expect(checkOutputForExpectedContent(output, 'gth_')).toBe(true);
-    expect(checkOutputForExpectedContent(output, '_CHAT.md')).toBe(true);
-    expect(checkOutputForExpectedContent(output, 'write_file')).toBe(false);
-    expect(checkOutputForExpectedContent(output, 'edit_file')).toBe(false);
+    // Assert on the string itself (not a boolean wrapper) so a flake prints the
+    // model's actual reply. The agent acknowledges and offers help; small models
+    // phrase that tersely ("Yes. What do you need?"), so accept any opener.
+    expect(output.toLowerCase()).toMatch(/help|assist|hello|what do you need|how can i/);
+    // Session is logged to gth_<timestamp>_CHAT.md
+    expect(output).toContain('gth_');
+    expect(output).toContain('_CHAT.md');
+    // A plain greeting must not trigger file-mutation tools
+    expect(output).not.toContain('write_file');
+    expect(output).not.toContain('edit_file');
   });
 
   it('should start interactive session without initial message', async () => {
