@@ -54,7 +54,41 @@ export interface GthCompiledGraph {
   invoke(input: any, config?: RunnableConfig): Promise<{ messages: BaseMessage[] }>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   stream(input: any, config?: any): Promise<IterableReadableStream<any>>;
+  /**
+   * Read the checkpointed graph state for a thread. Present on LangGraph compiled graphs
+   * (both `createAgent` and `createDeepAgent`); used to detect a graph suspended on a
+   * human-in-the-loop `interrupt()` (its pending {@link PendingToolInterrupt} lives in
+   * `state.tasks[].interrupts[].value`). Optional because the structural surface predates it.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  getState?(config: RunnableConfig): Promise<any>;
 }
+
+/**
+ * A single tool call a human-in-the-loop interrupt is waiting on, surfaced from the
+ * suspended graph state so a consumer (the interactive session) can render an approve/reject
+ * prompt. Mirrors LangChain's HITL `ActionRequest` (tool name + the args it would run with).
+ */
+export interface PendingToolInterrupt {
+  name: string;
+  args: Record<string, unknown>;
+}
+
+/**
+ * A consumer-supplied decision on a {@link PendingToolInterrupt}: approve runs the tool,
+ * reject feeds the model a tool-rejected message (with the optional reason).
+ */
+export type ToolApprovalDecision = { type: 'approve' } | { type: 'reject'; message?: string };
+
+/**
+ * Callback the {@link GthAgentRunner} invokes when a run suspends on a tool-approval
+ * interrupt, once per pending tool call. Returns the human's decision. When no handler is
+ * wired (e.g. a non-interactive run), the runner defaults to reject so a run can never
+ * silently hang or auto-approve.
+ */
+export type ToolApprovalCallback = (
+  pending: PendingToolInterrupt
+) => Promise<ToolApprovalDecision> | ToolApprovalDecision;
 
 export interface GthAgentInterface {
   init(
@@ -86,6 +120,24 @@ export interface GthAgentInterface {
     queuedMessages?: BaseMessage[],
     signal?: AbortSignal
   ): AsyncGenerator<AgentStreamEvent>;
+
+  /**
+   * Resume a graph suspended on a human-in-the-loop `interrupt()` and stream the continuation
+   * as text (the string counterpart to {@link streamWithEventsResume}, for the readline path).
+   * Optional: only implemented by agents that support tool-approval interrupts.
+   */
+  streamResume?(
+    resumeValue: unknown,
+    runConfig: RunnableConfig
+  ): Promise<IterableReadableStream<string>>;
+
+  /**
+   * Inspect the checkpointed state for the thread and return any tool calls currently pending
+   * human approval (empty when the run completed normally). Optional: only implemented by
+   * agents whose graph exposes `getState`. Used by {@link GthAgentRunner} to drive the
+   * approve/reject confirmation loop.
+   */
+  getPendingToolInterrupts?(runConfig: RunnableConfig): Promise<PendingToolInterrupt[]>;
 
   cleanup?(): Promise<void>;
 }

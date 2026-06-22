@@ -108,6 +108,45 @@ describe('GthDevToolkit - Basic Tests', () => {
     });
   });
 
+  describe('run_shell_command (opt-in shell tool)', () => {
+    it('is NOT emitted by default (shell omitted)', () => {
+      toolkit = new GthDevToolkit({ run_tests: 'npm test' });
+      expect(toolkit.tools.map((t) => t.name)).not.toContain('run_shell_command');
+    });
+
+    it('is NOT emitted when shell is false', () => {
+      toolkit = new GthDevToolkit({ shell: false });
+      expect(toolkit.tools.map((t) => t.name)).not.toContain('run_shell_command');
+    });
+
+    it('is emitted when shell is true (bare boolean)', () => {
+      toolkit = new GthDevToolkit({ shell: true });
+      const shellTool = toolkit.tools.find((t) => t.name === 'run_shell_command');
+      expect(shellTool).toBeDefined();
+      expect((shellTool as any).gthDevType).toBe('execute');
+    });
+
+    it('is emitted when shell is { enabled: true } (object form)', () => {
+      toolkit = new GthDevToolkit({ shell: { enabled: true } });
+      expect(toolkit.tools.map((t) => t.name)).toContain('run_shell_command');
+    });
+
+    it('is NOT emitted when shell is { enabled: false }', () => {
+      toolkit = new GthDevToolkit({ shell: { enabled: false } });
+      expect(toolkit.tools.map((t) => t.name)).not.toContain('run_shell_command');
+    });
+
+    it('runs the model-supplied command verbatim (no parameter sanitizing)', async () => {
+      toolkit = new GthDevToolkit({ shell: true });
+      const shellTool = toolkit.tools.find((t) => t.name === 'run_shell_command')!;
+      // A legitimate shell command with a pipe + $ — would be rejected by the path sanitizer,
+      // but the shell tool must pass it through (confirmation, not filtering, is the guardrail).
+      const result = await shellTool.invoke({ command: 'echo $HOME | cat' });
+      expect(result).toContain("Command 'echo $HOME | cat' completed successfully");
+      expect(childProcessMock.spawn).toHaveBeenCalledWith('echo $HOME | cat', { shell: true });
+    });
+  });
+
   describe('buildSingleTestCommand', () => {
     it('should build command with placeholder', () => {
       toolkit = new GthDevToolkit({ run_single_test: 'npm test -- ${testPath}' });

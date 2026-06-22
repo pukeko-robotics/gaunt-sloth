@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { spawn } from 'child_process';
 import path from 'node:path';
 import { displayInfo, displayError } from '@gaunt-sloth/core/utils/consoleUtils.js';
-import { GthDevToolsConfig } from '@gaunt-sloth/core/config.js';
+import { GthDevToolsConfig, isShellToolEnabled } from '@gaunt-sloth/core/config.js';
 import { stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
 
 // Helper function to create a tool with dev type
@@ -31,6 +31,9 @@ const RunLintArgsSchema = z.object({});
 const RunBuildArgsSchema = z.object({});
 const RunSingleTestArgsSchema = z.object({
   testPath: z.string().describe('Relative path to the test file to run'),
+});
+const RunShellCommandArgsSchema = z.object({
+  command: z.string().describe('The shell command to run'),
 });
 
 const TEST_PATH_PLACEHOLDER = '${testPath}';
@@ -244,6 +247,30 @@ export default class GthDevToolkit extends BaseToolkit {
               'Build the project. Executes the configured build command and returns the build output.' +
               `\nThe configured command is [${this.commands.run_build!}].`,
             schema: RunBuildArgsSchema,
+          },
+          'execute'
+        )
+      );
+    }
+
+    // Opt-in general-purpose shell tool. Unlike the fixed run_* commands, the model supplies
+    // the command, so the guardrail is the per-command confirmation dialog wired by the deep
+    // agent (createDeepAgent `interruptOn`), not a parameter sanitizer — a real shell command
+    // legitimately contains pipes / `$` / `;`, so validateParameterValue must NOT be applied.
+    if (isShellToolEnabled(this.commands)) {
+      tools.push(
+        createGthTool(
+          async (args: z.infer<typeof RunShellCommandArgsSchema>): Promise<string> => {
+            return await this.executeCommand(args.command, 'run_shell_command');
+          },
+          {
+            name: 'run_shell_command',
+            description:
+              'Run an arbitrary shell command in the project working directory and return its ' +
+              'combined stdout/stderr and exit status. Use for any task the fixed run_* tools do ' +
+              'not cover (e.g. git, package managers, file inspection). Each call is subject to ' +
+              'human approval before it runs unless approval has been disabled.',
+            schema: RunShellCommandArgsSchema,
           },
           'execute'
         )

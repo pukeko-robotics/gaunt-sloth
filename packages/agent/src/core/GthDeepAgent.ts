@@ -1,4 +1,5 @@
-import type { GthConfig } from '@gaunt-sloth/core/config.js';
+import type { GthConfig, GthDevToolsConfig } from '@gaunt-sloth/core/config.js';
+import { isShellToolEnabled } from '@gaunt-sloth/core/config.js';
 import { GthAbstractAgent } from '@gaunt-sloth/core/core/GthAbstractAgent.js';
 import { type GthCommand, StatusLevel } from '@gaunt-sloth/core/core/types.js';
 import { debugLog, debugLogObject } from '@gaunt-sloth/core/utils/debugUtils.js';
@@ -13,7 +14,7 @@ import { getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import type { BaseCheckpointSaver } from '@langchain/langgraph';
-import { createMiddleware } from 'langchain';
+import { createMiddleware, type InterruptOnConfig } from 'langchain';
 import { createDeepAgent, FilesystemBackend } from 'deepagents';
 import {
   buildPermissions,
@@ -50,6 +51,18 @@ export interface GthDeepAgentParams {
    * no prompt content is composed (lets deepagents use only its base prompt).
    */
   systemPrompt: string | undefined;
+  /**
+   * Per-tool human-in-the-loop configuration passed straight to
+   * `createDeepAgent({ interruptOn })` (deepagents installs LangChain's
+   * `humanInTheLoopMiddleware` for it). A matching tool call suspends the graph with a
+   * `__interrupt__` (a `HITLRequest`) so a consumer can approve/reject before the tool runs;
+   * resume with `new Command({ resume: { decisions: [...] } })` on the same `thread_id`.
+   *
+   * gsloth currently sets this only for the opt-in `run_shell_command` tool (when its
+   * `devTools.shell` is enabled and `devTools.shellYolo` is NOT). Left `undefined` otherwise —
+   * including under yolo — so no tool is gated and runs never suspend for approval.
+   */
+  interruptOn?: Record<string, boolean | InterruptOnConfig>;
 }
 
 /**
@@ -172,6 +185,10 @@ export class GthDeepAgent extends GthAbstractAgent {
       middleware: middleware as any,
       backend,
       permissions: params.permissions,
+      // Per-tool human-in-the-loop gating (e.g. run_shell_command confirmation). When set,
+      // deepagents installs humanInTheLoopMiddleware so a matching tool call suspends the graph
+      // for approval; `undefined` (the default, and under yolo) leaves every tool ungated.
+      interruptOn: params.interruptOn,
       checkpointer,
     });
     debugLog('Deep agent created successfully');
@@ -353,13 +370,58 @@ export class GthDeepAgent extends GthAbstractAgent {
     const systemPrompt =
       typeof systemMessages[0]?.content === 'string' ? systemMessages[0].content : undefined;
 
+    // Gate the opt-in run_shell_command tool behind a per-command approval interrupt. The tool
+    // is only emitted (by GthDevToolkit, via builtInToolsConfig) when its devTools.shell flag is
+    // set; mirror the same per-command devTools resolution here so the interrupt is wired only
+    // when the tool actually exists. yolo (shellYolo) opts OUT of the confirmation: leave
+    // interruptOn undefined so the tool runs without suspending.
+    const devTools = this.getEffectiveDevToolsConfig();
+    const interruptOn =
+      isShellToolEnabled(devTools) && devTools?.shellYolo !== true
+        ? ({ run_shell_command: { allowedDecisions: ['approve', 'reject'] } } as Record<
+            string,
+            boolean | InterruptOnConfig
+          >)
+        : undefined;
+    if (interruptOn) {
+      this.statusUpdate(
+        StatusLevel.INFO,
+        'Shell tool (run_shell_command) enabled with per-command approval (interruptOn).'
+      );
+    } else if (isShellToolEnabled(devTools)) {
+      this.statusUpdate(
+        StatusLevel.WARNING,
+        'Shell tool (run_shell_command) enabled in YOLO mode: commands run WITHOUT confirmation.'
+      );
+    }
+
     return {
       model: this.config.llm,
       tools: passThroughTools as StructuredToolInterface[],
       permissions,
       middleware,
       systemPrompt,
+      interruptOn,
     };
+  }
+
+  /**
+   * Resolve the {@link GthDevToolsConfig} that applies to the active command, mirroring the
+   * per-command selection in `builtInToolsConfig.getDefaultTools` (which is what actually emits
+   * the dev tools): `exec` → `commands.exec.devTools`, `ask --write` → `commands.ask.devTools`,
+   * otherwise (`code`) → `commands.code.devTools`. Returns `undefined` for any other command,
+   * matching the toolkit being inert there. Kept private and side-effect-free so the interrupt
+   * wiring above and the tool emission stay in lockstep.
+   */
+  private getEffectiveDevToolsConfig(): GthDevToolsConfig | undefined {
+    const config = this.config;
+    if (!config) return undefined;
+    const command = this.command;
+    const askWrite = command === 'ask' && config.askWriteMode === true;
+    if (command === 'exec') return config.commands?.exec?.devTools;
+    if (askWrite) return config.commands?.ask?.devTools;
+    if (command === 'code') return config.commands?.code?.devTools;
+    return undefined;
   }
 }
 

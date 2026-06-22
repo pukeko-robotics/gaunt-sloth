@@ -94,6 +94,7 @@ const gthAgentRunnerMock = vi.fn(function GthAgentRunnerMock() {
 const gthAgentRunnerInstanceMock = {
   init: vi.fn(),
   processMessages: vi.fn(),
+  setToolApprovalCallback: vi.fn(),
   cleanup: vi.fn(),
 };
 vi.mock('#src/core/GthAgentRunner.js', () => ({

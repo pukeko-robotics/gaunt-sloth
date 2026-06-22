@@ -71,6 +71,10 @@ describe('GthAgentRunner', () => {
     mockAgent.stream.mockClear();
     mockAgent.streamWithEvents.mockClear();
     mockAgent.cleanup.mockClear();
+    // The HITL interrupt methods are added per-test on the shared mock; remove any that leaked
+    // from a previous test so unrelated cases see an agent without interrupt support (no-op loop).
+    delete (mockAgent as any).getPendingToolInterrupts;
+    delete (mockAgent as any).streamResume;
 
     statusUpdateCallback = vi.fn();
 
@@ -272,6 +276,80 @@ describe('GthAgentRunner', () => {
         const message = error instanceof Error ? error.message : String(error);
         expect(message).not.toMatch(/gcloud auth application-default login/);
       }
+    });
+  });
+
+  describe('tool-approval interrupts (run_shell_command)', () => {
+    function streamOf(...chunks: string[]) {
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const c of chunks) yield c;
+        },
+      };
+    }
+
+    it('approves a pending tool call via the callback, then resumes with an approve decision', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      // Initial turn streams some text, then suspends on one pending tool call.
+      mockAgent.stream.mockResolvedValue(streamOf('working'));
+      const getPending = vi
+        .fn()
+        // First check: one pending command. Second check (after resume): none.
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'ls -la' } }])
+        .mockResolvedValueOnce([]);
+      const streamResume = vi.fn().mockResolvedValue(streamOf(' done'));
+      (mockAgent as any).getPendingToolInterrupts = getPending;
+      (mockAgent as any).streamResume = streamResume;
+
+      await runner.init(undefined, { ...mockConfig, streamOutput: true });
+      const approve = vi.fn().mockResolvedValue({ type: 'approve' });
+      runner.setToolApprovalCallback(approve);
+
+      const result = await runner.processMessages([new HumanMessage('run ls')]);
+
+      expect(approve).toHaveBeenCalledWith({
+        name: 'run_shell_command',
+        args: { command: 'ls -la' },
+      });
+      // Resume sent the HITL decisions array shape humanInTheLoopMiddleware expects.
+      expect(streamResume).toHaveBeenCalledWith(
+        { decisions: [{ type: 'approve' }] },
+        expect.anything()
+      );
+      expect(result).toBe('working done');
+    });
+
+    it('rejects when no approval callback is wired (non-interactive default)', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('working'));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'rm -rf /' } }])
+        .mockResolvedValueOnce([]);
+      const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+      (mockAgent as any).streamResume = streamResume;
+
+      await runner.init(undefined, { ...mockConfig, streamOutput: true });
+      // No setToolApprovalCallback → default reject.
+      mockAgent.invoke.mockResolvedValue('rejected and continued');
+
+      await runner.processMessages([new HumanMessage('run rm')]);
+
+      const resumeArg = streamResume.mock.calls[0][0];
+      expect(resumeArg.decisions[0].type).toBe('reject');
+    });
+
+    it('does not attempt interrupt resolution when the agent lacks getState support', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('hello'));
+      // No getPendingToolInterrupts / streamResume on the mock → loop no-ops.
+      delete (mockAgent as any).getPendingToolInterrupts;
+      delete (mockAgent as any).streamResume;
+
+      await runner.init(undefined, { ...mockConfig, streamOutput: true });
+      const result = await runner.processMessages([new HumanMessage('hi')]);
+
+      expect(result).toBe('hello');
     });
   });
 

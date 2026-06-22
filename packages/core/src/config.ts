@@ -489,7 +489,7 @@ export interface CustomCommandConfig {
 /**
  * Config for {@link GthDevToolkit}.
  * Tools are not applied when config is not provided.
- * Only available in `code` mode.
+ * Only available in `code`/`exec` mode (and `ask --write`).
  */
 export interface GthDevToolsConfig {
   /**
@@ -515,6 +515,45 @@ export interface GthDevToolsConfig {
    * Not applied when config is not provided.
    */
   run_single_test?: string;
+  /**
+   * Opt-in general-purpose shell tool (`run_shell_command`). Unlike the fixed
+   * `run_*` commands above, this lets the agent run ARBITRARY shell commands it
+   * composes itself — the agentic-coding escape hatch the deep agent otherwise
+   * lacks (it can read/write files but not run commands).
+   *
+   * OFF by default; only emitted when truthy. Accepts a bare boolean or an
+   * `{ enabled }` object for symmetry with future per-tool options.
+   *
+   * Because the model chooses the command, every invocation is gated behind a
+   * per-command human confirmation dialog (LangChain `humanInTheLoopMiddleware`,
+   * wired via deepagents' `interruptOn`) UNLESS {@link shellYolo} bypasses it.
+   * The confirmation — not string-filtering — is the guardrail, so the command
+   * is passed through verbatim (pipes / `$` / `;` are all legitimate).
+   *
+   * Example: `{ "shell": true }` or `{ "shell": { "enabled": true } }`.
+   */
+  shell?: boolean | { enabled?: boolean };
+  /**
+   * Opt-out of the per-command confirmation dialog for {@link shell}
+   * (`run_shell_command`) — the explicit "yolo" bypass. When `true` AND `shell`
+   * is enabled, the shell tool runs without any approval interrupt: the model's
+   * commands execute immediately. Dangerous by design; off by default.
+   *
+   * Example: `{ "shell": true, "shellYolo": true }`.
+   */
+  shellYolo?: boolean;
+}
+
+/**
+ * Normalize the {@link GthDevToolsConfig.shell} opt-in (bare boolean or `{ enabled }`)
+ * to a plain boolean. Centralized so the toolkit (tool emission) and the deep agent
+ * (interrupt wiring) agree on what "shell enabled" means.
+ */
+export function isShellToolEnabled(devTools: GthDevToolsConfig | undefined): boolean {
+  const shell = devTools?.shell;
+  if (typeof shell === 'boolean') return shell;
+  if (shell && typeof shell === 'object') return shell.enabled === true;
+  return false;
 }
 
 export interface LLMConfig extends Record<string, unknown> {

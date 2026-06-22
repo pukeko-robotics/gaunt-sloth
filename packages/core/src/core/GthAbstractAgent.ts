@@ -6,6 +6,7 @@ import {
   GthCommand,
   GthCompiledGraph,
   Message,
+  PendingToolInterrupt,
   StatusLevel,
   StatusUpdateCallback,
 } from '#src/core/types.js';
@@ -129,12 +130,40 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
     messages: Message[],
     runConfig: RunnableConfig
   ): Promise<IterableReadableStream<string>> {
+    debugLog('=== Starting streaming invoke ===');
+    debugLogObject('LLM Input Messages', messages);
+    return this.streamFromInput({ messages }, runConfig);
+  }
+
+  /**
+   * Resume a graph suspended on a human-in-the-loop `interrupt()` and stream the continuation
+   * as text. Identical plumbing to {@link stream} (Esc-to-interrupt, binary handling), except
+   * the graph input is a `Command({ resume })` instead of fresh `messages` — so the suspended
+   * tool-approval interrupt is answered and the run continues on the same thread.
+   */
+  async streamResume(
+    resumeValue: unknown,
+    runConfig: RunnableConfig
+  ): Promise<IterableReadableStream<string>> {
+    debugLog('=== Starting streaming resume ===');
+    debugLogObject('Resume value', resumeValue);
+    return this.streamFromInput(new Command({ resume: resumeValue }), runConfig);
+  }
+
+  /**
+   * Shared body for {@link stream} / {@link streamResume}: drive the compiled graph from
+   * `input` (fresh `{ messages }` or a resume `Command`) and surface AI text deltas as a
+   * string stream, with Esc-to-interrupt and binary-output materialization.
+   */
+  private async streamFromInput(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    input: any,
+    runConfig: RunnableConfig
+  ): Promise<IterableReadableStream<string>> {
     if (!this.agent || !this.config) {
       throw new Error('Agent not initialized. Call init() first.');
     }
 
-    debugLog('=== Starting streaming invoke ===');
-    debugLogObject('LLM Input Messages', messages);
     debugLogObject('Stream RunConfig', runConfig);
 
     this.statusUpdate(StatusLevel.INFO, '\nThinking...\n');
@@ -160,10 +189,11 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
 
     let stream;
     try {
-      stream = await this.agent.stream(
-        { messages },
-        { ...runConfig, streamMode: 'messages', signal: abortController.signal }
-      );
+      stream = await this.agent.stream(input, {
+        ...runConfig,
+        streamMode: 'messages',
+        signal: abortController.signal,
+      });
     } catch (error) {
       // If stream creation fails (e.g. an auth error), the IterableReadableStream below -
       // whose finally/cancel are what normally unregister the Escape listener - is never
@@ -345,6 +375,52 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
       }
       throw e;
     }
+  }
+
+  /**
+   * Inspect the checkpointed state for the thread and return the tool calls currently pending
+   * human approval (empty array when the run finished normally). A LangGraph
+   * `humanInTheLoopMiddleware` interrupt parks one `HITLRequest` per suspended super-step in
+   * `state.tasks[].interrupts[].value.actionRequests` (each `{ name, args }`); this flattens
+   * those into {@link PendingToolInterrupt}s. Defensive throughout — a graph without
+   * `getState`, or any unexpected shape, yields `[]` rather than throwing, so a missing HITL
+   * setup degrades to "no approval needed" instead of breaking the run.
+   */
+  async getPendingToolInterrupts(runConfig: RunnableConfig): Promise<PendingToolInterrupt[]> {
+    if (!this.agent || typeof this.agent.getState !== 'function') {
+      return [];
+    }
+    let state: unknown;
+    try {
+      state = await this.agent.getState(runConfig);
+    } catch (e) {
+      debugLogError('getPendingToolInterrupts getState', e);
+      return [];
+    }
+    const tasks = (state as { tasks?: unknown })?.tasks;
+    if (!Array.isArray(tasks)) {
+      return [];
+    }
+    const pending: PendingToolInterrupt[] = [];
+    for (const task of tasks) {
+      const interrupts = (task as { interrupts?: unknown })?.interrupts;
+      if (!Array.isArray(interrupts)) continue;
+      for (const interrupt of interrupts) {
+        const value = (interrupt as { value?: unknown })?.value;
+        const actionRequests = (value as { actionRequests?: unknown })?.actionRequests;
+        if (!Array.isArray(actionRequests)) continue;
+        for (const action of actionRequests) {
+          const name = (action as { name?: unknown })?.name;
+          if (typeof name !== 'string') continue;
+          const args = (action as { args?: unknown })?.args;
+          pending.push({
+            name,
+            args: args && typeof args === 'object' ? (args as Record<string, unknown>) : {},
+          });
+        }
+      }
+    }
+    return pending;
   }
 
   protected async *processEventStream(

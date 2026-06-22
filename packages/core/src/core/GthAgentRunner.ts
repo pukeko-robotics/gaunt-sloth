@@ -8,6 +8,8 @@ import {
   GthCommand,
   Message,
   StatusUpdateCallback,
+  ToolApprovalCallback,
+  ToolApprovalDecision,
 } from '#src/core/types.js';
 import { GthLangChainAgent } from '#src/core/GthLangChainAgent.js';
 import { enhanceVertexUnauthorizedMessage } from '#src/utils/vertexaiUtils.js';
@@ -31,6 +33,13 @@ export class GthAgentRunner {
   private config: GthConfig | null = null;
   private runConfig: RunnableConfig | null = null;
   private agentFactory: GthAgentFactory;
+  /**
+   * Consumer hook invoked when a run suspends on a tool-approval interrupt (e.g. the opt-in
+   * `run_shell_command` confirmation). Set via {@link setToolApprovalCallback}; when unset the
+   * runner REJECTS pending tool calls rather than hanging or auto-approving — the safe default
+   * for non-interactive entrypoints (a scripted `exec` run with no TTY to prompt on).
+   */
+  private toolApprovalCallback: ToolApprovalCallback | null = null;
 
   /**
    * @param agentFactory Produces the {@link GthAgentInterface} the runner drives.
@@ -47,6 +56,15 @@ export class GthAgentRunner {
     this.resolvers = resolvers;
     this.agentFactory =
       agentFactory ?? ((status, agentResolvers) => new GthLangChainAgent(status, agentResolvers));
+  }
+
+  /**
+   * Register the tool-approval handler the runner calls when a run suspends on a tool-approval
+   * interrupt (the interactive readline session wires a y/n prompt here). Pass `null` to clear.
+   * Without a handler the runner rejects pending tool calls (see {@link toolApprovalCallback}).
+   */
+  public setToolApprovalCallback(callback: ToolApprovalCallback | null): void {
+    this.toolApprovalCallback = callback;
   }
 
   /**
@@ -97,10 +115,11 @@ export class GthAgentRunner {
         const stream = await this.agent.stream(messages, this.runConfig);
         let result = '';
         try {
-          for await (const chunk of stream) {
-            debugLogObject('Stream chunk', chunk);
-            result += chunk;
-          }
+          result = await this.drainTextStream(stream);
+          // A run may suspend on one or more tool-approval interrupts (run_shell_command).
+          // Resolve them in a loop: each resume can itself suspend again on the next gated
+          // tool call, so keep going until the graph completes with no pending interrupts.
+          result += await this.resolveToolInterrupts();
         } catch (streamError) {
           // Handle streaming-specific errors
           debugLogError('Stream processing', streamError);
@@ -143,6 +162,62 @@ export class GthAgentRunner {
         error instanceof Error ? { cause: error } : undefined
       );
     }
+  }
+
+  /**
+   * Accumulate a text stream into a single string. Extracted so {@link processMessages} and
+   * the interrupt-resume loop ({@link resolveToolInterrupts}) drain streams identically.
+   */
+  private async drainTextStream(stream: AsyncIterable<string>): Promise<string> {
+    let result = '';
+    for await (const chunk of stream) {
+      debugLogObject('Stream chunk', chunk);
+      result += chunk;
+    }
+    return result;
+  }
+
+  /**
+   * After a streamed run ends, resolve any tool-approval interrupts it suspended on. For each
+   * pending tool call the {@link toolApprovalCallback} is consulted (defaulting to REJECT when
+   * no handler is wired, so a non-interactive run never hangs or auto-approves); the collected
+   * decisions are then sent back via the agent's `streamResume` as a LangChain HITL resume
+   * (`{ decisions }`). Because a resumed run can suspend again on the next gated tool call, this
+   * loops until the graph completes with no pending interrupts. Returns the concatenated text
+   * streamed across all resume turns (empty when nothing was resumed).
+   *
+   * No-ops (returns '') when the agent does not support interrupts (`getPendingToolInterrupts`/
+   * `streamResume` absent), so the lean agent and non-HITL configs are unaffected.
+   */
+  private async resolveToolInterrupts(): Promise<string> {
+    const agent = this.agent;
+    const runConfig = this.runConfig;
+    if (!agent || !runConfig) return '';
+    if (!agent.getPendingToolInterrupts || !agent.streamResume) return '';
+
+    let resumedText = '';
+    // Bound the loop defensively so a misbehaving graph that re-suspends forever cannot spin.
+    for (let guard = 0; guard < 100; guard++) {
+      const pending = await agent.getPendingToolInterrupts(runConfig);
+      if (pending.length === 0) break;
+
+      const decisions: ToolApprovalDecision[] = [];
+      for (const tool of pending) {
+        if (this.toolApprovalCallback) {
+          decisions.push(await this.toolApprovalCallback(tool));
+        } else {
+          // No interactive handler (e.g. non-TTY exec run): reject rather than auto-approve.
+          decisions.push({
+            type: 'reject',
+            message: 'Tool call rejected: no interactive approval handler available.',
+          });
+        }
+      }
+
+      const stream = await agent.streamResume({ decisions }, runConfig);
+      resumedText += await this.drainTextStream(stream);
+    }
+    return resumedText;
   }
 
   /**
