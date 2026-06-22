@@ -61,7 +61,8 @@ export async function createInteractiveSession(
     //   [a]lways  — additionally persist it to the project allow-list,
     //   anything else → reject (fail-closed).
     // The runner consults the allow-list BEFORE calling this, so trusted commands never reach
-    // this prompt at all. (The Ink TUI path does not yet surface this prompt — see EXT-9 report.)
+    // this prompt at all. (The Ink TUI surfaces the same scoped prompt via an approval bridge —
+    // see tuiSessionModule's createApprovalBridge + the <ApprovalPrompt> component.)
     runner.setToolApprovalCallback(async (pending) => {
       const commandText =
         typeof pending.args.command === 'string'

@@ -8,8 +8,10 @@ import {
   type SubagentTreeViewModel,
   type TurnViewModel,
 } from '#src/tui/viewModel.js';
-import type { TranscriptItem, TuiAppProps } from '#src/tui/types.js';
+import type { PendingApproval, TranscriptItem, TuiAppProps } from '#src/tui/types.js';
+import type { ToolApprovalScope } from '@gaunt-sloth/core/core/types.js';
 import { Transcript } from '#src/tui/components/Transcript.js';
+import { ApprovalPrompt } from '#src/tui/components/ApprovalPrompt.js';
 import { LiveTurn } from '#src/tui/components/LiveTurn.js';
 import { StatusBar } from '#src/tui/components/StatusBar.js';
 import { PromptInput } from '#src/tui/components/PromptInput.js';
@@ -83,6 +85,16 @@ export function App(props: TuiAppProps): React.ReactElement {
   // swallowed because clearing <Static>'s items resets its internal index (TUI-C12). Hidden
   // again the moment the next user turn starts so it doesn't linger above a fresh conversation.
   const [clearedBanner, setClearedBanner] = useState(false);
+  // Tool-approval queue (EXT-9 Phase B2). The head record (if any) is the approval currently
+  // shown; while it is non-null the approval prompt OWNS keyboard input and the normal prompt is
+  // suspended, so the command can't be typed into the chat box. Additional requests queue behind
+  // it (only one approval is shown at a time) and surface as the head is resolved.
+  const [approvalQueue, setApprovalQueue] = useState<PendingApproval[]>([]);
+  const pendingApproval = approvalQueue[0] ?? null;
+  // Mirror for the synchronous useInput handler, so it can read+resolve the head without a stale
+  // closure (the handler is bound once and must not depend on the queue in its deps).
+  const approvalQueueRef = useRef<PendingApproval[]>([]);
+  approvalQueueRef.current = approvalQueue;
   // Mirror of toolsExpanded for the slash-command handler (memoized without it in deps), so
   // /tools can compute the next state without a stale closure or a side effect in the updater.
   const toolsExpandedRef = useRef(false);
@@ -193,6 +205,40 @@ export function App(props: TuiAppProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Resolve the currently-shown approval (the queue head) and commit a brief notice so the
+  // decision reads in the transcript (TUI-C14 notice conventions). Dequeues the head so the next
+  // queued approval (if any) surfaces. Approve carries the chosen scope; reject is fail-closed.
+  const resolveApproval = useCallback((decision: 'once' | 'session' | 'always' | 'reject') => {
+    const head = approvalQueueRef.current[0];
+    if (!head) return;
+    if (decision === 'reject') {
+      head.resolve({ type: 'reject', message: 'User rejected the shell command.' });
+      push({
+        kind: 'notice',
+        title: 'Command rejected',
+        lines: ['The shell command was not run; the agent was told you declined.'],
+        tone: 'warn',
+      });
+    } else {
+      const scope: ToolApprovalScope = decision;
+      head.resolve({ type: 'approve', scope });
+      const detail =
+        scope === 'once'
+          ? 'Approved this single invocation only.'
+          : scope === 'session'
+            ? 'Approved for this session — future variants will not re-prompt.'
+            : 'Approved and remembered — saved to the project allow-list.';
+      push({
+        kind: 'notice',
+        title: `Command approved (${scope})`,
+        lines: [detail],
+        tone: 'info',
+      });
+    }
+    setApprovalQueue((q) => q.slice(1));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleSubmit = useCallback(
     (value: string) => {
       if (runningRef.current) return;
@@ -289,6 +335,19 @@ export function App(props: TuiAppProps): React.ReactElement {
   //  3. While the panel is focused → Tab/Shift+Tab cycle sections, ↑/↓ scroll one line,
   //     PageUp/PageDown page-step, m maximises, Esc unfocuses.
   useInput((input, key) => {
+    // Highest priority: a pending tool approval OWNS the keyboard (EXT-9 Phase B2). While one is
+    // shown, o/s/a resolve approve with the matching scope; anything else (n, Esc, Enter, …)
+    // resolves reject — fail-closed, mirroring the readline path. We swallow the key either way
+    // so it can't fall through to abort/debug handling or get typed into the prompt.
+    if (approvalQueueRef.current.length > 0) {
+      const ch = input.toLowerCase();
+      if (ch === 'o') resolveApproval('once');
+      else if (ch === 's') resolveApproval('session');
+      else if (ch === 'a') resolveApproval('always');
+      else resolveApproval('reject');
+      return;
+    }
+
     if (key.escape && runningRef.current) {
       abortRef.current?.abort();
       return;
@@ -388,6 +447,16 @@ export function App(props: TuiAppProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Surface tool-approval requests bridged from the runner (EXT-9 Phase B2): each pending
+  // approval is appended to the queue; the head renders the <ApprovalPrompt> and owns input.
+  useEffect(() => {
+    if (!props.subscribeApproval) return;
+    return props.subscribeApproval((record) => {
+      setApprovalQueue((q) => [...q, record]);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // The greeting is an intro, not a permanent fixture: show it only before the first
   // exchange, so it stops padding the bottom dock once the conversation is underway.
   const showIntro = !initialMessage && transcript.length === 0 && !live;
@@ -416,6 +485,9 @@ export function App(props: TuiAppProps): React.ReactElement {
       ) : null}
       {/* Input dock: bracketed top and bottom by rules so the status bar, prompt and hint
           read as a distinct control zone rather than blending into the scrollback. */}
+      {/* Tool-approval affordance (EXT-9 Phase B2): when an approval is pending it sits just above
+          the input dock, owns the keyboard, and suspends the normal prompt below. */}
+      {pendingApproval ? <ApprovalPrompt pending={pendingApproval.pending} /> : null}
       <Rule />
       <StatusBar
         running={running}
@@ -424,7 +496,9 @@ export function App(props: TuiAppProps): React.ReactElement {
         turnCount={turnCount}
         debugHint={debugVisible && !debugFocused}
       />
-      {!running && !debugFocused ? <PromptInput onSubmit={handleSubmit} /> : null}
+      {!running && !debugFocused && !pendingApproval ? (
+        <PromptInput onSubmit={handleSubmit} />
+      ) : null}
       <Text dimColor>{exitMessage.trim()}</Text>
       <Rule />
     </Box>
