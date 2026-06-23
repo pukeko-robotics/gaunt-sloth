@@ -350,6 +350,60 @@ describe('GthDeepAgent', () => {
     expect(createDeepAgentMock.mock.calls[0][0].tools).toEqual([]);
   });
 
+  it('does not set interruptOn when the shell tool is not enabled', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+
+    await agent.init('code', makeConfig());
+
+    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toBeUndefined();
+  });
+
+  it('sets interruptOn for run_shell_command when shell is enabled and yolo is off', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+    const config = makeConfig({
+      commands: { code: { devTools: { shell: true } } } as any,
+    });
+
+    await agent.init('code', config);
+
+    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toEqual({
+      run_shell_command: { allowedDecisions: ['approve', 'reject'] },
+    });
+  });
+
+  it('omits interruptOn under yolo (shell enabled, shellYolo true) so the tool runs unconfirmed', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+    const config = makeConfig({
+      commands: { code: { devTools: { shell: true, shellYolo: true } } } as any,
+    });
+
+    await agent.init('code', config);
+
+    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toBeUndefined();
+    // And it warns loudly about the bypass.
+    expect(statusUpdate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('YOLO mode')
+    );
+  });
+
+  it('reads the exec command devTools for the interrupt wiring', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+    const config = makeConfig({
+      commands: { exec: { devTools: { shell: true } } } as any,
+    });
+
+    await agent.init('exec', config);
+
+    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toEqual({
+      run_shell_command: { allowedDecisions: ['approve', 'reject'] },
+    });
+  });
+
   it('stubs client config tools (clones, swapping the body for interrupt)', async () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const clientTool = fakeTool('client_tool', { client: true });

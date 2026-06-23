@@ -3,6 +3,10 @@ import { render } from 'ink';
 import { type CommandLineConfigOverrides, initConfig } from '@gaunt-sloth/core/config.js';
 import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
 import { StatusLevel } from '@gaunt-sloth/core/core/types.js';
+import type {
+  PendingToolInterrupt,
+  ToolApprovalDecision,
+} from '@gaunt-sloth/core/core/types.js';
 import {
   flushSessionLog,
   initSessionLogging,
@@ -18,7 +22,7 @@ import { GthDeepAgent } from '@gaunt-sloth/agent/core/GthDeepAgent.js';
 import type { SessionConfig } from '@gaunt-sloth/agent/modules/interactiveSessionModule.js';
 import type { BaseMessage } from '@langchain/core/messages';
 import { App } from '#src/tui/components/App.js';
-import type { TuiAgent, TuiDebugCapture } from '#src/tui/types.js';
+import type { PendingApproval, TuiAgent, TuiDebugCapture } from '#src/tui/types.js';
 import { renderHistory, renderRequestDetails, renderResponse } from '#src/tui/debugRender.js';
 import { viewportBumpSequence } from '#src/tui/terminal.js';
 import type { DebugRequestExtras } from '@gaunt-sloth/agent/core/debugCapture.js';
@@ -65,6 +69,53 @@ function createDebugBridge() {
           details: renderRequestDetails(extras),
         }),
       onResponse: (response: unknown) => emit({ kind: 'response', text: renderResponse(response) }),
+    },
+  };
+}
+
+/**
+ * Fan-out so the runner's tool-approval callback can reach the mounted React app. Modeled on
+ * {@link createStatusBridge}, but promise-based: when the runner suspends on a
+ * `run_shell_command` interrupt and calls the approval callback, the bridge creates a pending
+ * record (the {@link PendingToolInterrupt} plus a `resolve`), emits it to the subscribed
+ * `<App>`, and hands the callback a Promise it awaits until the app resolves a decision.
+ *
+ * Fail-closed: if the session ends / the app unmounts while an approval is still pending, every
+ * outstanding record is resolved as a reject (`abortPending`), so a suspended run can never hang
+ * — matching the readline path's "anything not o/s/a → reject" default.
+ */
+function createApprovalBridge() {
+  const listeners = new Set<(record: PendingApproval) => void>();
+  // Records that have been emitted but not yet resolved (used by abortPending on teardown).
+  const outstanding = new Set<PendingApproval>();
+  return {
+    /** Wired to `runner.setToolApprovalCallback`: returns a Promise the runner awaits. */
+    request: (pending: PendingToolInterrupt): Promise<ToolApprovalDecision> =>
+      new Promise<ToolApprovalDecision>((resolve) => {
+        let settled = false;
+        const record: PendingApproval = {
+          pending,
+          resolve: (decision) => {
+            if (settled) return;
+            settled = true;
+            outstanding.delete(record);
+            resolve(decision);
+          },
+        };
+        outstanding.add(record);
+        for (const l of listeners) l(record);
+      }),
+    subscribe: (cb: (record: PendingApproval) => void) => {
+      listeners.add(cb);
+      return () => {
+        listeners.delete(cb);
+      };
+    },
+    /** Resolve every still-pending approval as a reject (fail-closed) on teardown. */
+    abortPending: () => {
+      for (const record of [...outstanding]) {
+        record.resolve({ type: 'reject', message: 'Session ended before approval.' });
+      }
     },
   };
 }
@@ -118,10 +169,18 @@ export async function createTuiSession(
 
   const bridge = createStatusBridge();
   const debugBridge = createDebugBridge();
+  const approvalBridge = createApprovalBridge();
   const runner = new GthAgentRunner(bridge.emit, createResolvers(), gthDeepAgentFactory);
 
   try {
     await runner.init(sessionConfig.mode, config, checkpointSaver);
+
+    // Tool-approval (human-in-the-loop) prompt for gated tools — the readline counterpart in
+    // interactiveSessionModule. The runner consults the allow-list BEFORE calling this, so
+    // trusted commands never reach the TUI prompt; otherwise the bridge surfaces the pending
+    // command in the mounted <App> and awaits the human's scoped decision (o/s/a → approve,
+    // anything else → reject, fail-closed).
+    runner.setToolApprovalCallback((pending) => approvalBridge.request(pending));
 
     // Attach the debug sink to the live deep agent (opt-in; the wrapModelCall middleware reads
     // it lazily, so this only enables capture for the TUI's /debug panel — the lean/AG-UI
@@ -172,9 +231,13 @@ export async function createTuiSession(
         initialMessage={message}
         subscribeStatus={bridge.subscribe}
         subscribeDebug={debugBridge.subscribe}
+        subscribeApproval={approvalBridge.subscribe}
         onTurnComplete={logTurn}
         onResetFrame={() => resetFrame?.()}
         onExit={async () => {
+          // Fail-closed: resolve any approval still awaiting a decision before tearing down,
+          // so a suspended run can never hang on an unanswered prompt.
+          approvalBridge.abortPending();
           await runner.cleanup();
           stopSessionLogging();
         }}
@@ -184,6 +247,7 @@ export async function createTuiSession(
 
     await instance.waitUntilExit();
   } catch (err) {
+    approvalBridge.abortPending();
     await runner.cleanup();
     stopSessionLogging();
     throw err;

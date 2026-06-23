@@ -16,6 +16,7 @@ import {
   USER_PROJECT_CONFIG_MJS,
 } from '#src/constants.js';
 import { StatusLevel } from '#src/core/types.js';
+import type { GthCommand } from '#src/core/types.js';
 import {
   displayDebug,
   displayError,
@@ -489,7 +490,7 @@ export interface CustomCommandConfig {
 /**
  * Config for {@link GthDevToolkit}.
  * Tools are not applied when config is not provided.
- * Only available in `code` mode.
+ * Only available in `code`/`exec` mode (and `ask --write`).
  */
 export interface GthDevToolsConfig {
   /**
@@ -515,6 +516,160 @@ export interface GthDevToolsConfig {
    * Not applied when config is not provided.
    */
   run_single_test?: string;
+  /**
+   * Opt-in general-purpose shell tool (`run_shell_command`). Unlike the fixed
+   * `run_*` commands above, this lets the agent run ARBITRARY shell commands it
+   * composes itself — the agentic-coding escape hatch the deep agent otherwise
+   * lacks (it can read/write files but not run commands).
+   *
+   * OFF by default; only emitted when truthy. Accepts a bare boolean or an
+   * `{ enabled }` object for symmetry with future per-tool options.
+   *
+   * Because the model chooses the command, every invocation is gated behind a
+   * per-command human confirmation dialog (LangChain `humanInTheLoopMiddleware`,
+   * wired via deepagents' `interruptOn`) UNLESS {@link shellYolo} bypasses it.
+   * The confirmation — not string-filtering — is the guardrail, so the command
+   * is passed through verbatim (pipes / `$` / `;` are all legitimate).
+   *
+   * The object form also tunes the EXT-9 Tier-1 hardening applied to every run
+   * (these have safe defaults so bare `shell: true` is already hardened):
+   * - `timeout`: per-command wall-clock limit in MILLISECONDS before the child
+   *   (and its process group) is killed. Default {@link SHELL_DEFAULT_TIMEOUT_MS}.
+   * - `maxOutputBytes`: byte budget for the captured output returned to the model
+   *   (head + tail window; the middle is dropped and the full output spilled to a
+   *   temp file). Default {@link SHELL_DEFAULT_MAX_OUTPUT_BYTES}. Live terminal
+   *   streaming is never capped.
+   *
+   * A hardcoded hardline blocklist of catastrophic commands (rm -rf /, mkfs, dd
+   * to a block device, fork bomb, shutdown/reboot, …) is refused even under
+   * {@link shellYolo}; that floor is not configurable.
+   *
+   * Example: `{ "shell": true }`,
+   * `{ "shell": { "enabled": true, "timeout": 300000, "maxOutputBytes": 200000 } }`.
+   *
+   * The object form additionally accepts EXT-9 Tier-2 allow-list knobs:
+   * - `allowlist`: master switch for the scoped approval allow-list (session +
+   *   persisted `always`). Default `true` — once a command is approved at `session`/
+   *   `always` scope, flag-variants of the same classified operation auto-approve
+   *   without re-prompting. Set `false` to require fresh approval for every command.
+   * - `persistAllowlist`: whether `always`-scoped approvals are written to the project
+   *   allow-list file (`.gsloth/.gsloth-settings/shell-allowlist.json`). Default `true`.
+   *   When `false`, an `always` decision behaves like `session` (in-memory only).
+   */
+  shell?:
+    | boolean
+    | {
+        enabled?: boolean;
+        timeout?: number;
+        maxOutputBytes?: number;
+        allowlist?: boolean;
+        persistAllowlist?: boolean;
+      };
+  /**
+   * Opt-out of the per-command confirmation dialog for {@link shell}
+   * (`run_shell_command`) — the explicit "yolo" bypass. When `true` AND `shell`
+   * is enabled, the shell tool runs without any approval interrupt: the model's
+   * commands execute immediately. Dangerous by design; off by default.
+   *
+   * Example: `{ "shell": true, "shellYolo": true }`.
+   */
+  shellYolo?: boolean;
+}
+
+/**
+ * Default per-command shell timeout (ms) when {@link GthDevToolsConfig.shell}
+ * does not specify one. ~120s suits typical build/test/git steps without
+ * hanging the agent forever on a stuck command.
+ */
+export const SHELL_DEFAULT_TIMEOUT_MS = 120_000;
+
+/**
+ * Default byte budget for shell output captured into the ToolMessage returned to
+ * the model (head + tail window). ~100KB keeps a noisy log from blowing the
+ * context window; the full output is spilled to a temp file when this is exceeded.
+ */
+export const SHELL_DEFAULT_MAX_OUTPUT_BYTES = 100_000;
+
+/**
+ * Normalize the {@link GthDevToolsConfig.shell} opt-in (bare boolean or
+ * `{ enabled }`) to a plain boolean. Centralized so the toolkit (tool emission)
+ * and the deep agent (interrupt wiring) agree on what "shell enabled" means.
+ */
+export function isShellToolEnabled(devTools: GthDevToolsConfig | undefined): boolean {
+  const shell = devTools?.shell;
+  if (typeof shell === 'boolean') return shell;
+  if (shell && typeof shell === 'object') return shell.enabled === true;
+  return false;
+}
+
+/**
+ * Resolve the per-command shell timeout (ms) from config, falling back to
+ * {@link SHELL_DEFAULT_TIMEOUT_MS}. Only the object form can override it; a bare
+ * `shell: true` uses the default. Non-positive / non-finite values are ignored.
+ */
+export function getShellTimeoutMs(devTools: GthDevToolsConfig | undefined): number {
+  const shell = devTools?.shell;
+  if (shell && typeof shell === 'object' && typeof shell.timeout === 'number') {
+    if (Number.isFinite(shell.timeout) && shell.timeout > 0) return shell.timeout;
+  }
+  return SHELL_DEFAULT_TIMEOUT_MS;
+}
+
+/**
+ * Resolve the captured-output byte budget from config, falling back to
+ * {@link SHELL_DEFAULT_MAX_OUTPUT_BYTES}. Only the object form can override it.
+ * Non-positive / non-finite values are ignored.
+ */
+export function getShellMaxOutputBytes(devTools: GthDevToolsConfig | undefined): number {
+  const shell = devTools?.shell;
+  if (shell && typeof shell === 'object' && typeof shell.maxOutputBytes === 'number') {
+    if (Number.isFinite(shell.maxOutputBytes) && shell.maxOutputBytes > 0) {
+      return shell.maxOutputBytes;
+    }
+  }
+  return SHELL_DEFAULT_MAX_OUTPUT_BYTES;
+}
+
+/**
+ * Whether the EXT-9 Tier-2 scoped allow-list is active. Default `true`; only the object
+ * form's `allowlist: false` disables it (a bare `shell: true` keeps it on). When off, the
+ * runner prompts for every `run_shell_command` regardless of prior approvals.
+ */
+export function isShellAllowlistEnabled(devTools: GthDevToolsConfig | undefined): boolean {
+  const shell = devTools?.shell;
+  if (shell && typeof shell === 'object' && shell.allowlist === false) return false;
+  return true;
+}
+
+/**
+ * Whether `always`-scoped approvals are persisted to the project allow-list file. Default
+ * `true`; only the object form's `persistAllowlist: false` disables persistence (an
+ * `always` decision then behaves as `session`).
+ */
+export function isShellAllowlistPersisted(devTools: GthDevToolsConfig | undefined): boolean {
+  const shell = devTools?.shell;
+  if (shell && typeof shell === 'object' && shell.persistAllowlist === false) return false;
+  return true;
+}
+
+/**
+ * Resolve the {@link GthDevToolsConfig} that applies to the active command, mirroring the
+ * per-command selection in `builtInToolsConfig.getDefaultTools` (which is what actually emits
+ * the dev tools) and `GthDeepAgent.getEffectiveDevToolsConfig`: `exec` → `commands.exec`,
+ * `ask --write` → `commands.ask`, `code` → `commands.code`; `undefined` elsewhere (the
+ * toolkit is inert there). Shared in core so the runner's allow-list gate stays in lockstep
+ * with where the shell tool is actually emitted.
+ */
+export function getEffectiveDevToolsConfig(
+  config: Pick<GthConfig, 'commands' | 'askWriteMode'> | undefined,
+  command: GthCommand | undefined
+): GthDevToolsConfig | undefined {
+  if (!config) return undefined;
+  const askWrite = command === 'ask' && config.askWriteMode === true;
+  if (command === 'exec') return config.commands?.exec?.devTools;
+  if (askWrite) return config.commands?.ask?.devTools;
+  if (command === 'code') return config.commands?.code?.devTools;
+  return undefined;
 }
 
 export interface LLMConfig extends Record<string, unknown> {

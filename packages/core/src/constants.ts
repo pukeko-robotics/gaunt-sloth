@@ -12,3 +12,8 @@ export const GSLOTH_CHAT_PROMPT = '.gsloth.chat.md';
 export const GSLOTH_CODE_PROMPT = '.gsloth.code.md';
 export const GSLOTH_EXEC_PROMPT = '.gsloth.exec.md';
 export const AIIGNORE_FILE = '.aiignore';
+/**
+ * EXT-9 Tier-2: project-scoped persisted shell allow-list (`always` approvals).
+ * Lives under `.gsloth/.gsloth-settings/` like other project settings.
+ */
+export const SHELL_ALLOWLIST_FILE = 'shell-allowlist.json';

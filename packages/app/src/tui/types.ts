@@ -1,6 +1,21 @@
-import type { AgentStreamEvent } from '@gaunt-sloth/core/core/types.js';
+import type {
+  AgentStreamEvent,
+  PendingToolInterrupt,
+  ToolApprovalDecision,
+} from '@gaunt-sloth/core/core/types.js';
 import type { TurnViewModel } from '#src/tui/viewModel.js';
 import type { CommandNoticeTone } from '#src/tui/components/CommandNotice.js';
+
+/**
+ * One in-flight tool-approval request bridged from the runner into the mounted `<App>`
+ * (EXT-9 Phase B2): the {@link PendingToolInterrupt} the runner suspended on, plus a `resolve`
+ * that hands the human's {@link ToolApprovalDecision} back to the awaiting runner callback.
+ * Idempotent — calling `resolve` more than once is a no-op (the first decision wins).
+ */
+export interface PendingApproval {
+  pending: PendingToolInterrupt;
+  resolve: (decision: ToolApprovalDecision) => void;
+}
 
 /**
  * The minimal agent surface the Ink `<App>` drives. Decoupling the component from
@@ -58,6 +73,13 @@ export interface TuiAppProps {
    * so the readline/AG-UI paths and the fixture agent (which have no such sink) simply omit it.
    */
   subscribeDebug?: (cb: (capture: TuiDebugCapture) => void) => () => void;
+  /**
+   * Subscribe to tool-approval requests bridged from the runner (EXT-9 Phase B2): each
+   * {@link PendingApproval} carries the pending `run_shell_command` interrupt and a `resolve`
+   * the app calls with the human's scoped decision. Optional so the fixture/AG-UI paths (which
+   * never surface approvals) simply omit it.
+   */
+  subscribeApproval?: (cb: (record: PendingApproval) => void) => () => void;
   /** Called once a turn finishes, with the user input and the final assistant text. */
   onTurnComplete?: (userInput: string, assistantText: string) => void;
   /**

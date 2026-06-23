@@ -11,14 +11,16 @@ vi.mock('child_process', () => childProcessMock);
 const consoleUtilsMock = {
   displayInfo: vi.fn(),
   displayError: vi.fn(),
+  displayWarning: vi.fn(),
 };
 vi.mock('#src/utils/consoleUtils.js', () => consoleUtilsMock);
 
-// Mock systemUtils
+// Mock systemUtils (env is consumed by the shell credential-scrub helper).
 const systemUtilsMock = {
   stdout: {
     write: vi.fn(),
   },
+  env: { PATH: '/usr/bin', HOME: '/home/test' },
 };
 vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
 
@@ -108,6 +110,48 @@ describe('GthDevToolkit - Basic Tests', () => {
     });
   });
 
+  describe('run_shell_command (opt-in shell tool)', () => {
+    it('is NOT emitted by default (shell omitted)', () => {
+      toolkit = new GthDevToolkit({ run_tests: 'npm test' });
+      expect(toolkit.tools.map((t) => t.name)).not.toContain('run_shell_command');
+    });
+
+    it('is NOT emitted when shell is false', () => {
+      toolkit = new GthDevToolkit({ shell: false });
+      expect(toolkit.tools.map((t) => t.name)).not.toContain('run_shell_command');
+    });
+
+    it('is emitted when shell is true (bare boolean)', () => {
+      toolkit = new GthDevToolkit({ shell: true });
+      const shellTool = toolkit.tools.find((t) => t.name === 'run_shell_command');
+      expect(shellTool).toBeDefined();
+      expect((shellTool as any).gthDevType).toBe('execute');
+    });
+
+    it('is emitted when shell is { enabled: true } (object form)', () => {
+      toolkit = new GthDevToolkit({ shell: { enabled: true } });
+      expect(toolkit.tools.map((t) => t.name)).toContain('run_shell_command');
+    });
+
+    it('is NOT emitted when shell is { enabled: false }', () => {
+      toolkit = new GthDevToolkit({ shell: { enabled: false } });
+      expect(toolkit.tools.map((t) => t.name)).not.toContain('run_shell_command');
+    });
+
+    it('runs the model-supplied command verbatim (no parameter sanitizing)', async () => {
+      toolkit = new GthDevToolkit({ shell: true });
+      const shellTool = toolkit.tools.find((t) => t.name === 'run_shell_command')!;
+      // A legitimate shell command with a pipe + $ — would be rejected by the path sanitizer,
+      // but the shell tool must pass it through (confirmation, not filtering, is the guardrail).
+      const result = await shellTool.invoke({ command: 'echo $HOME | cat' });
+      expect(result).toContain("Command 'echo $HOME | cat' completed successfully");
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        'echo $HOME | cat',
+        expect.objectContaining({ shell: true, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+      );
+    });
+  });
+
   describe('buildSingleTestCommand', () => {
     it('should build command with placeholder', () => {
       toolkit = new GthDevToolkit({ run_single_test: 'npm test -- ${testPath}' });
@@ -140,7 +184,10 @@ describe('GthDevToolkit - Basic Tests', () => {
       expect(consoleUtilsMock.displayInfo).toHaveBeenCalledWith(
         '\n🔧 Executing test_tool: echo test'
       );
-      expect(childProcessMock.spawn).toHaveBeenCalledWith('echo test', { shell: true });
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        'echo test',
+        expect.objectContaining({ shell: true, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+      );
     });
 
     it('should handle command failure', async () => {
