@@ -48,7 +48,10 @@ const RELEASE_TYPES = [
 ];
 const PREIDS = ['alpha', 'beta', 'rc'];
 
-const args = process.argv.slice(2).filter((a) => a !== '--commit');
+// Drop our own `--commit` flag and any bare `--` arg-separator. pnpm forwards
+// the `--` from `pnpm run <script> -- <args>` literally into argv (npm strips
+// it), so without this a `--` would be parsed as the version spec.
+const args = process.argv.slice(2).filter((a) => a !== '--commit' && a !== '--');
 const commit = process.argv.slice(2).includes('--commit');
 
 // Arg shapes:
