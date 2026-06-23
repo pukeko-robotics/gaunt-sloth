@@ -64,10 +64,19 @@ async function filterDevTools(
   command: GthCommand | undefined,
   devToolConfig: GthDevToolsConfig | undefined
 ): Promise<StructuredToolInterface[]> {
-  if ((command !== 'code' && command !== 'exec') || !devToolConfig) {
+  // Dev tools only apply to the do-the-job commands (`code` / `exec`; `ask --write` is mapped
+  // to `code` by the caller). EXT-12: for `code` the toolkit is constructed even when no
+  // devTools config is present, so the shell tool's absent-config default (ON in `code`) can
+  // emit `run_shell_command` (still gated). For `exec` we keep the prior behaviour — no config
+  // means no dev tools — by short-circuiting when the config is absent.
+  if (command !== 'code' && command !== 'exec') {
     return [];
   }
-  const toolkit = new GthDevToolkit(devToolConfig);
+  if (command === 'exec' && !devToolConfig) {
+    return [];
+  }
+  // Pass the command so GthDevToolkit resolves the shell default for the active mode.
+  const toolkit = new GthDevToolkit(devToolConfig ?? {}, command);
   return [...toolkit.getTools()];
 }
 

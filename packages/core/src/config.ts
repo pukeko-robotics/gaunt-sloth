@@ -522,7 +522,11 @@ export interface GthDevToolsConfig {
    * composes itself — the agentic-coding escape hatch the deep agent otherwise
    * lacks (it can read/write files but not run commands).
    *
-   * OFF by default; only emitted when truthy. Accepts a bare boolean or an
+   * EXT-12 — default: ON in `code` mode, OFF elsewhere. When this is ABSENT/undefined,
+   * `code` mode emits the tool (still GATED behind the per-command approval prompt — the
+   * absent-config default NEVER implies yolo); `exec` / `ask --write` keep it OFF. An
+   * EXPLICIT value always wins: `shell: false` (or `{ enabled: false }`) is a hard escape
+   * hatch that fully disables it even in `code`. Accepts a bare boolean or an
    * `{ enabled }` object for symmetry with future per-tool options.
    *
    * Because the model chooses the command, every invocation is gated behind a
@@ -621,12 +625,28 @@ export const SHELL_DEFAULT_MAX_OUTPUT_BYTES = 100_000;
  * Normalize the {@link GthDevToolsConfig.shell} opt-in (bare boolean or
  * `{ enabled }`) to a plain boolean. Centralized so the toolkit (tool emission)
  * and the deep agent (interrupt wiring) agree on what "shell enabled" means.
+ *
+ * EXT-12 — default-resolution: an EXPLICIT value always wins (a bare boolean, or the
+ * object form's `enabled`), so `shell: false` / `{ enabled: false }` remains a hard
+ * escape hatch that fully disables the tool. Only when `shell` is ABSENT/undefined does
+ * the per-mode default apply: in `code` mode the shell tool is ON by default (still
+ * gated — the per-command approval interrupt is wired separately and is NOT bypassed by
+ * this), and OFF everywhere else (`exec`, `ask --write`, …) to preserve prior behaviour.
+ * The default is `code`-mode only because `code` is the interactive agentic-coding surface
+ * where a TTY can answer the approval prompt; the absent-config default never implies yolo.
+ *
+ * @param command The active command, so the absent-config default can be scoped to `code`.
+ *   Omit (or pass a non-`code` command) to keep the historical OFF-by-default behaviour.
  */
-export function isShellToolEnabled(devTools: GthDevToolsConfig | undefined): boolean {
+export function isShellToolEnabled(
+  devTools: GthDevToolsConfig | undefined,
+  command?: GthCommand | undefined
+): boolean {
   const shell = devTools?.shell;
   if (typeof shell === 'boolean') return shell;
   if (shell && typeof shell === 'object') return shell.enabled === true;
-  return false;
+  // Absent/undefined shell: ON by default for `code` mode (gated), OFF elsewhere.
+  return command === 'code';
 }
 
 /**

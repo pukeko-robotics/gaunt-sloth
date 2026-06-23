@@ -350,11 +350,38 @@ describe('GthDeepAgent', () => {
     expect(createDeepAgentMock.mock.calls[0][0].tools).toEqual([]);
   });
 
-  it('does not set interruptOn when the shell tool is not enabled', async () => {
+  it('does not set interruptOn for a non-code command with no shell config (e.g. chat)', async () => {
+    // EXT-12: the absent-config shell default is `code`-only, so `chat` (which carries no devTools
+    // at all) still gets no shell tool and therefore no interrupt wiring.
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+
+    await agent.init('chat', makeConfig());
+
+    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toBeUndefined();
+  });
+
+  it('EXT-12: sets gated interruptOn for code with NO shell config (shell ON by default)', async () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
 
     await agent.init('code', makeConfig());
+
+    // Absent devTools.shell in `code` mode now resolves to enabled — and still GATED (interruptOn
+    // set), never yolo-by-default.
+    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toEqual({
+      run_shell_command: { allowedDecisions: ['approve', 'reject'] },
+    });
+  });
+
+  it('EXT-12: explicit shell:false fully disables the tool in code mode (escape hatch)', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+    const config = makeConfig({
+      commands: { code: { devTools: { shell: false } } } as any,
+    });
+
+    await agent.init('code', config);
 
     expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toBeUndefined();
   });
