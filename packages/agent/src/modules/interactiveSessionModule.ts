@@ -124,7 +124,7 @@ export async function createInteractiveSession(
         if (!userInput.trim()) {
           continue; // Skip inference if no input
         }
-        const lowerInput = userInput.toLowerCase();
+        const lowerInput = userInput.toLowerCase().trim();
         if (lowerInput === 'exit' || lowerInput === '/exit') {
           display('Exiting...');
           shouldExit = true;
@@ -132,6 +132,21 @@ export async function createInteractiveSession(
           stopSessionLogging();
           rl.close();
           break;
+        }
+        // EXT-12 — `/yolo` toggles session-wide shell auto-approval at the approval-decision
+        // layer (the runner flag), distinct from the static `shellYolo` config. Session-scoped,
+        // reversible, never persisted; the hardline floor still blocks catastrophic commands.
+        if (lowerInput === '/yolo') {
+          const enabled = runner.toggleSessionYolo();
+          if (enabled) {
+            displayWarning(
+              'yolo ON — shell commands auto-approved this session (no per-command prompt). ' +
+                'The hardline safety floor still blocks catastrophic commands. Run /yolo again to require approvals.'
+            );
+          } else {
+            displayInfo('yolo OFF — approvals required before each shell command.');
+          }
+          continue; // do not send the command to the model
         }
 
         let shouldRetry = false;

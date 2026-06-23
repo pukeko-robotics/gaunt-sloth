@@ -376,8 +376,11 @@ export class GthDeepAgent extends GthAbstractAgent {
     // when the tool actually exists. yolo (shellYolo) opts OUT of the confirmation: leave
     // interruptOn undefined so the tool runs without suspending.
     const devTools = this.getEffectiveDevToolsConfig();
+    // EXT-12 — pass the active command so the absent-config default (shell ON in `code`)
+    // is applied consistently with where the tool is actually emitted (GthDevToolkit).
+    const shellEnabled = isShellToolEnabled(devTools, this.command);
     const interruptOn =
-      isShellToolEnabled(devTools) && devTools?.shellYolo !== true
+      shellEnabled && devTools?.shellYolo !== true
         ? ({ run_shell_command: { allowedDecisions: ['approve', 'reject'] } } as Record<
             string,
             boolean | InterruptOnConfig
@@ -388,7 +391,7 @@ export class GthDeepAgent extends GthAbstractAgent {
         StatusLevel.INFO,
         'Shell tool (run_shell_command) enabled with per-command approval (interruptOn).'
       );
-    } else if (isShellToolEnabled(devTools)) {
+    } else if (shellEnabled) {
       this.statusUpdate(
         StatusLevel.WARNING,
         'Shell tool (run_shell_command) enabled in YOLO mode: commands run WITHOUT confirmation.'

@@ -151,6 +151,46 @@ describe('tui <App>', () => {
     unmount();
   });
 
+  it('/yolo calls agent.toggleYolo and commits the resulting-state notice (EXT-12)', async () => {
+    let yolo = false;
+    let turnsRun = 0;
+    const agent: TuiAgent = {
+      async *runTurn() {
+        turnsRun += 1;
+        yield { type: 'text', delta: 'should not run' };
+      },
+      toggleYolo() {
+        yolo = !yolo;
+        return yolo;
+      },
+    };
+    const { stdin, frames, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    stdin.write('/yolo');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/yolo'));
+    stdin.write('\r');
+
+    // First toggle → ON notice.
+    await vi.waitFor(() => {
+      expect(frames.join('\n')).toContain('yolo ON');
+      expect(frames.join('\n')).toContain('auto-approved this session');
+    });
+    expect(yolo).toBe(true);
+
+    // Toggle again → OFF notice (reversible).
+    stdin.write('/yolo');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/yolo'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(frames.join('\n')).toContain('yolo OFF'));
+    expect(yolo).toBe(false);
+
+    // The command never reaches the model.
+    expect(turnsRun).toBe(0);
+
+    unmount();
+  });
+
   it('toggles the docked debug panel on /debug (shows then hides the section tabs)', async () => {
     const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
     const { stdin, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);

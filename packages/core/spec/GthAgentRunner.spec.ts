@@ -487,6 +487,79 @@ describe('GthAgentRunner', () => {
     });
   });
 
+  // EXT-12 — runtime, session-scoped yolo flag (the `/yolo` slash command). When ON, gated
+  // run_shell_command calls auto-approve WITHOUT prompting; the hardline floor still applies at
+  // exec time (enforced in GthDevToolkit, not here, so a catastrophic command is still refused).
+  describe('session-scoped yolo flag (/yolo)', () => {
+    function streamOf(...chunks: string[]) {
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const c of chunks) yield c;
+        },
+      };
+    }
+
+    it('toggleSessionYolo flips the flag and isSessionYolo reflects it (defaults OFF)', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      await runner.init('code', mockConfig);
+      expect(runner.isSessionYolo()).toBe(false);
+      expect(runner.toggleSessionYolo()).toBe(true);
+      expect(runner.isSessionYolo()).toBe(true);
+      expect(runner.toggleSessionYolo()).toBe(false);
+      expect(runner.isSessionYolo()).toBe(false);
+    });
+
+    it('auto-approves a gated shell command WITHOUT invoking the human callback when yolo is ON', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'rm -rf node_modules' } },
+        ])
+        .mockResolvedValueOnce([]);
+      const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+      (mockAgent as any).streamResume = streamResume;
+
+      await runner.init('code', { ...mockConfig, streamOutput: true });
+      const human = vi.fn();
+      runner.setToolApprovalCallback(human);
+      runner.toggleSessionYolo(); // ON
+
+      await runner.processMessages([new HumanMessage('clean')]);
+
+      // The human prompt was never consulted; the resume carried an approve decision.
+      expect(human).not.toHaveBeenCalled();
+      expect(streamResume.mock.calls[0][0].decisions[0]).toEqual({
+        type: 'approve',
+        scope: 'once',
+      });
+    });
+
+    it('still prompts the human when yolo is OFF (default)', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'npm install' } }])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+      // allow-list off so the prompt is reached deterministically.
+      await runner.init('code', {
+        ...mockConfig,
+        streamOutput: true,
+        commands: { code: { devTools: { shell: { enabled: true, allowlist: false } } } },
+      } as any);
+      const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('install')]);
+
+      expect(human).toHaveBeenCalledTimes(1);
+    });
+  });
+
   // EXT-10 — LLM-as-judge safety gate. Uses a FAKE model (config.llm with a stubbed
   // withStructuredOutput) so the judge is deterministic; no live LLM call.
   describe('LLM-as-judge safety gate (run_shell_command)', () => {

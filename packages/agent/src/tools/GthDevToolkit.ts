@@ -12,6 +12,7 @@ import {
   getShellTimeoutMs,
   isShellToolEnabled,
 } from '@gaunt-sloth/core/config.js';
+import type { GthCommand } from '@gaunt-sloth/core/core/types.js';
 import { stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { checkHardline } from '#src/tools/shell/hardline.js';
 import { buildScrubbedEnv } from '#src/tools/shell/env.js';
@@ -84,10 +85,17 @@ const TEST_PATH_PLACEHOLDER = '${testPath}';
 export default class GthDevToolkit extends BaseToolkit {
   tools: StructuredToolInterface[];
   private commands: GthDevToolsConfig;
+  /**
+   * The active command, threaded through so the EXT-12 absent-config default for the shell
+   * tool (ON in `code`, OFF elsewhere) is resolved consistently with the deep agent's
+   * interrupt wiring. Omitted → historical OFF-by-default behaviour.
+   */
+  private readonly command: GthCommand | undefined;
 
-  constructor(commands: GthDevToolsConfig = {}) {
+  constructor(commands: GthDevToolsConfig = {}, command?: GthCommand | undefined) {
     super();
     this.commands = commands;
+    this.command = command;
     this.tools = this.createTools();
   }
 
@@ -364,7 +372,7 @@ export default class GthDevToolkit extends BaseToolkit {
     // the command, so the guardrail is the per-command confirmation dialog wired by the deep
     // agent (createDeepAgent `interruptOn`), not a parameter sanitizer — a real shell command
     // legitimately contains pipes / `$` / `;`, so validateParameterValue must NOT be applied.
-    if (isShellToolEnabled(this.commands)) {
+    if (isShellToolEnabled(this.commands, this.command)) {
       tools.push(
         createGthTool(
           async (args: z.infer<typeof RunShellCommandArgsSchema>): Promise<string> => {

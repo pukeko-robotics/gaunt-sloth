@@ -43,6 +43,28 @@ Rules:
   for caution — e.g. the **unknown-command** notice, which never forwards the text to the model and
   points the user at `/help`.
 
+## `/yolo` — session shell auto-approval (DL-4 transparency, EXT-12)
+
+`/yolo` toggles, for the current session only, whether gated `run_shell_command` calls auto-approve
+without the per-command prompt. It is **distinct from the static `shellYolo` config flag** (which
+omits the tool from `interruptOn` at agent-build time and cannot change mid-session): the runtime
+toggle lives at the approval-decision layer (`GthAgentRunner.toggleSessionYolo()` /
+`isSessionYolo()`), so the tool stays gated and the flag is consulted at the top of
+`decideToolApproval`.
+
+- **State-aware copy.** Like `/tools` and `/debug`, the App owns the runner flag, so it flips it and
+  commits the notice for the **resulting** state via the shared `yoloToggleNotice(yolo)` builder
+  (`yolo ON — shell commands auto-approved this session` / `yolo OFF — approvals required`). The
+  command's pure `run()` only returns `{ toggleYolo: true }`.
+- **Tone = `warn` when ON.** Turning the approval gate off is a caution-worthy action, so the ON
+  notice is yellow; OFF returns to `info`.
+- **Tell the truth about the floor (DL-4).** The ON notice states that the **hardline safety floor
+  still blocks catastrophic commands** — `/yolo` only skips the approval *prompt*, it never disables
+  the unbypassable exec-time floor enforced in `GthDevToolkit.executeCommand`.
+- **Session-scoped, reversible, never persisted** — nothing is written to config; toggling again
+  restores approvals. The readline interactive session mirrors the same `/yolo` toggle via
+  `displayWarning`/`displayInfo` (no `CommandNotice` there).
+
 ## `/clear` (DL-3 preserve context, DL-5 respect host)
 
 `/clear` resets the session **without destroying history**:

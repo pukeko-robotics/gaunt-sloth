@@ -148,7 +148,11 @@ describe('Custom Tools Configuration', () => {
       });
 
       const tools = await getDefaultTools(config, 'code');
-      const customTools = tools.filter((t) => !t.name?.startsWith('gth_'));
+      // EXT-12: `code` mode now emits the gated `run_shell_command` dev tool by default, so
+      // exclude `run_*` dev tools too (this test asserts no CUSTOM tools are produced).
+      const customTools = tools.filter(
+        (t) => !t.name?.startsWith('gth_') && !t.name?.startsWith('run_')
+      );
       expect(customTools.length).toBe(0);
     });
 

@@ -54,6 +54,13 @@ export interface SlashCommandResult {
   toggleDebug?: boolean;
   /** When true, the component toggles tool-call panels between collapsed and expanded. */
   toggleTools?: boolean;
+  /**
+   * EXT-12 — when true, the component flips the runner's session-scoped yolo flag (shell
+   * commands auto-approved this session) and commits the resulting-state notice. The command
+   * itself stays pure: it cannot read the runner's flag, so the App owns the actual toggle and
+   * the notice (mirroring how `/tools` / `/debug` defer their state-aware copy to the App).
+   */
+  toggleYolo?: boolean;
   /** When true, the component quits the app (runs `onExit`). */
   exit?: boolean;
 }
@@ -132,6 +139,31 @@ export function debugToggleNotice(visible: boolean): SlashCommandNotice {
 }
 
 /**
+ * The notice for the `/yolo` toggle (EXT-12), given the RESULTING (post-toggle) state. Shared so
+ * the command reports exactly the state the App applies. ON is rendered 'warn' (yellow) because it
+ * disables the approval gate for the session; OFF is 'info'.
+ */
+export function yoloToggleNotice(yolo: boolean): SlashCommandNotice {
+  return yolo
+    ? {
+        title: 'yolo ON — shell commands auto-approved this session',
+        lines: [
+          'run_shell_command will now execute WITHOUT the per-command approval prompt.',
+          'Session-scoped only (not saved); run /yolo again to require approvals.',
+          'The hardline safety floor still blocks catastrophic commands.',
+        ],
+        tone: 'warn',
+      }
+    : {
+        title: 'yolo OFF — approvals required',
+        lines: [
+          'run_shell_command will prompt for approval again before each command.',
+          'Run /yolo to re-enable session-wide auto-approval.',
+        ],
+      };
+}
+
+/**
  * Build the default command registry. Returns a fresh array each call so callers may push
  * extension commands onto it (EXT-5) without sharing mutable module state.
  */
@@ -162,6 +194,13 @@ export function createCommandRegistry(): SlashCommand[] {
       description: 'Toggle tool-call detail (collapsed summary ⇄ expanded args/result)',
       // State-aware: report the notice for the state the toggle will land on (the inverse of now).
       run: (ctx) => ({ toggleTools: true, notice: toolsToggleNotice(!ctx.toolsExpanded) }),
+    },
+    {
+      name: 'yolo',
+      description: 'Toggle session-wide shell auto-approval (no per-command prompt)',
+      // State-aware: the App owns the runner flag, so it flips it and commits the notice for the
+      // landed state (the command can't read the flag here). EXT-12.
+      run: () => ({ toggleYolo: true }),
     },
     {
       name: 'exit',
