@@ -402,6 +402,16 @@ export class GthAgentRunner {
    * underlying `streamWithEvents` ends cleanly on abort or `interrupt()`. The string
    * path's empty-stream retry/`invoke` fallback is intentionally NOT duplicated here — the
    * TUI renders the live event stream directly; revisit if empty-stream retries are needed.
+   *
+   * Tool-approval round-trip (EXT-11): after the stream ends, a gated `run_shell_command`
+   * leaves the graph suspended on a `humanInTheLoopMiddleware` interrupt rather than
+   * completing. This is the event-stream counterpart to the readline path's
+   * {@link resolveToolInterrupts}: it drains any pending interrupts through
+   * {@link decideToolApproval} (allow-list → judge → bridged human prompt), resumes via
+   * `streamWithEventsResume({ decisions })`, and loops until the graph completes with no
+   * pending interrupts — so the executed command's output renders into the TUI. Without
+   * this the TUI silently finalized an empty turn (approval gate was dead code on the
+   * event-stream path).
    */
   async *processMessagesWithEvents(
     messages: Message[],
@@ -413,6 +423,45 @@ export class GthAgentRunner {
     debugLog('Processing messages (event stream)...');
     debugLogObject('Input Messages', messages);
     yield* this.agent.streamWithEvents(messages, this.runConfig, signal);
+    yield* this.resolveToolInterruptsWithEvents(signal);
+  }
+
+  /**
+   * Event-stream counterpart to {@link resolveToolInterrupts}: after a streamed run ends,
+   * resolve any tool-approval interrupts it suspended on, yielding the resumed run's typed
+   * {@link AgentStreamEvent}s so the renderer (the Ink TUI) shows the executed command's
+   * output. Each pending tool call is consulted via {@link decideToolApproval} — the SAME
+   * three-layer gate the readline path uses (allow-list auto-approve → EXT-10 judge →
+   * bridged human callback, defaulting to REJECT when no handler is wired) — and the
+   * collected decisions are sent back via `streamWithEventsResume` as a LangChain HITL
+   * resume (`{ decisions }`). Because a resumed run can suspend again on the next gated
+   * tool call, this loops until the graph completes with no pending interrupts.
+   *
+   * No-ops (yields nothing) when the agent does not support interrupts
+   * (`getPendingToolInterrupts`/`streamWithEventsResume` absent), so the lean agent and
+   * non-HITL configs are unaffected. Aborts (`signal`) propagate through the resumed stream.
+   */
+  private async *resolveToolInterruptsWithEvents(
+    signal?: AbortSignal
+  ): AsyncGenerator<AgentStreamEvent> {
+    const agent = this.agent;
+    const runConfig = this.runConfig;
+    if (!agent || !runConfig) return;
+    if (!agent.getPendingToolInterrupts || !agent.streamWithEventsResume) return;
+
+    // Bound the loop defensively so a misbehaving graph that re-suspends forever cannot spin.
+    for (let guard = 0; guard < 100; guard++) {
+      if (signal?.aborted) return;
+      const pending = await agent.getPendingToolInterrupts(runConfig);
+      if (pending.length === 0) break;
+
+      const decisions: ToolApprovalDecision[] = [];
+      for (const tool of pending) {
+        decisions.push(await this.decideToolApproval(tool));
+      }
+
+      yield* agent.streamWithEventsResume({ decisions }, runConfig, [], signal);
+    }
   }
 
   // noinspection JSUnusedGlobalSymbols

@@ -721,6 +721,133 @@ describe('GthAgentRunner', () => {
     });
   });
 
+  // EXT-11 — the event-stream / TUI turn path must run the SAME tool-approval round-trip the
+  // readline path has. Before the fix `processMessagesWithEvents` was a bare `yield*` with no
+  // interrupt detection, so a gated `run_shell_command` left the graph suspended and the turn
+  // silently ended with no prompt and no execution. These mirror the `processMessages`
+  // (readline) interrupt tests above, but assert the typed-event resume path.
+  describe('processMessagesWithEvents — tool-approval interrupts (EXT-11)', () => {
+    function eventStream(...events: import('#src/core/types.js').AgentStreamEvent[]) {
+      return (async function* () {
+        for (const e of events) yield e;
+      })();
+    }
+
+    async function drain(gen: AsyncGenerator<unknown>) {
+      const out: unknown[] = [];
+      for await (const e of gen) out.push(e);
+      return out;
+    }
+
+    it('approves a pending tool call via the callback, then resumes the EVENT stream and renders its output', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      // Initial event stream ends (graph suspended on a pending tool call), then a resume stream
+      // carries the executed command's tool_result + the model's answer.
+      mockAgent.streamWithEvents.mockImplementation(() =>
+        eventStream({ type: 'text', delta: 'on it' })
+      );
+      const getPending = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'ls -la' } }])
+        .mockResolvedValueOnce([]);
+      const streamWithEventsResume = vi
+        .fn()
+        .mockImplementation(() =>
+          eventStream(
+            { type: 'tool_result', id: 't1', content: '4 entries' },
+            { type: 'text', delta: ' done' }
+          )
+        );
+      (mockAgent as any).getPendingToolInterrupts = getPending;
+      (mockAgent as any).streamWithEventsResume = streamWithEventsResume;
+
+      await runner.init(undefined, { ...mockConfig, streamOutput: true });
+      const approve = vi.fn().mockResolvedValue({ type: 'approve' });
+      runner.setToolApprovalCallback(approve);
+
+      const events = await drain(runner.processMessagesWithEvents([new HumanMessage('run ls')]));
+
+      expect(approve).toHaveBeenCalledWith({
+        name: 'run_shell_command',
+        args: { command: 'ls -la' },
+      });
+      // Resume sent the HITL `{ decisions }` shape humanInTheLoopMiddleware expects.
+      expect(streamWithEventsResume).toHaveBeenCalledWith(
+        { decisions: [{ type: 'approve' }] },
+        expect.anything(),
+        [],
+        undefined
+      );
+      // The resumed run's events (the executed command's output) reach the renderer.
+      expect(events).toEqual([
+        { type: 'text', delta: 'on it' },
+        { type: 'tool_result', id: 't1', content: '4 entries' },
+        { type: 'text', delta: ' done' },
+      ]);
+    });
+
+    it('rejects when no approval callback is wired (non-interactive default), still resuming gracefully', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.streamWithEvents.mockImplementation(() =>
+        eventStream({ type: 'text', delta: 'x' })
+      );
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'rm -rf /' } }])
+        .mockResolvedValueOnce([]);
+      const streamWithEventsResume = vi.fn().mockImplementation(() => eventStream());
+      (mockAgent as any).streamWithEventsResume = streamWithEventsResume;
+
+      await runner.init(undefined, { ...mockConfig, streamOutput: true });
+      // No setToolApprovalCallback → default reject.
+
+      await drain(runner.processMessagesWithEvents([new HumanMessage('run rm')]));
+
+      const resumeArg = streamWithEventsResume.mock.calls[0][0];
+      expect(resumeArg.decisions[0].type).toBe('reject');
+    });
+
+    it('loops until no interrupts remain (multiple gated tool calls in one turn)', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.streamWithEvents.mockImplementation(() =>
+        eventStream({ type: 'text', delta: 'a' })
+      );
+      const getPending = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'echo one' } }])
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'echo two' } }])
+        .mockResolvedValueOnce([]);
+      const streamWithEventsResume = vi.fn().mockImplementation(() => eventStream());
+      (mockAgent as any).getPendingToolInterrupts = getPending;
+      (mockAgent as any).streamWithEventsResume = streamWithEventsResume;
+
+      await runner.init(undefined, { ...mockConfig, streamOutput: true });
+      const approve = vi.fn().mockResolvedValue({ type: 'approve' });
+      runner.setToolApprovalCallback(approve);
+
+      await drain(runner.processMessagesWithEvents([new HumanMessage('go')]));
+
+      // Two suspends → two resumes; the human was prompted for each gated command.
+      expect(approve).toHaveBeenCalledTimes(2);
+      expect(streamWithEventsResume).toHaveBeenCalledTimes(2);
+    });
+
+    it('no-ops the interrupt loop when the agent lacks interrupt support (lean agent)', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.streamWithEvents.mockImplementation(() =>
+        eventStream({ type: 'text', delta: 'hello' })
+      );
+      // No getPendingToolInterrupts / streamWithEventsResume on the mock → loop no-ops.
+      delete (mockAgent as any).getPendingToolInterrupts;
+      delete (mockAgent as any).streamWithEventsResume;
+
+      await runner.init(undefined, { ...mockConfig, streamOutput: true });
+      const events = await drain(runner.processMessagesWithEvents([new HumanMessage('hi')]));
+
+      expect(events).toEqual([{ type: 'text', delta: 'hello' }]);
+    });
+  });
+
   describe('processMessagesWithEvents', () => {
     it('should throw error if not initialized', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
