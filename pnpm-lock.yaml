@@ -205,6 +205,9 @@ importers:
       langchain:
         specifier: ^1.5.0
         version: 1.5.0(@langchain/core@1.2.0(openai@6.44.0(ws@8.21.0)(zod@4.4.3))(ws@8.21.0))(openai@6.44.0(ws@8.21.0)(zod@4.4.3))(react@19.2.7)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))
+      zod:
+        specifier: ^3.25.0 || ^4.0.0
+        version: 4.4.3
 
   packages/review:
     dependencies:

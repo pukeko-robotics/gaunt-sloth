@@ -70,6 +70,13 @@ export async function createInteractiveSession(
           : JSON.stringify(pending.args);
       displayWarning(`\nThe agent wants to run a shell command via ${pending.name}:`);
       display(`\n    ${commandText}\n`);
+      // EXT-10: if the LLM-as-judge gate escalated (rather than auto-approving) this command, show
+      // its flag + reason before the human decides.
+      if (pending.safetyVerdict) {
+        displayWarning(
+          `⚠ safety judge (${pending.safetyVerdict.risk}): ${pending.safetyVerdict.reason}`
+        );
+      }
       setRawMode(false); // ensure typed input is echoed for this confirm
       const answer = (
         await rl.question(formatInputPrompt('Approve? [o]nce / [s]ession / [a]lways / [N]o: '))

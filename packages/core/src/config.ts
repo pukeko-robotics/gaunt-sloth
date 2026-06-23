@@ -555,6 +555,25 @@ export interface GthDevToolsConfig {
    * - `persistAllowlist`: whether `always`-scoped approvals are written to the project
    *   allow-list file (`.gsloth/.gsloth-settings/shell-allowlist.json`). Default `true`.
    *   When `false`, an `always` decision behaves like `session` (in-memory only).
+   *
+   * The object form also accepts the EXT-10 LLM-as-judge safety gate (default OFF):
+   * - `judge`: an opt-in, tiered auto-approve pre-filter that vets each `run_shell_command`
+   *   with a lightweight judge model BEFORE the human prompt. It auto-approves clearly-safe
+   *   commands (fatigue reducer), escalates the rest to the existing human prompt, and may
+   *   reject clearly-catastrophic ones. Default OFF because it costs one LLM call per command.
+   *   Accepts a bare boolean (`judge: true` → defaults: auto-approve low, escalate medium/high,
+   *   judge model = `config.llm`) or an object:
+   *     - `enabled`: turn the gate on.
+   *     - `autoApproveLow`: auto-approve `low`-risk, statically-resolvable commands. Default true.
+   *     - `blockHigh`: reject clearly-catastrophic (`high` + destructive) verdicts WITHOUT
+   *       prompting. Default false (conservative; EXT-9's hardline floor already refuses truly
+   *       catastrophic commands at exec time).
+   *     - `model`: an optional separate (e.g. cheaper) judge model config. Defaults to `config.llm`.
+   *   Hardening (always on when the judge runs): the command is normalized + XML-tagged as
+   *   UNTRUSTED input in the judge prompt; a judge throw/timeout/parse-failure fails CLOSED
+   *   (escalate, never auto-approve); commands whose target can't be statically resolved
+   *   (shell composition / substitution / redirection) and interpreter+script invocations that
+   *   leak ALL_CAPS env vars are NEVER auto-approved.
    */
   shell?:
     | boolean
@@ -564,6 +583,14 @@ export interface GthDevToolsConfig {
         maxOutputBytes?: number;
         allowlist?: boolean;
         persistAllowlist?: boolean;
+        judge?:
+          | boolean
+          | {
+              enabled?: boolean;
+              autoApproveLow?: boolean;
+              blockHigh?: boolean;
+              model?: LLMConfig;
+            };
       };
   /**
    * Opt-out of the per-command confirmation dialog for {@link shell}
@@ -650,6 +677,54 @@ export function isShellAllowlistPersisted(devTools: GthDevToolsConfig | undefine
   const shell = devTools?.shell;
   if (shell && typeof shell === 'object' && shell.persistAllowlist === false) return false;
   return true;
+}
+
+/**
+ * Resolved settings for the EXT-10 LLM-as-judge safety gate.
+ */
+export interface ShellJudgeSettings {
+  /** Whether the judge gate runs at all. */
+  enabled: boolean;
+  /** Auto-approve `low`-risk, statically-resolvable commands (the fatigue reducer). */
+  autoApproveLow: boolean;
+  /** Reject clearly-catastrophic (`high` + destructive) verdicts without prompting. */
+  blockHigh: boolean;
+  /** Optional separate judge model config; when absent the runner uses `config.llm`. */
+  model?: LLMConfig;
+}
+
+/**
+ * Whether the EXT-10 LLM-as-judge safety gate is enabled for the given dev-tools config.
+ * Default OFF (only the object form's `judge` truthy enables it), mirroring
+ * {@link isShellToolEnabled}. A bare `shell: true` keeps the judge OFF — it costs an LLM call
+ * per command and must be opted into explicitly.
+ */
+export function isShellJudgeEnabled(devTools: GthDevToolsConfig | undefined): boolean {
+  const shell = devTools?.shell;
+  if (!shell || typeof shell !== 'object') return false;
+  const judge = shell.judge;
+  if (typeof judge === 'boolean') return judge;
+  if (judge && typeof judge === 'object') return judge.enabled === true;
+  return false;
+}
+
+/**
+ * Resolve the EXT-10 judge gate settings from a dev-tools config, applying safe defaults
+ * (auto-approve low, do NOT block high). `enabled` reflects {@link isShellJudgeEnabled}.
+ */
+export function getShellJudgeSettings(devTools: GthDevToolsConfig | undefined): ShellJudgeSettings {
+  const enabled = isShellJudgeEnabled(devTools);
+  const shell = devTools?.shell;
+  const judge =
+    shell && typeof shell === 'object' && shell.judge && typeof shell.judge === 'object'
+      ? shell.judge
+      : undefined;
+  return {
+    enabled,
+    autoApproveLow: judge?.autoApproveLow ?? true,
+    blockHigh: judge?.blockHigh ?? false,
+    model: judge?.model,
+  };
 }
 
 /**

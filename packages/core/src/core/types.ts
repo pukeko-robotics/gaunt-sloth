@@ -1,4 +1,5 @@
 import type { GthConfig } from '#src/config.js';
+import type { ShellSafetyVerdict } from '#src/core/shell/judge.js';
 import type { BaseMessage } from '@langchain/core/messages';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import type { StructuredToolInterface } from '@langchain/core/tools';
@@ -72,6 +73,13 @@ export interface GthCompiledGraph {
 export interface PendingToolInterrupt {
   name: string;
   args: Record<string, unknown>;
+  /**
+   * EXT-10 — when the LLM-as-judge safety gate escalated this `run_shell_command` to the human
+   * (rather than auto-approving it), the judge's verdict is attached here so the approval surface
+   * can show a "safety judge flagged: <reason>" notice. Absent when the judge is disabled (the
+   * default) or when the command reached the human without going through the judge.
+   */
+  safetyVerdict?: ShellSafetyVerdict;
 }
 
 /**

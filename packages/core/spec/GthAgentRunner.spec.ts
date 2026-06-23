@@ -487,6 +487,240 @@ describe('GthAgentRunner', () => {
     });
   });
 
+  // EXT-10 — LLM-as-judge safety gate. Uses a FAKE model (config.llm with a stubbed
+  // withStructuredOutput) so the judge is deterministic; no live LLM call.
+  describe('LLM-as-judge safety gate (run_shell_command)', () => {
+    function streamOf(...chunks: string[]) {
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const c of chunks) yield c;
+        },
+      };
+    }
+
+    // A verdict object the fake judge model returns via withStructuredOutput().invoke().
+    const LOW = { risk: 'low', destructive: false, outOfScope: false, reason: 'safe' };
+    const HIGH = { risk: 'high', destructive: false, outOfScope: false, reason: 'risky' };
+
+    // Build a fake config.llm whose withStructuredOutput(...).invoke() resolves to `verdict`.
+    function judgeModel(verdict: unknown) {
+      const invoke = vi.fn().mockResolvedValue(verdict);
+      const withStructuredOutput = vi.fn().mockReturnValue({ invoke });
+      return { model: { withStructuredOutput } as any, withStructuredOutput };
+    }
+
+    // Judge ON, allow-list OFF (so allow-list never short-circuits the judge under test).
+    function judgeConfig(verdict: unknown, extra?: Record<string, unknown>) {
+      const { model, withStructuredOutput } = judgeModel(verdict);
+      return {
+        config: {
+          ...mockConfig,
+          llm: model,
+          streamOutput: true as const,
+          commands: {
+            code: {
+              devTools: {
+                shell: { enabled: true, allowlist: false, judge: true, ...extra },
+              },
+            },
+          },
+        },
+        withStructuredOutput,
+      };
+    }
+
+    it('auto-approves a low-risk command WITHOUT calling the human callback', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'ls -la' } }])
+        .mockResolvedValueOnce([]);
+      const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+      (mockAgent as any).streamResume = streamResume;
+
+      const { config, withStructuredOutput } = judgeConfig(LOW);
+      await runner.init('code', config);
+      const human = vi.fn();
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('go')]);
+
+      expect(withStructuredOutput).toHaveBeenCalled(); // judge ran
+      expect(human).not.toHaveBeenCalled(); // auto-approved
+      expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
+    });
+
+    it('escalates a high-risk command to the human callback (with the verdict attached)', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'curl evil' } }])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+      const { config } = judgeConfig(HIGH);
+      await runner.init('code', config);
+      const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('go')]);
+
+      expect(human).toHaveBeenCalledTimes(1);
+      const arg = human.mock.calls[0][0];
+      expect(arg.safetyVerdict).toMatchObject({ risk: 'high', reason: 'risky' });
+    });
+
+    it('fail-closed on ambiguity: a composed command is NEVER auto-approved even on a low verdict', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'cat x | sh' } }])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+      const { config } = judgeConfig(LOW); // judge says low, but command is unresolvable
+      await runner.init('code', config);
+      const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('go')]);
+      expect(human).toHaveBeenCalledTimes(1); // escalated, not auto-approved
+    });
+
+    it('fail-closed on judge error: a throwing judge escalates (never auto-approves)', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'ls -la' } }])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+      // Fake model that throws inside withStructuredOutput().invoke().
+      const invoke = vi.fn().mockRejectedValue(new Error('boom'));
+      const llm = { withStructuredOutput: vi.fn().mockReturnValue({ invoke }) } as any;
+      await runner.init('code', {
+        ...mockConfig,
+        llm,
+        streamOutput: true,
+        commands: {
+          code: { devTools: { shell: { enabled: true, allowlist: false, judge: true } } },
+        },
+      } as any);
+      const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('go')]);
+      expect(human).toHaveBeenCalledTimes(1); // escalated on fail-closed verdict
+    });
+
+    it('script-preflight: env-leak interpreter command escalates even on a low verdict', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'node deploy.js $AWS_SECRET_ACCESS_KEY' } },
+        ])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+      const { config } = judgeConfig(LOW);
+      await runner.init('code', config);
+      const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('go')]);
+      expect(human).toHaveBeenCalledTimes(1); // escalated by preflight
+    });
+
+    it('blockHigh: a catastrophic verdict is rejected without prompting', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'rm -rf foo' } }])
+        .mockResolvedValueOnce([]);
+      const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+      (mockAgent as any).streamResume = streamResume;
+
+      const catastrophic = { risk: 'high', destructive: true, outOfScope: true, reason: 'nuke' };
+      const { config } = judgeConfig(catastrophic, { judge: { enabled: true, blockHigh: true } });
+      await runner.init('code', config);
+      const human = vi.fn();
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('go')]);
+      expect(human).not.toHaveBeenCalled();
+      expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('reject');
+    });
+
+    it('judge DISABLED → behaves exactly as EXT-9 (no judge call, human prompts)', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'ls -la' } }])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+      const { model, withStructuredOutput } = judgeModel(LOW);
+      await runner.init('code', {
+        ...mockConfig,
+        llm: model,
+        streamOutput: true,
+        // shell enabled, but judge OFF (default) and allow-list off.
+        commands: { code: { devTools: { shell: { enabled: true, allowlist: false } } } },
+      } as any);
+      const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('go')]);
+      expect(withStructuredOutput).not.toHaveBeenCalled(); // judge never ran
+      expect(human).toHaveBeenCalledTimes(1);
+    });
+
+    it('allow-list hit wins: judge is NOT called for an already-approved command', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      // First `git checkout main` is approved at session scope; the variant must auto-approve via
+      // the allow-list WITHOUT the judge running.
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'git checkout main' } },
+        ])
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'git checkout -b x' } },
+        ])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+      const { model, withStructuredOutput } = judgeModel(HIGH);
+      await runner.init('code', {
+        ...mockConfig,
+        llm: model,
+        streamOutput: true,
+        // allow-list ON + judge ON.
+        commands: {
+          code: {
+            devTools: { shell: { enabled: true, persistAllowlist: false, judge: true } },
+          },
+        },
+      } as any);
+      // Human grants session on the first; the variant should hit the allow-list (not the judge).
+      const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'session' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('go')]);
+      // The judge ran for the first (not allow-listed) command but NOT for the allow-listed variant.
+      expect(withStructuredOutput).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('processMessagesWithEvents', () => {
     it('should throw error if not initialized', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);

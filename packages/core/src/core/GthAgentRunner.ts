@@ -1,8 +1,10 @@
 import {
   GthConfig,
   getEffectiveDevToolsConfig,
+  getShellJudgeSettings,
   isShellAllowlistEnabled,
   isShellAllowlistPersisted,
+  isShellJudgeEnabled,
 } from '#src/config.js';
 import { BaseCheckpointSaver } from '@langchain/langgraph';
 import {
@@ -26,6 +28,12 @@ import {
 } from '#src/core/shell/allowlist.js';
 import { classifyCommand } from '#src/core/shell/arity.js';
 import { normalizeCommand } from '#src/core/shell/normalize.js';
+import {
+  judgeShellCommand,
+  mapVerdictToAction,
+  type ShellSafetyVerdict,
+} from '#src/core/shell/judge.js';
+import { env } from '#src/utils/systemUtils.js';
 import { getGslothConfigWritePath } from '#src/utils/fileUtils.js';
 import { SHELL_ALLOWLIST_FILE } from '#src/constants.js';
 import { enhanceVertexUnauthorizedMessage } from '#src/utils/vertexaiUtils.js';
@@ -265,12 +273,43 @@ export class GthAgentRunner {
    */
   private async decideToolApproval(tool: PendingToolInterrupt): Promise<ToolApprovalDecision> {
     const command = typeof tool.args?.command === 'string' ? (tool.args.command as string) : null;
-    const allowlistApplies =
-      tool.name === 'run_shell_command' && command !== null && this.isShellAllowlistOn();
+    const isShellCommand = tool.name === 'run_shell_command' && command !== null;
+    const allowlistApplies = isShellCommand && this.isShellAllowlistOn();
 
-    // Auto-approve from the allow-list without prompting.
+    // Auto-approve from the allow-list without prompting. The allow-list ALWAYS wins over the
+    // judge: a human-trusted prefix shouldn't pay for an LLM call on every variant.
     if (allowlistApplies && this.isApprovedByAllowlist(command)) {
       return { type: 'approve', scope: 'session' };
+    }
+
+    // EXT-10 — LLM-as-judge safety gate (default OFF). Runs BEFORE the human callback for a
+    // `run_shell_command` not already allow-listed: auto-approve clearly-safe (fatigue reducer),
+    // reject clearly-catastrophic (only when blockHigh), otherwise fall through to the human with
+    // the verdict attached. When disabled this is a no-op and behaviour is exactly EXT-9.
+    let safetyVerdict: ShellSafetyVerdict | undefined;
+    if (isShellCommand && command !== null && this.isShellJudgeOn()) {
+      const settings = getShellJudgeSettings(
+        getEffectiveDevToolsConfig(this.config ?? undefined, this.command)
+      );
+      const verdict = await judgeShellCommand(command, this.config as GthConfig, {
+        home: env?.HOME,
+      });
+      const action = mapVerdictToAction(command, verdict, {
+        autoApproveLow: settings.autoApproveLow,
+        blockHigh: settings.blockHigh,
+      });
+      if (action === 'auto-approve') {
+        // Scope `once`: judge approvals are NEVER persisted to the allow-list.
+        return { type: 'approve', scope: 'once' };
+      }
+      if (action === 'reject') {
+        return {
+          type: 'reject',
+          message: `Safety judge blocked the command: ${verdict.reason}`,
+        };
+      }
+      // Escalate: carry the verdict to the human approval surface.
+      safetyVerdict = verdict;
     }
 
     if (!this.toolApprovalCallback) {
@@ -281,13 +320,23 @@ export class GthAgentRunner {
       };
     }
 
-    const decision = await this.toolApprovalCallback(tool);
+    // Surface the judge's verdict to the human prompt (if the judge escalated) without mutating
+    // the original interrupt object the caller holds.
+    const pending: PendingToolInterrupt = safetyVerdict ? { ...tool, safetyVerdict } : tool;
+    const decision = await this.toolApprovalCallback(pending);
 
     // Persist the human's scoped grant so future variants of the same operation skip the prompt.
     if (decision.type === 'approve' && allowlistApplies && command) {
       this.recordApproval(command, decision.scope ?? 'once');
     }
     return decision;
+  }
+
+  /** Whether the EXT-10 LLM-as-judge safety gate is enabled for the active command's config. */
+  private isShellJudgeOn(): boolean {
+    if (!this.config) return false;
+    const devTools = getEffectiveDevToolsConfig(this.config, this.command);
+    return isShellJudgeEnabled(devTools);
   }
 
   /** Whether the EXT-9 Tier-2 allow-list is enabled for the active command's devTools config. */

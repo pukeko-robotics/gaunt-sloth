@@ -35,7 +35,8 @@
   "dependencies": {
     "@langchain/core": "^1.2.0",
     "@langchain/langgraph": "^1.4.4",
-    "langchain": "^1.5.0"
+    "langchain": "^1.5.0",
+    "zod": "^3.25.0 || ^4.0.0"
   },
   "peerDependencies": {
     "@langchain/anthropic": "^1.5.0",
