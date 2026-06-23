@@ -69,6 +69,17 @@ export class GthAgentRunner {
   private command: GthCommand | undefined = undefined;
 
   /**
+   * EXT-12 — runtime, session-scoped yolo flag toggled by the `/yolo` slash command. Distinct
+   * from the static `devTools.shellYolo` config flag (which omits the tool from `interruptOn` at
+   * agent-build time and cannot be changed mid-session). Because the tool stays gated (in
+   * `interruptOn`), this flag is consulted at the TOP of {@link decideToolApproval}: when ON, a
+   * gated `run_shell_command` is auto-approved WITHOUT prompting (yolo behaviour) for the rest of
+   * this runner's life. Never persisted; defaults OFF. It does NOT disable the hardline floor —
+   * catastrophic commands are still refused at exec time in `GthDevToolkit.executeCommand`.
+   */
+  private sessionYolo = false;
+
+  /**
    * EXT-9 Tier-2 session allow-list — approved command prefixes that auto-approve for the
    * life of THIS runner instance. Instance-scoped (not module-global) so concurrent
    * sessions (ACP / AG-UI multi-session) cannot stomp each other's approvals.
@@ -107,6 +118,22 @@ export class GthAgentRunner {
    */
   public setToolApprovalCallback(callback: ToolApprovalCallback | null): void {
     this.toolApprovalCallback = callback;
+  }
+
+  /**
+   * EXT-12 — flip the runtime, session-scoped yolo flag (the `/yolo` slash command). When ON,
+   * gated `run_shell_command` calls auto-approve without prompting for the rest of this session;
+   * the hardline floor still applies at exec time. Returns the NEW state so the caller can render
+   * a notice. Session-scoped only — nothing is written to config.
+   */
+  public toggleSessionYolo(): boolean {
+    this.sessionYolo = !this.sessionYolo;
+    return this.sessionYolo;
+  }
+
+  /** EXT-12 — current state of the runtime session-scoped yolo flag (see {@link toggleSessionYolo}). */
+  public isSessionYolo(): boolean {
+    return this.sessionYolo;
   }
 
   /**
@@ -275,6 +302,15 @@ export class GthAgentRunner {
     const command = typeof tool.args?.command === 'string' ? (tool.args.command as string) : null;
     const isShellCommand = tool.name === 'run_shell_command' && command !== null;
     const allowlistApplies = isShellCommand && this.isShellAllowlistOn();
+
+    // EXT-12 — runtime session yolo (`/yolo`): when ON, auto-approve a gated shell command WITHOUT
+    // prompting, judging, or persisting. Scope `once` so nothing is written to the allow-list (the
+    // bypass is intentionally ephemeral and reversible). The hardline floor is NOT bypassed here —
+    // it is enforced at exec time in GthDevToolkit.executeCommand regardless of this decision, so a
+    // catastrophic command is still refused even under yolo.
+    if (isShellCommand && this.sessionYolo) {
+      return { type: 'approve', scope: 'once' };
+    }
 
     // Auto-approve from the allow-list without prompting. The allow-list ALWAYS wins over the
     // judge: a human-trusted prefix shouldn't pay for an LLM call on every variant.

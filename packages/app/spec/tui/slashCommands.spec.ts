@@ -104,6 +104,28 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     expect(result.notice?.lines[0]).toContain('single summary line');
   });
 
+  it('/yolo requests a session-yolo toggle (App owns the runner flag + state-aware notice)', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const result = dispatchSlashCommand(parseSlashCommand('/yolo')!, createCommandRegistry(), ctx);
+    // The command is pure: it only requests the toggle; the App flips the runner flag and commits
+    // the notice for the resulting state (the command can't read the flag).
+    expect(result.toggleYolo).toBe(true);
+    expect(result.notice).toBeUndefined();
+    expect(result.exit).toBeUndefined();
+  });
+
+  it('yoloToggleNotice copy: ON is warn-tone and mentions the hardline floor; OFF is info', async () => {
+    const { yoloToggleNotice } = await import('#src/tui/slashCommands.js');
+    const on = yoloToggleNotice(true);
+    expect(on.title).toContain('yolo ON');
+    expect(on.tone).toBe('warn');
+    expect(on.lines.join(' ')).toContain('hardline');
+    const off = yoloToggleNotice(false);
+    expect(off.title).toContain('yolo OFF');
+    expect(off.tone).toBeUndefined();
+  });
+
   it('/exit requests an app quit', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('#src/tui/slashCommands.js');

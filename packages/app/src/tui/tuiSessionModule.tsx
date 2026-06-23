@@ -206,6 +206,10 @@ export async function createTuiSession(
       resetThread() {
         runner.resetThread();
       },
+      // `/yolo` flips the runner's session-scoped shell auto-approval flag (EXT-12).
+      toggleYolo() {
+        return runner.toggleSessionYolo();
+      },
     };
 
     // "Bump up" the screen on launch the clear/Ctrl+L way (TUI-C13): scroll whatever was on

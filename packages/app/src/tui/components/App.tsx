@@ -28,6 +28,7 @@ import {
   dispatchSlashCommand,
   parseSlashCommand,
   toolsToggleNotice,
+  yoloToggleNotice,
 } from '#src/tui/slashCommands.js';
 import { viewportBumpSequence } from '#src/tui/terminal.js';
 
@@ -293,6 +294,22 @@ export function App(props: TuiAppProps): React.ReactElement {
           // toggleTools owns the notice so the copy matches the state actually applied.
           toggleTools();
         }
+        if (result.toggleYolo) {
+          // The runner owns the flag; flip it and commit the notice for the landed state. When the
+          // agent can't toggle (fixture without a runner) fall back to a clear system line rather
+          // than silently no-op. EXT-12.
+          if (agent.toggleYolo) {
+            const next = agent.toggleYolo();
+            const { title, lines, tone } = yoloToggleNotice(next);
+            push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
+          } else {
+            push({
+              kind: 'system',
+              level: 'warning',
+              text: 'yolo is unavailable in this session.',
+            });
+          }
+        }
         if (result.toggleDebug) {
           setDebugVisible((v) => {
             const next = !v;
@@ -309,9 +326,9 @@ export function App(props: TuiAppProps): React.ReactElement {
             return next;
           });
         }
-        // Commit a structured notice (TUI-C14). /tools owns its notice via toggleTools above, so
-        // skip the result.notice in that case to avoid a duplicate.
-        if (result.notice && !result.toggleTools) {
+        // Commit a structured notice (TUI-C14). /tools and /yolo own their notices above (the
+        // state-aware copy is committed there), so skip result.notice in those cases.
+        if (result.notice && !result.toggleTools && !result.toggleYolo) {
           const { title, lines, tone } = result.notice;
           push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
         }

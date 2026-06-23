@@ -100,6 +100,16 @@ d('GthDevToolkit shell hardening (real spawn)', () => {
     expect(result).not.toContain('<COMMAND_OUTPUT>');
   });
 
+  it('refuses a hardline command at exec time regardless of HOW it was approved (EXT-12 /yolo)', async () => {
+    // EXT-12's runtime `/yolo` flag only changes the APPROVAL decision (auto-approve without
+    // prompting) in GthAgentRunner; the tool body is unchanged, so the unbypassable hardline
+    // floor still fires at exec time exactly as it does under the static shellYolo. This asserts
+    // the floor is a property of executeCommand itself, not of any particular approval path.
+    const result = await run('mkfs.ext4 /dev/sda', { shell: { enabled: true } });
+    expect(result).toContain('blocked by hardline safety policy');
+    expect(result).not.toContain('<COMMAND_OUTPUT>');
+  });
+
   it('refuses an OBFUSCATED hardline command (normalization works)', async () => {
     const result = await run('r\\m -rf /', { shell: { enabled: true }, shellYolo: true });
     expect(result).toContain('blocked by hardline safety policy');

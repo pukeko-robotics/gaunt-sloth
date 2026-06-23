@@ -31,6 +31,12 @@ export interface TuiAgent {
    * Optional so the fixture agent (no real checkpointer thread) may omit it.
    */
   resetThread?(): void;
+  /**
+   * EXT-12 — flip the runner's session-scoped yolo flag (shell auto-approval) and return the NEW
+   * state, so the App can render a state-aware notice. Wired to the `/yolo` slash command.
+   * Optional so the fixture agent (no runner) may omit it.
+   */
+  toggleYolo?(): boolean;
 }
 
 /**
