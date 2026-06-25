@@ -45,3 +45,37 @@ jobs:
           packages/agent/spec/GthDevToolkit.killProcessGroup.spec.ts
           packages/agent/spec/GthDevToolkit.shell.win.integration.spec.ts
           packages/agent/spec/GthDevToolkit.simple.spec.ts
+
+  # Diagnostic only (workflow_dispatch): reproduce the Windows `gth code` hang with
+  # the child's output made VISIBLE via GSLOTH_IT_VERBOSE (the harness normally pipes
+  # it away). Bounded to 6 min so it fails fast instead of the ~9-min CI cancel.
+  code-repro:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    environment: integration tests
+    timeout-minutes: 6
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Use Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run simple ITs with child output visible
+        run: pnpm run it openrouter simple
+        env:
+          GSLOTH_IT_VERBOSE: '1'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          INCEPTION_API_KEY: ${{ secrets.INCEPTION_API_KEY }}
+          OPEN_ROUTER_API_KEY: ${{ secrets.OPEN_ROUTER_API_KEY }}

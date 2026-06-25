@@ -147,7 +147,12 @@ describe('GthDevToolkit - Basic Tests', () => {
       expect(result).toContain("Command 'echo $HOME | cat' completed successfully");
       expect(childProcessMock.spawn).toHaveBeenCalledWith(
         'echo $HOME | cat',
-        expect.objectContaining({ shell: true, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+        // EXT-15: `detached` is POSIX-only (Windows uses taskkill /T, not process groups).
+        expect.objectContaining({
+          shell: true,
+          detached: process.platform !== 'win32',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
       );
     });
   });
@@ -186,7 +191,12 @@ describe('GthDevToolkit - Basic Tests', () => {
       );
       expect(childProcessMock.spawn).toHaveBeenCalledWith(
         'echo test',
-        expect.objectContaining({ shell: true, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+        // EXT-15: `detached` is POSIX-only (Windows uses taskkill /T, not process groups).
+        expect.objectContaining({
+          shell: true,
+          detached: process.platform !== 'win32',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
       );
     });
 
