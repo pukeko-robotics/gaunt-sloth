@@ -1,6 +1,6 @@
 {
   "name": "@gaunt-sloth/review",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Review functionality for Gaunt Sloth",
   "license": "MIT",
   "author": "Andrew Kondratev",
@@ -34,10 +34,10 @@
     "#src/*.js": "./dist/*.js"
   },
   "dependencies": {
-    "@gaunt-sloth/core": "0.1.8"
+    "@gaunt-sloth/core": "0.1.9"
   },
   "peerDependencies": {
-    "@gaunt-sloth/tools": "0.1.8"
+    "@gaunt-sloth/tools": "0.1.9"
   },
   "peerDependenciesMeta": {
     "@gaunt-sloth/tools": {
