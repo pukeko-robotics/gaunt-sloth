@@ -9,7 +9,7 @@
   "sourceLinkExternal": true,
   "includeVersion": false,
   "navigationLinks": {
-    "GitHub": "https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant"
+    "GitHub": "https://github.com/pukeko-robotics/gaunt-sloth"
   },
   "highlightLanguages": ["typescript", "javascript", "markdown", "json", "bash"],
   "markdownItOptions": {

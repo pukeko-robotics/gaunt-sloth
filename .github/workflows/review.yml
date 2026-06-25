@@ -2,7 +2,7 @@ name: AI PR Review
 
 # The pull_request_target is an important feature. It is running on files from `main`.
 # This is important to avoid changes which would execute code from the PR.
-# See postmortem here https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/discussions/304
+# See postmortem here https://github.com/pukeko-robotics/gaunt-sloth/discussions/304
 #
 # Flow:
 #   concierge       - classifies the PR author (internal vs external).

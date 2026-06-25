@@ -109,7 +109,7 @@ describe('runPrDiscovery', () => {
     ghDiffMock.mockResolvedValue('Diff from gh');
     ghPrViewMock.mockResolvedValue(`GitHub PR: #360
 Description:
-Requirements: https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/issues/359`);
+Requirements: https://github.com/pukeko-robotics/gaunt-sloth/issues/359`);
     ghIssueMock.mockResolvedValue('Issue #359 requirements');
     jiraIssueMock.mockResolvedValue('ABC-123 requirements');
     jiraIssueLegacyMock.mockResolvedValue('ABC-123 legacy requirements');
@@ -129,7 +129,7 @@ Requirements: https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/issues/
     // The full URL is passed through so cross-repo issue links resolve in the right repo.
     expect(ghIssueMock).toHaveBeenCalledWith(
       null,
-      'https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/issues/359'
+      'https://github.com/pukeko-robotics/gaunt-sloth/issues/359'
     );
     expect(initMock).not.toHaveBeenCalled();
     expect(processMessagesMock).not.toHaveBeenCalled();
@@ -145,7 +145,7 @@ Requirements: https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/issues/
   it('lowercases the host of a GitHub issue URL so the issue source accepts it', async () => {
     ghPrViewMock.mockResolvedValue(`GitHub PR: #360
 Description:
-Requirements: HTTPS://GITHUB.COM/Galvanized-Pukeko/gaunt-sloth-assistant/issues/359`);
+Requirements: HTTPS://GITHUB.COM/pukeko-robotics/gaunt-sloth/issues/359`);
 
     const { runPrDiscovery } = await import('#src/commands/prDiscovery.js');
 
@@ -156,7 +156,7 @@ Requirements: HTTPS://GITHUB.COM/Galvanized-Pukeko/gaunt-sloth-assistant/issues/
     // check in ghIssueSource still accepts the copied URL.
     expect(ghIssueMock).toHaveBeenCalledWith(
       null,
-      'https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/issues/359'
+      'https://github.com/pukeko-robotics/gaunt-sloth/issues/359'
     );
     expect(initMock).not.toHaveBeenCalled();
   });
@@ -540,7 +540,7 @@ No linked ticket here`;
   it('normalizes the case of the /issues/ path segment so the issue source accepts the URL', async () => {
     ghPrViewMock.mockResolvedValue(`GitHub PR: #360
 Description:
-Requirements: https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/ISSUES/77`);
+Requirements: https://github.com/pukeko-robotics/gaunt-sloth/ISSUES/77`);
 
     const { runPrDiscovery } = await import('#src/commands/prDiscovery.js');
     await runPrDiscovery(config);
@@ -548,7 +548,7 @@ Requirements: https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/ISSUES/
     // The host and the /issues/ segment are lowercased; the owner/repo case is preserved.
     expect(ghIssueMock).toHaveBeenCalledWith(
       null,
-      'https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/issues/77'
+      'https://github.com/pukeko-robotics/gaunt-sloth/issues/77'
     );
     expect(initMock).not.toHaveBeenCalled();
   });

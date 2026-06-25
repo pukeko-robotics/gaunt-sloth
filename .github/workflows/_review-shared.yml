@@ -6,7 +6,7 @@
 #
 # The pull_request_target context runs files from `main`, not from the PR.
 # This is important to avoid executing code from the PR.
-# See postmortem here https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/discussions/304
+# See postmortem here https://github.com/pukeko-robotics/gaunt-sloth/discussions/304
 name: AI PR Review (shared)
 
 on:

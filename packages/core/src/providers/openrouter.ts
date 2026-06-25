@@ -30,7 +30,7 @@ export async function processJsonConfig(
       baseURL: 'https://openrouter.ai/api/v1',
       ...(llmConfig.configuration || {}),
       defaultHeaders: {
-        'HTTP-Referer': 'https://gaunt-sloth-assistant.github.io/',
+        'HTTP-Referer': 'https://gauntsloth.app/',
         'X-Title': 'Gaunt Sloth Assistant',
       },
     },

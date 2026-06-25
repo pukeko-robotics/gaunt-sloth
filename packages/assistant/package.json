@@ -1,6 +1,6 @@
 {
   "name": "gaunt-sloth-assistant",
-  "version": "1.5.6",
+  "version": "1.5.7",
   "description": "",
   "license": "MIT",
   "author": "Andrew Kondratev",
@@ -8,12 +8,12 @@
   "main": "dist/cli.js",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant.git"
+    "url": "git+https://github.com/pukeko-robotics/gaunt-sloth.git"
   },
   "bugs": {
-    "url": "https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/issues"
+    "url": "https://github.com/pukeko-robotics/gaunt-sloth/issues"
   },
-  "homepage": "https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant#readme",
+  "homepage": "https://github.com/pukeko-robotics/gaunt-sloth#readme",
   "keywords": [
     "ai",
     "agent",

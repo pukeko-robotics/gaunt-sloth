@@ -2,7 +2,7 @@
 
 Populate `.gsloth.guidelines.md` with your project details and quality requirements.
 A proper preamble is paramount for good inference.
-Check [.gsloth.guidelines.md](https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/blob/main/.gsloth.guidelines.md) for example.
+Check [.gsloth.guidelines.md](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/.gsloth.guidelines.md) for example.
 
 Your project should have the following files in order for gsloth to function:
 
@@ -249,9 +249,9 @@ By default, Gaunt Sloth falls back to its bundled `.gsloth.*.md` prompt files wh
 
 ## Configuration Object
 
-Refer to documentation site for [Configuration Interface](https://gaunt-sloth-assistant.github.io/docs/interfaces/config.GthConfig.html)
+Refer to documentation site for [Configuration Interface](https://gauntsloth.app/docs/interfaces/config.GthConfig.html)
 
-Refer to documentation site for [Default Config Values](https://gaunt-sloth-assistant.github.io/docs/variables/config.DEFAULT_CONFIG.html)
+Refer to documentation site for [Default Config Values](https://gauntsloth.app/docs/variables/config.DEFAULT_CONFIG.html)
 
 It is always worth checking sourcecode in [config.ts](../src/config.ts) for more insightful information.
 

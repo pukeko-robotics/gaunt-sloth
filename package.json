@@ -9,7 +9,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant.git"
+    "url": "git+https://github.com/pukeko-robotics/gaunt-sloth.git"
   },
   "engines": {
     "node": ">=24.0.0",

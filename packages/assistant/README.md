@@ -1,5 +1,17 @@
 # gaunt-sloth-assistant
 
+> ⚠️ **`gaunt-sloth-assistant` has been renamed to [`gaunt-sloth`](https://www.npmjs.com/package/gaunt-sloth).**
+> The `1.5.x` series is the final release under the old name — active development continues under
+> the new package. To switch:
+>
+> ```bash
+> npm uninstall -g gaunt-sloth-assistant
+> npm install -g gaunt-sloth
+> ```
+>
+> The `gth`, `gsloth`, and `gaunt-sloth` commands are unchanged.
+> Site & docs: <https://gauntsloth.app> · Source: <https://github.com/pukeko-robotics/gaunt-sloth>
+
 The main CLI application for Gaunt Sloth.
 
 ## Contents

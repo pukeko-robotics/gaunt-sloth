@@ -231,13 +231,13 @@ Open a GitHub Issue describing:
 
 ## Documentation Publishing
 
-If you need to publish project documentation, clone `gaunt-sloth-assistant.github.io` in the same parent directory as this repository and run:
+If you need to publish project documentation, clone `gauntsloth.app` in the same parent directory as this repository and run:
 
 ```bash
 ./update-docs.sh
 ```
 
-Commit and push from the `gaunt-sloth-assistant.github.io` repository.
+Commit and push from the `gauntsloth.app` repository.
 
 ## Code of Conduct
 

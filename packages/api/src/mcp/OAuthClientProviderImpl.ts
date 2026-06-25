@@ -111,7 +111,7 @@ export class OAuthClientProviderImpl implements OAuthClientProvider {
     return {
       redirect_uris: [this.config.redirectUrl],
       client_name: 'Gaunt Sloth Assistant',
-      client_uri: 'https://gaunt-sloth-assistant.github.io/',
+      client_uri: 'https://gauntsloth.app/',
       software_id: '1dd38b83-946b-4631-8855-66ee467bfd68',
       scope: 'mcp:read mcp:write',
       token_endpoint_auth_method: 'none',

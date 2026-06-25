@@ -1,5 +1,5 @@
 # Gaunt Sloth Assistant
-[![Tests and Lint](https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/actions/workflows/unit-tests.yml) [![Integration Tests](https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/actions/workflows/integration-tests.yml/badge.svg?event=push)](https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/actions/workflows/integration-tests.yml)
+[![Tests and Lint](https://github.com/pukeko-robotics/gaunt-sloth/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/pukeko-robotics/gaunt-sloth/actions/workflows/unit-tests.yml) [![Integration Tests](https://github.com/pukeko-robotics/gaunt-sloth/actions/workflows/integration-tests.yml/badge.svg?event=push)](https://github.com/pukeko-robotics/gaunt-sloth/actions/workflows/integration-tests.yml)
 
 Gaunt Sloth Assistant is a command-line AI assistant for CI/CD workflows, code reviews, and DIY projects. It supports PR and diff reviews with requirements context, code and diff Q&A, interactive chat and coding sessions, and controlled automation through predefined tools and JSON or JavaScript configuration.
 
@@ -7,7 +7,7 @@ Gaunt Sloth Assistant is a command-line AI assistant for CI/CD workflows, code r
 
 Based on [LangChain.js](https://github.com/langchain-ai/langchainjs)
 
-[Documentation](https://gaunt-sloth-assistant.github.io/docs/) | [Official Site](https://gaunt-sloth-assistant.github.io/) | [NPM](https://www.npmjs.com/package/gaunt-sloth-assistant) | [GitHub](https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant)
+[Documentation](https://gauntsloth.app/docs/) | [Official Site](https://gauntsloth.app/) | [NPM](https://www.npmjs.com/package/gaunt-sloth-assistant) | [GitHub](https://github.com/pukeko-robotics/gaunt-sloth)
 
 ## Why?
 
@@ -82,7 +82,7 @@ Unlike autonomous coding agents or hosted review services, GSloth is a **configu
 - Anthropic;
 - OpenAI (and other providers using OpenAI format, such as Inception);
 - Local AI: LM Studio, Ollama, llama.cpp (Via OpenAI compatibitlity)
-- Ollama with JS config (some of the models, see https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/discussions/107)
+- Ollama with JS config (some of the models, see https://github.com/pukeko-robotics/gaunt-sloth/discussions/107)
 - xAI;
 
 `*` Any other provider supported by LangChain.JS should also work with [JS config](./docs/CONFIGURATION.md#javascript-configuration).
@@ -329,7 +329,7 @@ Make sure you either define `XAI_API_KEY` environment variable or edit your conf
 
 ### Other AI providers
 Any other AI provider supported by Langchain.js can be configured with js [Config](./docs/CONFIGURATION.md).
-For example, Ollama can be set up with JS config (some of the models, see https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/discussions/107)
+For example, Ollama can be set up with JS config (some of the models, see https://github.com/pukeko-robotics/gaunt-sloth/discussions/107)
 
 ### JavaScript Configuration with Custom Middleware and Tools
 JavaScript configs enable advanced customization including custom middleware and tools that aren't available in JSON configs. See the [JavaScript config example](./examples/js-config/README.md) for a complete demonstration of creating custom logging middleware and custom tools.
