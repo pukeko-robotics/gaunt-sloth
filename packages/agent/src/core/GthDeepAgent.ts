@@ -24,6 +24,21 @@ import {
 import type { DebugCapture, DebugRequestExtras, DebugToolDef } from '#src/core/debugCapture.js';
 
 /**
+ * EXT-16: decide whether the deepagents filesystem backend must run in virtualMode.
+ *
+ * deepagents' permission layer (`validatePath`) requires POSIX `/`-rooted glob paths, and its
+ * fs tools hand the SAME model-supplied path string to both the permission check and the native
+ * `path.resolve`/`fs` backend. On Windows a real cwd is `D:\...`, which can satisfy neither side
+ * as one string, so the EXT-13 real-path sandbox throws `Error: path must be absolute` on every
+ * turn and the agent hangs. The precise trigger is "the real cwd is not POSIX-rooted", so we key
+ * off that directly (not just `win32`): when true, run virtualMode (cwd→`/`) with virtual
+ * permissions — the pre-EXT-13 known-good behavior. POSIX keeps the EXT-13 real-path namespace.
+ */
+function shouldUseVirtualFs(): boolean {
+  return !getCurrentWorkDir().startsWith('/');
+}
+
+/**
  * The subset of `createDeepAgent` params that are independent of the transport
  * (the local runner vs. the ACP server). Both {@link GthDeepAgent.init} (which adds the
  * console-bound tool-call-status middleware + a virtual {@link FilesystemBackend} +
@@ -166,15 +181,23 @@ export class GthDeepAgent extends GthAbstractAgent {
     // it removes a guardrail, so it is announced loudly by the exec command and surfaced here.
     const allowDirs = this.config?.allowDirs;
     const widenFs = Array.isArray(allowDirs) && allowDirs.length > 0;
+    // EXT-16: deepagents' permission layer requires POSIX `/`-rooted paths, so a Windows real
+    // cwd (`D:\...`) can't be expressed as a permission glob and the EXT-13 real-path mode hangs
+    // there (`Error: path must be absolute`). When the real cwd isn't POSIX-rooted, fall back to
+    // virtualMode (cwd→`/`) with virtual permissions — the pre-EXT-13 known-good Windows behavior.
+    const useVirtualFs = shouldUseVirtualFs();
     if (widenFs) {
       this.statusUpdate(
         StatusLevel.WARNING,
-        `Filesystem sandbox widened beyond cwd (--allow-dir): ${allowDirs.join(', ')}`
+        `Filesystem sandbox widened beyond cwd (--allow-dir): ${allowDirs.join(', ')}` +
+          (useVirtualFs
+            ? ' — note: on this platform the sandbox runs in virtual mode, so widening beyond cwd is not applied.'
+            : '')
       );
     }
     const backend = new FilesystemBackend({
       rootDir: getCurrentWorkDir(),
-      virtualMode: false,
+      virtualMode: useVirtualFs,
     });
 
     // EXT-13 (part b): on the local-runner code path the model used to be told nothing about
@@ -184,8 +207,11 @@ export class GthDeepAgent extends GthAbstractAgent {
     // shell access; the ACP transport keeps virtualMode and re-roots per session, so this
     // real-path note must NOT leak there (which is why it lives in init(), not the
     // transport-agnostic buildDeepAgentParams).
+    // In virtualMode (EXT-16, Windows) the model correctly assumes the virtual root `/` IS cwd
+    // (the pre-EXT-13 behavior), so the real-cwd note must NOT be injected — it would mislabel
+    // the namespace. Only the real-path code path needs it.
     const systemPrompt =
-      this.command === 'code'
+      this.command === 'code' && !useVirtualFs
         ? appendCwdNote(params.systemPrompt, getCurrentWorkDir())
         : params.systemPrompt;
 
@@ -357,14 +383,19 @@ export class GthDeepAgent extends GthAbstractAgent {
     // `--allow-dir` widens the sandbox, the backend runs without virtualMode, so paths are REAL
     // absolute paths: constrain read+write to cwd + the allowed dirs (everything else denied),
     // layered under the .aiignore deny rules.
-    const permissions = buildPermissions({
-      filesystem: this.config.filesystem,
-      aiignore: this.config.aiignore,
-      allowDirs:
-        Array.isArray(this.config.allowDirs) && this.config.allowDirs.length > 0
-          ? this.config.allowDirs
-          : undefined,
-    });
+    const permissions = buildPermissions(
+      {
+        filesystem: this.config.filesystem,
+        aiignore: this.config.aiignore,
+        allowDirs:
+          Array.isArray(this.config.allowDirs) && this.config.allowDirs.length > 0
+            ? this.config.allowDirs
+            : undefined,
+      },
+      // EXT-16: build virtual (`/`-rooted) permission rules when the backend will run in
+      // virtualMode (Windows), matching the FilesystemBackend created in init().
+      shouldUseVirtualFs()
+    );
     debugLogObject('Filesystem permissions', permissions);
 
     // Compose gsloth's system prompt (backstory + guidelines + per-command mode prompt +

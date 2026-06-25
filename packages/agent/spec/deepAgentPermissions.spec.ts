@@ -135,6 +135,46 @@ describe('deepAgentPermissions', () => {
     });
   });
 
+  describe('filesystemModeToPermissions (EXT-16: virtualMode → virtual-root sandbox)', () => {
+    // In virtualMode the rules anchor at the virtual root "/" (= cwd) and IGNORE the real cwd,
+    // so a Windows `D:\...` cwd never leaks into a glob (deepagents' validatePath would reject it).
+    const WIN_CWD = 'D:\\a\\proj';
+
+    it('"all" anchors the sandbox at the virtual root, ignoring the real cwd', () => {
+      expect(filesystemModeToPermissions('all', WIN_CWD, true)).toEqual([
+        { operations: ['read', 'write'], paths: ['/**', '/'], mode: 'allow' },
+        { operations: ['read', 'write'], paths: ['/**'], mode: 'deny' },
+      ]);
+    });
+
+    it('"read" denies writes and confines reads to the virtual root', () => {
+      expect(filesystemModeToPermissions('read', WIN_CWD, true)).toEqual([
+        { operations: ['write'], paths: ['/**'], mode: 'deny' },
+        { operations: ['read'], paths: ['/**', '/'], mode: 'allow' },
+        { operations: ['read'], paths: ['/**'], mode: 'deny' },
+      ]);
+    });
+
+    it('an allow-list anchors each dir under the virtual root', () => {
+      expect(filesystemModeToPermissions(['src', './docs/'], WIN_CWD, true)).toEqual([
+        { operations: ['read', 'write'], paths: ['/src/**', '/src'], mode: 'allow' },
+        { operations: ['read', 'write'], paths: ['/docs/**', '/docs'], mode: 'allow' },
+        { operations: ['read', 'write'], paths: ['/**'], mode: 'deny' },
+      ]);
+    });
+
+    it('emits ONLY POSIX `/`-rooted paths even with a Windows cwd (deepagents invariant)', () => {
+      // deepagents' validatePath throws on any permission path not starting with "/". This is the
+      // exact guarantee that fixes the Windows hang, so assert it across every mode.
+      for (const mode of ['all', 'read', 'none', ['src', 'docs/sub']] as const) {
+        for (const p of filesystemModeToPermissions(mode, WIN_CWD, true).flatMap((r) => r.paths)) {
+          expect(p.startsWith('/')).toBe(true);
+          expect(p.includes('\\')).toBe(false);
+        }
+      }
+    });
+  });
+
   describe('buildPermissions', () => {
     it('puts .aiignore deny rules first so they win over allow rules (real-cwd anchored)', () => {
       const rules = buildPermissions({
@@ -224,6 +264,28 @@ describe('deepAgentPermissions', () => {
         operations: ['read', 'write'],
         paths: ['/**'],
         mode: 'deny',
+      });
+    });
+
+    describe('virtual mode (EXT-16, Windows)', () => {
+      it('anchors aiignore + the sandbox at the virtual root, not the real cwd', () => {
+        const rules = buildPermissions(
+          { filesystem: 'all', aiignore: { enabled: true, patterns: ['*.env'] } },
+          true
+        );
+        expect(rules).toEqual([
+          { operations: ['read', 'write'], paths: ['/*.env', '/**/*.env'], mode: 'deny' },
+          { operations: ['read', 'write'], paths: ['/**', '/'], mode: 'allow' },
+          { operations: ['read', 'write'], paths: ['/**'], mode: 'deny' },
+        ]);
+      });
+
+      it('ignores allowDirs (cannot widen a virtual root) and keeps the cwd-only sandbox', () => {
+        const rules = buildPermissions({ filesystem: 'all', allowDirs: ['/tmp/out'] }, true);
+        expect(rules).toEqual([
+          { operations: ['read', 'write'], paths: ['/**', '/'], mode: 'allow' },
+          { operations: ['read', 'write'], paths: ['/**'], mode: 'deny' },
+        ]);
       });
     });
   });
