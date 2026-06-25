@@ -36,7 +36,7 @@
   "dependencies": {
     "@gaunt-sloth/core": "0.2.0",
     "diff": "^9.0.0",
-    "langchain": "^1.4.4"
+    "langchain": "^1.5.2"
   },
   "files": [
     "./dist/*"

@@ -37,8 +37,8 @@
   },
   "dependencies": {
     "@a2a-js/sdk": "^0.3.13",
-    "@ag-ui/core": "^0.0.56",
-    "@ag-ui/encoder": "^0.0.56",
+    "@ag-ui/core": "^0.0.57",
+    "@ag-ui/encoder": "^0.0.57",
     "@gaunt-sloth/core": "0.2.0",
     "@gaunt-sloth/tools": "0.2.0",
     "@langchain/mcp-adapters": "^1.1.3",
