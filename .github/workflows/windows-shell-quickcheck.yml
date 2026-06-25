@@ -1,0 +1,47 @@
+name: Windows shell quick-check
+
+# Fast, LLM-free Windows probe for the EXT-15 shell timeout-reap path. The full
+# platform integration tests are LLM-driven (openrouter), slow (~9 min), and
+# their child output is captured by the harness — useless for isolating a
+# Windows-only hang. This runs the REAL spawn + taskkill reap directly (no
+# secrets), so it returns a clear pass/fail in ~2 min and guards against
+# regressions on every change to the shell tool.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'packages/agent/src/tools/GthDevToolkit.ts'
+      - 'packages/agent/src/tools/shell/**'
+      - 'packages/agent/spec/GthDevToolkit.*'
+      - '.github/workflows/windows-shell-quickcheck.yml'
+
+jobs:
+  reap:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Use Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build core + agent
+        run: pnpm -F @gaunt-sloth/core build && pnpm -F @gaunt-sloth/agent build
+
+      - name: Real-spawn shell reap (taskkill) + platform-branch unit tests
+        run: >
+          pnpm exec vitest run
+          packages/agent/spec/GthDevToolkit.killProcessGroup.spec.ts
+          packages/agent/spec/GthDevToolkit.shell.win.integration.spec.ts
+          packages/agent/spec/GthDevToolkit.simple.spec.ts
