@@ -1,8 +1,23 @@
 # @gaunt-sloth/tools
 
 > ⚠️ **Deprecated.** This package is part of the `gaunt-sloth-assistant` 1.x line, which has been
-> renamed to [`gaunt-sloth`](https://www.npmjs.com/package/gaunt-sloth). It is not carried forward
-> into v2 and will receive no further updates.
+> renamed to [`gaunt-sloth`](https://www.npmjs.com/package/gaunt-sloth). In v2 its tools and
+> middleware are consolidated into [`@gaunt-sloth/agent`](https://www.npmjs.com/package/@gaunt-sloth/agent);
+> this package will receive no further updates.
+>
+> **Migrating imports** — the same modules live under `@gaunt-sloth/agent`:
+>
+> ```js
+> // v1 (@gaunt-sloth/tools)                                   → v2 (@gaunt-sloth/agent)
+> import { resolveMiddleware } from '@gaunt-sloth/tools/middleware/registry.js';
+> import { resolveMiddleware } from '@gaunt-sloth/agent';
+>
+> import GthFileSystemToolkit from '@gaunt-sloth/tools/tools/GthFileSystemToolkit.js';
+> import GthFileSystemToolkit from '@gaunt-sloth/agent/tools/GthFileSystemToolkit.js';
+> ```
+>
+> Some APIs were reorganised in v2 (e.g. `builtInToolsConfig` → `AVAILABLE_BUILT_IN_TOOLS` /
+> `getDefaultTools`) — see <https://gauntsloth.app/docs/>.
 > Site & docs: <https://gauntsloth.app> · Source: <https://github.com/pukeko-robotics/gaunt-sloth>
 
 Tools and middleware for Gaunt Sloth.
