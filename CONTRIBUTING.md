@@ -231,13 +231,14 @@ Open a GitHub Issue describing:
 
 ## Documentation Publishing
 
-If you need to publish project documentation, clone `gauntsloth.app` in the same parent directory as this repository and run:
+API documentation is generated with TypeDoc:
 
 ```bash
-./update-docs.sh
+npm run typedoc        # writes ./docs-generated
 ```
 
-Commit and push from the `gauntsloth.app` repository.
+Publishing is handled via the `gauntsloth.app` site repository — copy the generated
+`docs-generated/` into that site's docs directory and commit/push from there.
 
 ## Code of Conduct
 
