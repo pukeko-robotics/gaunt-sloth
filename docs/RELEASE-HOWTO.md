@@ -87,7 +87,7 @@ as a standalone global install before publishing.
 
 ### Assistant package
 
-The CLI `gaunt-sloth-assistant` lives in `packages/assistant` and carries its
+The CLI `gaunt-sloth` lives in `packages/assistant` and carries its
 own version (tagged `vX.Y.Z`), independent of the lock-stepped `@gaunt-sloth/*`
 libraries. The repo root (`gaunt-sloth-workspace`) is `private` and is **never
 published** — `npm version` / `npm publish` run at the root do not touch the
@@ -97,7 +97,7 @@ Bump the assistant inside its workspace. npm does **not** auto-commit or tag for
 workspace members, so commit and tag yourself:
 
 ```bash
-npm version patch -w gaunt-sloth-assistant   # or minor / major — edits packages/assistant/package.json only
+npm version patch -w gaunt-sloth   # or minor / major — edits packages/assistant/package.json only
 git commit -am "Release notes"
 git tag -a v1.5.1 -m "Release notes"
 git push --tags
@@ -138,7 +138,7 @@ at the root will refuse:
 
 ```bash
 npm login
-npm publish -w gaunt-sloth-assistant
+npm publish -w gaunt-sloth
 ```
 
 Remember to review a list of files in the build, before confirming it.

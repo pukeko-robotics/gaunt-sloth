@@ -12,7 +12,7 @@
 /docs-generated
 .junie
 .idea
-gaunt-sloth-assistant.iml
+*.iml
 .gsloth/.gsloth-settings/jira/
 .gsloth/gth_*
 /gaunt-sloth.log

@@ -1,9 +1,8 @@
 # @gaunt-sloth/tools
 
-> ⚠️ **Deprecated.** This package is part of the `gaunt-sloth-assistant` 1.x line, which has been
-> renamed to [`gaunt-sloth`](https://www.npmjs.com/package/gaunt-sloth). In v2 its tools and
+> ⚠️ **Deprecated.** This package belongs to the `gaunt-sloth` 1.x line. In v2 its tools and
 > middleware are consolidated into [`@gaunt-sloth/agent`](https://www.npmjs.com/package/@gaunt-sloth/agent);
-> this package will receive no further updates.
+> it will receive no further updates.
 >
 > **Migrating imports** — the same modules live under `@gaunt-sloth/agent`:
 >
@@ -50,4 +49,4 @@ import { resolveMiddleware } from '@gaunt-sloth/tools/middleware/registry.js';
 - [`@gaunt-sloth/tools`](../tools) — Built-in tools, filesystem toolkit, and middleware registry (this package)
 - [`@gaunt-sloth/api`](../api) — API server, AG-UI, MCP, and A2A integration
 - [`@gaunt-sloth/review`](../review) — Review and Q&A modules with standalone CLI
-- [`gaunt-sloth-assistant`](../assistant) — Main CLI application
+- [`gaunt-sloth`](../assistant) — Main CLI application

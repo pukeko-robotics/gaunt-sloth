@@ -1,16 +1,4 @@
-# gaunt-sloth-assistant
-
-> ⚠️ **`gaunt-sloth-assistant` has been renamed to [`gaunt-sloth`](https://www.npmjs.com/package/gaunt-sloth).**
-> The `1.5.x` series is the final release under the old name — active development continues under
-> the new package. To switch:
->
-> ```bash
-> npm uninstall -g gaunt-sloth-assistant
-> npm install -g gaunt-sloth
-> ```
->
-> The `gth`, `gsloth`, and `gaunt-sloth` commands are unchanged.
-> Site & docs: <https://gauntsloth.app> · Source: <https://github.com/pukeko-robotics/gaunt-sloth>
+# gaunt-sloth
 
 The main CLI application for Gaunt Sloth.
 
@@ -44,12 +32,12 @@ This is the only package in the workspace that pulls in AI vendor dependencies d
 
 ## Re-exports
 
-`gaunt-sloth-assistant` re-exports public APIs from the sub-packages for backward compatibility. Consumers that previously imported directly from `gaunt-sloth-assistant` continue to work without changes.
+`gaunt-sloth` re-exports public APIs from the sub-packages for backward compatibility. Consumers that previously imported directly from `gaunt-sloth` continue to work without changes.
 
 ## Installation
 
 ```bash
-npm install -g gaunt-sloth-assistant
+npm install -g gaunt-sloth
 ```
 
 For full usage documentation see the [root README](../../README.md) and [docs/COMMANDS.md](../../docs/COMMANDS.md).
@@ -60,4 +48,4 @@ For full usage documentation see the [root README](../../README.md) and [docs/CO
 - [`@gaunt-sloth/tools`](../tools) — Built-in tools, filesystem toolkit, and middleware registry
 - [`@gaunt-sloth/api`](../api) — API server, AG-UI, MCP, and A2A integration
 - [`@gaunt-sloth/review`](../review) — Review and Q&A modules with standalone CLI
-- [`gaunt-sloth-assistant`](../assistant) — Main CLI application (this package)
+- [`gaunt-sloth`](../assistant) — Main CLI application (this package)

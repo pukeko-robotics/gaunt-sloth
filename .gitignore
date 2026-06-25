@@ -18,7 +18,7 @@
 .junie
 .idea
 .claude/settings.local.json
-gaunt-sloth-assistant.iml
+*.iml
 .gsloth/.gsloth-settings/jira/
 .gsloth/gth_*
 /gaunt-sloth.log

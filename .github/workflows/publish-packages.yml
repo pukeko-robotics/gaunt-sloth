@@ -2,7 +2,7 @@ name: Publish packages
 
 # Manually dispatched end-to-end publish pipeline for the synced library
 # packages (@gaunt-sloth/{core,tools,api,review}). The user-facing
-# gaunt-sloth-assistant CLI is intentionally EXCLUDED — it carries its own
+# gaunt-sloth CLI is intentionally EXCLUDED — it carries its own
 # version and is published by publish.yml (see docs/RELEASE-HOWTO.md).
 #
 # Flow (each stage gates the next): lint + unit -> integration tests ->

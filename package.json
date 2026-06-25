@@ -20,7 +20,7 @@
   ],
   "scripts": {
     "clean": "npm run clean --workspaces --if-present",
-    "build": "npm run build -w @gaunt-sloth/core && npm run build -w @gaunt-sloth/tools && npm run build -w @gaunt-sloth/api && npm run build -w @gaunt-sloth/review && npm run build -w gaunt-sloth-assistant",
+    "build": "npm run build -w @gaunt-sloth/core && npm run build -w @gaunt-sloth/tools && npm run build -w @gaunt-sloth/api && npm run build -w @gaunt-sloth/review && npm run build -w gaunt-sloth",
     "unit": "vitest run",
     "test": "npm run build && vitest run",
     "it": "npm run build && node it.js",

@@ -1,13 +1,13 @@
-# Gaunt Sloth Assistant
+# Gaunt Sloth
 [![Tests and Lint](https://github.com/pukeko-robotics/gaunt-sloth/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/pukeko-robotics/gaunt-sloth/actions/workflows/unit-tests.yml) [![Integration Tests](https://github.com/pukeko-robotics/gaunt-sloth/actions/workflows/integration-tests.yml/badge.svg?event=push)](https://github.com/pukeko-robotics/gaunt-sloth/actions/workflows/integration-tests.yml)
 
-Gaunt Sloth Assistant is a command-line AI assistant for CI/CD workflows, code reviews, and DIY projects. It supports PR and diff reviews with requirements context, code and diff Q&A, interactive chat and coding sessions, and controlled automation through predefined tools and JSON or JavaScript configuration.
+Gaunt Sloth is a command-line AI assistant for CI/CD workflows, code reviews, and DIY projects. It supports PR and diff reviews with requirements context, code and diff Q&A, interactive chat and coding sessions, and controlled automation through predefined tools and JSON or JavaScript configuration.
 
 ![GSloth Banner](assets/gaunt-sloth-logo.png)
 
 Based on [LangChain.js](https://github.com/langchain-ai/langchainjs)
 
-[Documentation](https://gauntsloth.app/docs/) | [Official Site](https://gauntsloth.app/) | [NPM](https://www.npmjs.com/package/gaunt-sloth-assistant) | [GitHub](https://github.com/pukeko-robotics/gaunt-sloth)
+[Documentation](https://gauntsloth.app/docs/) | [Official Site](https://gauntsloth.app/) | [NPM](https://www.npmjs.com/package/gaunt-sloth) | [GitHub](https://github.com/pukeko-robotics/gaunt-sloth)
 
 ## Why?
 
@@ -31,19 +31,19 @@ The promise of Gaunt Sloth:
 
 This repository is an NPM workspace monorepo. The dependency chain is:
 
-`@gaunt-sloth/core` <- `@gaunt-sloth/tools` <- `@gaunt-sloth/api` <- `gaunt-sloth-assistant`
+`@gaunt-sloth/core` <- `@gaunt-sloth/tools` <- `@gaunt-sloth/api` <- `gaunt-sloth`
 
 `@gaunt-sloth/review` depends only on `@gaunt-sloth/core` (with `@gaunt-sloth/tools` as an optional peer).
 
 | Package | Description |
 |---|---|
-| `gaunt-sloth-assistant` | Main CLI application. Installs the `gsloth`/`gth` binaries. Most users only need this package. |
+| `gaunt-sloth` | Main CLI application. Installs the `gsloth`/`gth` binaries. Most users only need this package. |
 | `@gaunt-sloth/api` | AG-UI server, A2A client, MCP utilities, and tool resolvers. Includes the `gaunt-sloth-api` binary. |
 | `@gaunt-sloth/review` | Review and Q&A modules with content providers (GitHub, Jira). Includes the `gaunt-sloth-review` binary for lightweight CI pipelines. |
 | `@gaunt-sloth/tools` | Filesystem toolkit, custom tools, dev tools, and middleware registry. |
 | `@gaunt-sloth/core` | Config system, agent infrastructure, LLM provider wrappers, and shared utilities. |
 
-Most users install `gaunt-sloth-assistant` globally and do not interact with the sub-packages directly. `@gaunt-sloth/review` can be used standalone in CI pipelines — it has no dependency on `commander`, MCP, or A2A, making it a lighter option when only review functionality is needed.
+Most users install `gaunt-sloth` globally and do not interact with the sub-packages directly. `@gaunt-sloth/review` can be used standalone in CI pipelines — it has no dependency on `commander`, MCP, or A2A, making it a lighter option when only review functionality is needed.
 
 ## What GSloth does
 
@@ -180,7 +180,7 @@ Tested with Node 22 LTS.
 
 ### NPM
 ```bash
-npm install gaunt-sloth-assistant -g
+npm install gaunt-sloth -g
 ```
 
 ## Configuration
@@ -358,7 +358,7 @@ Gaunt Sloth supports the [A2A protocol](https://a2a-protocol.org/) for connectin
 ## Uninstall
 Uninstall global NPM package:
 ```bash
-npm uninstall -g gaunt-sloth-assistant
+npm uninstall -g gaunt-sloth
 ```
 
 Remove global config (if any)

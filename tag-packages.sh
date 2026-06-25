@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Create git tags for the synced @gaunt-sloth/* packages (core, tools, api, review).
 #
-# The user-facing CLI (gaunt-sloth-assistant) is intentionally EXCLUDED — it
+# The user-facing CLI (gaunt-sloth) is intentionally EXCLUDED — it
 # carries its own version and already uses the repo's v<MAJOR.MINOR.PATCH> tags.
 #
 # Tags are annotated and named "@gaunt-sloth/<pkg>@<version>" (npm monorepo

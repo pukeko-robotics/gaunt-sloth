@@ -1,11 +1,5 @@
 # @gaunt-sloth/review
 
-> ℹ️ **Moved.** The Gaunt Sloth project now lives at
-> [`pukeko-robotics/gaunt-sloth`](https://github.com/pukeko-robotics/gaunt-sloth) and
-> [gauntsloth.app](https://gauntsloth.app). The `0.1.x` releases belong to the
-> `gaunt-sloth-assistant` 1.x line; `@gaunt-sloth/review` continues in v2 as part of the
-> [`gaunt-sloth`](https://www.npmjs.com/package/gaunt-sloth) line.
-
 Review and question-answering functionality for Gaunt Sloth.
 
 ## Installation
@@ -82,4 +76,4 @@ import { commandUtils } from '@gaunt-sloth/review/commandUtils.js';
 - [`@gaunt-sloth/tools`](../tools) — Built-in tools, filesystem toolkit, and middleware registry
 - [`@gaunt-sloth/api`](../api) — API server, AG-UI, MCP, and A2A integration
 - [`@gaunt-sloth/review`](../review) — Review and Q&A modules with standalone CLI (this package)
-- [`gaunt-sloth-assistant`](../assistant) — Main CLI application
+- [`gaunt-sloth`](../assistant) — Main CLI application

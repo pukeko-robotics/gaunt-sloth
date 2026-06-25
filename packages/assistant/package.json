@@ -1,6 +1,6 @@
 {
-  "name": "gaunt-sloth-assistant",
-  "version": "1.5.7",
+  "name": "gaunt-sloth",
+  "version": "1.5.8",
   "description": "",
   "license": "MIT",
   "author": "Andrew Kondratev",
@@ -36,10 +36,10 @@
     "gth": "cli.js"
   },
   "dependencies": {
-    "@gaunt-sloth/api": "0.1.9",
-    "@gaunt-sloth/core": "0.1.9",
-    "@gaunt-sloth/review": "0.1.9",
-    "@gaunt-sloth/tools": "0.1.9",
+    "@gaunt-sloth/api": "0.2.0",
+    "@gaunt-sloth/core": "0.2.0",
+    "@gaunt-sloth/review": "0.2.0",
+    "@gaunt-sloth/tools": "0.2.0",
     "@langchain/anthropic": "^1.4.0",
     "@langchain/core": "^1.1.48",
     "@langchain/deepseek": "^1.0.27",

@@ -2,7 +2,7 @@
 
 Scripts for testing `@gaunt-sloth/review` as a standalone global install,
 without workspace hoisting leaking in transitive dependencies from other packages
-(e.g. `gaunt-sloth-assistant`).
+(e.g. `gaunt-sloth`).
 
 ## Bumping versions before deploy
 

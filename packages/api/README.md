@@ -1,9 +1,8 @@
 # @gaunt-sloth/api
 
-> ⚠️ **Deprecated.** This package is part of the `gaunt-sloth-assistant` 1.x line, which has been
-> renamed to [`gaunt-sloth`](https://www.npmjs.com/package/gaunt-sloth). In v2 it is superseded by
-> [`@gaunt-sloth/agent`](https://www.npmjs.com/package/@gaunt-sloth/agent); this package will
-> receive no further updates.
+> ⚠️ **Deprecated.** This package belongs to the `gaunt-sloth` 1.x line. In v2 it is superseded by
+> [`@gaunt-sloth/agent`](https://www.npmjs.com/package/@gaunt-sloth/agent); it will receive no
+> further updates.
 > Site & docs: <https://gauntsloth.app> · Source: <https://github.com/pukeko-robotics/gaunt-sloth>
 
 API server and agent integration layer for Gaunt Sloth.
@@ -98,4 +97,4 @@ The AG-UI server uses `express.json({ limit: '5mb' })` to accommodate base64 env
 - [`@gaunt-sloth/tools`](../tools) — Built-in tools, filesystem toolkit, and middleware registry
 - [`@gaunt-sloth/api`](../api) — API server, AG-UI, MCP, and A2A integration (this package)
 - [`@gaunt-sloth/review`](../review) — Review and Q&A modules with standalone CLI
-- [`gaunt-sloth-assistant`](../assistant) — Main CLI application
+- [`gaunt-sloth`](../assistant) — Main CLI application

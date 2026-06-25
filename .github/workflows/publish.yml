@@ -19,4 +19,4 @@ jobs:
       # the assistant's dist/ exists in the published tarball. The `files` block
       # ships ./dist/*; without this step npm publishes a dist-less, broken bin.
       - run: npm run build
-      - run: npm publish --provenance --access public --tag latest -w gaunt-sloth-assistant
+      - run: npm publish --provenance --access public --tag latest -w gaunt-sloth
