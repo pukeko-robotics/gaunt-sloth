@@ -1,0 +1,41 @@
+name: Integration tests (macOS, full)
+
+# Manual full integration-test suite on macOS. Mirrors integration-tests.yml
+# (the canonical ubuntu full run) but on macos-latest, so the complete suite —
+# not just the lite `simple` subset of integration-tests-platforms.yml — can be
+# exercised on macOS on demand.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  integration-tests:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    environment: integration tests
+    strategy:
+      matrix:
+        node-version: [24.x]
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Enable Corepack
+      run: corepack enable
+
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v6
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'pnpm'
+
+    - name: Install dependencies
+      run: pnpm install --frozen-lockfile
+
+    - name: Run Integration
+      run: pnpm run it $BIG_TEST_PROVIDER
+      env:
+        BIG_TEST_PROVIDER: ${{ vars.BIG_TEST_PROVIDER }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

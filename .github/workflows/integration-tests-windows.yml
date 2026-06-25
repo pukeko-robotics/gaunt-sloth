@@ -1,0 +1,42 @@
+name: Integration tests (Windows, full)
+
+# Manual full integration-test suite on Windows. Mirrors integration-tests.yml
+# (the canonical ubuntu full run) but on windows-latest, so the complete suite —
+# not just the lite `simple` subset of integration-tests-platforms.yml — can be
+# exercised on Windows on demand (e.g. to validate Windows-specific fs/shell
+# behavior like the EXT-15/EXT-16 fixes).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  integration-tests:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    environment: integration tests
+    strategy:
+      matrix:
+        node-version: [24.x]
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Enable Corepack
+      run: corepack enable
+
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v6
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'pnpm'
+
+    - name: Install dependencies
+      run: pnpm install --frozen-lockfile
+
+    - name: Run Integration
+      run: pnpm run it $env:BIG_TEST_PROVIDER
+      env:
+        BIG_TEST_PROVIDER: ${{ vars.BIG_TEST_PROVIDER }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
