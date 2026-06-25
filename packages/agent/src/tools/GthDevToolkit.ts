@@ -3,7 +3,7 @@
  */
 import { BaseToolkit, StructuredToolInterface, tool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import path from 'node:path';
 import { displayInfo, displayError, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import {
@@ -23,22 +23,49 @@ import { OutputBuffer } from '#src/tools/shell/outputBuffer.js';
 const KILL_GRACE_MS = 3_000;
 
 /**
- * Kill the child AND its descendants. Because the child is spawned `detached`, it
- * leads its own process group, so signalling the NEGATIVE pid (`-pid`) delivers
- * to the whole group — otherwise a shell's children (e.g. a spawned server) would
- * be orphaned and keep running after a timeout. Swallows the EPERM/ESRCH races
- * that occur when the process has already exited.
+ * Kill the child AND its descendants on timeout.
+ *
+ * POSIX: the child is spawned `detached`, so it leads its own process group;
+ * signalling the NEGATIVE pid (`-pid`) delivers to the whole group — otherwise a
+ * shell's children (e.g. a spawned server) would be orphaned and keep running.
+ *
+ * Windows (EXT-15): there are no POSIX process groups — `process.kill(-pid)`
+ * throws `EINVAL`, and `child.kill()` only terminates the `cmd.exe` wrapper while
+ * grandchildren keep the piped stdio handles open, so `'close'` never fires and
+ * the tool Promise hangs forever (silently cancelling Windows CI). Use `taskkill
+ * /T` to kill the whole tree by pid; `/F` (force) mirrors POSIX SIGKILL, while a
+ * graceful taskkill mirrors SIGTERM. Swallows the races where it has already exited.
+ *
+ * Exported for unit testing the platform branch without a Windows host.
  */
-function killProcessGroup(
+export function killProcessGroup(
   child: { pid?: number; kill: (signal?: NodeJS.Signals) => boolean },
   signal: NodeJS.Signals
 ): void {
-  try {
-    if (typeof child.pid === 'number') {
-      // Negative pid → signal the entire process group.
-      process.kill(-child.pid, signal);
+  if (typeof child.pid !== 'number') return;
+
+  if (process.platform === 'win32') {
+    // No process groups on Windows; taskkill /T walks the whole tree by pid.
+    try {
+      const args = ['/PID', String(child.pid), '/T'];
+      if (signal === 'SIGKILL') args.push('/F');
+      spawnSync('taskkill', args, { stdio: 'ignore', windowsHide: true });
       return;
+    } catch {
+      // taskkill unavailable / already gone — fall through to the direct kill.
     }
+    try {
+      child.kill(signal);
+    } catch {
+      // Already exited — nothing to do.
+    }
+    return;
+  }
+
+  try {
+    // Negative pid → signal the entire process group.
+    process.kill(-child.pid, signal);
+    return;
   } catch (e) {
     const code = (e as NodeJS.ErrnoException)?.code;
     // ESRCH: already gone. EPERM: group-kill not permitted — fall through to the
@@ -206,8 +233,9 @@ export default class GthDevToolkit extends BaseToolkit {
         shell: true,
         // (1) Never let the child block on stdin (e.g. git commit opening $EDITOR).
         stdio: ['ignore', 'pipe', 'pipe'],
-        // (1) Own process group so we can kill the whole tree on timeout.
-        detached: true,
+        // (1) POSIX: own process group so we can kill the whole tree on timeout
+        // (see killProcessGroup). No-op/harmful on Windows, which uses taskkill /T.
+        detached: process.platform !== 'win32',
         // (3) Child env with provider/LLM credentials removed.
         env: buildScrubbedEnv(),
       });

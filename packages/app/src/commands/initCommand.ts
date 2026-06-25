@@ -17,9 +17,7 @@ import { Argument, Command } from 'commander';
 export function initCommand(program: Command): void {
   program
     .command('init')
-    .description(
-      'Initialize Gaunt Sloth in your project. This will write necessary config files.'
-    )
+    .description('Initialize Gaunt Sloth in your project. This will write necessary config files.')
     .addArgument(
       new Argument(
         '[type]',
