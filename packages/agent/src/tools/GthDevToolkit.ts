@@ -46,18 +46,20 @@ export function killProcessGroup(
 
   if (process.platform === 'win32') {
     // No process groups on Windows; taskkill /T walks the whole tree by pid.
-    try {
-      const args = ['/PID', String(child.pid), '/T'];
-      if (signal === 'SIGKILL') args.push('/F');
-      spawnSync('taskkill', args, { stdio: 'ignore', windowsHide: true });
-      return;
-    } catch {
-      // taskkill unavailable / already gone — fall through to the direct kill.
-    }
-    try {
-      child.kill(signal);
-    } catch {
-      // Already exited — nothing to do.
+    const args = ['/PID', String(child.pid), '/T'];
+    if (signal === 'SIGKILL') args.push('/F');
+    // IMPORTANT: spawnSync does NOT throw when it fails to spawn (e.g. ENOENT if taskkill is
+    // missing from PATH) — unlike execSync, it returns an object with an `error` property. So a
+    // try/catch would never reach the fallback. Inspect `res.error` explicitly and fall back to
+    // the direct child kill (best effort). A non-zero exit (process already gone) is NOT a spawn
+    // failure, so it correctly does not trigger the fallback. (`res?.` tolerates test mocks.)
+    const res = spawnSync('taskkill', args, { stdio: 'ignore', windowsHide: true });
+    if (res?.error) {
+      try {
+        child.kill(signal);
+      } catch {
+        // Already exited — nothing to do.
+      }
     }
     return;
   }

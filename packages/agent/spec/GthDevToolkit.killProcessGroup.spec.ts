@@ -58,16 +58,28 @@ describe('killProcessGroup platform branch', () => {
     );
   });
 
-  it('falls back to child.kill when taskkill itself throws on win32', () => {
+  it('falls back to child.kill when taskkill fails to spawn on win32 (spawnSync returns error, does not throw)', () => {
     setPlatform('win32');
-    spawnSyncMock.mockImplementation(() => {
-      throw new Error('taskkill ENOENT');
-    });
+    // spawnSync reports a spawn failure (e.g. ENOENT) by RETURNING an object with an `error`
+    // property — it does not throw. The reap path must inspect that, not rely on try/catch.
+    spawnSyncMock.mockReturnValue({ error: new Error('spawnSync taskkill ENOENT') });
     const kill = vi.fn();
 
     killProcessGroup({ pid: 7, kill }, 'SIGTERM');
 
     expect(kill).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  it('does NOT fall back when taskkill spawns but the process is already gone (non-zero exit, no error)', () => {
+    setPlatform('win32');
+    // taskkill ran but the pid was already dead → non-zero status, no spawn `error`. That is not
+    // a spawn failure, so child.kill must NOT be invoked as a redundant fallback.
+    spawnSyncMock.mockReturnValue({ status: 128 });
+    const kill = vi.fn();
+
+    killProcessGroup({ pid: 7, kill }, 'SIGTERM');
+
+    expect(kill).not.toHaveBeenCalled();
   });
 
   it('signals the negative pid (process group) on POSIX', () => {
