@@ -1,5 +1,11 @@
 # @gaunt-sloth/review
 
+> ℹ️ **Moved.** The Gaunt Sloth project now lives at
+> [`pukeko-robotics/gaunt-sloth`](https://github.com/pukeko-robotics/gaunt-sloth) and
+> [gauntsloth.app](https://gauntsloth.app). The `0.1.x` releases belong to the
+> `gaunt-sloth-assistant` 1.x line; `@gaunt-sloth/review` continues in v2 as part of the
+> [`gaunt-sloth`](https://www.npmjs.com/package/gaunt-sloth) line.
+
 Review and question-answering functionality for Gaunt Sloth.
 
 ## Installation
