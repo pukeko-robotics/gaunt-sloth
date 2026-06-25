@@ -1,6 +1,6 @@
 /**
  * @packageDocumentation
- * Type definitions for middleware configuration in Gaunt Sloth Assistant.
+ * Type definitions for middleware configuration in Gaunt Sloth.
  *
  * Middleware provides hooks to intercept and control agent execution at critical points.
  * This module defines the configuration interfaces for both predefined and custom middleware.

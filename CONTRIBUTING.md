@@ -1,4 +1,4 @@
-# Contributing to Gaunt Sloth Assistant
+# Contributing to Gaunt Sloth
 
 ## Scope
 

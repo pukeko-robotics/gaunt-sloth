@@ -18,7 +18,7 @@ export function initCommand(program: Command): void {
   program
     .command('init')
     .description(
-      'Initialize the Gaunt Sloth Assistant in your project. This will write necessary config files.'
+      'Initialize Gaunt Sloth in your project. This will write necessary config files.'
     )
     .addArgument(
       new Argument(

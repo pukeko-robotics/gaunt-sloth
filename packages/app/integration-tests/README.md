@@ -1,6 +1,6 @@
-# Gaunt Sloth Assistant Integration Tests
+# Gaunt Sloth Integration Tests
 
-This directory contains integration tests for the Gaunt Sloth Assistant CLI tool.
+This directory contains integration tests for the Gaunt Sloth CLI tool.
 
 ## Directory Structure
 

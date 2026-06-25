@@ -31,7 +31,7 @@ export async function processJsonConfig(
       ...(llmConfig.configuration || {}),
       defaultHeaders: {
         'HTTP-Referer': 'https://gauntsloth.app/',
-        'X-Title': 'Gaunt Sloth Assistant',
+        'X-Title': 'Gaunt Sloth',
       },
     },
   };

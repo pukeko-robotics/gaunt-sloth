@@ -1,6 +1,6 @@
 /**
  * @packageDocumentation
- * Middleware registry for Gaunt Sloth Assistant.
+ * Middleware registry for Gaunt Sloth.
  *
  * This module provides factory functions for creating predefined middleware instances
  * and a resolver to convert middleware configurations into middleware objects.

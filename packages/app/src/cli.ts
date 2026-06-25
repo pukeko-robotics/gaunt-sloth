@@ -17,7 +17,7 @@ const program = new Command();
 
 program
   .name('gsloth')
-  .description('Gaunt Sloth Assistant reviewing your PRs')
+  .description('Gaunt Sloth reviewing your PRs')
   .version(getSlothVersion())
   .option(
     '--verbose',

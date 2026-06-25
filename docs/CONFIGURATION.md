@@ -753,7 +753,7 @@ GitHub actions bot.
 
 ## Model Context Protocol (MCP)
 
-Gaunt Sloth Assistant supports the Model Context Protocol (MCP), which provides enhanced context management. You can connect to various MCP servers, including those requiring OAuth authentication.
+Gaunt Sloth supports the Model Context Protocol (MCP), which provides enhanced context management. You can connect to various MCP servers, including those requiring OAuth authentication.
 
 ### OAuth-enabled MCP Servers
 

@@ -3,7 +3,7 @@
   "name": "gaunt-sloth-workspace",
   "version": "0.0.0",
   "private": true,
-  "description": "Gaunt Sloth Assistant workspace",
+  "description": "Gaunt Sloth workspace",
   "license": "MIT",
   "author": "Andrew Kondratev",
   "type": "module",

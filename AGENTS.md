@@ -1,4 +1,4 @@
-# Gaunt Sloth Assistant Internal Development Guidelines
+# Gaunt Sloth Internal Development Guidelines
 
 This file provides guidance to any AI coding agent (Claude Code, Cursor, etc.) working with this repository.
 
@@ -217,7 +217,7 @@ Release notes should include relevant sections:
 
 ## Codebase Architecture
 
-Gaunt Sloth Assistant is a command line AI assistant for software developers, primarily focused on code reviews and question answering.
+Gaunt Sloth is a command line AI assistant for software developers, primarily focused on code reviews and question answering.
 
 ### High-Level Structure
 

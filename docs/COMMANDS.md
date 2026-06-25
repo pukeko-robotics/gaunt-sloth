@@ -1,10 +1,10 @@
 # Commands
 
-This document provides detailed information about all available commands in Gaunt Sloth Assistant.
+This document provides detailed information about all available commands in Gaunt Sloth.
 
 ## Overview
 
-Gaunt Sloth Assistant provides several commands to help with code review, analysis, and interaction. All commands can be executed using either `gsloth` or `gth`.
+Gaunt Sloth provides several commands to help with code review, analysis, and interaction. All commands can be executed using either `gsloth` or `gth`.
 
 ## Global Options
 
@@ -17,7 +17,7 @@ Every command supports these shared flags:
 
 ## init
 
-Initialize Gaunt Sloth Assistant in your project.
+Initialize Gaunt Sloth in your project.
 
 ```bash
 gsloth init [type]

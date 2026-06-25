@@ -110,7 +110,7 @@ export class OAuthClientProviderImpl implements OAuthClientProvider {
   get clientMetadata(): OAuthClientMetadata {
     return {
       redirect_uris: [this.config.redirectUrl],
-      client_name: 'Gaunt Sloth Assistant',
+      client_name: 'Gaunt Sloth',
       client_uri: 'https://gauntsloth.app/',
       software_id: '1dd38b83-946b-4631-8855-66ee467bfd68',
       scope: 'mcp:read mcp:write',
