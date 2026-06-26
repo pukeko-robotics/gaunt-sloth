@@ -82,7 +82,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
       - name: Show version BEFORE bump
-        run: node -p "'before: ' + require('./packages/core/package.json').version"
+        run: |
+          echo "before: $(node -p "require('./packages/core/package.json').version")"
       - name: Run bump-and-commit (the step under test)
         env:
           BUMP: ${{ inputs.bump }}
