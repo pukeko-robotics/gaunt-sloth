@@ -5,7 +5,7 @@
 // `npm run release:bump -- minor`             — increment (patch | minor | major | pre*) , then sync
 // `npm run release:bump -- prerelease alpha`  — semver.inc with a preid, then sync
 // `npm run release:bump -- 2.0.0-alpha.0`     — set an explicit version, then sync
-// `npm run release:bump-and-commit -- ...`    — same, then refresh package-lock.json and git-commit
+// `npm run release:bump-and-commit -- ...`    — same, then refresh pnpm-lock.yaml and git-commit
 //
 // LOCKED packages — all four carry the SAME version and pin each other exactly:
 //   @gaunt-sloth/core, @gaunt-sloth/agent, @gaunt-sloth/review  (dirs: core/agent/review)
@@ -160,10 +160,15 @@ writePkg(appPath, app);
 console.log(`  ${'gaunt-sloth'.padEnd(9)} ${appBefore} → ${target}  (tag ${distTag})`);
 
 if (commit) {
-  // package-lock.json records the workspace versions, so refresh it or the
-  // next `npm ci` sees the lock and the package.jsons out of sync.
-  console.log('Refreshing package-lock.json');
-  execFileSync('npm', ['install', '--package-lock-only'], {
+  // pnpm-lock.yaml records the workspace importers, so refresh it or a later
+  // `pnpm install --frozen-lockfile` sees the lock and the package.jsons out of
+  // sync. This is a pnpm workspace (workspace:* cross-deps, no package-lock.json)
+  // — refreshing must go through pnpm; `npm install --package-lock-only` cannot
+  // resolve the workspace:* protocol and crashes ("Cannot read properties of
+  // null (reading 'matches')"). `--lockfile-only` updates the lock without
+  // touching node_modules, and is a no-op when nothing in the lock changed.
+  console.log('Refreshing pnpm-lock.yaml');
+  execFileSync('pnpm', ['install', '--lockfile-only'], {
     cwd: ROOT,
     stdio: 'inherit',
     shell: process.platform === 'win32',
@@ -171,7 +176,7 @@ if (commit) {
 
   const files = [
     ...ALL_DIRS.map((name) => `packages/${name}/package.json`),
-    'package-lock.json',
+    'pnpm-lock.yaml',
   ];
   const status = execFileSync('git', ['status', '--porcelain', '--', ...files], {
     cwd: ROOT,
