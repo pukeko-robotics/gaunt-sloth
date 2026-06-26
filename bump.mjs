@@ -188,7 +188,11 @@ if (commit) {
     execFileSync('git', ['add', '--', ...files], { cwd: ROOT, stdio: 'inherit' });
     // Pathspec-limited commit: only the bump files go in, so anything else the
     // user had staged stays staged instead of being swept into the release.
-    execFileSync('git', ['commit', '-m', `Release ${target}`, '--', ...files], {
+    // Model B: this is the POST-bump — main now carries the NEXT version to
+    // publish, so it's the start of that version's dev cycle, NOT its release
+    // (the release/tag/publish for the prior version already happened). Word it
+    // so the history doesn't read as if `target` has shipped.
+    execFileSync('git', ['commit', '-m', `chore(release): start ${target} development cycle`, '--', ...files], {
       cwd: ROOT,
       stdio: 'inherit',
     });
