@@ -1,0 +1,401 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`effective-merged acceptance (B2b) > resolves examples/a2a/.gsloth.config.json to a stable effective config 1`] = `
+{
+  "a2aAgents": {
+    "timeAgent": {
+      "agentId": "hello-time-agent",
+      "agentUrl": "http://localhost:8080/a2a",
+    },
+  },
+  "aiignore": {
+    "enabled": true,
+    "patterns": undefined,
+  },
+  "canInterruptInferenceWithEsc": false,
+  "commands": {
+    "api": {
+      "cors": {
+        "allowHeaders": "Content-Type, Accept",
+        "allowMethods": "POST, GET, OPTIONS",
+        "allowOrigin": "http://localhost:3000",
+      },
+      "filesystem": "read",
+      "port": 3000,
+    },
+    "ask": {
+      "filesystem": "read",
+    },
+    "chat": {
+      "filesystem": "read",
+    },
+    "code": {
+      "filesystem": "all",
+    },
+    "exec": {
+      "filesystem": "all",
+    },
+    "pr": {
+      "contentProvider": "github",
+      "contentSource": "github",
+      "rating": {
+        "enabled": true,
+        "errorOnReviewFail": true,
+        "maxRating": 10,
+        "minRating": 0,
+        "passThreshold": 6,
+      },
+      "requirementSource": "github",
+      "requirementsProvider": "github",
+    },
+    "review": {
+      "rating": {
+        "enabled": true,
+        "errorOnReviewFail": true,
+        "maxRating": 10,
+        "minRating": 0,
+        "passThreshold": 6,
+      },
+    },
+  },
+  "consoleLevel": 1,
+  "contentProvider": "file",
+  "contentSource": "file",
+  "debugLog": false,
+  "filesystem": "none",
+  "includeCurrentDateAfterGuidelines": false,
+  "llm": {
+    "location": "global",
+    "model": "gemini-3-pro-preview",
+    "type": "vertexai",
+  },
+  "projectGuidelines": ".gsloth.guidelines.md",
+  "projectReviewInstructions": ".gsloth.review.md",
+  "requirementSource": "file",
+  "requirementsProvider": "file",
+  "streamOutput": true,
+  "streamSessionInferenceLog": true,
+  "useColour": true,
+  "writeBinaryOutputsToFile": true,
+  "writeOutputToFile": false,
+}
+`;
+
+exports[`effective-merged acceptance (B2b) > resolves examples/jira-mcp/.gsloth.config.json to a stable effective config 1`] = `
+{
+  "aiignore": {
+    "enabled": true,
+    "patterns": undefined,
+  },
+  "canInterruptInferenceWithEsc": false,
+  "commands": {
+    "api": {
+      "cors": {
+        "allowHeaders": "Content-Type, Accept",
+        "allowMethods": "POST, GET, OPTIONS",
+        "allowOrigin": "http://localhost:3000",
+      },
+      "filesystem": "read",
+      "port": 3000,
+    },
+    "ask": {
+      "filesystem": "read",
+    },
+    "chat": {
+      "filesystem": "read",
+    },
+    "code": {
+      "filesystem": "all",
+    },
+    "exec": {
+      "filesystem": "all",
+    },
+    "pr": {
+      "contentProvider": "github",
+      "contentSource": "github",
+      "rating": {
+        "enabled": true,
+        "errorOnReviewFail": true,
+        "maxRating": 10,
+        "minRating": 0,
+        "passThreshold": 6,
+      },
+      "requirementSource": "jira",
+      "requirementsProvider": "jira",
+    },
+    "review": {
+      "rating": {
+        "enabled": true,
+        "errorOnReviewFail": true,
+        "maxRating": 10,
+        "minRating": 0,
+        "passThreshold": 6,
+      },
+    },
+  },
+  "consoleLevel": 1,
+  "contentProvider": "file",
+  "contentSource": "file",
+  "debugLog": false,
+  "filesystem": "none",
+  "includeCurrentDateAfterGuidelines": false,
+  "llm": {
+    "model": "gemini-2.5-pro",
+    "type": "vertexai",
+  },
+  "mcpServers": {
+    "jira": {
+      "authProvider": "OAuth",
+      "transport": "sse",
+      "url": "https://mcp.atlassian.com/v1/sse",
+    },
+  },
+  "projectGuidelines": ".gsloth.guidelines.md",
+  "projectReviewInstructions": ".gsloth.review.md",
+  "requirementSource": "file",
+  "requirementSourceConfig": {
+    "jira": {
+      "cloudId": "YOURCLOUDID",
+      "displayUrl": "https://YOURDOMAIN.atlassian.net/browse/",
+    },
+  },
+  "requirementsProvider": "file",
+  "streamOutput": true,
+  "streamSessionInferenceLog": true,
+  "useColour": true,
+  "writeBinaryOutputsToFile": true,
+  "writeOutputToFile": true,
+}
+`;
+
+exports[`effective-merged acceptance (B2b) > resolves examples/lmstudio/.gsloth.config.json to a stable effective config 1`] = `
+{
+  "aiignore": {
+    "enabled": true,
+    "patterns": undefined,
+  },
+  "canInterruptInferenceWithEsc": false,
+  "commands": {
+    "api": {
+      "cors": {
+        "allowHeaders": "Content-Type, Accept",
+        "allowMethods": "POST, GET, OPTIONS",
+        "allowOrigin": "http://localhost:3000",
+      },
+      "filesystem": "read",
+      "port": 3000,
+    },
+    "ask": {
+      "filesystem": "read",
+    },
+    "chat": {
+      "filesystem": "read",
+    },
+    "code": {
+      "filesystem": "all",
+    },
+    "exec": {
+      "filesystem": "all",
+    },
+    "pr": {
+      "contentProvider": "github",
+      "contentSource": "github",
+      "rating": {
+        "enabled": true,
+        "errorOnReviewFail": true,
+        "maxRating": 10,
+        "minRating": 0,
+        "passThreshold": 6,
+      },
+      "requirementSource": "github",
+      "requirementsProvider": "github",
+    },
+    "review": {
+      "rating": {
+        "enabled": true,
+        "errorOnReviewFail": true,
+        "maxRating": 10,
+        "minRating": 0,
+        "passThreshold": 6,
+      },
+    },
+  },
+  "consoleLevel": 1,
+  "contentProvider": "file",
+  "contentSource": "file",
+  "debugLog": false,
+  "filesystem": "none",
+  "includeCurrentDateAfterGuidelines": false,
+  "llm": {
+    "apiKey": "none",
+    "configuration": {
+      "baseURL": "http://127.0.0.1:1234/v1",
+    },
+    "model": "openai/gpt-oss-20b",
+    "type": "openai",
+  },
+  "projectGuidelines": ".gsloth.guidelines.md",
+  "projectReviewInstructions": ".gsloth.review.md",
+  "requirementSource": "file",
+  "requirementsProvider": "file",
+  "streamOutput": true,
+  "streamSessionInferenceLog": true,
+  "useColour": true,
+  "writeBinaryOutputsToFile": true,
+  "writeOutputToFile": true,
+}
+`;
+
+exports[`effective-merged acceptance (B2b) > resolves examples/simple-DIY-helper/.gsloth.config.json to a stable effective config 1`] = `
+{
+  "aiignore": {
+    "enabled": true,
+    "patterns": undefined,
+  },
+  "canInterruptInferenceWithEsc": false,
+  "commands": {
+    "api": {
+      "cors": {
+        "allowHeaders": "Content-Type, Accept",
+        "allowMethods": "POST, GET, OPTIONS",
+        "allowOrigin": "http://localhost:3000",
+      },
+      "filesystem": "read",
+      "port": 3000,
+    },
+    "ask": {
+      "filesystem": "read",
+    },
+    "chat": {
+      "filesystem": "read",
+    },
+    "code": {
+      "filesystem": "all",
+    },
+    "exec": {
+      "filesystem": "all",
+    },
+    "pr": {
+      "contentProvider": "github",
+      "contentSource": "github",
+      "rating": {
+        "enabled": true,
+        "errorOnReviewFail": true,
+        "maxRating": 10,
+        "minRating": 0,
+        "passThreshold": 6,
+      },
+      "requirementSource": "github",
+      "requirementsProvider": "github",
+    },
+    "review": {
+      "rating": {
+        "enabled": true,
+        "errorOnReviewFail": true,
+        "maxRating": 10,
+        "minRating": 0,
+        "passThreshold": 6,
+      },
+    },
+  },
+  "consoleLevel": 1,
+  "contentProvider": "file",
+  "contentSource": "file",
+  "debugLog": false,
+  "filesystem": "none",
+  "includeCurrentDateAfterGuidelines": false,
+  "llm": {
+    "model": "deepseek-reasoner",
+    "type": "deepseek",
+  },
+  "projectGuidelines": ".gsloth.guidelines.md",
+  "projectReviewInstructions": ".gsloth.review.md",
+  "requirementSource": "file",
+  "requirementsProvider": "file",
+  "streamOutput": true,
+  "streamSessionInferenceLog": true,
+  "useColour": true,
+  "writeBinaryOutputsToFile": true,
+  "writeOutputToFile": true,
+}
+`;
+
+exports[`effective-merged acceptance (B2b) > resolves the consumer-shaped fixture to a stable effective config 1`] = `
+{
+  "aiignore": {
+    "enabled": true,
+    "patterns": undefined,
+  },
+  "builtInTools": [
+    "show_a2ui_surface",
+  ],
+  "canInterruptInferenceWithEsc": false,
+  "commands": {
+    "api": {
+      "cors": {
+        "allowHeaders": "Content-Type, Accept",
+        "allowMethods": "POST, GET, OPTIONS",
+        "allowOrigin": "http://localhost:5555",
+      },
+      "filesystem": "read",
+      "port": 3000,
+    },
+    "ask": {
+      "filesystem": "read",
+    },
+    "chat": {
+      "filesystem": "read",
+    },
+    "code": {
+      "filesystem": "all",
+    },
+    "exec": {
+      "filesystem": "all",
+    },
+    "pr": {
+      "contentProvider": "github",
+      "contentSource": "github",
+      "rating": {
+        "enabled": true,
+        "errorOnReviewFail": true,
+        "maxRating": 10,
+        "minRating": 0,
+        "passThreshold": 6,
+      },
+      "requirementSource": "github",
+      "requirementsProvider": "github",
+    },
+    "review": {
+      "rating": {
+        "enabled": true,
+        "errorOnReviewFail": true,
+        "maxRating": 10,
+        "minRating": 0,
+        "passThreshold": 6,
+      },
+    },
+  },
+  "consoleLevel": 1,
+  "contentProvider": "file",
+  "contentSource": "file",
+  "debugLog": false,
+  "filesystem": "none",
+  "includeCurrentDateAfterGuidelines": false,
+  "llm": {
+    "configuration": {
+      "temperature": 0.7,
+    },
+    "model": "gpt-5.4",
+    "type": "openai",
+  },
+  "projectGuidelines": ".gsloth.guidelines.md",
+  "projectReviewInstructions": ".gsloth.review.md",
+  "requirementSource": "file",
+  "requirementsProvider": "file",
+  "streamOutput": true,
+  "streamSessionInferenceLog": true,
+  "useColour": true,
+  "writeBinaryOutputsToFile": true,
+  "writeOutputToFile": true,
+}
+`;

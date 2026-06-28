@@ -456,6 +456,85 @@ describe('config', async () => {
 
       expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
     });
+
+    it('Should pre-map deprecated contentProvider to contentSource and warn (B3)', async () => {
+      const jsonConfig = {
+        llm: { type: 'vertexai' },
+        contentProvider: 'github',
+        commands: { pr: { requirementsProvider: 'jira' } },
+      } as unknown as RawGthConfig;
+
+      fsMock.existsSync.mockImplementation((path: string) => {
+        return path && path.includes('.gsloth.config.json');
+      });
+      fsMock.readFileSync.mockImplementation((path: string) => {
+        if (path && path.includes('.gsloth.config.json')) return JSON.stringify(jsonConfig);
+        return '';
+      });
+      fileUtilsMock.getGslothConfigReadPath.mockImplementation((filename: string) => {
+        return `/mock/read/${filename}`;
+      });
+
+      vi.doMock('#src/providers/vertexai.js', () => ({
+        processJsonConfig: vi.fn().mockResolvedValue({ type: 'vertexai' }),
+        postProcessJsonConfig: undefined,
+      }));
+
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({});
+
+      // Deprecated names resolve to canonical, and the deprecated runtime fields stay
+      // populated from canonical (kept for the wide reader blast radius).
+      expect(config.contentSource).toBe('github');
+      expect(config.contentProvider).toBe('github');
+      expect(config.commands?.pr?.requirementSource).toBe('jira');
+      expect(config.commands?.pr?.requirementsProvider).toBe('jira');
+
+      // A deprecation warning is emitted per occurrence (root + per-command).
+      expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
+        expect.stringContaining('"contentProvider"')
+      );
+      expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
+        expect.stringContaining('"requirementsProvider"')
+      );
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+    });
+
+    it('Should fail with a path-scoped error and exit on schema type mismatch (B1)', async () => {
+      const jsonConfig = {
+        llm: { type: 'vertexai' },
+        commands: { api: { port: '3000' } },
+      } as unknown as RawGthConfig;
+
+      fsMock.existsSync.mockImplementation((path: string) => {
+        return path && path.includes('.gsloth.config.json');
+      });
+      fsMock.readFileSync.mockImplementation((path: string) => {
+        if (path && path.includes('.gsloth.config.json')) return JSON.stringify(jsonConfig);
+        return '';
+      });
+      fileUtilsMock.getGslothConfigReadPath.mockImplementation((filename: string) => {
+        return `/mock/read/${filename}`;
+      });
+
+      vi.doMock('#src/providers/vertexai.js', () => ({
+        processJsonConfig: vi.fn().mockResolvedValue({ type: 'vertexai' }),
+        postProcessJsonConfig: undefined,
+      }));
+
+      const { initConfig } = await import('#src/config.js');
+      try {
+        // The mocked exit() does not stop execution, so guard the subsequent throw.
+        await initConfig({});
+      } catch {
+        // Expected: downstream code may throw after the mocked exit(1).
+      }
+
+      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+        expect.stringContaining('commands.api.port')
+      );
+      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+    });
   });
 
   describe('global config layer (CFG-3)', () => {

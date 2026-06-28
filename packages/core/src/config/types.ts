@@ -1,0 +1,509 @@
+/**
+ * @packageDocumentation
+ * Gaunt Sloth configuration types. Extracted verbatim from the former `config.ts`
+ * god-file; the public type surface is unchanged. The shell/dev-tools policy types
+ * live in `./shell-policy.ts`; defaults in `./defaults.ts`; the loader in `./loader.ts`.
+ */
+import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
+import type { BaseToolkit, StructuredToolInterface } from '@langchain/core/tools';
+import type { StatusLevel } from '#src/core/types.js';
+import type { GthDevToolsConfig } from '#src/config/shell-policy.js';
+
+/**
+ * Shared per-command tooling configuration (the knobs every actionable command carries).
+ * Reused across the per-command types in {@link GthConfig.commands} and by
+ * {@link PrCommandConfig}. Type-level dedupe only — no runtime/behaviour change.
+ *
+ * NOTE: `commands.api` intentionally does NOT use this shape (it only has
+ * `filesystem`/`builtInTools` plus `port`/`cors`), so it stays bespoke below.
+ */
+export interface CommandToolingConfig {
+  filesystem?: string[] | 'all' | 'read' | 'none';
+  builtInTools?: string[];
+  customTools?: CustomToolsConfig | false;
+  /** See {@link GthConfig.allowedTools}. */
+  allowedTools?: string[];
+  binaryFormats?: false | BinaryFormatConfig[];
+}
+
+/**
+ * This is a processed Gaunt Sloth config ready to be passed down into components.
+ *
+ * Default values can be found in {@link DEFAULT_CONFIG}
+ */
+export interface GthConfig {
+  llm: BaseChatModel;
+  /**
+   * Binary format support configuration.
+   * Disabled by default unless explicitly configured.
+   */
+  binaryFormats?: false | BinaryFormatConfig[];
+  /**
+   * Content Provider. Provider used to fetch content (usually diff) for `review` or `pr` command.
+   *
+   * {@link DEFAULT_CONFIG#contentProvider}
+   */
+  /**
+   * Content source type. Preferred name for contentProvider.
+   */
+  contentSource: string;
+  /**
+   * Requirement source type. Preferred name for requirementsProvider.
+   */
+  requirementSource: string;
+  /**
+   * @deprecated Use contentSource instead
+   */
+  contentProvider: string;
+  /**
+   * @deprecated Use requirementSource instead
+   */
+  requirementsProvider: string;
+  /**
+   * Path to project-specific guidelines.
+   * The default is `.gsloth.guidelines.md`; this config may be used to point Gaunt Sloth to a different file,
+   * for example, to AGENTS.md
+   */
+  projectGuidelines: string;
+  /**
+   * Separate identity profile.
+   * May include separate identity, guidelines and command protocol,
+   * making gsloth behave as an agent different from default profile behaviour.
+   * for example, `devops` profile to detect changes such as properties and environment variables.
+   * Custom config can still win over this one.
+   * This setting requires .gsloth/.gsloth-settings directory to exist.
+   */
+  identityProfile?: string;
+  /**
+   * Whether to include the current date in the project review instructions or not.
+   */
+  includeCurrentDateAfterGuidelines: boolean;
+  /**
+   * Organisation name, locale and timezone.
+   * Only used with {@link includeCurrentDateAfterGuidelines}.
+   * timeZone and locale should be in format supported by Intl.DateTimeFormat
+   */
+  organization?: {
+    name?: string;
+    locale?: string;
+    timezone?: string;
+  };
+  projectReviewInstructions: string;
+  /**
+   * If true, only use user-provided system prompts. Do not fall back to the
+   * bundled `.gsloth.*.md` prompt files shipped with the installation.
+   * This applies to all `.gsloth.*.md` files (backstory, system, chat, code, guidelines, review).
+   */
+  noDefaultPrompts?: boolean;
+  filesystem: string[] | 'all' | 'read' | 'none';
+  builtInTools?: string[];
+  tools?: StructuredToolInterface[] | BaseToolkit[] | ServerTool[];
+  /**
+   * Restrict the agent to this allow-list of tool names, applied after every tool source
+   * (filesystem, built-in, custom, MCP, A2A, and `tools`) is resolved. This is the only knob
+   * that can gate MCP and A2A tools, which have no per-source override of their own.
+   *
+   * - omitted/undefined: no filtering, all resolved tools remain available.
+   * - non-empty array: keep only tools whose name is in the list.
+   * - empty array `[]`: disable every tool. MCP servers are not even contacted (no OAuth),
+   *   which is useful for agents that only need to reason over the prompt (e.g. the review
+   *   agent).
+   *
+   * Can be overridden per command via `commands.<command>.allowedTools`.
+   */
+  allowedTools?: string[];
+  /**
+   * Middleware configuration for LangChain v1.
+   * Middleware provides hooks to intercept and control agent execution at critical points.
+   *
+   * Middleware can be:
+   * - Predefined middleware (string or config object) - works in both JSON and JS configs
+   * - Custom middleware objects - only available in JS configs
+   *
+   * Example (JSON config):
+   * ```json
+   * {
+   *   "middleware": [
+   *     "summarization",
+   *     { "name": "anthropic-prompt-caching", "ttl": "5m" }
+   *   ]
+   * }
+   * ```
+   *
+   * Example (JS config):
+   * ```js
+   * {
+   *   middleware: [
+   *     "summarization",
+   *     { beforeModel: (state) => { /* custom logic *\/ return state; } }
+   *   ]
+   * }
+   * ```
+   *
+   * Available predefined middleware:
+   * - `anthropic-prompt-caching`: Reduces API costs by caching prompts (Anthropic only)
+   * - `summarization`: Condenses conversation history when approaching token limits
+   */
+  middleware?: unknown[];
+  /**
+   * Stream output. Some models do not support streaming. Set value to `false` for them.
+   *
+   * {@link DEFAULT_CONFIG#streamOutput}
+   */
+  streamOutput: boolean;
+  /**
+   * Should the output be written to md file.
+   * (e.g. gth_2025-07-26_22-59-06_REVIEW.md).
+   * Can be set to false with `-wn` or `-w0`
+   * Can be set to a specific filename or path by passing a string:
+   * - Bare filenames (e.g. `"review.md"`) are placed in `.gsloth/` when it exists, otherwise project root
+   * - Paths with separators (e.g. `"./review.md"` or `"reviews/last.md"`) are always relative to project root
+   * Please note the string does not accept absolute path, but allows to exit project with `..` if necessary.
+   */
+  writeOutputToFile: boolean | string;
+  /**
+   * Whether binary model outputs should be written to files instead of printed inline.
+   * When enabled, supported binary content blocks are materialized as `gth_*.<ext>` files.
+   */
+  writeBinaryOutputsToFile: boolean;
+  /**
+   * Use colour in output
+   */
+  useColour: boolean;
+  /**
+   * Stream session log instead of writing it when inference streaming is complete.
+   * (only works when {@link streamOutput} is true)
+   */
+  streamSessionInferenceLog: boolean;
+  /**
+   * Allow inference to be interrupted with esc. Only has an effect in TTY mode.
+   */
+  canInterruptInferenceWithEsc: boolean;
+  /**
+   * Log messages and events to gaunt-sloth.log,
+   * use llm.verbose or `gth --verbose` as more intrusive option, setting verbose to LangChain / LangGraph
+   */
+  debugLog?: boolean;
+  /**
+   * LangGraph recursion limit for an agent run — the maximum number of
+   * super-steps (model ↔ tool round-trips) before the graph throws. Defaults to
+   * 1000, which suits long coding chains; embodied / tight-loop consumers can
+   * lower it so a stuck run fails fast and visibly instead of grinding.
+   */
+  recursionLimit?: number;
+  /**
+   * Console logging level. Only messages at or above this level will be displayed.
+   * Valid values: 'debug', 'info', 'display', 'success', 'warning', 'error', 'stream'
+   * Default: 'info' (not debug)
+   */
+  consoleLevel?: StatusLevel;
+  customTools?: CustomToolsConfig;
+  requirementSourceConfig?: Record<string, unknown>;
+  contentSourceConfig?: Record<string, unknown>;
+  /** @deprecated Use requirementSourceConfig instead */
+  requirementsProviderConfig?: Record<string, unknown>;
+  /** @deprecated Use contentSourceConfig instead */
+  contentProviderConfig?: Record<string, unknown>;
+  /**
+   * MCP (Model Context Protocol) server connections.
+   * Allows connecting to external MCP servers including those requiring OAuth.
+   * @see {@link https://modelcontextprotocol.io/}
+   */
+  mcpServers?: Record<string, unknown>;
+  /**
+   * A2A (Agent-to-Agent) protocol agents configuration.
+   * Enables delegation of tasks to external AI agents.
+   * Each agent becomes available as a tool named `a2a_agent_<agentId>`.
+   * @experimental This feature is experimental and may change.
+   * @see {@link https://a2a-protocol.org/}
+   */
+  a2aAgents?: Record<string, unknown>;
+  builtInToolsConfig?: BuiltInToolsConfig;
+  aiignore?: {
+    enabled?: boolean;
+    patterns?: string[];
+  };
+  commands?: {
+    pr?: PrCommandConfig;
+    review?: CommandToolingConfig & {
+      contentSource?: string;
+      requirementSource?: string;
+      /** @deprecated Use requirementSource instead */
+      requirementsProvider?: string;
+      /** @deprecated Use contentSource instead */
+      contentProvider?: string;
+      rating?: RatingConfig;
+    };
+    ask?: CommandToolingConfig & {
+      /**
+       * Dev tools (run commands etc.) for `ask --write` runs. Normally inherited from
+       * `commands.exec` / `commands.code` by the `--write` flag rather than set directly.
+       */
+      devTools?: GthDevToolsConfig;
+    };
+    chat?: CommandToolingConfig;
+    code?: CommandToolingConfig & {
+      devTools?: GthDevToolsConfig;
+    };
+    /**
+     * `gth exec` — prompt-as-script runtime. Like `code`, an exec run may need to actually
+     * do the job (read/write files, run commands), so it carries the same tool/filesystem knobs.
+     */
+    exec?: CommandToolingConfig & {
+      devTools?: GthDevToolsConfig;
+    };
+    api?: {
+      filesystem?: string[] | 'all' | 'read' | 'none';
+      builtInTools?: string[];
+      port?: number;
+      cors?: {
+        allowOrigin?: string;
+        allowMethods?: string;
+        allowHeaders?: string;
+      };
+    };
+  };
+  modelDisplayName?: string;
+  /**
+   * Transient (runtime-only) extra filesystem roots the agent is allowed to read/write for
+   * THIS run, in addition to the cwd sandbox. Populated by `gth exec --allow-dir <path>`
+   * (repeatable); never persisted to a config file. When set, the deep agent's
+   * {@link FilesystemBackend} drops `virtualMode` (so absolute paths and `..` resolve on the
+   * real filesystem) and access is constrained to cwd + these dirs via permission allow-rules.
+   * Removing the cwd-only sandbox is a guardrail removal, so callers announce it loudly.
+   */
+  allowDirs?: string[];
+  /**
+   * Transient (runtime-only) flag set by `gth ask --write`: opt `ask` into the same
+   * "do-the-job" filesystem + dev tools that `exec`/`code` get, so a question can act
+   * (read/write files, run commands) rather than only chat. Never persisted to a config file.
+   */
+  askWriteMode?: boolean;
+}
+
+/**
+ * `gth pr` command configuration.
+ *
+ * Declared as a named interface (rather than inline in {@link GthConfig}) so that downstream
+ * packages can extend it with their own command features via TypeScript module augmentation
+ * (`declare module '@gaunt-sloth/core/config.js'`), keeping those features' types out of core.
+ * For example, the assistant package merges its PR discovery config (`discovery`) into this
+ * interface.
+ */
+export interface PrCommandConfig extends CommandToolingConfig {
+  contentSource?: string;
+  requirementSource?: string;
+  /** @deprecated Use contentSource instead */
+  contentProvider?: string;
+  /** @deprecated Use requirementSource instead */
+  requirementsProvider?: string;
+  logWorkForReviewInSeconds?: number;
+  rating?: RatingConfig;
+}
+
+/**
+ * Server tools such as Anthropic Web Search.
+ * These tools are meant to be magic objects like
+ * `{"type": "web_search_20250305", "name": "web_search", "max_uses": 10}`,
+ * AI Provider does the rest of the magic on their side.
+ */
+export interface ServerTool extends Record<string, unknown> {
+  type: string;
+  name?: string;
+}
+
+/**
+ * Raw, unprocessed Gaunt Sloth config.
+ */
+export type ConsoleLevelInput =
+  | StatusLevel
+  | keyof typeof StatusLevel
+  | Lowercase<keyof typeof StatusLevel>;
+
+export interface RawGthConfig extends Omit<GthConfig, 'llm' | 'consoleLevel'> {
+  llm: LLMConfig;
+  consoleLevel?: ConsoleLevelInput;
+}
+
+export type BinaryFormatType = 'image' | 'file' | 'audio' | 'video' | 'binary';
+
+export interface BinaryFormatConfig {
+  /**
+   * The type/category of binary format.
+   */
+  type: BinaryFormatType;
+  /**
+   * List of allowed extensions for this type (without leading dot).
+   */
+  extensions: string[];
+  /**
+   * Maximum file size in bytes. Defaults to 10MB when omitted.
+   */
+  maxSize?: number;
+  /**
+   * Optional MIME type overrides for extensions not in the default mapping.
+   */
+  mimeTypes?: Record<string, string>;
+}
+
+export type CustomToolsConfig = Record<string, CustomCommandConfig>;
+export type BuiltInToolsConfig = Record<string, unknown>;
+
+/**
+ * Configuration for review rating feature.
+ * Allows configuring automated review scoring with pass/fail thresholds.
+ */
+export interface RatingConfig {
+  /**
+   * Enable or disable review rating.
+   * @default true
+   */
+  enabled?: boolean;
+  /**
+   * Minimum score (0-10) required to pass the review.
+   * @default 6
+   */
+  passThreshold?: number;
+  /**
+   * Highest allowed value on the rating scale.
+   * @default 10
+   */
+  maxRating?: number;
+  /**
+   * Lowest allowed value on the rating scale.
+   * @default 0
+   */
+  minRating?: number;
+  /**
+   * Exit with error code 1 when review fails (below threshold).
+   * When false, exits normally (code 0) regardless of rating.
+   * @default true
+   */
+  errorOnReviewFail?: boolean;
+}
+
+/**
+ * Validation checks that can be skipped for custom command parameters.
+ * Use with the `allow` property to bypass specific security checks.
+ *
+ * - `absolute-paths`: Allow absolute paths (e.g. `/dev/ttyUSB0`)
+ * - `directory-traversal`: Allow `..` in paths
+ * - `shell-injection`: Allow shell metacharacters (`|`, `&`, `;`, etc.)
+ * - `null-bytes`: Allow null bytes in values
+ */
+export type ValidationCheck =
+  | 'absolute-paths'
+  | 'directory-traversal'
+  | 'shell-injection'
+  | 'null-bytes';
+
+/**
+ * Configuration for a custom command parameter.
+ * Parameters allow the model to provide dynamic values to commands.
+ */
+export interface CustomCommandParameter {
+  /**
+   * Description of the parameter shown to the model.
+   */
+  description: string;
+  /**
+   * Optional list of validation checks to skip for this parameter's value.
+   * Use when this parameter legitimately requires values that would normally be blocked.
+   * For example, `["absolute-paths"]` allows values like `/dev/ttyUSB0` for this parameter.
+   *
+   * Available checks: `absolute-paths`, `directory-traversal`, `shell-injection`, `null-bytes`
+   */
+  allow?: ValidationCheck[];
+}
+
+/**
+ * Configuration for a custom command.
+ * Custom commands can be executed with or without parameters.
+ */
+export interface CustomCommandConfig {
+  /**
+   * The shell command to execute.
+   * Can include placeholders like ${paramName} that will be replaced with parameter values.
+   * If no placeholder is present and parameters are provided, they are appended to the command.
+   */
+  command: string;
+  /**
+   * Description of what this command does, shown to the model.
+   */
+  description: string;
+  /**
+   * Optional parameters that the model can provide when calling this command.
+   * Each parameter has a name (the key) and a description.
+   * Parameters are validated for security (no shell injection, directory traversal, etc.).
+   */
+  parameters?: Record<string, CustomCommandParameter>;
+  /**
+   * Optional timeout in seconds.
+   * When set, the command will be killed if it exceeds this duration.
+   * When omitted, no timeout is applied.
+   */
+  timeout?: number;
+}
+
+export interface LLMConfig extends Record<string, unknown> {
+  type: string;
+  model: string;
+  configuration: Record<string, unknown>;
+  apiKeyEnvironmentVariable?: string;
+}
+
+export const availableDefaultConfigs = [
+  'vertexai',
+  'anthropic',
+  'groq',
+  'deepseek',
+  'openai',
+  'google-genai',
+  'xai',
+  'openrouter',
+  'ollama',
+] as const;
+export type ConfigType = (typeof availableDefaultConfigs)[number];
+
+export interface CommandLineConfigOverrides {
+  /**
+   * Custom config path
+   */
+  customConfigPath?: string;
+  /**
+   * Set LangChain/LangGraph to verbose mode,
+   * causing LangChain/LangGraph to log many details to the console.
+   * debugLog from config.ts may be a less intrusive option.
+   */
+  verbose?: boolean;
+  /**
+   * Should the output be written to md file.
+   * (e.g. gth_2025-07-26_22-59-06_REVIEW.md).
+   * Can be set to false with `-wn` or `-w0`
+   * Can be set to a specific filename or path by passing a string:
+   * - Bare filenames (e.g. `"review.md"`) are placed in `.gsloth/` when it exists, otherwise project root
+   * - Paths with separators (e.g. `"./review.md"` or `"reviews/last.md"`) are always relative to project root
+   * Please note the string does not accept absolute path, but allows to exit project with `..` if necessary.
+   */
+  writeOutputToFile?: boolean | string;
+  /**
+   * Separate identity profile.
+   * May include separate identity, guidelines and command protocol,
+   * making gsloth behave as an agent different from default profile behaviour.
+   * for example, `devops` profile to detect changes such as properties and environment variables.
+   * Custom config can still win over this one.
+   * This setting requires .gsloth/.gsloth-settings directory to exist.
+   * Important to note that the profile directory substitutes the entire config directory,
+   * in the case if some prompt files are missing - a file from the installation directory will be used.
+   */
+  identityProfile?: string;
+  /**
+   * Interactive TUI activation override for chat/code sessions.
+   * - `true` (`--tui`): force the Ink TUI on where the terminal supports it (also overrides
+   *   the CI auto-off heuristic).
+   * - `false` (`--no-tui`): force the plain readline session.
+   * - `undefined` (default): auto-detect from the terminal.
+   * The decision itself lives in `gaunt-sloth`'s `shouldUseTui`; this only carries the flag.
+   */
+  tui?: boolean;
+}

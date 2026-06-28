@@ -11,6 +11,7 @@ import {
 } from '#src/utils/consoleUtils.js';
 import { wrapContent } from '#src/utils/llmUtils.js';
 import url from 'node:url';
+import { createJiti } from 'jiti';
 
 /**
  * Checks if .gsloth directory exists in the project root
@@ -247,11 +248,19 @@ export function readFileSyncWithMessages(
 }
 
 /**
- * Dynamically imports a module from a file path from the outside of the installation dir
+ * Dynamically imports a module from a file path from the outside of the installation dir.
+ * `.ts` modules are loaded through jiti (Node's native dynamic `import()` cannot load
+ * TypeScript), so `.gsloth.config.ts` honours the same async `configure()` contract as
+ * `.js`/`.mjs`. All other extensions use native dynamic import.
  * @returns A promise that resolves to the imported module
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function importExternalFile(filePath: string): Promise<Record<string, any>> {
+  if (filePath.endsWith('.ts')) {
+    const jiti = createJiti(import.meta.url);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return jiti.import(filePath) as Promise<Record<string, any>>;
+  }
   const configFileUrl = url.pathToFileURL(filePath).toString();
   return import(configFileUrl);
 }
