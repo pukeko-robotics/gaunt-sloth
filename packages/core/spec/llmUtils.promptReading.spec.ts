@@ -11,6 +11,7 @@ vi.mock('node:fs', () => ({
 
 vi.mock('#src/utils/systemUtils.js', () => ({
   getCurrentWorkDir: vi.fn(),
+  getProjectDir: vi.fn(),
   getUseColour: vi.fn().mockReturnValue(false),
 }));
 
@@ -31,6 +32,7 @@ describe('prompt reading functions', async () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.spyOn(systemUtils, 'getCurrentWorkDir').mockReturnValue(mockProjectDir);
+    vi.spyOn(systemUtils, 'getProjectDir').mockReturnValue(mockProjectDir);
 
     vi.mocked(fs.existsSync).mockReset();
     vi.mocked(fs.readFileSync).mockReset();
@@ -198,6 +200,7 @@ describe('prompt reading with identityProfile variations', async () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.spyOn(systemUtils, 'getCurrentWorkDir').mockReturnValue(mockProjectDir);
+    vi.spyOn(systemUtils, 'getProjectDir').mockReturnValue(mockProjectDir);
 
     vi.mocked(fs.existsSync).mockReset();
     vi.mocked(fs.readFileSync).mockReset();
@@ -309,6 +312,7 @@ describe('noDefaultPrompts behavior', async () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.spyOn(systemUtils, 'getCurrentWorkDir').mockReturnValue(mockProjectDir);
+    vi.spyOn(systemUtils, 'getProjectDir').mockReturnValue(mockProjectDir);
 
     vi.mocked(fs.existsSync).mockReset();
     vi.mocked(fs.readFileSync).mockReset();

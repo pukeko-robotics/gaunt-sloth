@@ -28,7 +28,14 @@ import {
 } from '#src/config/schema.js';
 import { getGslothConfigReadPath, importExternalFile } from '#src/utils/fileUtils.js';
 import { getGlobalGslothConfigReadPath } from '#src/utils/globalConfigUtils.js';
-import { error, exit, getCurrentWorkDir, isTTY, setUseColour } from '#src/utils/systemUtils.js';
+import {
+  error,
+  exit,
+  getCurrentWorkDir,
+  isTTY,
+  setProjectDir,
+  setUseColour,
+} from '#src/utils/systemUtils.js';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -263,6 +270,17 @@ async function applyGlobalConfigBase<T extends Record<string, unknown>>(
 }
 
 /**
+ * ORDERING INVARIANT (GS2-11): detection ({@link hasProjectConfig}/{@link hasAnyConfig}) MUST run
+ * before {@link initConfig} in a given process. Both resolve cwd-level candidates via
+ * `getGslothConfigReadPath`, which reads `getProjectDir()`; {@link initConfig} clears `projectDir`
+ * at the start of its run, so detection stays cwd-correct as long as it precedes initConfig (it
+ * does: startSession calls hasAnyConfig before any initConfig, and the ACP/agent path calls
+ * initConfig directly without detection). Calling detection AFTER an initConfig with a changed cwd
+ * in a long-lived process would read a stale projectDir (currently unreachable). If that call
+ * order is ever introduced, decouple discovery's cwd-branch from `getProjectDir()`.
+ */
+
+/**
  * Returns true when a project-level config file (json/js/mjs) exists for the given
  * overrides. Honours `customConfigPath` and the active identity profile so the check
  * matches exactly what {@link initConfig} would attempt to load.
@@ -306,11 +324,25 @@ export async function initConfig(
     );
   }
 
+  // Clear the project root BEFORE discovery. Discovery and detection must resolve against cwd,
+  // and the up-tree walk itself goes through getGslothConfigReadPath -> getProjectDir(); clearing
+  // first guarantees getProjectDir() falls back to cwd during the walk, even on a SECOND initConfig
+  // call in a long-lived process (ACP server) or across tests where a stale projectDir would
+  // otherwise poison the walk and miss the real config.
+  setProjectDir(undefined);
+
   // Discover the project config location: a customConfigPath wins outright, otherwise walk up
   // from cwd to the stop boundary (see findProjectConfigPath). Detection and loading share this
   // resolver, and the discovered dir becomes the base for the per-format cascade below.
   const discovered = findProjectConfigPath(commandLineConfigOverrides);
   const baseDir = discovered?.dir ?? getCurrentWorkDir();
+
+  // Set the project root for post-config, project-relative artifact resolution (guidelines,
+  // prompts, .gsloth-settings, outputs). up-tree and --config both set it here; a global-only /
+  // no-config run leaves it undefined so those artifacts stay cwd-bound (see getProjectDir).
+  // Safe for the in-function load below: when discovered.dir === cwd getProjectDir() is unchanged,
+  // and when it is an ancestor resolveConfigPath takes its explicit-dir branch (never getProjectDir).
+  setProjectDir(discovered?.dir);
 
   const jsonConfigPath =
     commandLineConfigOverrides.customConfigPath ??

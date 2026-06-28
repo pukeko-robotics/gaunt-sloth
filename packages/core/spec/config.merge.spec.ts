@@ -24,6 +24,8 @@ const systemUtilsMock = {
   exit: vi.fn(),
   error: vi.fn(),
   getCurrentWorkDir: vi.fn(),
+  getProjectDir: vi.fn(),
+  setProjectDir: vi.fn(),
   getInstallDir: vi.fn(),
   setUseColour: vi.fn(),
   isTTY: vi.fn(),
@@ -55,6 +57,7 @@ describe('Config merging', () => {
     vi.resetAllMocks();
     ChatAnthropicMock.mockClear();
     systemUtilsMock.getCurrentWorkDir.mockReturnValue('/mock/current/dir');
+    systemUtilsMock.getProjectDir.mockReturnValue('/mock/current/dir');
     systemUtilsMock.getInstallDir.mockReturnValue('/mock/install/dir');
     systemUtilsMock.isTTY.mockReturnValue(true);
   });
