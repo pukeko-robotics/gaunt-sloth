@@ -63,10 +63,10 @@ describe('Config merging', () => {
   });
 
   describe('pr command config merging', () => {
-    it('should preserve rating config when user overrides contentProvider', async () => {
+    it('should preserve rating config when user overrides contentSource', async () => {
       mockAnthropic();
 
-      // User config only overrides contentProvider
+      // User config only overrides contentSource
       const userConfig: Partial<RawGthConfig> = {
         llm: {
           type: 'anthropic',
@@ -75,7 +75,7 @@ describe('Config merging', () => {
         },
         commands: {
           pr: {
-            contentProvider: 'jira',
+            contentSource: 'jira',
           },
         },
       };
@@ -87,8 +87,8 @@ describe('Config merging', () => {
       const { initConfig } = await import('#src/config.js');
       const config = await initConfig({});
 
-      // Verify that contentProvider is overridden
-      expect(config.commands?.pr?.contentProvider).toBe('jira');
+      // Verify that contentSource is overridden
+      expect(config.commands?.pr?.contentSource).toBe('jira');
 
       // Verify that rating config is preserved from defaults
       expect(config.commands?.pr?.rating).toBeDefined();
@@ -98,8 +98,8 @@ describe('Config merging', () => {
       expect(config.commands?.pr?.rating?.maxRating).toBe(10);
       expect(config.commands?.pr?.rating?.errorOnReviewFail).toBe(true);
 
-      // Verify that requirementsProvider is preserved from defaults
-      expect(config.commands?.pr?.requirementsProvider).toBe('github');
+      // Verify that requirementSource is preserved from defaults
+      expect(config.commands?.pr?.requirementSource).toBe('github');
     });
 
     it('should allow user to override rating config while preserving other defaults', async () => {
@@ -137,9 +137,9 @@ describe('Config merging', () => {
       expect(config.commands?.pr?.rating?.maxRating).toBe(10);
       expect(config.commands?.pr?.rating?.errorOnReviewFail).toBe(true);
 
-      // Verify that contentProvider is preserved from defaults
-      expect(config.commands?.pr?.contentProvider).toBe('github');
-      expect(config.commands?.pr?.requirementsProvider).toBe('github');
+      // Verify that contentSource is preserved from defaults
+      expect(config.commands?.pr?.contentSource).toBe('github');
+      expect(config.commands?.pr?.requirementSource).toBe('github');
     });
 
     it('should handle complex nested override scenario', async () => {
@@ -154,8 +154,8 @@ describe('Config merging', () => {
         },
         commands: {
           pr: {
-            contentProvider: 'jira',
-            requirementsProvider: 'jira',
+            contentSource: 'jira',
+            requirementSource: 'jira',
             filesystem: ['read'],
             rating: {
               passThreshold: 7,
@@ -173,8 +173,8 @@ describe('Config merging', () => {
       const config = await initConfig({});
 
       // Verify user overrides
-      expect(config.commands?.pr?.contentProvider).toBe('jira');
-      expect(config.commands?.pr?.requirementsProvider).toBe('jira');
+      expect(config.commands?.pr?.contentSource).toBe('jira');
+      expect(config.commands?.pr?.requirementSource).toBe('jira');
       expect(config.commands?.pr?.filesystem).toEqual(['read']);
       expect(config.commands?.pr?.rating?.passThreshold).toBe(7);
       expect(config.commands?.pr?.rating?.errorOnReviewFail).toBe(false);
@@ -187,10 +187,10 @@ describe('Config merging', () => {
   });
 
   describe('review command config merging', () => {
-    it('should preserve rating config when user overrides contentProvider', async () => {
+    it('should preserve rating config when user overrides contentSource', async () => {
       mockAnthropic();
 
-      // User config only overrides contentProvider
+      // User config only overrides contentSource
       const userConfig: Partial<RawGthConfig> = {
         llm: {
           type: 'anthropic',
@@ -199,8 +199,8 @@ describe('Config merging', () => {
         },
         commands: {
           review: {
-            contentProvider: 'file',
-            requirementsProvider: 'jira',
+            contentSource: 'file',
+            requirementSource: 'jira',
           },
         },
       };
@@ -213,8 +213,8 @@ describe('Config merging', () => {
       const config = await initConfig({});
 
       // Verify that providers are overridden
-      expect(config.commands?.review?.contentProvider).toBe('file');
-      expect(config.commands?.review?.requirementsProvider).toBe('jira');
+      expect(config.commands?.review?.contentSource).toBe('file');
+      expect(config.commands?.review?.requirementSource).toBe('jira');
 
       // Verify that rating config is preserved from defaults
       expect(config.commands?.review?.rating).toBeDefined();
@@ -314,8 +314,8 @@ describe('Config merging', () => {
       const config = await initConfig({});
 
       // Verify that all command defaults are preserved
-      expect(config.commands?.pr?.contentProvider).toBe('github');
-      expect(config.commands?.pr?.requirementsProvider).toBe('github');
+      expect(config.commands?.pr?.contentSource).toBe('github');
+      expect(config.commands?.pr?.requirementSource).toBe('github');
       expect(config.commands?.pr?.rating?.enabled).toBe(true);
       expect(config.commands?.review?.rating?.enabled).toBe(true);
       expect(config.commands?.code?.filesystem).toBe('all');
@@ -385,8 +385,8 @@ describe('Config merging', () => {
       const config = await initConfig({});
 
       // Verify that all defaults are preserved
-      expect(config.commands?.pr?.contentProvider).toBe('github');
-      expect(config.commands?.pr?.requirementsProvider).toBe('github');
+      expect(config.commands?.pr?.contentSource).toBe('github');
+      expect(config.commands?.pr?.requirementSource).toBe('github');
       expect(config.commands?.pr?.rating?.enabled).toBe(true);
       expect(config.commands?.review?.rating?.enabled).toBe(true);
     });

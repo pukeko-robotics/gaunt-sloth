@@ -105,8 +105,6 @@ const BASE_GTH_CONFIG: Pick<
   GthConfig,
   | 'contentSource'
   | 'requirementSource'
-  | 'contentProvider'
-  | 'requirementsProvider'
   | 'projectGuidelines'
   | 'projectReviewInstructions'
   | 'streamOutput'
@@ -120,8 +118,6 @@ const BASE_GTH_CONFIG: Pick<
 > = {
   contentSource: 'file',
   requirementSource: 'file',
-  contentProvider: 'file',
-  requirementsProvider: 'file',
   projectGuidelines: '.gsloth.guidelines.md',
   projectReviewInstructions: '.gsloth.review.md',
   streamOutput: false,
@@ -129,8 +125,6 @@ const BASE_GTH_CONFIG: Pick<
     pr: {
       contentSource: 'github',
       requirementSource: 'github',
-      contentProvider: 'github',
-      requirementsProvider: 'github',
     },
   },
   filesystem: 'none',
@@ -511,7 +505,6 @@ describe('reviewModule', () => {
         ...mockConfig,
         tools: undefined,
         contentSource: 'file',
-        contentProvider: 'file',
         commands: { review: { contentSource: 'file' } },
       } as unknown as GthConfig;
 

@@ -134,18 +134,18 @@ export async function runPrDiscovery(config: GthConfig): Promise<PrDiscoveryResu
     prMetadata: '',
   };
 
-  const contentProvider = config.commands?.pr?.contentProvider ?? config.contentProvider;
+  const contentSource = config.commands?.pr?.contentSource ?? config.contentSource;
   if (discoveryConfig?.deterministicDiff !== false) {
-    if (contentProvider !== 'github') {
+    if (contentSource !== 'github') {
       // The deterministic fast path uses `gh pr diff`, which only makes sense for the GitHub
-      // content provider. For any other provider, skip it (rather than emitting a spurious gh
+      // content source. For any other source, skip it (rather than emitting a spurious gh
       // failure warning) and let the discovery agent fetch the diff via its tools.
       debugLog(
-        `Skipped the deterministic gh diff fetch because the content provider is "${contentProvider}", not "github".`
+        `Skipped the deterministic gh diff fetch because the content source is "${contentSource}", not "github".`
       );
     } else {
       try {
-        const diff = await getGhPrDiff(getGithubContentProviderConfig(config), undefined);
+        const diff = await getGhPrDiff(getGithubContentSourceConfig(config), undefined);
         state.diff = diff ?? '';
         if (state.diff) {
           displayInfo('Retrieved current-branch PR diff with gh.');
@@ -159,7 +159,7 @@ export async function runPrDiscovery(config: GthConfig): Promise<PrDiscoveryResu
   }
 
   try {
-    const prMetadata = await getGhPrView(getGithubContentProviderConfig(config), undefined);
+    const prMetadata = await getGhPrView(getGithubContentSourceConfig(config), undefined);
     state.prMetadata = prMetadata ?? '';
     if (state.prMetadata) {
       const prNumber = extractGithubPrNumber(state.prMetadata);
@@ -172,11 +172,11 @@ export async function runPrDiscovery(config: GthConfig): Promise<PrDiscoveryResu
     }
   } catch (error) {
     const message = `Could not retrieve current-branch PR metadata: ${error instanceof Error ? error.message : String(error)}`;
-    // The metadata fetch (gh pr view) still runs for non-github content providers, because a
+    // The metadata fetch (gh pr view) still runs for non-github content sources, because a
     // GitHub PR can legitimately be reviewed with a non-github diff source. But in a fully
     // non-github setup a failure here is expected noise, so log it at debug level rather than
     // warning - mirroring how the deterministic diff path stays quiet off GitHub.
-    if (contentProvider === 'github') {
+    if (contentSource === 'github') {
       displayWarning(message);
     } else {
       debugLog(message);
@@ -306,7 +306,7 @@ function createPrDiscoveryTools(
   const ghPr = tool(
     async ({ prId }: z.infer<typeof GhPrArgsSchema>): Promise<string> => {
       try {
-        return (await getGhPrView(getGithubContentProviderConfig(config), prId)) ?? '';
+        return (await getGhPrView(getGithubContentSourceConfig(config), prId)) ?? '';
       } catch (error) {
         // Return the failure as text rather than throwing, so a single failed fetch (e.g. no PR
         // for the current branch) lets the model adapt instead of aborting the whole discovery
@@ -326,7 +326,7 @@ function createPrDiscoveryTools(
     async ({ prId }: z.infer<typeof GhDiffArgsSchema>): Promise<string> => {
       let diff: string;
       try {
-        diff = (await getGhPrDiff(getGithubContentProviderConfig(config), prId)) ?? '';
+        diff = (await getGhPrDiff(getGithubContentSourceConfig(config), prId)) ?? '';
       } catch (error) {
         // Surface the failure as text instead of throwing so the discovery run continues and the
         // model can try another approach - consistent with gh_pr/gh_issue.
@@ -354,7 +354,7 @@ function createPrDiscoveryTools(
 
   const ghIssue = tool(
     async ({ issueId }: z.infer<typeof GhIssueArgsSchema>): Promise<string> => {
-      const issue = await getGhIssue(getGithubRequirementsProviderConfig(config), issueId);
+      const issue = await getGhIssue(getGithubRequirementSourceConfig(config), issueId);
       if (issue) {
         return issue;
       }
@@ -374,55 +374,46 @@ function createPrDiscoveryTools(
   return [setDiff, setRequirements, ghPr, ghDiff, ghIssue];
 }
 
-function getProviderConfig(config: unknown): ProviderConfig | null {
+function getSourceConfig(config: unknown): ProviderConfig | null {
   return config && typeof config === 'object' ? (config as ProviderConfig) : null;
 }
 
-function getGithubContentProviderConfig(config: GthConfig): ProviderConfig | null {
-  return getProviderConfig(
-    config.contentSourceConfig?.github ?? config.contentProviderConfig?.github
-  );
+function getGithubContentSourceConfig(config: GthConfig): ProviderConfig | null {
+  return getSourceConfig(config.contentSourceConfig?.github);
 }
 
-function getGithubRequirementsProviderConfig(config: GthConfig): ProviderConfig | null {
-  return getProviderConfig(
-    config.requirementSourceConfig?.github ?? config.requirementsProviderConfig?.github
-  );
+function getGithubRequirementSourceConfig(config: GthConfig): ProviderConfig | null {
+  return getSourceConfig(config.requirementSourceConfig?.github);
 }
 
-function getJiraRequirementsProviderConfig(config: GthConfig): ProviderConfig | null {
+function getJiraRequirementSourceConfig(config: GthConfig): ProviderConfig | null {
   // builtInToolsConfig.jira takes precedence because it is the canonical Jira credential location
-  // (shared with the Jira MCP/built-in tooling); the requirementSource/requirementsProvider
-  // entries are the older provider-scoped fallbacks. If a user sets both with different cloudIds,
-  // the deterministic fast path uses the built-in config - keep them in sync to avoid surprises.
-  return getProviderConfig(
-    config.builtInToolsConfig?.jira ??
-      config.requirementSourceConfig?.jira ??
-      config.requirementsProviderConfig?.jira
-  );
+  // (shared with the Jira MCP/built-in tooling); the requirementSource entry is the older
+  // source-scoped fallback. If a user sets both with different cloudIds, the deterministic fast
+  // path uses the built-in config - keep them in sync to avoid surprises.
+  return getSourceConfig(config.builtInToolsConfig?.jira ?? config.requirementSourceConfig?.jira);
 }
 
 /**
  * Deterministically resolve requirements from PR metadata, using a fast path that matches
- * the configured requirements provider. Falls back to '' when nothing is found, leaving the
+ * the configured requirement source. Falls back to '' when nothing is found, leaving the
  * discovery agent to resolve requirements.
  */
 async function discoverRequirementsFromPrMetadata(
   config: GthConfig,
   prMetadata: string
 ): Promise<string> {
-  const requirementsProvider =
-    config.commands?.pr?.requirementsProvider ?? config.requirementsProvider;
+  const requirementSource = config.commands?.pr?.requirementSource ?? config.requirementSource;
 
-  if (requirementsProvider === 'jira' || requirementsProvider === 'jira-legacy') {
+  if (requirementSource === 'jira' || requirementSource === 'jira-legacy') {
     const issueKey = extractJiraIssueKey(prMetadata);
     if (!issueKey) {
       return '';
     }
-    const jiraConfig = getJiraRequirementsProviderConfig(config);
+    const jiraConfig = getJiraRequirementSourceConfig(config);
     try {
       const requirements =
-        (requirementsProvider === 'jira-legacy'
+        (requirementSource === 'jira-legacy'
           ? await getJiraIssueLegacy(jiraConfig, issueKey)
           : await getJiraIssue(jiraConfig, issueKey)) ?? '';
       if (requirements) {
@@ -448,7 +439,7 @@ async function discoverRequirementsFromPrMetadata(
     return '';
   }
   const requirements =
-    (await getGhIssue(getGithubRequirementsProviderConfig(config), requirementsIssueRef)) ?? '';
+    (await getGhIssue(getGithubRequirementSourceConfig(config), requirementsIssueRef)) ?? '';
   if (requirements) {
     displayInfo(
       `Discovered requirements from GitHub issue ${formatGithubIssueRef(requirementsIssueRef)} linked in the PR description.`

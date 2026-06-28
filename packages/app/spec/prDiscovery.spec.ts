@@ -64,8 +64,8 @@ describe('runPrDiscovery', () => {
     llm: { invoke: vi.fn() } as unknown as BaseChatModel,
     projectGuidelines: '.gsloth.guidelines.md',
     projectReviewInstructions: '.gsloth.review.md',
-    contentProvider: 'github',
-    requirementsProvider: 'github',
+    contentSource: 'github',
+    requirementSource: 'github',
     streamOutput: false,
     filesystem: 'none',
     useColour: false,
@@ -74,12 +74,10 @@ describe('runPrDiscovery', () => {
     streamSessionInferenceLog: true,
     canInterruptInferenceWithEsc: true,
     includeCurrentDateAfterGuidelines: false,
-    contentSource: 'github',
-    requirementSource: 'github',
     commands: {
       pr: {
-        contentProvider: 'github',
-        requirementsProvider: 'github',
+        contentSource: 'github',
+        requirementSource: 'github',
         discovery: {
           enabled: true,
           deterministicDiff: true,
@@ -91,13 +89,12 @@ describe('runPrDiscovery', () => {
 
   const jiraConfig = {
     ...config,
-    requirementsProvider: 'jira',
     requirementSource: 'jira',
     builtInToolsConfig: { jira: { cloudId: 'cloud-1' } },
     commands: {
       pr: {
-        contentProvider: 'github',
-        requirementsProvider: 'jira',
+        contentSource: 'github',
+        requirementSource: 'jira',
         discovery: { enabled: true, deterministicDiff: true },
       },
       review: {},
@@ -307,11 +304,11 @@ Requirements: https://company.atlassian.net/browse/ABC-123`);
 
     const legacyConfig = {
       ...jiraConfig,
-      requirementsProvider: 'jira-legacy',
+      requirementSource: 'jira-legacy',
       commands: {
         pr: {
-          contentProvider: 'github',
-          requirementsProvider: 'jira-legacy',
+          contentSource: 'github',
+          requirementSource: 'jira-legacy',
           discovery: { enabled: true, deterministicDiff: true },
         },
         review: {},
@@ -363,7 +360,7 @@ No linked ticket here`;
         ...config,
         ...extra,
         commands: {
-          pr: { contentProvider: 'github', requirementsProvider: 'github', discovery },
+          pr: { contentSource: 'github', requirementSource: 'github', discovery },
           review: {},
         },
       }) as Partial<GthConfig> as GthConfig;
@@ -600,9 +597,9 @@ This tightens the requirements validation, see #42`);
   it('skips the deterministic gh diff fetch when the content provider is not github', async () => {
     const textContentConfig = {
       ...config,
-      contentProvider: 'text',
+      contentSource: 'text',
       commands: {
-        pr: { contentProvider: 'text', requirementsProvider: 'github', auto: { enabled: true } },
+        pr: { contentSource: 'text', requirementSource: 'github', auto: { enabled: true } },
         review: {},
       },
     } as Partial<GthConfig> as GthConfig;
@@ -623,9 +620,9 @@ No linked ticket here`);
   it('downgrades the metadata-fetch failure to debug when the content provider is not github', async () => {
     const textContentConfig = {
       ...config,
-      contentProvider: 'text',
+      contentSource: 'text',
       commands: {
-        pr: { contentProvider: 'text', requirementsProvider: 'github', auto: { enabled: true } },
+        pr: { contentSource: 'text', requirementSource: 'github', auto: { enabled: true } },
         review: {},
       },
     } as Partial<GthConfig> as GthConfig;

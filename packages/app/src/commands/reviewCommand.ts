@@ -1,16 +1,16 @@
 import { Command, Option } from 'commander';
 import { getStringFromStdin } from '@gaunt-sloth/core/utils/systemUtils.js';
 import {
-  getCommandProviderInput,
-  getEffectiveContentProvider,
-  getEffectiveRequirementsProvider,
+  getCommandSourceInput,
+  getEffectiveContentSource,
+  getEffectiveRequirementSource,
   getReviewSystemPrompt,
 } from '#src/commands/commandIntrospection.js';
 import {
-  REQUIREMENTS_PROVIDERS,
-  CONTENT_PROVIDERS,
-  type RequirementsProviderType,
-  type ContentProviderType,
+  REQUIREMENTS_SOURCES,
+  CONTENT_SOURCES,
+  type RequirementSourceType,
+  type ContentSourceType,
 } from '#src/commands/commandUtils.js';
 import { CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
 import { wrapContent } from '@gaunt-sloth/core/utils/llmUtils.js';
@@ -20,8 +20,8 @@ import { readMultipleFilesFromProjectDir } from '@gaunt-sloth/review/utils/fileU
 interface ReviewCommandOptions {
   file?: string[];
   requirements?: string;
-  requirementsProvider?: RequirementsProviderType;
-  contentProvider?: ContentProviderType;
+  requirementsSource?: RequirementSourceType;
+  contentSource?: ContentSourceType;
   message?: string;
 }
 
@@ -32,12 +32,9 @@ export function reviewCommand(
   program
     .command('review')
     .description('Review provided diff or other content')
-    .argument(
-      '[contentId]',
-      'Optional content ID argument to retrieve content with content provider'
-    )
+    .argument('[contentId]', 'Optional content ID argument to retrieve content with content source')
     .alias('r')
-    // TODO add provider to get results of git --no-pager diff
+    // TODO add source to get results of git --no-pager diff
     .option(
       '-f, --file [files...]',
       'Input files. Content of these files will be added BEFORE the diff, but after requirements'
@@ -46,13 +43,13 @@ export function reviewCommand(
     .option('-r, --requirements <requirements>', 'Requirements for this review.')
     .addOption(
       new Option(
-        '-p, --requirements-provider <requirementsProvider>',
-        'Requirements provider for this review.'
-      ).choices(Object.keys(REQUIREMENTS_PROVIDERS))
+        '-p, --requirements-source <requirementSource>',
+        'Requirement source for this review.'
+      ).choices(Object.keys(REQUIREMENTS_SOURCES))
     )
     .addOption(
-      new Option('--content-provider <contentProvider>', 'Content  provider').choices(
-        Object.keys(CONTENT_PROVIDERS)
+      new Option('--content-source <contentSource>', 'Content source').choices(
+        Object.keys(CONTENT_SOURCES)
       )
     )
     .option('-m, --message <message>', 'Extra message to provide just before the content')
@@ -61,35 +58,31 @@ export function reviewCommand(
       const config = await initConfig(cliConfigOverrides); // Initialize and get config
       const content: string[] = [];
       const requirementsId = options.requirements;
-      const requirementsProvider = getEffectiveRequirementsProvider(
+      const requirementSource = getEffectiveRequirementSource(
         'review',
         config,
-        options.requirementsProvider
+        options.requirementsSource
       );
-      const contentProvider = getEffectiveContentProvider(
-        'review',
-        config,
-        options.contentProvider
-      );
+      const contentSource = getEffectiveContentSource('review', config, options.contentSource);
 
       // TODO consider calling these in parallel
-      const requirements = await getCommandProviderInput(
+      const requirements = await getCommandSourceInput(
         'review',
         'requirements',
         requirementsId,
         config,
-        requirementsProvider
+        requirementSource
       );
       if (requirements) {
         content.push(requirements);
       }
 
-      const providedContent = await getCommandProviderInput(
+      const providedContent = await getCommandSourceInput(
         'review',
         'content',
         contentId,
         config,
-        contentProvider
+        contentSource
       );
       if (providedContent) {
         content.push(providedContent);

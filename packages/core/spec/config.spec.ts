@@ -139,8 +139,6 @@ describe('config', async () => {
         llm: { type: 'vertexai' },
         contentSource: 'file',
         requirementSource: 'file',
-        contentProvider: 'file',
-        requirementsProvider: 'file',
         projectGuidelines: '.gsloth.guidelines.md',
         projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
@@ -159,8 +157,6 @@ describe('config', async () => {
           pr: {
             contentSource: 'github',
             requirementSource: 'github',
-            contentProvider: 'github',
-            requirementsProvider: 'github',
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -240,8 +236,6 @@ describe('config', async () => {
         llm: { type: 'anthropic' },
         contentSource: 'file',
         requirementSource: 'file',
-        contentProvider: 'file',
-        requirementsProvider: 'file',
         projectGuidelines: '.gsloth.guidelines.md',
         projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
@@ -260,8 +254,6 @@ describe('config', async () => {
           pr: {
             contentSource: 'github',
             requirementSource: 'github',
-            contentProvider: 'github',
-            requirementsProvider: 'github',
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -374,8 +366,6 @@ describe('config', async () => {
         llm: { type: 'groq' },
         contentSource: 'file',
         requirementSource: 'file',
-        contentProvider: 'file',
-        requirementsProvider: 'file',
         projectGuidelines: '.gsloth.guidelines.md',
         projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
@@ -394,8 +384,6 @@ describe('config', async () => {
           pr: {
             contentSource: 'github',
             requirementSource: 'github',
-            contentProvider: 'github',
-            requirementsProvider: 'github',
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -486,12 +474,12 @@ describe('config', async () => {
       const { initConfig } = await import('#src/config.js');
       const config = await initConfig({});
 
-      // Deprecated names resolve to canonical, and the deprecated runtime fields stay
-      // populated from canonical (kept for the wide reader blast radius).
+      // Deprecated config-file keys resolve one-way to canonical; the deprecated runtime
+      // fields no longer exist on the effective config (B3 clean break).
       expect(config.contentSource).toBe('github');
-      expect(config.contentProvider).toBe('github');
+      expect('contentProvider' in config).toBe(false);
       expect(config.commands?.pr?.requirementSource).toBe('jira');
-      expect(config.commands?.pr?.requirementsProvider).toBe('jira');
+      expect('requirementsProvider' in (config.commands?.pr ?? {})).toBe(false);
 
       // A deprecation warning is emitted per occurrence (root + per-command).
       expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
@@ -1260,8 +1248,6 @@ describe('config', async () => {
         modelDisplayName: 'test-model',
         contentSource: 'file',
         requirementSource: 'file',
-        contentProvider: 'file',
-        requirementsProvider: 'file',
         projectGuidelines: '.gsloth.guidelines.md',
         projectReviewInstructions: '.gsloth.review.md',
         canInterruptInferenceWithEsc: true,
@@ -1280,8 +1266,6 @@ describe('config', async () => {
           pr: {
             contentSource: 'github',
             requirementSource: 'github',
-            contentProvider: 'github',
-            requirementsProvider: 'github',
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -1597,8 +1581,6 @@ describe('config', async () => {
         modelDisplayName: undefined,
         contentSource: 'file',
         requirementSource: 'file',
-        contentProvider: 'file',
-        requirementsProvider: 'file',
         projectGuidelines: '.gsloth.guidelines.md',
         projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
@@ -1617,8 +1599,6 @@ describe('config', async () => {
           pr: {
             contentSource: 'github',
             requirementSource: 'github',
-            contentProvider: 'github',
-            requirementsProvider: 'github',
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -1682,8 +1662,6 @@ describe('config', async () => {
         llm: { type: 'anthropic' },
         contentSource: 'file',
         requirementSource: 'file',
-        contentProvider: 'file',
-        requirementsProvider: 'file',
         projectGuidelines: '.gsloth.guidelines.md',
         projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
@@ -1702,8 +1680,6 @@ describe('config', async () => {
           pr: {
             contentSource: 'github',
             requirementSource: 'github',
-            contentProvider: 'github',
-            requirementsProvider: 'github',
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -1767,8 +1743,6 @@ describe('config', async () => {
         llm: { type: 'groq' },
         contentSource: 'file',
         requirementSource: 'file',
-        contentProvider: 'file',
-        requirementsProvider: 'file',
         projectGuidelines: '.gsloth.guidelines.md',
         projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
@@ -1787,8 +1761,6 @@ describe('config', async () => {
           pr: {
             contentSource: 'github',
             requirementSource: 'github',
-            contentProvider: 'github',
-            requirementsProvider: 'github',
             rating: {
               enabled: true,
               passThreshold: 6,

@@ -81,15 +81,15 @@ const mockConfig = {
   llm: new FakeStreamingChatModel({
     responses: ['LLM Response' as unknown as BaseMessage],
   }),
-  contentProvider: 'file',
-  requirementsProvider: 'file',
+  contentSource: 'file',
+  requirementSource: 'file',
   projectGuidelines: '.gsloth.guidelines.md',
   projectReviewInstructions: '.gsloth.review.md',
   streamOutput: false,
   commands: {
     pr: {
-      contentProvider: 'github',
-      requirementsProvider: 'github',
+      contentSource: 'github',
+      requirementSource: 'github',
     },
   },
   filesystem: 'none',

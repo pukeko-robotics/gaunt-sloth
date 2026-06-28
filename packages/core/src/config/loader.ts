@@ -639,10 +639,9 @@ function deepMerge<T extends Record<string, unknown>>(
 
 /**
  * Resolve a fully-merged {@link GthConfig} from a partial config + CLI overrides WITHOUT
- * any global side effects — a pure transform. It deep-merges defaults, applies CLI overrides,
- * back-fills the deprecated runtime fields from their canonical counterparts, resolves the
- * numeric `consoleLevel` (warning + defaulting to INFO on an invalid value), and computes
- * `canInterruptInferenceWithEsc`. The process-global setters (`setUseColour` /
+ * any global side effects (a pure transform). It deep-merges defaults, applies CLI overrides,
+ * resolves the numeric `consoleLevel` (warning + defaulting to INFO on an invalid value), and
+ * computes `canInterruptInferenceWithEsc`. The process-global setters (`setUseColour` /
  * `setConsoleLevel`) are applied separately by {@link mergeConfig}, so this function can be
  * reasoned about and reused without touching global state.
  */
@@ -651,26 +650,6 @@ export function resolveConfig(
   commandLineConfigOverrides: CommandLineConfigOverrides
 ): GthConfig {
   const config = partialConfig as GthConfig;
-
-  // Deprecated key names (contentProvider/requirementsProvider/*Config) are pre-mapped
-  // one-way to their canonical names at the raw-config layer, with a deprecation warning
-  // per occurrence (see validateRawConfigLayer / preMapDeprecatedConfigNames). Canonical
-  // is the single source of truth. Here we only keep the deprecated *runtime* fields
-  // populated FROM the canonical ones, because a wide set of readers across packages/app
-  // and packages/review (and the existing test suite) still read contentProvider /
-  // requirementsProvider. Full reader migration / field removal is a later slice.
-  if (config.contentSource) config.contentProvider = config.contentSource;
-  if (config.requirementSource) config.requirementsProvider = config.requirementSource;
-
-  if (config.commands) {
-    for (const cmdName of ['pr', 'review'] as const) {
-      const cmd = config.commands[cmdName];
-      if (cmd) {
-        if (cmd.contentSource) cmd.contentProvider = cmd.contentSource;
-        if (cmd.requirementSource) cmd.requirementsProvider = cmd.requirementSource;
-      }
-    }
-  }
 
   // Deep merge command configs while preserving defaults
   // Type complexity from DEFAULT_CONFIG.commands 'as const' requires any cast for deep merge result

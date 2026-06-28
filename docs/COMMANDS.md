@@ -87,7 +87,7 @@ gsloth pr [prId] [requirementsId]
 - `[requirementsId]` - Optional requirements ID to retrieve requirements from provider. This argument is only supported together with `prId`; requirements-only syntax such as `gsloth pr PROJ-123` is not supported.
 
 ### Options
-- `-p, --requirements-provider <provider>` - Requirements provider for this review
+- `-p, --requirements-source <requirementSource>` - Requirement source for this review
 - `-f, --file [files...]` - Input files to add before the diff
 - `-m, --message <message>` - Additional reviewer instructions inserted before the diff
 
@@ -96,7 +96,7 @@ gsloth pr [prId] [requirementsId]
 - For optimal reviews, the PR branch should be checked out locally
 
 ### Description
-Reviews a pull request using GitHub as the default content provider. Can integrate with issue tracking systems to include requirements in the review.
+Reviews a pull request using GitHub as the default content source. Can integrate with issue tracking systems to include requirements in the review.
 
 ### Change Requirements Discovery
 
@@ -105,7 +105,7 @@ Running `gsloth pr` with no positional arguments triggers change requirements di
 discovery and is unsupported. The diff for the current branch's PR is fetched
 deterministically with `gh pr diff`, and the PR description is inspected for an explicit
 requirements reference (a linked GitHub issue or a Jira key, depending on the configured
-requirements provider). When both are found, the review starts immediately. Otherwise a discovery
+requirement source). When both are found, the review starts immediately. Otherwise a discovery
 agent runs first with the `gh_pr`, `gh_diff` and `gh_issue` tools (plus any configured tools, e.g.
 a Jira MCP server) to locate the diff and requirements before handing over to the review agent.
 
@@ -137,7 +137,7 @@ gsloth pr 42 -f architecture.md notes.txt
 
 ## review
 
-Review any diff or content provided via stdin, files, or content providers.
+Review any diff or content provided via stdin, files, or content sources.
 
 ```bash
 gsloth review [contentId]
@@ -149,8 +149,8 @@ gsloth review [contentId]
 ### Options
 - `-f, --file [files...]` - Input files to add before the content
 - `-r, --requirements <requirements>` - Requirements for this review
-- `-p, --requirements-provider <provider>` - Requirements provider
-- `--content-provider <provider>` - Content provider
+- `-p, --requirements-source <requirementSource>` - Requirement source
+- `--content-source <contentSource>` - Content source
 - `-m, --message <message>` - Extra message to provide before the content
 
 ### Description
@@ -355,12 +355,12 @@ Commands can be configured individually in your configuration file. See [CONFIGU
   },
   "commands": {
     "pr": {
-      "contentProvider": "github",
-      "requirementsProvider": "github"
+      "contentSource": "github",
+      "requirementSource": "github"
     },
     "review": {
-      "contentProvider": "file",
-      "requirementsProvider": "file"
+      "contentSource": "file",
+      "requirementSource": "file"
     }
   }
 }

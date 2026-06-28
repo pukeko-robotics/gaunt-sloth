@@ -34,8 +34,6 @@ describe('GthAgentRunner', () => {
     | 'streamOutput'
     | 'contentSource'
     | 'requirementSource'
-    | 'contentProvider'
-    | 'requirementsProvider'
     | 'projectReviewInstructions'
     | 'filesystem'
     | 'useColour'
@@ -49,8 +47,6 @@ describe('GthAgentRunner', () => {
     streamOutput: false,
     contentSource: 'file',
     requirementSource: 'file',
-    contentProvider: 'file',
-    requirementsProvider: 'file',
     projectReviewInstructions: '.gsloth.review.md',
     filesystem: 'none',
     useColour: false,

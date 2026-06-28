@@ -36,7 +36,6 @@ exports[`effective-merged acceptance (B2b) > resolves examples/a2a/.gsloth.confi
       "filesystem": "all",
     },
     "pr": {
-      "contentProvider": "github",
       "contentSource": "github",
       "rating": {
         "enabled": true,
@@ -46,7 +45,6 @@ exports[`effective-merged acceptance (B2b) > resolves examples/a2a/.gsloth.confi
         "passThreshold": 6,
       },
       "requirementSource": "github",
-      "requirementsProvider": "github",
     },
     "review": {
       "rating": {
@@ -59,7 +57,6 @@ exports[`effective-merged acceptance (B2b) > resolves examples/a2a/.gsloth.confi
     },
   },
   "consoleLevel": 1,
-  "contentProvider": "file",
   "contentSource": "file",
   "debugLog": false,
   "filesystem": "none",
@@ -72,7 +69,6 @@ exports[`effective-merged acceptance (B2b) > resolves examples/a2a/.gsloth.confi
   "projectGuidelines": ".gsloth.guidelines.md",
   "projectReviewInstructions": ".gsloth.review.md",
   "requirementSource": "file",
-  "requirementsProvider": "file",
   "streamOutput": true,
   "streamSessionInferenceLog": true,
   "useColour": true,
@@ -111,7 +107,6 @@ exports[`effective-merged acceptance (B2b) > resolves examples/jira-mcp/.gsloth.
       "filesystem": "all",
     },
     "pr": {
-      "contentProvider": "github",
       "contentSource": "github",
       "rating": {
         "enabled": true,
@@ -121,7 +116,6 @@ exports[`effective-merged acceptance (B2b) > resolves examples/jira-mcp/.gsloth.
         "passThreshold": 6,
       },
       "requirementSource": "jira",
-      "requirementsProvider": "jira",
     },
     "review": {
       "rating": {
@@ -134,7 +128,6 @@ exports[`effective-merged acceptance (B2b) > resolves examples/jira-mcp/.gsloth.
     },
   },
   "consoleLevel": 1,
-  "contentProvider": "file",
   "contentSource": "file",
   "debugLog": false,
   "filesystem": "none",
@@ -159,7 +152,6 @@ exports[`effective-merged acceptance (B2b) > resolves examples/jira-mcp/.gsloth.
       "displayUrl": "https://YOURDOMAIN.atlassian.net/browse/",
     },
   },
-  "requirementsProvider": "file",
   "streamOutput": true,
   "streamSessionInferenceLog": true,
   "useColour": true,
@@ -198,7 +190,6 @@ exports[`effective-merged acceptance (B2b) > resolves examples/lmstudio/.gsloth.
       "filesystem": "all",
     },
     "pr": {
-      "contentProvider": "github",
       "contentSource": "github",
       "rating": {
         "enabled": true,
@@ -208,7 +199,6 @@ exports[`effective-merged acceptance (B2b) > resolves examples/lmstudio/.gsloth.
         "passThreshold": 6,
       },
       "requirementSource": "github",
-      "requirementsProvider": "github",
     },
     "review": {
       "rating": {
@@ -221,7 +211,6 @@ exports[`effective-merged acceptance (B2b) > resolves examples/lmstudio/.gsloth.
     },
   },
   "consoleLevel": 1,
-  "contentProvider": "file",
   "contentSource": "file",
   "debugLog": false,
   "filesystem": "none",
@@ -237,7 +226,6 @@ exports[`effective-merged acceptance (B2b) > resolves examples/lmstudio/.gsloth.
   "projectGuidelines": ".gsloth.guidelines.md",
   "projectReviewInstructions": ".gsloth.review.md",
   "requirementSource": "file",
-  "requirementsProvider": "file",
   "streamOutput": true,
   "streamSessionInferenceLog": true,
   "useColour": true,
@@ -276,7 +264,6 @@ exports[`effective-merged acceptance (B2b) > resolves examples/simple-DIY-helper
       "filesystem": "all",
     },
     "pr": {
-      "contentProvider": "github",
       "contentSource": "github",
       "rating": {
         "enabled": true,
@@ -286,7 +273,6 @@ exports[`effective-merged acceptance (B2b) > resolves examples/simple-DIY-helper
         "passThreshold": 6,
       },
       "requirementSource": "github",
-      "requirementsProvider": "github",
     },
     "review": {
       "rating": {
@@ -299,7 +285,6 @@ exports[`effective-merged acceptance (B2b) > resolves examples/simple-DIY-helper
     },
   },
   "consoleLevel": 1,
-  "contentProvider": "file",
   "contentSource": "file",
   "debugLog": false,
   "filesystem": "none",
@@ -311,7 +296,6 @@ exports[`effective-merged acceptance (B2b) > resolves examples/simple-DIY-helper
   "projectGuidelines": ".gsloth.guidelines.md",
   "projectReviewInstructions": ".gsloth.review.md",
   "requirementSource": "file",
-  "requirementsProvider": "file",
   "streamOutput": true,
   "streamSessionInferenceLog": true,
   "useColour": true,
@@ -353,7 +337,6 @@ exports[`effective-merged acceptance (B2b) > resolves the consumer-shaped fixtur
       "filesystem": "all",
     },
     "pr": {
-      "contentProvider": "github",
       "contentSource": "github",
       "rating": {
         "enabled": true,
@@ -363,7 +346,6 @@ exports[`effective-merged acceptance (B2b) > resolves the consumer-shaped fixtur
         "passThreshold": 6,
       },
       "requirementSource": "github",
-      "requirementsProvider": "github",
     },
     "review": {
       "rating": {
@@ -376,7 +358,6 @@ exports[`effective-merged acceptance (B2b) > resolves the consumer-shaped fixtur
     },
   },
   "consoleLevel": 1,
-  "contentProvider": "file",
   "contentSource": "file",
   "debugLog": false,
   "filesystem": "none",
@@ -391,7 +372,6 @@ exports[`effective-merged acceptance (B2b) > resolves the consumer-shaped fixtur
   "projectGuidelines": ".gsloth.guidelines.md",
   "projectReviewInstructions": ".gsloth.review.md",
   "requirementSource": "file",
-  "requirementsProvider": "file",
   "streamOutput": true,
   "streamSessionInferenceLog": true,
   "useColour": true,
