@@ -1,6 +1,15 @@
 packages:
   - 'packages/*'
 
+# Force a single copy of @langchain/core across the workspace. A workspace
+# package can resolve a provider (e.g. @langchain/xai) via its optional
+# peerDependency at a patch built against an older core than the app's direct
+# dependency, leaving two copies of @langchain/core in the tree and a nominal
+# type clash ("ChatXAI is not assignable to BaseChatModel"). Deduping core alone
+# is enough — the provider copies then all build against the same core type.
+overrides:
+  '@langchain/core': ^1.2.1
+
 # Dependencies with install/build scripts pnpm is allowed to run (the pnpm
 # equivalent of npm's allow-scripts approval). These are transitive dev/test
 # deps: node-pty + @swc/core come from @microsoft/tui-test (the TUI e2e harness).
