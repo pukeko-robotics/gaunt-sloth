@@ -118,6 +118,26 @@ export const setRawMode = (rawMode: boolean) => {
   }
 };
 
+/**
+ * Ref stdin so it keeps the event loop alive, WITHOUT changing raw mode.
+ *
+ * EXT-18: the ref/unref of stdin used to be coupled to raw mode (only setRawMode(true)
+ * re-ref'd, see above), but some interactive prompts run in COOKED mode after a stream
+ * end. When an agent run suspends on a tool-approval interrupt, the stream's finally
+ * calls stopWaitingForEscape(), which unref's stdin. The readline approval prompt then
+ * does setRawMode(false) (cooked, so typed input echoes) and awaits rl.question(...) -
+ * but with stdin unref'd and nothing else holding the loop open the process exits to the
+ * shell before the user can answer. Refing stdin (decoupled from raw mode) before such a
+ * prompt keeps the loop alive so rl.question() can wait for input. This is intentionally
+ * NOT folded into setRawMode(false): the cooked-path unref is load-bearing for one-shot
+ * commands (e.g. `gth pr`) to exit, so only the interactive-prompt sites opt back in.
+ */
+export const refStdin = (): void => {
+  if (process.stdin.isTTY) {
+    process.stdin.ref?.();
+  }
+};
+
 export const initLogStream = (logFileName: string): void => {
   try {
     // Close existing stream if present

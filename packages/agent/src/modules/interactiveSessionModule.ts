@@ -15,6 +15,7 @@ import {
   createInterface,
   error,
   exit,
+  refStdin,
   setRawMode,
   stdin as input,
   stdout as output,
@@ -52,6 +53,17 @@ export async function createInteractiveSession(
     const rl = createInterface({ input, output });
     let shouldExit = false;
 
+    // EXT-18: ref stdin before every rl.question() that can run AFTER an agent turn/stream end.
+    // When a run suspends (tool-approval interrupt) or throws, the stream's finally calls
+    // stopWaitingForEscape(), which unref's stdin so one-shot commands can exit. A prompt that
+    // follows must re-ref stdin first, otherwise nothing keeps the event loop alive and the
+    // process exits to the shell before the user can answer. The main `> ` loop is safe because
+    // its setRawMode(true) already re-refs; these cooked-mode prompts do not, so they ref here.
+    const askLine = (prompt: string): Promise<string> => {
+      refStdin();
+      return rl.question(prompt);
+    };
+
     // Tool-approval (human-in-the-loop) prompt for gated tools — currently the opt-in
     // `run_shell_command`. When a run suspends on such a tool call, the runner calls this with
     // the pending command. EXT-9 Tier-2: instead of a bare y/N, offer a scoped choice so the
@@ -78,20 +90,29 @@ export async function createInteractiveSession(
         );
       }
       setRawMode(false); // ensure typed input is echoed for this confirm
-      const answer = (
-        await rl.question(formatInputPrompt('Approve? [o]nce / [s]ession / [a]lways / [N]o: '))
-      )
-        .trim()
-        .toLowerCase();
+      // EXT-18: wrap the prompt in try/finally so the raw-mode/ref state is not left wedged if
+      // rl.question throws. The subsequent streamResume run re-establishes raw mode + ref, but be
+      // defensive. askLine() refs stdin first so the prompt actually waits for input (the run just
+      // suspended on the tool interrupt, whose stream-end unref'd stdin).
+      let answer: string;
+      try {
+        answer = (
+          await askLine(formatInputPrompt('Approve? [o]nce / [s]ession / [a]lways / [N]o: '))
+        )
+          .trim()
+          .toLowerCase();
+      } finally {
+        refStdin();
+      }
       if (answer === 'o' || answer === 'once') {
         return { type: 'approve', scope: 'once' };
       }
       if (answer === 's' || answer === 'session') {
-        displayInfo('Approved for this session — future variants will not re-prompt.');
+        displayInfo('Approved for this session, future variants will not re-prompt.');
         return { type: 'approve', scope: 'session' };
       }
       if (answer === 'a' || answer === 'always') {
-        displayInfo('Approved and remembered — saved to the project allow-list.');
+        displayInfo('Approved and remembered, saved to the project allow-list.');
         return { type: 'approve', scope: 'always' };
       }
       displayInfo('Command rejected.');
@@ -159,7 +180,10 @@ export async function createInteractiveSession(
             display(
               `\n❌ Error processing message: ${err instanceof Error ? err.message : String(err)}\n`
             );
-            const retryResponse = await rl.question(
+            // EXT-18: askLine() refs stdin first. This prompt runs in the catch after
+            // processMessage threw, by which point the stream's finally has already unref'd
+            // stdin (same exit as the approval prompt) - re-ref so it waits for input.
+            const retryResponse = await askLine(
               'Do you want to try again with the same prompt? (y/n): '
             );
             shouldRetry = retryResponse.toLowerCase().trim().startsWith('y');
