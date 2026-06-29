@@ -12,6 +12,7 @@ vi.mock('node:fs', () => fsUtilsMock);
 // Mock the systemUtils module
 const systemUtilsMock = {
   getCurrentWorkDir: vi.fn(),
+  getProjectDir: vi.fn(),
   exit: vi.fn(),
 };
 vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
@@ -32,6 +33,7 @@ describe('utils', () => {
 
     // Set up default mock values
     systemUtilsMock.getCurrentWorkDir.mockReturnValue('/mock/project/dir');
+    systemUtilsMock.getProjectDir.mockReturnValue('/mock/project/dir');
   });
 
   describe('generateStandardFileName', () => {
@@ -98,7 +100,7 @@ describe('utils', () => {
       expect(result).toBe(fileContent);
       expect(fsUtilsMock.writeFileSync).not.toHaveBeenCalled();
       expect(fsUtilsMock.readFileSync).toHaveBeenCalledWith(filePath, { encoding: 'utf8' });
-      expect(systemUtilsMock.getCurrentWorkDir).toHaveBeenCalled();
+      expect(systemUtilsMock.getProjectDir).toHaveBeenCalled();
       expect(consoleUtilsMock.displayInfo).toHaveBeenCalledWith(expect.stringContaining('Reading'));
     });
 

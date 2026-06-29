@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getCurrentWorkDir } from '#src/utils/systemUtils.js';
+import { getProjectDir } from '#src/utils/systemUtils.js';
 import { GSLOTH_DIR, GSLOTH_SETTINGS_DIR } from '#src/constants.js';
 import {
   displayError,
@@ -18,7 +18,7 @@ import { createJiti } from 'jiti';
  * @returns Boolean indicating whether .gsloth directory exists
  */
 export function gslothDirExists(): boolean {
-  const currentDir = getCurrentWorkDir();
+  const currentDir = getProjectDir();
   const gslothDirPath = resolve(currentDir, GSLOTH_DIR);
   return existsSync(gslothDirPath);
 }
@@ -29,7 +29,7 @@ export function gslothDirExists(): boolean {
  * @returns The resolved path where the file should be written
  */
 export function getGslothFilePath(filename: string): string {
-  const currentDir = getCurrentWorkDir();
+  const currentDir = getProjectDir();
 
   if (gslothDirExists()) {
     const gslothDirPath = resolve(currentDir, GSLOTH_DIR);
@@ -51,7 +51,7 @@ export function getGslothFilePath(filename: string): string {
  * @returns The resolved path where the configuration file should be written
  */
 export function getGslothConfigWritePath(filename: string): string {
-  const currentDir = getCurrentWorkDir();
+  const currentDir = getProjectDir();
 
   if (gslothDirExists()) {
     const gslothDirPath = resolve(currentDir, GSLOTH_DIR);
@@ -78,10 +78,10 @@ export function getGslothConfigReadPath(
   filename: string,
   identityProfileRaw: string | undefined
 ): string {
-  const projectDir = getCurrentWorkDir();
+  const baseDir = getProjectDir();
   const identityProfile = identityProfileRaw?.trim();
   if (gslothDirExists()) {
-    const gslothDirPath = resolve(projectDir, GSLOTH_DIR);
+    const gslothDirPath = resolve(baseDir, GSLOTH_DIR);
     const gslothSettingsPath = resolve(gslothDirPath, GSLOTH_SETTINGS_DIR);
     const configPath = identityProfile
       ? resolve(gslothSettingsPath, identityProfile, filename)
@@ -92,7 +92,7 @@ export function getGslothConfigReadPath(
     }
   }
 
-  return resolve(projectDir, filename);
+  return resolve(baseDir, filename);
 }
 
 /**
@@ -102,7 +102,7 @@ export function getGslothConfigReadPath(
  * - If it's a bare filename, place it under .gsloth/ when present, otherwise project root.
  */
 export function resolveOutputPath(writeOutputToFile: string): string {
-  const currentDir = getCurrentWorkDir();
+  const currentDir = getProjectDir();
   const provided = String(writeOutputToFile).trim();
 
   // Detect if provided path contains path separators (cross-platform)
@@ -157,7 +157,7 @@ export function generateStandardFileName(command: string): string {
 }
 
 export function readFileFromProjectDir(fileName: string): string {
-  const currentDir = getCurrentWorkDir();
+  const currentDir = getProjectDir();
   const filePath = resolve(currentDir, fileName);
   displayInfo(`Reading file ${filePath}...`);
   return readFileSyncWithMessages(filePath);

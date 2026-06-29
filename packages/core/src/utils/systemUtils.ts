@@ -26,6 +26,7 @@ export interface ProgramLike {
 
 interface InnerState {
   installDir: string | null | undefined;
+  projectDir: string | undefined;
   stringFromStdin: string;
   useColour: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -36,6 +37,7 @@ interface InnerState {
 
 const innerState: InnerState = {
   installDir: undefined,
+  projectDir: undefined,
   stringFromStdin: '',
   useColour: false,
   waitForEscapeCallback: undefined,
@@ -194,6 +196,24 @@ export const getCurrentWorkDir = (): string => process.env?.INIT_CWD ?? process.
  * real workspace from the protocol should use this instead.
  */
 export const getProcessCwd = (): string => process.cwd();
+/**
+ * The directory of the DISCOVERED project config (the up-tree match, or the `--config`
+ * override). It governs ONLY post-config, project-relative artifact resolution (project
+ * guidelines, prompts, `.gsloth-settings`, outputs). When unset (a global-only config, no
+ * config at all, or before discovery has run) callers fall back to cwd via {@link getProjectDir}.
+ *
+ * This is NOT the global-config dir (`~/.gsloth`): the global config stays cwd-anchored by
+ * design, so it must never be routed through this value.
+ */
+export const setProjectDir = (dir: string | undefined): void => {
+  innerState.projectDir = dir ? resolve(dir) : undefined;
+};
+/**
+ * The discovered project root for project-relative artifact resolution, falling back to
+ * {@link getCurrentWorkDir} when no project config has been discovered (see {@link setProjectDir}).
+ * Config DISCOVERY and DETECTION must NOT use this; they stay cwd-bound.
+ */
+export const getProjectDir = (): string => innerState.projectDir ?? getCurrentWorkDir();
 export const getInstallDir = (): string => {
   if (innerState.installDir) {
     return innerState.installDir;

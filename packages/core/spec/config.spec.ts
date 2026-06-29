@@ -48,6 +48,8 @@ vi.mock('#src/utils/fileUtils.js', () => fileUtilsMock);
 const systemUtilsMock = {
   exit: vi.fn(),
   getCurrentWorkDir: vi.fn(),
+  getProjectDir: vi.fn(),
+  setProjectDir: vi.fn(),
   getInstallDir: vi.fn(),
   setUseColour: vi.fn(),
   isTTY: vi.fn(),
@@ -75,6 +77,7 @@ describe('config', async () => {
     vi.resetModules();
     // Reset and set up systemUtils mocks
     systemUtilsMock.getCurrentWorkDir.mockReturnValue('/mock/current/dir');
+    systemUtilsMock.getProjectDir.mockReturnValue('/mock/current/dir');
     systemUtilsMock.getInstallDir.mockReturnValue('/mock/install/dir');
     systemUtilsMock.isTTY.mockReturnValue(true);
     // Default: global config path is absent (sentinel never matched by fs mocks).
