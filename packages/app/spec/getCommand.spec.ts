@@ -65,8 +65,8 @@ describe('getCommand', () => {
       llm: { invoke: vi.fn() } as unknown as BaseChatModel,
       projectGuidelines: '.gsloth.guidelines.md',
       projectReviewInstructions: '.gsloth.review.md',
-      contentProvider: 'text',
-      requirementsProvider: 'text',
+      contentSource: 'text',
+      requirementSource: 'text',
       streamOutput: true,
       filesystem: 'none',
       useColour: false,
@@ -75,12 +75,12 @@ describe('getCommand', () => {
       canInterruptInferenceWithEsc: true,
       commands: {
         pr: {
-          contentProvider: 'github',
-          requirementsProvider: 'text',
+          contentSource: 'github',
+          requirementSource: 'text',
         },
         review: {
-          contentProvider: 'text',
-          requirementsProvider: 'text',
+          contentSource: 'text',
+          requirementSource: 'text',
         },
       },
     });
@@ -118,7 +118,7 @@ describe('getCommand', () => {
       );
       return {
         ...actual,
-        getRequirementsFromProvider: vi
+        getRequirementsFromSource: vi
           .fn()
           .mockResolvedValue(
             '\nProvided requirements follows within text-1234567 block\n<text-1234567>\nRequirements content\n</text-1234567>\n'
@@ -144,7 +144,7 @@ describe('getCommand', () => {
       );
       return {
         ...actual,
-        getContentFromProvider: vi
+        getContentFromSource: vi
           .fn()
           .mockResolvedValue(
             '\nProvided GitHub diff follows within github-1234567 block\n<github-1234567>\nPR Diff Content\n</github-1234567>\n'
@@ -156,8 +156,8 @@ describe('getCommand', () => {
       llm: { invoke: vi.fn() } as unknown as BaseChatModel,
       projectGuidelines: '.gsloth.guidelines.md',
       projectReviewInstructions: '.gsloth.review.md',
-      contentProvider: 'text',
-      requirementsProvider: 'text',
+      contentSource: 'text',
+      requirementSource: 'text',
       streamOutput: true,
       filesystem: 'none',
       useColour: false,
@@ -189,7 +189,7 @@ describe('getCommand', () => {
     await program.parseAsync(['na', 'na', 'get', 'ask', 'content', '123']);
 
     expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
-      'Unsupported provider-backed command: ask.'
+      'Unsupported source-backed command: ask.'
     );
     expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(1);
   });

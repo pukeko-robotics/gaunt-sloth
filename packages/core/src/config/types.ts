@@ -39,26 +39,15 @@ export interface GthConfig {
    */
   binaryFormats?: false | BinaryFormatConfig[];
   /**
-   * Content Provider. Provider used to fetch content (usually diff) for `review` or `pr` command.
+   * Content source type. Source used to fetch content (usually diff) for `review` or `pr` command.
    *
-   * {@link DEFAULT_CONFIG#contentProvider}
-   */
-  /**
-   * Content source type. Preferred name for contentProvider.
+   * {@link DEFAULT_CONFIG#contentSource}
    */
   contentSource: string;
   /**
-   * Requirement source type. Preferred name for requirementsProvider.
+   * Requirement source type. Source used to fetch requirements for `review` or `pr` command.
    */
   requirementSource: string;
-  /**
-   * @deprecated Use contentSource instead
-   */
-  contentProvider: string;
-  /**
-   * @deprecated Use requirementSource instead
-   */
-  requirementsProvider: string;
   /**
    * Path to project-specific guidelines.
    * The default is `.gsloth.guidelines.md`; this config may be used to point Gaunt Sloth to a different file,
@@ -200,10 +189,6 @@ export interface GthConfig {
   customTools?: CustomToolsConfig;
   requirementSourceConfig?: Record<string, unknown>;
   contentSourceConfig?: Record<string, unknown>;
-  /** @deprecated Use requirementSourceConfig instead */
-  requirementsProviderConfig?: Record<string, unknown>;
-  /** @deprecated Use contentSourceConfig instead */
-  contentProviderConfig?: Record<string, unknown>;
   /**
    * MCP (Model Context Protocol) server connections.
    * Allows connecting to external MCP servers including those requiring OAuth.
@@ -228,10 +213,6 @@ export interface GthConfig {
     review?: CommandToolingConfig & {
       contentSource?: string;
       requirementSource?: string;
-      /** @deprecated Use requirementSource instead */
-      requirementsProvider?: string;
-      /** @deprecated Use contentSource instead */
-      contentProvider?: string;
       rating?: RatingConfig;
     };
     ask?: CommandToolingConfig & {
@@ -293,10 +274,6 @@ export interface GthConfig {
 export interface PrCommandConfig extends CommandToolingConfig {
   contentSource?: string;
   requirementSource?: string;
-  /** @deprecated Use contentSource instead */
-  contentProvider?: string;
-  /** @deprecated Use requirementSource instead */
-  requirementsProvider?: string;
   logWorkForReviewInSeconds?: number;
   rating?: RatingConfig;
 }

@@ -52,13 +52,13 @@ const mockConfig = {
   llm: { invoke: vi.fn() } as unknown as BaseChatModel,
   projectGuidelines: '.gsloth.guidelines.md',
   projectReviewInstructions: '.gsloth.review.md',
-  contentProvider: 'file',
-  requirementsProvider: 'file',
+  contentSource: 'file',
+  requirementSource: 'file',
   streamOutput: true,
   commands: {
     pr: {
-      contentProvider: 'github',
-      requirementsProvider: 'github',
+      contentSource: 'github',
+      requirementSource: 'github',
     },
     review: {},
   },
@@ -166,11 +166,11 @@ describe('reviewCommand', () => {
     commandUnderTest?.outputHelp();
 
     // Verify content providers are displayed
-    expect(testOutput.text).toContain('--content-provider <contentProvider>');
+    expect(testOutput.text).toContain('--content-source <contentSource>');
     expect(testOutput.text).toContain('(choices: "github", "text", "file")');
 
     // Verify requirements providers are displayed
-    expect(testOutput.text).toContain('--requirements-provider <requirementsProvider>');
+    expect(testOutput.text).toContain('--requirements-source <requirementSource>');
     expect(testOutput.text).toContain('(choices: "jira-legacy", "jira", "github", "text", "file")');
   });
 
@@ -178,23 +178,23 @@ describe('reviewCommand', () => {
     // Setup specific config for this test
     const testConfig = {
       ...mockConfig,
-      requirementsProvider: 'jira-legacy',
-      requirementsProviderConfig: {
+      requirementSource: 'jira-legacy',
+      requirementSourceConfig: {
         'jira-legacy': {
           username: 'test-user',
           token: 'test-token',
           baseUrl: 'https://test-jira.atlassian.net/rest/api/2/issue/',
         },
       },
-      contentProvider: 'text',
+      contentSource: 'text',
       commands: {
         pr: {
-          contentProvider: 'github',
-          requirementsProvider: 'jira-legacy',
+          contentSource: 'github',
+          requirementSource: 'jira-legacy',
         },
         review: {
-          requirementsProvider: 'jira-legacy',
-          contentProvider: 'text',
+          requirementSource: 'jira-legacy',
+          contentSource: 'text',
         },
       },
       streamOutput: false,
@@ -218,7 +218,7 @@ describe('reviewCommand', () => {
       'INTERNAL BACKSTORY\nPROJECT GUIDELINES\nREVIEW INSTRUCTIONS',
       '\nProvided requirements follows within jira-legacy-1234567 block\n<jira-legacy-1234567>\nJIRA Requirements\n</jira-legacy-1234567>\n\n\nProvided content follows within text-1234567 block\n<text-1234567>\ncontent-id\n</text-1234567>\n',
       expect.objectContaining({
-        requirementsProvider: 'jira-legacy',
+        requirementSource: 'jira-legacy',
         projectGuidelines: '.gsloth.guidelines.md',
         projectReviewInstructions: '.gsloth.review.md',
       }),
@@ -231,16 +231,16 @@ describe('reviewCommand', () => {
     // Setup specific config for this test
     const testConfig = {
       ...mockConfig,
-      contentProvider: 'github',
-      requirementsProvider: 'text',
+      contentSource: 'github',
+      requirementSource: 'text',
       commands: {
         pr: {
-          contentProvider: 'github',
-          requirementsProvider: 'text',
+          contentSource: 'github',
+          requirementSource: 'text',
         },
         review: {
-          requirementsProvider: 'text',
-          contentProvider: 'github',
+          requirementSource: 'text',
+          contentSource: 'github',
         },
       },
       streamOutput: false,
@@ -264,7 +264,7 @@ describe('reviewCommand', () => {
       'INTERNAL BACKSTORY\nPROJECT GUIDELINES\nREVIEW INSTRUCTIONS',
       '\nProvided GitHub diff follows within github-1234567 block\n<github-1234567>\nPR Diff Content\n</github-1234567>\n',
       expect.objectContaining({
-        contentProvider: 'github',
+        contentSource: 'github',
         projectGuidelines: '.gsloth.guidelines.md',
         projectReviewInstructions: '.gsloth.review.md',
       }),
@@ -309,7 +309,7 @@ describe('reviewCommand', () => {
     // Setup specific config for this test
     const testConfig = {
       ...mockConfig,
-      contentProvider: 'github',
+      contentSource: 'github',
       streamOutput: false,
     };
     configMock.initConfig.mockResolvedValue(testConfig);
@@ -331,7 +331,7 @@ describe('reviewCommand', () => {
       'INTERNAL BACKSTORY\nPROJECT GUIDELINES\nREVIEW INSTRUCTIONS',
       '\nProvided GitHub diff follows within github-1234567 block\n<github-1234567>\nPR Diff Content\n</github-1234567>\n\n\nProvided user message follows within message-1234567 block\n<message-1234567>\nFocus on code style\n</message-1234567>\n',
       expect.objectContaining({
-        contentProvider: 'github',
+        contentSource: 'github',
         projectGuidelines: '.gsloth.guidelines.md',
         projectReviewInstructions: '.gsloth.review.md',
       }),

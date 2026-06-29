@@ -65,8 +65,6 @@ describe('Custom Tools Configuration', () => {
     llm: {} as BaseChatModel,
     contentSource: 'github',
     requirementSource: 'github',
-    contentProvider: 'github',
-    requirementsProvider: 'github',
     projectGuidelines: '.gsloth.guidelines.md',
     includeCurrentDateAfterGuidelines: false,
     projectReviewInstructions: '',

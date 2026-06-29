@@ -4,9 +4,9 @@ import { displayError } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { wrapContent } from '@gaunt-sloth/core/utils/llmUtils.js';
 
 /**
- * Requirements providers. Aliases are mapped to actual package paths.
+ * Requirement sources. Aliases are mapped to actual package paths.
  */
-export const REQUIREMENTS_PROVIDERS = {
+export const REQUIREMENTS_SOURCES = {
   'jira-legacy': '@gaunt-sloth/review/sources/jiraIssueLegacySource.js',
   jira: '@gaunt-sloth/review/sources/jiraIssueSource.js',
   github: '@gaunt-sloth/review/sources/ghIssueSource.js',
@@ -14,71 +14,70 @@ export const REQUIREMENTS_PROVIDERS = {
   file: '@gaunt-sloth/review/sources/fileSource.js',
 } as const;
 
-export type RequirementsProviderType = keyof typeof REQUIREMENTS_PROVIDERS;
+export type RequirementSourceType = keyof typeof REQUIREMENTS_SOURCES;
 
 /**
- * Content providers. Aliases are mapped to actual package paths.
+ * Content sources. Aliases are mapped to actual package paths.
  */
-export const CONTENT_PROVIDERS = {
+export const CONTENT_SOURCES = {
   github: '@gaunt-sloth/review/sources/ghPrDiffSource.js',
   text: '@gaunt-sloth/review/sources/textSource.js',
   file: '@gaunt-sloth/review/sources/fileSource.js',
 } as const;
 
-export type ContentProviderType = keyof typeof CONTENT_PROVIDERS;
+export type ContentSourceType = keyof typeof CONTENT_SOURCES;
 
-export async function getRequirementsFromProvider(
-  requirementsProvider: RequirementsProviderType | undefined,
+export async function getRequirementsFromSource(
+  requirementSource: RequirementSourceType | undefined,
   requirementsId: string | undefined,
   config: GthConfig
 ): Promise<string> {
-  const requirements = await getFromProvider(
-    requirementsProvider,
+  const requirements = await getFromSource(
+    requirementSource,
     requirementsId,
-    (config?.requirementsProviderConfig ?? {})[requirementsProvider as string],
-    REQUIREMENTS_PROVIDERS
+    (config?.requirementSourceConfig ?? {})[requirementSource as string],
+    REQUIREMENTS_SOURCES
   );
-  return wrapContent(requirements, requirementsProvider, 'requirements');
+  return wrapContent(requirements, requirementSource, 'requirements');
 }
 
-export async function getContentFromProvider(
-  contentProvider: ContentProviderType | undefined,
+export async function getContentFromSource(
+  contentSource: ContentSourceType | undefined,
   contentId: string | undefined,
   config: GthConfig
 ): Promise<string> {
-  const content = await getFromProvider(
-    contentProvider,
+  const content = await getFromSource(
+    contentSource,
     contentId,
-    (config?.contentProviderConfig ?? {})[contentProvider as string],
-    CONTENT_PROVIDERS
+    (config?.contentSourceConfig ?? {})[contentSource as string],
+    CONTENT_SOURCES
   );
   return wrapContent(
     content,
-    contentProvider,
-    contentProvider === 'github' ? 'GitHub diff' : 'content'
+    contentSource,
+    contentSource === 'github' ? 'GitHub diff' : 'content'
   );
 }
 
-async function getFromProvider(
-  provider: RequirementsProviderType | ContentProviderType | undefined,
+async function getFromSource(
+  source: RequirementSourceType | ContentSourceType | undefined,
   id: string | undefined,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   config: any,
-  legitPredefinedProviders: typeof REQUIREMENTS_PROVIDERS | typeof CONTENT_PROVIDERS
+  legitPredefinedSources: typeof REQUIREMENTS_SOURCES | typeof CONTENT_SOURCES
 ): Promise<string> {
-  if (typeof provider === 'string') {
-    // Use one of the predefined providers
-    if (legitPredefinedProviders[provider as keyof typeof legitPredefinedProviders]) {
-      const providerPath =
-        legitPredefinedProviders[provider as keyof typeof legitPredefinedProviders];
-      const { get } = await import(providerPath);
+  if (typeof source === 'string') {
+    // Use one of the predefined sources
+    if (legitPredefinedSources[source as keyof typeof legitPredefinedSources]) {
+      const sourcePath = legitPredefinedSources[source as keyof typeof legitPredefinedSources];
+      const { get } = await import(sourcePath);
       return await get(config, id);
     } else {
-      displayError(`Unknown provider: ${provider}. Continuing without it.`);
+      displayError(`Unknown source: ${source}. Continuing without it.`);
     }
-  } else if (typeof provider === 'function') {
+  } else if (typeof source === 'function') {
     // Type assertion to handle function call
-    return await (provider as (id: string | undefined) => Promise<string>)(id);
+    return await (source as (id: string | undefined) => Promise<string>)(id);
   }
   return '';
 }

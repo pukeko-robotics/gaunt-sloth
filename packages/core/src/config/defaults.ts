@@ -13,8 +13,6 @@ import type { GthConfig } from '#src/config/types.js';
 export const DEFAULT_CONFIG = {
   contentSource: 'file',
   requirementSource: 'file',
-  contentProvider: 'file',
-  requirementsProvider: 'file',
   /**
    * Path to project-specific guidelines.
    * The default is `.gsloth.guidelines.md`; this config may be used to point Gaunt Sloth to a different file,
@@ -30,20 +28,18 @@ export const DEFAULT_CONFIG = {
   debugLog: false,
   consoleLevel: StatusLevel.INFO, // Default to INFO level, not debug
   /**
-   * Default provider for both requirements and content is GitHub.
+   * Default source for both requirements and content is GitHub.
    * It needs GitHub CLI (gh).
    *
-   * `github` content provider uses `gh pr diff NN` internally. {@link src/providers/ghPrDiffProvider.ts!}
+   * `github` content source uses `gh pr diff NN` internally. {@link src/sources/ghPrDiffSource.ts!}
    *
    *
-   * `github` requirements provider `gh issue view NN` internally
+   * `github` requirement source uses `gh issue view NN` internally
    */
   commands: {
     pr: {
       contentSource: 'github',
       requirementSource: 'github',
-      contentProvider: 'github',
-      requirementsProvider: 'github',
       rating: {
         enabled: true,
         passThreshold: 6,

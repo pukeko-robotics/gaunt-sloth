@@ -10,7 +10,7 @@
       "transport": "sse"
     }
   },
-  "requirementsProviderConfig": {
+  "requirementSourceConfig": {
     "jira": {
       "cloudId": "YOURCLOUDID",
       "displayUrl": "https://YOURDOMAIN.atlassian.net/browse/"
@@ -18,8 +18,8 @@
   },
   "commands": {
     "pr": {
-      "contentProvider": "github",
-      "requirementsProvider": "jira"
+      "contentSource": "github",
+      "requirementSource": "jira"
     }
   }
 }

@@ -64,13 +64,13 @@ const mockConfig = {
   llm: { invoke: vi.fn() } as unknown as BaseChatModel,
   projectGuidelines: '.gsloth.guidelines.md',
   projectReviewInstructions: '.gsloth.review.md',
-  contentProvider: 'file',
-  requirementsProvider: 'file',
+  contentSource: 'file',
+  requirementSource: 'file',
   streamOutput: true,
   commands: {
     pr: {
-      contentProvider: 'github',
-      requirementsProvider: 'github',
+      contentSource: 'github',
+      requirementSource: 'github',
     },
     review: {},
   },
@@ -128,8 +128,8 @@ describe('prCommand', () => {
       ...mockConfig,
       commands: {
         pr: {
-          contentProvider: 'github',
-          requirementsProvider: 'github',
+          contentSource: 'github',
+          requirementSource: 'github',
           discovery: {
             enabled: true,
             deterministicDiff: true,
@@ -167,8 +167,8 @@ describe('prCommand', () => {
       ...mockConfig,
       commands: {
         pr: {
-          contentProvider: 'github',
-          requirementsProvider: 'github',
+          contentSource: 'github',
+          requirementSource: 'github',
           discovery: {
             enabled: false,
           },
@@ -194,8 +194,8 @@ describe('prCommand', () => {
       ...mockConfig,
       commands: {
         pr: {
-          contentProvider: 'github',
-          requirementsProvider: 'jira',
+          contentSource: 'github',
+          requirementSource: 'jira',
         },
         review: {},
       },
@@ -220,16 +220,16 @@ describe('prCommand', () => {
     // Setup specific config for this test
     const testConfig = {
       ...mockConfig,
-      contentProvider: 'text',
-      requirementsProvider: 'text',
+      contentSource: 'text',
+      requirementSource: 'text',
       commands: {
         pr: {
-          contentProvider: 'github',
-          requirementsProvider: 'text',
+          contentSource: 'github',
+          requirementSource: 'text',
         },
         review: {
-          requirementsProvider: 'text',
-          contentProvider: 'text',
+          requirementSource: 'text',
+          contentSource: 'text',
         },
       },
       streamOutput: false,
@@ -253,7 +253,7 @@ describe('prCommand', () => {
       'INTERNAL BACKSTORY\nPROJECT GUIDELINES\nREVIEW INSTRUCTIONS',
       '\nProvided GitHub diff follows within github-1234567 block\n<github-1234567>\nPR Diff Content\n</github-1234567>\n',
       expect.objectContaining({
-        contentProvider: 'text',
+        contentSource: 'text',
         projectGuidelines: '.gsloth.guidelines.md',
         projectReviewInstructions: '.gsloth.review.md',
       }),
@@ -266,16 +266,16 @@ describe('prCommand', () => {
   it('Should fail loudly when the content provider resolves to no content', async () => {
     const testConfig = {
       ...mockConfig,
-      contentProvider: 'text',
-      requirementsProvider: 'text',
+      contentSource: 'text',
+      requirementSource: 'text',
       commands: {
         pr: {
-          contentProvider: 'github',
-          requirementsProvider: 'text',
+          contentSource: 'github',
+          requirementSource: 'text',
         },
         review: {
-          requirementsProvider: 'text',
-          contentProvider: 'text',
+          requirementSource: 'text',
+          contentSource: 'text',
         },
       },
       streamOutput: false,
@@ -286,8 +286,8 @@ describe('prCommand', () => {
     const program = new Command();
 
     // ghPrDiffSource returns null (with a warning) for an invalid PR number instead of throwing.
-    // Mock the exact module the github content provider imports (CONTENT_PROVIDERS.github) so the
-    // null genuinely flows through getCommandProviderInput rather than the test passing by accident.
+    // Mock the exact module the github content provider imports (CONTENT_SOURCES.github) so the
+    // null genuinely flows through getCommandSourceInput rather than the test passing by accident.
     const ghProvider = vi.fn().mockResolvedValue(null);
     vi.doMock('@gaunt-sloth/review/sources/ghPrDiffSource.js', () => ({
       get: ghProvider,
@@ -308,11 +308,11 @@ describe('prCommand', () => {
     // Setup specific config for this test
     const testConfig = {
       ...mockConfig,
-      requirementsProvider: 'text',
+      requirementSource: 'text',
       commands: {
         pr: {
-          contentProvider: 'github',
-          requirementsProvider: 'text',
+          contentSource: 'github',
+          requirementSource: 'text',
         },
         review: {},
       },
@@ -356,8 +356,8 @@ describe('prCommand', () => {
     // Setup config that will trigger JIRA error (missing token)
     const errorConfig = {
       ...mockConfig,
-      requirementsProvider: 'jira-legacy',
-      requirementsProviderConfig: {
+      requirementSource: 'jira-legacy',
+      requirementSourceConfig: {
         'jira-legacy': {
           username: 'test-user',
           baseUrl: 'https://test-jira.atlassian.net/rest/api/2/issue/',
@@ -366,8 +366,8 @@ describe('prCommand', () => {
       },
       commands: {
         pr: {
-          contentProvider: 'github',
-          requirementsProvider: 'jira-legacy',
+          contentSource: 'github',
+          requirementSource: 'jira-legacy',
         },
         review: {},
       },
@@ -420,7 +420,7 @@ describe('prCommand', () => {
     commandUnderTest?.outputHelp();
 
     // Verify requirements providers are displayed
-    expect(testOutput.text).toContain('--requirements-provider <requirementsProvider>');
+    expect(testOutput.text).toContain('--requirements-source <requirementSource>');
     expect(testOutput.text).toContain('(choices: "jira-legacy", "jira", "github", "text", "file")');
   });
 
@@ -428,16 +428,16 @@ describe('prCommand', () => {
     // Setup specific config for this test
     const testConfig = {
       ...mockConfig,
-      contentProvider: 'text',
-      requirementsProvider: 'text',
+      contentSource: 'text',
+      requirementSource: 'text',
       commands: {
         pr: {
-          contentProvider: 'github',
-          requirementsProvider: 'text',
+          contentSource: 'github',
+          requirementSource: 'text',
         },
         review: {
-          requirementsProvider: 'text',
-          contentProvider: 'text',
+          requirementSource: 'text',
+          contentSource: 'text',
         },
       },
       streamOutput: false,
@@ -468,7 +468,7 @@ describe('prCommand', () => {
       'INTERNAL BACKSTORY\nPROJECT GUIDELINES\nREVIEW INSTRUCTIONS',
       '\nProvided GitHub diff follows within github-1234567 block\n<github-1234567>\nPR Diff Content\n</github-1234567>\n\n\nProvided user message follows within message-1234567 block\n<message-1234567>\nPlease pay attention to security issues\n</message-1234567>\n',
       expect.objectContaining({
-        contentProvider: 'text',
+        contentSource: 'text',
         projectGuidelines: '.gsloth.guidelines.md',
         projectReviewInstructions: '.gsloth.review.md',
       }),
@@ -482,11 +482,11 @@ describe('prCommand', () => {
     // Setup specific config for this test
     const testConfig = {
       ...mockConfig,
-      requirementsProvider: 'text',
+      requirementSource: 'text',
       commands: {
         pr: {
-          contentProvider: 'github',
-          requirementsProvider: 'text',
+          contentSource: 'github',
+          requirementSource: 'text',
         },
         review: {},
       },

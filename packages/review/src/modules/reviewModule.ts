@@ -128,12 +128,7 @@ function maybeAddGhReadFileTool(
   prId: string | undefined
 ): void {
   const commandConfig = config.commands?.[command];
-  // Honor deprecated alias too: contentProvider.
-  const contentSource =
-    commandConfig?.contentSource ??
-    commandConfig?.contentProvider ??
-    config.contentSource ??
-    config.contentProvider;
+  const contentSource = commandConfig?.contentSource ?? config.contentSource;
 
   if (contentSource !== 'github') {
     return;

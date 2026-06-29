@@ -38,12 +38,12 @@ function getToolImpl(config?: Partial<JiraConfig>): StructuredToolInterface {
 
 // Export a default instance that uses environment variables
 export function get(config: GthConfig) {
-  if (!config.builtInToolsConfig?.jira && config.requirementsProviderConfig?.jira) {
+  if (!config.builtInToolsConfig?.jira && config.requirementSourceConfig?.jira) {
     displayWarning(
-      'config.prebuiltToolsConfig.jira is not defined. Using config.requirementsProviderConfig.jira.'
+      'config.prebuiltToolsConfig.jira is not defined. Using config.requirementSourceConfig.jira.'
     );
   }
-  const jiraConfig = config.builtInToolsConfig?.jira || config.requirementsProviderConfig?.jira;
+  const jiraConfig = config.builtInToolsConfig?.jira || config.requirementSourceConfig?.jira;
   if (!jiraConfig) {
     throw new Error('gth_jira_log_work is added to builtInTools, but no Jira config is provided.');
   }

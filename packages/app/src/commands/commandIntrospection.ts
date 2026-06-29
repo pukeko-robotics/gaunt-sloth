@@ -1,9 +1,9 @@
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import {
-  getContentFromProvider,
-  getRequirementsFromProvider,
-  type ContentProviderType,
-  type RequirementsProviderType,
+  getContentFromSource,
+  getRequirementsFromSource,
+  type ContentSourceType,
+  type RequirementSourceType,
 } from '#src/commands/commandUtils.js';
 import {
   buildSystemMessages,
@@ -18,8 +18,8 @@ import {
 import { readPrDiscoveryPrompt } from '#src/commands/prDiscovery.js';
 
 export type PromptCommandType = 'ask' | 'review' | 'pr' | 'pr-discovery' | 'chat' | 'code' | 'exec';
-export type ProviderCommandType = 'review' | 'pr';
-export type ProviderInputType = 'content' | 'requirements';
+export type SourceCommandType = 'review' | 'pr';
+export type SourceInputType = 'content' | 'requirements';
 
 export function getAskSystemPrompt(config: GthConfig): string {
   const parts = [readBackstory(config), readGuidelines(config)];
@@ -80,48 +80,48 @@ function flattenSystemMessageContent(config: GthConfig, modePrompt: string): str
   return '';
 }
 
-export function getEffectiveRequirementsProvider(
-  command: ProviderCommandType,
+export function getEffectiveRequirementSource(
+  command: SourceCommandType,
   config: GthConfig,
-  cliProvider?: RequirementsProviderType
-): RequirementsProviderType | undefined {
+  cliSource?: RequirementSourceType
+): RequirementSourceType | undefined {
   return (
-    cliProvider ??
-    (config?.commands?.[command]?.requirementsProvider as RequirementsProviderType | undefined) ??
-    (config?.requirementsProvider as RequirementsProviderType | undefined)
+    cliSource ??
+    (config?.commands?.[command]?.requirementSource as RequirementSourceType | undefined) ??
+    (config?.requirementSource as RequirementSourceType | undefined)
   );
 }
 
-export function getEffectiveContentProvider(
-  command: ProviderCommandType,
+export function getEffectiveContentSource(
+  command: SourceCommandType,
   config: GthConfig,
-  cliProvider?: ContentProviderType
-): ContentProviderType | undefined {
+  cliSource?: ContentSourceType
+): ContentSourceType | undefined {
   return (
-    cliProvider ??
-    (config?.commands?.[command]?.contentProvider as ContentProviderType | undefined) ??
-    (config?.contentProvider as ContentProviderType | undefined) ??
+    cliSource ??
+    (config?.commands?.[command]?.contentSource as ContentSourceType | undefined) ??
+    (config?.contentSource as ContentSourceType | undefined) ??
     (command === 'pr' ? 'github' : undefined)
   );
 }
 
-export async function getCommandProviderInput(
-  command: ProviderCommandType,
-  inputType: ProviderInputType,
+export async function getCommandSourceInput(
+  command: SourceCommandType,
+  inputType: SourceInputType,
   id: string | undefined,
   config: GthConfig,
-  cliProvider?: RequirementsProviderType | ContentProviderType
+  cliSource?: RequirementSourceType | ContentSourceType
 ): Promise<string> {
   if (inputType === 'requirements') {
-    return getRequirementsFromProvider(
-      getEffectiveRequirementsProvider(command, config, cliProvider as RequirementsProviderType),
+    return getRequirementsFromSource(
+      getEffectiveRequirementSource(command, config, cliSource as RequirementSourceType),
       id,
       config
     );
   }
 
-  return getContentFromProvider(
-    getEffectiveContentProvider(command, config, cliProvider as ContentProviderType),
+  return getContentFromSource(
+    getEffectiveContentSource(command, config, cliSource as ContentSourceType),
     id,
     config
   );

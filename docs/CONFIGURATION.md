@@ -818,11 +818,11 @@ for example, configuration for reference sequential thinking MCP follows:
 
 This configuration launches the MCP filesystem server using npx, providing the LLM with access to the specified directory. The server uses stdio for communication with the LLM.
 
-## Content providers
+## Content sources
 
 ### GitHub Issues
 
-Gaunt Sloth supports GitHub issues as a requirements provider using the GitHub CLI. This integration is simple to use and requires minimal setup.
+Gaunt Sloth supports GitHub issues as a requirement source using the GitHub CLI. This integration is simple to use and requires minimal setup.
 
 **Prerequisites:**
 
@@ -847,14 +847,14 @@ gsloth pr 42 23 -p github
 
 **Configuration:**
 
-To set GitHub as your default requirements provider, add this to your configuration file:
+To set GitHub as your default requirement source, add this to your configuration file:
 
 ```json
 {
   "llm": { "type": "vertexai", "model": "gemini-2.5-pro" },
   "commands": {
     "pr": {
-      "requirementsProvider": "github"
+      "requirementSource": "github"
     }
   }
 }
@@ -919,8 +919,8 @@ JSON:
 ```json
 {
   "llm": { "type": "vertexai", "model": "gemini-2.5-pro" },
-  "requirementsProvider": "jira",
-  "requirementsProviderConfig": {
+  "requirementSource": "jira",
+  "requirementSourceConfig": {
     "jira": {
       "username": "username@yourcompany.com",
       "token": "YOUR_JIRA_PAT_TOKEN",
@@ -935,8 +935,8 @@ Optionally displayUrl can be defined to have a clickable link in the output:
 ```json
 {
   "llm": { "type": "vertexai", "model": "gemini-2.5-pro" },
-  "requirementsProvider": "jira",
-  "requirementsProviderConfig": {
+  "requirementSource": "jira",
+  "requirementSourceConfig": {
     "jira": {
       "displayUrl": "https://yourcompany.atlassian.net/browse/"
     }
@@ -949,8 +949,8 @@ If your environment already contains a full Base64-encoded Basic token, you can 
 ```json
 {
   "llm": { "type": "vertexai", "model": "gemini-2.5-pro" },
-  "requirementsProvider": "jira",
-  "requirementsProviderConfig": {
+  "requirementSource": "jira",
+  "requirementSourceConfig": {
     "jira": {
       "cloudId": "YOUR_ATLASSIAN_CLOUD_ID",
       "displayUrl": "https://yourcompany.atlassian.net/browse/"
@@ -971,8 +971,8 @@ export async function configure() {
       model: 'gemini-2.5-pro',
       vertexai: true,
     }),
-    requirementsProvider: 'jira',
-    requirementsProviderConfig: {
+    requirementSource: 'jira',
+    requirementSourceConfig: {
       jira: {
         username: 'username@yourcompany.com', // Your Jira username/email
         token: 'YOUR_JIRA_PAT_TOKEN', // Your Personal Access Token
@@ -985,7 +985,7 @@ export async function configure() {
 
 ##### Automatic work logging for Jira reviews
 
-When you pass a Jira issue ID to `gsloth pr` and use the modern Jira provider (`requirementsProvider: "jira"`),
+When you pass a Jira issue ID to `gsloth pr` and use the modern Jira provider (`requirementSource: "jira"`),
 you can ask Gaunt Sloth to log review time back to that issue automatically by setting
 `commands.pr.logWorkForReviewInSeconds`. The value is recorded as worklog seconds after each PR review.
 
@@ -993,7 +993,7 @@ you can ask Gaunt Sloth to log review time back to that issue automatically by s
 {
   "commands": {
     "pr": {
-      "requirementsProvider": "jira",
+      "requirementSource": "jira",
       "logWorkForReviewInSeconds": 600
     }
   }
@@ -1027,8 +1027,8 @@ JSON:
 ```json
 {
   "llm": { "type": "vertexai", "model": "gemini-2.5-pro" },
-  "requirementsProvider": "jira-legacy",
-  "requirementsProviderConfig": {
+  "requirementSource": "jira-legacy",
+  "requirementSourceConfig": {
     "jira-legacy": {
       "username": "username@yourcompany.com",
       "token": "YOUR_JIRA_LEGACY_TOKEN",
@@ -1048,8 +1048,8 @@ export async function configure() {
       model: 'gemini-2.5-pro',
       vertexai: true,
     }),
-    requirementsProvider: 'jira-legacy',
-    requirementsProviderConfig: {
+    requirementSource: 'jira-legacy',
+    requirementSourceConfig: {
       'jira-legacy': {
         username: 'username@yourcompany.com', // Your Jira username/email
         token: 'YOUR_JIRA_LEGACY_TOKEN', // Replace with your real Jira API token

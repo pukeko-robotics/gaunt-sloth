@@ -50,13 +50,13 @@ describe('predefined AI provider configurations', () => {
     // Mock a successful config initialization with the mock instance
     const expectedConfig = {
       llm: mockChatInstance,
-      contentProvider: 'file',
-      requirementsProvider: 'file',
+      contentSource: 'file',
+      requirementSource: 'file',
       projectGuidelines: '.gsloth.guidelines.md',
       projectReviewInstructions: '.gsloth.review.md',
       streamOutput: true,
       commands: {
-        pr: { contentProvider: 'github', requirementsProvider: 'github' },
+        pr: { contentSource: 'github', requirementSource: 'github' },
         code: { filesystem: 'all' },
       },
     };
@@ -111,13 +111,13 @@ describe('predefined AI provider configurations', () => {
     // Mock a successful config initialization with the mock instance
     const expectedConfig = {
       llm: mockChatInstance,
-      contentProvider: 'file',
-      requirementsProvider: 'file',
+      contentSource: 'file',
+      requirementSource: 'file',
       projectGuidelines: '.gsloth.guidelines.md',
       projectReviewInstructions: '.gsloth.review.md',
       streamOutput: true,
       commands: {
-        pr: { contentProvider: 'github', requirementsProvider: 'github' },
+        pr: { contentSource: 'github', requirementSource: 'github' },
         code: { filesystem: 'all' },
       },
     };
@@ -172,13 +172,13 @@ describe('predefined AI provider configurations', () => {
     // Mock a successful config initialization with the mock instance
     const expectedConfig = {
       llm: mockChatInstance,
-      contentProvider: 'file',
-      requirementsProvider: 'file',
+      contentSource: 'file',
+      requirementSource: 'file',
       projectGuidelines: '.gsloth.guidelines.md',
       projectReviewInstructions: '.gsloth.review.md',
       streamOutput: true,
       commands: {
-        pr: { contentProvider: 'github', requirementsProvider: 'github' },
+        pr: { contentSource: 'github', requirementSource: 'github' },
         code: { filesystem: 'all' },
       },
     };

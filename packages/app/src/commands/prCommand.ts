@@ -2,12 +2,12 @@ import { Command, Option } from 'commander';
 import { displayError } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { setExitCode } from '@gaunt-sloth/core/utils/systemUtils.js';
 import {
-  getCommandProviderInput,
-  getEffectiveContentProvider,
-  getEffectiveRequirementsProvider,
+  getCommandSourceInput,
+  getEffectiveContentSource,
+  getEffectiveRequirementSource,
   getReviewSystemPrompt,
 } from '#src/commands/commandIntrospection.js';
-import { REQUIREMENTS_PROVIDERS, type RequirementsProviderType } from './commandUtils.js';
+import { REQUIREMENTS_SOURCES, type RequirementSourceType } from './commandUtils.js';
 import jiraLogWork from '#src/helpers/jira/jiraLogWork.js';
 import { JiraConfig } from '@gaunt-sloth/review/sources/types.js';
 import { CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
@@ -18,7 +18,7 @@ import { readMultipleFilesFromProjectDir } from '@gaunt-sloth/review/utils/fileU
 
 interface PrCommandOptions {
   file?: string[];
-  requirementsProvider?: RequirementsProviderType;
+  requirementsSource?: RequirementSourceType;
   message?: string;
 }
 
@@ -30,7 +30,7 @@ export function prCommand(
     .command('pr')
     .description(
       'Review provided Pull Request in current directory. ' +
-        'This command is similar to `review`, but default content provider is `github`. ' +
+        'This command is similar to `review`, but default content source is `github`. ' +
         '(assuming that GitHub CLI is installed and authenticated for current project'
     )
     .argument(
@@ -39,13 +39,13 @@ export function prCommand(
     )
     .argument(
       '[requirementsId]',
-      'Optional requirements ID argument to retrieve requirements with requirements provider'
+      'Optional requirements ID argument to retrieve requirements with requirement source'
     )
     .addOption(
       new Option(
-        '-p, --requirements-provider <requirementsProvider>',
-        'Requirements provider for this review.'
-      ).choices(Object.keys(REQUIREMENTS_PROVIDERS))
+        '-p, --requirements-source <requirementSource>',
+        'Requirement source for this review.'
+      ).choices(Object.keys(REQUIREMENTS_SOURCES))
     )
     .option(
       '-f, --file [files...]',
@@ -56,12 +56,12 @@ export function prCommand(
       const { initConfig } = await import('@gaunt-sloth/core/config.js');
       const config = await initConfig(commandLineConfigOverrides); // Initialize and get config
       const content: string[] = [];
-      const requirementsProvider = getEffectiveRequirementsProvider(
+      const requirementSource = getEffectiveRequirementSource(
         'pr',
         config,
-        options.requirementsProvider
+        options.requirementsSource
       );
-      const contentProvider = getEffectiveContentProvider('pr', config);
+      const contentSource = getEffectiveContentSource('pr', config);
 
       if (options.file) {
         content.push(readMultipleFilesFromProjectDir(options.file));
@@ -69,7 +69,7 @@ export function prCommand(
 
       const isDiscovery = !prId && !requirementsId;
       const looksLikeRequirementsOnlyMode =
-        contentProvider === 'github' && Boolean(prId) && !requirementsId && !/^\d+$/.test(prId);
+        contentSource === 'github' && Boolean(prId) && !requirementsId && !/^\d+$/.test(prId);
 
       if (looksLikeRequirementsOnlyMode) {
         displayError(
@@ -112,28 +112,28 @@ export function prCommand(
         }
       } else {
         // Handle requirements
-        const requirements = await getCommandProviderInput(
+        const requirements = await getCommandSourceInput(
           'pr',
           'requirements',
           requirementsId,
           config,
-          requirementsProvider
+          requirementSource
         );
 
         if (requirements) {
           content.push(requirements);
         }
 
-        // Get PR diff using the provider
+        // Get PR diff using the source
         try {
-          const prContent = await getCommandProviderInput(
+          const prContent = await getCommandSourceInput(
             'pr',
             'content',
             prId,
             config,
-            contentProvider
+            contentSource
           );
-          // A provider may resolve to an empty result instead of throwing - e.g. ghPrDiffSource
+          // A source may resolve to an empty result instead of throwing - e.g. ghPrDiffSource
           // returns null (with a warning) for an invalid PR number. Without this guard the review
           // would silently proceed against no diff; fail loudly as the throwing path used to.
           if (!prContent) {
@@ -174,13 +174,12 @@ export function prCommand(
 
       if (
         requirementsId &&
-        (config.commands?.pr?.requirementsProvider ?? config.requirementsProvider) === 'jira' &&
+        (config.commands?.pr?.requirementSource ?? config.requirementSource) === 'jira' &&
         config.commands?.pr?.logWorkForReviewInSeconds
       ) {
         // TODO we need to figure out some sort of post-processors
         let jiraConfig =
-          config.builtInToolsConfig?.jira ||
-          (config.requirementsProviderConfig?.jira as JiraConfig);
+          config.builtInToolsConfig?.jira || (config.requirementSourceConfig?.jira as JiraConfig);
         await jiraLogWork(
           jiraConfig,
           requirementsId,

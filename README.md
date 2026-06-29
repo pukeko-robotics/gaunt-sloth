@@ -39,7 +39,7 @@ This repository is an NPM workspace monorepo. The dependency chain is:
 |---|---|
 | `gaunt-sloth` | Main CLI application (`packages/app`). Installs the `gsloth`/`gth` binaries. Most users only need this package. |
 | `@gaunt-sloth/agent` | Agent runtime (`packages/agent`): AG-UI server, A2A client, MCP utilities, filesystem and custom tools, and middleware registry — bundles the former tools and api packages. |
-| `@gaunt-sloth/review` | Review and Q&A modules (`packages/review`) with content providers (GitHub, Jira). Includes the `gaunt-sloth-review` binary for lightweight CI pipelines. |
+| `@gaunt-sloth/review` | Review and Q&A modules (`packages/review`) with content sources (GitHub, Jira). Includes the `gaunt-sloth-review` binary for lightweight CI pipelines. |
 | `@gaunt-sloth/core` | Config system, agent infrastructure, LLM provider wrappers, and shared utilities (`packages/core`). |
 
 Most users install `gaunt-sloth` globally and do not interact with the sub-packages directly. `@gaunt-sloth/review` can be used standalone in CI pipelines — it has no dependency on `commander`, MCP, or A2A, making it a lighter option when only review functionality is needed.
@@ -142,9 +142,9 @@ git --no-pager diff | gsloth review
 git --no-pager diff v0.8.3..HEAD | gth review
 ```
 
-**Review diff between head and previous release and head using a specific requirements provider (GitHub issue 38), not the one which is configured by default:
+**Review diff between head and previous release and head using a specific requirement source (GitHub issue 38), not the one which is configured by default:
 ```bash
-git --no-pager diff v0.8.10 HEAD | npx gth review --requirements-provider github -r 38
+git --no-pager diff v0.8.10 HEAD | npx gth review --requirements-source github -r 38
 ```
 
 **Ask questions:**

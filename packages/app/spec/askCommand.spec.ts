@@ -46,13 +46,13 @@ const mockConfig = {
   },
   projectGuidelines: '.gsloth.guidelines.md',
   projectReviewInstructions: '.gsloth.review.md',
-  contentProvider: 'file',
-  requirementsProvider: 'file',
+  contentSource: 'file',
+  requirementSource: 'file',
   streamOutput: true,
   commands: {
     pr: {
-      contentProvider: 'github',
-      requirementsProvider: 'github',
+      contentSource: 'github',
+      requirementSource: 'github',
     },
   },
   filesystem: 'none',
