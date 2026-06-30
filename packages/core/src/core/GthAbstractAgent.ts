@@ -517,7 +517,15 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
 
         const content =
           typeof chunk.content === 'string' ? chunk.content : JSON.stringify(chunk.content);
-        yield { type: 'tool_result', id: chunk.tool_call_id as string, content };
+        // Surface the real tool-result error signal (LangChain `ToolMessage.status`) so
+        // consumers render the ✗/error affordance from fact, not from sniffing the result
+        // text. Only attach the flag on error to keep the success event shape unchanged.
+        yield {
+          type: 'tool_result',
+          id: chunk.tool_call_id as string,
+          content,
+          ...(chunk.status === 'error' ? { isError: true } : {}),
+        };
       }
     }
 

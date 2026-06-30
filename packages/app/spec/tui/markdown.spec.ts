@@ -120,5 +120,26 @@ describe('tui markdown renderer', () => {
       const out = stripAnsi(renderMarkdown('run `a * b` here'));
       expect(out).toContain('a * b');
     });
+
+    it('preserves spacing for code directly touching surrounding text (no stray spaces)', () => {
+      // The protective sentinel must not inject padding around a code span.
+      const out = stripAnsi(renderMarkdown('x`y`z is **bold**'));
+      expect(out).toContain('xyz'); // no spaces leaked around the code span
+      expect(out).not.toContain('x y z');
+    });
+
+    it('keeps adjacent code spans tight together', () => {
+      const out = stripAnsi(renderMarkdown('a `one``two` b is **bold**'));
+      // The two adjacent spans restore back-to-back, exactly as authored.
+      expect(out).toContain('a onetwo b');
+    });
+
+    it('restores multiple (multi-digit) code spans to the correct contents', () => {
+      const spans = Array.from({ length: 12 }, (_, i) => `\`c${i}\``).join('');
+      const out = stripAnsi(renderMarkdown(`${spans} and **bold**`));
+      // The 11th span (index 10, multi-digit) must restore its own contents.
+      expect(out).toContain('c0c1c2c3c4c5c6c7c8c9c10c11');
+      expect(out).not.toContain('CODE'); // no leaked placeholder token
+    });
   });
 });

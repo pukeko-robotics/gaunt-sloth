@@ -21,6 +21,12 @@ export interface ToolCallViewModel {
   status: 'running' | 'done';
   /** Present once a `tool_result` arrives. */
   result?: string;
+  /**
+   * True when the `tool_result` event reported `isError` (the real LangChain
+   * `ToolMessage.status === 'error'` signal). Undefined means success; the renderer drives
+   * the ✗/error glyph from this, never from sniffing the result text.
+   */
+  isError?: boolean;
 }
 
 /** The renderable state of a single in-progress assistant turn. */
@@ -108,6 +114,7 @@ export function foldEvents(state: TurnViewModel, event: AgentStreamEvent): TurnV
           ...tc,
           status: 'done',
           result: event.content,
+          isError: event.isError,
         })),
       };
     default: {

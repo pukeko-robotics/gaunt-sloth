@@ -6,9 +6,10 @@ import { renderMarkdown } from '#src/tui/markdown.js';
 /** Status glyph + word for a tool call's compact summary line. */
 function toolStatus(tc: ToolCallViewModel): { glyph: string; label: string; color: string } {
   if (tc.status === 'done') {
-    // A tool whose result text looks like an error gets the error affordance.
-    const errored = !!tc.result && /^\s*(error|err:|exception|failed)/i.test(tc.result);
-    return errored
+    // Drive the error affordance from the real tool-result signal (LangChain
+    // `ToolMessage.status === 'error'`, threaded through as `isError`), never from sniffing
+    // the result text — legitimate output may simply begin with "Error handling…".
+    return tc.isError
       ? { glyph: '✗', label: 'error', color: 'red' }
       : { glyph: '✓', label: 'done', color: 'magenta' };
   }

@@ -61,6 +61,22 @@ describe('tui/viewModel foldEvents', () => {
     });
   });
 
+  it('threads the tool_result isError signal onto the tool-call view model', async () => {
+    const { foldEventSequence } = await import('#src/tui/viewModel.js');
+    const errored = foldEventSequence([
+      { type: 'tool_start', id: 't1', name: 'run' },
+      { type: 'tool_result', id: 't1', content: 'boom', isError: true },
+    ]);
+    expect(errored.toolCalls[0]).toMatchObject({ status: 'done', result: 'boom', isError: true });
+
+    // Success: no isError on the event => undefined on the model (renderer shows ✓).
+    const ok = foldEventSequence([
+      { type: 'tool_start', id: 't1', name: 'run' },
+      { type: 'tool_result', id: 't1', content: 'Error handling guide' },
+    ]);
+    expect(ok.toolCalls[0].isError).toBeUndefined();
+  });
+
   it('interleaves multiple tool calls preserving first-seen order', async () => {
     const { foldEventSequence } = await import('#src/tui/viewModel.js');
     const vm = foldEventSequence([

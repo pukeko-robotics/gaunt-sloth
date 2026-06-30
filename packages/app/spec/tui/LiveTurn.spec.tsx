@@ -78,17 +78,46 @@ describe('tui <LiveTurn>', () => {
       unmount();
     });
 
-    it('marks a tool whose result looks like an error', () => {
+    it('marks a tool as errored from the real isError signal, not the result text', () => {
       const errored = turn({
         toolCalls: [
-          { id: 't1', name: 'run', argsText: '', status: 'done', result: 'Error: boom' },
+          {
+            id: 't1',
+            name: 'run',
+            argsText: '',
+            status: 'done',
+            result: 'boom happened',
+            isError: true,
+          },
         ],
       });
       const { lastFrame, unmount } = render(<LiveTurn turn={errored} toolsExpanded />);
       const f = stripAnsi(lastFrame() ?? '');
       expect(f).toContain('error');
       expect(f).toContain('✗');
-      expect(f).toContain('Error: boom');
+      expect(f).toContain('boom happened');
+      unmount();
+    });
+
+    it('renders ✓ for a successful result even when its text literally starts with "Error"', () => {
+      // Regression guard: the old heuristic sniffed the result text and mislabeled this.
+      const successButErrorText = turn({
+        toolCalls: [
+          {
+            id: 't1',
+            name: 'run',
+            argsText: '',
+            status: 'done',
+            result: 'Error handling guide: how to recover from failures',
+            // isError omitted => success
+          },
+        ],
+      });
+      const { lastFrame, unmount } = render(<LiveTurn turn={successButErrorText} toolsExpanded />);
+      const f = stripAnsi(lastFrame() ?? '');
+      expect(f).toContain('✓');
+      expect(f).toContain('done');
+      expect(f).not.toContain('✗');
       unmount();
     });
   });

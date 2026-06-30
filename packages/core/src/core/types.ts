@@ -40,7 +40,18 @@ export type AgentStreamEvent =
   | { type: 'tool_start'; id: string; name: string }
   | { type: 'tool_args'; id: string; delta: string }
   | { type: 'tool_end'; id: string }
-  | { type: 'tool_result'; id: string; content: string };
+  | {
+      type: 'tool_result';
+      id: string;
+      content: string;
+      /**
+       * True when the underlying `ToolMessage.status` is `'error'` (LangChain's real
+       * tool-result error signal). Absent/undefined means success — consumers must not
+       * sniff the result text to infer failure. Optional for backward compatibility with
+       * producers that predate the field.
+       */
+      isError?: boolean;
+    };
 
 /**
  * The minimal structural surface of a compiled LangGraph agent that the shared agent
