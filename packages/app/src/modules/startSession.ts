@@ -46,13 +46,15 @@ export async function startSession(
       displayWarning('Setup was not completed. Re-run gth once a configuration exists.');
       return;
     }
-    // Stop here rather than continuing into the session in this SAME process: the first-run
-    // dialog's Ink prompts and the session's Ink TUI both drive stdin/raw-mode, and handing the
-    // terminal from one Ink render straight to the next in-process left the TUI mounting then
-    // immediately exiting. A fresh `gth` invocation gets a clean terminal and loads the config
-    // we just wrote.
-    displaySuccess('Setup complete — run `gth` again to start your session.');
-    return;
+    // CFG-16 — setup succeeded, so continue straight into the interactive session in THIS process
+    // instead of telling the user to re-run `gth` (a dead-end). The first-run dialog cleans up its
+    // own terminal owner before returning — the Ink selector fully unmounts (waitUntilExit) and the
+    // readline fallback is closed in its `finally` — so by the time we fall through, stdin/raw-mode
+    // is free for the session's TUI/readline to claim. The freshly written config is picked up
+    // cleanly below: `initConfig` re-reads from disk on every call (it resets projectDir first and
+    // caches nothing), so the session sees exactly what the dialog just wrote.
+    displaySuccess('Setup complete — starting your session.');
+    // Fall through to the normal dispatch with the same `sessionConfig` (code mode for bare `gth`).
   }
 
   // Cheap gates first (TTY/flags/env). Only probe the optional Ink deps when the

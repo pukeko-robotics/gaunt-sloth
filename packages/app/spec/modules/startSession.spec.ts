@@ -98,7 +98,7 @@ describe('startSession dispatcher', () => {
     expect(interactiveSessionMock.createInteractiveSession).toHaveBeenCalled();
   });
 
-  it('CFG-10: runs the first-run dialog when no config exists, then stops for a clean re-run', async () => {
+  it('CFG-16: runs the first-run dialog when no config exists, then continues into the session', async () => {
     // No config initially; after the dialog writes one, config is present.
     configMock.hasAnyConfig.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     loadInkMock.isInkAvailable.mockResolvedValue(false);
@@ -107,22 +107,39 @@ describe('startSession dispatcher', () => {
     await startSession(sessionConfig, {}, undefined);
 
     expect(firstRunDialogMock.runFirstRunDialog).toHaveBeenCalledTimes(1);
-    // Does NOT continue into the session in the same process — handing the first-run dialog's
-    // Ink terminal straight into the session's Ink TUI left it mounting then exiting. The user
-    // re-runs `gth` to start with a clean terminal and the freshly written config.
-    expect(interactiveSessionMock.createInteractiveSession).not.toHaveBeenCalled();
+    // CFG-16: a SUCCESSFUL first-run hands straight off into the interactive session in the same
+    // process (no dead-end "re-run gth" message). Ink is unavailable here, so it falls through to
+    // the readline session with the SAME sessionConfig and the freshly written config.
+    expect(interactiveSessionMock.createInteractiveSession).toHaveBeenCalledWith(
+      sessionConfig,
+      {},
+      undefined
+    );
     expect(tuiSessionMock.createTuiSession).not.toHaveBeenCalled();
   });
 
-  it('CFG-10: does NOT run the dialog or hang on a non-TTY (piped) run', async () => {
+  it('CFG-16: continues into the TUI session after a successful first-run when Ink is available', async () => {
+    configMock.hasAnyConfig.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    loadInkMock.isInkAvailable.mockResolvedValue(true);
+
+    const { startSession } = await import('#src/modules/startSession.js');
+    await startSession(sessionConfig, {}, undefined);
+
+    expect(firstRunDialogMock.runFirstRunDialog).toHaveBeenCalledTimes(1);
+    expect(tuiSessionMock.createTuiSession).toHaveBeenCalledWith(sessionConfig, {}, undefined);
+    expect(interactiveSessionMock.createInteractiveSession).not.toHaveBeenCalled();
+  });
+
+  it('CFG-16: does NOT run the dialog (no auto-launch) on a non-TTY (piped) run', async () => {
     systemUtilsMock.stdin.isTTY = false;
     configMock.hasAnyConfig.mockResolvedValue(false);
 
     const { startSession } = await import('#src/modules/startSession.js');
     await startSession(sessionConfig, {}, undefined);
 
+    // No TTY -> never enter first-run setup, so there is no setup-driven auto-launch. It falls
+    // through to the normal session (which surfaces the existing "no config" error downstream).
     expect(firstRunDialogMock.runFirstRunDialog).not.toHaveBeenCalled();
-    // Falls through to the normal session (which surfaces the existing error downstream).
     expect(interactiveSessionMock.createInteractiveSession).toHaveBeenCalledTimes(1);
   });
 
