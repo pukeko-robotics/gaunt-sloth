@@ -52,7 +52,13 @@ describe('Review Command Integration Tests', () => {
       1,
       PROFILES_WORKDIR
     );
-    expect(failedSpellOutput.output.toLowerCase()).not.toContain('axios');
+    // Rejection is proven deterministically by the exit code 1 the wrapper already
+    // enforces (it only resolves when the process exits 1). Assert the review's own
+    // FAIL verdict marker (emitted by reviewModule's displayError → stdout) rather
+    // than the absence of the word "axios": a correct rejection can legitimately
+    // mention "axios" while declining to award it, so the old word-absence check
+    // was fragile to model phrasing. FAIL is product-emitted and phrasing-independent.
+    expect(failedSpellOutput.output).toContain('FAIL');
   });
 
   it('should work with fisher-alt profile', async () => {
