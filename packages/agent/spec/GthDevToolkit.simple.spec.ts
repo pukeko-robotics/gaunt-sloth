@@ -15,12 +15,19 @@ const consoleUtilsMock = {
 };
 vi.mock('#src/utils/consoleUtils.js', () => consoleUtilsMock);
 
-// Mock systemUtils (env is consumed by the shell credential-scrub helper).
+// Sentinel fs-backend root: distinct from process.cwd() so the S4 assertion below proves the spawn
+// cwd comes from getCurrentWorkDir() and not from bare process.cwd().
+const FAKE_WORKDIR = '/fake/fs-backend-root';
+
+// Mock systemUtils (env is consumed by the shell credential-scrub helper; getCurrentWorkDir is the
+// EXT-22/S4 spawn cwd). `#src/utils/systemUtils.js` and `@gaunt-sloth/core/utils/systemUtils.js`
+// resolve to the same core module under the vitest workspace plugin, so this intercepts the toolkit.
 const systemUtilsMock = {
   stdout: {
     write: vi.fn(),
   },
   env: { PATH: '/usr/bin', HOME: '/home/test' },
+  getCurrentWorkDir: vi.fn(() => FAKE_WORKDIR),
 };
 vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
 
@@ -192,12 +199,24 @@ describe('GthDevToolkit - Basic Tests', () => {
       expect(childProcessMock.spawn).toHaveBeenCalledWith(
         'echo test',
         // EXT-15: `detached` is POSIX-only (Windows uses taskkill /T, not process groups).
+        // EXT-22 (S4): cwd is the fs-backend root (getCurrentWorkDir()), not bare process.cwd().
         expect.objectContaining({
           shell: true,
           detached: process.platform !== 'win32',
           stdio: ['ignore', 'pipe', 'pipe'],
+          cwd: FAKE_WORKDIR,
         })
       );
+    });
+
+    it('EXT-22 (S4): spawns with cwd === getCurrentWorkDir() (the fs-backend root)', async () => {
+      await toolkit['executeCommand']('echo hi', 'run_shell_command');
+      // The shell must spawn in the same directory the deepagents FilesystemBackend is rooted at
+      // (getCurrentWorkDir()), so the shell tool and the fs tools share one path namespace.
+      expect(childProcessMock.spawn).toHaveBeenCalledTimes(1);
+      const [, options] = childProcessMock.spawn.mock.calls[0];
+      expect((options as { cwd?: string }).cwd).toBe(FAKE_WORKDIR);
+      expect((options as { cwd?: string }).cwd).toBe(systemUtilsMock.getCurrentWorkDir());
     });
 
     it('should throw ShellCommandFailedError on a non-zero exit (was resolve)', async () => {

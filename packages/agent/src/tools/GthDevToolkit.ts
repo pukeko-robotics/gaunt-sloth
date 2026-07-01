@@ -13,7 +13,7 @@ import {
   isShellToolEnabled,
 } from '@gaunt-sloth/core/config.js';
 import type { GthCommand } from '@gaunt-sloth/core/core/types.js';
-import { stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { stdout, getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { checkHardline } from '#src/tools/shell/hardline.js';
 import { buildScrubbedEnv } from '#src/tools/shell/env.js';
 import { OutputBuffer } from '#src/tools/shell/outputBuffer.js';
@@ -276,6 +276,15 @@ export default class GthDevToolkit extends BaseToolkit {
     return new Promise((resolve, reject) => {
       const child = spawn(command, {
         shell: true,
+        // EXT-22 (S4): spawn in the SAME directory the deepagents FilesystemBackend is rooted at,
+        // so the shell tool and the fs tools (ls/read_file/write_file/edit_file/glob/grep) operate
+        // on one path namespace instead of diverging. That backend is constructed with
+        // `rootDir: getCurrentWorkDir()` (GthDeepAgent.ts init), so getCurrentWorkDir() IS the
+        // fs-backend root on the local code/chat runner. getCurrentWorkDir() =
+        // `process.env.INIT_CWD ?? process.cwd()` (core systemUtils); it only diverges from bare
+        // process.cwd() when INIT_CWD is set (npm-bin / IDE-spawned launches) — exactly the
+        // POSIX-latent divergence S4 closes. Evaluated at call time.
+        cwd: getCurrentWorkDir(),
         // (1) Never let the child block on stdin (e.g. git commit opening $EDITOR).
         stdio: ['ignore', 'pipe', 'pipe'],
         // (1) POSIX: own process group so we can kill the whole tree on timeout
