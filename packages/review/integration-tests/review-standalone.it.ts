@@ -69,7 +69,7 @@ describe('Standalone @gaunt-sloth/review integration test', () => {
       commands: {
         pr: {
           contentSource: 'file',
-          rating: false,
+          rating: { enabled: false },
         },
       },
     };
