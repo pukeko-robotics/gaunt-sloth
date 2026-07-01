@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SystemMessage } from '@langchain/core/messages';
 import type { GthConfig } from '#src/config.js';
 import { buildPermissions } from '#src/core/deepAgentPermissions.js';
+import * as deepAgentPermissions from '#src/core/deepAgentPermissions.js';
 
 // getCurrentWorkDir drives shouldUseVirtualFs() (real cwd not `/`-rooted → virtualMode). Mock it
 // so tests can toggle between POSIX real-path mode ('/...') and virtualMode ('D:\\...'). Partial
@@ -78,6 +79,13 @@ describe('GthDeepAgent', () => {
     readCodePromptMock.mockReturnValue('code-mode-prompt');
     readExecPromptMock.mockReturnValue('exec-mode-prompt');
     buildSystemMessagesMock.mockReturnValue([{ content: 'SYSTEM PROMPT' }]);
+    // EXT-14: GthDeepAgent now wraps the FilesystemBackend in guardFilesystemBackend before
+    // handing it to createDeepAgent. Stub it as an identity pass-through here so the pre-existing
+    // `params.backend instanceof FilesystemBackendStub` assertions below keep working; the
+    // dedicated 'EXT-14' tests further down assert the REAL (unstubbed) wiring/behavior.
+    vi.spyOn(deepAgentPermissions, 'guardFilesystemBackend').mockImplementation(
+      (backend) => backend as any
+    );
   });
 
   it('builds a deep agent with model, FilesystemBackend, permissions and checkpointer', async () => {
@@ -103,6 +111,12 @@ describe('GthDeepAgent', () => {
     expect((params.backend as FilesystemBackendStub).options).toMatchObject({ virtualMode: false });
     expect(params.permissions).toEqual(buildPermissions({ filesystem: 'none' }));
     expect(params.tools.map((t: { name: string }) => t.name)).toEqual(['foo']);
+    // EXT-14: the FilesystemBackend is passed through guardFilesystemBackend before it reaches
+    // createDeepAgent (stubbed above as an identity pass-through), anchored at the real cwd.
+    expect(deepAgentPermissions.guardFilesystemBackend).toHaveBeenCalledWith(
+      expect.any(FilesystemBackendStub),
+      expect.objectContaining({ cwd: '/home/user/proj', virtual: false })
+    );
   });
 
   it('with allowDirs (--allow-dir) drops virtualMode and uses the widened permission allow-list', async () => {
@@ -124,6 +138,12 @@ describe('GthDeepAgent', () => {
       expect.anything(),
       expect.stringContaining('widened beyond cwd')
     );
+    // EXT-14: the widened --allow-dir roots are passed through to the realpath guard too, so a
+    // symlink can't be used to escape THOSE roots either.
+    expect(deepAgentPermissions.guardFilesystemBackend).toHaveBeenCalledWith(
+      expect.any(FilesystemBackendStub),
+      expect.objectContaining({ allowDirs: ['/tmp/out'] })
+    );
   });
 
   it('without allowDirs runs in real-path mode too (EXT-13: default cwd sandbox via globs)', async () => {
@@ -136,6 +156,25 @@ describe('GthDeepAgent', () => {
     // EXT-13: the default sandbox no longer relies on virtualMode — the backend uses real
     // absolute paths and the cwd allow/deny globs do the containment.
     expect((params.backend as FilesystemBackendStub).options).toMatchObject({ virtualMode: false });
+  });
+
+  it('EXT-14: wraps the FilesystemBackend in the REAL realpath guard (not the identity stub)', async () => {
+    // Un-stub guardFilesystemBackend for this one test so we exercise the real wiring: the
+    // resulting `params.backend` should be a distinct guarded object (not the raw
+    // FilesystemBackendStub instance), exposing the same fs-backend method surface deepagents
+    // expects. Full symlink-escape behavior is covered end to end (real fs, real FilesystemBackend)
+    // in deepAgentRealPathSandbox.spec.ts; this only proves GthDeepAgent actually wires the guard.
+    (deepAgentPermissions.guardFilesystemBackend as ReturnType<typeof vi.fn>).mockRestore();
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+
+    await agent.init('exec', makeConfig({ filesystem: 'all' }));
+
+    const params = createDeepAgentMock.mock.calls[0][0];
+    expect(params.backend).not.toBeInstanceOf(FilesystemBackendStub);
+    for (const method of ['ls', 'read', 'readRaw', 'write', 'edit', 'glob', 'grep']) {
+      expect(typeof params.backend[method]).toBe('function');
+    }
   });
 
   it('passes the composed gsloth system prompt to createDeepAgent (chat prompt by default)', async () => {

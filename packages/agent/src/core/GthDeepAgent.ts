@@ -19,6 +19,7 @@ import { createDeepAgent, FilesystemBackend } from 'deepagents';
 import {
   buildPermissions,
   FILESYSTEM_TOOL_NAMES,
+  guardFilesystemBackend,
   type FilesystemPermission,
 } from '#src/core/deepAgentPermissions.js';
 import type { DebugCapture, DebugRequestExtras, DebugToolDef } from '#src/core/debugCapture.js';
@@ -92,7 +93,10 @@ export interface GthDeepAgentParams {
  *   {@link FilesystemBackend}. gsloth's `.aiignore` + `filesystem` config are mapped
  *   onto deepagents `permissions` (see {@link buildPermissions}). Any resolved tool
  *   that reuses a deepagents filesystem-tool name is therefore superseded and dropped
- *   (`createDeepAgent` would otherwise throw on the collision).
+ *   (`createDeepAgent` would otherwise throw on the collision). EXT-14: the
+ *   `FilesystemBackend` itself is wrapped with {@link guardFilesystemBackend} before it
+ *   reaches `createDeepAgent`, adding a realpath (symlink-resolved) containment check the
+ *   permission globs alone can't provide.
  * - todos / subagents / summarization come from deepagents' standard middleware.
  *
  * The transport-agnostic param assembly lives in {@link buildDeepAgentParams} so the ACP
@@ -196,9 +200,11 @@ export class GthDeepAgent extends GthAbstractAgent {
 
     // EXT-13: the backend always runs in REAL-path mode (virtualMode off) so the deepagents fs
     // tools and the EXT-9 run_shell_command tool share ONE path namespace — real absolute paths
-    // rooted at cwd. Containment is enforced entirely by the permission allow/deny globs built in
+    // rooted at cwd. Containment is enforced by the permission allow/deny globs built in
     // buildDeepAgentParams (default: allow cwd/**, deny /**), which match what virtualMode used to
-    // give for free (see deepAgentPermissions + the EXT-13 symlink/`..` parity tests).
+    // give for free (see deepAgentPermissions + the EXT-13 symlink/`..` parity tests), PLUS the
+    // EXT-14 realpath guard wrapped around the backend below (closes the intermediate-symlinked-
+    // directory gap those lexical globs alone can't catch).
     // `--allow-dir` (config.allowDirs) further widens those allow-rules to reach extra real dirs;
     // it removes a guardrail, so it is announced loudly by the exec command and surfaced here.
     const allowDirs = this.config?.allowDirs;
@@ -212,10 +218,21 @@ export class GthDeepAgent extends GthAbstractAgent {
             : '')
       );
     }
-    const backend = new FilesystemBackend({
-      rootDir: getCurrentWorkDir(),
-      virtualMode: useVirtualFs,
-    });
+    // EXT-14: layer the realpath containment guard around the backend deepagents' fs middleware
+    // (main agent AND every subagent — they all share this one `backend` reference, see
+    // guardFilesystemBackend's doc comment) reads/writes through. Closes the intermediate-
+    // symlinked-directory escape that the lexical allow/deny globs alone cannot catch.
+    const backend = guardFilesystemBackend(
+      new FilesystemBackend({
+        rootDir: getCurrentWorkDir(),
+        virtualMode: useVirtualFs,
+      }),
+      {
+        cwd: getCurrentWorkDir(),
+        virtual: useVirtualFs,
+        allowDirs: widenFs ? allowDirs : undefined,
+      }
+    );
 
     // EXT-13 (part b): on the local-runner code path the model used to be told nothing about
     // where it is, so it assumed `/` was cwd and fed `/`-rooted paths to the real-fs shell. Now

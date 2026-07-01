@@ -1,12 +1,15 @@
 /**
- * EXT-13 containment + path-namespace integration tests.
+ * EXT-13 containment + path-namespace integration tests, EXT-14 realpath-sandbox tests.
  *
  * Unlike the unit tests in deepAgentPermissions.spec.ts (which assert the SHAPE of the rules
  * gsloth builds), these drive the REAL deepagents filesystem tools (`createFilesystemMiddleware`
- * with a real {@link FilesystemBackend} in non-virtual mode + gsloth's `buildPermissions` output)
- * against a real temp directory. They prove the rules actually contain — i.e. that removing
- * virtualMode (EXT-13 part a) did NOT weaken the sandbox — and that the fs tools and shell now
- * agree on one real-absolute-path namespace (the glob-vs-shell symptom from live testing).
+ * with a real {@link FilesystemBackend} in non-virtual mode, wrapped in gsloth's EXT-14
+ * {@link guardFilesystemBackend} + gsloth's `buildPermissions` output — i.e. the exact backend
+ * construction {@link GthDeepAgent.init} wires up) against a real temp directory. They prove the
+ * rules actually contain — i.e. that removing virtualMode (EXT-13 part a) did NOT weaken the
+ * sandbox — that the fs tools and shell now agree on one real-absolute-path namespace (the
+ * glob-vs-shell symptom from live testing), and (EXT-14) that a symlink can't be used to escape
+ * the sandbox even when its lexical form matches an `allow cwd/**` rule.
  *
  * These intentionally do NOT mock deepagents or node:fs: the whole point is to exercise the real
  * permission enforcement + backend path resolution end to end.
@@ -24,10 +27,18 @@ vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => ({
   getCurrentWorkDir: () => getCurrentWorkDirMock(),
 }));
 
-// Pull the tools off a real filesystem middleware built with a non-virtual backend + the given
-// permissions. Returns a name→tool map so tests can `.invoke()` read_file / write_file / glob.
-function buildFsTools(cwd: string, permissions: unknown) {
-  const backend = new FilesystemBackend({ rootDir: cwd, virtualMode: false });
+// Pull the tools off a real filesystem middleware built with a non-virtual backend (wrapped in
+// the EXT-14 realpath guard, exactly as GthDeepAgent.init() wires it) + the given permissions.
+// Returns a name→tool map so tests can `.invoke()` read_file / write_file / glob.
+async function buildFsTools(cwd: string, permissions: unknown) {
+  const { guardFilesystemBackend } = await import('#src/core/deepAgentPermissions.js');
+  const backend = guardFilesystemBackend(
+    new FilesystemBackend({ rootDir: cwd, virtualMode: false }),
+    {
+      cwd,
+      virtual: false,
+    }
+  );
 
   const mw = createFilesystemMiddleware({ backend, permissions: permissions as any });
 
@@ -62,7 +73,7 @@ describe('EXT-13 real-path sandbox (default code mode, no virtualMode)', () => {
     const { buildPermissions } = await import('#src/core/deepAgentPermissions.js');
     // The default code-mode sandbox: filesystem 'all' → allow cwd/**, deny /**.
     const permissions = buildPermissions({ filesystem: 'all' });
-    return { tools: buildFsTools(cwd, permissions), permissions };
+    return { tools: await buildFsTools(cwd, permissions), permissions };
   }
 
   it('reads a file INSIDE cwd (real absolute path) — allowed', async () => {
@@ -108,7 +119,7 @@ describe('EXT-13 real-path sandbox (default code mode, no virtualMode)', () => {
 
   it('"read" mode allows reads in cwd but denies writes', async () => {
     const { buildPermissions } = await import('#src/core/deepAgentPermissions.js');
-    const tools = buildFsTools(cwd, buildPermissions({ filesystem: 'read' }));
+    const tools = await buildFsTools(cwd, buildPermissions({ filesystem: 'read' }));
     const read = await tools.read_file.invoke({ file_path: path.join(cwd, 'inside.txt') });
     expect(JSON.stringify(read)).toContain('INSIDE');
     await expect(
@@ -118,7 +129,7 @@ describe('EXT-13 real-path sandbox (default code mode, no virtualMode)', () => {
 
   it('"none" mode denies reads and writes even inside cwd', async () => {
     const { buildPermissions } = await import('#src/core/deepAgentPermissions.js');
-    const tools = buildFsTools(cwd, buildPermissions({ filesystem: 'none' }));
+    const tools = await buildFsTools(cwd, buildPermissions({ filesystem: 'none' }));
     await expect(
       tools.read_file.invoke({ file_path: path.join(cwd, 'inside.txt') })
     ).rejects.toThrow(/permission denied for read/i);
@@ -127,7 +138,7 @@ describe('EXT-13 real-path sandbox (default code mode, no virtualMode)', () => {
   it('.aiignore deny rules win over the cwd allow rule (anchored at real cwd)', async () => {
     const { buildPermissions } = await import('#src/core/deepAgentPermissions.js');
     writeFileSync(path.join(cwd, 'secrets.env'), 'TOKEN=abc');
-    const tools = buildFsTools(
+    const tools = await buildFsTools(
       cwd,
       buildPermissions({ filesystem: 'all', aiignore: { enabled: true, patterns: ['*.env'] } })
     );
@@ -140,46 +151,60 @@ describe('EXT-13 real-path sandbox (default code mode, no virtualMode)', () => {
   });
 
   /**
-   * SYMLINK CONTAINMENT — the load-bearing parity check for EXT-13.
+   * SYMLINK CONTAINMENT — EXT-13 parity plus the EXT-14 fix.
    *
    * deepagents enforces permissions on the RAW model-supplied path string (validatePath +
    * micromatch globs); it does NOT fs.realpath/resolve symlinks before matching. virtualMode's
    * resolvePath is also purely lexical (path.resolve + a ".." check), so it never resolved
-   * symlinks either. Empirically (verified during EXT-13) BOTH modes behave identically:
+   * symlinks either. Historically (verified during EXT-13) BOTH modes behaved identically:
    *
-   *   - A symlink whose FINAL component points outside cwd is blocked by the backend's read()
-   *     (O_NOFOLLOW / lstat-rejects-symlink) → ELOOP / "Symlinks are not allowed". (covered below)
+   *   - A symlink whose FINAL component points outside cwd was blocked by the backend's read()
+   *     (O_NOFOLLOW / lstat-rejects-symlink) → ELOOP / "Symlinks are not allowed".
    *   - A symlink used as an INTERMEDIATE DIRECTORY component (cwd/linkdir -> /outside, then
-   *     cwd/linkdir/secret.txt) is NOT caught: the permission glob matches the in-cwd path
+   *     cwd/linkdir/secret.txt) was NOT caught: the permission glob matched the in-cwd path
    *     (allow cwd/**), O_NOFOLLOW only guards the final component, and neither virtualMode nor
-   *     the new real-path mode resolves the intermediate symlink. So it reads the outside target.
+   *     the EXT-13 real-path mode resolved the intermediate symlink — so it read the outside
+   *     target. That was a PRE-EXISTING gap shared by virtualMode; EXT-13 introduced no regression.
    *
-   * This is a PRE-EXISTING gap shared by virtualMode — EXT-13 introduces NO regression. The
-   * intermediate-symlink case is asserted here as the documented current behavior (NOT a new
-   * weakness); see the EXT-13 report for the follow-up to close it (resolve realpath before the
-   * permission check, ideally upstream in deepagents).
+   * EXT-14 closes the intermediate-directory gap by wrapping the backend in gsloth's own
+   * `guardFilesystemBackend` (see `buildFsTools` above), which realpath-resolves the target BEFORE
+   * delegating to the backend and denies anything that resolves outside the sandbox root(s) — so
+   * BOTH symlink shapes below are now denied (the final-component case picks up a consistent
+   * "permission denied" throw too, since the realpath guard runs before the backend's own
+   * O_NOFOLLOW read). Upstream tracking (closing this in deepagents itself): EXT-19.
    */
-  describe('symlink containment (parity with virtualMode; documents a pre-existing gap)', () => {
-    it('final-component symlink pointing outside cwd is blocked by the backend', async () => {
+  describe('symlink containment (EXT-13 parity + the EXT-14 realpath fix)', () => {
+    it('final-component symlink pointing outside cwd is denied by the realpath guard', async () => {
       const { tools } = await defaultTools();
       const link = path.join(cwd, 'linkfile');
       symlinkSync(path.join(outside, 'secret.txt'), link);
-      // Permission glob allows the in-cwd path, but the backend refuses to follow the symlink.
-      const out = await tools.read_file.invoke({ file_path: link });
-      expect(JSON.stringify(out)).toMatch(/symlink|ELOOP/i);
-      expect(JSON.stringify(out)).not.toContain('SECRET-OUTSIDE');
+      // The permission glob still allows the in-cwd lexical path, but the EXT-14 guard resolves
+      // the symlink and denies before the backend's own O_NOFOLLOW read ever runs.
+      await expect(tools.read_file.invoke({ file_path: link })).rejects.toThrow(
+        /permission denied for read/i
+      );
     });
 
-    it('XFAIL/KNOWN-GAP: intermediate symlink DIR reaches outside cwd (same in virtualMode)', async () => {
+    it('FIXED (was XFAIL/KNOWN-GAP): intermediate symlink DIR reaching outside cwd is denied', async () => {
       const { tools } = await defaultTools();
       const linkdir = path.join(cwd, 'linkdir');
       symlinkSync(outside, linkdir); // cwd/linkdir -> /outside
-      const out = await tools.read_file.invoke({ file_path: path.join(linkdir, 'secret.txt') });
-      // Documented current behavior: the outside file IS read. This is the pre-existing gap that
-      // virtualMode ALSO had (lexical resolve, no realpath). If a future deepagents resolves
-      // realpath before the permission check, this assertion will start failing — at which point
-      // flip it to expect a permission denial and close the EXT-13 follow-up.
-      expect(JSON.stringify(out)).toContain('SECRET-OUTSIDE');
+      // EXT-14: the realpath guard resolves cwd/linkdir/secret.txt to its real location outside
+      // cwd and denies it, even though the lexical path matches `allow cwd/**`.
+      await expect(
+        tools.read_file.invoke({ file_path: path.join(linkdir, 'secret.txt') })
+      ).rejects.toThrow(/permission denied for read/i);
+    });
+
+    it('an intermediate symlink DIR pointing at ANOTHER in-cwd dir is still readable (no regression)', async () => {
+      const { tools } = await defaultTools();
+      const realSubdir = path.join(cwd, 'realsubdir');
+      mkdirSync(realSubdir);
+      writeFileSync(path.join(realSubdir, 'note.txt'), 'IN-CWD-VIA-LINK');
+      const linkdir = path.join(cwd, 'linkdir-legit');
+      symlinkSync(realSubdir, linkdir); // cwd/linkdir-legit -> cwd/realsubdir (both in-sandbox)
+      const out = await tools.read_file.invoke({ file_path: path.join(linkdir, 'note.txt') });
+      expect(JSON.stringify(out)).toContain('IN-CWD-VIA-LINK');
     });
   });
 

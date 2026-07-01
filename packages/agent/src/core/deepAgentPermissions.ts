@@ -1,4 +1,6 @@
-import type { FilesystemPermission } from 'deepagents';
+import type { BackendProtocolV2, FilesystemPermission } from 'deepagents';
+import { realpathSync } from 'node:fs';
+import { realpath as realpathAsync } from 'node:fs/promises';
 import path from 'node:path';
 import { getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
 
@@ -34,6 +36,18 @@ export interface PermissionConfigSlice {
 }
 
 /**
+ * Compute the real absolute containment root(s) for a real-path (non-virtual) sandbox: cwd plus
+ * each of `dirs` resolved against cwd, de-duped (e.g. a dir that resolves back to cwd). Shared by
+ * {@link allowDirsToPermissions} (turns these into glob allow-rules) and
+ * {@link guardFilesystemBackend} (EXT-14: uses them as the realpath containment boundary — the
+ * SAME roots the lexical globs are anchored at, so the two checks agree on what "contained"
+ * means).
+ */
+function computeSandboxRoots(cwd: string, dirs: string[] = []): string[] {
+  return Array.from(new Set([cwd, ...dirs.map((d) => path.resolve(cwd, d))]));
+}
+
+/**
  * Build allow+deny rules for the widened (`--allow-dir`) sandbox. Because the backend runs
  * without virtualMode, paths are REAL absolute paths, so we anchor allow rules at the resolved
  * absolute cwd and each allowed dir, then deny everything else. First-match-wins, so the allow
@@ -41,9 +55,7 @@ export interface PermissionConfigSlice {
  */
 export function allowDirsToPermissions(allowDirs: string[]): FilesystemPermission[] {
   const cwd = getCurrentWorkDir();
-  const roots = [cwd, ...allowDirs.map((d) => path.resolve(cwd, d))];
-  // De-dupe resolved roots (e.g. an --allow-dir pointing back at cwd).
-  const uniqueRoots = Array.from(new Set(roots));
+  const uniqueRoots = computeSandboxRoots(cwd, allowDirs);
   const allow: FilesystemPermission[] = uniqueRoots.map((root) => ({
     operations: ['read', 'write'],
     paths: [`${root}/**`, root],
@@ -182,4 +194,139 @@ export function buildPermissions(
       ? allowDirsToPermissions(config.allowDirs!)
       : filesystemModeToPermissions(config.filesystem, cwd, virtual);
   return [...aiignore, ...modeRules];
+}
+
+/**
+ * EXT-14: which fs operation a guarded backend method enforces, for the denial message.
+ */
+type GuardOperation = 'read' | 'write';
+
+/**
+ * Resolve `absPath` to its real, symlink-free location, walking up to the nearest EXISTING
+ * ancestor when the target itself doesn't exist yet (e.g. a `write_file` target about to be
+ * created). Only an EXISTING path component can itself be — or sit behind — a symlink, so
+ * resolving the nearest real ancestor is enough to catch an intermediate symlinked directory
+ * that would steer a not-yet-existing write outside the sandbox. Terminates because
+ * `path.dirname` strictly shortens the path until it reaches the filesystem root.
+ */
+async function realpathNearestExisting(absPath: string): Promise<string> {
+  let current = absPath;
+  for (;;) {
+    try {
+      return await realpathAsync(current);
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return current; // filesystem root; nothing left to resolve
+      current = parent;
+    }
+  }
+}
+
+/** True when `resolved` equals one of `roots` or is a descendant of one. */
+function isWithinRoots(resolved: string, roots: string[]): boolean {
+  return roots.some((root) => resolved === root || resolved.startsWith(`${root}${path.sep}`));
+}
+
+/** Options for {@link guardFilesystemBackend}. */
+export interface RealpathGuardOptions {
+  /** Real absolute cwd the sandbox is rooted at. Defaults to {@link getCurrentWorkDir}. */
+  cwd?: string;
+  /**
+   * True when the wrapped backend runs in virtualMode (EXT-16 Windows fallback): the
+   * model-supplied path is a `/`-rooted VIRTUAL path relative to cwd, not a real OS path.
+   * `--allow-dir` widening never applies in virtualMode (mirrors {@link buildPermissions}), so
+   * `allowDirs` is ignored when this is true.
+   */
+  virtual?: boolean;
+  /** Extra real absolute directories allowed beyond cwd (the `--allow-dir` widened roots). */
+  allowDirs?: string[];
+}
+
+/**
+ * Wrap a deepagents filesystem backend so every read/write/edit/ls/glob/grep call is additionally
+ * checked for a REALPATH (symlink-resolved) escape from the sandbox root(s) — closes EXT-14.
+ *
+ * deepagents' own permission layer (`enforcePermission` → `validatePath` → `decidePathAccess`,
+ * `permissions/enforce.ts`) matches the RAW model-supplied path against the allow/deny globs and
+ * never resolves symlinks. A raw `..`/`~` is rejected by `validatePath`, and a FINAL-component
+ * symlink is blocked by the backend's own `O_NOFOLLOW` read — but an INTERMEDIATE symlinked
+ * directory inside cwd whose target is OUTSIDE cwd (`cwd/linkdir -> /outside`, then reading
+ * `cwd/linkdir/secret.txt`) matches the lexical `allow cwd/**` rule and reaches outside the
+ * sandbox. See `deepAgentRealPathSandbox.spec.ts` for the end-to-end proof.
+ *
+ * This wraps the BACKEND — rather than adding a `wrapToolCall` middleware — because it is the ONE
+ * seam gsloth fully controls that also covers subagents: `createDeepAgent` builds a fresh
+ * `createFilesystemMiddleware({ backend, permissions })` per subagent (and for the main agent)
+ * from the SAME `backend` reference, but each subagent gets its OWN middleware array that does
+ * NOT include gsloth's `middleware` param — so a `wrapToolCall` guard would only cover the
+ * top-level agent's tool calls, not a subagent's. Wrapping the shared backend closes the gap for
+ * both.
+ *
+ * Deliberately does NOT re-implement deepagents' glob/permission matching (aiignore, read-only
+ * mode, etc. all stay correctly enforced, unchanged, by the existing lexical checks inside the
+ * wrapped backend's tools) — this is a second, independent containment gate layered in front of
+ * them. TOCTOU: the realpath resolution here and the real fs op that follows inside the wrapped
+ * backend are not atomic; racing a symlink swap in that small window is an accepted risk (out of
+ * scope — this closes the deterministic, non-racing escape described above).
+ */
+export function guardFilesystemBackend(
+  backend: BackendProtocolV2,
+  options: RealpathGuardOptions = {}
+): BackendProtocolV2 {
+  const cwd = options.cwd ?? getCurrentWorkDir();
+  const virtual = options.virtual ?? false;
+  // allowDirs never widens virtualMode (mirrors buildPermissions); real mode's roots are cwd plus
+  // each configured extra real dir. Resolved via realpath ONCE at wrap time (not per call) so a
+  // symlinked tmp root (e.g. macOS `/tmp` -> `/private/tmp`) doesn't itself look like an escape.
+  const rawRoots = virtual ? [cwd] : computeSandboxRoots(cwd, options.allowDirs);
+  const roots = rawRoots.map((root) => {
+    try {
+      return realpathSync(root);
+    } catch {
+      return root; // root doesn't exist (yet) — fall back to its lexical form
+    }
+  });
+
+  async function assertContained(rawPath: string, operation: GuardOperation): Promise<void> {
+    const lexical = virtual
+      ? path.resolve(cwd, rawPath.startsWith('/') ? rawPath.slice(1) : rawPath)
+      : path.resolve(cwd, rawPath);
+    const resolved = await realpathNearestExisting(lexical);
+    if (!isWithinRoots(resolved, roots)) {
+      throw new Error(`Error: permission denied for ${operation} on ${rawPath}`);
+    }
+  }
+
+  return {
+    async ls(dirPath) {
+      await assertContained(dirPath, 'read');
+      return backend.ls(dirPath);
+    },
+    async read(filePath, offset, limit) {
+      await assertContained(filePath, 'read');
+      return backend.read(filePath, offset, limit);
+    },
+    async readRaw(filePath) {
+      await assertContained(filePath, 'read');
+      return backend.readRaw(filePath);
+    },
+    async write(filePath, content) {
+      await assertContained(filePath, 'write');
+      return backend.write(filePath, content);
+    },
+    async edit(filePath, oldString, newString, replaceAll) {
+      await assertContained(filePath, 'write');
+      return backend.edit(filePath, oldString, newString, replaceAll);
+    },
+    async glob(pattern, dirPath) {
+      await assertContained(dirPath ?? '/', 'read');
+      return backend.glob(pattern, dirPath);
+    },
+    async grep(pattern, dirPath, glob) {
+      await assertContained(dirPath ?? '/', 'read');
+      return backend.grep(pattern, dirPath, glob);
+    },
+    uploadFiles: backend.uploadFiles?.bind(backend),
+    downloadFiles: backend.downloadFiles?.bind(backend),
+  };
 }
