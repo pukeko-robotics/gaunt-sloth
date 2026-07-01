@@ -357,6 +357,39 @@ describe('GthDeepAgent', () => {
     expect(result.status).toBe('error');
   });
 
+  // EXT-24: deepagents' validatePath (permissions/enforce.ts) THROWS on a malformed path the
+  // model supplied — a relative path, a `..`/`~` segment, or an empty string — and this throw runs
+  // BEFORE the permission check. Left unsoftened it escaped both softeners and aborted the whole
+  // run; on the AG-UI transport the run then ended with RUN_ERROR (a terminal event) and never
+  // reached RUN_FINISHED, hanging a consumer that waits for it. Each of these must now soften to a
+  // recoverable error ToolMessage (same shape as the permission-denial case) so the model can
+  // retry and the run finishes normally.
+  it.each([
+    ['path must be absolute: "."', 'ls'],
+    ['path must not contain "..": "/a/../b"', 'read_file'],
+    ['path must not contain "~": "~/secrets"', 'write_file'],
+    ['path must be a non-empty string', 'glob'],
+  ])(
+    'fs-denial-softening softens the validatePath throw %j into an error ToolMessage',
+    async (message) => {
+      const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+      const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+      await agent.init(undefined, makeConfig());
+
+      const softening = createDeepAgentMock.mock.calls[0][0].middleware.find(
+        (m: { name: string }) => m.name === 'GthDeepFsDenialSoftening'
+      );
+      const handler = vi.fn().mockRejectedValue(new Error(message));
+
+      const result = await softening.wrapToolCall({ toolCall: { id: 'tc-path' } }, handler);
+      // Softened (not rethrown): the model observes the mistake as a normal error result and the run
+      // continues to RUN_FINISHED instead of aborting into RUN_ERROR.
+      expect(String(result.content)).toBe(message);
+      expect(result.tool_call_id).toBe('tc-path');
+      expect(result.status).toBe('error');
+    }
+  );
+
   it('fs-denial-softening rethrows non-permission errors', async () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });

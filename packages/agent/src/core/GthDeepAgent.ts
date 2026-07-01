@@ -349,11 +349,20 @@ export class GthDeepAgent extends GthAbstractAgent {
       return true;
     });
 
-    // Soften deepagents' fail-hard filesystem permission denials. By default a denied
-    // read/write THROWS, which aborts the whole run; wrap tool calls so a denial becomes
-    // a recoverable ToolMessage instead, letting the model continue and report it. This
-    // preserves gsloth's recoverable-denial UX (the old GthFileSystemToolkit returned a
-    // message rather than throwing).
+    // Soften deepagents' fail-hard filesystem tool throws. By default the permission layer
+    // THROWS on both a denied read/write AND on a malformed path the model supplied — a relative
+    // path, a `..`/`~` segment, or an empty string (deepagents' validatePath, run BEFORE the
+    // permission check in enforcePermission). Any of these aborts the WHOLE run. On the AG-UI
+    // transport that throw propagates out of streamWithEvents into the run handler's catch, which
+    // emits RUN_ERROR and ends the response WITHOUT a terminal RUN_FINISHED — and since AG-UI's
+    // protocol makes RUN_ERROR terminal ("no further events can be sent"), a consumer waiting for
+    // RUN_FINISHED hangs (EXT-24). Wrap tool calls so each of these becomes a recoverable error
+    // ToolMessage instead, letting the model observe the mistake, retry with a good path, and
+    // finish the run normally (reaching RUN_FINISHED). This preserves gsloth's recoverable-denial
+    // UX (the old GthFileSystemToolkit returned a message rather than throwing). Only these known
+    // fs path/permission messages are caught; every other throw (GraphInterrupt from a client-tool
+    // interrupt stub, AbortError on client disconnect, unexpected errors) is rethrown untouched so
+    // control-flow and genuine failures still surface.
     const fsDenialSoftening = createMiddleware({
       name: 'GthDeepFsDenialSoftening',
       wrapToolCall: async (request, handler) => {
@@ -361,8 +370,15 @@ export class GthDeepAgent extends GthAbstractAgent {
           return await handler(request);
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
-          if (/permission denied for (read|write)/i.test(message)) {
-            debugLog(`Softened fs permission denial into a ToolMessage: ${message}`);
+          // deepagents fs enforcement throws (middleware/fs.ts enforcePermission +
+          // permissions/enforce.ts validatePath): a permission denial, or a path that is
+          // relative / contains ".." or "~" / is empty. All are recoverable model-input errors.
+          if (
+            /permission denied for (read|write)|path must (be absolute|not contain|be a non-empty string)/i.test(
+              message
+            )
+          ) {
+            debugLog(`Softened fs tool throw into a ToolMessage: ${message}`);
             return new ToolMessage({
               content: message,
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
