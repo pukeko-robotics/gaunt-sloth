@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SystemMessage } from '@langchain/core/messages';
 import type { GthConfig } from '#src/config.js';
 import { buildPermissions } from '#src/core/deepAgentPermissions.js';
@@ -671,6 +671,8 @@ describe('EXT-22 path-namespace guidance (S2 note + S1 correction middleware)', 
     // The EXT-13 real-path note must NOT be present in virtualMode.
     expect(prompt).not.toContain('there is no virtual root');
     expect(prompt).not.toContain('Working directory:');
+    // EXT-26: the OS/shell note is appended in code mode regardless of virtualMode.
+    expect(prompt).toContain('Host operating system:');
   });
 
   it('S2: code + real-path (POSIX) keeps the EXT-13 note and NOT the virtualMode guidance', async () => {
@@ -679,11 +681,14 @@ describe('EXT-22 path-namespace guidance (S2 note + S1 correction middleware)', 
     expect(prompt).toContain('Working directory:');
     expect(prompt).toContain('there is no virtual root'); // EXT-13 real-path note
     expect(prompt).not.toContain(VIRTUAL_ONLY_MARKER); // no virtualMode guidance
+    expect(prompt).toContain('Host operating system:'); // EXT-26 OS/shell note in code mode
   });
 
   it('S2: virtualMode but non-code command (chat) gets NEITHER note', async () => {
     const params = await initAgent('chat', 'D:\\work');
     expect(params.systemPrompt).toBe('SYSTEM PROMPT');
+    // EXT-26: non-code commands get no OS/shell note either.
+    expect(params.systemPrompt).not.toContain('Host operating system:');
   });
 
   // ---- S1: last-word correction middleware (placement + gating + behavior) ----
@@ -768,6 +773,60 @@ describe('appendVirtualCwdNote (EXT-22 S2)', () => {
     const { appendVirtualCwdNote } = await import('#src/core/GthDeepAgent.js');
     const out = appendVirtualCwdNote(undefined);
     expect(out.startsWith('Filesystem vs shell path namespaces:')).toBe(true);
+  });
+});
+
+describe('appendOsShellNote (EXT-26)', () => {
+  const realPlatform = process.platform;
+  const setPlatform = (value: NodeJS.Platform): void => {
+    Object.defineProperty(process, 'platform', { value, configurable: true });
+  };
+  afterEach(() => {
+    setPlatform(realPlatform);
+  });
+
+  it('appends the OS/shell note to an existing prompt', async () => {
+    const { appendOsShellNote } = await import('#src/core/GthDeepAgent.js');
+    const out = appendOsShellNote('BASE PROMPT');
+    expect(out.startsWith('BASE PROMPT\n\n')).toBe(true);
+    expect(out).toContain('Host operating system:');
+    expect(out).toContain('write_file / edit_file');
+  });
+
+  it('returns just the note (no leading blank lines) when there is no base prompt', async () => {
+    const { appendOsShellNote } = await import('#src/core/GthDeepAgent.js');
+    const out = appendOsShellNote(undefined);
+    expect(out.startsWith('Host operating system:')).toBe(true);
+  });
+
+  it('on win32 names cmd.exe and steers to `dir`', async () => {
+    setPlatform('win32');
+    const { appendOsShellNote } = await import('#src/core/GthDeepAgent.js');
+    const out = appendOsShellNote('BASE PROMPT');
+    expect(out).toContain('Windows');
+    expect(out).toContain('cmd.exe');
+    expect(out).toContain('`dir`');
+    expect(out).not.toContain('/bin/sh');
+  });
+
+  it('on linux names /bin/sh and does NOT tell the model to use `dir`', async () => {
+    setPlatform('linux');
+    const { appendOsShellNote } = await import('#src/core/GthDeepAgent.js');
+    const out = appendOsShellNote('BASE PROMPT');
+    expect(out).toContain('Linux');
+    expect(out).toContain('/bin/sh');
+    expect(out).not.toContain('cmd.exe');
+    expect(out).not.toContain('`dir`');
+  });
+
+  it('on darwin names macOS + /bin/sh (POSIX branch, no cmd.exe)', async () => {
+    setPlatform('darwin');
+    const { appendOsShellNote } = await import('#src/core/GthDeepAgent.js');
+    const out = appendOsShellNote('BASE PROMPT');
+    expect(out).toContain('macOS');
+    expect(out).toContain('/bin/sh');
+    expect(out).not.toContain('cmd.exe');
+    expect(out).not.toContain('`dir`');
   });
 });
 

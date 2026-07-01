@@ -246,11 +246,18 @@ export class GthDeepAgent extends GthAbstractAgent {
     // injects the virtualMode path-namespace note so the model is told EARLY that the fs virtual
     // `/` root and run_shell_command's real-OS paths differ (the S1 middleware repeats it as the
     // authoritative last word after deepagents' `/`-rooted line). Non-code paths get neither.
+    // EXT-26: after the cwd/virtual-cwd note, append the OS + shell-dialect note so the model is
+    // told its host OS and which shell run_shell_command spawns (cmd.exe on Windows, /bin/sh on
+    // POSIX). This is ORTHOGONAL to the path-namespace notes above (those say WHERE it is; this
+    // says WHAT shell it speaks) and applies in BOTH code-mode branches, independent of
+    // virtualMode — the shell dialect matters on every platform. Non-code paths get nothing new.
     const systemPrompt =
       this.command === 'code'
-        ? useVirtualFs
-          ? appendVirtualCwdNote(params.systemPrompt)
-          : appendCwdNote(params.systemPrompt, getCurrentWorkDir())
+        ? appendOsShellNote(
+            useVirtualFs
+              ? appendVirtualCwdNote(params.systemPrompt)
+              : appendCwdNote(params.systemPrompt, getCurrentWorkDir())
+          )
         : params.systemPrompt;
 
     this.agent = createDeepAgent({
@@ -653,6 +660,55 @@ export function appendCwdNote(systemPrompt: string | undefined, cwd: string): st
     'same real paths. Check the current directory before filesystem operations and prefer absolute ' +
     'paths (or paths relative to the working directory); do not assume the current directory is "/".';
   return systemPrompt ? `${systemPrompt}\n\n${cwdNote}` : cwdNote;
+}
+
+/**
+ * EXT-26: the platform-agnostic tail shared by both {@link appendOsShellNote} branches.
+ *
+ * The recurring failure mode on non-POSIX hosts is not just wrong command NAMES but shell
+ * REDIRECTION quoting: a grouped/multi-line `echo` redirect on cmd.exe reported success yet wrote
+ * a 0-byte file. So on every platform we steer file creation/mutation to the deepagents built-in
+ * `write_file`/`edit_file` tools (which never touch the shell's quoting) and keep each shell
+ * command a single line. Kept short — this is prompt text an LLM reads, not documentation.
+ */
+export const OS_SHELL_GUIDANCE =
+  'Prefer the built-in write_file / edit_file tools over shell echo/redirection to create or ' +
+  'modify files: shell redirection quoting is unreliable and can silently write an empty ' +
+  '(0-byte) file. Keep each run_shell_command a single line.';
+
+/**
+ * EXT-26: append an OS + shell-dialect note to the composed code-mode system prompt.
+ *
+ * The deep-agent model was never told its host OS or which shell `run_shell_command` uses, so on
+ * non-POSIX hosts it defaulted to POSIX idioms that fail (ran `ls` where cmd.exe has `dir`, a
+ * multi-line echo-redirect that wrote 0 bytes, a PowerShell here-string, `python -c` multi-line).
+ * This is ORTHOGONAL to the EXT-13/16/22 path-namespace notes: those say WHERE the model is (path
+ * form); this says WHAT shell it speaks (dialect).
+ *
+ * The shell is derived from the SAME rule Node's `spawn(command, { shell: true })` uses — exactly
+ * how `run_shell_command` spawns (GthDevToolkit spawn) — so on `win32` it is cmd.exe (via
+ * `%ComSpec%`) and on POSIX it is `/bin/sh` (POSIX sh, NOT guaranteed bash). Computed from
+ * `process.platform` at call time so the text is correct per host. Returns the note alone when
+ * there is no base prompt. A single injection is authoritative (nothing in deepagents' base prompt
+ * contradicts shell dialect), so unlike EXT-22 no correction middleware is needed.
+ */
+export function appendOsShellNote(systemPrompt: string | undefined): string {
+  let note: string;
+  if (process.platform === 'win32') {
+    note =
+      'Host operating system: Windows. `run_shell_command` runs in cmd.exe. Use native cmd ' +
+      'syntax: `dir` (not `ls`), `type` (not `cat`), `copy` / `move` / `del`, `%VAR%` for ' +
+      'environment variables, and backslash paths. Do NOT use POSIX-only idioms: no sh/bash ' +
+      'heredocs (`<< EOF`), no here-strings (`<<<`), no multi-line quoted command blocks, and do ' +
+      `not assume POSIX quoting. ${OS_SHELL_GUIDANCE}`;
+  } else {
+    const osName = process.platform === 'darwin' ? 'macOS' : 'Linux';
+    note =
+      `Host operating system: ${osName}. \`run_shell_command\` runs in /bin/sh (POSIX sh, not ` +
+      'necessarily bash). Stick to POSIX sh syntax and avoid bash-only constructs such as ' +
+      `here-strings (\`<<<\`) and \`[[ ]]\` tests. ${OS_SHELL_GUIDANCE}`;
+  }
+  return systemPrompt ? `${systemPrompt}\n\n${note}` : note;
 }
 
 /**
