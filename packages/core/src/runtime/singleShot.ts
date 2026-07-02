@@ -15,6 +15,7 @@ import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { ProgressIndicator } from '#src/utils/ProgressIndicator.js';
 import type { AgentResolvers, GthAgentFactory, GthCommand } from '#src/core/types.js';
 import { recordSessionSafe } from '#src/history/recordSession.js';
+import type { GthRunStats } from '#src/core/types.js';
 import { getProjectDir } from '#src/utils/systemUtils.js';
 
 /**
@@ -69,14 +70,29 @@ export async function runSingleShot(
     await runner.cleanup();
   }
 
+  // GS2-16: live token usage + invoked tool names for this run (fail-soft; empty when the
+  // provider reported no usage / the runner has no stats). Read post-cleanup — the runner
+  // snapshots stats at cleanup() so this still reflects the finished run.
+  let runStats: GthRunStats = { tools: [] };
+  try {
+    const s = runner.getRunStats?.();
+    if (s) runStats = s;
+  } catch {
+    /* fail-soft: analytics must never affect this run */
+  }
+
   // GS2-7 (B20): opt-in, fail-soft session history. A no-op unless `history.enabled`; never throws
   // (recordSessionSafe is fully guarded) so a DB problem can't abort or alter this run.
+  // GS2-16 threads token/tool analytics; costUsd is intentionally left unset (no reliable price).
   recordSessionSafe(config, {
     command,
     project: getProjectDir(),
     model: config.modelDisplayName,
     prompt: content,
     response: responseText,
+    tokensInput: runStats.tokensInput,
+    tokensOutput: runStats.tokensOutput,
+    tools: runStats.tools.length > 0 ? runStats.tools : undefined,
     durationMs: Date.now() - startedAt,
   });
 

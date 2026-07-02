@@ -67,11 +67,21 @@ export function formatInsightsSummary(insights: HistoryInsights): string[] {
   if (insights.firstTs && insights.lastTs) {
     lines.push(`Span: ${insights.firstTs} → ${insights.lastTs}`);
   }
-  lines.push(
-    `Tokens: ${insights.totalTokens} total ` +
-      `(${insights.totalTokensInput} in / ${insights.totalTokensOutput} out)`
-  );
-  lines.push(`Estimated cost: $${insights.totalCostUsd.toFixed(4)}`);
+  // GS2-16: only surface the token/cost/top-tool lines when there is real data behind them.
+  // Older records (and providers that report no usage) leave these zero/empty; printing
+  // `Tokens: 0` / `$0.0000` / `(none recorded)` reads as "the run used nothing", which is
+  // misleading, so omit the line entirely instead. Sessions / Span / By-command always show.
+  if (insights.totalTokens > 0) {
+    lines.push(
+      `Tokens: ${insights.totalTokens} total ` +
+        `(${insights.totalTokensInput} in / ${insights.totalTokensOutput} out)`
+    );
+  }
+  // Cost is only ever recorded when a reliable price was available (the recorder never invents
+  // one), so a positive total is the signal that a cost line is meaningful.
+  if (insights.totalCostUsd > 0) {
+    lines.push(`Estimated cost: $${insights.totalCostUsd.toFixed(4)}`);
+  }
 
   if (insights.perCommand.length > 0) {
     lines.push('By command:');
@@ -80,8 +90,6 @@ export function formatInsightsSummary(insights: HistoryInsights): string[] {
   if (insights.topTools.length > 0) {
     lines.push('Top tools:');
     for (const t of insights.topTools) lines.push(`  ${t.tool}: ${t.count}`);
-  } else {
-    lines.push('Top tools: (none recorded)');
   }
   return lines;
 }

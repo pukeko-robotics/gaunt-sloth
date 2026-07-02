@@ -69,6 +69,44 @@ describe('history/historyFormat', () => {
       expect(lines.some((l) => l.includes('read_file: 3'))).toBe(true);
       expect(lines.some((l) => l.includes('ask: 2'))).toBe(true);
     });
+    it('OMITS token, cost and top-tool lines when there is no such data (GS2-16)', () => {
+      // Sessions were recorded (older records / providers that report no usage), but no tokens,
+      // no cost and no tools — the misleading `0`/`$0.0000`/`(none recorded)` lines must not show.
+      const noAnalytics: HistoryInsights = {
+        sessionCount: 4,
+        totalTokensInput: 0,
+        totalTokensOutput: 0,
+        totalTokens: 0,
+        totalCostUsd: 0,
+        topTools: [],
+        perCommand: [{ command: 'ask', count: 4 }],
+        firstTs: '2026-07-01T00:00:00.000Z',
+        lastTs: '2026-07-03T00:00:00.000Z',
+      };
+      const lines = formatInsightsSummary(noAnalytics);
+      expect(lines.some((l) => l.includes('Sessions: 4'))).toBe(true); // always shown
+      expect(lines.some((l) => l.includes('By command'))).toBe(true); // always shown
+      expect(lines.some((l) => l.includes('Tokens'))).toBe(false);
+      expect(lines.some((l) => l.toLowerCase().includes('cost'))).toBe(false);
+      expect(lines.some((l) => l.includes('$'))).toBe(false);
+      expect(lines.some((l) => l.toLowerCase().includes('tools'))).toBe(false);
+    });
+
+    it('SHOWS the token line when tokens exist but still omits cost when zero (GS2-16)', () => {
+      const tokensNoCost: HistoryInsights = {
+        sessionCount: 1,
+        totalTokensInput: 100,
+        totalTokensOutput: 30,
+        totalTokens: 130,
+        totalCostUsd: 0, // no reliable price → recorder never set costUsd
+        topTools: [],
+        perCommand: [],
+      };
+      const lines = formatInsightsSummary(tokensNoCost);
+      expect(lines.some((l) => l.includes('130 total'))).toBe(true);
+      expect(lines.some((l) => l.includes('$'))).toBe(false); // cost still suppressed
+    });
+
     it('reports an enable hint for an empty store', () => {
       const empty: HistoryInsights = {
         sessionCount: 0,

@@ -27,6 +27,24 @@ export enum StatusLevel {
 export type GthCommand = 'ask' | 'pr' | 'review' | 'chat' | 'code' | 'api' | 'exec';
 
 /**
+ * GS2-16 — per-run analytics harvested from a finished agent turn, threaded into the opt-in
+ * history recorder ({@link recordSessionSafe}) so `gth insights` reports real numbers instead of
+ * zeros. All fields are best-effort: token counts are only present when the provider actually
+ * reported `usage_metadata` (otherwise omitted so the recorder stores NULL and the insights
+ * formatter suppresses the misleading `0`), and `tools` lists the names of tools invoked during
+ * the run (deduplicated, order-insensitive). There is no `costUsd` — cost requires a reliable
+ * price table this project does not carry, so it is deliberately never invented here.
+ */
+export interface GthRunStats {
+  /** Total prompt/input tokens across the run's LLM calls, when the provider reported usage. */
+  tokensInput?: number;
+  /** Total completion/output tokens across the run's LLM calls, when the provider reported usage. */
+  tokensOutput?: number;
+  /** Names of tools invoked during the run (deduplicated); empty when no tools were used. */
+  tools: string[];
+}
+
+/**
  * Typed events emitted by the agent's {@link GthAgentInterface#streamWithEvents} path.
  * This is the renderer contract shared by every consumer of an agent run — the AG-UI
  * SSE encoder, the (future) TUI, and any embedder — so it is intentionally agnostic of
@@ -173,6 +191,20 @@ export interface GthAgentInterface {
    * approve/reject confirmation loop.
    */
   getPendingToolInterrupts?(runConfig: RunnableConfig): Promise<PendingToolInterrupt[]>;
+
+  /**
+   * GS2-16 — reset the per-run analytics accumulator so the NEXT turn's token/tool totals start
+   * from zero. Called by {@link GthAgentRunner} at each turn boundary (the runner is reused across
+   * turns in interactive sessions). Optional: agents that don't collect stats simply omit it.
+   */
+  resetRunStats?(): void;
+
+  /**
+   * GS2-16 — the analytics harvested from the run(s) since the last {@link resetRunStats}. Used by
+   * the runner to thread token/tool data into the opt-in history recorder. Optional; when absent
+   * the runner records no analytics for that turn. Reading must never throw.
+   */
+  getRunStats?(): GthRunStats;
 
   cleanup?(): Promise<void>;
 }

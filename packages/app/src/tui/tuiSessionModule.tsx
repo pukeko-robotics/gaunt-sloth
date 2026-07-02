@@ -25,6 +25,7 @@ import {
   formatSearchResults,
 } from '@gaunt-sloth/core/history/historyFormat.js';
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
+import type { GthRunStats } from '@gaunt-sloth/core/core/types.js';
 import { HumanMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import { createResolvers } from '@gaunt-sloth/agent/resolvers.js';
@@ -251,16 +252,36 @@ export async function createTuiSession(
       agent.debugCapture = debugBridge.capture;
     }
 
+    // GS2-16: wall-clock start of the in-flight turn, stamped when runTurn begins and read by
+    // logTurn on completion (turns are sequential in the TUI). 0 until the first turn runs.
+    let turnStartedAt = 0;
+
     const logTurn = (userInput: string, assistantText: string) => {
+      // GS2-16: live token usage + invoked tool names + duration for this turn, fail-soft. The
+      // runner may lack stats support (e.g. under test) → guard; empty tally when unavailable.
+      let runStats: GthRunStats = { tools: [] };
+      try {
+        const s = runner.getRunStats?.();
+        if (s) runStats = s;
+      } catch {
+        /* fail-soft: analytics must never affect the session */
+      }
+      const durationMs = turnStartedAt > 0 ? Date.now() - turnStartedAt : undefined;
+
       // GS2-7 (B20): opt-in, fail-soft history — records each completed turn as a session when
       // `history.enabled`. Independent of the per-run md log (so it works even with
       // writeOutputToFile off) and fully guarded, so it never affects the session.
+      // GS2-16 threads token/tool/duration analytics; costUsd is left unset (no reliable price).
       recordSessionSafe(config, {
         command: sessionConfig.mode,
         project: getProjectDir(),
         model: config.modelDisplayName,
         prompt: userInput,
         response: assistantText,
+        tokensInput: runStats.tokensInput,
+        tokensOutput: runStats.tokensOutput,
+        tools: runStats.tools.length > 0 ? runStats.tools : undefined,
+        durationMs,
       });
       if (!logFileName) return;
       appendToFile(logFileName, `## User\n\n${userInput}\n\n## Assistant\n\n${assistantText}\n\n`);
@@ -269,6 +290,7 @@ export async function createTuiSession(
 
     const tuiAgent: TuiAgent = {
       async *runTurn(userInput, signal) {
+        turnStartedAt = Date.now(); // GS2-16: mark turn start for durationMs in logTurn
         yield* runner.processMessagesWithEvents([new HumanMessage(userInput)], signal);
       },
       // `/clear` rotates the runner's thread_id so the model context truly matches the

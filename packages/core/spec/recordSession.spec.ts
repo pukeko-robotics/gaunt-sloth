@@ -53,6 +53,36 @@ describe('history/recordSessionSafe', () => {
     store.close();
   });
 
+  it('persists token/tool/duration analytics and reads them back (GS2-16)', () => {
+    const dbPath = resolve(dir, 'history.db');
+    const id = recordSessionSafe(
+      { history: { enabled: true, dbPath } },
+      {
+        command: 'code',
+        prompt: 'do the thing',
+        response: 'did it',
+        tokensInput: 120,
+        tokensOutput: 45,
+        tools: ['read_file', 'run_shell_command'],
+        durationMs: 1234,
+      }
+    );
+    expect(id).toBeTypeOf('number');
+
+    const store = openHistoryStore(dbPath, { create: false })!;
+    const recent = store.listRecent(1);
+    expect(recent).toHaveLength(1);
+    expect(recent[0].tokensInput).toBe(120);
+    expect(recent[0].tokensOutput).toBe(45);
+    expect(recent[0].tools).toEqual(['read_file', 'run_shell_command']);
+    expect(recent[0].durationMs).toBe(1234);
+
+    const insights = store.insights();
+    expect(insights.totalTokens).toBe(165);
+    expect(insights.topTools.map((t) => t.tool).sort()).toEqual(['read_file', 'run_shell_command']);
+    store.close();
+  });
+
   it('fails soft (returns null, no throw) when enabled but the DB path is unusable', () => {
     // Point at a path whose parent is a file, so opening/creating the DB fails.
     const unusable = resolve(dir, 'history.db');

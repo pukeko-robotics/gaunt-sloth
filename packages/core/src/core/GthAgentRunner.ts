@@ -13,6 +13,7 @@ import {
   GthAgentFactory,
   GthAgentInterface,
   GthCommand,
+  GthRunStats,
   Message,
   PendingToolInterrupt,
   StatusUpdateCallback,
@@ -67,6 +68,14 @@ export class GthAgentRunner {
 
   /** The command the runner was initialized for; selects which `devTools` config applies. */
   private command: GthCommand | undefined = undefined;
+
+  /**
+   * GS2-16 — snapshot of the last turn's analytics (token usage + invoked tools), captured from
+   * the agent at {@link cleanup} time. Needed because {@link runSingleShot} reads stats AFTER it
+   * has already called `cleanup()` (which nulls the agent); interactive callers read live via
+   * {@link getRunStats} before cleanup. Defaults to an empty tally.
+   */
+  private lastRunStats: GthRunStats = { tools: [] };
 
   /**
    * EXT-12 — runtime, session-scoped yolo flag toggled by the `/yolo` slash command. Distinct
@@ -173,6 +182,9 @@ export class GthAgentRunner {
     if (!this.agent || !this.config || !this.runConfig) {
       throw new Error('AgentRunner not initialized. Call init() first.');
     }
+
+    // GS2-16: start this turn's analytics tally from zero (the runner is reused across turns).
+    this.resetRunStats();
 
     debugLog('Processing messages...');
     debugLogObject('Input Messages', messages);
@@ -456,6 +468,8 @@ export class GthAgentRunner {
     if (!this.agent || !this.config || !this.runConfig) {
       throw new Error('AgentRunner not initialized. Call init() first.');
     }
+    // GS2-16: start this turn's analytics tally from zero (the runner is reused across turns).
+    this.resetRunStats();
     debugLog('Processing messages (event stream)...');
     debugLogObject('Input Messages', messages);
     yield* this.agent.streamWithEvents(messages, this.runConfig, signal);
@@ -506,6 +520,44 @@ export class GthAgentRunner {
   }
 
   /**
+   * GS2-16 — reset the current turn's analytics tally on both the live agent and the runner's
+   * cached snapshot, so a new turn starts clean. Fail-soft (an agent without stats support is a
+   * no-op). Called at the top of each `processMessages` / `processMessagesWithEvents`.
+   */
+  private resetRunStats(): void {
+    this.lastRunStats = { tools: [] };
+    try {
+      this.agent?.resetRunStats?.();
+    } catch {
+      /* fail-soft: analytics must never affect a run */
+    }
+  }
+
+  /** GS2-16 — read the live agent's run stats (fail-soft; empty tally if unavailable). */
+  private captureRunStats(): GthRunStats {
+    try {
+      const stats = this.agent?.getRunStats?.();
+      if (stats) return stats;
+    } catch {
+      /* fail-soft */
+    }
+    return { tools: [] };
+  }
+
+  /**
+   * GS2-16 — the analytics harvested from the just-finished turn (token usage + invoked tools),
+   * to thread into the opt-in history recorder. Reads live from the agent when one is present,
+   * otherwise the snapshot captured at {@link cleanup} (the single-shot path reads post-cleanup).
+   * Never throws.
+   */
+  public getRunStats(): GthRunStats {
+    if (this.agent) {
+      this.lastRunStats = this.captureRunStats();
+    }
+    return this.lastRunStats;
+  }
+
+  /**
    * Rotate the thread the runner drives by minting a fresh `runConfig` (new `thread_id`),
    * so subsequent turns start from an empty checkpointer thread rather than retrieving the
    * prior conversation. Used by the TUI's `/clear`, which clears the on-screen transcript;
@@ -521,6 +573,9 @@ export class GthAgentRunner {
 
   async cleanup(): Promise<void> {
     debugLog('Cleaning up GthAgentRunner...');
+    // GS2-16: snapshot the agent's run stats BEFORE nulling it, so a post-cleanup reader
+    // (runSingleShot records history after calling cleanup) still gets this turn's analytics.
+    this.lastRunStats = this.captureRunStats();
     if (this.agent && 'cleanup' in this.agent && typeof this.agent.cleanup === 'function') {
       await this.agent.cleanup();
     }

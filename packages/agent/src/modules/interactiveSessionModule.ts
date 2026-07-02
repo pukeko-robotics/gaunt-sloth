@@ -11,15 +11,18 @@ import {
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
+import { recordSessionSafe } from '@gaunt-sloth/core/history/recordSession.js';
 import {
   createInterface,
   error,
   exit,
+  getProjectDir,
   refStdin,
   setRawMode,
   stdin as input,
   stdout as output,
 } from '@gaunt-sloth/core/utils/systemUtils.js';
+import type { GthRunStats } from '@gaunt-sloth/core/core/types.js';
 import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import { createResolvers } from '#src/resolvers.js';
@@ -141,7 +144,30 @@ export async function createInteractiveSession(
       // message that Anthropic rejects).
       const messages: BaseMessage[] = [new HumanMessage(userInput)];
 
-      await runner.processMessages(messages);
+      // GS2-18: wire the readline (`--no-tui`) interactive path into the opt-in history recorder
+      // at its turn boundary, matching the single-shot and Ink-TUI paths. Fail-soft and
+      // default-OFF (recordSessionSafe is a no-op unless `history.enabled`), so a default run is
+      // unchanged. GS2-16 threads live token/tool/duration analytics; costUsd stays unset.
+      const startedAt = Date.now();
+      const responseText = await runner.processMessages(messages);
+      let runStats: GthRunStats = { tools: [] };
+      try {
+        const s = runner.getRunStats?.();
+        if (s) runStats = s;
+      } catch {
+        /* fail-soft: analytics must never affect the session */
+      }
+      recordSessionSafe(config, {
+        command: sessionConfig.mode,
+        project: getProjectDir(),
+        model: config.modelDisplayName,
+        prompt: userInput,
+        response: responseText,
+        tokensInput: runStats.tokensInput,
+        tokensOutput: runStats.tokensOutput,
+        tools: runStats.tools.length > 0 ? runStats.tools : undefined,
+        durationMs: Date.now() - startedAt,
+      });
     };
 
     const askQuestion = async () => {
