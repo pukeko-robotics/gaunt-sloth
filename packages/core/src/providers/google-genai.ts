@@ -4,6 +4,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { ChatGoogleParams } from '@langchain/google/node';
 
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
+import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 
 // Function to process JSON config and create Google GenAI LLM instance
 export async function processJsonConfig(
@@ -15,7 +16,7 @@ export async function processJsonConfig(
   const configFields = {
     ...llmConfig,
     apiKey: googleApiKey,
-    model: llmConfig.model || 'gemini-3.5-flash',
+    model: llmConfig.model || getCuratedFallbackModel('google-genai'),
     platformType: 'gai' as const,
   };
   delete configFields.type;
@@ -23,20 +24,13 @@ export async function processJsonConfig(
   return new ChatGoogle(configFields);
 }
 
-const jsonContent = `{
-  "llm": {
-    "type": "google-genai",
-    "model": "gemini-3.5-flash"
-  }
-}`;
-
-export function init(configFileName: string, force = false): void {
+export function init(configFileName: string, force = false, model?: string): void {
   // Determine which content to use based on file extension
   if (!configFileName.endsWith('.json')) {
     throw new Error('Only JSON config is supported.');
   }
 
-  writeConfigFileWithMessages(configFileName, jsonContent, force);
+  writeConfigFileWithMessages(configFileName, buildInitConfigContent('google-genai', model), force);
   displayWarning(
     `You need to update your ${configFileName} to add your Google GenAI API key, ` +
       'or define GOOGLE_API_KEY environment variable.'

@@ -7,6 +7,7 @@ import type {
 import type { ChatXAIInput } from '@langchain/xai';
 
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
+import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 
 // Function to process JSON config and create XAI LLM instance
 export async function processJsonConfig(
@@ -18,24 +19,17 @@ export async function processJsonConfig(
   return new ChatXAI({
     ...llmConfig,
     apiKey,
-    model: llmConfig.model || 'grok-4.3',
+    model: llmConfig.model || getCuratedFallbackModel('xai'),
   });
 }
 
-const jsonContent = `{
-  "llm": {
-    "type": "xai",
-    "model": "grok-4.3"
-  }
-}`;
-
-export function init(configFileName: string, force = false): void {
+export function init(configFileName: string, force = false, model?: string): void {
   // Determine which content to use based on file extension
   if (!configFileName.endsWith('.json')) {
     throw new Error('Only JSON config is supported.');
   }
 
-  writeConfigFileWithMessages(configFileName, jsonContent, force);
+  writeConfigFileWithMessages(configFileName, buildInitConfigContent('xai', model), force);
   displayWarning(
     `You need to update your ${configFileName} to add your xAI API key, ` +
       'or define XAI_API_KEY environment variable.'

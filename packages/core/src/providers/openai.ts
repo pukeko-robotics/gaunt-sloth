@@ -8,6 +8,7 @@ import { OpenAIChatInput } from '@langchain/openai';
 import { ChatOpenAIFields } from '@langchain/openai';
 
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
+import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 
 /**
  * OpenAI reasoning-model families that reject any non-default `temperature`: the API 400s with
@@ -37,7 +38,7 @@ export async function processJsonConfig(
   const configFields = {
     ...llmConfig,
     apiKey: openaiApiKey,
-    model: llmConfig.model || 'gpt-5.5',
+    model: llmConfig.model || getCuratedFallbackModel('openai'),
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   delete (configFields as any).type;
@@ -74,20 +75,13 @@ function getApiKey(llmConfig: OpenAIChatInput & ChatOpenAIFields & BaseChatModel
   }
 }
 
-const jsonContent = `{
-  "llm": {
-    "type": "openai",
-    "model": "gpt-5.5"
-  }
-}`;
-
-export function init(configFileName: string, force = false): void {
+export function init(configFileName: string, force = false, model?: string): void {
   // Determine which content to use based on file extension
   if (!configFileName.endsWith('.json')) {
     throw new Error('Only JSON config is supported.');
   }
 
-  writeConfigFileWithMessages(configFileName, jsonContent, force);
+  writeConfigFileWithMessages(configFileName, buildInitConfigContent('openai', model), force);
   displayWarning(
     `You need to edit your ${configFileName} to configure model, ` +
       'or define OPENAI_API_KEY environment variable.'

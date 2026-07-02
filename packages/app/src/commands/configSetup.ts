@@ -5,6 +5,7 @@ import {
   USER_PROJECT_CONFIG_JSON,
 } from '@gaunt-sloth/core/constants.js';
 import { availableDefaultConfigs, type ConfigType } from '@gaunt-sloth/core/config.js';
+import { resolveInitModel, type ProviderId } from '@gaunt-sloth/core/providers/modelDiscovery.js';
 import { displayError, displayInfo, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import {
   getGslothConfigWritePath,
@@ -40,8 +41,14 @@ export async function createProjectConfig(configType: string, force = false): Pr
   }
 
   displayInfo(`Creating project config for ${configType}`);
+  // CFG-14: resolve the model to write from live `/v1/models` discovery when a key/daemon is
+  // present (a verified-present id, never a speculative literal). When live discovery is
+  // impossible this returns undefined and `init` omits `model`, deferring to the provider's
+  // single curated run-time fallback (getCuratedFallbackModel) rather than baking a stale id that
+  // 404s once the model is retired.
+  const model = await resolveInitModel(configType as ProviderId);
   const vendorConfig = await import(`@gaunt-sloth/core/providers/${configType}.js`);
-  vendorConfig.init(configPath, force);
+  vendorConfig.init(configPath, force, model);
 }
 
 /**
