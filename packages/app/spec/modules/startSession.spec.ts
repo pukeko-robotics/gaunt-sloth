@@ -155,31 +155,6 @@ describe('startSession dispatcher', () => {
     expect(tuiSessionMock.createTuiSession).not.toHaveBeenCalled();
   });
 
-  it('CFG-19: dispatchInteractiveSession starts a session WITHOUT any first-run detection', async () => {
-    // No config anywhere — but dispatchInteractiveSession must NOT run the first-run dialog; its
-    // caller (e.g. initCommand) owns that gate. It just picks TUI vs readline and starts.
-    configMock.hasAnyConfig.mockResolvedValue(false);
-    loadInkMock.isInkAvailable.mockResolvedValue(false);
-
-    const { dispatchInteractiveSession } = await import('#src/modules/startSession.js');
-    await dispatchInteractiveSession(sessionConfig, {}, 'hi');
-
-    expect(firstRunDialogMock.runFirstRunDialog).not.toHaveBeenCalled();
-    expect(interactiveSessionMock.createInteractiveSession).toHaveBeenCalledWith(
-      sessionConfig,
-      {},
-      'hi'
-    );
-  });
-
-  it('CFG-19: dispatchInteractiveSession uses the TUI when the terminal supports it', async () => {
-    const { dispatchInteractiveSession } = await import('#src/modules/startSession.js');
-    await dispatchInteractiveSession(sessionConfig, {}, undefined);
-
-    expect(tuiSessionMock.createTuiSession).toHaveBeenCalledWith(sessionConfig, {}, undefined);
-    expect(interactiveSessionMock.createInteractiveSession).not.toHaveBeenCalled();
-  });
-
   it('degrades to readline with a warning if mounting the TUI throws', async () => {
     tuiSessionMock.createTuiSession.mockRejectedValue(new Error('no raw mode'));
     const { startSession } = await import('#src/modules/startSession.js');

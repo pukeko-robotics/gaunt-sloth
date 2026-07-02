@@ -57,23 +57,6 @@ export async function startSession(
     // Fall through to the normal dispatch with the same `sessionConfig` (code mode for bare `gth`).
   }
 
-  await dispatchInteractiveSession(sessionConfig, commandLineConfigOverrides, message);
-}
-
-/**
- * Interactive-session dispatch tail, factored out of {@link startSession} so it can be reused by
- * callers that have ALREADY decided a session should start (e.g. `gth init` continuing straight
- * into a `code` session after a successful first-run — CFG-19). Decides between the Ink TUI and
- * the readline session, then hands off the SAME `SessionConfig`/overrides/message either way.
- * Anything that prevents the TUI (non-TTY, `--no-tui`/`GTH_NO_TUI`, CI, missing optional deps, or
- * a TUI mount failure) degrades to readline — never a crash. This function does NOT run any
- * first-run detection; callers own that gate.
- */
-export async function dispatchInteractiveSession(
-  sessionConfig: SessionConfig,
-  commandLineConfigOverrides: CommandLineConfigOverrides,
-  message?: string
-): Promise<void> {
   // Cheap gates first (TTY/flags/env). Only probe the optional Ink deps when the
   // environment actually favours the TUI, so we never load React/Ink for a readline run.
   const environmentFavoursTui = shouldUseTui({
