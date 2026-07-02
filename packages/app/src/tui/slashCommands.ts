@@ -26,6 +26,24 @@ export interface SlashCommandContext {
    * {@link formatConfigSummary}); omitted where no config is loaded (e.g. the fixture agent).
    */
   configSummary?: string[];
+  /**
+   * GS2-7 (B20) — pre-rendered recent-session lines for `/history`. The App builds these fail-soft
+   * from the local history store (see `formatHistoryList`); omitted when no store is available
+   * (history never enabled / DB missing), in which case `/history` shows an "unavailable" notice.
+   */
+  historySummary?: string[];
+  /**
+   * GS2-7 (B20) — pre-rendered analytics lines for `/insights` (see `formatInsightsSummary`),
+   * built fail-soft by the App; omitted when no store is available.
+   */
+  insightsSummary?: string[];
+  /**
+   * GS2-7 (B20) — a fail-soft search provider for `/search <query>`, bound by the App to the local
+   * history store (returns already-formatted result lines). Injected (rather than the command
+   * touching the DB) so the registry stays pure and testable with a stub. Omitted when no store is
+   * available, in which case `/search` reports that history is unavailable.
+   */
+  historySearch?: (query: string) => string[];
 }
 
 /**
@@ -73,6 +91,50 @@ export function configNotice(summary: string[] | undefined): SlashCommandNotice 
         ? summary
         : ['Configuration details are not available in this session.'],
   };
+}
+
+/** Shared "history is unavailable" body (history off / DB missing), reused by all three commands. */
+const HISTORY_UNAVAILABLE_LINES = [
+  'No local session history is available in this session.',
+  'Enable it with `history.enabled: true` in your gsloth config (local only, opt-in).',
+];
+
+/** The `/history` notice (GS2-7): recent recorded sessions, or an "unavailable" fallback. */
+export function historyNotice(summary: string[] | undefined): SlashCommandNotice {
+  return {
+    title: 'Recent sessions',
+    lines: summary && summary.length > 0 ? summary : HISTORY_UNAVAILABLE_LINES,
+  };
+}
+
+/** The `/insights` notice (GS2-7): local analytics summary, or an "unavailable" fallback. */
+export function insightsNotice(summary: string[] | undefined): SlashCommandNotice {
+  return {
+    title: 'Session insights (local only)',
+    lines: summary && summary.length > 0 ? summary : HISTORY_UNAVAILABLE_LINES,
+  };
+}
+
+/**
+ * The `/search` notice (GS2-7). With no query it prints usage; otherwise it runs the injected
+ * fail-soft {@link SlashCommandContext.historySearch} provider and renders its result lines. When
+ * no provider is bound (no store), it reports history as unavailable.
+ */
+export function searchNotice(
+  args: string[],
+  search: ((query: string) => string[]) | undefined
+): SlashCommandNotice {
+  const query = args.join(' ').trim();
+  if (!query) {
+    return {
+      title: 'Search session history',
+      lines: ['Usage: /search <terms> — full-text search across your recorded sessions.'],
+    };
+  }
+  if (!search) {
+    return { title: `Search: "${query}"`, lines: HISTORY_UNAVAILABLE_LINES };
+  }
+  return { title: `Search: "${query}"`, lines: search(query) };
 }
 
 /**
@@ -312,6 +374,23 @@ export function createCommandRegistry(): SlashCommand[] {
       // Read-only discovery: surface the pre-rendered, secret-free summary the App computed from
       // the resolved config. Editing lives in `gth init` / the config file, not here (GS2-1).
       run: (ctx) => ({ notice: configNotice(ctx.configSummary) }),
+    },
+    {
+      name: 'history',
+      description: 'Show recent recorded sessions (local, opt-in history)',
+      // Read-only discovery, mirroring /config: render the App's fail-soft, pre-built summary.
+      run: (ctx) => ({ notice: historyNotice(ctx.historySummary) }),
+    },
+    {
+      name: 'search',
+      description: 'Search recorded session history (/search <terms>)',
+      // Dynamic query, so it calls the App-injected fail-soft search provider (stubbable in tests).
+      run: (ctx, args) => ({ notice: searchNotice(args, ctx.historySearch) }),
+    },
+    {
+      name: 'insights',
+      description: 'Show local analytics over recorded sessions (tokens, cost, top tools)',
+      run: (ctx) => ({ notice: insightsNotice(ctx.insightsSummary) }),
     },
     {
       name: 'model',

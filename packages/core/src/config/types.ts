@@ -45,6 +45,18 @@ export interface GthConfig {
    */
   agent?: { backend?: 'deep' | 'lean' };
   /**
+   * GS2-7 (B20) — local, opt-in session history store. DEFAULT OFF (absent = disabled): a default
+   * run persists nothing and behaves exactly as before. When `enabled`, each run is recorded to a
+   * local SQLite DB (`~/.gsloth/history.db` by default, overridable via `dbPath`) for
+   * `gth history search` / `gth insights`. Local only — no telemetry leaves the machine.
+   */
+  history?: { enabled?: boolean; dbPath?: string };
+  /**
+   * GS2-7 (B21) — opt-in file-backed memory (MEMORY.md / USER.md). DEFAULT OFF. Forward-compat
+   * toggle only; the feature is a deferred follow-up.
+   */
+  memory?: { enabled?: boolean };
+  /**
    * Binary format support configuration.
    * Disabled by default unless explicitly configured.
    */

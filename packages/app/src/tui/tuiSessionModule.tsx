@@ -13,7 +13,18 @@ import {
   stopSessionLogging,
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
-import { env, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { env, getProjectDir, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { recordSessionSafe } from '@gaunt-sloth/core/history/recordSession.js';
+import {
+  openHistoryStore,
+  resolveHistoryDbPath,
+} from '@gaunt-sloth/core/history/historyStore.js';
+import {
+  formatHistoryList,
+  formatInsightsSummary,
+  formatSearchResults,
+} from '@gaunt-sloth/core/history/historyFormat.js';
+import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import { HumanMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import { createResolvers } from '@gaunt-sloth/agent/resolvers.js';
@@ -27,6 +38,51 @@ import type { PendingApproval, TuiAgent, TuiDebugCapture } from '#src/tui/types.
 import { renderHistory, renderRequestDetails, renderResponse } from '#src/tui/debugRender.js';
 import { viewportBumpSequence } from '#src/tui/terminal.js';
 import type { DebugRequestExtras } from '@gaunt-sloth/agent/core/debugCapture.js';
+
+/** The `/history` `/insights` `/search` props, or `{}` when no store is available. */
+interface HistorySlashProps {
+  historySummary?: string[];
+  insightsSummary?: string[];
+  historySearch?: (query: string) => string[];
+}
+
+/**
+ * GS2-7 (B20) — build the read-only history slash-command props from the local store, fail-soft.
+ * If no DB is available (history never enabled / file missing / unopenable) it returns `{}`, so
+ * `/history` `/insights` `/search` render their "history unavailable" notices. Never throws — a
+ * store problem must not affect starting a session.
+ */
+function buildHistorySlashProps(config: GthConfig): HistorySlashProps {
+  try {
+    const dbPath = resolveHistoryDbPath(config.history?.dbPath);
+    const store = openHistoryStore(dbPath, { create: false });
+    if (!store) return {};
+    try {
+      const historySummary = formatHistoryList(store.listRecent(20));
+      const insightsSummary = formatInsightsSummary(store.insights());
+      // Search runs later (at dispatch), so it re-opens read-only per call rather than holding a
+      // connection open for the session; still fully fail-soft.
+      const historySearch = (query: string): string[] => {
+        try {
+          const s = openHistoryStore(dbPath, { create: false });
+          if (!s) return formatSearchResults([]);
+          try {
+            return formatSearchResults(s.search(query, 20));
+          } finally {
+            s.close();
+          }
+        } catch {
+          return formatSearchResults([]);
+        }
+      };
+      return { historySummary, insightsSummary, historySearch };
+    } finally {
+      store.close();
+    }
+  } catch {
+    return {};
+  }
+}
 
 type StatusListener = (level: string, message: string) => void;
 
@@ -196,6 +252,16 @@ export async function createTuiSession(
     }
 
     const logTurn = (userInput: string, assistantText: string) => {
+      // GS2-7 (B20): opt-in, fail-soft history — records each completed turn as a session when
+      // `history.enabled`. Independent of the per-run md log (so it works even with
+      // writeOutputToFile off) and fully guarded, so it never affects the session.
+      recordSessionSafe(config, {
+        command: sessionConfig.mode,
+        project: getProjectDir(),
+        model: config.modelDisplayName,
+        prompt: userInput,
+        response: assistantText,
+      });
       if (!logFileName) return;
       appendToFile(logFileName, `## User\n\n${userInput}\n\n## Assistant\n\n${assistantText}\n\n`);
       flushSessionLog();
@@ -235,6 +301,7 @@ export async function createTuiSession(
         mode={sessionConfig.mode}
         modelDisplayName={config.modelDisplayName}
         configSummary={formatConfigSummary(config)}
+        {...buildHistorySlashProps(config)}
         readyMessage={sessionConfig.readyMessage}
         exitMessage={sessionConfig.exitMessage}
         initialMessage={message}

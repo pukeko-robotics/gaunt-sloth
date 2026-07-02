@@ -14,6 +14,8 @@ import { MemorySaver } from '@langchain/langgraph';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { ProgressIndicator } from '#src/utils/ProgressIndicator.js';
 import type { AgentResolvers, GthAgentFactory, GthCommand } from '#src/core/types.js';
+import { recordSessionSafe } from '#src/history/recordSession.js';
+import { getProjectDir } from '#src/utils/systemUtils.js';
 
 /**
  * Ask a question and get an answer from the LLM.
@@ -55,15 +57,28 @@ export async function runSingleShot(
   // Run via Agent Runner (consistent with interactive session)
   const runner = new GthAgentRunner(defaultStatusCallback, resolvers, agentFactory);
   let succeeded = true;
+  let responseText = '';
+  const startedAt = Date.now();
   try {
     await runner.init(command, config, new MemorySaver());
-    await runner.processMessages(messages);
+    responseText = await runner.processMessages(messages);
   } catch (err) {
     succeeded = false;
     displayError(`Failed to get answer: ${err instanceof Error ? err.message : String(err)}`);
   } finally {
     await runner.cleanup();
   }
+
+  // GS2-7 (B20): opt-in, fail-soft session history. A no-op unless `history.enabled`; never throws
+  // (recordSessionSafe is fully guarded) so a DB problem can't abort or alter this run.
+  recordSessionSafe(config, {
+    command,
+    project: getProjectDir(),
+    model: config.modelDisplayName,
+    prompt: content,
+    response: responseText,
+    durationMs: Date.now() - startedAt,
+  });
 
   progressIndicator?.stop();
 

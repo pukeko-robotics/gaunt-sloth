@@ -71,6 +71,15 @@ export interface TuiAppProps {
    * the fixture agent (no config loaded), where `/config` shows an "unavailable" notice.
    */
   configSummary?: string[];
+  /**
+   * GS2-7 (B20) — pre-rendered recent-session lines for `/history` and analytics lines for
+   * `/insights`, plus a fail-soft search provider for `/search`. All built by the session module
+   * from the local, opt-in history store; omitted when no store is available (history off / DB
+   * missing), where the commands show an "unavailable" notice.
+   */
+  historySummary?: string[];
+  insightsSummary?: string[];
+  historySearch?: (query: string) => string[];
   /** Greeting shown before the first prompt (mirrors the readline `readyMessage`). */
   readyMessage: string;
   /** Hint shown in the status bar / on start (mirrors the readline `exitMessage`). */

@@ -199,6 +199,21 @@ export const rawGthConfigSchema = z.looseObject({
       backend: z.enum(['deep', 'lean']).optional(),
     })
     .optional(),
+  // GS2-7 (B20) — local, opt-in session history. DEFAULT OFF: absent or `enabled: false` means
+  // nothing is persisted and runs behave exactly as before (stateless identity preserved).
+  history: z
+    .object({
+      enabled: z.boolean().optional(),
+      dbPath: z.string().optional(),
+    })
+    .optional(),
+  // GS2-7 (B21) — opt-in file-backed memory (MEMORY.md / USER.md). DEFAULT OFF. The toggle exists
+  // for forward-compat; the feature itself is a deferred follow-up.
+  memory: z
+    .object({
+      enabled: z.boolean().optional(),
+    })
+    .optional(),
   binaryFormats: binaryFormatsSchema.optional(),
   contentSource: z.string().optional(),
   requirementSource: z.string().optional(),

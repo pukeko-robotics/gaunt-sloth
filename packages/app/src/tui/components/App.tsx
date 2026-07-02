@@ -265,6 +265,9 @@ export function App(props: TuiAppProps): React.ReactElement {
           toolsExpanded: toolsExpandedRef.current,
           debugVisible: debugVisibleRef.current,
           configSummary: props.configSummary,
+          historySummary: props.historySummary,
+          insightsSummary: props.insightsSummary,
+          historySearch: props.historySearch,
         });
         if (result.clearTranscript) {
           setTranscript([]);

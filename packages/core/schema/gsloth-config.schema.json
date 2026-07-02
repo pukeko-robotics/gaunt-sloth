@@ -39,6 +39,25 @@
         }
       }
     },
+    "history": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "dbPath": {
+          "type": "string"
+        }
+      }
+    },
+    "memory": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
     "binaryFormats": {
       "anyOf": [
         {

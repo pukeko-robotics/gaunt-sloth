@@ -33,6 +33,8 @@ vi.mock('node:path', () => pathMock);
 // Mock systemUtils module
 const systemUtilsMock = {
   getCurrentWorkDir: vi.fn(),
+  // GS2-7: singleShot now records opt-in history and reads the project dir for the record.
+  getProjectDir: vi.fn(() => '/project'),
 };
 vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
 

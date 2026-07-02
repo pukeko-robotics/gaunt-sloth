@@ -9,6 +9,8 @@ import { codeCommand } from '#src/commands/codeCommand.js';
 import { apiCommand } from '#src/commands/apiCommand.js';
 import { getCommand } from '#src/commands/getCommand.js';
 import { configCommand } from '#src/commands/configCommand.js';
+import { historyCommand } from '#src/commands/historyCommand.js';
+import { insightsCommand } from '#src/commands/insightsCommand.js';
 import { argv, getSlothVersion, readStdin } from '@gaunt-sloth/core/utils/systemUtils.js';
 import type { CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
 
@@ -84,5 +86,9 @@ codeCommand(program, cliConfigOverrides);
 apiCommand(program, cliConfigOverrides);
 getCommand(program, cliConfigOverrides);
 configCommand(program, cliConfigOverrides);
+// GS2-7 (B20) — read-only, local history/insights surfaces. They resolve their own DB path (global
+// default or --db) and do not build the LLM, so they stay decoupled from config/provider setup.
+historyCommand(program);
+insightsCommand(program);
 
 await readStdin(program);
