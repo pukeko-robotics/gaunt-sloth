@@ -95,6 +95,39 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | null {
 }
 
 /**
+ * TUI-C10 — the discovery-menu trigger test. The Ink `<PromptInput>` shows the slash-command menu
+ * while the user is typing a bare command: the raw input is a menu query iff its first character is
+ * `/` and it contains no whitespace yet (once a space is typed the user is entering args, so the
+ * menu closes and normal dispatch takes over). Returns the lower-cased query AFTER the slash (so a
+ * bare `/` yields `''` = "show everything"), or `null` when the input is not a menu trigger.
+ *
+ * Kept pure and next to the registry (like {@link parseSlashCommand}) so the menu's show/hide and
+ * filter logic is unit-testable without React.
+ */
+export function slashMenuQuery(input: string): string | null {
+  if (!/^\/\S*$/.test(input)) return null;
+  return input.slice(1).toLowerCase();
+}
+
+/**
+ * TUI-C10 — filter the registry down to the commands that match a menu query, most-relevant first.
+ * Prefix matches (the name starts with the query) rank above looser substring matches; within each
+ * bucket the registry's own order is preserved (so extension-registered commands — appended to the
+ * array — naturally sort after the built-ins). An empty query returns the whole registry, so a bare
+ * `/` lists every command including any the extensions added (never a hardcoded list).
+ *
+ * Pure: takes the registry the caller already built via {@link createCommandRegistry}, so the menu
+ * automatically reflects extension commands without this layer knowing they exist.
+ */
+export function filterSlashCommands(registry: SlashCommand[], query: string): SlashCommand[] {
+  const q = query.toLowerCase();
+  if (!q) return [...registry];
+  const prefix = registry.filter((c) => c.name.startsWith(q));
+  const substring = registry.filter((c) => !c.name.startsWith(q) && c.name.includes(q));
+  return [...prefix, ...substring];
+}
+
+/**
  * The notice for the tool-detail toggle, given the RESULTING (post-toggle) state. Shared by the
  * `/tools` command and the Ctrl+T key handler so the copy is single-sourced (TUI-C14).
  */
