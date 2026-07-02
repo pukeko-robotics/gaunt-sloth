@@ -1,5 +1,9 @@
 # Configuration
 
+> **Upgrading from 1.x?** 2.0 is a breaking config release. See
+> [Migrating to 2.0](MIGRATION.md) for the HARD vs SOFT change list and before/after
+> snippets, then run `gth config validate` to check your migrated config.
+
 Populate `.gsloth.guidelines.md` with your project details and quality requirements.
 A proper preamble is paramount for good inference.
 Check [.gsloth.guidelines.md](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/.gsloth.guidelines.md) for example.
