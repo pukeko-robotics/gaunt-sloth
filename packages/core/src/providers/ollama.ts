@@ -8,6 +8,7 @@ import { OpenAIChatInput } from '@langchain/openai';
 import { ChatOpenAIFields } from '@langchain/openai';
 
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
+import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 
 /**
  * Default Ollama daemon host, matching the Ollama CLI/library default. The
@@ -15,12 +16,6 @@ import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
  * `DEFAULT_OLLAMA_HOST` in `modelDiscovery.ts`.
  */
 const DEFAULT_OLLAMA_HOST = 'http://127.0.0.1:11434';
-
-/**
- * Curated default model — mirrors the first ⭐ preferred model advertised for
- * ollama by first-run discovery (`PROVIDER_DESCRIPTORS` in modelDiscovery.ts).
- */
-const DEFAULT_OLLAMA_MODEL = 'qwen3-coder';
 
 /**
  * Ollama serves an unauthenticated local daemon, but `ChatOpenAI` requires a
@@ -60,7 +55,7 @@ export async function processJsonConfig(
   const configFields = {
     ...llmConfig,
     apiKey,
-    model: llmConfig.model || DEFAULT_OLLAMA_MODEL,
+    model: llmConfig.model || getCuratedFallbackModel('ollama'),
     configuration: {
       baseURL: resolveBaseUrl(),
       ...(llmConfig.configuration || {}),
@@ -74,20 +69,13 @@ export async function processJsonConfig(
   return new ChatOpenAI(configFields);
 }
 
-const jsonContent = `{
-  "llm": {
-    "type": "ollama",
-    "model": "qwen3-coder"
-  }
-}`;
-
-export function init(configFileName: string, force = false): void {
+export function init(configFileName: string, force = false, model?: string): void {
   // Determine which content to use based on file extension
   if (!configFileName.endsWith('.json')) {
     throw new Error('Only JSON config is supported.');
   }
 
-  writeConfigFileWithMessages(configFileName, jsonContent, force);
+  writeConfigFileWithMessages(configFileName, buildInitConfigContent('ollama', model), force);
   displayWarning(
     `You need to edit your ${configFileName} to configure the model. ` +
       'Ollama runs locally and needs no API key; set OLLAMA_HOST if your daemon ' +

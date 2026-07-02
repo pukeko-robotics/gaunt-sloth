@@ -8,6 +8,7 @@ import { OpenAIChatInput } from '@langchain/openai';
 import { ChatOpenAIFields } from '@langchain/openai';
 
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
+import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 
 // Function to process JSON config and create OpenRouter LLM instance
 // noinspection JSUnusedGlobalSymbols
@@ -25,7 +26,7 @@ export async function processJsonConfig(
   const configFields = {
     ...llmConfig,
     apiKey: openRouterApiKey,
-    model: llmConfig.model || 'qwen/qwen3-coder',
+    model: llmConfig.model || getCuratedFallbackModel('openrouter'),
     configuration: {
       baseURL: 'https://openrouter.ai/api/v1',
       ...(llmConfig.configuration || {}),
@@ -52,20 +53,13 @@ function getApiKey(llmConfig: OpenAIChatInput & ChatOpenAIFields & BaseChatModel
   }
 }
 
-const jsonContent = `{
-  "llm": {
-    "type": "openrouter",
-    "model": "qwen/qwen3-coder"
-  }
-}`;
-
-export function init(configFileName: string, force = false): void {
+export function init(configFileName: string, force = false, model?: string): void {
   // Determine which content to use based on file extension
   if (!configFileName.endsWith('.json')) {
     throw new Error('Only JSON config is supported.');
   }
 
-  writeConfigFileWithMessages(configFileName, jsonContent, force);
+  writeConfigFileWithMessages(configFileName, buildInitConfigContent('openrouter', model), force);
   displayWarning(
     `You need to edit your ${configFileName} to configure model, ` +
       'or define OPEN_ROUTER_API_KEY environment variable.'

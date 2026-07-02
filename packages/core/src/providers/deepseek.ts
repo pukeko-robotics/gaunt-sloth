@@ -7,6 +7,7 @@ import type {
 import { ChatDeepSeekInput } from '@langchain/deepseek';
 
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
+import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 
 // Function to process JSON config and create DeepSeek LLM instance
 export async function processJsonConfig(
@@ -18,24 +19,17 @@ export async function processJsonConfig(
   return new deepseek.ChatDeepSeek({
     ...llmConfig,
     apiKey: deepseekApiKey,
-    model: llmConfig.model || 'deepseek-v4-pro',
+    model: llmConfig.model || getCuratedFallbackModel('deepseek'),
   });
 }
 
-const jsonContent = `{
-  "llm": {
-    "type": "deepseek",
-    "model": "deepseek-v4-pro"
-  }
-}`;
-
-export function init(configFileName: string, force = false): void {
+export function init(configFileName: string, force = false, model?: string): void {
   // Determine which content to use based on file extension
   if (!configFileName.endsWith('.json')) {
     throw new Error('Only JSON config is supported.');
   }
 
-  writeConfigFileWithMessages(configFileName, jsonContent, force);
+  writeConfigFileWithMessages(configFileName, buildInitConfigContent('deepseek', model), force);
   displayWarning(
     `You need to update your ${configFileName} to add your DeepSeek API key, ` +
       'or define DEEPSEEK_API_KEY environment variable.'

@@ -15,21 +15,15 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { ChatGoogleParams } from '@langchain/google/node';
 
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
+import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 
-const jsonContent = `{
-  "llm": {
-    "type": "vertexai",
-    "model": "gemini-3.5-flash"
-  }
-}`;
-
-export function init(configFileName: string, force = false): void {
+export function init(configFileName: string, force = false, model?: string): void {
   // Determine which content to use based on file extension
   if (!configFileName.endsWith('.json')) {
     throw new Error('Only JSON config is supported.');
   }
 
-  writeConfigFileWithMessages(configFileName, jsonContent, force);
+  writeConfigFileWithMessages(configFileName, buildInitConfigContent('vertexai', model), force);
   displayWarning(
     'For Google VertexAI you likely to need to do `gcloud auth login` and `gcloud auth application-default login`.'
   );
@@ -42,7 +36,7 @@ export async function processJsonConfig(
   const { ChatGoogle } = await import('@langchain/google/node');
   const configFields = {
     ...llmConfig,
-    model: llmConfig.model || 'gemini-3.5-flash',
+    model: llmConfig.model || getCuratedFallbackModel('vertexai'),
     vertexai: true,
   };
   delete configFields.type;

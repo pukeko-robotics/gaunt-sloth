@@ -33,9 +33,12 @@ vi.mock('@gaunt-sloth/review/utils/fileUtils.js', () => ({
 
 const exit = vi.fn();
 const getCurrentWorkDir = vi.fn();
+// CFG-14: createProjectConfig resolves the init model via modelDiscovery, which reads `env`
+// for provider API keys. An empty env → no live discovery → init model=undefined (omit).
 vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => ({
   exit,
   getCurrentWorkDir,
+  env: {} as Record<string, string | undefined>,
 }));
 
 const fsMock = {
@@ -82,7 +85,8 @@ describe('createProjectConfig (gth init <provider>)', () => {
     await createProjectConfig('vertexai', true);
 
     expect(vertexaiInit).toHaveBeenCalledTimes(1);
-    expect(vertexaiInit).toHaveBeenCalledWith(CONFIG_PATH, true);
+    // vertexai has no live model endpoint (kind:'none'), so the model is omitted (undefined).
+    expect(vertexaiInit).toHaveBeenCalledWith(CONFIG_PATH, true, undefined);
     expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalledWith(
       expect.stringContaining('already exists and was kept')
     );
@@ -95,6 +99,6 @@ describe('createProjectConfig (gth init <provider>)', () => {
     await createProjectConfig('vertexai', false);
 
     expect(vertexaiInit).toHaveBeenCalledTimes(1);
-    expect(vertexaiInit).toHaveBeenCalledWith(CONFIG_PATH, false);
+    expect(vertexaiInit).toHaveBeenCalledWith(CONFIG_PATH, false, undefined);
   });
 });

@@ -53,6 +53,10 @@ const systemUtilsMock = {
   getInstallDir: vi.fn(),
   setUseColour: vi.fn(),
   isTTY: vi.fn(),
+  // CFG-14: createProjectConfig now resolves the init model via modelDiscovery, which reads
+  // `env` to look for provider API keys. An empty env means no keys → no live discovery →
+  // resolveInitModel returns undefined and `init` is called with model=undefined (omit).
+  env: {} as Record<string, string | undefined>,
 };
 vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
 
@@ -1924,7 +1928,7 @@ describe('config', async () => {
       );
 
       // Verify init was called with correct parameters
-      expect(mockInit).toHaveBeenCalledWith('/mock/write/.gsloth.config.json', false);
+      expect(mockInit).toHaveBeenCalledWith('/mock/write/.gsloth.config.json', false, undefined);
 
       // Verify writeFileIfNotExistsWithMessages was called for guidelines and review instructions
       expect(fileUtilsMock.writeFileIfNotExistsWithMessages).toHaveBeenCalledTimes(2);
@@ -2005,7 +2009,7 @@ describe('config', async () => {
       expect(consoleUtilsMock.displayInfo).toHaveBeenCalledWith(
         'Creating project config for anthropic'
       );
-      expect(mockInit).toHaveBeenCalledWith('/mock/write/.gsloth.config.json', false);
+      expect(mockInit).toHaveBeenCalledWith('/mock/write/.gsloth.config.json', false, undefined);
     });
 
     it('Should create project config for groq', async () => {
@@ -2027,7 +2031,7 @@ describe('config', async () => {
       await createProjectConfig(configType);
 
       expect(consoleUtilsMock.displayInfo).toHaveBeenCalledWith('Creating project config for groq');
-      expect(mockInit).toHaveBeenCalledWith('/mock/write/.gsloth.config.json', false);
+      expect(mockInit).toHaveBeenCalledWith('/mock/write/.gsloth.config.json', false, undefined);
     });
 
     it('Should create project config for google-genai', async () => {
@@ -2051,7 +2055,7 @@ describe('config', async () => {
       expect(consoleUtilsMock.displayInfo).toHaveBeenCalledWith(
         'Creating project config for google-genai'
       );
-      expect(mockInit).toHaveBeenCalledWith('/mock/write/.gsloth.config.json', false);
+      expect(mockInit).toHaveBeenCalledWith('/mock/write/.gsloth.config.json', false, undefined);
     });
 
     it('Should create project config for xai', async () => {
@@ -2073,7 +2077,7 @@ describe('config', async () => {
       await createProjectConfig(configType);
 
       expect(consoleUtilsMock.displayInfo).toHaveBeenCalledWith('Creating project config for xai');
-      expect(mockInit).toHaveBeenCalledWith('/mock/write/.gsloth.config.json', false);
+      expect(mockInit).toHaveBeenCalledWith('/mock/write/.gsloth.config.json', false, undefined);
     });
   });
 });

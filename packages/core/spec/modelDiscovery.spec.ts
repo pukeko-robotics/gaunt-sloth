@@ -311,4 +311,120 @@ describe('modelDiscovery', () => {
       expect(availableOnly.map((p) => p.id)).toEqual(['openai']);
     });
   });
+
+  // CFG-14 — the single fallback source of truth.
+  describe('getCuratedFallbackModel', () => {
+    it('returns the top curated preferredModels entry for every registered provider', async () => {
+      const { getCuratedFallbackModel, PROVIDER_DESCRIPTORS } =
+        await import('#src/providers/modelDiscovery.js');
+      for (const descriptor of PROVIDER_DESCRIPTORS) {
+        expect(getCuratedFallbackModel(descriptor.id)).toBe(descriptor.preferredModels[0]);
+        expect(getCuratedFallbackModel(descriptor.id)).toBeTruthy();
+      }
+    });
+
+    it('throws for an unknown provider (invariant: the fallback source must be complete)', async () => {
+      const { getCuratedFallbackModel } = await import('#src/providers/modelDiscovery.js');
+
+      expect(() => getCuratedFallbackModel('nope' as any)).toThrow('No curated fallback model');
+    });
+  });
+
+  // CFG-14 — the init template builder that omits `model` unless a verified id is supplied.
+  describe('buildInitConfigContent', () => {
+    it('omits the model key entirely when no model is provided (defers to run-time fallback)', async () => {
+      const { buildInitConfigContent } = await import('#src/providers/modelDiscovery.js');
+      const parsed = JSON.parse(buildInitConfigContent('openai'));
+      expect(parsed).toEqual({ llm: { type: 'openai' } });
+      expect('model' in parsed.llm).toBe(false);
+    });
+
+    it('includes the model when a resolved id is supplied', async () => {
+      const { buildInitConfigContent } = await import('#src/providers/modelDiscovery.js');
+      const parsed = JSON.parse(buildInitConfigContent('openai', 'gpt-live-42'));
+      expect(parsed).toEqual({ llm: { type: 'openai', model: 'gpt-live-42' } });
+    });
+  });
+
+  // CFG-14 — (a) live resolution and (b) the omit-when-impossible fallback.
+  describe('resolveInitModel', () => {
+    it('(a) key present: prefers the highest-ranked curated id that is actually live', async () => {
+      systemUtilsMock.env.OPENAI_API_KEY = 'sk-openai-123';
+      const { resolveInitModel, PROVIDER_DESCRIPTORS } =
+        await import('#src/providers/modelDiscovery.js');
+      const descriptor = PROVIDER_DESCRIPTORS.find((d) => d.id === 'openai')!;
+      const top = descriptor.preferredModels[0];
+      const second = descriptor.preferredModels[1];
+      // Both a lower-ranked and the top curated id are live, alongside a non-curated one.
+      vi.stubGlobal('fetch', okJson({ data: [{ id: 'gpt-other' }, { id: second }, { id: top }] }));
+
+      expect(await resolveInitModel('openai')).toBe(top);
+    });
+
+    it('(a) key present: falls back to the first live id when no curated id is present', async () => {
+      systemUtilsMock.env.OPENAI_API_KEY = 'sk-openai-123';
+      vi.stubGlobal('fetch', okJson({ data: [{ id: 'gpt-alpha' }, { id: 'gpt-beta' }] }));
+      const { resolveInitModel } = await import('#src/providers/modelDiscovery.js');
+
+      expect(await resolveInitModel('openai')).toBe('gpt-alpha');
+    });
+
+    it('(a) matches a curated id tolerant of an :latest suffix (ollama qwen3 -> qwen3:latest)', async () => {
+      vi.stubGlobal('fetch', okJson({ data: [{ id: 'random:7b' }, { id: 'qwen3:latest' }] }));
+      const { resolveInitModel } = await import('#src/providers/modelDiscovery.js');
+
+      // curated `qwen3` is present as the live `qwen3:latest`; the LIVE id is returned.
+      expect(await resolveInitModel('ollama')).toBe('qwen3:latest');
+    });
+
+    it('(b) no key: returns undefined without any network call (only speculative path is omit)', async () => {
+      const fetchMock = vi.fn(async () => {
+        throw new Error('should not be called');
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const { resolveInitModel } = await import('#src/providers/modelDiscovery.js');
+
+      expect(await resolveInitModel('openai')).toBeUndefined();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('(b) kind:"none" provider returns undefined even with a key present', async () => {
+      systemUtilsMock.env.GOOGLE_API_KEY = 'g-123';
+      const fetchMock = vi.fn(async () => {
+        throw new Error('should not be called');
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const { resolveInitModel } = await import('#src/providers/modelDiscovery.js');
+
+      expect(await resolveInitModel('google-genai')).toBeUndefined();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('(b) returns undefined on a network error (never invents a literal)', async () => {
+      systemUtilsMock.env.OPENAI_API_KEY = 'sk-openai-123';
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          throw new Error('timeout');
+        })
+      );
+      const { resolveInitModel } = await import('#src/providers/modelDiscovery.js');
+
+      expect(await resolveInitModel('openai')).toBeUndefined();
+    });
+
+    it('(b) returns undefined on an empty live catalog', async () => {
+      systemUtilsMock.env.OPENAI_API_KEY = 'sk-openai-123';
+      vi.stubGlobal('fetch', okJson({ data: [] }));
+      const { resolveInitModel } = await import('#src/providers/modelDiscovery.js');
+
+      expect(await resolveInitModel('openai')).toBeUndefined();
+    });
+
+    it('returns undefined for an unknown provider (never throws)', async () => {
+      const { resolveInitModel } = await import('#src/providers/modelDiscovery.js');
+
+      expect(await resolveInitModel('nope' as any)).toBeUndefined();
+    });
+  });
 });

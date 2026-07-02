@@ -329,6 +329,44 @@ export function buildModelList(
   return discoveredModels.map((id) => ({ id, preferred: isPreferred(id) }));
 }
 
+/**
+ * The single fallback source of truth for a provider's default model id (CFG-14).
+ *
+ * Returns the top curated ⭐ `preferredModels` entry for the provider — the one
+ * id that provider factories fall back to when a config carries no `model`, and
+ * the id first-run writes when live discovery is impossible. Centralising it here
+ * means the fallback lives in exactly ONE place (the curated registry above)
+ * instead of being duplicated as a literal in every `providers/<id>.ts`.
+ *
+ * Every registered provider is required to carry at least one curated model, so
+ * this always resolves for a known id; it throws for an unknown provider or a
+ * provider whose `preferredModels` is empty (a developer error — the invariant
+ * that the fallback source is complete would otherwise fail silently).
+ *
+ * @returns the curated default model id (always defined for a known provider).
+ */
+export function getCuratedFallbackModel(providerId: ProviderId): string {
+  const model = PROVIDER_DESCRIPTORS.find((d) => d.id === providerId)?.preferredModels[0];
+  if (!model) {
+    throw new Error(`No curated fallback model registered for provider "${providerId}".`);
+  }
+  return model;
+}
+
+/**
+ * Build the minimal `.gsloth.config.json` body an `init` template writes for a
+ * provider (CFG-14). When `model` is omitted, the `model` key is left OUT of the
+ * config entirely, so the provider factory resolves it at run time from
+ * {@link getCuratedFallbackModel} — the single curated source that tracks the
+ * installed version, rather than a literal frozen into the user's file that 404s
+ * once the model is retired.
+ */
+export function buildInitConfigContent(providerId: ProviderId, model?: string): string {
+  const llm: { type: ProviderId; model?: string } = { type: providerId };
+  if (model) llm.model = model;
+  return JSON.stringify({ llm }, null, 2);
+}
+
 /** Live-fetch timeout: short enough to never block first-run for long. */
 const DISCOVERY_TIMEOUT_MS = 2000;
 
@@ -444,6 +482,44 @@ export async function discoverModels(providerId: ProviderId): Promise<ModelInfo[
  */
 export async function listModels(providerId: ProviderId): Promise<ModelInfo[]> {
   return discoverModels(providerId);
+}
+
+/**
+ * Resolve the model id that `init` should bake into a generated config for a
+ * provider (CFG-14) — the safeguard against writing a speculative id that 404s
+ * once the model is retired.
+ *
+ * - **Live discovery possible** (a key / running daemon and a responding
+ *   `/v1/models` endpoint): returns a *verified-present* id — the highest-ranked
+ *   curated ⭐ id that is actually in the live list (matched tolerant of an
+ *   `:latest` suffix), or, when no curated id is live, the first live id.
+ * - **Live discovery impossible** (`kind: 'none'`, no key, offline, empty
+ *   catalog): returns `undefined`. This is the ONLY speculative path, and it
+ *   deliberately declines to invent a literal: the caller OMITS `model` so the
+ *   provider factory falls back to {@link getCuratedFallbackModel} at run time
+ *   (a single curated source that upgrades with the installed version).
+ *
+ * Never throws — a bad key or network error degrades to `undefined`, mirroring
+ * {@link discoverModels}.
+ */
+export async function resolveInitModel(providerId: ProviderId): Promise<string | undefined> {
+  const descriptor = PROVIDER_DESCRIPTORS.find((d) => d.id === providerId);
+  if (!descriptor) return undefined;
+  const { models, live } = await discoverModelsInternal(descriptor);
+  // Not a live catalog → do NOT emit a speculative literal; defer to the run-time
+  // curated fallback by omitting `model`.
+  if (!live || models.length === 0) return undefined;
+  // Prefer the highest-ranked curated id that is actually present in the live
+  // list, tolerating an explicit `:latest` suffix (so curated `qwen3` matches a
+  // live `qwen3:latest`).
+  const strip = (id: string): string => id.replace(/:latest$/, '');
+  const liveByStripped = new Map(models.map((m) => [strip(m.id), m.id]));
+  for (const curated of descriptor.preferredModels) {
+    const hit = liveByStripped.get(strip(curated));
+    if (hit) return hit;
+  }
+  // No curated id is live → the first live id is still a verified-present choice.
+  return models[0].id;
 }
 
 /**

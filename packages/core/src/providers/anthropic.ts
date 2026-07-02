@@ -1,5 +1,6 @@
 import { displayWarning } from '#src/utils/consoleUtils.js';
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
+import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 import { env } from '#src/utils/systemUtils.js';
 import type { AnthropicInput } from '@langchain/anthropic';
 import type {
@@ -20,25 +21,18 @@ export async function processJsonConfig(
   return new anthropic.ChatAnthropic({
     ...llmConfig,
     apiKey: anthropicApiKey,
-    model: llmConfig.model || 'claude-sonnet-4-6',
+    model: llmConfig.model || getCuratedFallbackModel('anthropic'),
   });
 }
 
-const jsonContent = `{
-  "llm": {
-    "type": "anthropic",
-    "model": "claude-sonnet-4-6"
-  }
-}`;
-
 // noinspection JSUnusedGlobalSymbols
-export function init(configFileName: string, force = false): void {
+export function init(configFileName: string, force = false, model?: string): void {
   // Determine which content to use based on file extension
   if (!configFileName.endsWith('.json')) {
     throw new Error('Only JSON config is supported.');
   }
 
-  writeConfigFileWithMessages(configFileName, jsonContent, force);
+  writeConfigFileWithMessages(configFileName, buildInitConfigContent('anthropic', model), force);
   displayWarning(
     `You need to update your ${configFileName} to add your Anthropic API key, ` +
       'or define ANTHROPIC_API_KEY environment variable.'
