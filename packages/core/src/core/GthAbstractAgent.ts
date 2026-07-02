@@ -86,6 +86,23 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   }
 
   /**
+   * GS2-16 — best-effort count of messages already in the checkpointed thread state, used by
+   * {@link invoke} as the baseline so it harvests only THIS turn's new messages rather than the
+   * whole accumulated conversation a checkpointer returns. Fail-soft: a missing `getState`, an odd
+   * state shape, or any error yields 0 (worst case a one-turn over-count, never a throw).
+   */
+  private async getStateMessageCount(runConfig: RunnableConfig): Promise<number> {
+    try {
+      if (!this.agent || typeof this.agent.getState !== 'function') return 0;
+      const state = await this.agent.getState(runConfig);
+      const messages = (state as { values?: { messages?: unknown } })?.values?.messages;
+      return Array.isArray(messages) ? messages.length : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
    * Build the underlying compiled graph and assign it to {@link agent}. This is the only
    * part that differs between the lean and deep agents.
    */
@@ -114,10 +131,20 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
       const progress = new ProgressIndicator('Thinking.');
       try {
         debugLog('Calling agent.invoke...');
+        // GS2-16: capture the prior conversation length BEFORE invoking so we harvest ONLY this
+        // turn's NEW messages. With a checkpointer + persistent thread (a multi-turn `--no-tui`
+        // interactive session with `streamOutput: false`), `response.messages` is the FULL
+        // accumulated conversation, not just this turn — folding all of it would re-sum prior
+        // turns' usage_metadata and re-collect prior tools (per-turn over-count). This baseline
+        // slice also prevents a double-harvest by the empty-stream fallback invoke in
+        // GthAgentRunner: by then the streamed turn is checkpointed, so it is BEFORE the baseline.
+        // Fail-soft: an unreadable baseline yields 0 (a one-turn over-count at worst, never a throw).
+        const priorMessageCount = await this.getStateMessageCount(runConfig);
         const response = await this.agent.invoke({ messages }, runConfig);
-        // GS2-16: harvest token usage + invoked tool names from the finished run's messages
-        // (fail-soft) so the opt-in history recorder can populate `gth insights`.
-        for (const m of response.messages ?? []) this.recordRunStats(m);
+        // Harvest token usage + invoked tool names from THIS turn's new messages only (fail-soft)
+        // so the opt-in history recorder can populate `gth insights`.
+        const allMessages = Array.isArray(response.messages) ? response.messages : [];
+        for (const m of allMessages.slice(priorMessageCount)) this.recordRunStats(m);
         const finalMessage = response.messages[response.messages.length - 1];
         const finalContent = finalMessage?.content;
         const processedContent = !this.config.writeBinaryOutputsToFile
