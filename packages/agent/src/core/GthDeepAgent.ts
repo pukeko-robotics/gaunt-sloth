@@ -14,6 +14,7 @@ import { getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import type { BaseCheckpointSaver } from '@langchain/langgraph';
+import { GraphInterrupt } from '@langchain/langgraph';
 import { createMiddleware, type InterruptOnConfig } from 'langchain';
 import { createDeepAgent, FilesystemBackend } from 'deepagents';
 import {
@@ -413,6 +414,20 @@ export class GthDeepAgent extends GthAbstractAgent {
         try {
           return await handler(request);
         } catch (e) {
+          // EXT-25: rethrow control-flow throws BY TYPE, BEFORE the message regex below. A
+          // GraphInterrupt (a client-tool interrupt() suspending the graph for HITL tool
+          // approval) and an AbortError (caller cancellation) must ALWAYS propagate so the graph
+          // suspends / cancels — never be converted into a benign ToolMessage. Mirrors the guard
+          // in GthAbstractAgent (error.name checks + GraphInterrupt instanceof). Today these
+          // survive only because their messages happen not to match the regex; guarding by type
+          // stops a future regex broadening from silently swallowing the HITL suspend.
+          if (
+            e instanceof GraphInterrupt ||
+            (e as { name?: string })?.name === 'GraphInterrupt' ||
+            (e as { name?: string })?.name === 'AbortError'
+          ) {
+            throw e;
+          }
           const message = e instanceof Error ? e.message : String(e);
           // deepagents fs enforcement throws (middleware/fs.ts enforcePermission +
           // permissions/enforce.ts validatePath): a permission denial, or a path that is

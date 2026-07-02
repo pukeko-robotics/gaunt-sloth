@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SystemMessage } from '@langchain/core/messages';
+import { GraphInterrupt } from '@langchain/langgraph';
 import type { GthConfig } from '#src/config.js';
 import { buildPermissions } from '#src/core/deepAgentPermissions.js';
 import * as deepAgentPermissions from '#src/core/deepAgentPermissions.js';
@@ -469,6 +470,62 @@ describe('GthDeepAgent', () => {
 
     await expect(softening.wrapToolCall({ toolCall: { id: 'tc1' } }, handler)).rejects.toThrow(
       'boom'
+    );
+  });
+
+  // EXT-25: control-flow throws must pass through the softener UN-softened, guarded BY TYPE before
+  // the message regex. A GraphInterrupt (a client-tool interrupt() suspending the graph for HITL
+  // tool approval) or an AbortError (caller cancellation) must always propagate so the graph
+  // suspends / cancels — never be converted into a benign ToolMessage. This locks in the type
+  // guard so a future regex broadening cannot silently swallow the HITL suspend.
+  it('fs-denial-softening rethrows a GraphInterrupt (instanceof) un-softened, not as a ToolMessage', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+    await agent.init(undefined, makeConfig());
+
+    const softening = createDeepAgentMock.mock.calls[0][0].middleware.find(
+      (m: { name: string }) => m.name === 'GthDeepFsDenialSoftening'
+    );
+    const interrupt = new GraphInterrupt();
+    const handler = vi.fn().mockRejectedValue(interrupt);
+
+    // Rethrown by reference (control flow), NOT converted to a status:'error' ToolMessage.
+    await expect(softening.wrapToolCall({ toolCall: { id: 'tc-int' } }, handler)).rejects.toBe(
+      interrupt
+    );
+  });
+
+  it('fs-denial-softening rethrows a GraphInterrupt-by-name un-softened, not as a ToolMessage', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+    await agent.init(undefined, makeConfig());
+
+    const softening = createDeepAgentMock.mock.calls[0][0].middleware.find(
+      (m: { name: string }) => m.name === 'GthDeepFsDenialSoftening'
+    );
+    // A GraphInterrupt that does not pass instanceof (e.g. crossed a module/realm boundary) is
+    // still recognized by its name so the graph suspend is never softened away.
+    const err = Object.assign(new Error('interrupt'), { name: 'GraphInterrupt' });
+    const handler = vi.fn().mockRejectedValue(err);
+
+    await expect(softening.wrapToolCall({ toolCall: { id: 'tc-int2' } }, handler)).rejects.toBe(
+      err
+    );
+  });
+
+  it('fs-denial-softening rethrows an AbortError un-softened, not as a ToolMessage', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+    await agent.init(undefined, makeConfig());
+
+    const softening = createDeepAgentMock.mock.calls[0][0].middleware.find(
+      (m: { name: string }) => m.name === 'GthDeepFsDenialSoftening'
+    );
+    const err = Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
+    const handler = vi.fn().mockRejectedValue(err);
+
+    await expect(softening.wrapToolCall({ toolCall: { id: 'tc-abort' } }, handler)).rejects.toBe(
+      err
     );
   });
 
