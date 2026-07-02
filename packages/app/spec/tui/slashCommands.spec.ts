@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SlashCommandContext } from '#src/tui/slashCommands.js';
+import type { SlashCommand, SlashCommandContext } from '#src/tui/slashCommands.js';
 
 const ctx: SlashCommandContext = {
   mode: 'chat',
@@ -180,5 +180,77 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     });
     const result = dispatchSlashCommand(parseSlashCommand('/ping')!, registry, ctx);
     expect(result.message).toBe('pong');
+  });
+});
+
+describe('tui/slashCommands slashMenuQuery (TUI-C10 menu trigger)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('returns the lower-cased query after the slash for a bare in-progress command', async () => {
+    const { slashMenuQuery } = await import('#src/tui/slashCommands.js');
+    expect(slashMenuQuery('/')).toBe('');
+    expect(slashMenuQuery('/mo')).toBe('mo');
+    expect(slashMenuQuery('/MODE')).toBe('mode');
+  });
+
+  it('returns null for non-slash input or once a space begins the args', async () => {
+    const { slashMenuQuery } = await import('#src/tui/slashCommands.js');
+    expect(slashMenuQuery('')).toBeNull();
+    expect(slashMenuQuery('hello')).toBeNull();
+    expect(slashMenuQuery(' /mode')).toBeNull(); // leading space: not a trigger
+    expect(slashMenuQuery('/mode ')).toBeNull(); // space started args -> menu closes
+    expect(slashMenuQuery('/mode foo')).toBeNull();
+  });
+});
+
+describe('tui/slashCommands filterSlashCommands (TUI-C10 menu filter)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('an empty query returns the whole registry (bare "/" lists everything)', async () => {
+    const { createCommandRegistry, filterSlashCommands } =
+      await import('#src/tui/slashCommands.js');
+    const registry = createCommandRegistry();
+    const all = filterSlashCommands(registry, '');
+    expect(all.map((c) => c.name)).toEqual(registry.map((c) => c.name));
+    expect(all).not.toBe(registry); // a copy, never the live array
+  });
+
+  it('filters by prefix, case-insensitively', async () => {
+    const { createCommandRegistry, filterSlashCommands } =
+      await import('#src/tui/slashCommands.js');
+    const registry = createCommandRegistry();
+    expect(filterSlashCommands(registry, 'mo').map((c) => c.name)).toEqual(['mode', 'model']);
+    // 'model' also starts with 'mode' (m-o-d-e-l), so both match the prefix.
+    expect(filterSlashCommands(registry, 'MODE').map((c) => c.name)).toEqual(['mode', 'model']);
+    expect(filterSlashCommands(registry, 'model').map((c) => c.name)).toEqual(['model']);
+  });
+
+  it('ranks prefix matches ahead of looser substring matches', async () => {
+    const { filterSlashCommands } = await import('#src/tui/slashCommands.js');
+    const registry: SlashCommand[] = [
+      { name: 'compare', description: '', run: () => ({}) },
+      { name: 'clear', description: '', run: () => ({}) },
+    ];
+    // "c" prefixes both; "lea" only substrings inside "clear".
+    expect(filterSlashCommands(registry, 'lea').map((c) => c.name)).toEqual(['clear']);
+    // A query matching a prefix on one and a substring on another puts the prefix first.
+    const mixed: SlashCommand[] = [
+      { name: 'xray', description: '', run: () => ({}) }, // substring 'ra'
+      { name: 'range', description: '', run: () => ({}) }, // prefix 'ra'
+    ];
+    expect(filterSlashCommands(mixed, 'ra').map((c) => c.name)).toEqual(['range', 'xray']);
+  });
+
+  it('includes extension-registered commands automatically (no hardcoded list)', async () => {
+    const { createCommandRegistry, filterSlashCommands } =
+      await import('#src/tui/slashCommands.js');
+    const registry = createCommandRegistry();
+    registry.push({ name: 'ping', description: 'extension command', run: () => ({}) });
+    expect(filterSlashCommands(registry, 'pi').map((c) => c.name)).toEqual(['ping']);
+    expect(filterSlashCommands(registry, '').map((c) => c.name)).toContain('ping');
   });
 });

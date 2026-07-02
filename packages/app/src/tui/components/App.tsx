@@ -109,6 +109,9 @@ export function App(props: TuiAppProps): React.ReactElement {
   // Per-turn args buffers for the subagent fold (mirrors foldSubagentTree's internal map).
   const subagentBuffersRef = useRef<Map<string, string>>(new Map());
   const debugFocusedRef = useRef(false);
+  // TUI-C10 — mirror of whether the prompt's slash-command menu currently owns navigation keys, so
+  // the top-level Tab handler (debug-panel focus) stands down while the menu is open.
+  const slashMenuActiveRef = useRef(false);
   const { exit } = useApp();
   // Terminal height drives the maximised viewport size; useStdout keeps it resize-aware.
   const { stdout } = useStdout();
@@ -425,8 +428,9 @@ export function App(props: TuiAppProps): React.ReactElement {
       return;
     }
 
-    // Tab focuses the docked panel when it is visible and no turn is running.
-    if (key.tab && debugVisible && !runningRef.current) {
+    // Tab focuses the docked panel when it is visible and no turn is running — unless the prompt's
+    // slash-command menu is open, in which case Tab completes the highlighted command (TUI-C10).
+    if (key.tab && debugVisible && !runningRef.current && !slashMenuActiveRef.current) {
       setDebugFocused(true);
       debugFocusedRef.current = true;
     }
@@ -514,7 +518,13 @@ export function App(props: TuiAppProps): React.ReactElement {
         debugHint={debugVisible && !debugFocused}
       />
       {!running && !debugFocused && !pendingApproval ? (
-        <PromptInput onSubmit={handleSubmit} />
+        <PromptInput
+          onSubmit={handleSubmit}
+          commands={registry}
+          onMenuStateChange={(active) => {
+            slashMenuActiveRef.current = active;
+          }}
+        />
       ) : null}
       <Text dimColor>{exitMessage.trim()}</Text>
       <Rule />
