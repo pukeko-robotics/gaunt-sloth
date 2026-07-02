@@ -122,6 +122,57 @@ describe('tui <LiveTurn>', () => {
     });
   });
 
+  describe('reasoning region (💭 Thinking)', () => {
+    const withReasoning = turn({
+      reasoning: 'First I consider the options.\nThen I decide.',
+      text: '👍',
+    });
+
+    it('collapsed by default: shows the 💭 Thinking label + collapsed caret, hides the thought body', () => {
+      const { lastFrame, unmount } = render(<LiveTurn turn={withReasoning} />);
+      const f = stripAnsi(lastFrame() ?? '');
+      expect(f).toContain('💭 Thinking'); // label affordance
+      expect(f).toContain('▸'); // collapsed caret
+      expect(f).not.toContain('First I consider the options.'); // thought hidden
+      expect(f).not.toContain('│'); // gutter only renders when expanded
+      expect(f).toContain('👍'); // the answer still shows
+      unmount();
+    });
+
+    it('expanded: shows the open caret, the │ gutter and the thought body', () => {
+      const { lastFrame, unmount } = render(<LiveTurn turn={withReasoning} toolsExpanded />);
+      const f = stripAnsi(lastFrame() ?? '');
+      expect(f).toContain('💭 Thinking');
+      expect(f).toContain('▾'); // expanded caret
+      expect(f).toContain('│'); // gutter
+      expect(f).toContain('First I consider the options.'); // thought body line 1
+      expect(f).toContain('Then I decide.'); // thought body line 2
+      unmount();
+    });
+
+    it('shows the Ctrl+T expand hint when collapsed on the live (streaming) turn', () => {
+      const { lastFrame, unmount } = render(<LiveTurn turn={withReasoning} streaming />);
+      expect(stripAnsi(lastFrame() ?? '')).toContain('Ctrl+T to expand');
+      unmount();
+    });
+
+    it('renders nothing for the reasoning region when there is no reasoning', () => {
+      const { lastFrame, unmount } = render(<LiveTurn turn={turn({ text: 'hi' })} />);
+      expect(stripAnsi(lastFrame() ?? '')).not.toContain('💭 Thinking');
+      unmount();
+    });
+
+    it('reasoning region uses colour, not dim alone, for the label + gutter (DL-8)', () => {
+      // The label/gutter must be a coloured layer boundary, not the dim-only region that
+      // disappears on many themes. Assert the raw frame carries the cyan SGR for the label.
+      const { lastFrame, unmount } = render(<LiveTurn turn={withReasoning} toolsExpanded />);
+      const raw = lastFrame() ?? '';
+      // chalk.level=3 → cyan foreground is SGR 36; the label text is styled with it.
+      expect(raw).toContain('[36m');
+      unmount();
+    });
+  });
+
   describe('markdown vs plain text', () => {
     it('renders completed assistant text as markdown (streaming=false)', () => {
       const t = turn({ text: '# Title\n- item one' });

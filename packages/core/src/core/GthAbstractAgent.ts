@@ -485,6 +485,19 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
           yield { type: 'text', delta: chunk.text as string };
         }
       } else if (AIMessage.isInstance(chunk)) {
+        // Reasoning on a non-chunk AIMessage — a non-streamed / resumed thinking message
+        // (e.g. a checkpoint replay) still carries its thinking in
+        // additional_kwargs.reasoning_content. Mirror the AIMessageChunk branch and emit the
+        // same reasoning event series, otherwise the thought is silently dropped (TUI-C15).
+        const reasoningContent = chunk.additional_kwargs?.reasoning_content;
+        if (typeof reasoningContent === 'string' && reasoningContent.length > 0) {
+          if (!reasoningOpen) {
+            reasoningOpen = true;
+            yield { type: 'reasoning_start' };
+          }
+          yield { type: 'reasoning_delta', delta: reasoningContent };
+        }
+
         // Non-chunk AIMessage (e.g. on resumed runs) carries final tool_calls
         // directly; merge them into the aggregate so flushAggregated emits them.
         if (chunk.tool_calls && chunk.tool_calls.length > 0) {

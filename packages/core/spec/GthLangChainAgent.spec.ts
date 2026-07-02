@@ -1198,6 +1198,47 @@ describe('GthLangChainAgent', () => {
       expect(okEvent.content).toBe('all good');
       expect(okEvent.isError).toBeUndefined();
     });
+
+    it('emits reasoning events for a non-chunk AIMessage carrying reasoning_content (TUI-C15)', async () => {
+      const agent = new GthLangChainAgent(statusUpdateCallback);
+      const fakeListChatModel = new FakeListChatModel({ responses: [] });
+      fakeListChatModel.bindTools = vi.fn().mockReturnValue(fakeListChatModel);
+      await agent.init(undefined, { ...mockConfig, llm: fakeListChatModel });
+
+      // A non-streamed / resumed reasoning message arrives as a plain AIMessage (NOT an
+      // AIMessageChunk), carrying its thinking in additional_kwargs.reasoning_content plus the
+      // final answer text. The non-chunk branch must still surface the reasoning series, not
+      // just the text (the latent drop this ticket fixes).
+      const reasoned = new AIMessage({
+        content: 'The answer is 42.',
+        additional_kwargs: { reasoning_content: 'Let me think step by step.' },
+      });
+
+      async function* streamed() {
+        yield [reasoned, {}];
+      }
+      agentMock.stream.mockResolvedValue(streamed());
+
+      const events: { type: string; delta?: string }[] = [];
+      for await (const ev of agent.streamWithEvents([new HumanMessage('go')], {
+        recursionLimit: 1000,
+        configurable: { thread_id: 'nonchunk-reasoning' },
+      })) {
+        events.push(ev as { type: string; delta?: string });
+      }
+
+      expect(events.map((e) => e.type)).toEqual([
+        'reasoning_start',
+        'reasoning_delta',
+        'reasoning_end',
+        'text',
+      ]);
+      expect(events[1]).toMatchObject({
+        type: 'reasoning_delta',
+        delta: 'Let me think step by step.',
+      });
+      expect(events[3]).toMatchObject({ type: 'text', delta: 'The answer is 42.' });
+    });
   });
 
   describe('streamWithEventsResume', () => {

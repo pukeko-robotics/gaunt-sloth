@@ -66,10 +66,51 @@ function ToolCallPanel({
 }
 
 /**
- * Renders one assistant turn from the pure {@link TurnViewModel}: a dim reasoning region,
- * one collapsible panel per tool call, then the assistant text. Used both for the in-progress
- * live turn and (frozen) for committed turns in the transcript, so the look is identical once
- * done.
+ * The `💭 Thinking` region: the model's reasoning/chain-of-thought, rendered as a distinct
+ * *layer* from the answer. Collapsible like {@link ToolCallPanel} (shares the turn's Ctrl+T
+ * detail toggle) and collapsed by default, so ephemeral thinking never competes with the answer
+ * — worst case a lone 👍 answer drowned by paragraphs of thought. When expanded, each line is
+ * drawn behind a `│ ` gutter. The label + gutter are **cyan** (DL-8 "informational") rather than
+ * dim-only: dim is the least reliably-rendered ANSI attribute and vanishes on many themes, so a
+ * dim-only region reads as the answer. Cyan carries the layer boundary as colour; the body stays
+ * dim+italic underneath the coloured gutter.
+ */
+function ReasoningPanel({
+  reasoning,
+  expanded,
+  live,
+}: {
+  reasoning: string;
+  expanded: boolean;
+  /** True for the in-progress turn, where Ctrl+T can toggle the detail in place. */
+  live: boolean;
+}): React.ReactElement {
+  const caret = expanded ? '▾' : '▸';
+  return (
+    <Box flexDirection="column">
+      <Text color="cyan">
+        {`${caret} 💭 Thinking`}
+        {live && !expanded ? <Text dimColor>{'  (Ctrl+T to expand)'}</Text> : null}
+      </Text>
+      {expanded
+        ? reasoning.split('\n').map((line, i) => (
+            <Box key={i}>
+              <Text color="cyan">{'│ '}</Text>
+              <Text dimColor italic>
+                {line}
+              </Text>
+            </Box>
+          ))
+        : null}
+    </Box>
+  );
+}
+
+/**
+ * Renders one assistant turn from the pure {@link TurnViewModel}: a collapsible `💭 Thinking`
+ * reasoning region, one collapsible panel per tool call, then the assistant text. Used both for
+ * the in-progress live turn and (frozen) for committed turns in the transcript, so the look is
+ * identical once done.
  *
  * Assistant text is rendered as terminal **markdown** once the segment is complete; while a
  * turn is still streaming (`streaming` true) we render it as plain text so the live region
@@ -90,7 +131,9 @@ export function LiveTurn({
 }): React.ReactElement {
   return (
     <Box flexDirection="column">
-      {turn.reasoning ? <Text dimColor>{turn.reasoning}</Text> : null}
+      {turn.reasoning ? (
+        <ReasoningPanel reasoning={turn.reasoning} expanded={toolsExpanded} live={streaming} />
+      ) : null}
       {turn.toolCalls.map((tc) => (
         <ToolCallPanel key={tc.id} tc={tc} expanded={toolsExpanded} live={streaming} />
       ))}
