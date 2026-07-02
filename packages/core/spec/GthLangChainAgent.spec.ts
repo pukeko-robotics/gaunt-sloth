@@ -335,6 +335,121 @@ describe('GthLangChainAgent', () => {
         expect.stringContaining('Loaded tools')
       );
     });
+
+    // EXT-21: the lean-path (exec / ask --write) sibling of the deep agent's
+    // GthDeepShellExitSoftening. A failed run_* command throws a ShellCommandFailedError; this
+    // middleware must convert it into a status:'error' ToolMessage (→ ✗) with the full body
+    // preserved, while leaving every other throw untouched.
+    describe('GthLeanShellExitSoftening (run_* ✗ signal)', () => {
+      const getSoftening = () => {
+        const middleware = createAgentMock.mock.calls.at(-1)?.[0].middleware as {
+          name: string;
+          wrapToolCall?: (
+            _request: unknown,
+            _handler: (_r: unknown) => Promise<unknown>
+          ) => Promise<ToolMessage>;
+        }[];
+        return middleware.find((m) => m.name === 'GthLeanShellExitSoftening');
+      };
+
+      it('is installed as the outermost wrapToolCall middleware', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('exec', mockConfig);
+
+        const middleware = createAgentMock.mock.calls.at(-1)?.[0].middleware as { name: string }[];
+        expect(middleware[0]?.name).toBe('GthLeanShellExitSoftening');
+      });
+
+      it('converts a ShellCommandFailedError into an error ToolMessage, body preserved', async () => {
+        const { ShellCommandFailedError } =
+          await import('#src/core/shell/ShellCommandFailedError.js');
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('exec', mockConfig);
+
+        const softening = getSoftening();
+        expect(softening).toBeDefined();
+        const body =
+          "Executing 'npm test'...\n\n<COMMAND_OUTPUT>\n1 failing\n</COMMAND_OUTPUT>\n" +
+          "\n\nCommand 'npm test' exited with code 1";
+        const handler = vi.fn().mockRejectedValue(
+          new ShellCommandFailedError({
+            output: body,
+            exitCode: 1,
+            command: 'npm test',
+            toolName: 'run_tests',
+          })
+        );
+
+        const result = await softening!.wrapToolCall!({ toolCall: { id: 'tc-shell' } }, handler);
+        // Full stdout/stderr body preserved verbatim — the model's observation is unchanged...
+        expect(String(result.content)).toBe(body);
+        expect(result.tool_call_id).toBe('tc-shell');
+        // ...except the status flips to 'error' (→ isError → ✗ glyph).
+        expect(result.status).toBe('error');
+      });
+
+      it('recognises a structurally-shaped ShellCommandFailedError (dual-package fallback)', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('exec', mockConfig);
+
+        const softening = getSoftening();
+        // An error that does NOT pass instanceof (e.g. crossed a module/realm boundary) is still
+        // recognised by its name + carried fields so the ✗ signal is never silently regressed.
+        const body = "Executing 'bad'...\n\nCommand 'bad' exited with code 2";
+        const err = Object.assign(new Error(body), {
+          name: 'ShellCommandFailedError',
+          output: body,
+          exitCode: 2,
+          command: 'bad',
+          toolName: 'run_shell_command',
+        });
+        const handler = vi.fn().mockRejectedValue(err);
+
+        const result = await softening!.wrapToolCall!({ toolCall: { id: 'tc-struct' } }, handler);
+        expect(String(result.content)).toBe(body);
+        expect(result.status).toBe('error');
+      });
+
+      it('rethrows a non-shell error untouched', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('exec', mockConfig);
+
+        const softening = getSoftening();
+        const err = new Error('boom');
+        const handler = vi.fn().mockRejectedValue(err);
+
+        await expect(
+          softening!.wrapToolCall!({ toolCall: { id: 'tc-other' } }, handler)
+        ).rejects.toBe(err);
+      });
+
+      it('passes a successful tool result straight through', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('exec', mockConfig);
+
+        const softening = getSoftening();
+        const ok = new ToolMessage({ content: 'done', tool_call_id: 'tc-ok', status: 'success' });
+        const handler = vi.fn().mockResolvedValue(ok);
+
+        const result = await softening!.wrapToolCall!({ toolCall: { id: 'tc-ok' } }, handler);
+        expect(result).toBe(ok);
+      });
+    });
   });
 
   describe('invoke', () => {

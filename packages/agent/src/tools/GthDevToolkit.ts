@@ -14,52 +14,21 @@ import {
 } from '@gaunt-sloth/core/config.js';
 import type { GthCommand } from '@gaunt-sloth/core/core/types.js';
 import { stdout, getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { ShellCommandFailedError } from '@gaunt-sloth/core/core/shell/ShellCommandFailedError.js';
 import { checkHardline } from '#src/tools/shell/hardline.js';
 import { buildScrubbedEnv } from '#src/tools/shell/env.js';
 import { OutputBuffer } from '#src/tools/shell/outputBuffer.js';
 
+// EXT-21: `ShellCommandFailedError` moved to core so BOTH agents can recognise a shell failure
+// without breaking the agent→core dependency direction (the lean `GthLangChainAgent` lives in core
+// and cannot import from agent). Re-exported here so the historical import site
+// (`#src/tools/GthDevToolkit.js`) — GthDeepAgent + the existing GthDevToolkit specs — keeps working
+// and every throw below is one and the same core type both agents' softeners catch.
+export { ShellCommandFailedError } from '@gaunt-sloth/core/core/shell/ShellCommandFailedError.js';
+
 // Grace period (ms) between SIGTERM and the escalation to SIGKILL when a command
 // exceeds its timeout. Mirrors opencode's `forceKillAfter` (3s).
 const KILL_GRACE_MS = 3_000;
-
-/**
- * EXT-20: a run_* command that did NOT exit cleanly (non-zero exit code, or was killed for
- * exceeding the timeout). Carries the FULL model-facing body text ({@link output}) so the
- * softening middleware ({@link GthDeepShellExitSoftening}) can hand the model the exact same
- * observation it saw before — the only change is the tool result's status flips to `'error'`,
- * which drives the ✗ (`isError`) glyph.
- *
- * `executeCommand` previously `resolve()`d on a non-zero exit, so the LangChain `ToolMessage`
- * stayed `status: 'success'` and every failure rendered a ✓. Throwing this typed error instead
- * lets the deep-agent middleware convert it into an error `ToolMessage`. A clean exit (`code === 0`)
- * still `resolve()`s; a spawn-level `child.on('error')` still rejects with a plain `Error`.
- */
-export class ShellCommandFailedError extends Error {
-  /** The full model-facing body (command echo + `<COMMAND_OUTPUT>` + the failure/timeout tail). */
-  readonly output: string;
-  /** The process exit code; `null` when the command was killed (timeout) and never exited cleanly. */
-  readonly exitCode: number | null;
-  /** The exact command string that was executed. */
-  readonly command: string;
-  /** The run_* tool name that invoked the command (e.g. `run_tests`, `run_shell_command`). */
-  readonly toolName: string;
-
-  constructor(params: {
-    output: string;
-    exitCode: number | null;
-    command: string;
-    toolName: string;
-  }) {
-    // Use the full body as the Error message so any generic logger/handler still surfaces the
-    // real command output rather than an opaque wrapper string.
-    super(params.output);
-    this.name = 'ShellCommandFailedError';
-    this.output = params.output;
-    this.exitCode = params.exitCode;
-    this.command = params.command;
-    this.toolName = params.toolName;
-  }
-}
 
 /**
  * Kill the child AND its descendants on timeout.

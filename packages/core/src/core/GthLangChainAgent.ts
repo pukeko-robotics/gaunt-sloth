@@ -4,7 +4,8 @@ import { GthAbstractAgent } from '#src/core/GthAbstractAgent.js';
 import { debugLog, debugLogObject } from '#src/utils/debugUtils.js';
 import { formatToolCalls } from '#src/utils/llmUtils.js';
 import { getCurrentWorkDir } from '#src/utils/systemUtils.js';
-import { AIMessage } from '@langchain/core/messages';
+import { isShellCommandFailedError } from '#src/core/shell/ShellCommandFailedError.js';
+import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import { BaseCheckpointSaver } from '@langchain/langgraph';
 import { createAgent, createMiddleware } from 'langchain';
 
@@ -121,8 +122,44 @@ export class GthLangChainAgent extends GthAbstractAgent {
       },
     });
 
-    // Combine all middleware
-    const middleware = [...configuredMiddleware, toolCallStatusMiddleware];
+    // EXT-21: lean-path sibling of the deep agent's GthDeepShellExitSoftening (GthDeepAgent.ts).
+    // `exec` / `ask --write` route through this lean `createAgent` graph, whose run_* shell/dev
+    // tools (GthDevToolkit.executeCommand) THROW a ShellCommandFailedError on a non-zero exit or a
+    // timeout-kill. langchain's default ToolNode would catch that throw into a ToolMessage but leave
+    // it status:'success' (✓) — misreporting a failed command. Catch it here at the tool-wrap layer
+    // and return an error ToolMessage that PRESERVES the full stdout/stderr body: the model's
+    // observation is unchanged except the status flips to 'error', which drives the ✗ (isError)
+    // glyph (GthAbstractAgent maps status==='error' → isError). Returning a ToolMessage (rather than
+    // rethrowing) keeps it a normal, observed tool result — no run-abort, no retry loop. Recognised
+    // via isShellCommandFailedError (instanceof + structural fallback) since core cannot import the
+    // throw site in the agent package. Every OTHER throw is rethrown untouched so genuine failures
+    // and control-flow (GraphInterrupt / AbortError) still surface.
+    const shellExitSoftening = createMiddleware({
+      name: 'GthLeanShellExitSoftening',
+      wrapToolCall: async (request, handler) => {
+        try {
+          return await handler(request);
+        } catch (e) {
+          if (isShellCommandFailedError(e)) {
+            debugLog(
+              `Softened shell/dev command failure (exit ${e.exitCode ?? 'timeout'}) into an ` +
+                `error ToolMessage for '${e.command}'`
+            );
+            return new ToolMessage({
+              content: e.output,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              tool_call_id: (request.toolCall as any)?.id ?? '',
+              status: 'error',
+            });
+          }
+          throw e;
+        }
+      },
+    });
+
+    // shellExitSoftening FIRST so it is the outermost wrapToolCall — it must see the raw
+    // ShellCommandFailedError throw before any user-configured middleware could transform it.
+    const middleware = [shellExitSoftening, ...configuredMiddleware, toolCallStatusMiddleware];
 
     this.statusUpdate(
       StatusLevel.INFO,
