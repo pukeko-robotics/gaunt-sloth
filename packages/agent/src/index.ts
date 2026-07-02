@@ -15,3 +15,4 @@ export { resolveMiddleware } from '#src/middleware/registry.js';
 export { GthDeepAgent, type GthDeepAgentParams } from '#src/core/GthDeepAgent.js';
 export * from '#src/core/deepAgentPermissions.js';
 export { gthDeepAgentFactory } from '#src/core/gthDeepAgentFactory.js';
+export { resolveAgentFactory } from '#src/core/resolveAgentFactory.js';

@@ -23,7 +23,7 @@ import {
 import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import { createResolvers } from '#src/resolvers.js';
-import { gthDeepAgentFactory } from '#src/core/gthDeepAgentFactory.js';
+import { resolveAgentFactory } from '#src/core/resolveAgentFactory.js';
 
 export interface SessionConfig {
   mode: 'chat' | 'code';
@@ -46,7 +46,13 @@ export async function createInteractiveSession(
   if (logFileName) {
     initSessionLogging(logFileName, config.streamSessionInferenceLog);
   }
-  const runner = new GthAgentRunner(defaultStatusCallback, createResolvers(), gthDeepAgentFactory);
+  // B5: interactive code/chat default to the deep backend; an explicit config.agent.backend
+  // overrides it. createResolvers() is unchanged, so a lean session keeps the full toolset.
+  const runner = new GthAgentRunner(
+    defaultStatusCallback,
+    createResolvers(),
+    resolveAgentFactory(config, 'deep')
+  );
 
   try {
     await runner.init(sessionConfig.mode, config, checkpointSaver);

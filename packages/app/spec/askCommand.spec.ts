@@ -16,6 +16,13 @@ const resolversMock = {
 };
 vi.mock('@gaunt-sloth/agent/resolvers.js', () => resolversMock);
 
+// B5: askCommand resolves the backend factory (default lean) and passes it to runSingleShot.
+const resolvedFactory = vi.fn();
+const resolveAgentFactoryMock = {
+  resolveAgentFactory: vi.fn(() => resolvedFactory),
+};
+vi.mock('@gaunt-sloth/agent/core/resolveAgentFactory.js', () => resolveAgentFactoryMock);
+
 const runSingleShot = vi.fn();
 const prompt = {
   readBackstory: vi.fn(),
@@ -130,8 +137,12 @@ describe('askCommand', () => {
       'INTERNAL PREAMBLE\nPROJECT GUIDELINES',
       '\nProvided user message follows within message-1234567 block\n<message-1234567>\ntest message\n</message-1234567>\n',
       mockConfig,
-      expect.any(Object)
+      expect.any(Object),
+      'ask',
+      resolvedFactory
     );
+    // ask defaults to the lean backend; an explicit agent.backend would override it.
+    expect(resolveAgentFactoryMock.resolveAgentFactory).toHaveBeenCalledWith(mockConfig, 'lean');
   });
 
   it('Should call runSingleShot with message and file content', async () => {
@@ -145,7 +156,9 @@ describe('askCommand', () => {
       'test.file:\n```\nFILE CONTENT\n```\n' +
         '\nProvided user message follows within message-1234567 block\n<message-1234567>\ntest message\n</message-1234567>\n',
       mockConfig,
-      expect.any(Object)
+      expect.any(Object),
+      'ask',
+      resolvedFactory
     );
   });
 
@@ -166,7 +179,9 @@ describe('askCommand', () => {
       'test.file:\n```\nFILE CONTENT\n```\n\ntest2.file:\n```\nFILE2 CONTENT\n```\n' +
         '\nProvided user message follows within message-1234567 block\n<message-1234567>\ntest message\n</message-1234567>\n',
       mockConfig,
-      expect.any(Object)
+      expect.any(Object),
+      'ask',
+      resolvedFactory
     );
   });
 
@@ -188,7 +203,9 @@ describe('askCommand', () => {
       'INTERNAL PREAMBLE\nPROJECT GUIDELINES',
       'test.file:\n```\nFILE CONTENT\n```',
       mockConfig,
-      expect.any(Object)
+      expect.any(Object),
+      'ask',
+      resolvedFactory
     );
   });
 
@@ -206,7 +223,9 @@ describe('askCommand', () => {
       'INTERNAL PREAMBLE\nPROJECT GUIDELINES',
       '\nProvided content follows within stdin-content-1234567 block\n<stdin-content-1234567>\nSTDIN CONTENT\n</stdin-content-1234567>\n',
       mockConfig,
-      expect.any(Object)
+      expect.any(Object),
+      'ask',
+      resolvedFactory
     );
   });
 
@@ -244,7 +263,9 @@ describe('askCommand', () => {
       'INTERNAL PREAMBLE\nPROJECT GUIDELINES',
       '\nProvided user message follows within message-1234567 block\n<message-1234567>\nintegration test message\n</message-1234567>\n',
       configWithWriteOutputDisabled,
-      expect.any(Object)
+      expect.any(Object),
+      'ask',
+      resolvedFactory
     );
 
     // Specifically verify the writeOutputToFile parameter was passed through

@@ -95,12 +95,17 @@ export function askCommand(
 
       const { runSingleShot } = await import('@gaunt-sloth/core/runtime/singleShot.js');
       const { createResolvers } = await import('@gaunt-sloth/agent/resolvers.js');
+      const { resolveAgentFactory } =
+        await import('@gaunt-sloth/agent/core/resolveAgentFactory.js');
       await runSingleShot(
         'ASK',
         getAskSystemPrompt(config),
         content.join('\n'),
         config,
-        createResolvers()
+        createResolvers(),
+        'ask',
+        // ask defaults to the lean backend; an explicit config.agent.backend overrides it.
+        resolveAgentFactory(config, 'lean')
       );
     });
 }

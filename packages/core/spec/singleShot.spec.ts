@@ -214,4 +214,36 @@ describe('singleShot', () => {
     // Since streamOutput is true, display should not be called
     expect(consoleUtilsMock.display).not.toHaveBeenCalled();
   });
+
+  // B5: the optional trailing agentFactory param must be forwarded to GthAgentRunner's 3rd ctor
+  // arg so `ask`/`exec` can select the backend. Undefined must keep the runner's lean default.
+  it('forwards the agentFactory to GthAgentRunner (B5)', async () => {
+    const testConfig = { ...mockConfig } as GthConfig;
+    const { runSingleShot } = await import('#src/runtime/singleShot.js');
+    const fakeFactory = vi.fn();
+
+    await runSingleShot(
+      'test-source',
+      'test-preamble',
+      'test-content',
+      testConfig,
+      undefined,
+      'ask',
+      fakeFactory as never
+    );
+
+    // 3rd ctor arg is the agent factory.
+    expect(gthAgentRunnerMock).toHaveBeenCalledTimes(1);
+    expect(gthAgentRunnerMock.mock.calls[0][2]).toBe(fakeFactory);
+  });
+
+  it('passes undefined agentFactory when none is supplied (keeps lean default)', async () => {
+    const testConfig = { ...mockConfig } as GthConfig;
+    const { runSingleShot } = await import('#src/runtime/singleShot.js');
+
+    await runSingleShot('test-source', 'test-preamble', 'test-content', testConfig);
+
+    expect(gthAgentRunnerMock).toHaveBeenCalledTimes(1);
+    expect(gthAgentRunnerMock.mock.calls[0][2]).toBeUndefined();
+  });
 });

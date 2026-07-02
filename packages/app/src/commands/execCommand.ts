@@ -148,6 +148,8 @@ export function execCommand(
 
       const { runSingleShot } = await import('@gaunt-sloth/core/runtime/singleShot.js');
       const { createResolvers } = await import('@gaunt-sloth/agent/resolvers.js');
+      const { resolveAgentFactory } =
+        await import('@gaunt-sloth/agent/core/resolveAgentFactory.js');
 
       let ok = false;
       try {
@@ -157,7 +159,9 @@ export function execCommand(
           content.join('\n'),
           execConfig,
           createResolvers(),
-          'exec'
+          'exec',
+          // exec defaults to the lean backend; an explicit config.agent.backend overrides it.
+          resolveAgentFactory(execConfig, 'lean')
         );
       } catch (error) {
         displayError(error instanceof Error ? error.message : String(error));

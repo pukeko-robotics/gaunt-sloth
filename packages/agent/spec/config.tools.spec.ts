@@ -177,5 +177,26 @@ describe('Config Tool Functions', () => {
       );
       expect(result.map((t) => t.name)).toContain('run_shell_command');
     });
+
+    // B5: lean-keeps-tools. The backend is selected independently of the tool resolver, so a lean
+    // code-mode run resolves the SAME default toolset as deep: gaunt-sloth's own filesystem toolkit
+    // (GthFileSystemToolkit) plus, in code mode, the hardened GthDevToolkit shell. Lean is not
+    // capability-stripped — it only drops the deepagents-specific extras (subagent task, todos,
+    // summarization, /large_tool_results). This asserts the resolver, which lean and deep share.
+    it('code-mode default tools include the fs toolkit AND the dev/shell tool (lean is not toothless)', async () => {
+      const result = await getDefaultTools(
+        {
+          filesystem: 'all',
+        } as Partial<GthConfig> as GthConfig,
+        'code'
+      );
+      const names = result.map((t) => t.name);
+      // GthFileSystemToolkit tools
+      expect(names).toContain('read_file');
+      expect(names).toContain('write_file');
+      expect(names).toContain('edit_file');
+      // GthDevToolkit shell tool (code mode constructs the toolkit even without devTools config)
+      expect(names).toContain('run_shell_command');
+    });
   });
 });

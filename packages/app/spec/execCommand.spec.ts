@@ -15,6 +15,13 @@ const resolversMock = {
 };
 vi.mock('@gaunt-sloth/agent/resolvers.js', () => resolversMock);
 
+// B5: execCommand resolves the backend factory (default lean) and passes it to runSingleShot.
+const resolvedFactory = vi.fn();
+const resolveAgentFactoryMock = {
+  resolveAgentFactory: vi.fn(() => resolvedFactory),
+};
+vi.mock('@gaunt-sloth/agent/core/resolveAgentFactory.js', () => resolveAgentFactoryMock);
+
 const runSingleShot = vi.fn();
 const singleShotModule = { runSingleShot };
 vi.mock('@gaunt-sloth/core/runtime/singleShot.js', () => singleShotModule);
@@ -108,7 +115,7 @@ describe('execCommand', () => {
     await program.parseAsync(['na', 'na', 'exec', 'script.md']);
 
     expect(runSingleShot).toHaveBeenCalledTimes(1);
-    const [source, preamble, content, , , command] = runSingleShot.mock.calls[0];
+    const [source, preamble, content, , , command, agentFactory] = runSingleShot.mock.calls[0];
     expect(source).toEqual('EXEC');
     expect(preamble).toEqual('EXEC SYSTEM PROMPT');
     expect(command).toEqual('exec');
@@ -116,6 +123,12 @@ describe('execCommand', () => {
     expect(content).toContain('SCRIPT BODY');
     expect(content).toContain('prompt-executable script');
     expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+    // B5: exec defaults to the lean backend; the resolved factory is threaded through.
+    expect(resolveAgentFactoryMock.resolveAgentFactory).toHaveBeenCalledWith(
+      expect.anything(),
+      'lean'
+    );
+    expect(agentFactory).toBe(resolvedFactory);
   });
 
   it('reads the script from stdin when no path argument is given', async () => {

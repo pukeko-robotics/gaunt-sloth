@@ -13,7 +13,7 @@ import { GthAgentRunner } from '#src/core/GthAgentRunner.js';
 import { MemorySaver } from '@langchain/langgraph';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { ProgressIndicator } from '#src/utils/ProgressIndicator.js';
-import type { AgentResolvers, GthCommand } from '#src/core/types.js';
+import type { AgentResolvers, GthAgentFactory, GthCommand } from '#src/core/types.js';
 
 /**
  * Ask a question and get an answer from the LLM.
@@ -28,6 +28,9 @@ import type { AgentResolvers, GthCommand } from '#src/core/types.js';
  * @param config - The resolved config
  * @param resolvers - Optional agent resolvers (tools/middleware)
  * @param command - The originating command (defaults to `ask`); selects the agent mode prompt
+ * @param agentFactory - Optional backend factory (B5). When omitted the runner uses its built-in
+ *   lean {@link GthLangChainAgent} default (unchanged behavior for existing callers). The app
+ *   layer passes `resolveAgentFactory(config, 'lean')` so an explicit `agent.backend` is honored.
  * @returns `true` when the run completed without error, `false` when it failed (so callers
  *   such as `exec` can set a non-zero exit code).
  */
@@ -37,7 +40,8 @@ export async function runSingleShot(
   content: string,
   config: GthConfig,
   resolvers?: AgentResolvers,
-  command: GthCommand = 'ask'
+  command: GthCommand = 'ask',
+  agentFactory?: GthAgentFactory
 ): Promise<boolean> {
   const progressIndicator = config.streamOutput ? undefined : new ProgressIndicator('Thinking.');
   const messages = [new SystemMessage(preamble), new HumanMessage(content)];
@@ -49,7 +53,7 @@ export async function runSingleShot(
   }
 
   // Run via Agent Runner (consistent with interactive session)
-  const runner = new GthAgentRunner(defaultStatusCallback, resolvers);
+  const runner = new GthAgentRunner(defaultStatusCallback, resolvers, agentFactory);
   let succeeded = true;
   try {
     await runner.init(command, config, new MemorySaver());
