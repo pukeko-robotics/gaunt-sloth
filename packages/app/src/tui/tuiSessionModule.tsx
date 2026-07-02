@@ -22,6 +22,7 @@ import { GthDeepAgent } from '@gaunt-sloth/agent/core/GthDeepAgent.js';
 import type { SessionConfig } from '@gaunt-sloth/agent/modules/interactiveSessionModule.js';
 import type { BaseMessage } from '@langchain/core/messages';
 import { App } from '#src/tui/components/App.js';
+import { formatConfigSummary } from '#src/tui/slashCommands.js';
 import type { PendingApproval, TuiAgent, TuiDebugCapture } from '#src/tui/types.js';
 import { renderHistory, renderRequestDetails, renderResponse } from '#src/tui/debugRender.js';
 import { viewportBumpSequence } from '#src/tui/terminal.js';
@@ -233,6 +234,7 @@ export async function createTuiSession(
         agent={tuiAgent}
         mode={sessionConfig.mode}
         modelDisplayName={config.modelDisplayName}
+        configSummary={formatConfigSummary(config)}
         readyMessage={sessionConfig.readyMessage}
         exitMessage={sessionConfig.exitMessage}
         initialMessage={message}

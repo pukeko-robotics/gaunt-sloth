@@ -14,6 +14,16 @@ export const GSLOTH_CODE_PROMPT = '.gsloth.code.md';
 export const GSLOTH_EXEC_PROMPT = '.gsloth.exec.md';
 export const AIIGNORE_FILE = '.aiignore';
 /**
+ * `$schema` pointer written into a generated `.gsloth.config.json` (GS2-1) so editors offer
+ * autocomplete + validation. A relative `node_modules` path is used rather than a published
+ * URL because it is the least speculative option: the JSON Schema ships inside the published
+ * `@gaunt-sloth/core` package (`files: ["./schema/*"]`), so this resolves offline right after
+ * `npm i` and never 404s / drifts against a hand-stamped hosted copy (PLAT-9 would be needed to
+ * make a stable hosted URL authoritative).
+ */
+export const CONFIG_SCHEMA_POINTER =
+  './node_modules/@gaunt-sloth/core/schema/gsloth-config.schema.json';
+/**
  * EXT-9 Tier-2: project-scoped persisted shell allow-list (`always` approvals).
  * Lives under `.gsloth/.gsloth-settings/` like other project settings.
  */

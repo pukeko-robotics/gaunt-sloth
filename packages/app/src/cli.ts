@@ -8,6 +8,7 @@ import { chatCommand } from '#src/commands/chatCommand.js';
 import { codeCommand } from '#src/commands/codeCommand.js';
 import { apiCommand } from '#src/commands/apiCommand.js';
 import { getCommand } from '#src/commands/getCommand.js';
+import { configCommand } from '#src/commands/configCommand.js';
 import { argv, getSlothVersion, readStdin } from '@gaunt-sloth/core/utils/systemUtils.js';
 import type { CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
 
@@ -82,5 +83,6 @@ chatCommand(program, cliConfigOverrides);
 codeCommand(program, cliConfigOverrides);
 apiCommand(program, cliConfigOverrides);
 getCommand(program, cliConfigOverrides);
+configCommand(program, cliConfigOverrides);
 
 await readStdin(program);

@@ -25,7 +25,10 @@ import {
   formatConfigValidationError,
   preMapDeprecatedConfigNames,
   rawGthConfigSchema,
+  validateRawGthConfig,
+  type RawConfigValidationResult,
 } from '#src/config/schema.js';
+import { parseJsonc } from '#src/config/jsonc.js';
 import { getGslothConfigReadPath, importExternalFile } from '#src/utils/fileUtils.js';
 import { getGlobalGslothConfigReadPath } from '#src/utils/globalConfigUtils.js';
 import {
@@ -220,7 +223,10 @@ export async function loadGlobalRawConfig(): Promise<Partial<RawGthConfig> | und
   const jsonPath = getGlobalGslothConfigReadPath(USER_PROJECT_CONFIG_JSON);
   if (existsSync(jsonPath)) {
     try {
-      const parsed = JSON.parse(readFileSync(jsonPath, 'utf8')) as Record<string, unknown>;
+      const parsed = parseJsonc(
+        readFileSync(jsonPath, 'utf8'),
+        `${USER_PROJECT_CONFIG_JSON} (global)`
+      ) as Record<string, unknown>;
       return validateRawConfigLayer(
         parsed,
         `${USER_PROJECT_CONFIG_JSON} (global)`
@@ -382,7 +388,10 @@ export async function initConfig(
       // truth): pre-map deprecated names, warn on unknown top-level keys, and fail
       // with a friendly, path-scoped message on a genuine type mismatch.
       const projectJsonConfig = validateRawConfigLayer(
-        JSON.parse(readFileSync(jsonConfigPath, 'utf8')) as Record<string, unknown>,
+        parseJsonc(readFileSync(jsonConfigPath, 'utf8'), USER_PROJECT_CONFIG_JSON) as Record<
+          string,
+          unknown
+        >,
         USER_PROJECT_CONFIG_JSON
       ) as unknown as RawGthConfig;
       // Apply global config as the base layer (project config wins on conflicts).
@@ -771,6 +780,86 @@ function resolveConsoleLevel(level: ConsoleLevelInput | StatusLevel): StatusLeve
   }
 
   return undefined;
+}
+
+/**
+ * Read a raw config object from an on-disk path WITHOUT validating, building an LLM, or
+ * merging defaults. JSON/JSONC files are parsed leniently ({@link parseJsonc}); module
+ * formats (`.js`/`.mjs`/`.ts`) are imported and their `configure()` invoked. Used by the
+ * read-side {@link validateConfig}; may throw on a parse/module error (surfaced by the caller).
+ */
+async function readRawConfigAtPath(path: string): Promise<Record<string, unknown>> {
+  if (path.endsWith('.json') || path.endsWith('.jsonc')) {
+    return parseJsonc(readFileSync(path, 'utf8'), path) as Record<string, unknown>;
+  }
+  const imported = await importExternalFile(path);
+  return (await imported.configure()) as Record<string, unknown>;
+}
+
+/**
+ * Global config read for the read-side {@link validateConfig}: mirrors
+ * {@link loadGlobalRawConfig}'s lookup order (JSON → JS → MJS) but does NOT validate or
+ * `exit` — it just returns the raw object + a source label so the validator owns the verdict.
+ */
+async function loadGlobalRawConfigUnvalidated(): Promise<
+  { raw: Record<string, unknown>; label: string } | undefined
+> {
+  const jsonPath = getGlobalGslothConfigReadPath(USER_PROJECT_CONFIG_JSON);
+  if (existsSync(jsonPath)) {
+    const label = `${USER_PROJECT_CONFIG_JSON} (global)`;
+    return {
+      raw: parseJsonc(readFileSync(jsonPath, 'utf8'), label) as Record<string, unknown>,
+      label,
+    };
+  }
+  for (const filename of [USER_PROJECT_CONFIG_JS, USER_PROJECT_CONFIG_MJS]) {
+    const modulePath = getGlobalGslothConfigReadPath(filename);
+    if (existsSync(modulePath)) {
+      const imported = await importExternalFile(modulePath);
+      return {
+        raw: (await imported.configure()) as Record<string, unknown>,
+        label: `${filename} (global)`,
+      };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The outcome of `gth config validate`: whether a config was found, where, and whether it
+ * validates. Pure/read-side — it neither builds an LLM nor mutates process globals, so it can
+ * report a verdict without the run-path's side effects. The command layer turns this into
+ * console output + an exit code.
+ */
+export interface ConfigValidationReport extends RawConfigValidationResult {
+  /** False when no project or global config exists within the discovery boundary. */
+  found: boolean;
+  /** The resolved config path (or `"<name> (global)"`) when one was found. */
+  sourceLabel?: string;
+}
+
+/**
+ * Locate and validate the effective raw config against the schema WITHOUT building the LLM
+ * or merging defaults (the read-side of GS2-1). Honours `--config`, up-tree discovery, and
+ * the identity profile via {@link findProjectConfigPath}, falling back to a standalone global
+ * config (CFG-8 order) when no project config exists. A JSONC/module parse failure is thrown
+ * to the caller (surfaced as a clear "invalid config" error + non-zero exit).
+ */
+export async function validateConfig(
+  commandLineConfigOverrides: CommandLineConfigOverrides
+): Promise<ConfigValidationReport> {
+  const discovered = findProjectConfigPath(commandLineConfigOverrides);
+  if (discovered) {
+    const raw = await readRawConfigAtPath(discovered.path);
+    return { found: true, sourceLabel: discovered.path, ...validateRawGthConfig(raw) };
+  }
+
+  const globalRaw = await loadGlobalRawConfigUnvalidated();
+  if (globalRaw) {
+    return { found: true, sourceLabel: globalRaw.label, ...validateRawGthConfig(globalRaw.raw) };
+  }
+
+  return { found: false, ok: false, warnings: [] };
 }
 
 /**

@@ -65,6 +65,12 @@ export interface TuiAppProps {
   mode: string;
   /** Model/provider display name for the status bar and `/model` (from `config.modelDisplayName`). */
   modelDisplayName?: string;
+  /**
+   * Pre-rendered, secret-free summary lines of the resolved config for the read-only `/config`
+   * slash command (GS2-1). Built once by the session module via `formatConfigSummary`; omitted by
+   * the fixture agent (no config loaded), where `/config` shows an "unavailable" notice.
+   */
+  configSummary?: string[];
   /** Greeting shown before the first prompt (mirrors the readline `readyMessage`). */
   readyMessage: string;
   /** Hint shown in the status bar / on start (mirrors the readline `exitMessage`). */

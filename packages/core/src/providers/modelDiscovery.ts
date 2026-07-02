@@ -24,6 +24,7 @@
  * `{ providerId, model }` maps directly onto a `RawGthConfig.llm`.
  */
 import { availableDefaultConfigs, type ConfigType } from '#src/config.js';
+import { CONFIG_SCHEMA_POINTER } from '#src/constants.js';
 import { displayDebug } from '#src/utils/consoleUtils.js';
 import { env } from '#src/utils/systemUtils.js';
 
@@ -360,11 +361,15 @@ export function getCuratedFallbackModel(providerId: ProviderId): string {
  * {@link getCuratedFallbackModel} — the single curated source that tracks the
  * installed version, rather than a literal frozen into the user's file that 404s
  * once the model is retired.
+ *
+ * A `$schema` pointer ({@link CONFIG_SCHEMA_POINTER}) is written first so editors offer
+ * autocomplete/validation against the shipped JSON Schema (GS2-1). `$schema` is a known,
+ * runtime-ignored config field (see the zod schema), so it never affects loading.
  */
 export function buildInitConfigContent(providerId: ProviderId, model?: string): string {
   const llm: { type: ProviderId; model?: string } = { type: providerId };
   if (model) llm.model = model;
-  return JSON.stringify({ llm }, null, 2);
+  return JSON.stringify({ $schema: CONFIG_SCHEMA_POINTER, llm }, null, 2);
 }
 
 /** Live-fetch timeout: short enough to never block first-run for long. */

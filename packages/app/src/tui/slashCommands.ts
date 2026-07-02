@@ -20,6 +20,59 @@ export interface SlashCommandContext {
   toolsExpanded: boolean;
   /** Whether the docked debug panel is currently shown (drives `/debug` copy). */
   debugVisible: boolean;
+  /**
+   * Pre-rendered, secret-free summary lines of the resolved config, surfaced read-only by
+   * `/config` (GS2-1). The App builds these once from the resolved config (see
+   * {@link formatConfigSummary}); omitted where no config is loaded (e.g. the fixture agent).
+   */
+  configSummary?: string[];
+}
+
+/**
+ * The subset of the resolved config `/config` surfaces. Structurally typed (not the full
+ * `GthConfig`) so this pure module stays decoupled from the config types; the caller passes the
+ * real resolved config, which is a superset.
+ */
+export interface ConfigSummaryInput {
+  modelDisplayName?: string;
+  agent?: { backend?: string };
+  filesystem?: unknown;
+  streamOutput?: boolean;
+  useColour?: boolean;
+  consoleLevel?: unknown;
+  commands?: Record<string, unknown>;
+}
+
+/**
+ * Build the compact, read-only `/config` summary (GS2-1): a handful of the most orienting
+ * resolved-config fields, one per line, with a pointer to `gth config print` for the full view.
+ * Pure and secret-free — it only reads non-sensitive scalar fields (never API keys / the live
+ * llm instance). Used by the App to fill {@link SlashCommandContext.configSummary}.
+ */
+export function formatConfigSummary(config: ConfigSummaryInput): string[] {
+  const fmt = (v: unknown): string =>
+    typeof v === 'string' ? v : Array.isArray(v) ? JSON.stringify(v) : String(v);
+  const lines: string[] = [];
+  lines.push(`Model: ${config.modelDisplayName || 'unknown'}`);
+  lines.push(`Agent backend: ${config.agent?.backend ?? 'deep'}`);
+  if (config.filesystem !== undefined) lines.push(`Filesystem: ${fmt(config.filesystem)}`);
+  if (config.streamOutput !== undefined) lines.push(`Stream output: ${config.streamOutput}`);
+  if (config.useColour !== undefined) lines.push(`Colour: ${config.useColour}`);
+  const commandNames = config.commands ? Object.keys(config.commands) : [];
+  if (commandNames.length > 0) lines.push(`Commands configured: ${commandNames.join(', ')}`);
+  lines.push('Run `gth config print` for the full resolved config (secrets redacted).');
+  return lines;
+}
+
+/** The `/config` notice, from the pre-rendered summary lines (or an unavailable fallback). */
+export function configNotice(summary: string[] | undefined): SlashCommandNotice {
+  return {
+    title: 'Resolved configuration',
+    lines:
+      summary && summary.length > 0
+        ? summary
+        : ['Configuration details are not available in this session.'],
+  };
 }
 
 /**
@@ -252,6 +305,13 @@ export function createCommandRegistry(): SlashCommand[] {
           ],
         },
       }),
+    },
+    {
+      name: 'config',
+      description: 'Show the resolved configuration (read-only)',
+      // Read-only discovery: surface the pre-rendered, secret-free summary the App computed from
+      // the resolved config. Editing lives in `gth init` / the config file, not here (GS2-1).
+      run: (ctx) => ({ notice: configNotice(ctx.configSummary) }),
     },
     {
       name: 'model',

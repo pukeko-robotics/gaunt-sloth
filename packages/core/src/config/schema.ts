@@ -356,3 +356,48 @@ export function preMapDeprecatedConfigNames<T extends Record<string, unknown>>(
 export function generateConfigJsonSchema(): Record<string, unknown> {
   return z.toJSONSchema(rawGthConfigSchema, { io: 'input' }) as Record<string, unknown>;
 }
+
+/**
+ * The structured outcome of validating a single raw config layer, WITHOUT any side
+ * effects (no console output, no `exit`). This is the read-side counterpart to the
+ * loader's `validateRawConfigLayer` (which warns + `exit`s inline): `gth config validate`
+ * uses it to render its own output and choose its own exit code.
+ */
+export interface RawConfigValidationResult {
+  /** True when the config parses against the schema (unknown keys do NOT make it false). */
+  ok: boolean;
+  /** Non-fatal advisories: deprecated-name remaps (B3) and unknown top-level keys. */
+  warnings: string[];
+  /** Present only when `ok` is false: the path-scoped, multi-line validation message. */
+  errorMessage?: string;
+}
+
+/**
+ * Validate a freshly-loaded raw config object against {@link rawGthConfigSchema} and
+ * report the outcome as data (a pure function — no `displayWarning`/`exit`). Mirrors the
+ * loader's policy: deprecated key names are pre-mapped (each yielding a warning), unknown
+ * top-level keys warn but do not fail, and a genuine type mismatch on a known field fails
+ * with a path-scoped message.
+ *
+ * A shallow copy is taken before the (mutating) deprecated-name pre-map so the caller's
+ * top-level object is not modified.
+ */
+export function validateRawGthConfig(raw: Record<string, unknown>): RawConfigValidationResult {
+  const warnings: string[] = [];
+  const { config, warnings: deprecationWarnings } = preMapDeprecatedConfigNames({ ...raw });
+  warnings.push(...deprecationWarnings);
+
+  const unknownKeys = findUnknownTopLevelKeys(config);
+  if (unknownKeys.length > 0) {
+    warnings.push(
+      `Unknown top-level config ${unknownKeys.length === 1 ? 'key' : 'keys'}: ` +
+        `${unknownKeys.join(', ')} (kept as-is but ignored by Gaunt Sloth; check for typos).`
+    );
+  }
+
+  const result = rawGthConfigSchema.safeParse(config);
+  if (!result.success) {
+    return { ok: false, warnings, errorMessage: formatConfigValidationError(result.error) };
+  }
+  return { ok: true, warnings };
+}

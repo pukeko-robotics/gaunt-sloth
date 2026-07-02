@@ -183,6 +183,72 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
   });
 });
 
+describe('tui/slashCommands /config (GS2-1 read-only)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('surfaces the pre-rendered config summary as a notice', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const result = dispatchSlashCommand(parseSlashCommand('/config')!, createCommandRegistry(), {
+      ...ctx,
+      configSummary: ['Model: claude-x', 'Agent backend: lean'],
+    });
+    expect(result.notice?.title).toBe('Resolved configuration');
+    expect(result.notice?.lines).toEqual(['Model: claude-x', 'Agent backend: lean']);
+  });
+
+  it('shows an "unavailable" line when no summary is present (e.g. fixture agent)', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const result = dispatchSlashCommand(
+      parseSlashCommand('/config')!,
+      createCommandRegistry(),
+      ctx
+    );
+    expect(result.notice?.lines.join(' ')).toContain('not available');
+  });
+
+  it('is listed in the registry (so it appears in the /help + / menu)', async () => {
+    const { createCommandRegistry } = await import('#src/tui/slashCommands.js');
+    expect(createCommandRegistry().some((c) => c.name === 'config')).toBe(true);
+  });
+});
+
+describe('tui/slashCommands formatConfigSummary (GS2-1)', () => {
+  it('summarizes the orienting resolved-config fields, secret-free', async () => {
+    const { formatConfigSummary } = await import('#src/tui/slashCommands.js');
+    const lines = formatConfigSummary({
+      modelDisplayName: 'gpt-5.5',
+      agent: { backend: 'lean' },
+      filesystem: 'all',
+      streamOutput: true,
+      useColour: false,
+      commands: { pr: {}, review: {}, code: {} },
+    });
+    const joined = lines.join('\n');
+    expect(joined).toContain('Model: gpt-5.5');
+    expect(joined).toContain('Agent backend: lean');
+    expect(joined).toContain('Filesystem: all');
+    expect(joined).toContain('Commands configured: pr, review, code');
+    expect(joined).toContain('gth config print');
+  });
+
+  it('defaults the agent backend to deep and the model to unknown when absent', async () => {
+    const { formatConfigSummary } = await import('#src/tui/slashCommands.js');
+    const lines = formatConfigSummary({});
+    expect(lines.join('\n')).toContain('Model: unknown');
+    expect(lines.join('\n')).toContain('Agent backend: deep');
+  });
+
+  it('renders an array filesystem policy as JSON', async () => {
+    const { formatConfigSummary } = await import('#src/tui/slashCommands.js');
+    const lines = formatConfigSummary({ filesystem: ['./src', './docs'] });
+    expect(lines.join('\n')).toContain('Filesystem: ["./src","./docs"]');
+  });
+});
+
 describe('tui/slashCommands slashMenuQuery (TUI-C10 menu trigger)', () => {
   beforeEach(() => {
     vi.resetAllMocks();

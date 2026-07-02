@@ -264,6 +264,7 @@ export function App(props: TuiAppProps): React.ReactElement {
           turnCount: turnCountRef.current,
           toolsExpanded: toolsExpandedRef.current,
           debugVisible: debugVisibleRef.current,
+          configSummary: props.configSummary,
         });
         if (result.clearTranscript) {
           setTranscript([]);

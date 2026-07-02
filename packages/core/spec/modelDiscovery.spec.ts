@@ -334,15 +334,31 @@ describe('modelDiscovery', () => {
   describe('buildInitConfigContent', () => {
     it('omits the model key entirely when no model is provided (defers to run-time fallback)', async () => {
       const { buildInitConfigContent } = await import('#src/providers/modelDiscovery.js');
+      const { CONFIG_SCHEMA_POINTER } = await import('#src/constants.js');
       const parsed = JSON.parse(buildInitConfigContent('openai'));
-      expect(parsed).toEqual({ llm: { type: 'openai' } });
+      expect(parsed).toEqual({ $schema: CONFIG_SCHEMA_POINTER, llm: { type: 'openai' } });
       expect('model' in parsed.llm).toBe(false);
     });
 
     it('includes the model when a resolved id is supplied', async () => {
       const { buildInitConfigContent } = await import('#src/providers/modelDiscovery.js');
+      const { CONFIG_SCHEMA_POINTER } = await import('#src/constants.js');
       const parsed = JSON.parse(buildInitConfigContent('openai', 'gpt-live-42'));
-      expect(parsed).toEqual({ llm: { type: 'openai', model: 'gpt-live-42' } });
+      expect(parsed).toEqual({
+        $schema: CONFIG_SCHEMA_POINTER,
+        llm: { type: 'openai', model: 'gpt-live-42' },
+      });
+    });
+
+    it('writes a $schema pointer first so editors validate the generated config (GS2-1)', async () => {
+      const { buildInitConfigContent } = await import('#src/providers/modelDiscovery.js');
+      const { CONFIG_SCHEMA_POINTER } = await import('#src/constants.js');
+      const body = buildInitConfigContent('anthropic');
+      // The pointer resolves to the schema shipped inside the published core package.
+      expect(CONFIG_SCHEMA_POINTER).toContain('@gaunt-sloth/core/schema/gsloth-config.schema.json');
+      // Written as the FIRST key so it is visible at the top of the file.
+      expect(body.indexOf('"$schema"')).toBeLessThan(body.indexOf('"llm"'));
+      expect(JSON.parse(body).$schema).toBe(CONFIG_SCHEMA_POINTER);
     });
   });
 
