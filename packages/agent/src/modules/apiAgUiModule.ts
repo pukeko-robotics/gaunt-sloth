@@ -4,6 +4,8 @@ import { EventEncoder } from '@ag-ui/encoder';
 import { EventType } from '@ag-ui/core';
 import { GthConfig } from '@gaunt-sloth/core/config.js';
 import { GthDeepAgent } from '#src/core/GthDeepAgent.js';
+import { GthAbstractAgent } from '@gaunt-sloth/core/core/GthAbstractAgent.js';
+import { GthLangChainAgent } from '@gaunt-sloth/core/core/GthLangChainAgent.js';
 import {
   defaultStatusCallback,
   displayInfo,
@@ -151,6 +153,21 @@ function convertMessage(msg: {
   }
 }
 
+/**
+ * Construct the AG-UI agent for the configured backend (B5).
+ * - `agent.backend: 'lean'` → {@link GthLangChainAgent} (plain LangChain agent, no deepagents
+ *   `/large_tool_results` offload — the fix for `filesystem: 'none'` consumers).
+ * - anything else (including `'deep'` and the default `undefined`) → {@link GthDeepAgent}.
+ *
+ * Returns the shared {@link GthAbstractAgent} base so both backends flow through the same
+ * `.init`/`.streamWithEvents`/`.streamWithEventsResume` surface used below.
+ */
+function createConfiguredAgent(cfg: GthConfig): GthAbstractAgent {
+  return cfg.agent?.backend === 'lean'
+    ? new GthLangChainAgent(defaultStatusCallback, createResolvers())
+    : new GthDeepAgent(defaultStatusCallback, createResolvers());
+}
+
 export async function startAgUiServer(config: GthConfig, port: number): Promise<void> {
   const app = express();
   app.use(express.json({ limit: '5mb' }));
@@ -179,7 +196,7 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
   // Note this would need a refactoring if it is to be used for a public web server,
   // For connecting local WEB to local CLI agent, this is absolutely OK, since one thread is OK.
   const checkpointSaver = new MemorySaver();
-  const agent = new GthDeepAgent(defaultStatusCallback, createResolvers());
+  const agent = createConfiguredAgent(config);
   await agent.init('api', config, checkpointSaver);
 
   displayInfo(`AG-UI agent initialized`);
@@ -189,7 +206,7 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
   // its resume share ONE compiled graph — LangGraph resumes from the
   // checkpointer, but the graph shape must match the suspended one. Built lazily
   // on first sighting of a given toolset.
-  const toolAgentCache = new Map<string, GthDeepAgent>();
+  const toolAgentCache = new Map<string, GthAbstractAgent>();
 
   function toolSignature(tools: RunInputTool[]): string {
     return JSON.stringify(
@@ -199,7 +216,7 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
     );
   }
 
-  async function getAgentForTools(tools: RunInputTool[]): Promise<GthDeepAgent> {
+  async function getAgentForTools(tools: RunInputTool[]): Promise<GthAbstractAgent> {
     const sig = toolSignature(tools);
     const cached = toolAgentCache.get(sig);
     if (cached) return cached;
@@ -220,7 +237,7 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
       ...config,
       tools: [...baseTools, ...clientStubs],
     } as GthConfig;
-    const reqAgent = new GthDeepAgent(defaultStatusCallback, createResolvers());
+    const reqAgent = createConfiguredAgent(reqConfig);
     await reqAgent.init('api', reqConfig, checkpointSaver);
     toolAgentCache.set(sig, reqAgent);
     displayInfo(

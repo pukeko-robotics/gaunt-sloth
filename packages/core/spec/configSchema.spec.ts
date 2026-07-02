@@ -147,6 +147,38 @@ describe('config schema (GS2-1 B1)', () => {
     });
   });
 
+  describe('agent.backend selector (GS2-2 B5)', () => {
+    it("accepts agent.backend 'deep' and 'lean'", () => {
+      for (const backend of ['deep', 'lean'] as const) {
+        const result = rawGthConfigSchema.safeParse({
+          llm: { type: 'openai' },
+          agent: { backend },
+        });
+        expect(result.success).toBe(true);
+      }
+    });
+
+    it('rejects an invalid agent.backend value with a path-scoped message', () => {
+      const result = rawGthConfigSchema.safeParse({
+        llm: { type: 'openai' },
+        agent: { backend: 'medium' },
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(formatConfigValidationError(result.error)).toContain('agent.backend');
+      }
+    });
+
+    it('treats agent as a known top-level key (no unknown-key warning)', () => {
+      expect(findUnknownTopLevelKeys({ llm: {}, agent: { backend: 'lean' } })).toEqual([]);
+    });
+
+    it('accepts a config that omits agent (undefined ⇒ deep)', () => {
+      const result = rawGthConfigSchema.safeParse({ llm: { type: 'openai' } });
+      expect(result.success).toBe(true);
+    });
+  });
+
   describe('JSON Schema generation (golden snapshot)', () => {
     it('matches the committed schema file', () => {
       const generated = generateConfigJsonSchema();

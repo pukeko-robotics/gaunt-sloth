@@ -123,6 +123,27 @@ describe('acpModule.startAcpServer', () => {
     });
   });
 
+  it("rejects agent.backend: 'lean' — ACP is deep-only (B5 guard)", async () => {
+    const { startAcpServer } = await import('#src/modules/acpModule.js');
+    const config = makeConfig({ agent: { backend: 'lean' } });
+
+    await expect(startAcpServer(config)).rejects.toThrow(/lean.*not supported by the ACP server/);
+    // Guard runs before any agent is constructed.
+    expect(gthDeepAgentCtorMock).not.toHaveBeenCalled();
+    expect(buildDeepAgentParamsMock).not.toHaveBeenCalled();
+    expect(startServerMock).not.toHaveBeenCalled();
+  });
+
+  it("constructs the deep agent for agent.backend: 'deep'", async () => {
+    const { startAcpServer } = await import('#src/modules/acpModule.js');
+    const config = makeConfig({ agent: { backend: 'deep' } });
+
+    await startAcpServer(config);
+
+    expect(gthDeepAgentCtorMock).toHaveBeenCalledTimes(1);
+    expect(startServerMock).toHaveBeenCalledTimes(1);
+  });
+
   it('routes agent status to stderr, never stdout', async () => {
     const { startAcpServer } = await import('#src/modules/acpModule.js');
 

@@ -34,6 +34,17 @@ export interface CommandToolingConfig {
 export interface GthConfig {
   llm: BaseChatModel;
   /**
+   * Selects the agent backend.
+   * - `deep` (default when omitted): the deepagents runtime. Preserves every current behavior.
+   * - `lean`: the plain LangChain agent ({@link GthLangChainAgent}) with no deepagents machinery
+   *   (no `/large_tool_results` offload). Useful for `filesystem: 'none'` consumers (e.g. the
+   *   robot AG-UI backend) where the deep agent's tool-result offload writes are denied.
+   *
+   * Honored at the AG-UI/api entry only. The ACP server is structurally deep-only and rejects
+   * an explicit `lean` backend. The CLI (code mode) stays deep.
+   */
+  agent?: { backend?: 'deep' | 'lean' };
+  /**
    * Binary format support configuration.
    * Disabled by default unless explicitly configured.
    */

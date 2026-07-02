@@ -108,7 +108,7 @@ importers:
         specifier: '>=11.1.1'
         version: 14.0.1
       zod:
-        specifier: ^3.25.0 || ^4.0.0
+        specifier: ^4.0.0
         version: 4.4.3
 
   packages/app:
@@ -212,7 +212,7 @@ importers:
         specifier: ^1.5.2
         version: 1.5.2(@langchain/core@1.2.1(openai@6.45.0(ws@8.21.0)(zod@4.4.3))(ws@8.21.0))(openai@6.45.0(ws@8.21.0)(zod@4.4.3))(react@19.2.7)(ws@8.21.0)
       zod:
-        specifier: ^3.25.0 || ^4.0.0
+        specifier: ^4.0.0
         version: 4.4.3
 
   packages/review:
@@ -230,7 +230,7 @@ importers:
         specifier: ^1.5.2
         version: 1.5.2(@langchain/core@1.2.1(openai@6.45.0(ws@8.21.0)(zod@4.4.3))(ws@8.21.0))(openai@6.45.0(ws@8.21.0)(zod@4.4.3))(react@19.2.7)(ws@8.21.0)
       zod:
-        specifier: ^3.25.0 || ^4.0.0
+        specifier: ^4.0.0
         version: 4.4.3
 
 packages:

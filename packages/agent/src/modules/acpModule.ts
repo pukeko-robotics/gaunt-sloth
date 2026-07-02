@@ -60,6 +60,17 @@ export async function startAcpServer(
 ): Promise<void> {
   const command: GthCommand = options.command ?? 'code';
 
+  // ACP is structurally deep-only: it calls GthDeepAgent.buildDeepAgentParams and hands the
+  // extracted params to the deepagents-acp server. There is no lean analog, so an explicit
+  // `agent.backend: 'lean'` cannot be honored here — reject it loudly rather than silently
+  // running deep despite the request (B5 selector, kept honest at the ACP entry).
+  if (config.agent?.backend === 'lean') {
+    throw new Error(
+      "agent.backend: 'lean' is not supported by the ACP server — ACP relies on the deep " +
+        '(deepagents) backend. Remove the lean setting, or use the AG-UI/api server for a lean agent.'
+    );
+  }
+
   const agent = new GthDeepAgent(acpStatusUpdate, createResolvers());
   const params = await agent.buildDeepAgentParams(command, config);
 

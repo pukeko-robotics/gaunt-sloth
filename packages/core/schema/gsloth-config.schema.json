@@ -27,6 +27,18 @@
       },
       "additionalProperties": {}
     },
+    "agent": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": [
+            "deep",
+            "lean"
+          ]
+        }
+      }
+    },
     "binaryFormats": {
       "anyOf": [
         {

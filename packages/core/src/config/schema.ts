@@ -191,6 +191,14 @@ export const rawGthConfigSchema = z.looseObject({
   // Allow a JSON Schema reference for editor support; never read at runtime.
   $schema: z.string().optional(),
   llm: llmConfigSchema.optional(),
+  // Selects the agent backend. `deep` (the default when omitted) uses the deepagents
+  // runtime; `lean` uses the plain LangChain agent (no `/large_tool_results` offload).
+  // Honored at the AG-UI/api entry; the ACP server is deep-only and rejects `lean`.
+  agent: z
+    .object({
+      backend: z.enum(['deep', 'lean']).optional(),
+    })
+    .optional(),
   binaryFormats: binaryFormatsSchema.optional(),
   contentSource: z.string().optional(),
   requirementSource: z.string().optional(),
