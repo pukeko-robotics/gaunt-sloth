@@ -259,7 +259,7 @@ Gaunt Sloth is a command line AI assistant for software developers, primarily fo
 1. **Command Pattern**: Commands are separated into module and handler code
 2. **Provider Pattern**: Abstract interfaces for fetching content
 3. **Configuration-driven**: Heavy use of configuration files
-4. **Output Persistence**: All outputs are saved to local files
+4. **Output Persistence**: Outputs can be saved to local files (opt-in via `writeOutputToFile`; off by default)
 5. **Integration**: GitHub CLI and Jira integration for PR reviews
 
 ## Testing (Important)

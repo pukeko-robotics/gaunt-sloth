@@ -12,7 +12,7 @@ Every command supports these shared flags:
 
 - `--config <path>` – load a specific configuration file (without changing directories)
 - `-i, --identity-profile <name>` – use prompts/configs from `.gsloth/.gsloth-settings/<name>/`
-- `-w, --write-output-to-file <value>` – control output files (`true` by default, use `-wn`/`-w0` for false, or pass a relative filename)
+- `-w, --write-output-to-file <value>` – control output files (`false` by default, pass `true` for standard names, `-wn`/`-w0` for false, or a relative filename)
 - `--verbose` – enable verbose LangChain/LangGraph logs for troubleshooting
 
 ## init
@@ -217,12 +217,12 @@ It is possible to press Escape during inference to interrupt it.
 - `[message]` - Initial message to start the chat
 
 ### Description
-Opens an interactive chat session where you can have a conversation with the AI. The session maintains context throughout the conversation. Chat history is saved as `gth_<timestamp>_CHAT.md` (in `.gsloth/` when present, otherwise the project root). Running `gsloth` with no subcommand starts this chat mode automatically.
+Opens an interactive chat session where you can have a conversation with the AI. The session maintains context throughout the conversation. Running `gsloth` with no subcommand starts this chat mode automatically. Writing the session to disk is off by default; enable it with `writeOutputToFile` (or `-w`) to save the history as `gth_<timestamp>_CHAT.md` (in `.gsloth/` when present, otherwise the project root).
 
 ### Features
 - Interactive conversation with context memory
 - Type 'exit' or press Ctrl+C to end the session
-- Chat history automatically saved
+- Chat history saved to file when `writeOutputToFile` is enabled
 
 ### Examples
 ```bash
@@ -247,13 +247,13 @@ It is possible to press Escape during inference to interrupt it.
 - `[message]` - Initial message to start the code session
 
 ### Description
-Opens an interactive coding session where the AI has full read access to your project files. This command is specifically designed for code writing tasks with enhanced context awareness. Code session history is saved to `gth_<timestamp>_CODE.md`.
+Opens an interactive coding session where the AI has full read access to your project files. This command is specifically designed for code writing tasks with enhanced context awareness. Writing the session to disk is off by default; enable it with `writeOutputToFile` (or `-w`) to save the history to `gth_<timestamp>_CODE.md`.
 
 ### Features
 - Full file system read access within project
 - Interactive coding session with context memory
 - Type 'exit' or press Ctrl+C to end the session
-- Code history automatically saved
+- Code history saved to file when `writeOutputToFile` is enabled
 - Streaming disabled for better interactive experience
 
 ### Examples
@@ -368,11 +368,11 @@ Commands can be configured individually in your configuration file. See [CONFIGU
 
 ## Output Files
 
-All command outputs are saved as markdown files:
+Writing command outputs to markdown files is **off by default**. Enable it with
+`-w/--write-output-to-file` or the `writeOutputToFile` config option. When enabled:
 - If `.gsloth` directory exists: Files are saved to `.gsloth/`
 - Otherwise: Files are saved to the project root
 - File naming: `gth_<timestamp>_<COMMAND>.md` for interactive sessions (same as for other commands)
-- Control this behavior with `-w/--write-output-to-file` or the `writeOutputToFile` config option.
 
 ## Exit Codes
 

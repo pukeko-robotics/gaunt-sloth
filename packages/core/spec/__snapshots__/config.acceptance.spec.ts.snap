@@ -156,7 +156,7 @@ exports[`effective-merged acceptance (B2b) > resolves examples/jira-mcp/.gsloth.
   "streamSessionInferenceLog": true,
   "useColour": true,
   "writeBinaryOutputsToFile": true,
-  "writeOutputToFile": true,
+  "writeOutputToFile": false,
 }
 `;
 
@@ -230,7 +230,7 @@ exports[`effective-merged acceptance (B2b) > resolves examples/lmstudio/.gsloth.
   "streamSessionInferenceLog": true,
   "useColour": true,
   "writeBinaryOutputsToFile": true,
-  "writeOutputToFile": true,
+  "writeOutputToFile": false,
 }
 `;
 
@@ -300,7 +300,7 @@ exports[`effective-merged acceptance (B2b) > resolves examples/simple-DIY-helper
   "streamSessionInferenceLog": true,
   "useColour": true,
   "writeBinaryOutputsToFile": true,
-  "writeOutputToFile": true,
+  "writeOutputToFile": false,
 }
 `;
 
@@ -376,6 +376,6 @@ exports[`effective-merged acceptance (B2b) > resolves the consumer-shaped fixtur
   "streamSessionInferenceLog": true,
   "useColour": true,
   "writeBinaryOutputsToFile": true,
-  "writeOutputToFile": true,
+  "writeOutputToFile": false,
 }
 `;

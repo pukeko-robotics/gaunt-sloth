@@ -80,7 +80,7 @@ export const DEFAULT_CONFIG = {
     },
   },
   streamOutput: true,
-  writeOutputToFile: true,
+  writeOutputToFile: false,
   writeBinaryOutputsToFile: true,
   useColour: true,
   streamSessionInferenceLog: true,

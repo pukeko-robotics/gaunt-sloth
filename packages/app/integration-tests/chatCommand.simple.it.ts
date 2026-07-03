@@ -4,9 +4,11 @@ import { checkOutputForExpectedContent } from './support/outputChecker';
 
 describe('Chat Command Integration Tests', () => {
   it('should respond to initial message', async () => {
+    // writeOutputToFile now defaults to false; opt in with -w true so this test
+    // still exercises the session-logging path.
     const output = await runCommandWithArgs(
       'npx',
-      ['gth', 'chat', '"Hello, can you help me?"'],
+      ['gth', '-w', 'true', 'chat', '"Hello, can you help me?"'],
       ' >'
     );
 

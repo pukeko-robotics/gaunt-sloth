@@ -69,7 +69,7 @@ Unlike autonomous coding agents or hosted review services, GSloth is a **configu
 - Interactive chat and coding sessions with filesystem access
 
 **Output handling**
-- Saves all responses to timestamped files (override with `-w/--write-output-to-file`)
+- Optionally saves responses to timestamped files (off by default; enable with `-w/--write-output-to-file`)
 - Materializes binary model outputs (e.g. generated images) as local files
 
 ### To make GSloth work, you need an **API key** from some AI provider, such as:
@@ -97,7 +97,7 @@ For detailed information about all commands, see [docs/COMMANDS.md](./docs/COMMA
 These apply to every command:
 - `--config <path>` – load a specific config file without moving directories
 - `-i, --identity-profile <name>` – switch to another profile under `.gsloth/.gsloth-settings/<name>/`
-- `-w, --write-output-to-file <value>` – control response files (`true` by default, use `-wn`/`-w0` for false, or pass a filename)
+- `-w, --write-output-to-file <value>` – control response files (`false` by default, pass `true` for standard names, `-wn`/`-w0` for false, or a filename)
 - `--verbose` – enable verbose LangChain/LangGraph logs (useful when debugging prompts)
 
 ### Available Commands:
