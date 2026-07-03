@@ -220,7 +220,35 @@ This is not a validation error and `gth config validate` will not flag it. It on
 when you split config across the global and project layers. `gth config print` shows the
 final merged result, which is the quickest way to confirm the effective arrays.
 
-## E. New in 2.0 (additive, nothing to migrate)
+## E. `writeOutputToFile` now defaults to `false` (behaviour change)
+
+In 1.x every command wrote its response to a timestamped `gth_<timestamp>_<COMMAND>.md`
+file (under `.gsloth/` or the project root) unless you turned it off. These files
+accumulate quickly — especially from interactive `chat`/`code` sessions, whose transcript
+you already saw live — so in 2.0 the default flips: **nothing is written to disk unless you
+opt in.**
+
+`writeOutputToFile` still accepts the same values; only the default changed:
+
+- `false` (new default) — no output file is written
+- `true` — restores the old behaviour (standard `gth_<timestamp>_<COMMAND>.md` name)
+- a string — a custom path, unchanged (see [CONFIGURATION.md](CONFIGURATION.md#controlling-output-files))
+
+**If you relied on the auto-saved files** (for example, a CI job that reads back the review
+output), set it explicitly:
+
+```json
+{
+  "writeOutputToFile": true
+}
+```
+
+**If your CI already passes an explicit value** — a string path like `"reviews/last.md"` or
+`writeOutputToFile: true`, whether in config or via `-w/--write-output-to-file` — nothing
+changes; those configs keep working exactly as before. This flip only affects setups that
+were leaning on the implicit `true` default.
+
+## F. New in 2.0 (additive, nothing to migrate)
 
 These are new capabilities, not breaking changes, but they are useful while migrating:
 
@@ -246,4 +274,6 @@ These are new capabilities, not breaking changes, but they are useful while migr
 3. Rename `*Provider*` config keys to `*Source*`, update CLI flags in scripts, and update
    any TypeScript that imported the removed provider types (C).
 4. If you split config across global + project, re-check arrays that used to merge (D).
-5. Run `gth config validate` (and optionally `gth config print`) to confirm the result.
+5. If you relied on the auto-saved `gth_<timestamp>_<COMMAND>.md` output files, set
+   `writeOutputToFile: true` (or a string path) — the default is now `false` (E).
+6. Run `gth config validate` (and optionally `gth config print`) to confirm the result.

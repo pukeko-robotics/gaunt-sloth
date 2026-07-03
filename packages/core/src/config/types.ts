@@ -166,6 +166,8 @@ export interface GthConfig {
   /**
    * Should the output be written to md file.
    * (e.g. gth_2025-07-26_22-59-06_REVIEW.md).
+   * Defaults to `false` (no file is written); set to `true` for the standard
+   * `gth_<timestamp>_<COMMAND>.md` name.
    * Can be set to false with `-wn` or `-w0`
    * Can be set to a specific filename or path by passing a string:
    * - Bare filenames (e.g. `"review.md"`) are placed in `.gsloth/` when it exists, otherwise project root
@@ -479,6 +481,8 @@ export interface CommandLineConfigOverrides {
   /**
    * Should the output be written to md file.
    * (e.g. gth_2025-07-26_22-59-06_REVIEW.md).
+   * Defaults to `false` (no file is written); set to `true` for the standard
+   * `gth_<timestamp>_<COMMAND>.md` name.
    * Can be set to false with `-wn` or `-w0`
    * Can be set to a specific filename or path by passing a string:
    * - Bare filenames (e.g. `"review.md"`) are placed in `.gsloth/` when it exists, otherwise project root

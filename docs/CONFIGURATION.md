@@ -70,11 +70,11 @@ fetched from the installation directory.
 
 ### Controlling Output Files
 
-By default, Gaunt Sloth writes each response to `gth_<timestamp>_<COMMAND>.md` under `.gsloth/` (or the project root).
-Set `writeOutputToFile` in your config to:
+By default, Gaunt Sloth does **not** write responses to disk. Set `writeOutputToFile` in your
+config to opt in:
 
-- `true` (default) for standard filenames,
-- `false` to skip writing files,
+- `false` (default) to skip writing files,
+- `true` to write each response to `gth_<timestamp>_<COMMAND>.md` under `.gsloth/` (or the project root),
 - a string for a custom path (behavior depends on the format):
   - **Bare filenames** (e.g. `"review.md"`) are placed in `.gsloth/` when it exists, otherwise project root
   - **Paths with separators** (e.g. `"./review.md"` or `"reviews/last.md"`) are always relative to project root

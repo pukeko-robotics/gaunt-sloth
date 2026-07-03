@@ -146,7 +146,7 @@ describe('config', async () => {
         projectGuidelines: '.gsloth.guidelines.md',
         projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
-        writeOutputToFile: true,
+        writeOutputToFile: false,
         writeBinaryOutputsToFile: true,
         useColour: true,
         filesystem: 'none',
@@ -243,7 +243,7 @@ describe('config', async () => {
         projectGuidelines: '.gsloth.guidelines.md',
         projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
-        writeOutputToFile: true,
+        writeOutputToFile: false,
         writeBinaryOutputsToFile: true,
         useColour: true,
         filesystem: 'none',
@@ -373,7 +373,7 @@ describe('config', async () => {
         projectGuidelines: '.gsloth.guidelines.md',
         projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
-        writeOutputToFile: true,
+        writeOutputToFile: false,
         writeBinaryOutputsToFile: true,
         useColour: true,
         filesystem: 'none',
@@ -628,8 +628,8 @@ describe('config', async () => {
       const { initConfig } = await import('#src/config.js');
       const config = await initConfig({});
 
-      // writeOutputToFile is set by neither layer -> DEFAULT_CONFIG default of true.
-      expect(config.writeOutputToFile).toBe(true);
+      // writeOutputToFile is set by neither layer -> DEFAULT_CONFIG default of false.
+      expect(config.writeOutputToFile).toBe(false);
       expect(config.useColour).toBe(true);
     });
 
@@ -644,7 +644,7 @@ describe('config', async () => {
 
       expect(config.projectGuidelines).toBe('PROJECT.md');
       // Defaults intact, no global influence.
-      expect(config.writeOutputToFile).toBe(true);
+      expect(config.writeOutputToFile).toBe(false);
       expect(config.streamOutput).toBe(true);
       // Absent global must not warn.
       expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
@@ -793,7 +793,7 @@ describe('config', async () => {
   });
 
   describe('writeOutputToFile configuration', () => {
-    it('Should set writeOutputToFile to true by default in config', async () => {
+    it('Should set writeOutputToFile to false by default in config', async () => {
       // Create a test config
       const jsonConfig = {
         llm: {
@@ -826,8 +826,8 @@ describe('config', async () => {
       // Function under test
       const config = await initConfig({});
 
-      // Verify that writeOutputToFile is true by default
-      expect(config.writeOutputToFile).toBe(true);
+      // Verify that writeOutputToFile is false by default
+      expect(config.writeOutputToFile).toBe(false);
     });
 
     it('Should respect writeOutputToFile setting when explicitly set to false', async () => {
@@ -1257,7 +1257,7 @@ describe('config', async () => {
         canInterruptInferenceWithEsc: true,
         streamOutput: true,
         streamSessionInferenceLog: true,
-        writeOutputToFile: true,
+        writeOutputToFile: false,
         writeBinaryOutputsToFile: true,
         useColour: true,
         filesystem: 'none',
@@ -1589,7 +1589,7 @@ describe('config', async () => {
         projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
         streamSessionInferenceLog: true,
-        writeOutputToFile: true,
+        writeOutputToFile: false,
         writeBinaryOutputsToFile: true,
         useColour: true,
         filesystem: 'none',
@@ -1670,7 +1670,7 @@ describe('config', async () => {
         projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
         streamSessionInferenceLog: true,
-        writeOutputToFile: true,
+        writeOutputToFile: false,
         writeBinaryOutputsToFile: true,
         useColour: true,
         filesystem: 'none',
@@ -1751,7 +1751,7 @@ describe('config', async () => {
         projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
         streamSessionInferenceLog: true,
-        writeOutputToFile: true,
+        writeOutputToFile: false,
         writeBinaryOutputsToFile: true,
         useColour: true,
         filesystem: 'none',
