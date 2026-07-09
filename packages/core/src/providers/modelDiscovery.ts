@@ -149,7 +149,7 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'anthropic',
     label: 'Anthropic (Claude)',
     apiKeyEnvironmentVariables: ['ANTHROPIC_API_KEY'],
-    preferredModels: ['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-haiku-4-5'],
+    preferredModels: ['claude-sonnet-5', 'claude-opus-4-8', 'claude-haiku-4-5'],
     discovery: {
       kind: 'anthropic',
       modelsUrl: () => 'https://api.anthropic.com/v1/models',
