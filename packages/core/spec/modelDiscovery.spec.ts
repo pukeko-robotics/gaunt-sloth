@@ -354,8 +354,11 @@ describe('modelDiscovery', () => {
       const { buildInitConfigContent } = await import('#src/providers/modelDiscovery.js');
       const { CONFIG_SCHEMA_POINTER } = await import('#src/constants.js');
       const body = buildInitConfigContent('anthropic');
-      // The pointer resolves to the schema shipped inside the published core package.
-      expect(CONFIG_SCHEMA_POINTER).toContain('@gaunt-sloth/core/schema/gsloth-config.schema.json');
+      // The pointer is the hosted, major-pinned schema URL (resolves for global/npx/local installs,
+      // unlike a relative node_modules path). Kept in sync via websites/.../schema (PLAT-9).
+      expect(CONFIG_SCHEMA_POINTER).toBe(
+        'https://gauntsloth.app/schema/v2/gsloth-config.schema.json'
+      );
       // Written as the FIRST key so it is visible at the top of the file.
       expect(body.indexOf('"$schema"')).toBeLessThan(body.indexOf('"llm"'));
       expect(JSON.parse(body).$schema).toBe(CONFIG_SCHEMA_POINTER);
