@@ -313,7 +313,11 @@ export function findApiKeyEnvVar(descriptor: ProviderDescriptor): string | undef
  * - When `discoveredModels` is omitted, the curated `preferredModels` are
  *   returned, all flagged ⭐ preferred.
  * - When provided, every discovered model is listed; those that also appear in
- *   the curated `preferredModels` are flagged ⭐ preferred.
+ *   the curated `preferredModels` are flagged ⭐ preferred. The list is ordered
+ *   **preferred first** (in curated order, so the recommended default sits on top
+ *   and is pre-selected), then every other discovered model **alphabetically** —
+ *   so a large catalog (e.g. OpenRouter's 200+ models) is navigable instead of
+ *   arriving in the endpoint's arbitrary order.
  */
 export function buildModelList(
   descriptor: ProviderDescriptor,
@@ -322,12 +326,21 @@ export function buildModelList(
   if (!discoveredModels) {
     return descriptor.preferredModels.map((id) => ({ id, preferred: true }));
   }
-  const preferred = new Set(descriptor.preferredModels);
-  // Match preferred ids against the discovered tag, ignoring an explicit
-  // `:latest` suffix so `qwen3` flags `qwen3:latest`.
-  const isPreferred = (id: string): boolean =>
-    preferred.has(id) || preferred.has(id.replace(/:latest$/, ''));
-  return discoveredModels.map((id) => ({ id, preferred: isPreferred(id) }));
+  // Rank a discovered id by its position in the curated list, ignoring an explicit
+  // `:latest` suffix so `qwen3` matches `qwen3:latest`; `undefined` = not preferred.
+  const preferredRank = new Map(descriptor.preferredModels.map((id, i) => [id, i]));
+  const rankOf = (id: string): number | undefined =>
+    preferredRank.get(id) ?? preferredRank.get(id.replace(/:latest$/, ''));
+  const isPreferred = (id: string): boolean => rankOf(id) !== undefined;
+  const ordered = [...discoveredModels].sort((a, b) => {
+    const ra = rankOf(a);
+    const rb = rankOf(b);
+    if (ra !== undefined && rb !== undefined) return ra - rb; // both preferred → curated order
+    if (ra !== undefined) return -1; // preferred sorts before non-preferred
+    if (rb !== undefined) return 1;
+    return a.localeCompare(b); // neither preferred → alphabetical
+  });
+  return ordered.map((id) => ({ id, preferred: isPreferred(id) }));
 }
 
 /**
