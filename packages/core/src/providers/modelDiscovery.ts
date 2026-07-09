@@ -233,7 +233,7 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     // OPENROUTER_API_KEY is accepted as an alias.
     label: 'OpenRouter',
     apiKeyEnvironmentVariables: ['OPEN_ROUTER_API_KEY', 'OPENROUTER_API_KEY'],
-    preferredModels: ['qwen/qwen3-coder', 'anthropic/claude-sonnet-4.6', 'openai/gpt-5.5'],
+    preferredModels: ['qwen/qwen3-coder', 'anthropic/claude-sonnet-5', 'openai/gpt-5.5'],
     discovery: {
       kind: 'openai',
       modelsUrl: () => 'https://openrouter.ai/api/v1/models',
