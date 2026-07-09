@@ -18,6 +18,11 @@ on:
     branches:
       - 'main'
 
+# Least-privilege default: jobs get no GITHUB_TOKEN permissions unless they
+# opt in explicitly below. The concierge job needs none (it only writes to
+# $GITHUB_OUTPUT); the review jobs declare exactly what they require.
+permissions: {}
+
 jobs:
   concierge:
     runs-on: ubuntu-latest
