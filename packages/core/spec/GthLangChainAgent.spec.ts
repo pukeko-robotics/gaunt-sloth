@@ -84,6 +84,25 @@ vi.mock('#src/middleware/registry.js', () => ({
   resolveMiddleware: resolveMiddlewareMock,
 }));
 
+// GS2-21: stub the prompt readers + system-prompt composer so the lean agent's system prompt is
+// deterministic and does not hit the on-disk gsloth config path. Only these four are overridden;
+// everything else in llmUtils (formatToolCalls, prepareRunConfig, wrapContent, …) stays real via
+// importOriginal so the rest of the suite is unaffected.
+const buildSystemMessagesMock = vi.fn();
+const readChatPromptMock = vi.fn();
+const readCodePromptMock = vi.fn();
+const readExecPromptMock = vi.fn();
+vi.mock('#src/utils/llmUtils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#src/utils/llmUtils.js')>();
+  return {
+    ...actual,
+    buildSystemMessages: buildSystemMessagesMock,
+    readChatPrompt: readChatPromptMock,
+    readCodePrompt: readCodePromptMock,
+    readExecPrompt: readExecPromptMock,
+  };
+});
+
 describe('GthLangChainAgent', () => {
   let GthLangChainAgent: typeof import('#src/core/GthLangChainAgent.js').GthLangChainAgent;
   let statusUpdateCallback: Mock<StatusUpdateCallback>;
@@ -115,6 +134,12 @@ describe('GthLangChainAgent', () => {
 
     // Setup middleware mock
     resolveMiddlewareMock.mockResolvedValue([]);
+
+    // GS2-21: deterministic system-prompt composition (reset by vi.resetAllMocks above).
+    readChatPromptMock.mockReturnValue('chat-mode-prompt');
+    readCodePromptMock.mockReturnValue('code-mode-prompt');
+    readExecPromptMock.mockReturnValue('exec-mode-prompt');
+    buildSystemMessagesMock.mockReturnValue([{ content: 'SYSTEM PROMPT' }]);
 
     // Setup createAgent mock
     createAgentMock.mockReturnValue(agentMock);
@@ -448,6 +473,80 @@ describe('GthLangChainAgent', () => {
 
         const result = await softening!.wrapToolCall!({ toolCall: { id: 'tc-ok' } }, handler);
         expect(result).toBe(ok);
+      });
+    });
+
+    // GS2-21: the lean agent must give the model a system prompt, composed exactly like the deep
+    // agent (backstory + projectGuidelines + mode prompt + system prompt) and handed to createAgent
+    // as its `systemPrompt` (a static per-turn system message, NOT a mid-conversation SystemMessage
+    // Anthropic would reject). Before the fix it passed NONE, so the robot (agent.backend: lean)
+    // behaved as if it never received its guidelines.
+    describe('system prompt composition (GS2-21)', () => {
+      it('passes a systemPrompt to createAgent that includes the config projectGuidelines', async () => {
+        const sentinel = 'GS2-21-SENTINEL-PROJECT-GUIDELINES';
+        // buildSystemMessages composes backstory + guidelines + mode + system; echo the config's
+        // projectGuidelines through so we can prove it reaches the model's system prompt.
+        buildSystemMessagesMock.mockImplementation((cfg: GthConfig, modePrompt?: string) => [
+          { content: `${cfg.projectGuidelines}\n${modePrompt ?? ''}`.trim() },
+        ]);
+
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        const config = { ...mockConfig, projectGuidelines: sentinel } as GthConfig;
+        await agent.init(undefined, config);
+
+        // Default command → chat-mode prompt, fed to buildSystemMessages together with the config.
+        expect(readChatPromptMock).toHaveBeenCalled();
+        expect(buildSystemMessagesMock).toHaveBeenCalledWith(
+          expect.objectContaining({ projectGuidelines: sentinel }),
+          'chat-mode-prompt'
+        );
+        const systemPrompt = createAgentMock.mock.calls.at(-1)?.[0].systemPrompt as
+          | string
+          | undefined;
+        expect(typeof systemPrompt).toBe('string');
+        expect(systemPrompt).toContain(sentinel);
+      });
+
+      it('selects the code-mode prompt for the code command', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        await agent.init('code', mockConfig);
+
+        expect(readCodePromptMock).toHaveBeenCalled();
+        expect(readChatPromptMock).not.toHaveBeenCalled();
+        expect(buildSystemMessagesMock).toHaveBeenCalledWith(expect.anything(), 'code-mode-prompt');
+        expect(createAgentMock.mock.calls.at(-1)?.[0].systemPrompt).toBe('SYSTEM PROMPT');
+      });
+
+      it('selects the exec-mode prompt for the exec command', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        await agent.init('exec', mockConfig);
+
+        expect(readExecPromptMock).toHaveBeenCalled();
+        expect(buildSystemMessagesMock).toHaveBeenCalledWith(expect.anything(), 'exec-mode-prompt');
+      });
+
+      it('omits systemPrompt entirely when no prompt content is composed', async () => {
+        // Empty composition (e.g. noDefaultPrompts with no on-disk overrides) → the agent must NOT
+        // be handed an empty-string system message: createAgent is called without the key.
+        buildSystemMessagesMock.mockReturnValue([]);
+
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        await agent.init(undefined, mockConfig);
+
+        const params = createAgentMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+        expect('systemPrompt' in params).toBe(false);
+      });
+
+      it('omits systemPrompt when the composed message content is non-string', async () => {
+        // A SystemMessage with array (multi-block) content is not a plain string; guard against
+        // passing a non-string through as the static prompt.
+        buildSystemMessagesMock.mockReturnValue([{ content: [{ type: 'text', text: 'x' }] }]);
+
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        await agent.init(undefined, mockConfig);
+
+        const params = createAgentMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+        expect('systemPrompt' in params).toBe(false);
       });
     });
   });

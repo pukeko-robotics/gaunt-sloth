@@ -2,7 +2,13 @@ import { GthConfig } from '#src/config.js';
 import { GthCommand, StatusLevel } from '#src/core/types.js';
 import { GthAbstractAgent } from '#src/core/GthAbstractAgent.js';
 import { debugLog, debugLogObject } from '#src/utils/debugUtils.js';
-import { formatToolCalls } from '#src/utils/llmUtils.js';
+import {
+  buildSystemMessages,
+  formatToolCalls,
+  readChatPrompt,
+  readCodePrompt,
+  readExecPrompt,
+} from '#src/utils/llmUtils.js';
 import { getCurrentWorkDir } from '#src/utils/systemUtils.js';
 import { isShellCommandFailedError } from '#src/core/shell/ShellCommandFailedError.js';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
@@ -166,12 +172,33 @@ export class GthLangChainAgent extends GthAbstractAgent {
       `Loaded middleware: ${middleware.map((m) => m.name).join(', ')}`
     );
 
-    // Create agent with configured middleware
+    // GS2-21: compose gsloth's system prompt (backstory + guidelines + per-command mode prompt +
+    // system prompt) EXACTLY as GthDeepAgent does, so identity profiles and `.gsloth.*.md` are
+    // honored on the lean backend too. Previously the lean agent gave the model NO system prompt
+    // (only the deep agent composed one), so `system-prompt.md` / projectGuidelines never reached
+    // the model — the robot (agent.backend: lean) behaved as if it never got its guidelines.
+    // This is passed to createAgent as `systemPrompt`, which langchain applies as the agent's
+    // static system message on every turn — NOT injected as a separate mid-conversation
+    // SystemMessage (a non-first system message that Anthropic rejects). 'code' uses the code-mode
+    // prompt; 'exec' uses the exec-mode prompt; chat/api/others use the chat prompt.
+    const modePrompt =
+      this.command === 'code'
+        ? readCodePrompt(this.config)
+        : this.command === 'exec'
+          ? readExecPrompt(this.config)
+          : readChatPrompt(this.config);
+    const systemMessages = buildSystemMessages(this.config, modePrompt);
+    const systemPrompt =
+      typeof systemMessages[0]?.content === 'string' ? systemMessages[0].content : undefined;
+
+    // Create agent with configured middleware. Only pass systemPrompt when non-empty so we never
+    // hand createAgent an empty system message.
     this.agent = createAgent({
       model: this.config.llm,
       tools,
       middleware,
       checkpointer,
+      ...(systemPrompt ? { systemPrompt } : {}),
     });
     debugLog('React agent created successfully');
   }
