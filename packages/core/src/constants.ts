@@ -15,14 +15,22 @@ export const GSLOTH_EXEC_PROMPT = '.gsloth.exec.md';
 export const AIIGNORE_FILE = '.aiignore';
 /**
  * `$schema` pointer written into a generated `.gsloth.config.json` (GS2-1) so editors offer
- * autocomplete + validation. A relative `node_modules` path is used rather than a published
- * URL because it is the least speculative option: the JSON Schema ships inside the published
- * `@gaunt-sloth/core` package (`files: ["./schema/*"]`), so this resolves offline right after
- * `npm i` and never 404s / drifts against a hand-stamped hosted copy (PLAT-9 would be needed to
- * make a stable hosted URL authoritative).
+ * autocomplete + validation. The **hosted, major-pinned** URL is used rather than a relative
+ * `node_modules` path because the relative path only resolves when `@gaunt-sloth/core` sits in a
+ * `node_modules` beside the config, which is NOT the case for a globally-installed CLI
+ * (`npm i -g`): the schema lands in the global prefix, not next to the user's project config, so
+ * a relative pointer would silently fail to resolve. A hosted URL resolves for every install mode
+ * (global, npx, local, or a hand-written config with nothing installed) and is the standard
+ * convention editors fetch + cache.
+ *
+ * The channel is **major-pinned** (`/schema/v2/…`, not `latest` or `alpha`) so a config never
+ * revalidates against a future major it was not written for. The hosted copy is kept in sync with
+ * this package's generated schema by the deploy runbook in
+ * `websites/gauntsloth.app/schema/README.md` (interim, hand-run) and, in time, PLAT-9's automated
+ * release step. The schema still ships inside the package (`files: ["./schema/*"]`) as an offline
+ * artifact and golden-snapshot source of truth; it is just no longer what the pointer references.
  */
-export const CONFIG_SCHEMA_POINTER =
-  './node_modules/@gaunt-sloth/core/schema/gsloth-config.schema.json';
+export const CONFIG_SCHEMA_POINTER = 'https://gauntsloth.app/schema/v2/gsloth-config.schema.json';
 /**
  * EXT-9 Tier-2: project-scoped persisted shell allow-list (`always` approvals).
  * Lives under `.gsloth/.gsloth-settings/` like other project settings.
