@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DetectedProvider, ModelInfo } from '@gaunt-sloth/core/providers/modelDiscovery.js';
+import { CONFIG_SCHEMA_POINTER } from '@gaunt-sloth/core/constants.js';
 
 // Silence the menu output during tests.
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
@@ -104,9 +105,13 @@ describe('firstRunDialog pure helpers', () => {
     expect(providerReadinessLabel(provider({ id: 'openai', available: false }))).toBe('No API Key');
   });
 
-  it('buildConfigContent emits the minimal llm config with a trailing newline', () => {
+  it('buildConfigContent stamps the $schema pointer + chosen llm, with a trailing newline', () => {
     const content = buildConfigContent('anthropic', 'claude-sonnet-4-5');
-    expect(JSON.parse(content)).toEqual({ llm: { type: 'anthropic', model: 'claude-sonnet-4-5' } });
+    const parsed = JSON.parse(content);
+    // GS2-1: the interactive first-run path must stamp the same $schema pointer as the per-provider
+    // template writers, so an editor offers autocomplete/validation on a config created via `gth init`.
+    expect(parsed.$schema).toBe(CONFIG_SCHEMA_POINTER);
+    expect(parsed.llm).toEqual({ type: 'anthropic', model: 'claude-sonnet-4-5' });
     expect(content.endsWith('\n')).toBe(true);
   });
 });
@@ -167,6 +172,7 @@ describe('runFirstRunDialog', () => {
     const [scope, content] = writeConfig.mock.calls[0];
     expect(scope).toBe('project');
     expect(JSON.parse(content)).toEqual({
+      $schema: CONFIG_SCHEMA_POINTER,
       llm: { type: 'anthropic', model: 'claude-sonnet-4-5' },
     });
   });
@@ -187,7 +193,10 @@ describe('runFirstRunDialog', () => {
     expect(writeProjectReviewPreamble).not.toHaveBeenCalled();
     const [scope, content] = writeConfig.mock.calls[0];
     expect(scope).toBe('global');
-    expect(JSON.parse(content)).toEqual({ llm: { type: 'openai', model: 'gpt-4o-mini' } });
+    expect(JSON.parse(content)).toEqual({
+      $schema: CONFIG_SCHEMA_POINTER,
+      llm: { type: 'openai', model: 'gpt-4o-mini' },
+    });
   });
 
   it('still writes config for an unavailable provider so the user can fill in the key', async () => {
@@ -215,7 +224,10 @@ describe('runFirstRunDialog', () => {
     await runFirstRunDialog(deps);
 
     const [, content] = writeConfig.mock.calls[0];
-    expect(JSON.parse(content)).toEqual({ llm: { type: 'ollama', model: 'qwen3-coder' } });
+    expect(JSON.parse(content)).toEqual({
+      $schema: CONFIG_SCHEMA_POINTER,
+      llm: { type: 'ollama', model: 'qwen3-coder' },
+    });
   });
 
   it('aborts without writing when no model is entered for an empty list', async () => {
