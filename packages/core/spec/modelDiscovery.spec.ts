@@ -80,6 +80,19 @@ describe('modelDiscovery', () => {
         { id: 'some-random-model:7b', preferred: false },
       ]);
     });
+
+    it('orders discovered models: preferred (curated order) first, then the rest alphabetically', async () => {
+      const { buildModelList, PROVIDER_DESCRIPTORS } =
+        await import('#src/providers/modelDiscovery.js');
+      const descriptor = PROVIDER_DESCRIPTORS.find((d) => d.id === 'anthropic')!;
+      const [p0, p1] = descriptor.preferredModels;
+      // Discovered in a deliberately scrambled order (p1 before p0, non-preferred unsorted).
+      const models = buildModelList(descriptor, ['zeta-model', p1, 'alpha-model', p0]);
+      // p0, p1 in CURATED order (not discovered order), then non-preferred alphabetically.
+      expect(models.map((m) => m.id)).toEqual([p0, p1, 'alpha-model', 'zeta-model']);
+      expect(models.slice(0, 2).every((m) => m.preferred)).toBe(true);
+      expect(models.slice(2).every((m) => !m.preferred)).toBe(true);
+    });
   });
 
   describe('discoverModels', () => {
@@ -118,20 +131,25 @@ describe('modelDiscovery', () => {
       expect(models[0].preferred).toBe(false);
     });
 
-    it('overlays preferred flags and preserves live ordering', async () => {
+    it('overlays preferred flags and sorts preferred-first then alphabetically', async () => {
       systemUtilsMock.env.OPENAI_API_KEY = 'sk-openai-123';
       const { PROVIDER_DESCRIPTORS } = await import('#src/providers/modelDiscovery.js');
       const descriptor = PROVIDER_DESCRIPTORS.find((d) => d.id === 'openai')!;
       const preferred = descriptor.preferredModels[0];
 
-      vi.stubGlobal('fetch', okJson({ data: [{ id: 'gpt-other' }, { id: preferred }] }));
+      // Live list in arbitrary API order, preferred model buried between two others.
+      vi.stubGlobal(
+        'fetch',
+        okJson({ data: [{ id: 'zzz-model' }, { id: preferred }, { id: 'aaa-model' }] })
+      );
       const { discoverModels } = await import('#src/providers/modelDiscovery.js');
       const models = await discoverModels('openai');
 
-      // Order follows the live list, not the curated list.
-      expect(models.map((m) => m.id)).toEqual(['gpt-other', preferred]);
-      expect(models.find((m) => m.id === 'gpt-other')!.preferred).toBe(false);
+      // Preferred first (pre-selected on top), then the rest alphabetically — not live order.
+      expect(models.map((m) => m.id)).toEqual([preferred, 'aaa-model', 'zzz-model']);
       expect(models.find((m) => m.id === preferred)!.preferred).toBe(true);
+      expect(models.find((m) => m.id === 'aaa-model')!.preferred).toBe(false);
+      expect(models.find((m) => m.id === 'zzz-model')!.preferred).toBe(false);
     });
 
     it('falls back to the curated list on a network error', async () => {
