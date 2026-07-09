@@ -299,9 +299,22 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
         configurable: { thread_id: effectiveThreadId },
       };
 
-      // Stream the response with typed events
-      let textMessageStarted = false;
+      // Stream the response with typed events. Text runs MUST be delimited
+      // (START…CONTENT…END) around tool calls and reasoning: the AG-UI client
+      // finalizes a text message once a tool call for it begins, so any text that
+      // resumes after a TOOL_CALL_START on the SAME messageId is silently dropped
+      // (the "swallowed last line before a tool call" bug). Give each contiguous
+      // text run its own id and END it before any tool/reasoning event; tool calls
+      // parent to the most recent assistant message id. (GS2-22 / RC-10.)
+      let textRunId: string | null = null;
+      let lastAssistantId: string = messageId;
       let reasoningMessageId: string | null = null;
+      const endTextRun = () => {
+        if (textRunId) {
+          res.write(encoder.encode({ type: EventType.TEXT_MESSAGE_END, messageId: textRunId }));
+          textRunId = null;
+        }
+      };
 
       // C-a (spike): detect CopilotKit's resume shape. CopilotKit fulfils a
       // frontend tool client-side and then RE-RUNS the agent with the full
@@ -352,32 +365,35 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
       for await (const event of eventStream) {
         switch (event.type) {
           case 'text': {
-            if (!textMessageStarted) {
+            if (!textRunId) {
+              textRunId = randomUUID();
+              lastAssistantId = textRunId;
               res.write(
                 encoder.encode({
                   type: EventType.TEXT_MESSAGE_START,
-                  messageId,
+                  messageId: textRunId,
                   role: 'assistant',
                 })
               );
-              textMessageStarted = true;
             }
             res.write(
               encoder.encode({
                 type: EventType.TEXT_MESSAGE_CONTENT,
-                messageId,
+                messageId: textRunId,
                 delta: event.delta,
               })
             );
             break;
           }
           case 'tool_start': {
+            // Close any open text run first so its final line isn't swallowed.
+            endTextRun();
             res.write(
               encoder.encode({
                 type: EventType.TOOL_CALL_START,
                 toolCallId: event.id,
                 toolCallName: event.name,
-                parentMessageId: messageId,
+                parentMessageId: lastAssistantId,
               })
             );
             break;
@@ -414,6 +430,8 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
             break;
           }
           case 'reasoning_start': {
+            // Close any open text run before a reasoning message begins.
+            endTextRun();
             reasoningMessageId = randomUUID();
             res.write(
               encoder.encode({
@@ -451,15 +469,8 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
         }
       }
 
-      // TEXT_MESSAGE_END (only if a text message was started)
-      if (textMessageStarted) {
-        res.write(
-          encoder.encode({
-            type: EventType.TEXT_MESSAGE_END,
-            messageId,
-          })
-        );
-      }
+      // Close any still-open text run at the end of the stream.
+      endTextRun();
 
       // RUN_FINISHED
       res.write(

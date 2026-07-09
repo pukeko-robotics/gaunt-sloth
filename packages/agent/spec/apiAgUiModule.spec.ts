@@ -332,6 +332,52 @@ describe('apiAgUiModule', () => {
       expect(res.end).toHaveBeenCalled();
     });
 
+    it('GS2-22: delimits text runs around tool calls so post-tool text is not swallowed', async () => {
+      // A single assistant turn that interleaves text -> tool -> text (the swallow case):
+      // before the fix the second text delta rode the same, never-ended messageId and the
+      // client dropped it once the tool call began.
+      gthDeepAgentStreamWithEventsMock.mockReturnValue(
+        (async function* () {
+          yield { type: 'text' as const, delta: 'Body center (0.2, 0.3). Let me calibrate.' };
+          yield { type: 'tool_start' as const, id: 'tc-1', name: 'turn_right' };
+          yield { type: 'tool_end' as const, id: 'tc-1' };
+          yield { type: 'text' as const, delta: 'Distance reads 25.8cm. Turning more.' };
+        })()
+      );
+
+      const handler = await getRunHandler();
+      const res = makeMockRes();
+      await handler(makeRunReq({ threadId: 'delimit-thread', runId: 'delimit-run' }), res);
+
+      const events = mockEncoderInstance.encode.mock.calls.map((c) => c[0]) as Array<
+        Record<string, unknown>
+      >;
+      const types = events.map((e) => e.type);
+
+      // The first text run is ENDED before the tool call starts (not left open).
+      const firstEnd = types.indexOf('TEXT_MESSAGE_END');
+      const toolStart = types.indexOf('TOOL_CALL_START');
+      expect(firstEnd).toBeGreaterThan(-1);
+      expect(toolStart).toBeGreaterThan(firstEnd);
+
+      // The text that resumes AFTER the tool call is present (previously swallowed)...
+      const afterContent = events.find(
+        (e) =>
+          e.type === 'TEXT_MESSAGE_CONTENT' && String(e.delta).includes('Distance reads 25.8cm')
+      );
+      expect(afterContent).toBeDefined();
+
+      // ...on a NEW text message id, with each run properly START/END-paired.
+      const startIds = events
+        .filter((e) => e.type === 'TEXT_MESSAGE_START')
+        .map((e) => e.messageId);
+      const endIds = events.filter((e) => e.type === 'TEXT_MESSAGE_END').map((e) => e.messageId);
+      expect(startIds.length).toBe(2);
+      expect(new Set(startIds).size).toBe(2);
+      expect([...endIds].sort()).toEqual([...startIds].sort());
+      expect(afterContent!.messageId).toBe(startIds[1]);
+    });
+
     it('should set SSE headers on the response', async () => {
       const handler = await getRunHandler();
       const req = makeRunReq({ threadId: 'headers-thread' });
