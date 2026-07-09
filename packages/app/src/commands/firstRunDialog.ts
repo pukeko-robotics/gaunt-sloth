@@ -1,5 +1,6 @@
 import { USER_PROJECT_CONFIG_JSON } from '@gaunt-sloth/core/constants.js';
 import {
+  buildInitConfigContent,
   detectProviders,
   listModels,
   type DetectedProvider,
@@ -95,9 +96,16 @@ export function defaultModelIndex(models: ModelInfo[]): number {
   return preferred >= 0 ? preferred : 0;
 }
 
-/** Builds the `.gsloth.config.json` body for a chosen provider + model. */
+/**
+ * Builds the `.gsloth.config.json` body for a chosen provider + model. Delegates to the shared
+ * {@link buildInitConfigContent} so the interactive first-run path stamps the same `$schema`
+ * pointer (GS2-1) as the per-provider template writers. Previously this local builder omitted
+ * `$schema`, so a config created through the first-run dialog got no editor autocomplete/validation.
+ * First-run always has an explicit model chosen, so it is written into the config (unlike a bare
+ * `init <provider>` template, which omits the model to track the curated fallback, CFG-14).
+ */
 export function buildConfigContent(providerId: ProviderId, model: string): string {
-  return `${JSON.stringify({ llm: { type: providerId, model } }, null, 2)}\n`;
+  return `${buildInitConfigContent(providerId, model)}\n`;
 }
 
 /** Resolves the config write path for the chosen scope (CFG-3 layering). */
