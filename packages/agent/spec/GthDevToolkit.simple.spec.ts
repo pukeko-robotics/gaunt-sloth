@@ -145,6 +145,53 @@ describe('GthDevToolkit - Basic Tests', () => {
       expect(toolkit.tools.map((t) => t.name)).not.toContain('run_shell_command');
     });
 
+    it('by default (virtualFs off) emits the plain single-parameter tool (no ack param)', () => {
+      toolkit = new GthDevToolkit({ shell: true });
+      const shellTool = toolkit.tools.find((t) => t.name === 'run_shell_command')!;
+      const shape = (shellTool.schema as any).shape ?? {};
+      expect(Object.keys(shape)).toEqual(['command']);
+      // Description does NOT carry the virtualMode path-namespace warning.
+      expect(shellTool.description).not.toContain('VIRTUAL');
+    });
+
+    it('in virtualFs mode augments the description and forces the acknowledgement param', async () => {
+      const { VIRTUAL_FS_SHELL_ACK_PARAM } = await import('#src/tools/GthDevToolkit.js');
+      toolkit = new GthDevToolkit({ shell: true }, 'code', { virtualFs: true });
+      const shellTool = toolkit.tools.find((t) => t.name === 'run_shell_command')!;
+      // The forced acknowledgement param is present alongside `command`...
+      const shape = (shellTool.schema as any).shape ?? {};
+      expect(Object.keys(shape)).toContain('command');
+      expect(Object.keys(shape)).toContain(VIRTUAL_FS_SHELL_ACK_PARAM);
+      // ...and it only accepts literal `true` (the "forced boolean").
+      expect((shellTool.schema as any).safeParse({ command: 'ls' }).success).toBe(false);
+      expect(
+        (shellTool.schema as any).safeParse({
+          command: 'ls',
+          [VIRTUAL_FS_SHELL_ACK_PARAM]: false,
+        }).success
+      ).toBe(false);
+      expect(
+        (shellTool.schema as any).safeParse({
+          command: 'ls',
+          [VIRTUAL_FS_SHELL_ACK_PARAM]: true,
+        }).success
+      ).toBe(true);
+      // The description warns about the virtual `/` root vs real shell paths.
+      expect(shellTool.description).toContain('VIRTUAL');
+      expect(shellTool.description).toContain(VIRTUAL_FS_SHELL_ACK_PARAM);
+    });
+
+    it('in virtualFs mode still runs the command once acknowledged', async () => {
+      const { VIRTUAL_FS_SHELL_ACK_PARAM } = await import('#src/tools/GthDevToolkit.js');
+      toolkit = new GthDevToolkit({ shell: true }, 'code', { virtualFs: true });
+      const shellTool = toolkit.tools.find((t) => t.name === 'run_shell_command')!;
+      const result = await shellTool.invoke({
+        command: 'echo hi',
+        [VIRTUAL_FS_SHELL_ACK_PARAM]: true,
+      });
+      expect(result).toContain("Command 'echo hi' completed successfully");
+    });
+
     it('runs the model-supplied command verbatim (no parameter sanitizing)', async () => {
       toolkit = new GthDevToolkit({ shell: true });
       const shellTool = toolkit.tools.find((t) => t.name === 'run_shell_command')!;

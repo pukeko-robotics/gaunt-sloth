@@ -55,14 +55,22 @@ export async function getDefaultTools(
       : askWrite
         ? config.commands?.ask?.devTools
         : config.commands?.code?.devTools;
-  const devTools = await filterDevTools(askWrite ? 'code' : command, devToolConfig);
+  // `config.deepFsVirtual` is set (transient) by the deep agent when its fs backend runs in
+  // virtualMode; it makes the shared shell tool advertise the fs-vs-shell path divergence. Absent
+  // on the lean path (real fs paths, no divergence), so the plain shell tool is emitted there.
+  const devTools = await filterDevTools(
+    askWrite ? 'code' : command,
+    devToolConfig,
+    config.deepFsVirtual === true
+  );
   const customTools = getCustomTools(config, command);
   return [...filesystemTools, ...devTools, ...customTools, ...builtInTools];
 }
 
 async function filterDevTools(
   command: GthCommand | undefined,
-  devToolConfig: GthDevToolsConfig | undefined
+  devToolConfig: GthDevToolsConfig | undefined,
+  virtualFs: boolean
 ): Promise<StructuredToolInterface[]> {
   // Dev tools only apply to the do-the-job commands (`code` / `exec`; `ask --write` is mapped
   // to `code` by the caller). EXT-12: for `code` the toolkit is constructed even when no
@@ -75,8 +83,9 @@ async function filterDevTools(
   if (command === 'exec' && !devToolConfig) {
     return [];
   }
-  // Pass the command so GthDevToolkit resolves the shell default for the active mode.
-  const toolkit = new GthDevToolkit(devToolConfig ?? {}, command);
+  // Pass the command so GthDevToolkit resolves the shell default for the active mode, and the
+  // virtualFs flag so the shell tool warns + forces acknowledgement when fs paths are virtual.
+  const toolkit = new GthDevToolkit(devToolConfig ?? {}, command, { virtualFs });
   return [...toolkit.getTools()];
 }
 

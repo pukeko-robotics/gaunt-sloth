@@ -118,7 +118,72 @@ const RunShellCommandArgsSchema = z.object({
   command: z.string().describe('The shell command to run'),
 });
 
+/**
+ * The name of the forced acknowledgement parameter added to `run_shell_command` when the deep
+ * agent's filesystem tools run in virtualMode. Intentionally a long, self-describing name: the
+ * model reads it on every shell call as a reminder that the fs-tool `/` root and the shell's real
+ * paths are two different namespaces.
+ */
+export const VIRTUAL_FS_SHELL_ACK_PARAM =
+  'i_acknowledge_that_fs_tools_are_in_virtual_mode_and_paths_could_be_different_from_shell';
+
+/**
+ * virtualMode variant of {@link RunShellCommandArgsSchema}. In addition to `command` it carries a
+ * FORCED acknowledgement flag ({@link VIRTUAL_FS_SHELL_ACK_PARAM}) typed as `z.literal(true)` — it
+ * is required and only accepts `true`, so the model cannot call the shell tool without first
+ * consciously acknowledging that a filesystem-tool `/`-rooted path is NOT necessarily a valid path
+ * for this real-OS shell.
+ */
+const RunShellCommandVirtualArgsSchema = z.object({
+  command: z.string().describe('The shell command to run'),
+  [VIRTUAL_FS_SHELL_ACK_PARAM]: z
+    .literal(true)
+    .describe(
+      'Required — must be true. By setting this to true you confirm you understand that the ' +
+        'filesystem tools (ls/read_file/write_file/edit_file/glob/grep) address a VIRTUAL "/" root ' +
+        '(a leading "/" means the working directory) which can differ from the real native paths ' +
+        'this shell uses, and that you have verified — or will verify — the real working directory ' +
+        'before relying on any path in the command.'
+    ),
+});
+
 const TEST_PATH_PLACEHOLDER = '${testPath}';
+
+/**
+ * The command that prints the real working directory in the shell `run_shell_command` spawns
+ * (`cmd.exe` on Windows, `/bin/sh` on POSIX). Used in the virtualMode shell-tool description so the
+ * model is told exactly how to confirm where it really is before trusting a path.
+ */
+function printWorkDirCommand(): string {
+  return process.platform === 'win32' ? '`cd` (with no arguments)' : '`pwd`';
+}
+
+/** Base description shared by both the plain and the virtualMode `run_shell_command` tool. */
+const RUN_SHELL_COMMAND_BASE_DESCRIPTION =
+  'Run an arbitrary shell command in the project working directory and return its ' +
+  'combined stdout/stderr and exit status. Use for any task the fixed run_* tools do ' +
+  'not cover (e.g. git, package managers, file inspection). Each call is subject to ' +
+  'human approval before it runs unless approval has been disabled.';
+
+/**
+ * The virtualMode `run_shell_command` description. Appends a path-namespace warning to the base
+ * description: the filesystem tools use a virtual `/` root while this shell uses real native OS
+ * paths, so the model must verify the real working directory (`pwd` / `cd`) before putting any path
+ * into a shell command and should prefer paths relative to the working directory.
+ */
+function buildVirtualShellDescription(): string {
+  return (
+    RUN_SHELL_COMMAND_BASE_DESCRIPTION +
+    '\n\nIMPORTANT — path namespaces differ in this session: the filesystem tools ' +
+    '(ls/read_file/write_file/edit_file/glob/grep) operate on a VIRTUAL "/" root, where a leading ' +
+    '"/" means the working directory. This shell runs in the REAL operating system and uses real ' +
+    'native paths, so a "/"-rooted path from the filesystem tools is NOT necessarily a valid path ' +
+    `for this shell. Before putting any path into a command, confirm the real working directory ` +
+    `first (run ${printWorkDirCommand()}), and prefer paths relative to the working directory over ` +
+    'absolute ones. You must also pass ' +
+    `\`${VIRTUAL_FS_SHELL_ACK_PARAM}: true\` on every call to acknowledge this.`
+  );
+}
 
 export default class GthDevToolkit extends BaseToolkit {
   tools: StructuredToolInterface[];
@@ -129,11 +194,24 @@ export default class GthDevToolkit extends BaseToolkit {
    * interrupt wiring. Omitted → historical OFF-by-default behaviour.
    */
   private readonly command: GthCommand | undefined;
+  /**
+   * True when the deep agent's deepagents `FilesystemBackend` runs in virtualMode for this run, so
+   * the fs tools address a virtual `/` root that can diverge from `run_shell_command`'s real OS
+   * paths. When set, the shell tool advertises that divergence (augmented description + the forced
+   * {@link VIRTUAL_FS_SHELL_ACK_PARAM} acknowledgement). Defaults to `false` (the lean path, whose
+   * fs tools use real paths, and any non-deep caller) so the plain shell tool is unchanged.
+   */
+  private readonly virtualFs: boolean;
 
-  constructor(commands: GthDevToolsConfig = {}, command?: GthCommand | undefined) {
+  constructor(
+    commands: GthDevToolsConfig = {},
+    command?: GthCommand | undefined,
+    options?: { virtualFs?: boolean }
+  ) {
     super();
     this.commands = commands;
     this.command = command;
+    this.virtualFs = options?.virtualFs === true;
     this.tools = this.createTools();
   }
 
@@ -442,19 +520,25 @@ export default class GthDevToolkit extends BaseToolkit {
     // agent (createDeepAgent `interruptOn`), not a parameter sanitizer — a real shell command
     // legitimately contains pipes / `$` / `;`, so validateParameterValue must NOT be applied.
     if (isShellToolEnabled(this.commands, this.command)) {
+      // In virtualMode the fs tools' `/` root diverges from this shell's real OS paths, so the
+      // shell tool warns about it (description) AND forces an explicit per-call acknowledgement
+      // (VIRTUAL_FS_SHELL_ACK_PARAM). The command runner ignores the ack flag — its only job is to
+      // make the model stop and think about the path namespace before every shell call. The plain
+      // (non-virtual) path keeps the original single-parameter tool unchanged.
+      const shellSchema = this.virtualFs
+        ? RunShellCommandVirtualArgsSchema
+        : RunShellCommandArgsSchema;
       tools.push(
         createGthTool(
-          async (args: z.infer<typeof RunShellCommandArgsSchema>): Promise<string> => {
+          async (args: z.infer<typeof shellSchema>): Promise<string> => {
             return await this.executeCommand(args.command, 'run_shell_command');
           },
           {
             name: 'run_shell_command',
-            description:
-              'Run an arbitrary shell command in the project working directory and return its ' +
-              'combined stdout/stderr and exit status. Use for any task the fixed run_* tools do ' +
-              'not cover (e.g. git, package managers, file inspection). Each call is subject to ' +
-              'human approval before it runs unless approval has been disabled.',
-            schema: RunShellCommandArgsSchema,
+            description: this.virtualFs
+              ? buildVirtualShellDescription()
+              : RUN_SHELL_COMMAND_BASE_DESCRIPTION,
+            schema: shellSchema,
           },
           'execute'
         )

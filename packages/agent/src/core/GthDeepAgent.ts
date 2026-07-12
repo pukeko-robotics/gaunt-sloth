@@ -27,18 +27,32 @@ import type { DebugCapture, DebugRequestExtras, DebugToolDef } from '#src/core/d
 import { ShellCommandFailedError } from '#src/tools/GthDevToolkit.js';
 
 /**
- * EXT-16: decide whether the deepagents filesystem backend must run in virtualMode.
+ * Decide whether the deepagents filesystem backend runs in virtualMode.
  *
- * deepagents' permission layer (`validatePath`) requires POSIX `/`-rooted glob paths, and its
- * fs tools hand the SAME model-supplied path string to both the permission check and the native
- * `path.resolve`/`fs` backend. On Windows a real cwd is `D:\...`, which can satisfy neither side
- * as one string, so the EXT-13 real-path sandbox throws `Error: path must be absolute` on every
- * turn and the agent hangs. The precise trigger is "the real cwd is not POSIX-rooted", so we key
- * off that directly (not just `win32`): when true, run virtualMode (cwd→`/`) with virtual
- * permissions — the pre-EXT-13 known-good behavior. POSIX keeps the EXT-13 real-path namespace.
+ * virtualMode (cwd→`/`, virtual permissions) is now the DEFAULT on every platform — it is
+ * deepagents' native, cross-platform-uniform behavior and the pre-EXT-13 known-good path. This
+ * supersedes the EXT-13 default (which ran POSIX in real-path mode to share ONE namespace with the
+ * shell). Under virtualMode the fs tools' virtual `/` root and `run_shell_command`'s real OS paths
+ * DIVERGE, so the shell tool is made virtualMode-aware (an augmented description plus a forced
+ * acknowledgement parameter — see GthDevToolkit) and the EXT-22 path-namespace notes/correction
+ * apply on all platforms, not just Windows.
+ *
+ * Two cases still force real-path mode instead of virtual:
+ *  - The real cwd is not POSIX `/`-rooted (e.g. Windows `D:\...`). deepagents' permission layer
+ *    (`validatePath`) requires POSIX `/`-rooted globs, so a non-POSIX cwd could never run real-path
+ *    mode anyway (was EXT-16) — it MUST be virtual. (This branch and the default now agree, but it
+ *    is kept explicit for clarity.)
+ *  - `--allow-dir` widening is requested on a POSIX host: reaching directories OUTSIDE cwd needs
+ *    REAL absolute paths that a virtual `/` root cannot express, so keep real-path mode there (the
+ *    EXT-13/EXT-14 real-path sandbox, unchanged) so widening still works.
  */
-function shouldUseVirtualFs(): boolean {
-  return !getCurrentWorkDir().startsWith('/');
+function shouldUseVirtualFs(config?: { allowDirs?: unknown }): boolean {
+  // Non-POSIX real cwd (Windows) can never be expressed as deepagents' POSIX `/`-rooted permission
+  // globs → must run virtual.
+  if (!getCurrentWorkDir().startsWith('/')) return true;
+  // POSIX: virtual by default; real-path only when `--allow-dir` widening needs real absolute paths.
+  const widen = Array.isArray(config?.allowDirs) && (config.allowDirs as unknown[]).length > 0;
+  return !widen;
 }
 
 /**
@@ -172,13 +186,12 @@ export class GthDeepAgent extends GthAbstractAgent {
       },
     });
 
-    // EXT-16: whether the deepagents fs backend runs in virtualMode. deepagents' permission layer
-    // requires POSIX `/`-rooted paths, so a Windows real cwd (`D:\...`) can't be expressed as a
-    // permission glob and the EXT-13 real-path mode hangs there (`Error: path must be absolute`).
-    // When the real cwd isn't POSIX-rooted, fall back to virtualMode (cwd→`/`) with virtual
-    // permissions — the pre-EXT-13 known-good Windows behavior. Computed here because the EXT-22 S1
-    // middleware (below), the backend, and the systemPrompt gate (further down) all key off it.
-    const useVirtualFs = shouldUseVirtualFs();
+    // Whether the deepagents fs backend runs in virtualMode. virtualMode is now the default on all
+    // platforms; real-path mode is retained only for a non-POSIX cwd (Windows) — where it is forced
+    // virtual — and for POSIX `--allow-dir` widening (which needs real absolute paths). Computed
+    // from the effective config because the EXT-22 S1 middleware (below), the backend, and the
+    // systemPrompt gate (further down) all key off it. See shouldUseVirtualFs.
+    const useVirtualFs = shouldUseVirtualFs(this.config ?? undefined);
 
     // EXT-22 (S1): last-word path-namespace correction. Appends the shared guidance as a trailing
     // system-message block ONLY in code + virtualMode (where the fs virtual `/` root and the
@@ -199,13 +212,14 @@ export class GthDeepAgent extends GthAbstractAgent {
       `Loaded middleware: ${middleware.map((m) => m.name).join(', ')}`
     );
 
-    // EXT-13: the backend always runs in REAL-path mode (virtualMode off) so the deepagents fs
-    // tools and the EXT-9 run_shell_command tool share ONE path namespace — real absolute paths
-    // rooted at cwd. Containment is enforced by the permission allow/deny globs built in
-    // buildDeepAgentParams (default: allow cwd/**, deny /**), which match what virtualMode used to
-    // give for free (see deepAgentPermissions + the EXT-13 symlink/`..` parity tests), PLUS the
-    // EXT-14 realpath guard wrapped around the backend below (closes the intermediate-symlinked-
-    // directory gap those lexical globs alone can't catch).
+    // The backend runs in virtualMode by default (useVirtualFs) — the deepagents fs tools address a
+    // virtual `/` root (= cwd) while run_shell_command uses real OS paths; the divergence is handled
+    // by the virtualMode-aware shell tool + the EXT-22 path-namespace notes. Real-path mode (the
+    // EXT-13/EXT-14 sandbox) is retained for POSIX `--allow-dir` widening, where the fs tools and
+    // shell share ONE real-absolute-path namespace rooted at cwd. Containment in real-path mode is
+    // enforced by the permission allow/deny globs built in buildDeepAgentParams (default: allow
+    // cwd/**, deny /**) PLUS the EXT-14 realpath guard wrapped around the backend below; in
+    // virtualMode the virtual-root chroot + virtual permission globs do it (as they always have).
     // `--allow-dir` (config.allowDirs) further widens those allow-rules to reach extra real dirs;
     // it removes a guardrail, so it is announced loudly by the exec command and surfaced here.
     const allowDirs = this.config?.allowDirs;
@@ -326,7 +340,15 @@ export class GthDeepAgent extends GthAbstractAgent {
     // delete_file, search_files, …) would otherwise bypass deepagents' permission
     // enforcement entirely — a model could read an .aiignore-protected file through them.
     debugLog('Resolving tools (filesystem disabled; deepagents provides fs)...');
-    const toolResolutionConfig = { ...this.config, filesystem: 'none' as const };
+    // Tell the shared dev toolkit whether the fs backend runs in virtualMode for this run, so its
+    // run_shell_command tool warns about the fs-vs-shell path divergence and forces an explicit
+    // acknowledgement. Computed from the effective config (mirrors init()'s useVirtualFs).
+    const useVirtualFs = shouldUseVirtualFs(this.config ?? undefined);
+    const toolResolutionConfig = {
+      ...this.config,
+      filesystem: 'none' as const,
+      deepFsVirtual: useVirtualFs,
+    };
     const resolvedTools =
       !toolsDisabled && this.resolvers?.resolveTools
         ? await this.resolvers.resolveTools(toolResolutionConfig, command)
@@ -504,9 +526,10 @@ export class GthDeepAgent extends GthAbstractAgent {
             ? this.config.allowDirs
             : undefined,
       },
-      // EXT-16: build virtual (`/`-rooted) permission rules when the backend will run in
-      // virtualMode (Windows), matching the FilesystemBackend created in init().
-      shouldUseVirtualFs()
+      // Build virtual (`/`-rooted) permission rules when the backend will run in virtualMode (the
+      // default; also every non-POSIX cwd), matching the FilesystemBackend created in init(). Reuses
+      // the same useVirtualFs computed above so tools, permissions and backend stay in lockstep.
+      useVirtualFs
     );
     debugLogObject('Filesystem permissions', permissions);
 
@@ -606,13 +629,16 @@ export const PATH_NAMESPACE_GUIDANCE =
   'this session: a leading `/` means your working directory, and their paths are written ' +
   '`/`-rooted relative to it (this is what "all file paths must start with a /" refers to). That ' +
   '`/` is NOT the real operating-system filesystem root. run_shell_command is different: it runs ' +
-  'in the real operating system and uses real native paths (on Windows, e.g. ' +
-  '`C:\\Users\\...\\project`, with backslashes), never the virtual `/` root. A `/`-rooted path ' +
-  'from the filesystem tools is NOT a valid shell path and must never be passed to ' +
-  'run_shell_command. The one form that means the same thing to both tool families is a path ' +
-  'RELATIVE to the working directory (e.g. `src/index.ts`); prefer relative paths for both. When ' +
-  'you must be absolute, use `/`-rooted form ONLY for the filesystem tools and real native form ' +
-  'ONLY for run_shell_command.';
+  'in the real operating system and uses real native paths, never the virtual `/` root. On Windows ' +
+  'those look obviously different (e.g. `C:\\Users\\...\\project`, with backslashes); on Linux/macOS ' +
+  'the real working directory is ITSELF an absolute path such as `/home/you/project`, so a virtual ' +
+  '`/src/index.ts` actually lives at `<working dir>/src/index.ts` for the shell — the two `/`-forms ' +
+  'look identical but mean different things, which is easy to get wrong. A `/`-rooted path from the ' +
+  'filesystem tools is NOT a valid shell path and must never be passed to run_shell_command. The ' +
+  'one form that means the same thing to both tool families is a path RELATIVE to the working ' +
+  'directory (e.g. `src/index.ts`); prefer relative paths for both. When you must be absolute, use ' +
+  '`/`-rooted form ONLY for the filesystem tools and real native form ONLY for run_shell_command ' +
+  '(confirm the real working directory with a shell command such as `pwd` first).';
 
 /**
  * EXT-22 (S2): virtualMode variant of {@link appendCwdNote}. On the `code` path when the fs

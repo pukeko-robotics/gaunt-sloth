@@ -107,16 +107,17 @@ describe('GthDeepAgent', () => {
     expect(params.model).toBe(config.llm);
     expect(params.checkpointer).toBe(checkpointer);
     expect(params.backend).toBeInstanceOf(FilesystemBackendStub);
-    // EXT-13: the backend always runs in real-path mode now (virtualMode off); containment is
-    // enforced by the permission globs anchored at the real cwd, not the virtual-root chroot.
-    expect((params.backend as FilesystemBackendStub).options).toMatchObject({ virtualMode: false });
-    expect(params.permissions).toEqual(buildPermissions({ filesystem: 'none' }));
+    // virtualMode is the default now (no --allow-dir), so the backend runs virtual and containment
+    // is the virtual-root chroot + virtual permission globs.
+    expect((params.backend as FilesystemBackendStub).options).toMatchObject({ virtualMode: true });
+    // filesystem:'none' is virtual-agnostic (deny /** either way), so the permission shape is the same.
+    expect(params.permissions).toEqual(buildPermissions({ filesystem: 'none' }, true));
     expect(params.tools.map((t: { name: string }) => t.name)).toEqual(['foo']);
     // EXT-14: the FilesystemBackend is passed through guardFilesystemBackend before it reaches
-    // createDeepAgent (stubbed above as an identity pass-through), anchored at the real cwd.
+    // createDeepAgent (stubbed above as an identity pass-through); virtual mode by default.
     expect(deepAgentPermissions.guardFilesystemBackend).toHaveBeenCalledWith(
       expect.any(FilesystemBackendStub),
-      expect.objectContaining({ cwd: '/home/user/proj', virtual: false })
+      expect.objectContaining({ cwd: '/home/user/proj', virtual: true })
     );
   });
 
@@ -147,16 +148,16 @@ describe('GthDeepAgent', () => {
     );
   });
 
-  it('without allowDirs runs in real-path mode too (EXT-13: default cwd sandbox via globs)', async () => {
+  it('without allowDirs runs in virtualMode (virtual-by-default on all platforms)', async () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
 
     await agent.init('exec', makeConfig({ filesystem: 'all' }));
 
     const params = createDeepAgentMock.mock.calls[0][0];
-    // EXT-13: the default sandbox no longer relies on virtualMode — the backend uses real
-    // absolute paths and the cwd allow/deny globs do the containment.
-    expect((params.backend as FilesystemBackendStub).options).toMatchObject({ virtualMode: false });
+    // Virtual is the default now: without --allow-dir the backend runs in virtualMode (cwd→`/`),
+    // and the virtualMode-aware shell tool + EXT-22 notes handle the fs-vs-shell divergence.
+    expect((params.backend as FilesystemBackendStub).options).toMatchObject({ virtualMode: true });
   });
 
   it('EXT-14: wraps the FilesystemBackend in the REAL realpath guard (not the identity stub)', async () => {
@@ -192,7 +193,7 @@ describe('GthDeepAgent', () => {
     expect(createDeepAgentMock.mock.calls[0][0].systemPrompt).toBe('SYSTEM PROMPT');
   });
 
-  it('uses the code-mode prompt for the code command and appends the EXT-13 cwd note', async () => {
+  it('uses the code-mode prompt for the code command and appends the virtualMode namespace note', async () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
     const config = makeConfig();
@@ -201,12 +202,30 @@ describe('GthDeepAgent', () => {
 
     expect(readCodePromptMock).toHaveBeenCalledWith(config);
     expect(buildSystemMessagesMock).toHaveBeenCalledWith(config, 'code-mode-prompt');
-    // EXT-13 (part b): code mode appends the real cwd + path-model note so the model knows where
-    // it is (the fs tools + run_shell_command share one real-absolute-path namespace).
+    // Virtual by default: code mode appends the virtualMode path-namespace note (fs `/` root vs the
+    // shell's real paths), not the real-path cwd note.
     const prompt = createDeepAgentMock.mock.calls[0][0].systemPrompt as string;
     expect(prompt.startsWith('SYSTEM PROMPT')).toBe(true);
+    expect(prompt).toContain('Filesystem vs shell path namespaces:');
+    expect(prompt).toContain('is NOT a valid shell path');
+    expect(prompt).not.toContain('Working directory:');
+  });
+
+  it('code + --allow-dir (POSIX real-path mode) appends the real cwd note instead', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+    const config = makeConfig({ allowDirs: ['/tmp/out'] });
+
+    await agent.init('code', config);
+
+    const params = createDeepAgentMock.mock.calls[0][0];
+    // --allow-dir on a POSIX host keeps real-path mode (the fs tools + run_shell_command share one
+    // real-absolute-path namespace), so the EXT-13 real cwd note is used, not the virtual note.
+    expect((params.backend as FilesystemBackendStub).options).toMatchObject({ virtualMode: false });
+    const prompt = params.systemPrompt as string;
     expect(prompt).toContain('Working directory:');
     expect(prompt).toContain('real absolute filesystem paths');
+    expect(prompt).not.toContain('is NOT a valid shell path');
   });
 
   it('does NOT append the cwd note for non-code commands (chat keeps the bare prompt)', async () => {
@@ -228,18 +247,18 @@ describe('GthDeepAgent', () => {
     expect(createDeepAgentMock.mock.calls[0][0].systemPrompt).toBeUndefined();
   });
 
-  it('in code mode still emits the cwd note even when no other prompt content is composed', async () => {
+  it('in code mode still emits the path-namespace note even when no other prompt content is composed', async () => {
     buildSystemMessagesMock.mockReturnValue([]);
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
 
     await agent.init('code', makeConfig());
 
-    // EXT-13: the cwd / path-model note is essential for code mode, so it is injected even with
-    // an otherwise-empty composed prompt (no leading blank lines).
+    // The path-model note is essential for code mode, so it is injected even with an otherwise-empty
+    // composed prompt (no leading blank lines). Virtual by default → the virtualMode namespace note.
     const prompt = createDeepAgentMock.mock.calls[0][0].systemPrompt as string;
-    expect(prompt).toContain('Working directory:');
-    expect(prompt.startsWith('Working directory:')).toBe(true);
+    expect(prompt).toContain('Filesystem vs shell path namespaces:');
+    expect(prompt.startsWith('Filesystem vs shell path namespaces:')).toBe(true);
   });
 
   it('drops resolved tools that collide with deepagents filesystem tool names', async () => {
@@ -305,8 +324,13 @@ describe('GthDeepAgent', () => {
     await agent.init(undefined, config);
 
     const params = createDeepAgentMock.mock.calls[0][0];
+    // Virtual by default: the deep agent builds permissions with virtual=true, so the rules anchor
+    // at the virtual `/` root (`/src`) rather than the real cwd.
     expect(params.permissions).toEqual(
-      buildPermissions({ filesystem: ['src'], aiignore: { enabled: true, patterns: ['*.env'] } })
+      buildPermissions(
+        { filesystem: ['src'], aiignore: { enabled: true, patterns: ['*.env'] } },
+        true
+      )
     );
     // .aiignore deny rule comes first (wins over the src allow rule).
     expect(params.permissions[0].mode).toBe('deny');
@@ -702,11 +726,15 @@ describe('EXT-22 path-namespace guidance (S2 note + S1 correction middleware)', 
   // real-path note), so negative assertions can't false-pass on shared words like 'run_shell_command'.
   const VIRTUAL_ONLY_MARKER = 'is NOT a valid shell path';
 
-  async function initAgent(command: 'code' | 'chat', cwd: string) {
+  async function initAgent(
+    command: 'code' | 'chat',
+    cwd: string,
+    configOver: Partial<GthConfig> = {}
+  ) {
     getCurrentWorkDirMock.mockReturnValue(cwd);
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
-    await agent.init(command, makeConfig());
+    await agent.init(command, makeConfig(configOver));
     return createDeepAgentMock.mock.calls[0][0];
   }
 
@@ -732,8 +760,9 @@ describe('EXT-22 path-namespace guidance (S2 note + S1 correction middleware)', 
     expect(prompt).toContain('Host operating system:');
   });
 
-  it('S2: code + real-path (POSIX) keeps the EXT-13 note and NOT the virtualMode guidance', async () => {
-    const params = await initAgent('code', '/home/user/proj');
+  it('S2: code + real-path (POSIX, via --allow-dir) keeps the EXT-13 note and NOT the virtualMode guidance', async () => {
+    // Virtual is the default on POSIX now, so real-path mode must be forced with --allow-dir.
+    const params = await initAgent('code', '/home/user/proj', { allowDirs: ['/tmp/out'] });
     const prompt = params.systemPrompt as string;
     expect(prompt).toContain('Working directory:');
     expect(prompt).toContain('there is no virtual root'); // EXT-13 real-path note
@@ -790,8 +819,9 @@ describe('EXT-22 path-namespace guidance (S2 note + S1 correction middleware)', 
     }
   });
 
-  it('S1: transparent pass-through in code + real-path (POSIX) — request untouched', async () => {
-    const params = await initAgent('code', '/home/user/proj');
+  it('S1: transparent pass-through in code + real-path (POSIX, via --allow-dir) — request untouched', async () => {
+    // Real-path mode on POSIX now requires --allow-dir (virtual is the default).
+    const params = await initAgent('code', '/home/user/proj', { allowDirs: ['/tmp/out'] });
     const mw = lastMiddleware(params);
     const request = { systemMessage: new SystemMessage('BASE PROMPT') };
     const handler = vi.fn().mockResolvedValue('r');
