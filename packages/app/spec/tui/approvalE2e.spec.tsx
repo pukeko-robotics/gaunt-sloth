@@ -135,6 +135,10 @@ function wireRunner(agent: GthAgentInterface, config: Partial<GthConfig>, comman
     async *runTurn(userInput, signal) {
       yield* runner.processMessagesWithEvents([new HumanMessage(userInput) as Message], signal);
     },
+    setAutoApprove(action) {
+      if (action === 'toggle') return runner.toggleSessionYolo();
+      return runner.setSessionYolo(action === 'on');
+    },
   };
   return { bridge, runner, tuiAgent, command, config };
 }
@@ -277,6 +281,67 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     // The second command (a variant of the same operation) must auto-approve with NO prompt.
     await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
     expect(promptCount).toBe(1); // only the first command ever reached the human prompt
+
+    unmount();
+  });
+
+  it('pressing y at the approval turns on session auto-approve: this command runs and later ones skip the prompt (EXT-12)', async () => {
+    // Two suspends in one turn: the first is answered with `y` (auto-approve all), the second must
+    // then auto-approve with NO prompt because the session flag is now ON.
+    let phase = 0;
+    const agent: GthAgentInterface = {
+      async init() {},
+      async invoke() {
+        return '';
+      },
+      async stream() {
+        throw new Error('not used');
+      },
+      async *streamWithEvents(): AsyncGenerator<AgentStreamEvent> {
+        yield { type: 'text', delta: 'working' };
+      },
+      async getPendingToolInterrupts(): Promise<PendingToolInterrupt[]> {
+        phase += 1;
+        if (phase === 1) return [{ name: 'run_shell_command', args: { command: 'npm run build' } }];
+        if (phase === 2) return [{ name: 'run_shell_command', args: { command: 'npm test' } }];
+        return [];
+      },
+      async *streamWithEventsResume(): AsyncGenerator<AgentStreamEvent> {
+        yield { type: 'tool_result', id: 't', content: 'ok' };
+      },
+      async cleanup() {},
+    };
+    const { runner, bridge, tuiAgent } = wireRunner(agent, {}, 'code');
+    await runner.init('code' as never, {
+      ...FULL_CONFIG,
+      commands: { code: { devTools: { shell: { enabled: true, allowlist: false } } } },
+    } as GthConfig);
+
+    let promptCount = 0;
+    bridge.subscribe(() => {
+      promptCount += 1;
+    });
+    runner.setToolApprovalCallback((pending) => bridge.request(pending));
+
+    const { stdin, lastFrame, frames, unmount } = render(
+      <App {...baseProps} agent={tuiAgent} subscribeApproval={bridge.subscribe} initialMessage="go" />
+    );
+
+    // First command prompts; the `y` chooser is advertised and answering it enables auto-approve.
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).toContain('npm run build');
+      expect(f).toContain('auto-approve all');
+    });
+    stdin.write('y');
+
+    // The ON notice + persistent status badge appear, and the second command NEVER prompts.
+    await vi.waitFor(() => {
+      expect(frames.join('\n')).toContain('Auto-approve ON');
+      expect(lastFrame()).toContain('turns: 1');
+    });
+    expect(promptCount).toBe(1); // only the first command reached the human prompt
+    expect(runner.isSessionYolo()).toBe(true);
 
     unmount();
   });

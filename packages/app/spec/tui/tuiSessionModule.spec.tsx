@@ -24,6 +24,10 @@ vi.mock('@gaunt-sloth/core/core/GthAgentRunner.js', () => {
   GthAgentRunner.prototype.processMessagesWithEvents = vi.fn();
   GthAgentRunner.prototype.resetThread = vi.fn();
   GthAgentRunner.prototype.setToolApprovalCallback = vi.fn();
+  // EXT-12 — the session module reads the initial auto-approve state and wires setAutoApprove.
+  GthAgentRunner.prototype.isSessionYolo = vi.fn().mockReturnValue(false);
+  GthAgentRunner.prototype.toggleSessionYolo = vi.fn();
+  GthAgentRunner.prototype.setSessionYolo = vi.fn();
   return { GthAgentRunner };
 });
 

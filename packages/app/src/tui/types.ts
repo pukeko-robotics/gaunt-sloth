@@ -32,11 +32,12 @@ export interface TuiAgent {
    */
   resetThread?(): void;
   /**
-   * EXT-12 — flip the runner's session-scoped yolo flag (shell auto-approval) and return the NEW
-   * state, so the App can render a state-aware notice. Wired to the `/yolo` slash command.
-   * Optional so the fixture agent (no runner) may omit it.
+   * EXT-12 — apply a change to the runner's session-scoped auto-approve flag (shell auto-approval)
+   * and return the NEW state, so the App can render a state-aware notice and status indicator.
+   * `'on'`/`'off'` set it explicitly, `'toggle'` flips it. Wired to the `/auto-approve` slash
+   * command. Optional so the fixture agent (no runner) may omit it.
    */
-  toggleYolo?(): boolean;
+  setAutoApprove?(action: 'on' | 'off' | 'toggle'): boolean;
 }
 
 /**
@@ -65,6 +66,13 @@ export interface TuiAppProps {
   mode: string;
   /** Model/provider display name for the status bar and `/model` (from `config.modelDisplayName`). */
   modelDisplayName?: string;
+  /**
+   * EXT-12 — initial state of the session auto-approve flag, so the status bar shows the
+   * indicator from the first frame when `devTools.shellYolo` pre-enabled it in config. The App
+   * keeps its own state after this; the session module seeds it from `runner.isSessionYolo()`.
+   * Defaults to off (undefined) — the fixture / non-shell sessions omit it.
+   */
+  initialAutoApprove?: boolean;
   /**
    * Pre-rendered, secret-free summary lines of the resolved config for the read-only `/config`
    * slash command (GS2-1). Built once by the session module via `formatConfigSummary`; omitted by

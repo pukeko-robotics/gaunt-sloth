@@ -24,11 +24,11 @@ import {
   type DebugTab,
 } from '#src/tui/components/DebugPanel.js';
 import {
+  autoApproveNotice,
   createCommandRegistry,
   dispatchSlashCommand,
   parseSlashCommand,
   toolsToggleNotice,
-  yoloToggleNotice,
 } from '#src/tui/slashCommands.js';
 import { viewportBumpSequence } from '#src/tui/terminal.js';
 
@@ -81,6 +81,13 @@ export function App(props: TuiAppProps): React.ReactElement {
   // summary lines) so the transcript stays readable; Ctrl+T flips the whole turn's detail,
   // mirroring the docked debug panel's single-key detail toggle.
   const [toolsExpanded, setToolsExpanded] = useState(false);
+  // EXT-12 — session auto-approve (shell commands run without the per-command prompt). Seeded from
+  // props (config may pre-enable it via devTools.shellYolo); the runner owns the authoritative
+  // flag, this mirror drives the persistent status-bar indicator and the state-aware notice.
+  const [autoApprove, setAutoApprove] = useState(!!props.initialAutoApprove);
+  // Mirror for the synchronous approval useInput handler, so `y` (auto-approve all) can read the
+  // current flag without a stale closure.
+  const autoApproveRef = useRef(!!props.initialAutoApprove);
   // Whether to show the post-`/clear` "history cleared" banner. Lives in the live (non-Static)
   // frame so it is reliably visible — pushing a system line right after setTranscript([]) is
   // swallowed because clearing <Static>'s items resets its internal index (TUI-C12). Hidden
@@ -209,6 +216,32 @@ export function App(props: TuiAppProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // EXT-12 — apply an auto-approve change (from `/auto-approve on|off`, the `/yolo` alias, or the
+  // approval prompt's `y` key). The runner owns the flag, so ask it to apply the action, mirror the
+  // landed state into local state + ref (drives the status indicator), and commit the state-aware
+  // notice. Falls back to a clear system line when the agent has no runner (fixture). Returns the
+  // landed state so the approval handler can also approve the pending command in the same keystroke.
+  const applyAutoApprove = useCallback(
+    (action: 'on' | 'off' | 'toggle'): boolean => {
+      if (!agent.setAutoApprove) {
+        push({
+          kind: 'system',
+          level: 'warning',
+          text: 'Auto-approve is unavailable in this session.',
+        });
+        return autoApproveRef.current;
+      }
+      const next = agent.setAutoApprove(action);
+      autoApproveRef.current = next;
+      setAutoApprove(next);
+      const { title, lines, tone } = autoApproveNotice(next);
+      push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
+      return next;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [agent]
+  );
+
   // Resolve the currently-shown approval (the queue head) and commit a brief notice so the
   // decision reads in the transcript (TUI-C14 notice conventions). Dequeues the head so the next
   // queued approval (if any) surfaces. Approve carries the chosen scope; reject is fail-closed.
@@ -245,10 +278,25 @@ export function App(props: TuiAppProps): React.ReactElement {
 
   const handleSubmit = useCallback(
     (value: string) => {
-      if (runningRef.current) return;
       if (!value.trim()) return;
 
-      // Legacy bare `exit` keyword still quits.
+      const running = runningRef.current;
+      const parsed = parseSlashCommand(value);
+
+      // While a turn is streaming ("during inference") the prompt stays mounted so the user can
+      // flip auto-approval or inspect state mid-turn (EXT-12). Only slash commands are honoured
+      // then — a plain message can't be sent until the turn finishes — and dispatch itself refuses
+      // any command not marked availableDuringRun. Outside a run, everything behaves as before.
+      if (running && !parsed) {
+        push({
+          kind: 'system',
+          level: 'warning',
+          text: 'The agent is working — only slash commands (e.g. /auto-approve) are available right now.',
+        });
+        return;
+      }
+
+      // Legacy bare `exit` keyword still quits (idle only — guarded above while running).
       if (isPlainExit(value)) {
         quit();
         return;
@@ -256,19 +304,23 @@ export function App(props: TuiAppProps): React.ReactElement {
 
       // A line starting with `/` is a slash command: dispatch through the registry instead
       // of sending it to the model. Unknown commands become a friendly system line.
-      const parsed = parseSlashCommand(value);
       if (parsed) {
-        const result = dispatchSlashCommand(parsed, registry, {
-          mode,
-          modelDisplayName: modelDisplayName ?? '',
-          turnCount: turnCountRef.current,
-          toolsExpanded: toolsExpandedRef.current,
-          debugVisible: debugVisibleRef.current,
-          configSummary: props.configSummary,
-          historySummary: props.historySummary,
-          insightsSummary: props.insightsSummary,
-          historySearch: props.historySearch,
-        });
+        const result = dispatchSlashCommand(
+          parsed,
+          registry,
+          {
+            mode,
+            modelDisplayName: modelDisplayName ?? '',
+            turnCount: turnCountRef.current,
+            toolsExpanded: toolsExpandedRef.current,
+            debugVisible: debugVisibleRef.current,
+            configSummary: props.configSummary,
+            historySummary: props.historySummary,
+            insightsSummary: props.insightsSummary,
+            historySearch: props.historySearch,
+          },
+          { duringRun: running }
+        );
         if (result.clearTranscript) {
           setTranscript([]);
           setSubagents(initialSubagentTree());
@@ -301,21 +353,11 @@ export function App(props: TuiAppProps): React.ReactElement {
           // toggleTools owns the notice so the copy matches the state actually applied.
           toggleTools();
         }
-        if (result.toggleYolo) {
-          // The runner owns the flag; flip it and commit the notice for the landed state. When the
-          // agent can't toggle (fixture without a runner) fall back to a clear system line rather
-          // than silently no-op. EXT-12.
-          if (agent.toggleYolo) {
-            const next = agent.toggleYolo();
-            const { title, lines, tone } = yoloToggleNotice(next);
-            push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
-          } else {
-            push({
-              kind: 'system',
-              level: 'warning',
-              text: 'yolo is unavailable in this session.',
-            });
-          }
+        if (result.autoApprove) {
+          // The runner owns the flag; apply the requested action and commit the notice for the
+          // landed state via the shared helper (single-sourced with the approval prompt's y key).
+          // EXT-12.
+          applyAutoApprove(result.autoApprove);
         }
         if (result.toggleDebug) {
           setDebugVisible((v) => {
@@ -333,9 +375,9 @@ export function App(props: TuiAppProps): React.ReactElement {
             return next;
           });
         }
-        // Commit a structured notice (TUI-C14). /tools and /yolo own their notices above (the
-        // state-aware copy is committed there), so skip result.notice in those cases.
-        if (result.notice && !result.toggleTools && !result.toggleYolo) {
+        // Commit a structured notice (TUI-C14). /tools and /auto-approve own their notices above
+        // (the state-aware copy is committed there), so skip result.notice in those cases.
+        if (result.notice && !result.toggleTools && !result.autoApprove) {
           const { title, lines, tone } = result.notice;
           push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
         }
@@ -349,7 +391,7 @@ export function App(props: TuiAppProps): React.ReactElement {
       void runTurn(value);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [runTurn, quit, registry, mode, modelDisplayName, toggleTools]
+    [runTurn, quit, registry, mode, modelDisplayName, toggleTools, applyAutoApprove]
   );
 
   // Keyboard handling, in priority order:
@@ -360,15 +402,21 @@ export function App(props: TuiAppProps): React.ReactElement {
   //     PageUp/PageDown page-step, m maximises, Esc unfocuses.
   useInput((input, key) => {
     // Highest priority: a pending tool approval OWNS the keyboard (EXT-9 Phase B2). While one is
-    // shown, o/s/a resolve approve with the matching scope; anything else (n, Esc, Enter, …)
-    // resolves reject — fail-closed, mirroring the readline path. We swallow the key either way
-    // so it can't fall through to abort/debug handling or get typed into the prompt.
+    // shown, o/s/a resolve approve with the matching scope; `y` turns on session auto-approve
+    // (invoking /auto-approve during inference) and approves this one; anything else (n, Esc,
+    // Enter, …) resolves reject — fail-closed, mirroring the readline path. We swallow the key
+    // either way so it can't fall through to abort/debug handling or get typed into the prompt.
     if (approvalQueueRef.current.length > 0) {
       const ch = input.toLowerCase();
       if (ch === 'o') resolveApproval('once');
       else if (ch === 's') resolveApproval('session');
       else if (ch === 'a') resolveApproval('always');
-      else resolveApproval('reject');
+      else if (ch === 'y') {
+        // Enable auto-approval for the rest of the session, then approve this pending command
+        // once so the run continues; every later gated command auto-approves silently.
+        if (!autoApproveRef.current) applyAutoApprove('on');
+        resolveApproval('once');
+      } else resolveApproval('reject');
       return;
     }
 
@@ -520,8 +568,12 @@ export function App(props: TuiAppProps): React.ReactElement {
         modelDisplayName={modelDisplayName}
         turnCount={turnCount}
         debugHint={debugVisible && !debugFocused}
+        autoApprove={autoApprove}
       />
-      {!running && !debugFocused && !pendingApproval ? (
+      {/* The prompt stays mounted while a turn streams (EXT-12), so the user can run mid-turn
+          slash commands like /auto-approve; handleSubmit + dispatch gate what's allowed then. It
+          is suspended only when the debug panel is focused or a tool approval owns the keyboard. */}
+      {!debugFocused && !pendingApproval ? (
         <PromptInput
           onSubmit={handleSubmit}
           commands={registry}
