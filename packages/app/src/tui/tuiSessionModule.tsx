@@ -30,13 +30,18 @@ import { HumanMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import { createResolvers } from '@gaunt-sloth/agent/resolvers.js';
 import { resolveAgentFactory } from '@gaunt-sloth/agent/core/resolveAgentFactory.js';
-import { GthDeepAgent } from '@gaunt-sloth/agent/core/GthDeepAgent.js';
+import { GthAbstractAgent } from '@gaunt-sloth/core/core/GthAbstractAgent.js';
 import type { SessionConfig } from '@gaunt-sloth/agent/modules/interactiveSessionModule.js';
 import type { BaseMessage } from '@langchain/core/messages';
 import { App } from '#src/tui/components/App.js';
 import { formatConfigSummary } from '#src/tui/slashCommands.js';
 import type { PendingApproval, TuiAgent, TuiDebugCapture } from '#src/tui/types.js';
-import { renderHistory, renderRequestDetails, renderResponse } from '#src/tui/debugRender.js';
+import {
+  renderHistory,
+  renderSystemDetails,
+  renderToolDetails,
+  renderResponse,
+} from '#src/tui/debugRender.js';
 import { viewportBumpSequence } from '#src/tui/terminal.js';
 import type { DebugRequestExtras } from '@gaunt-sloth/agent/core/debugCapture.js';
 
@@ -124,7 +129,8 @@ function createDebugBridge() {
         emit({
           kind: 'request',
           text: renderHistory(messages),
-          details: renderRequestDetails(extras),
+          system: renderSystemDetails(extras),
+          tools: renderToolDetails(extras),
         }),
       onResponse: (response: unknown) => emit({ kind: 'response', text: renderResponse(response) }),
     },
@@ -228,10 +234,11 @@ export async function createTuiSession(
   const bridge = createStatusBridge();
   const debugBridge = createDebugBridge();
   const approvalBridge = createApprovalBridge();
-  // B5: TUI code/chat default to the deep backend; an explicit config.agent.backend overrides it
-  // (mirrors the readline path in createInteractiveSession). createResolvers() is unchanged, so a
-  // lean session keeps the full toolset.
-  const runner = new GthAgentRunner(bridge.emit, createResolvers(), resolveAgentFactory(config, 'deep'));
+  // B5: TUI code/chat default to the LEAN backend; an explicit config.agent.backend overrides it
+  // (deep is now opt-in / experimental). Mirrors the readline path in createInteractiveSession,
+  // askCommand, and execCommand — the TUI is the default interactive surface, so it must match.
+  // createResolvers() is unchanged, so a lean session keeps the full toolset.
+  const runner = new GthAgentRunner(bridge.emit, createResolvers(), resolveAgentFactory(config, 'lean'));
 
   try {
     await runner.init(sessionConfig.mode, config, checkpointSaver);
@@ -243,12 +250,12 @@ export async function createTuiSession(
     // anything else → reject, fail-closed).
     runner.setToolApprovalCallback((pending) => approvalBridge.request(pending));
 
-    // Attach the debug sink to the live deep agent (opt-in; the wrapModelCall middleware reads
-    // it lazily, so this only enables capture for the TUI's /debug panel — the lean/AG-UI
-    // contracts are untouched). Guarded by an instanceof so a non-deep agent simply has no
-    // debug capture rather than failing.
+    // Attach the debug sink to the live agent (opt-in; each backend's wrapModelCall middleware
+    // reads it lazily, so this only enables capture for the TUI's /debug panel — the AG-UI
+    // contract is untouched). Both the lean (default) and deep backends extend GthAbstractAgent
+    // and install the capture middleware, so the panel populates on either.
     const agent = runner.getAgent();
-    if (agent instanceof GthDeepAgent) {
+    if (agent instanceof GthAbstractAgent) {
       agent.debugCapture = debugBridge.capture;
     }
 

@@ -283,7 +283,7 @@ describe('tui <App>', () => {
     await vi.waitFor(() => {
       const f = lastFrame() ?? '';
       expect(f).toContain('Subagents');
-      expect(f).toContain('Raw model response');
+      expect(f).toContain('Raw response');
     });
 
     // Toggle off.
@@ -495,8 +495,9 @@ describe('tui <App>', () => {
     );
 
     await vi.waitFor(() => expect(lastFrame()).toContain('>'));
-    // Distinct content per section so we can tell which tab's body is shown.
-    emit?.({ kind: 'request', text: 'HISTORY_BODY', details: 'REQUEST_BODY' });
+    // Distinct content per section so we can tell which tab's body is shown (TUI-C16: system and
+    // tools are now separate tabs).
+    emit?.({ kind: 'request', text: 'HISTORY_BODY', system: 'SYSTEM_BODY', tools: 'TOOLS_BODY' });
     emit?.({ kind: 'response', text: 'RESPONSE_BODY' });
 
     stdin.write('/debug');
@@ -508,17 +509,21 @@ describe('tui <App>', () => {
     await vi.waitFor(() => expect(lastFrame()).toContain('Tab: section'));
     await vi.waitFor(() => expect(lastFrame()).toContain('(no subagents spawned yet)'));
 
-    // Shift+Tab from the first section wraps backward to the last (response).
+    // Shift+Tab from the first section (subagents) wraps backward to the last (response).
     stdin.write(SHIFT_TAB);
     await vi.waitFor(() => expect(lastFrame()).toContain('RESPONSE_BODY'));
 
-    // Shift+Tab again steps back one more to the request section.
-    stdin.write(SHIFT_TAB);
-    await vi.waitFor(() => expect(lastFrame()).toContain('REQUEST_BODY'));
+    // Order is subagents · system · tools · history · response, so stepping back visits each.
+    stdin.write(SHIFT_TAB); // -> history
+    await vi.waitFor(() => expect(lastFrame()).toContain('HISTORY_BODY'));
+    stdin.write(SHIFT_TAB); // -> tools
+    await vi.waitFor(() => expect(lastFrame()).toContain('TOOLS_BODY'));
+    stdin.write(SHIFT_TAB); // -> system
+    await vi.waitFor(() => expect(lastFrame()).toContain('SYSTEM_BODY'));
 
-    // Plain Tab still goes forward — back to the response section.
+    // Plain Tab still goes forward — back to the tools section.
     stdin.write(TAB);
-    await vi.waitFor(() => expect(lastFrame()).toContain('RESPONSE_BODY'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('TOOLS_BODY'));
 
     unmount();
   });
@@ -568,7 +573,7 @@ describe('tui <App>', () => {
     unmount();
   });
 
-  it('shows the "Sent to model (system + tools)" tab with captured request details', async () => {
+  it('shows the split "System prompt" and "Tools" tabs with captured request details (TUI-C16)', async () => {
     const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
     let emit: ((c: import('#src/tui/types.js').TuiDebugCapture) => void) | undefined;
     const subscribeDebug = (cb: (c: import('#src/tui/types.js').TuiDebugCapture) => void) => {
@@ -580,28 +585,32 @@ describe('tui <App>', () => {
     );
 
     await vi.waitFor(() => expect(lastFrame()).toContain('>'));
-    // Feed a request capture (history + the new request details).
+    // Feed a request capture split across the two tabs (system vs tool catalogue).
     emit?.({
       kind: 'request',
       text: '[]',
-      details: '=== MODEL PARAMS ===\n{"model":"claude-opus-4"}',
+      system: '=== MODEL PARAMS ===\n{"model":"claude-opus-4"}',
+      tools: '=== TOOLS (1) ===\n• read_file',
     });
 
     stdin.write('/debug');
     await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
     stdin.write('\r');
-    await vi.waitFor(() => expect(lastFrame()).toContain('Sent to model (system + tools)'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('System prompt'));
 
-    // Step to the request tab (subagents -> history -> request) and read its content.
+    // Step to the System prompt tab (subagents -> system) and read its content.
     stdin.write(TAB); // focus
     await vi.waitFor(() => expect(lastFrame()).toContain('Tab: section'));
-    stdin.write(TAB); // -> history
-    stdin.write(TAB); // -> request
+    stdin.write(TAB); // -> system
     await vi.waitFor(() => {
       const f = lastFrame() ?? '';
       expect(f).toContain('MODEL PARAMS');
       expect(f).toContain('claude-opus-4');
     });
+
+    // One more Tab reaches the Tools tab, which leads with the tool name list.
+    stdin.write(TAB); // -> tools
+    await vi.waitFor(() => expect(lastFrame()).toContain('read_file'));
 
     unmount();
   });

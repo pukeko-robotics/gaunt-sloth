@@ -23,7 +23,10 @@ import {
   guardFilesystemBackend,
   type FilesystemPermission,
 } from '#src/core/deepAgentPermissions.js';
-import type { DebugCapture, DebugRequestExtras, DebugToolDef } from '#src/core/debugCapture.js';
+import { extractDebugRequestExtras } from '#src/core/debugCapture.js';
+// Re-export so existing importers of this module (extractDebugRequestExtras.spec) keep working
+// now that the implementation lives in @gaunt-sloth/core.
+export { extractDebugRequestExtras } from '#src/core/debugCapture.js';
 import { ShellCommandFailedError } from '#src/tools/GthDevToolkit.js';
 
 /**
@@ -108,13 +111,8 @@ export interface GthDeepAgentParams {
  * middleware hardening without re-running `createDeepAgent` locally.
  */
 export class GthDeepAgent extends GthAbstractAgent {
-  /**
-   * Opt-in debug sink for the TUI `/debug` panel. Set AFTER {@link init} via
-   * `runner.getAgent()`; read lazily inside the `wrapModelCall` middleware so that when it
-   * is `undefined` (the normal path) the middleware is a transparent pass-through. Never
-   * touched by the lean agent or the AG-UI server, so those contracts are unchanged.
-   */
-  public debugCapture: DebugCapture | undefined;
+  // `debugCapture` (the opt-in TUI `/debug` sink) now lives on the shared GthAbstractAgent base
+  // so the lean backend supports it too; the wrapModelCall capture middleware below reads it.
 
   async init(
     command: GthCommand | undefined,
@@ -743,97 +741,6 @@ export function appendOsShellNote(systemPrompt: string | undefined): string {
   return systemPrompt ? `${systemPrompt}\n\n${note}` : note;
 }
 
-/**
- * Scalar model-param fields worth surfacing in the `/debug` panel. Deliberately an
- * allowlist (NOT a whole-object dump) so no credential field (`apiKey`, `accessToken`, …)
- * can ever leak into the rendered debug view.
- *
- * `streaming` is intentionally NOT here: it is the model instance's static flag, which is
- * usually `false` even when the turn streams — the GthAgentRunner decides streaming by calling
- * `.stream()` vs `.invoke()`, not by this property — so surfacing it just misleads.
- */
-const DEBUG_MODEL_PARAM_KEYS = [
-  'model',
-  'modelName',
-  'modelId',
-  'deploymentName',
-  'temperature',
-  'topP',
-  'topK',
-  'maxTokens',
-  'maxOutputTokens',
-  'maxReasoningTokens',
-  'reasoningEffort',
-  'thinkingBudget',
-  'stop',
-  'provider',
-] as const;
-
-/** Pull the key-free scalar model params from the (provider-specific) model instance. */
-function extractModelParams(model: unknown): Record<string, unknown> | undefined {
-  if (!model || typeof model !== 'object') return undefined;
-  const src = model as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
-  for (const key of DEBUG_MODEL_PARAM_KEYS) {
-    const value = src[key];
-    if (value === undefined || value === null) continue;
-    // Only scalars / scalar arrays — never nested objects that could carry credentials.
-    if (typeof value === 'object' && !Array.isArray(value)) continue;
-    out[key] = value;
-  }
-  // `model` / `modelName` / `modelId` are langchain aliases for the same value; collapse the
-  // duplicates so the panel shows the model id once instead of two identical lines.
-  if (typeof out.model !== 'string' && typeof out.modelName === 'string') {
-    out.model = out.modelName;
-  }
-  if (out.modelName === out.model) delete out.modelName;
-  if (out.modelId === out.model) delete out.modelId;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-/** Best-effort tool definition (name + description + schema) for the debug view. */
-function extractToolDefs(tools: unknown): DebugToolDef[] | undefined {
-  if (!Array.isArray(tools) || tools.length === 0) return undefined;
-  const defs: DebugToolDef[] = [];
-  for (const tool of tools) {
-    if (!tool || typeof tool !== 'object') continue;
-    const t = tool as Record<string, unknown>;
-    const name = typeof t.name === 'string' ? t.name : undefined;
-    if (!name) continue;
-    const description = typeof t.description === 'string' ? t.description : undefined;
-    // LangChain StructuredTools expose a Zod/JSON `schema`; some carry it on `lc_kwargs`.
-    const schema = (t.schema as unknown) ?? undefined;
-    defs.push({ name, description, schema });
-  }
-  return defs.length > 0 ? defs : undefined;
-}
-
-/**
- * Assemble the non-message request parts ({@link DebugRequestExtras}) for the `/debug`
- * panel from a `wrapModelCall` request, defensively and key-free. Never throws (the caller
- * already guards, but a debug sink must never break a run) and never dumps the raw model.
- */
-export function extractDebugRequestExtras(request: unknown): DebugRequestExtras | undefined {
-  if (!request || typeof request !== 'object') return undefined;
-  const req = request as Record<string, unknown>;
-  const systemMessage = req.systemMessage as { content?: unknown } | undefined;
-  const systemPrompt =
-    typeof req.systemPrompt === 'string' && req.systemPrompt
-      ? req.systemPrompt
-      : typeof systemMessage?.content === 'string'
-        ? systemMessage.content
-        : undefined;
-  const extras: DebugRequestExtras = {
-    systemPrompt,
-    tools: extractToolDefs(req.tools),
-    modelParams: extractModelParams(req.model),
-    toolChoice: req.toolChoice,
-  };
-  // Return undefined when nothing useful was captured so the renderer can show a clear empty state.
-  const hasAny =
-    extras.systemPrompt !== undefined ||
-    extras.tools !== undefined ||
-    extras.modelParams !== undefined ||
-    extras.toolChoice !== undefined;
-  return hasAny ? extras : undefined;
-}
+// The `/debug` request-extras extraction (extractDebugRequestExtras + its model-param / tool-def
+// allowlist helpers) now lives in @gaunt-sloth/core (`core/debugCapture.ts`) so the lean backend
+// shares it. Imported at the top of this module and re-exported for back-compat.

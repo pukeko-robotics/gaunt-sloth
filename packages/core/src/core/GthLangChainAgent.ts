@@ -11,6 +11,7 @@ import {
 } from '#src/utils/llmUtils.js';
 import { getCurrentWorkDir } from '#src/utils/systemUtils.js';
 import { isShellCommandFailedError } from '#src/core/shell/ShellCommandFailedError.js';
+import { extractDebugRequestExtras } from '#src/core/debugCapture.js';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import { BaseCheckpointSaver } from '@langchain/langgraph';
 import { createAgent, createMiddleware } from 'langchain';
@@ -163,9 +164,42 @@ export class GthLangChainAgent extends GthAbstractAgent {
       },
     });
 
+    // Debug-capture middleware (TUI `/debug` panel) — the lean-path sibling of GthDeepAgent's.
+    // Always installed but lazy: it reads `this.debugCapture` per call, so until the TUI attaches a
+    // sink it is a transparent pass-through (one extra await around the handler — the normal path
+    // pays nothing). `request.messages` is the real history at call time; `handler(request)`
+    // resolves to the AIMessage response. Without this, the TUI's System-prompt/Tools/Chat-history
+    // tabs stay empty on the (now default) lean backend.
+    const getDebugCapture = () => this.debugCapture;
+    const debugCaptureMiddleware = createMiddleware({
+      name: 'GthMiddlewareDebugCapture',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      wrapModelCall: async (request: any, handler: any) => {
+        const capture = getDebugCapture();
+        if (!capture) return handler(request);
+        try {
+          capture.onRequest?.(request.messages, extractDebugRequestExtras(request));
+        } catch {
+          /* a debug sink must never break the run */
+        }
+        const response = await handler(request);
+        try {
+          capture.onResponse?.(response);
+        } catch {
+          /* a debug sink must never break the run */
+        }
+        return response;
+      },
+    });
+
     // shellExitSoftening FIRST so it is the outermost wrapToolCall — it must see the raw
     // ShellCommandFailedError throw before any user-configured middleware could transform it.
-    const middleware = [shellExitSoftening, ...configuredMiddleware, toolCallStatusMiddleware];
+    const middleware = [
+      shellExitSoftening,
+      ...configuredMiddleware,
+      toolCallStatusMiddleware,
+      debugCaptureMiddleware,
+    ];
 
     this.statusUpdate(
       StatusLevel.INFO,

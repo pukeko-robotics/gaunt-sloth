@@ -476,6 +476,90 @@ describe('GthLangChainAgent', () => {
       });
     });
 
+    // The lean agent must install the SAME `/debug` capture middleware as the deep agent, so the
+    // TUI's System-prompt / Tools / Chat-history panels populate on the (now default) lean backend.
+    // Regression guard: before this, capture was deep-only and the panels stayed empty.
+    describe('GthMiddlewareDebugCapture (TUI /debug sink)', () => {
+      const getDebugMw = () => {
+        const middleware = createAgentMock.mock.calls.at(-1)?.[0].middleware as {
+          name: string;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          wrapModelCall?: (_request: any, _handler: any) => Promise<unknown>;
+        }[];
+        return middleware.find((m) => m.name === 'GthMiddlewareDebugCapture');
+      };
+
+      it('is installed in the lean middleware array', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('code', mockConfig);
+        expect(getDebugMw()).toBeDefined();
+      });
+
+      it('is a transparent pass-through when no sink is attached', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('code', mockConfig);
+
+        const response = { content: 'yo' };
+        const handler = vi.fn().mockResolvedValue(response);
+        const result = await getDebugMw()!.wrapModelCall!({ messages: [{ content: 'hi' }] }, handler);
+
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(result).toBe(response);
+      });
+
+      it('reports request history and the resolved response to the sink', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('code', mockConfig);
+
+        const onRequest = vi.fn();
+        const onResponse = vi.fn();
+        agent.debugCapture = { onRequest, onResponse };
+
+        const messages = [{ content: 'system' }, { content: 'user turn' }];
+        const response = { content: 'assistant reply' };
+        const handler = vi.fn().mockResolvedValue(response);
+
+        const result = await getDebugMw()!.wrapModelCall!({ messages }, handler);
+
+        // The minimal request carries no tools/system/params, so extras is undefined.
+        expect(onRequest).toHaveBeenCalledWith(messages, undefined);
+        expect(onResponse).toHaveBeenCalledWith(response);
+        expect(onRequest).toHaveBeenCalledBefore(onResponse);
+        expect(result).toBe(response);
+      });
+
+      it('never breaks the run when a sink callback throws', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('code', mockConfig);
+
+        agent.debugCapture = {
+          onRequest: () => {
+            throw new Error('sink boom');
+          },
+          onResponse: () => {
+            throw new Error('sink boom 2');
+          },
+        };
+
+        const response = { content: 'ok' };
+        const handler = vi.fn().mockResolvedValue(response);
+        await expect(getDebugMw()!.wrapModelCall!({ messages: [] }, handler)).resolves.toBe(response);
+        expect(handler).toHaveBeenCalledTimes(1);
+      });
+    });
+
     // GS2-21: the lean agent must give the model a system prompt, composed exactly like the deep
     // agent (backstory + projectGuidelines + mode prompt + system prompt) and handed to createAgent
     // as its `systemPrompt` (a static per-turn system message, NOT a mid-conversation SystemMessage

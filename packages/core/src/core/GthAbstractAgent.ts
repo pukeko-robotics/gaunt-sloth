@@ -17,6 +17,7 @@ import {
   finalizeRunStats,
   type RunStatsAccumulator,
 } from '#src/core/runStats.js';
+import type { DebugCapture } from '#src/core/debugCapture.js';
 import { debugLog, debugLogError, debugLogObject } from '#src/utils/debugUtils.js';
 import { ProgressIndicator } from '#src/utils/ProgressIndicator.js';
 import { stopWaitingForEscape, waitForEscape } from '#src/utils/systemUtils.js';
@@ -50,6 +51,15 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   protected agent: GthCompiledGraph | null = null;
   protected config: GthConfig | null = null;
   protected command: GthCommand | undefined = undefined;
+
+  /**
+   * Opt-in debug sink for the TUI `/debug` panel. Set AFTER {@link init} via
+   * `runner.getAgent()`; read lazily inside each backend's `wrapModelCall` capture middleware
+   * so that when it is `undefined` (the normal path) the middleware is a transparent
+   * pass-through. Lives on the base so BOTH the lean and deep backends support it; the AG-UI
+   * server / non-TUI callers simply never set it, so those contracts are unchanged.
+   */
+  public debugCapture: DebugCapture | undefined;
 
   /**
    * GS2-16 — per-run analytics tally (token usage + invoked tool names) folded from the messages

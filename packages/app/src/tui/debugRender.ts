@@ -18,11 +18,15 @@ import type { DebugRequestExtras, DebugToolDef } from '@gaunt-sloth/agent/core/d
 export function renderHistory(messages: BaseMessage[]): string {
   try {
     const stored = mapChatMessagesToStoredMessages(messages);
-    return JSON.stringify(stored, null, 2);
+    return withDescription(HISTORY_TAB_DESCRIPTION, JSON.stringify(stored, null, 2));
   } catch (err) {
     return `(could not render history: ${err instanceof Error ? err.message : String(err)})`;
   }
 }
+
+const HISTORY_TAB_DESCRIPTION =
+  "The message list sent to the model at call time, each message as a JSON-stable record. The " +
+  "system prompt is shown separately on the System prompt tab.";
 
 /**
  * Render "Raw model response": the resolved `AIMessage` returned by the handler. We try the
@@ -41,13 +45,32 @@ export function renderResponse(response: unknown): string {
 }
 
 /**
- * Render "Sent to model (system + tools)": the non-message parts that also shape a turn — the
- * system prompt, the tool definitions, the tool-choice config and the scalar model params.
- * These come pre-filtered (key-free) from the capture site; this renderer only formats them
- * readably. Each part degrades to a note rather than throwing, so the `/debug` panel never
- * blanks on an odd payload. This is the long content TUI-C4's maximise makes usable.
+ * TUI-C16 (2): a short, plain-language note leading each "Sent to model" tab — what this slice of
+ * the request is and why it shapes the turn. It is set off from the content by a rule but scrolls
+ * WITH it (not a fixed header), so it costs no permanent screen estate.
  */
-export function renderRequestDetails(extras: DebugRequestExtras | undefined): string {
+function withDescription(description: string, body: string): string {
+  return `${description}\n${'─'.repeat(8)}\n\n${body}`;
+}
+
+const SYSTEM_TAB_DESCRIPTION =
+  "System prompt and params. The standing instructions and scalar settings that frame every " +
+  "turn: model params, the tool-choice policy, then the system prompt itself. Sent once per " +
+  "call, ahead of the conversation.";
+
+const TOOLS_TAB_DESCRIPTION =
+  "Tools the model may call this turn. Names first, for an at-a-glance overview; then each " +
+  "tool's full description and parameter schema below.";
+
+/**
+ * Render the "System prompt" tab (TUI-C16): the non-message, non-tool parts that also shape a
+ * turn — the scalar model params, the tool-choice config and the system prompt itself. The tool
+ * catalogue lives on its own tab (see {@link renderToolDetails}) so the system prompt stands
+ * alone. These come pre-filtered (key-free) from the capture site; this renderer only formats
+ * them readably. Each part degrades to a note rather than throwing, so the `/debug` panel never
+ * blanks on an odd payload. Long content that TUI-C4's maximise makes usable.
+ */
+export function renderSystemDetails(extras: DebugRequestExtras | undefined): string {
   if (!extras) return '(no request details captured yet)';
   const sections: string[] = [];
 
@@ -64,15 +87,36 @@ export function renderRequestDetails(extras: DebugRequestExtras | undefined): st
   sections.push('=== SYSTEM PROMPT ===');
   sections.push(extras.systemPrompt ? extras.systemPrompt : '(no system prompt captured)');
 
-  sections.push('');
-  sections.push(`=== TOOL DEFINITIONS (${extras.tools?.length ?? 0}) ===`);
-  if (extras.tools && extras.tools.length > 0) {
-    for (const tool of extras.tools) sections.push(renderToolDef(tool));
+  return withDescription(SYSTEM_TAB_DESCRIPTION, sections.join('\n'));
+}
+
+/**
+ * Render the "Tools" tab (TUI-C16 (3)): the tool catalogue the model may call this turn. Leads
+ * with a compact list of tool NAMES as an at-a-glance overview of what the model can call, then
+ * the full per-tool descriptors (description + JSON-schema params) below. Split out of the system
+ * view so you no longer scroll past the whole system prompt to reach the tools.
+ */
+export function renderToolDetails(extras: DebugRequestExtras | undefined): string {
+  if (!extras) return '(no request details captured yet)';
+  const tools = extras.tools ?? [];
+  const sections: string[] = [];
+
+  sections.push(`=== TOOLS (${tools.length}) ===`);
+  if (tools.length > 0) {
+    // (3) at-a-glance name list first …
+    for (const tool of tools) sections.push(`• ${tool.name}`);
+    // … then the full descriptors below.
+    sections.push('');
+    sections.push('=== TOOL DEFINITIONS ===');
+    for (const tool of tools) {
+      sections.push('');
+      sections.push(renderToolDef(tool));
+    }
   } else {
     sections.push('(no tools captured)');
   }
 
-  return sections.join('\n');
+  return withDescription(TOOLS_TAB_DESCRIPTION, sections.join('\n'));
 }
 
 /** Format one tool definition: name, description, then its JSON-schema params. */

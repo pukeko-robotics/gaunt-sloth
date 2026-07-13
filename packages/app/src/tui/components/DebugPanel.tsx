@@ -2,25 +2,32 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import type { SubagentTreeViewModel } from '#src/tui/viewModel.js';
 
-/** The selectable sections of the docked panel, in tab order. */
-export const DEBUG_TABS = ['subagents', 'history', 'request', 'response'] as const;
+/**
+ * The selectable sections of the docked panel, in tab order. TUI-C16 split the old combined
+ * "Sent to model (system + tools)" section into two tabs — `system` and `tools` — so the tool
+ * catalogue no longer sits below the whole system prompt.
+ */
+export const DEBUG_TABS = ['subagents', 'system', 'tools', 'history', 'response'] as const;
 export type DebugTab = (typeof DEBUG_TABS)[number];
 
 const TAB_LABELS: Record<DebugTab, string> = {
   subagents: 'Subagents',
-  history: 'Sent to model (chat history)',
-  request: 'Sent to model (system + tools)',
-  response: 'Raw model response',
+  system: 'System prompt',
+  tools: 'Tools',
+  history: 'Chat history',
+  response: 'Raw response',
 };
 
 export interface DebugPanelProps {
   /** Subagent tree folded from `task` tool-call events. */
   subagents: SubagentTreeViewModel;
-  /** Rendered lines for "Sent to model (chat history)" (already split on newlines). */
+  /** Rendered lines for the "Chat history" tab (already split on newlines). */
   historyLines: string[];
-  /** Rendered lines for "Sent to model (system + tools)" — system/tools/params (split on newlines). */
-  requestLines: string[];
-  /** Rendered lines for "Raw model response" (already split on newlines). */
+  /** Rendered lines for the "System prompt" tab — model params/tool-choice/system prompt (TUI-C16). */
+  systemLines: string[];
+  /** Rendered lines for the "Tools" tab — tool name list then per-tool descriptors (TUI-C16). */
+  toolsLines: string[];
+  /** Rendered lines for the "Raw response" tab (already split on newlines). */
   responseLines: string[];
   /** Which tab is shown. */
   activeTab: DebugTab;
@@ -38,7 +45,8 @@ export interface DebugPanelProps {
 export interface DebugPanelLinesInput {
   subagents: SubagentTreeViewModel;
   historyLines: string[];
-  requestLines: string[];
+  systemLines: string[];
+  toolsLines: string[];
   responseLines: string[];
   activeTab: DebugTab;
 }
@@ -51,23 +59,23 @@ export interface DebugPanelLinesInput {
 export function debugPanelLines({
   subagents,
   historyLines,
-  requestLines,
+  systemLines,
+  toolsLines,
   responseLines,
   activeTab,
 }: DebugPanelLinesInput): string[] {
-  return activeTab === 'subagents'
-    ? subagentLines(subagents)
-    : activeTab === 'history'
-      ? historyLines.length
-        ? historyLines
-        : ['(no model call captured yet)']
-      : activeTab === 'request'
-        ? requestLines.length
-          ? requestLines
-          : ['(no request details captured yet)']
-        : responseLines.length
-          ? responseLines
-          : ['(no model response captured yet)'];
+  switch (activeTab) {
+    case 'subagents':
+      return subagentLines(subagents);
+    case 'system':
+      return systemLines.length ? systemLines : ['(no request details captured yet)'];
+    case 'tools':
+      return toolsLines.length ? toolsLines : ['(no tools captured yet)'];
+    case 'history':
+      return historyLines.length ? historyLines : ['(no model call captured yet)'];
+    case 'response':
+      return responseLines.length ? responseLines : ['(no model response captured yet)'];
+  }
 }
 
 /** Flatten the subagent tree into renderable lines for the bounded viewport. */
@@ -96,7 +104,8 @@ function subagentLines(tree: SubagentTreeViewModel): string[] {
 export function DebugPanel({
   subagents,
   historyLines,
-  requestLines,
+  systemLines,
+  toolsLines,
   responseLines,
   activeTab,
   scrollOffset,
@@ -107,7 +116,8 @@ export function DebugPanel({
   const lines = debugPanelLines({
     subagents,
     historyLines,
-    requestLines,
+    systemLines,
+    toolsLines,
     responseLines,
     activeTab,
   });
@@ -149,7 +159,7 @@ export function DebugPanel({
           })}
         </Text>
       </Box>
-      {/* Hint on its own row so it never competes with the (now four) tab labels for width
+      {/* Hint on its own row so it never competes with the (now five) tab labels for width
           and wraps mid-phrase. */}
       <Box>
         <Text dimColor>

@@ -75,7 +75,9 @@ export function App(props: TuiAppProps): React.ReactElement {
   const [debugScroll, setDebugScroll] = useState(0);
   const [debugMaximized, setDebugMaximized] = useState(false);
   const [debugHistory, setDebugHistory] = useState<string[]>([]);
-  const [debugRequest, setDebugRequest] = useState<string[]>([]);
+  // TUI-C16: the old combined "system + tools" capture is split across two tabs.
+  const [debugSystem, setDebugSystem] = useState<string[]>([]);
+  const [debugTools, setDebugTools] = useState<string[]>([]);
   const [debugResponse, setDebugResponse] = useState<string[]>([]);
   // Whether tool-call panels show their args/result body. Collapsed by default (compact
   // summary lines) so the transcript stays readable; Ctrl+T flips the whole turn's detail,
@@ -135,11 +137,12 @@ export function App(props: TuiAppProps): React.ReactElement {
       debugPanelLines({
         subagents,
         historyLines: debugHistory,
-        requestLines: debugRequest,
+        systemLines: debugSystem,
+        toolsLines: debugTools,
         responseLines: debugResponse,
         activeTab: debugTab,
       }).length,
-    [subagents, debugHistory, debugRequest, debugResponse, debugTab]
+    [subagents, debugHistory, debugSystem, debugTools, debugResponse, debugTab]
   );
   const debugMaxOffset = Math.max(0, debugLineCount - debugViewport);
   // Clamp helper shared by every downward scroll (page + arrow) so the offset never exceeds the
@@ -325,7 +328,8 @@ export function App(props: TuiAppProps): React.ReactElement {
           setTranscript([]);
           setSubagents(initialSubagentTree());
           setDebugHistory([]);
-          setDebugRequest([]);
+          setDebugSystem([]);
+          setDebugTools([]);
           setDebugResponse([]);
           // Show visible feedback for the clear. Rendered outside <Static> (see clearedBanner)
           // so the known index-reset swallow quirk can't eat it (TUI-C12).
@@ -519,7 +523,8 @@ export function App(props: TuiAppProps): React.ReactElement {
     return props.subscribeDebug((capture) => {
       if (capture.kind === 'request') {
         setDebugHistory(capture.text.split('\n'));
-        setDebugRequest(capture.details.split('\n'));
+        setDebugSystem(capture.system.split('\n'));
+        setDebugTools(capture.tools.split('\n'));
       } else setDebugResponse(capture.text.split('\n'));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -552,7 +557,8 @@ export function App(props: TuiAppProps): React.ReactElement {
         <DebugPanel
           subagents={subagents}
           historyLines={debugHistory}
-          requestLines={debugRequest}
+          systemLines={debugSystem}
+          toolsLines={debugTools}
           responseLines={debugResponse}
           activeTab={debugTab}
           scrollOffset={debugScroll}
