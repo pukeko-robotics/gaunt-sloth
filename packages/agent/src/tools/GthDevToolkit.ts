@@ -129,21 +129,27 @@ export const VIRTUAL_FS_SHELL_ACK_PARAM =
 
 /**
  * virtualMode variant of {@link RunShellCommandArgsSchema}. In addition to `command` it carries a
- * FORCED acknowledgement flag ({@link VIRTUAL_FS_SHELL_ACK_PARAM}) typed as `z.literal(true)` — it
- * is required and only accepts `true`, so the model cannot call the shell tool without first
- * consciously acknowledging that a filesystem-tool `/`-rooted path is NOT necessarily a valid path
- * for this real-OS shell.
+ * FORCED acknowledgement flag ({@link VIRTUAL_FS_SHELL_ACK_PARAM}) so the model cannot call the
+ * shell tool without first consciously acknowledging that a filesystem-tool `/`-rooted path is NOT
+ * necessarily a valid path for this real-OS shell.
+ *
+ * The flag is a plain required `z.boolean()`, NOT `z.literal(true)`: a literal emits a JSON-Schema
+ * `const`, which Gemini/Vertex AI's function-declaration schema dialect rejects ("Unknown name
+ * `const`"), poisoning the whole request. Keeping it a bare boolean produces only `{"type":
+ * "boolean"}`, which every provider accepts. The "only true is allowed" constraint is enforced at
+ * RUNTIME instead (see the tool body in `createTools`), which returns a recoverable message rather
+ * than aborting when the model passes anything but `true`.
  */
 const RunShellCommandVirtualArgsSchema = z.object({
   command: z.string().describe('The shell command to run'),
   [VIRTUAL_FS_SHELL_ACK_PARAM]: z
-    .literal(true)
+    .boolean()
     .describe(
-      'Required — must be true. By setting this to true you confirm you understand that the ' +
+      'Required — you MUST pass true. By setting this to true you confirm you understand that the ' +
         'filesystem tools (ls/read_file/write_file/edit_file/glob/grep) address a VIRTUAL "/" root ' +
         '(a leading "/" means the working directory) which can differ from the real native paths ' +
         'this shell uses, and that you have verified — or will verify — the real working directory ' +
-        'before relying on any path in the command.'
+        'before relying on any path in the command. The command will NOT run unless this is true.'
     ),
 });
 
@@ -522,15 +528,27 @@ export default class GthDevToolkit extends BaseToolkit {
     if (isShellToolEnabled(this.commands, this.command)) {
       // In virtualMode the fs tools' `/` root diverges from this shell's real OS paths, so the
       // shell tool warns about it (description) AND forces an explicit per-call acknowledgement
-      // (VIRTUAL_FS_SHELL_ACK_PARAM). The command runner ignores the ack flag — its only job is to
-      // make the model stop and think about the path namespace before every shell call. The plain
-      // (non-virtual) path keeps the original single-parameter tool unchanged.
-      const shellSchema = this.virtualFs
-        ? RunShellCommandVirtualArgsSchema
-        : RunShellCommandArgsSchema;
+      // (VIRTUAL_FS_SHELL_ACK_PARAM). The "only true is accepted" rule is enforced HERE at runtime
+      // (not via a schema literal, which would emit a Vertex-incompatible `const`): a missing/false
+      // ack returns a recoverable message so the model retries with it set, rather than aborting.
+      // The plain (non-virtual) path keeps the original single-parameter tool unchanged.
+      const virtualFs = this.virtualFs;
+      const shellSchema = virtualFs ? RunShellCommandVirtualArgsSchema : RunShellCommandArgsSchema;
       tools.push(
         createGthTool(
           async (args: z.infer<typeof shellSchema>): Promise<string> => {
+            if (
+              virtualFs &&
+              (args as Record<string, unknown>)[VIRTUAL_FS_SHELL_ACK_PARAM] !== true
+            ) {
+              return (
+                `Command not run. You must set \`${VIRTUAL_FS_SHELL_ACK_PARAM}: true\` to ` +
+                'acknowledge that the filesystem tools address a virtual "/" root that can differ ' +
+                "from this shell's real paths. Confirm the real working directory first (run " +
+                `${printWorkDirCommand()}), then retry this command with the acknowledgement set ` +
+                'to true.'
+              );
+            }
             return await this.executeCommand(args.command, 'run_shell_command');
           },
           {

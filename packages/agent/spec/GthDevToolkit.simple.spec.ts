@@ -154,31 +154,51 @@ describe('GthDevToolkit - Basic Tests', () => {
       expect(shellTool.description).not.toContain('VIRTUAL');
     });
 
-    it('in virtualFs mode augments the description and forces the acknowledgement param', async () => {
+    it('in virtualFs mode augments the description and adds the acknowledgement param', async () => {
       const { VIRTUAL_FS_SHELL_ACK_PARAM } = await import('#src/tools/GthDevToolkit.js');
       toolkit = new GthDevToolkit({ shell: true }, 'code', { virtualFs: true });
       const shellTool = toolkit.tools.find((t) => t.name === 'run_shell_command')!;
-      // The forced acknowledgement param is present alongside `command`...
+      // The acknowledgement param is present alongside `command` and is required at the schema level.
       const shape = (shellTool.schema as any).shape ?? {};
       expect(Object.keys(shape)).toContain('command');
       expect(Object.keys(shape)).toContain(VIRTUAL_FS_SHELL_ACK_PARAM);
-      // ...and it only accepts literal `true` (the "forced boolean").
       expect((shellTool.schema as any).safeParse({ command: 'ls' }).success).toBe(false);
+      // It is a PLAIN boolean (not z.literal(true)), so it emits no JSON-Schema `const` — Vertex AI
+      // rejects `const`. The "only true" constraint is enforced at runtime, not by the schema, so a
+      // `false` value still parses (it is refused when the tool runs; see below).
       expect(
         (shellTool.schema as any).safeParse({
           command: 'ls',
           [VIRTUAL_FS_SHELL_ACK_PARAM]: false,
         }).success
-      ).toBe(false);
-      expect(
-        (shellTool.schema as any).safeParse({
-          command: 'ls',
-          [VIRTUAL_FS_SHELL_ACK_PARAM]: true,
-        }).success
       ).toBe(true);
       // The description warns about the virtual `/` root vs real shell paths.
       expect(shellTool.description).toContain('VIRTUAL');
       expect(shellTool.description).toContain(VIRTUAL_FS_SHELL_ACK_PARAM);
+    });
+
+    it('emits no JSON-Schema `const`/`enum` in the ack param (Vertex AI compatibility)', async () => {
+      const { z } = await import('zod');
+      toolkit = new GthDevToolkit({ shell: true }, 'code', { virtualFs: true });
+      const shellTool = toolkit.tools.find((t) => t.name === 'run_shell_command')!;
+      const json = JSON.stringify(z.toJSONSchema(shellTool.schema as any));
+      expect(json).not.toContain('"const"');
+      // No boolean-valued enum either (Vertex only tolerates enum on strings).
+      expect(json).not.toContain('"enum":[true]');
+    });
+
+    it('in virtualFs mode refuses (recoverably) when the acknowledgement is not true', async () => {
+      const { VIRTUAL_FS_SHELL_ACK_PARAM } = await import('#src/tools/GthDevToolkit.js');
+      toolkit = new GthDevToolkit({ shell: true }, 'code', { virtualFs: true });
+      const shellTool = toolkit.tools.find((t) => t.name === 'run_shell_command')!;
+      const result = await shellTool.invoke({
+        command: 'echo hi',
+        [VIRTUAL_FS_SHELL_ACK_PARAM]: false,
+      });
+      // A recoverable message (not an exception, not a spawn): the command must not have run.
+      expect(result).toContain(VIRTUAL_FS_SHELL_ACK_PARAM);
+      expect(result).toContain('Command not run');
+      expect(result).not.toContain('completed successfully');
     });
 
     it('in virtualFs mode still runs the command once acknowledged', async () => {
