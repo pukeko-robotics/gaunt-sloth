@@ -127,6 +127,26 @@ function replaceUnionSchemas(schema: unknown, context: ReplaceUnionSchemasContex
     };
   }
 
+  // Gemini/Vertex AI does not support the JSON Schema `const` keyword (only `enum`),
+  // so replace it. A string const becomes a single-value enum (keeps the hard
+  // constraint); any other const value is folded into the description.
+  if (schema.const !== undefined) {
+    const constValue = schema.const;
+    // The unassignment below is for purpose of taking rest of parameters except const.
+    const { const: _const, ...rest } = schema;
+    const description = mergeDescription(
+      schema.description,
+      `Must be exactly: ${JSON.stringify(constValue)}.`
+    );
+    context.log(`${context.toolName}: converted schema const at ${context.path.join('.')}`);
+    const converted: JsonInputSchema = { ...rest, description };
+    if (typeof constValue === 'string') {
+      converted.type = 'string';
+      converted.enum = [constValue];
+    }
+    return converted;
+  }
+
   let hasChanges = false;
   let updatedSchema = schema;
   const updateField = <Key extends keyof JsonInputSchema>(
