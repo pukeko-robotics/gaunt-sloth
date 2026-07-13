@@ -25,6 +25,10 @@ export const DEFAULT_CONFIG = {
   includeCurrentDateAfterGuidelines: false,
   projectReviewInstructions: PROJECT_REVIEW_INSTRUCTIONS,
   filesystem: 'none',
+  // Enabled built-in tools. `gth_checklist` (the lean agent's planning/todo tool) is on by
+  // default across commands; a user `builtInTools` setting replaces this set entirely.
+  // Cast keeps it a mutable `string[]` under the surrounding `as const`.
+  builtInTools: ['gth_checklist'] as string[],
   debugLog: false,
   consoleLevel: StatusLevel.INFO, // Default to INFO level, not debug
   /**

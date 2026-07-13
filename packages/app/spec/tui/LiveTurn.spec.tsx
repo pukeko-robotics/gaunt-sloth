@@ -122,6 +122,50 @@ describe('tui <LiveTurn>', () => {
     });
   });
 
+  describe('checklist panel (gth_checklist)', () => {
+    const withChecklist = turn({
+      toolCalls: [
+        {
+          id: 'c1',
+          name: 'gth_checklist',
+          argsText: JSON.stringify({
+            items: [
+              { content: 'Set up config', status: 'completed' },
+              { content: 'Implement tool', status: 'in_progress' },
+              { content: 'Write tests', status: 'pending' },
+            ],
+          }),
+          status: 'running',
+        },
+      ],
+    });
+
+    it('renders a dedicated checkbox panel with a done/total header, expanded', () => {
+      const { lastFrame, unmount } = render(<LiveTurn turn={withChecklist} />);
+      const f = stripAnsi(lastFrame() ?? '');
+      expect(f).toContain('📋 Checklist (1/3)');
+      expect(f).toContain('[x] Set up config');
+      expect(f).toContain('[~] Implement tool');
+      expect(f).toContain('[ ] Write tests');
+      // Not the generic tool-call summary line.
+      expect(f).not.toContain('running');
+      unmount();
+    });
+
+    it('falls back to the generic tool panel while the args are still partial', () => {
+      const partial = turn({
+        toolCalls: [
+          { id: 'c1', name: 'gth_checklist', argsText: '{"items":[{"cont', status: 'running' },
+        ],
+      });
+      const { lastFrame, unmount } = render(<LiveTurn turn={partial} />);
+      const f = stripAnsi(lastFrame() ?? '');
+      expect(f).toContain('gth_checklist'); // generic summary line
+      expect(f).not.toContain('📋 Checklist');
+      unmount();
+    });
+  });
+
   describe('reasoning region (💭 Thinking)', () => {
     const withReasoning = turn({
       reasoning: 'First I consider the options.\nThen I decide.',

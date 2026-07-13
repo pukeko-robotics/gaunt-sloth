@@ -155,17 +155,23 @@ function convertMessage(msg: {
 
 /**
  * Construct the AG-UI agent for the configured backend (B5).
- * - `agent.backend: 'lean'` → {@link GthLangChainAgent} (plain LangChain agent, no deepagents
- *   `/large_tool_results` offload — the fix for `filesystem: 'none'` consumers).
- * - anything else (including `'deep'` and the default `undefined`) → {@link GthDeepAgent}.
+ * - `agent.backend: 'deep'` → {@link GthDeepAgent} (deepagents runtime, experimental).
+ * - anything else (including `'lean'` and the default `undefined`) → {@link GthLangChainAgent}
+ *   (plain LangChain agent, no deepagents `/large_tool_results` offload — also the fix for
+ *   `filesystem: 'none'` consumers). Lean is the default.
  *
  * Returns the shared {@link GthAbstractAgent} base so both backends flow through the same
  * `.init`/`.streamWithEvents`/`.streamWithEventsResume` surface used below.
  */
 function createConfiguredAgent(cfg: GthConfig): GthAbstractAgent {
-  return cfg.agent?.backend === 'lean'
-    ? new GthLangChainAgent(defaultStatusCallback, createResolvers())
-    : new GthDeepAgent(defaultStatusCallback, createResolvers());
+  if (cfg.agent?.backend === 'deep') {
+    displayWarning(
+      'Using the experimental deepagents backend (agent.backend: deep). The lean agent is the ' +
+        'default and recommended backend.'
+    );
+    return new GthDeepAgent(defaultStatusCallback, createResolvers());
+  }
+  return new GthLangChainAgent(defaultStatusCallback, createResolvers());
 }
 
 export async function startAgUiServer(config: GthConfig, port: number): Promise<void> {

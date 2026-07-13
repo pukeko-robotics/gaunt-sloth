@@ -140,6 +140,7 @@ describe('config', async () => {
 
       expect(config).toEqual({
         consoleLevel: StatusLevel.INFO,
+        builtInTools: ['gth_checklist'],
         llm: { type: 'vertexai' },
         contentSource: 'file',
         requirementSource: 'file',
@@ -237,6 +238,7 @@ describe('config', async () => {
 
       expect(config).toEqual({
         consoleLevel: StatusLevel.INFO,
+        builtInTools: ['gth_checklist'],
         llm: { type: 'anthropic' },
         contentSource: 'file',
         requirementSource: 'file',
@@ -367,6 +369,7 @@ describe('config', async () => {
 
       expect(config).toEqual({
         consoleLevel: StatusLevel.INFO,
+        builtInTools: ['gth_checklist'],
         llm: { type: 'groq' },
         contentSource: 'file',
         requirementSource: 'file',
@@ -1248,6 +1251,7 @@ describe('config', async () => {
 
       expect(config).toEqual({
         consoleLevel: StatusLevel.INFO,
+        builtInTools: ['gth_checklist'],
         llm: mockLlm,
         modelDisplayName: 'test-model',
         contentSource: 'file',
@@ -1581,6 +1585,7 @@ describe('config', async () => {
 
       expect(config).toEqual({
         consoleLevel: StatusLevel.INFO,
+        builtInTools: ['gth_checklist'],
         llm: { type: 'vertexai' },
         modelDisplayName: undefined,
         contentSource: 'file',
@@ -1663,6 +1668,7 @@ describe('config', async () => {
 
       expect(config).toEqual({
         consoleLevel: StatusLevel.INFO,
+        builtInTools: ['gth_checklist'],
         llm: { type: 'anthropic' },
         contentSource: 'file',
         requirementSource: 'file',
@@ -1744,6 +1750,7 @@ describe('config', async () => {
 
       expect(config).toEqual({
         consoleLevel: StatusLevel.INFO,
+        builtInTools: ['gth_checklist'],
         llm: { type: 'groq' },
         contentSource: 'file',
         requirementSource: 'file',

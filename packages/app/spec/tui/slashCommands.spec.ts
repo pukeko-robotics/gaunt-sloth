@@ -281,11 +281,11 @@ describe('tui/slashCommands formatConfigSummary (GS2-1)', () => {
     expect(joined).toContain('gth config print');
   });
 
-  it('defaults the agent backend to deep and the model to unknown when absent', async () => {
+  it('defaults the agent backend to lean and the model to unknown when absent', async () => {
     const { formatConfigSummary } = await import('#src/tui/slashCommands.js');
     const lines = formatConfigSummary({});
     expect(lines.join('\n')).toContain('Model: unknown');
-    expect(lines.join('\n')).toContain('Agent backend: deep');
+    expect(lines.join('\n')).toContain('Agent backend: lean');
   });
 
   it('renders an array filesystem policy as JSON', async () => {

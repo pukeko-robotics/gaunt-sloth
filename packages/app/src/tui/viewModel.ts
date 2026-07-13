@@ -264,3 +264,52 @@ export function foldSubagentTree(
   const buffers = new Map<string, string>();
   return events.reduce((acc, ev) => foldSubagentEvents(acc, ev, buffers), state);
 }
+
+/* ------------------------------------------------------------------------- *
+ * Checklist tool (`gth_checklist`)                                           *
+ * ------------------------------------------------------------------------- *
+ * The lean agent's planning tool takes `{ items: [{ content, status }] }`. When the TUI sees a
+ * tool call for this name it renders the streamed args as a live checkbox panel instead of a
+ * generic tool card. The name is kept as a local literal (like SUBAGENT_TOOL_NAME) so the TUI
+ * stays decoupled from the agent package.                                                       */
+
+/** The tool name the lean agent uses to record its checklist. Matches `gthChecklistTool.ts`. */
+export const CHECKLIST_TOOL_NAME = 'gth_checklist';
+
+export type ChecklistItemStatus = 'pending' | 'in_progress' | 'completed';
+
+/** One checklist row parsed from a `gth_checklist` tool call's args. */
+export interface ChecklistItemViewModel {
+  content: string;
+  status: ChecklistItemStatus;
+}
+
+/**
+ * Best-effort parse of a (possibly partial) streamed `gth_checklist` args JSON into rows. Mirrors
+ * {@link parseTaskArgs}: a half-streamed or malformed buffer never throws — it returns `null` so
+ * the renderer keeps showing the last good state (or falls back to the generic tool panel).
+ */
+export function parseChecklistArgs(argsText: string): ChecklistItemViewModel[] | null {
+  if (!argsText.trim()) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(argsText);
+  } catch {
+    return null;
+  }
+  const items = (parsed as { items?: unknown })?.items;
+  if (!Array.isArray(items)) return null;
+  const rows: ChecklistItemViewModel[] = [];
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'object') continue;
+    const content = (raw as { content?: unknown }).content;
+    const status = (raw as { status?: unknown }).status;
+    if (
+      typeof content === 'string' &&
+      (status === 'pending' || status === 'in_progress' || status === 'completed')
+    ) {
+      rows.push({ content, status });
+    }
+  }
+  return rows.length ? rows : null;
+}

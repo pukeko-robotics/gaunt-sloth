@@ -313,7 +313,7 @@ describe('apiAgUiModule', () => {
     }
 
     it('should emit RUN_STARTED, message events, and RUN_FINISHED for a successful run', async () => {
-      gthDeepAgentStreamWithEventsMock.mockReturnValue(textStream('Hello', ' world'));
+      gthLangChainAgentStreamWithEventsMock.mockReturnValue(textStream('Hello', ' world'));
 
       const handler = await getRunHandler();
       const req = makeRunReq({ threadId: 'run-success', runId: 'run-id-1' });
@@ -336,7 +336,7 @@ describe('apiAgUiModule', () => {
       // A single assistant turn that interleaves text -> tool -> text (the swallow case):
       // before the fix the second text delta rode the same, never-ended messageId and the
       // client dropped it once the tool call began.
-      gthDeepAgentStreamWithEventsMock.mockReturnValue(
+      gthLangChainAgentStreamWithEventsMock.mockReturnValue(
         (async function* () {
           yield { type: 'text' as const, delta: 'Body center (0.2, 0.3). Let me calibrate.' };
           yield { type: 'tool_start' as const, id: 'tc-1', name: 'turn_right' };
@@ -415,7 +415,7 @@ describe('apiAgUiModule', () => {
     });
 
     it('should emit RUN_ERROR and end response when stream throws', async () => {
-      gthDeepAgentStreamWithEventsMock.mockImplementation(() => {
+      gthLangChainAgentStreamWithEventsMock.mockImplementation(() => {
         throw new Error('Stream failed');
       });
 
@@ -433,7 +433,7 @@ describe('apiAgUiModule', () => {
     });
 
     it('should emit RUN_ERROR with string message for non-Error throws', async () => {
-      gthDeepAgentStreamWithEventsMock.mockImplementation(() => {
+      gthLangChainAgentStreamWithEventsMock.mockImplementation(() => {
         throw 'something went wrong';
       });
 
@@ -460,7 +460,7 @@ describe('apiAgUiModule', () => {
       // Must listen on the response, not the request: req 'close' fires as soon
       // as the POST body is consumed and would abort every run instantly.
       expect(res.on).toHaveBeenCalledWith('close', expect.any(Function));
-      const [, , signal] = gthDeepAgentStreamWithEventsMock.mock.calls[0];
+      const [, , signal] = gthLangChainAgentStreamWithEventsMock.mock.calls[0];
       expect(signal).toBeInstanceOf(AbortSignal);
       expect(signal.aborted).toBe(false);
     });
@@ -474,7 +474,7 @@ describe('apiAgUiModule', () => {
       // Connection closes after the response finished — must not abort.
       res.emitClose();
 
-      const [, , signal] = gthDeepAgentStreamWithEventsMock.mock.calls[0];
+      const [, , signal] = gthLangChainAgentStreamWithEventsMock.mock.calls[0];
       expect(signal.aborted).toBe(false);
     });
 
@@ -487,7 +487,7 @@ describe('apiAgUiModule', () => {
 
       await handler(req, makeMockRes());
 
-      const [, , , signal] = gthDeepAgentStreamWithEventsResumeMock.mock.calls[0];
+      const [, , , signal] = gthLangChainAgentStreamWithEventsResumeMock.mock.calls[0];
       expect(signal).toBeInstanceOf(AbortSignal);
     });
 
@@ -495,7 +495,7 @@ describe('apiAgUiModule', () => {
       const res = makeMockRes();
       // Simulate the client going away mid-stream: fire response 'close' (aborts
       // the signal) then surface the resulting AbortError out of the stream.
-      gthDeepAgentStreamWithEventsMock.mockImplementation(() =>
+      gthLangChainAgentStreamWithEventsMock.mockImplementation(() =>
         (async function* () {
           res.emitClose();
           const err = new Error('Aborted');
@@ -514,7 +514,7 @@ describe('apiAgUiModule', () => {
     });
 
     it('should emit TEXT_MESSAGE_CONTENT for each text event in the stream', async () => {
-      gthDeepAgentStreamWithEventsMock.mockReturnValue(textStream('real', 'content'));
+      gthLangChainAgentStreamWithEventsMock.mockReturnValue(textStream('real', 'content'));
 
       const handler = await getRunHandler();
       const req = makeRunReq({ threadId: 'text-events-thread' });
@@ -544,7 +544,7 @@ describe('apiAgUiModule', () => {
 
       await handler(req, res);
 
-      const [passedMessages] = gthDeepAgentStreamWithEventsMock.mock.calls[0];
+      const [passedMessages] = gthLangChainAgentStreamWithEventsMock.mock.calls[0];
       const roles = passedMessages.map((m: { role: string }) => m.role);
       expect(roles).toContain('user');
       expect(roles).toContain('assistant');
@@ -565,7 +565,7 @@ describe('apiAgUiModule', () => {
 
       await handler(req, makeMockRes());
 
-      const [passedMessages] = gthDeepAgentStreamWithEventsMock.mock.calls[0];
+      const [passedMessages] = gthLangChainAgentStreamWithEventsMock.mock.calls[0];
       expect(passedMessages[0]).toMatchObject({ role: 'user' });
       expect(passedMessages.some((m: { role?: string }) => m.role === 'system')).toBe(false);
       expect(llmUtilsMock.buildSystemMessages).not.toHaveBeenCalled();
@@ -574,7 +574,7 @@ describe('apiAgUiModule', () => {
     // ─── Frontend-fulfilled tool resume ────────────────────────────────────
 
     it('should route to streamWithEventsResume when forwardedProps.command.resume is present', async () => {
-      gthDeepAgentStreamWithEventsResumeMock.mockReturnValue(textStream('resumed'));
+      gthLangChainAgentStreamWithEventsResumeMock.mockReturnValue(textStream('resumed'));
 
       const handler = await getRunHandler();
       const req = makeRunReq({
@@ -590,10 +590,10 @@ describe('apiAgUiModule', () => {
 
       await handler(req, res);
 
-      expect(gthDeepAgentStreamWithEventsResumeMock).toHaveBeenCalledOnce();
-      const [resumeValue] = gthDeepAgentStreamWithEventsResumeMock.mock.calls[0];
+      expect(gthLangChainAgentStreamWithEventsResumeMock).toHaveBeenCalledOnce();
+      const [resumeValue] = gthLangChainAgentStreamWithEventsResumeMock.mock.calls[0];
       expect(resumeValue).toBe('{"mimeType":"image/jpeg","data":"AAA"}');
-      expect(gthDeepAgentStreamWithEventsMock).not.toHaveBeenCalled();
+      expect(gthLangChainAgentStreamWithEventsMock).not.toHaveBeenCalled();
     });
 
     it('should skip message conversion on resume (routes straight to resume)', async () => {
@@ -608,8 +608,8 @@ describe('apiAgUiModule', () => {
 
       await handler(req, res);
 
-      expect(gthDeepAgentStreamWithEventsMock).not.toHaveBeenCalled();
-      expect(gthDeepAgentStreamWithEventsResumeMock).toHaveBeenCalledOnce();
+      expect(gthLangChainAgentStreamWithEventsMock).not.toHaveBeenCalled();
+      expect(gthLangChainAgentStreamWithEventsResumeMock).toHaveBeenCalledOnce();
     });
 
     it('should pass runConfig with thread_id to streamWithEventsResume', async () => {
@@ -621,7 +621,7 @@ describe('apiAgUiModule', () => {
 
       await handler(req, makeMockRes());
 
-      const [, runConfig] = gthDeepAgentStreamWithEventsResumeMock.mock.calls[0];
+      const [, runConfig] = gthLangChainAgentStreamWithEventsResumeMock.mock.calls[0];
       expect(runConfig.configurable).toMatchObject({ thread_id: 'resume-thread-42' });
     });
 
@@ -636,7 +636,7 @@ describe('apiAgUiModule', () => {
 
       await handler(req, makeMockRes());
 
-      const [, , queuedMessages] = gthDeepAgentStreamWithEventsResumeMock.mock.calls[0];
+      const [, , queuedMessages] = gthLangChainAgentStreamWithEventsResumeMock.mock.calls[0];
       expect(queuedMessages).toHaveLength(2);
       expect(queuedMessages[0]).toMatchObject({ role: 'user', content: 'turn around' });
       expect(queuedMessages[1]).toMatchObject({ role: 'user', content: 'go slower' });
@@ -651,7 +651,7 @@ describe('apiAgUiModule', () => {
 
       await handler(req, makeMockRes());
 
-      const [, , queuedMessages] = gthDeepAgentStreamWithEventsResumeMock.mock.calls[0];
+      const [, , queuedMessages] = gthLangChainAgentStreamWithEventsResumeMock.mock.calls[0];
       expect(queuedMessages).toEqual([]);
     });
   });
@@ -675,7 +675,7 @@ describe('apiAgUiModule', () => {
     // its tools array containing a client stub (flagged metadata.client). The
     // startup agent's init carries the raw config.tools (no client flag) and is skipped.
     function mergedToolsFromInit(): Array<{ name?: string; metadata?: { client?: boolean } }> {
-      const reqInit = gthDeepAgentInitMock.mock.calls.find(
+      const reqInit = gthLangChainAgentInitMock.mock.calls.find(
         ([, cfg]) =>
           Array.isArray((cfg as { tools?: unknown[] })?.tools) &&
           (cfg as { tools: Array<{ metadata?: { client?: boolean } }> }).tools.some(
@@ -744,14 +744,14 @@ describe('apiAgUiModule', () => {
       return mockPostFn.mock.calls[0][1] as (_req: unknown, _res: unknown) => Promise<void>;
     }
 
-    it('uses the deep backend when agent.backend is undefined (default)', async () => {
+    it('uses the lean backend when agent.backend is undefined (default)', async () => {
       await startAndGetHandler(baseConfig);
 
-      // The static server agent is constructed + initialized as a GthDeepAgent.
-      expect(gthDeepAgentCtorMock).toHaveBeenCalledTimes(1);
-      expect(gthDeepAgentInitMock).toHaveBeenCalledWith('api', baseConfig, expect.anything());
-      expect(gthLangChainAgentCtorMock).not.toHaveBeenCalled();
-      expect(gthLangChainAgentInitMock).not.toHaveBeenCalled();
+      // Lean is the default: the static server agent is a GthLangChainAgent; deep is never built.
+      expect(gthLangChainAgentCtorMock).toHaveBeenCalledTimes(1);
+      expect(gthLangChainAgentInitMock).toHaveBeenCalledWith('api', baseConfig, expect.anything());
+      expect(gthDeepAgentCtorMock).not.toHaveBeenCalled();
+      expect(gthDeepAgentInitMock).not.toHaveBeenCalled();
     });
 
     it("uses the deep backend for agent.backend: 'deep'", async () => {
@@ -802,17 +802,18 @@ describe('apiAgUiModule', () => {
       expect(gthDeepAgentCtorMock).not.toHaveBeenCalled();
     });
 
-    it('routes the per-tool-set agent through the deep backend by default', async () => {
+    it('routes the per-tool-set agent through the lean backend by default', async () => {
       const handler = await startAndGetHandler(baseConfig);
       const req = makeRunReq({
-        threadId: 'deep-tools-thread',
+        threadId: 'default-tools-thread',
         tools: [{ name: 'capture_image', parameters: { type: 'object', properties: {} } }],
       });
 
       await handler(req, makeMockRes());
 
-      expect(gthDeepAgentCtorMock).toHaveBeenCalledTimes(2);
-      expect(gthLangChainAgentCtorMock).not.toHaveBeenCalled();
+      // Static agent + per-toolset agent — both lean by default, deep never constructed.
+      expect(gthLangChainAgentCtorMock).toHaveBeenCalledTimes(2);
+      expect(gthDeepAgentCtorMock).not.toHaveBeenCalled();
     });
   });
 

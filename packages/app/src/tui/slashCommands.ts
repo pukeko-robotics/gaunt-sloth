@@ -72,7 +72,7 @@ export function formatConfigSummary(config: ConfigSummaryInput): string[] {
     typeof v === 'string' ? v : Array.isArray(v) ? JSON.stringify(v) : String(v);
   const lines: string[] = [];
   lines.push(`Model: ${config.modelDisplayName || 'unknown'}`);
-  lines.push(`Agent backend: ${config.agent?.backend ?? 'deep'}`);
+  lines.push(`Agent backend: ${config.agent?.backend ?? 'lean'}`);
   if (config.filesystem !== undefined) lines.push(`Filesystem: ${fmt(config.filesystem)}`);
   if (config.streamOutput !== undefined) lines.push(`Stream output: ${config.streamOutput}`);
   if (config.useColour !== undefined) lines.push(`Colour: ${config.useColour}`);

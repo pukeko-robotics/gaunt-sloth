@@ -29,6 +29,11 @@ export const AVAILABLE_BUILT_IN_TOOLS = {
    * AG-UI A2UI surface tool: lets the agent render an A2UI surface in the web client.
    */
   show_a2ui_surface: '#src/tools/showA2UISurfaceTool.js',
+  /**
+   * Checklist / todo planning tool for the lean agent (the `write_todos` equivalent). Enabled
+   * by default (see {@link DEFAULT_CONFIG}); disable by setting your own `builtInTools`.
+   */
+  gth_checklist: '#src/tools/gthChecklistTool.js',
 } as const;
 
 /**

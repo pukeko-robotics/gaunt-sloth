@@ -1,6 +1,11 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import type { TurnViewModel, ToolCallViewModel } from '#src/tui/viewModel.js';
+import type {
+  TurnViewModel,
+  ToolCallViewModel,
+  ChecklistItemViewModel,
+} from '#src/tui/viewModel.js';
+import { CHECKLIST_TOOL_NAME, parseChecklistArgs } from '#src/tui/viewModel.js';
 import { renderMarkdown } from '#src/tui/markdown.js';
 
 /** Status glyph + word for a tool call's compact summary line. */
@@ -106,6 +111,45 @@ function ReasoningPanel({
   );
 }
 
+/** Glyph + colour for one checklist row's status (DL colour semantics). */
+function checklistRow(status: ChecklistItemViewModel['status']): { glyph: string; color: string } {
+  switch (status) {
+    case 'completed':
+      return { glyph: '[x]', color: 'green' };
+    case 'in_progress':
+      return { glyph: '[~]', color: 'yellow' };
+    default:
+      return { glyph: '[ ]', color: 'gray' };
+  }
+}
+
+/**
+ * A `gth_checklist` tool call rendered as a live plan: a `📋 Checklist (done/total)` header and one
+ * checkbox row per item, coloured by status. Shown expanded (unlike generic tool panels) because
+ * the plan is meant to be seen — it is the lean agent's answer to deepagents' `write_todos`. The
+ * caller only routes here once {@link parseChecklistArgs} yields rows; a still-streaming/partial
+ * args buffer falls back to the generic {@link ToolCallPanel}.
+ */
+function ChecklistPanel({ items }: { items: ChecklistItemViewModel[] }): React.ReactElement {
+  const done = items.filter((i) => i.status === 'completed').length;
+  return (
+    <Box flexDirection="column">
+      <Text color="cyan">{`📋 Checklist (${done}/${items.length})`}</Text>
+      {items.map((item, i) => {
+        const { glyph, color } = checklistRow(item.status);
+        return (
+          <Box key={i}>
+            <Text color={color}>{`  ${glyph} `}</Text>
+            <Text dimColor={item.status === 'completed'} strikethrough={item.status === 'completed'}>
+              {item.content}
+            </Text>
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
+
 /**
  * Renders one assistant turn from the pure {@link TurnViewModel}: a collapsible `💭 Thinking`
  * reasoning region, one collapsible panel per tool call, then the assistant text. Used both for
@@ -134,9 +178,15 @@ export function LiveTurn({
       {turn.reasoning ? (
         <ReasoningPanel reasoning={turn.reasoning} expanded={toolsExpanded} live={streaming} />
       ) : null}
-      {turn.toolCalls.map((tc) => (
-        <ToolCallPanel key={tc.id} tc={tc} expanded={toolsExpanded} live={streaming} />
-      ))}
+      {turn.toolCalls.map((tc) => {
+        // The checklist tool renders as a dedicated live plan panel once its args parse; until
+        // then (or if it never parses) it falls back to the generic collapsible tool panel.
+        if (tc.name === CHECKLIST_TOOL_NAME) {
+          const items = parseChecklistArgs(tc.argsText);
+          if (items) return <ChecklistPanel key={tc.id} items={items} />;
+        }
+        return <ToolCallPanel key={tc.id} tc={tc} expanded={toolsExpanded} live={streaming} />;
+      })}
       {turn.text ? <Text>{streaming ? turn.text : renderMarkdown(turn.text)}</Text> : null}
     </Box>
   );

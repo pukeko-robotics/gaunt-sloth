@@ -496,11 +496,16 @@ export function App(props: TuiAppProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Route agent status updates (warnings/info) into the transcript instead of stdout,
-  // which would otherwise corrupt Ink's frame.
+  // Route agent status updates (warnings/errors) into the transcript instead of stdout,
+  // which would otherwise corrupt Ink's frame. INFO/DEBUG system lines are suppressed in the
+  // TUI: the agent's per-turn chatter (`Requested tools`, `Loaded tools`, `Workdir`, `Model`,
+  // `Thinking…`) duplicates what the TUI already renders (live tool-call cards + spinner + the
+  // typed AgentStreamEvent content path). Plain-CLI keeps them via defaultStatusCallback. Only
+  // WARNING/ERROR (and content levels) reach the transcript so genuine signals still surface.
   useEffect(() => {
     if (!props.subscribeStatus) return;
     return props.subscribeStatus((level, message) => {
+      if (level === 'INFO' || level === 'DEBUG') return;
       if (message.trim()) push({ kind: 'system', level, text: message });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -35,13 +35,16 @@ export interface GthConfig {
   llm: BaseChatModel;
   /**
    * Selects the agent backend.
-   * - `deep` (default when omitted): the deepagents runtime. Preserves every current behavior.
-   * - `lean`: the plain LangChain agent ({@link GthLangChainAgent}) with no deepagents machinery
-   *   (no `/large_tool_results` offload). Useful for `filesystem: 'none'` consumers (e.g. the
-   *   robot AG-UI backend) where the deep agent's tool-result offload writes are denied.
+   * - `lean` (default when omitted): the plain LangChain agent ({@link GthLangChainAgent}). It is
+   *   given gsloth's full toolset (filesystem + hardened dev/shell + the `gth_checklist` planning
+   *   tool), with no deepagents machinery (no `/large_tool_results` offload). This is the
+   *   recommended backend and the default for the CLI (code/chat), single-shot (ask/exec), and
+   *   the AG-UI/api server.
+   * - `deep` (**experimental**, opt-in): the deepagents runtime (subagents, `write_todos`,
+   *   summarization, tool-result offload). Selecting it emits a warning. It can exhibit
+   *   path-divergence and sporadic failures and carries extra internal workarounds; prefer `lean`.
    *
-   * Honored at the AG-UI/api entry only. The ACP server is structurally deep-only and rejects
-   * an explicit `lean` backend. The CLI (code mode) stays deep.
+   * Honored everywhere; the ACP server is still structurally deep-only and always runs deep.
    */
   agent?: { backend?: 'deep' | 'lean' };
   /**

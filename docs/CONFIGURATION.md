@@ -139,6 +139,49 @@ The `api ag-ui` command reads its settings from `commands.api` in your config fi
 
 > **Note:** The port flag `--port` on the CLI overrides `commands.api.port`.
 
+## Agent Backend (`agent.backend`)
+
+Gaunt Sloth ships two agent backends. Select one with the top-level `agent.backend` field.
+
+| Value | Backend | Notes |
+|-------|---------|-------|
+| `lean` (**default**) | Plain LangChain agent | Recommended. Gaunt Sloth's own toolset — filesystem, hardened dev/shell, and the `gth_checklist` planning tool. Used for the CLI (`code`/`chat`), single-shot (`ask`/`exec`), and the AG-UI/`api` server. |
+| `deep` | deepagents runtime | **Experimental, opt-in.** Adds subagents, `write_todos`, summarization, and large-tool-result offload, but can exhibit path divergence and sporadic failures. Selecting it prints a warning. |
+
+```json
+{
+  "llm": { "type": "anthropic", "model": "claude-sonnet-4-5" },
+  "agent": { "backend": "lean" }
+}
+```
+
+When `agent.backend` is omitted, the lean backend is used everywhere. Set `"backend": "deep"` only
+to opt into the experimental deepagents runtime. The ACP server is structurally deepagents-based and
+always runs the deep backend regardless of this setting.
+
+## Built-in Tools (`builtInTools`)
+
+`builtInTools` is a string array selecting which built-in tools the agent loads. It can be set at the
+top level or per command (`commands.<command>.builtInTools`); a per-command value replaces the
+top-level one. Available tools:
+
+| Tool | Description |
+|------|-------------|
+| `gth_checklist` | Planning / todo checklist for multi-step work (the lean agent's `write_todos` equivalent). Renders as a live checkbox panel in the TUI. **Enabled by default.** |
+| `gth_web_fetch` | Fetch content from an HTTP/HTTPS URL. |
+| `gth_status_update` | Print a short status line to the console. |
+| `show_a2ui_surface` | (AG-UI) render an A2UI surface in the web client. |
+
+The default is `["gth_checklist"]`. Setting your own `builtInTools` **replaces** this set entirely, so
+include `gth_checklist` in your list if you want to keep it. Example — add web fetch while keeping the
+checklist:
+
+```json
+{
+  "builtInTools": ["gth_checklist", "gth_web_fetch"]
+}
+```
+
 ## AI Ignore (.aiignore)
 
 Gaunt Sloth can hide files and directories from filesystem tools using a `.aiignore` file in your project root.

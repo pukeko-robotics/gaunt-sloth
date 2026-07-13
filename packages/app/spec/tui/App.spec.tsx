@@ -102,6 +102,33 @@ describe('tui <App>', () => {
     unmount();
   });
 
+  it('suppresses INFO/DEBUG status lines in the TUI but keeps WARNING/ERROR', async () => {
+    // The agent routes per-turn chatter (Requested tools, Loaded tools, Thinking…) through
+    // statusUpdate at INFO level; that duplicates the TUI's own live rendering and must not reach
+    // the transcript. WARNING/ERROR still surface (e.g. the experimental deep-backend warning).
+    let emit: ((level: string, message: string) => void) | undefined;
+    const subscribeStatus = (cb: (level: string, message: string) => void) => {
+      emit = cb;
+      return () => {};
+    };
+    const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
+    const { frames, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} subscribeStatus={subscribeStatus} />
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    emit?.('INFO', 'Requested tools: read_file');
+    emit?.('DEBUG', 'internal state dump');
+    emit?.('WARNING', 'experimental deepagents backend');
+
+    await vi.waitFor(() => expect(frames.join('\n')).toContain('experimental deepagents backend'));
+    const all = frames.join('\n');
+    expect(all).not.toContain('Requested tools: read_file');
+    expect(all).not.toContain('internal state dump');
+
+    unmount();
+  });
+
   it('dispatches /help as a system line instead of running a turn', async () => {
     let turnsRun = 0;
     const agent: TuiAgent = {

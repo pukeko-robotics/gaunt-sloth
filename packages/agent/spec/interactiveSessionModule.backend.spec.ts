@@ -94,17 +94,18 @@ describe('interactiveSessionModule backend selection (B5)', () => {
     resolveAgentFactoryMock.mockReturnValue(factorySentinel);
   });
 
-  it("resolves the factory via resolveAgentFactory(config, 'deep') and passes it to the runner", async () => {
+  it("resolves the factory via resolveAgentFactory(config, 'lean') and passes it to the runner", async () => {
     const config = { streamSessionInferenceLog: false, agent: { backend: 'deep' } };
     initConfigMock.mockResolvedValue(config);
 
     const { createInteractiveSession } = await import('#src/modules/interactiveSessionModule.js');
     await createInteractiveSession(sessionConfig, {});
 
-    // Delegated to resolveAgentFactory with the resolved config and the 'deep' per-command default.
+    // Delegated to resolveAgentFactory with the resolved config and the 'lean' per-command default
+    // (an explicit config.agent.backend still wins inside resolveAgentFactory itself).
     expect(resolveAgentFactoryMock).toHaveBeenCalledTimes(1);
     expect(resolveAgentFactoryMock.mock.calls[0][0]).toMatchObject({ agent: { backend: 'deep' } });
-    expect(resolveAgentFactoryMock.mock.calls[0][1]).toBe('deep');
+    expect(resolveAgentFactoryMock.mock.calls[0][1]).toBe('lean');
 
     // The resolved factory is the runner's 3rd ctor arg; resolvers (2nd arg) are unchanged.
     expect(runnerCtorArgs).toHaveLength(1);
@@ -112,7 +113,7 @@ describe('interactiveSessionModule backend selection (B5)', () => {
     expect(runnerCtorArgs[0][2]).toBe(factorySentinel);
   });
 
-  it("still uses the 'deep' default when agent.backend is unset", async () => {
+  it("uses the 'lean' default when agent.backend is unset", async () => {
     initConfigMock.mockResolvedValue({ streamSessionInferenceLog: false });
 
     const { createInteractiveSession } = await import('#src/modules/interactiveSessionModule.js');
@@ -120,7 +121,7 @@ describe('interactiveSessionModule backend selection (B5)', () => {
 
     expect(resolveAgentFactoryMock).toHaveBeenCalledWith(
       expect.objectContaining({ streamSessionInferenceLog: false }),
-      'deep'
+      'lean'
     );
     expect(runnerCtorArgs[0][2]).toBe(factorySentinel);
   });

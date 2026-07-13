@@ -118,6 +118,21 @@ Tool calls render as **collapsible panels** (`tui/components/LiveTurn.tsx`):
   and future turns**. Committed turns live in Ink's `<Static>` and never re-fold, so an already-
   rendered turn won't retro-expand. The notice copy says exactly this ("Applies to new turns").
   Don't pretend otherwise; document it, don't paper over it.
+- **The checklist tool renders as a live plan panel.** A `gth_checklist` tool call is NOT shown as a
+  generic collapsible panel: it renders a dedicated, always-expanded `📋 Checklist (done/total)` list
+  with per-item checkboxes (`[x]` green completed, `[~]` yellow in-progress, `[ ]` dim pending). The
+  plan is the point of the tool, so it stays visible (DL-2 discloses the *plan* directly; DL-8 colour).
+
+## Status lines in the TUI (DL-2, DL-10)
+
+The agent emits `statusUpdate` chatter at several levels. In the TUI, **`INFO` and `DEBUG` system
+lines are suppressed** (`tui/components/App.tsx`): the agent's per-turn `INFO` output — `Requested
+tools`, `Loaded tools`, `Loaded middleware`, `Workdir`, `Model`, `Thinking…` — duplicates what the
+TUI already renders (live tool-call cards, the checklist panel, the status-bar spinner), so echoing it
+into the transcript is redundant noise (DL-2 progressive disclosure, DL-10 budget). **`WARNING` and
+`ERROR` still surface** — e.g. the experimental deepagents-backend warning — because those are signal,
+not chatter (DL-1 no important action is silent). Plain (non-TUI) CLI keeps all levels via
+`defaultStatusCallback`, which does its own level filtering; the suppression is TUI-only.
 
 ## Markdown (DL-7 legibility & graceful degradation)
 

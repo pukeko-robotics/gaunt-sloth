@@ -49,12 +49,13 @@ export async function createInteractiveSession(
   if (logFileName) {
     initSessionLogging(logFileName, config.streamSessionInferenceLog);
   }
-  // B5: interactive code/chat default to the deep backend; an explicit config.agent.backend
-  // overrides it. createResolvers() is unchanged, so a lean session keeps the full toolset.
+  // B5: interactive code/chat default to the LEAN backend; an explicit config.agent.backend
+  // overrides it (deep is now opt-in / experimental). createResolvers() is unchanged, so a lean
+  // session keeps the full toolset (filesystem + hardened dev/shell).
   const runner = new GthAgentRunner(
     defaultStatusCallback,
     createResolvers(),
-    resolveAgentFactory(config, 'deep')
+    resolveAgentFactory(config, 'lean')
   );
 
   try {

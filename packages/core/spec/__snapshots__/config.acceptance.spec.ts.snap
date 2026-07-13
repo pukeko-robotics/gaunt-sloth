@@ -12,6 +12,9 @@ exports[`effective-merged acceptance (B2b) > resolves examples/a2a/.gsloth.confi
     "enabled": true,
     "patterns": undefined,
   },
+  "builtInTools": [
+    "gth_checklist",
+  ],
   "canInterruptInferenceWithEsc": false,
   "commands": {
     "api": {
@@ -83,6 +86,9 @@ exports[`effective-merged acceptance (B2b) > resolves examples/jira-mcp/.gsloth.
     "enabled": true,
     "patterns": undefined,
   },
+  "builtInTools": [
+    "gth_checklist",
+  ],
   "canInterruptInferenceWithEsc": false,
   "commands": {
     "api": {
@@ -166,6 +172,9 @@ exports[`effective-merged acceptance (B2b) > resolves examples/lmstudio/.gsloth.
     "enabled": true,
     "patterns": undefined,
   },
+  "builtInTools": [
+    "gth_checklist",
+  ],
   "canInterruptInferenceWithEsc": false,
   "commands": {
     "api": {
@@ -240,6 +249,9 @@ exports[`effective-merged acceptance (B2b) > resolves examples/simple-DIY-helper
     "enabled": true,
     "patterns": undefined,
   },
+  "builtInTools": [
+    "gth_checklist",
+  ],
   "canInterruptInferenceWithEsc": false,
   "commands": {
     "api": {
