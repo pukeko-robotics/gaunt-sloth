@@ -483,7 +483,7 @@ describe('GthLangChainAgent', () => {
       const getDebugMw = () => {
         const middleware = createAgentMock.mock.calls.at(-1)?.[0].middleware as {
           name: string;
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
           wrapModelCall?: (_request: any, _handler: any) => Promise<unknown>;
         }[];
         return middleware.find((m) => m.name === 'GthMiddlewareDebugCapture');
@@ -507,7 +507,10 @@ describe('GthLangChainAgent', () => {
 
         const response = { content: 'yo' };
         const handler = vi.fn().mockResolvedValue(response);
-        const result = await getDebugMw()!.wrapModelCall!({ messages: [{ content: 'hi' }] }, handler);
+        const result = await getDebugMw()!.wrapModelCall!(
+          { messages: [{ content: 'hi' }] },
+          handler
+        );
 
         expect(handler).toHaveBeenCalledTimes(1);
         expect(result).toBe(response);
@@ -555,7 +558,9 @@ describe('GthLangChainAgent', () => {
 
         const response = { content: 'ok' };
         const handler = vi.fn().mockResolvedValue(response);
-        await expect(getDebugMw()!.wrapModelCall!({ messages: [] }, handler)).resolves.toBe(response);
+        await expect(getDebugMw()!.wrapModelCall!({ messages: [] }, handler)).resolves.toBe(
+          response
+        );
         expect(handler).toHaveBeenCalledTimes(1);
       });
     });

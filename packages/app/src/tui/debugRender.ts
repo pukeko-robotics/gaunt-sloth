@@ -25,8 +25,8 @@ export function renderHistory(messages: BaseMessage[]): string {
 }
 
 const HISTORY_TAB_DESCRIPTION =
-  "The message list sent to the model at call time, each message as a JSON-stable record. The " +
-  "system prompt is shown separately on the System prompt tab.";
+  'The message list sent to the model at call time, each message as a JSON-stable record. The ' +
+  'system prompt is shown separately on the System prompt tab.';
 
 /**
  * Render "Raw model response": the resolved `AIMessage` returned by the handler. We try the
@@ -54,12 +54,12 @@ function withDescription(description: string, body: string): string {
 }
 
 const SYSTEM_TAB_DESCRIPTION =
-  "System prompt and params. The standing instructions and scalar settings that frame every " +
-  "turn: model params, the tool-choice policy, then the system prompt itself. Sent once per " +
-  "call, ahead of the conversation.";
+  'System prompt and params. The standing instructions and scalar settings that frame every ' +
+  'turn: model params, the tool-choice policy, then the system prompt itself. Sent once per ' +
+  'call, ahead of the conversation.';
 
 const TOOLS_TAB_DESCRIPTION =
-  "Tools the model may call this turn. Names first, for an at-a-glance overview; then each " +
+  'Tools the model may call this turn. Names first, for an at-a-glance overview; then each ' +
   "tool's full description and parameter schema below.";
 
 /**
