@@ -13,9 +13,14 @@ describe('Chat Command Integration Tests', () => {
     );
 
     // Assert on the string itself (not a boolean wrapper) so a flake prints the
-    // model's actual reply. The agent acknowledges and offers help; small models
-    // phrase that tersely ("Yes. What do you need?"), so accept any opener.
-    expect(output.toLowerCase()).toMatch(/help|assist|hello|what do you need|how can i/);
+    // model's actual reply. The agent acknowledges and offers help, but the exact
+    // wording is model-dependent: small/terse models (e.g. Mistral) skip the
+    // pleasantries and answer with a bare affirmation plus a prompt for the task
+    // ("Yes. State your problem or task."). Accept any affirmative, help-offering,
+    // or "tell me what you need" opener rather than a fixed greeting phrase.
+    expect(output.toLowerCase()).toMatch(
+      /\b(yes|sure|hi|hello|hey|of course|absolutely|happy to|glad to|help|assist|how can i|what can i|what do you need|state (your|the)|tell me|let me know|go ahead|what'?s your)\b/
+    );
     // Session is logged to gth_<timestamp>_CHAT.md
     expect(output).toContain('gth_');
     expect(output).toContain('_CHAT.md');
