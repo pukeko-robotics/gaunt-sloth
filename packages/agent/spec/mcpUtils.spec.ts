@@ -222,6 +222,67 @@ describe('prepareMcpTools', () => {
     expect(rangeItemsSchema[0].description).toContain('number');
   });
 
+  it('should convert a string const to a single-value enum for Vertex', async () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        cloudId: {
+          properties: {
+            value: { const: 'my-cloud-id', description: 'The cloud id' },
+          },
+        },
+      },
+    } as const;
+    const tool = new DynamicStructuredTool({
+      name: 'mcp__jira__getJiraIssue',
+      description: 'Test tool',
+      schema,
+      func: async () => 'ok',
+    });
+    const { ChatGoogle } = await import('@langchain/google/node');
+    const config = {
+      llm: new ChatGoogle({ model: 'gemini-2.5-pro', vertexai: true }),
+    } as Partial<GthConfig>;
+
+    const { prepareMcpTools } = await import('#src/utils/mcpUtils.js');
+    const result = prepareMcpTools(vi.fn(), config as GthConfig, [tool]);
+
+    const valueSchema = (result?.[0].schema as any).properties.cloudId.properties.value;
+    expect(valueSchema.const).toBeUndefined();
+    expect(valueSchema.enum).toEqual(['my-cloud-id']);
+    expect(valueSchema.type).toBe('string');
+    expect(valueSchema.description).toContain('The cloud id');
+    expect(valueSchema.description).toContain('my-cloud-id');
+  });
+
+  it('should fold a non-string const into the description for Vertex', async () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        limit: { const: 50, description: 'Max results' },
+      },
+    } as const;
+    const tool = new DynamicStructuredTool({
+      name: 'mcp__jira__getJiraIssue',
+      description: 'Test tool',
+      schema,
+      func: async () => 'ok',
+    });
+    const { ChatGoogle } = await import('@langchain/google/node');
+    const config = {
+      llm: new ChatGoogle({ model: 'gemini-2.5-pro', vertexai: true }),
+    } as Partial<GthConfig>;
+
+    const { prepareMcpTools } = await import('#src/utils/mcpUtils.js');
+    const result = prepareMcpTools(vi.fn(), config as GthConfig, [tool]);
+
+    const limitSchema = (result?.[0].schema as any).properties.limit;
+    expect(limitSchema.const).toBeUndefined();
+    expect(limitSchema.enum).toBeUndefined();
+    expect(limitSchema.description).toContain('Max results');
+    expect(limitSchema.description).toContain('50');
+  });
+
   it('should convert nested union schemas in conditional branches for Vertex', async () => {
     const schema = {
       type: 'object',
