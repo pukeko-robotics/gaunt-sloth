@@ -33,9 +33,9 @@ import { ShellCommandFailedError } from '#src/tools/GthDevToolkit.js';
  * deepagents' native, cross-platform-uniform behavior and the pre-EXT-13 known-good path. This
  * supersedes the EXT-13 default (which ran POSIX in real-path mode to share ONE namespace with the
  * shell). Under virtualMode the fs tools' virtual `/` root and `run_shell_command`'s real OS paths
- * DIVERGE, so the shell tool is made virtualMode-aware (an augmented description plus a forced
- * acknowledgement parameter — see GthDevToolkit) and the EXT-22 path-namespace notes/correction
- * apply on all platforms, not just Windows.
+ * DIVERGE, so the shell tool is made virtualMode-aware (its description warns about the divergence
+ * and steers toward verifying the real cwd — see GthDevToolkit) and the EXT-22 path-namespace
+ * notes/correction apply on all platforms, not just Windows.
  *
  * Two cases still force real-path mode instead of virtual:
  *  - The real cwd is not POSIX `/`-rooted (e.g. Windows `D:\...`). deepagents' permission layer
@@ -344,8 +344,8 @@ export class GthDeepAgent extends GthAbstractAgent {
     // enforcement entirely — a model could read an .aiignore-protected file through them.
     debugLog('Resolving tools (filesystem disabled; deepagents provides fs)...');
     // Tell the shared dev toolkit whether the fs backend runs in virtualMode for this run, so its
-    // run_shell_command tool warns about the fs-vs-shell path divergence and forces an explicit
-    // acknowledgement. Computed from the effective config (mirrors init()'s useVirtualFs).
+    // run_shell_command tool's description warns about the fs-vs-shell path divergence. Computed
+    // from the effective config (mirrors init()'s useVirtualFs).
     const useVirtualFs = shouldUseVirtualFs(this.config ?? undefined);
     const toolResolutionConfig = {
       ...this.config,

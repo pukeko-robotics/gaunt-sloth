@@ -84,7 +84,7 @@ async function filterDevTools(
     return [];
   }
   // Pass the command so GthDevToolkit resolves the shell default for the active mode, and the
-  // virtualFs flag so the shell tool warns + forces acknowledgement when fs paths are virtual.
+  // virtualFs flag so the shell tool's description warns about the fs-vs-shell path divergence.
   const toolkit = new GthDevToolkit(devToolConfig ?? {}, command, { virtualFs });
   return [...toolkit.getTools()];
 }

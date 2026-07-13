@@ -289,9 +289,9 @@ export interface GthConfig {
    * Transient (runtime-only) flag set by the deep agent when its deepagents `FilesystemBackend`
    * runs in virtualMode (the default now — see `shouldUseVirtualFs` in `GthDeepAgent`). It tells
    * the shared dev toolkit that the filesystem tools address a VIRTUAL `/` root that can diverge
-   * from `run_shell_command`'s real native OS paths, so the shell tool must advertise that
-   * divergence (an augmented description plus a forced acknowledgement parameter). Never set on the
-   * lean path (its fs tools use real paths, so there is no divergence) and never persisted.
+   * from `run_shell_command`'s real native OS paths, so the shell tool's description must advertise
+   * that divergence (and steer toward verifying the real cwd). Never set on the lean path (its fs
+   * tools use real paths, so there is no divergence) and never persisted.
    */
   deepFsVirtual?: boolean;
 }

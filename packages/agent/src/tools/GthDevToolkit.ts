@@ -118,41 +118,6 @@ const RunShellCommandArgsSchema = z.object({
   command: z.string().describe('The shell command to run'),
 });
 
-/**
- * The name of the forced acknowledgement parameter added to `run_shell_command` when the deep
- * agent's filesystem tools run in virtualMode. Intentionally a long, self-describing name: the
- * model reads it on every shell call as a reminder that the fs-tool `/` root and the shell's real
- * paths are two different namespaces.
- */
-export const VIRTUAL_FS_SHELL_ACK_PARAM =
-  'i_acknowledge_that_fs_tools_are_in_virtual_mode_and_paths_could_be_different_from_shell';
-
-/**
- * virtualMode variant of {@link RunShellCommandArgsSchema}. In addition to `command` it carries a
- * FORCED acknowledgement flag ({@link VIRTUAL_FS_SHELL_ACK_PARAM}) so the model cannot call the
- * shell tool without first consciously acknowledging that a filesystem-tool `/`-rooted path is NOT
- * necessarily a valid path for this real-OS shell.
- *
- * The flag is a plain required `z.boolean()`, NOT `z.literal(true)`: a literal emits a JSON-Schema
- * `const`, which Gemini/Vertex AI's function-declaration schema dialect rejects ("Unknown name
- * `const`"), poisoning the whole request. Keeping it a bare boolean produces only `{"type":
- * "boolean"}`, which every provider accepts. The "only true is allowed" constraint is enforced at
- * RUNTIME instead (see the tool body in `createTools`), which returns a recoverable message rather
- * than aborting when the model passes anything but `true`.
- */
-const RunShellCommandVirtualArgsSchema = z.object({
-  command: z.string().describe('The shell command to run'),
-  [VIRTUAL_FS_SHELL_ACK_PARAM]: z
-    .boolean()
-    .describe(
-      'Required — you MUST pass true. By setting this to true you confirm you understand that the ' +
-        'filesystem tools (ls/read_file/write_file/edit_file/glob/grep) address a VIRTUAL "/" root ' +
-        '(a leading "/" means the working directory) which can differ from the real native paths ' +
-        'this shell uses, and that you have verified — or will verify — the real working directory ' +
-        'before relying on any path in the command. The command will NOT run unless this is true.'
-    ),
-});
-
 const TEST_PATH_PLACEHOLDER = '${testPath}';
 
 /**
@@ -186,8 +151,7 @@ function buildVirtualShellDescription(): string {
     'native paths, so a "/"-rooted path from the filesystem tools is NOT necessarily a valid path ' +
     `for this shell. Before putting any path into a command, confirm the real working directory ` +
     `first (run ${printWorkDirCommand()}), and prefer paths relative to the working directory over ` +
-    'absolute ones. You must also pass ' +
-    `\`${VIRTUAL_FS_SHELL_ACK_PARAM}: true\` on every call to acknowledge this.`
+    'absolute ones.'
   );
 }
 
@@ -203,9 +167,10 @@ export default class GthDevToolkit extends BaseToolkit {
   /**
    * True when the deep agent's deepagents `FilesystemBackend` runs in virtualMode for this run, so
    * the fs tools address a virtual `/` root that can diverge from `run_shell_command`'s real OS
-   * paths. When set, the shell tool advertises that divergence (augmented description + the forced
-   * {@link VIRTUAL_FS_SHELL_ACK_PARAM} acknowledgement). Defaults to `false` (the lean path, whose
-   * fs tools use real paths, and any non-deep caller) so the plain shell tool is unchanged.
+   * paths. When set, the shell tool's DESCRIPTION advertises that divergence (fs paths are virtual;
+   * verify the real cwd with pwd/cd; prefer relative paths). Description-only — the tool schema is
+   * identical either way. Defaults to `false` (the lean path, whose fs tools use real paths, and any
+   * non-deep caller) so the plain shell tool is unchanged.
    */
   private readonly virtualFs: boolean;
 
@@ -526,29 +491,13 @@ export default class GthDevToolkit extends BaseToolkit {
     // agent (createDeepAgent `interruptOn`), not a parameter sanitizer — a real shell command
     // legitimately contains pipes / `$` / `;`, so validateParameterValue must NOT be applied.
     if (isShellToolEnabled(this.commands, this.command)) {
-      // In virtualMode the fs tools' `/` root diverges from this shell's real OS paths, so the
-      // shell tool warns about it (description) AND forces an explicit per-call acknowledgement
-      // (VIRTUAL_FS_SHELL_ACK_PARAM). The "only true is accepted" rule is enforced HERE at runtime
-      // (not via a schema literal, which would emit a Vertex-incompatible `const`): a missing/false
-      // ack returns a recoverable message so the model retries with it set, rather than aborting.
-      // The plain (non-virtual) path keeps the original single-parameter tool unchanged.
-      const virtualFs = this.virtualFs;
-      const shellSchema = virtualFs ? RunShellCommandVirtualArgsSchema : RunShellCommandArgsSchema;
+      // In virtualMode the fs tools' `/` root diverges from this shell's real OS paths, so the shell
+      // tool's DESCRIPTION warns about it (fs paths are virtual; verify the real cwd with pwd/cd;
+      // prefer relative paths). This is description-only — the schema is identical in both modes — so
+      // there is no extra/unusual parameter to trip up provider tool-schema validation or the model.
       tools.push(
         createGthTool(
-          async (args: z.infer<typeof shellSchema>): Promise<string> => {
-            if (
-              virtualFs &&
-              (args as Record<string, unknown>)[VIRTUAL_FS_SHELL_ACK_PARAM] !== true
-            ) {
-              return (
-                `Command not run. You must set \`${VIRTUAL_FS_SHELL_ACK_PARAM}: true\` to ` +
-                'acknowledge that the filesystem tools address a virtual "/" root that can differ ' +
-                "from this shell's real paths. Confirm the real working directory first (run " +
-                `${printWorkDirCommand()}), then retry this command with the acknowledgement set ` +
-                'to true.'
-              );
-            }
+          async (args: z.infer<typeof RunShellCommandArgsSchema>): Promise<string> => {
             return await this.executeCommand(args.command, 'run_shell_command');
           },
           {
@@ -556,7 +505,7 @@ export default class GthDevToolkit extends BaseToolkit {
             description: this.virtualFs
               ? buildVirtualShellDescription()
               : RUN_SHELL_COMMAND_BASE_DESCRIPTION,
-            schema: shellSchema,
+            schema: RunShellCommandArgsSchema,
           },
           'execute'
         )
