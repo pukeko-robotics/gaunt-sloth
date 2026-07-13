@@ -298,9 +298,11 @@ export async function createTuiSession(
       resetThread() {
         runner.resetThread();
       },
-      // `/yolo` flips the runner's session-scoped shell auto-approval flag (EXT-12).
-      toggleYolo() {
-        return runner.toggleSessionYolo();
+      // `/auto-approve` applies the runner's session-scoped shell auto-approval flag (EXT-12):
+      // 'on'/'off' set it explicitly, 'toggle' flips it. Returns the landed state for the notice.
+      setAutoApprove(action) {
+        if (action === 'toggle') return runner.toggleSessionYolo();
+        return runner.setSessionYolo(action === 'on');
       },
     };
 
@@ -322,6 +324,7 @@ export async function createTuiSession(
         agent={tuiAgent}
         mode={sessionConfig.mode}
         modelDisplayName={config.modelDisplayName}
+        initialAutoApprove={runner.isSessionYolo()}
         configSummary={formatConfigSummary(config)}
         {...buildHistorySlashProps(config)}
         readyMessage={sessionConfig.readyMessage}

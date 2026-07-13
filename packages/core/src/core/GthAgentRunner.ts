@@ -78,13 +78,15 @@ export class GthAgentRunner {
   private lastRunStats: GthRunStats = { tools: [] };
 
   /**
-   * EXT-12 — runtime, session-scoped yolo flag toggled by the `/yolo` slash command. Distinct
-   * from the static `devTools.shellYolo` config flag (which omits the tool from `interruptOn` at
-   * agent-build time and cannot be changed mid-session). Because the tool stays gated (in
-   * `interruptOn`), this flag is consulted at the TOP of {@link decideToolApproval}: when ON, a
-   * gated `run_shell_command` is auto-approved WITHOUT prompting (yolo behaviour) for the rest of
-   * this runner's life. Never persisted; defaults OFF. It does NOT disable the hardline floor —
-   * catastrophic commands are still refused at exec time in `GthDevToolkit.executeCommand`.
+   * EXT-12 — runtime, session-scoped auto-approve flag driven by the `/auto-approve` (a.k.a.
+   * `/yolo`) slash command. Because the shell tool stays gated (in `interruptOn`) in the
+   * interactive `code` mode, this flag is consulted at the TOP of {@link decideToolApproval}:
+   * when ON, a gated `run_shell_command` is auto-approved WITHOUT prompting for the rest of this
+   * runner's life. Never persisted, but INITIALIZED at {@link init} from the static
+   * `devTools.shellYolo` config flag — so a config that pre-enables auto-approval still keeps the
+   * tool gated and therefore toggleable (`/auto-approve off` restores the per-command prompt).
+   * It does NOT disable the hardline floor — catastrophic commands are still refused at exec time
+   * in `GthDevToolkit.executeCommand`.
    */
   private sessionYolo = false;
 
@@ -130,17 +132,28 @@ export class GthAgentRunner {
   }
 
   /**
-   * EXT-12 — flip the runtime, session-scoped yolo flag (the `/yolo` slash command). When ON,
-   * gated `run_shell_command` calls auto-approve without prompting for the rest of this session;
-   * the hardline floor still applies at exec time. Returns the NEW state so the caller can render
-   * a notice. Session-scoped only — nothing is written to config.
+   * EXT-12 — flip the runtime, session-scoped auto-approve flag (the `/auto-approve` /
+   * `/yolo` slash command with no argument). When ON, gated `run_shell_command` calls
+   * auto-approve without prompting for the rest of this session; the hardline floor still applies
+   * at exec time. Returns the NEW state so the caller can render a notice. Session-scoped only —
+   * nothing is written to config.
    */
   public toggleSessionYolo(): boolean {
     this.sessionYolo = !this.sessionYolo;
     return this.sessionYolo;
   }
 
-  /** EXT-12 — current state of the runtime session-scoped yolo flag (see {@link toggleSessionYolo}). */
+  /**
+   * EXT-12 — set the session-scoped auto-approve flag explicitly (the `/auto-approve on|off`
+   * slash command). Idempotent; returns the NEW state so the caller can render a notice.
+   * Session-scoped only — nothing is written to config.
+   */
+  public setSessionYolo(on: boolean): boolean {
+    this.sessionYolo = on;
+    return this.sessionYolo;
+  }
+
+  /** EXT-12 — current state of the runtime session-scoped auto-approve flag (see {@link toggleSessionYolo}). */
   public isSessionYolo(): boolean {
     return this.sessionYolo;
   }
@@ -157,6 +170,12 @@ export class GthAgentRunner {
   ): Promise<void> {
     this.config = configIn;
     this.command = command;
+
+    // EXT-12 — seed the runtime auto-approve flag from the static `devTools.shellYolo` config so a
+    // config that pre-enables auto-approval starts ON, while the shell tool stays gated (see
+    // GthDeepAgent) and therefore remains toggleable (`/auto-approve off`). Resolved per-command,
+    // mirroring where the shell tool is actually emitted; no effect where the tool is ungated.
+    this.sessionYolo = getEffectiveDevToolsConfig(configIn, command)?.shellYolo === true;
 
     // Initialize debug logging
     initDebugLogging(configIn.debugLog ?? false);

@@ -43,27 +43,42 @@ Rules:
   for caution — e.g. the **unknown-command** notice, which never forwards the text to the model and
   points the user at `/help`.
 
-## `/yolo` — session shell auto-approval (DL-4 transparency, EXT-12)
+## `/auto-approve` — session shell auto-approval (DL-4 transparency, EXT-12)
 
-`/yolo` toggles, for the current session only, whether gated `run_shell_command` calls auto-approve
-without the per-command prompt. It is **distinct from the static `shellYolo` config flag** (which
-omits the tool from `interruptOn` at agent-build time and cannot change mid-session): the runtime
-toggle lives at the approval-decision layer (`GthAgentRunner.toggleSessionYolo()` /
-`isSessionYolo()`), so the tool stays gated and the flag is consulted at the top of
-`decideToolApproval`.
+`/auto-approve` controls, for the current session only, whether gated `run_shell_command` calls
+auto-approve without the per-command prompt. `/auto-approve on` and `/auto-approve off` set it
+explicitly; a bare `/auto-approve` **toggles**. `/yolo` remains a **back-compat alias** that
+toggles. The runtime flag lives at the approval-decision layer (`GthAgentRunner.setSessionYolo()` /
+`toggleSessionYolo()` / `isSessionYolo()`), so the tool stays gated and the flag is consulted at the
+top of `decideToolApproval`.
 
-- **State-aware copy.** Like `/tools` and `/debug`, the App owns the runner flag, so it flips it and
-  commits the notice for the **resulting** state via the shared `yoloToggleNotice(yolo)` builder
-  (`yolo ON — shell commands auto-approved this session` / `yolo OFF — approvals required`). The
-  command's pure `run()` only returns `{ toggleYolo: true }`.
+- **Config seeds it, but it stays toggleable (DL-4).** In interactive `code` mode the shell tool
+  stays gated even when `devTools.shellYolo` pre-enables auto-approval: `GthAgentRunner.init` seeds
+  the session flag ON from `shellYolo`, so the user sees no prompt by default **but can still restore
+  it** with `/auto-approve off`. (Only a non-interactive `exec` / `ask --write` yolo run keeps the
+  tool ungated, since its single-shot path never drains interrupts.)
+- **State-aware copy.** Like `/tools` and `/debug`, the App owns the runner flag, so it applies the
+  requested action and commits the notice for the **resulting** state via the shared
+  `autoApproveNotice(on)` builder (`Auto-approve ON — shell commands run without asking` /
+  `Auto-approve OFF — approvals required`). The command's pure `run()` only returns
+  `{ autoApprove: 'on' | 'off' | 'toggle' }`.
 - **Tone = `warn` when ON.** Turning the approval gate off is a caution-worthy action, so the ON
   notice is yellow; OFF returns to `info`.
+- **Persistent status indicator (DL-4).** While auto-approve is ON the status bar carries an
+  unmissable yellow **`⚡ auto-approve ON`** badge (both while running and idle), so the user can
+  never lose track of the fact that shell commands run unprompted. Seeded from
+  `initialAutoApprove` so a config-enabled session shows it from the first frame.
 - **Tell the truth about the floor (DL-4).** The ON notice states that the **hardline safety floor
-  still blocks catastrophic commands** — `/yolo` only skips the approval *prompt*, it never disables
-  the unbypassable exec-time floor enforced in `GthDevToolkit.executeCommand`.
+  still blocks catastrophic commands** — auto-approve only skips the approval *prompt*, it never
+  disables the unbypassable exec-time floor enforced in `GthDevToolkit.executeCommand`.
+- **Invokable during inference (DL-9).** The prompt stays mounted while a turn streams, so
+  `/auto-approve` (and the other read-only / toggle commands marked `availableDuringRun`) can be run
+  mid-turn; idle-only commands (`/clear`, `/exit`) are refused with a friendly notice. At the
+  approval prompt itself, **`y`** turns auto-approve ON and approves the pending command in one
+  keystroke — the fastest "stop asking me" path.
 - **Session-scoped, reversible, never persisted** — nothing is written to config; toggling again
-  restores approvals. The readline interactive session mirrors the same `/yolo` toggle via
-  `displayWarning`/`displayInfo` (no `CommandNotice` there).
+  restores approvals. The readline interactive session mirrors the same `/auto-approve` (and `/yolo`)
+  commands via `displayWarning`/`displayInfo` (no `CommandNotice` there).
 
 ## `/clear` (DL-3 preserve context, DL-5 respect host)
 
@@ -96,9 +111,9 @@ Tool calls render as **collapsible panels** (`tui/components/LiveTurn.tsx`):
 - **Collapsed by default:** one summary line — caret (`▸`/`▾`) + status glyph + tool name + status
   label. Status semantics: `⋯ running` (yellow), `✓ done` (magenta), `✗ error` (red) when the
   result text looks like an error. The transcript stays readable.
-- **Expand on demand:** `/tools` toggles detail when idle; **`Ctrl+T`** toggles it mid-turn (gated
-  on `running` so the prompt's text input doesn't eat the keystroke). Expanded panels show the
-  streamed `args` and the result body.
+- **Expand on demand:** `/tools` toggles detail (it is `availableDuringRun`, so it works idle **and**
+  mid-turn); **`Ctrl+T`** is the mid-turn keyboard shortcut for the same toggle. Expanded panels show
+  the streamed `args` and the result body.
 - **Honest limitation — committed turns are frozen.** Toggling tool detail only affects the **live
   and future turns**. Committed turns live in Ink's `<Static>` and never re-fold, so an already-
   rendered turn won't retro-expand. The notice copy says exactly this ("Applies to new turns").
@@ -125,13 +140,19 @@ Tool calls render as **collapsible panels** (`tui/components/LiveTurn.tsx`):
 - **Single-line, stable status bar** (`tui/components/StatusBar.tsx`). One dim line carrying
   session context — **mode · model · turn counter · ready** — when idle; a spinner +
   `Thinking… (Esc to interrupt)` while a turn runs. Keep it to one line and free of streaming
-  progress (that belongs to the live turn) so it never flickers.
+  progress (that belongs to the live turn) so it never flickers. When session auto-approve is ON it
+  additionally carries the yellow **`⚡ auto-approve ON`** badge in both states (see `/auto-approve`).
 
 ## Keyboard model (DL-9 keyboard-first)
 
 - **`Esc`** — abort the in-flight turn (only while running).
 - **`Ctrl+C`** — exit the app. (The bare `exit` keyword and `/exit` also quit.)
 - **`Ctrl+T`** — toggle tool-call detail mid-turn (mirrors `/tools`).
+- **`o` / `s` / `a` / `y` / anything-else** at a pending shell approval — approve once / session /
+  always / turn on auto-approve-all (then approve this one) / reject (fail-closed).
+- **slash commands mid-turn** — the prompt stays mounted while a turn streams, so run-safe commands
+  (`/auto-approve`, `/tools`, `/debug`, `/help`, `/model`, …) work during inference; a plain message
+  or an idle-only command is refused with a hint until the turn finishes.
 - **`Tab`** — focus the docked debug panel when visible/idle; once focused, `Tab` cycles its views
   (`Shift+Tab` reverses), `↑`/`↓` scroll one line and `PageUp`/`PageDown` page-step (arrows are the
   documented scroll keys since Mac/compact keyboards lack dedicated `PageUp`/`PageDown` — DL-9, DL-5,

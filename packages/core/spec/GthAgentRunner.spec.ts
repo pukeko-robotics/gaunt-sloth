@@ -505,6 +505,28 @@ describe('GthAgentRunner', () => {
       expect(runner.isSessionYolo()).toBe(false);
     });
 
+    it('setSessionYolo sets the flag explicitly (idempotent) and returns the new state (EXT-12)', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      await runner.init('code', mockConfig);
+      expect(runner.setSessionYolo(true)).toBe(true);
+      expect(runner.setSessionYolo(true)).toBe(true); // idempotent
+      expect(runner.isSessionYolo()).toBe(true);
+      expect(runner.setSessionYolo(false)).toBe(false);
+      expect(runner.isSessionYolo()).toBe(false);
+    });
+
+    it('init seeds the auto-approve flag ON from devTools.shellYolo config (EXT-12)', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      await runner.init('code', {
+        ...mockConfig,
+        commands: { code: { devTools: { shell: true, shellYolo: true } } },
+      } as typeof mockConfig);
+      // Config pre-enabled auto-approval, but the flag remains toggleable (/auto-approve off).
+      expect(runner.isSessionYolo()).toBe(true);
+      expect(runner.setSessionYolo(false)).toBe(false);
+      expect(runner.isSessionYolo()).toBe(false);
+    });
+
     it('auto-approves a gated shell command WITHOUT invoking the human callback when yolo is ON', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       mockAgent.stream.mockResolvedValue(streamOf('x'));

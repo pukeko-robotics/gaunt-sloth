@@ -151,7 +151,7 @@ describe('tui <App>', () => {
     unmount();
   });
 
-  it('/yolo calls agent.toggleYolo and commits the resulting-state notice (EXT-12)', async () => {
+  it('/auto-approve on|off calls agent.setAutoApprove, shows the status badge + notices (EXT-12)', async () => {
     let yolo = false;
     let turnsRun = 0;
     const agent: TuiAgent = {
@@ -159,35 +159,86 @@ describe('tui <App>', () => {
         turnsRun += 1;
         yield { type: 'text', delta: 'should not run' };
       },
-      toggleYolo() {
-        yolo = !yolo;
+      setAutoApprove(action) {
+        yolo = action === 'toggle' ? !yolo : action === 'on';
         return yolo;
       },
     };
     const { stdin, frames, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
 
     await vi.waitFor(() => expect(lastFrame()).toContain('>'));
-    stdin.write('/yolo');
-    await vi.waitFor(() => expect(lastFrame()).toContain('/yolo'));
+    stdin.write('/auto-approve on');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/auto-approve on'));
     stdin.write('\r');
 
-    // First toggle → ON notice.
+    // ON notice + persistent status-bar indicator.
     await vi.waitFor(() => {
-      expect(frames.join('\n')).toContain('yolo ON');
-      expect(frames.join('\n')).toContain('auto-approved this session');
+      expect(frames.join('\n')).toContain('Auto-approve ON');
+      expect(lastFrame()).toContain('auto-approve ON'); // status-bar badge
     });
     expect(yolo).toBe(true);
 
-    // Toggle again → OFF notice (reversible).
-    stdin.write('/yolo');
-    await vi.waitFor(() => expect(lastFrame()).toContain('/yolo'));
+    // /auto-approve off → OFF notice, badge cleared.
+    stdin.write('/auto-approve off');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/auto-approve off'));
     stdin.write('\r');
-    await vi.waitFor(() => expect(frames.join('\n')).toContain('yolo OFF'));
+    await vi.waitFor(() => {
+      expect(frames.join('\n')).toContain('Auto-approve OFF');
+      expect(lastFrame()).not.toContain('auto-approve ON');
+    });
     expect(yolo).toBe(false);
 
     // The command never reaches the model.
     expect(turnsRun).toBe(0);
 
+    unmount();
+  });
+
+  it('initialAutoApprove seeds the status-bar indicator (config-enabled auto-approve)', async () => {
+    const agent = scriptedAgent([]);
+    const { lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} initialAutoApprove />
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('auto-approve ON'));
+    unmount();
+  });
+
+  it('/auto-approve is dispatchable mid-turn; a plain message mid-turn is refused (EXT-12)', async () => {
+    let yolo = false;
+    // A turn that streams then blocks until aborted, so the prompt stays mounted (running) while
+    // we exercise mid-turn input.
+    const agent: TuiAgent = {
+      async *runTurn(_input, signal) {
+        yield { type: 'text', delta: 'working' };
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) return resolve();
+          signal.addEventListener('abort', () => resolve());
+        });
+      },
+      setAutoApprove(action) {
+        yolo = action === 'toggle' ? !yolo : action === 'on';
+        return yolo;
+      },
+    };
+    const { stdin, frames, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} initialMessage="go" />
+    );
+
+    // While running, a plain message is refused with a hint.
+    await vi.waitFor(() => expect(lastFrame()).toContain('Thinking'));
+    stdin.write('hello there');
+    await vi.waitFor(() => expect(lastFrame()).toContain('> hello there'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(frames.join('\n')).toContain('only slash commands'));
+
+    // While running, /auto-approve on IS honoured (flag flips, badge appears next to the spinner).
+    stdin.write('/auto-approve on');
+    await vi.waitFor(() => expect(lastFrame()).toContain('> /auto-approve on'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(yolo).toBe(true));
+    await vi.waitFor(() => expect(lastFrame()).toContain('auto-approve ON'));
+
+    stdin.write(String.fromCharCode(27)); // Esc to end the run cleanly
     unmount();
   });
 

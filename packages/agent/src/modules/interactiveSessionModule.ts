@@ -186,18 +186,38 @@ export async function createInteractiveSession(
           rl.close();
           break;
         }
-        // EXT-12 — `/yolo` toggles session-wide shell auto-approval at the approval-decision
-        // layer (the runner flag), distinct from the static `shellYolo` config. Session-scoped,
-        // reversible, never persisted; the hardline floor still blocks catastrophic commands.
-        if (lowerInput === '/yolo') {
-          const enabled = runner.toggleSessionYolo();
+        // EXT-12 — `/auto-approve` (with the `/yolo` alias) sets session-wide shell auto-approval
+        // at the approval-decision layer (the runner flag). `on`/`off` set it explicitly, no arg
+        // (or `/yolo`) toggles. Session-scoped, reversible, never persisted; the hardline floor
+        // still blocks catastrophic commands. The runner seeds this from the static `shellYolo`
+        // config, so `/auto-approve off` also turns off a config-enabled auto-approval.
+        if (
+          lowerInput === '/auto-approve' ||
+          lowerInput.startsWith('/auto-approve ') ||
+          lowerInput === '/yolo'
+        ) {
+          const arg = lowerInput.startsWith('/auto-approve ')
+            ? lowerInput.slice('/auto-approve '.length).trim()
+            : '';
+          let enabled: boolean;
+          if (arg === 'on' || arg === 'enable' || arg === 'true')
+            enabled = runner.setSessionYolo(true);
+          else if (arg === 'off' || arg === 'disable' || arg === 'false')
+            enabled = runner.setSessionYolo(false);
+          else if (arg === '' || arg === 'toggle') enabled = runner.toggleSessionYolo();
+          else {
+            displayWarning(
+              `Unknown option "${arg}". Usage: /auto-approve [on|off] (no arg toggles).`
+            );
+            continue;
+          }
           if (enabled) {
             displayWarning(
-              'yolo ON — shell commands auto-approved this session (no per-command prompt). ' +
-                'The hardline safety floor still blocks catastrophic commands. Run /yolo again to require approvals.'
+              'Auto-approve ON — shell commands run this session without the per-command prompt. ' +
+                'The hardline safety floor still blocks catastrophic commands. Run /auto-approve off to require approvals.'
             );
           } else {
-            displayInfo('yolo OFF — approvals required before each shell command.');
+            displayInfo('Auto-approve OFF — approvals required before each shell command.');
           }
           continue; // do not send the command to the model
         }
