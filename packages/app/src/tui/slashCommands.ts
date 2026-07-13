@@ -170,12 +170,13 @@ export interface SlashCommandResult {
   /** When true, the component toggles tool-call panels between collapsed and expanded. */
   toggleTools?: boolean;
   /**
-   * EXT-12 — when true, the component flips the runner's session-scoped yolo flag (shell
-   * commands auto-approved this session) and commits the resulting-state notice. The command
-   * itself stays pure: it cannot read the runner's flag, so the App owns the actual toggle and
-   * the notice (mirroring how `/tools` / `/debug` defer their state-aware copy to the App).
+   * EXT-12 — a requested change to the runner's session-scoped auto-approve flag (shell commands
+   * auto-approved this session), from the `/auto-approve` command: `'on'` / `'off'` set it
+   * explicitly, `'toggle'` flips it. The command itself stays pure — it cannot read the runner's
+   * flag — so the App owns the actual apply + the resulting-state notice (mirroring how `/tools`
+   * / `/debug` defer their state-aware copy to the App).
    */
-  toggleYolo?: boolean;
+  autoApprove?: 'on' | 'off' | 'toggle';
   /** When true, the component quits the app (runs `onExit`). */
   exit?: boolean;
 }
@@ -186,6 +187,14 @@ export interface SlashCommand {
   name: string;
   /** One-line description shown by `/help`. */
   description: string;
+  /**
+   * EXT-12 — whether this command may be dispatched WHILE a turn is streaming ("during
+   * inference"). Defaults to false: most commands are idle-only. The read-only / session-toggle
+   * commands (e.g. `/auto-approve`, `/tools`, `/debug`, `/help`, `/model`) set this so the user
+   * can flip auto-approval or inspect state mid-turn without interrupting the run. Commands that
+   * mutate the transcript or thread (`/clear`) or end the session (`/exit`) stay idle-only.
+   */
+  availableDuringRun?: boolean;
   run(ctx: SlashCommandContext, args: string[]): SlashCommandResult;
 }
 
@@ -287,28 +296,42 @@ export function debugToggleNotice(visible: boolean): SlashCommandNotice {
 }
 
 /**
- * The notice for the `/yolo` toggle (EXT-12), given the RESULTING (post-toggle) state. Shared so
- * the command reports exactly the state the App applies. ON is rendered 'warn' (yellow) because it
- * disables the approval gate for the session; OFF is 'info'.
+ * The notice for the `/auto-approve` toggle (EXT-12), given the RESULTING (post-apply) state.
+ * Shared so the command reports exactly the state the App applies. ON is rendered 'warn' (yellow)
+ * because it disables the approval gate for the session; OFF is 'info'.
  */
-export function yoloToggleNotice(yolo: boolean): SlashCommandNotice {
-  return yolo
+export function autoApproveNotice(on: boolean): SlashCommandNotice {
+  return on
     ? {
-        title: 'yolo ON — shell commands auto-approved this session',
+        title: 'Auto-approve ON — shell commands run without asking',
         lines: [
           'run_shell_command will now execute WITHOUT the per-command approval prompt.',
-          'Session-scoped only (not saved); run /yolo again to require approvals.',
+          'Session-scoped only (not saved); run /auto-approve off to require approvals.',
           'The hardline safety floor still blocks catastrophic commands.',
         ],
         tone: 'warn',
       }
     : {
-        title: 'yolo OFF — approvals required',
+        title: 'Auto-approve OFF — approvals required',
         lines: [
           'run_shell_command will prompt for approval again before each command.',
-          'Run /yolo to re-enable session-wide auto-approval.',
+          'Run /auto-approve (or /auto-approve on) to re-enable session-wide auto-approval.',
         ],
       };
+}
+
+/**
+ * EXT-12 — parse the `/auto-approve` argument: no arg (or `toggle`) flips; `on`/`off` (and the
+ * friendly synonyms `enable`/`disable`, `true`/`false`) set explicitly. Returns `null` for an
+ * unrecognized argument so the command can render a usage hint instead of guessing.
+ */
+export function parseAutoApproveArg(args: string[]): 'on' | 'off' | 'toggle' | null {
+  if (args.length === 0) return 'toggle';
+  const arg = args[0].toLowerCase();
+  if (arg === 'toggle') return 'toggle';
+  if (arg === 'on' || arg === 'enable' || arg === 'true') return 'on';
+  if (arg === 'off' || arg === 'disable' || arg === 'false') return 'off';
+  return null;
 }
 
 /**
@@ -334,21 +357,48 @@ export function createCommandRegistry(): SlashCommand[] {
     {
       name: 'debug',
       description: 'Toggle the docked subagents + debug panel',
+      availableDuringRun: true,
       // State-aware: report the notice for the state the toggle will land on (the inverse of now).
       run: (ctx) => ({ toggleDebug: true, notice: debugToggleNotice(!ctx.debugVisible) }),
     },
     {
       name: 'tools',
       description: 'Toggle tool-call detail (collapsed summary ⇄ expanded args/result)',
+      availableDuringRun: true,
       // State-aware: report the notice for the state the toggle will land on (the inverse of now).
       run: (ctx) => ({ toggleTools: true, notice: toolsToggleNotice(!ctx.toolsExpanded) }),
     },
     {
+      name: 'auto-approve',
+      description:
+        'Auto-approve shell commands this session (/auto-approve on|off; no arg toggles)',
+      // Available mid-turn so the user can stop being prompted for the run's remaining tool calls
+      // (EXT-12). The App owns the runner flag, so it applies the change and commits the notice for
+      // the landed state (the command can't read the flag here).
+      availableDuringRun: true,
+      run: (_ctx, args) => {
+        const action = parseAutoApproveArg(args);
+        if (action === null) {
+          return {
+            notice: {
+              title: `Unknown option: ${args[0]}`,
+              lines: [
+                'Usage: /auto-approve [on|off] — with no argument it toggles.',
+                'When ON, shell commands run this session without the per-command prompt.',
+              ],
+              tone: 'warn',
+            },
+          };
+        }
+        return { autoApprove: action };
+      },
+    },
+    {
       name: 'yolo',
-      description: 'Toggle session-wide shell auto-approval (no per-command prompt)',
-      // State-aware: the App owns the runner flag, so it flips it and commits the notice for the
-      // landed state (the command can't read the flag here). EXT-12.
-      run: () => ({ toggleYolo: true }),
+      description: 'Alias for /auto-approve (toggles session-wide shell auto-approval)',
+      availableDuringRun: true,
+      // Back-compat alias: a bare toggle, routed through the same auto-approve apply path. EXT-12.
+      run: () => ({ autoApprove: 'toggle' }),
     },
     {
       name: 'exit',
@@ -358,6 +408,7 @@ export function createCommandRegistry(): SlashCommand[] {
     {
       name: 'mode',
       description: 'Show the current session mode',
+      availableDuringRun: true,
       run: (ctx) => ({
         notice: {
           title: `Session mode: ${ctx.mode}`,
@@ -371,6 +422,7 @@ export function createCommandRegistry(): SlashCommand[] {
     {
       name: 'config',
       description: 'Show the resolved configuration (read-only)',
+      availableDuringRun: true,
       // Read-only discovery: surface the pre-rendered, secret-free summary the App computed from
       // the resolved config. Editing lives in `gth init` / the config file, not here (GS2-1).
       run: (ctx) => ({ notice: configNotice(ctx.configSummary) }),
@@ -378,23 +430,27 @@ export function createCommandRegistry(): SlashCommand[] {
     {
       name: 'history',
       description: 'Show recent recorded sessions (local, opt-in history)',
+      availableDuringRun: true,
       // Read-only discovery, mirroring /config: render the App's fail-soft, pre-built summary.
       run: (ctx) => ({ notice: historyNotice(ctx.historySummary) }),
     },
     {
       name: 'search',
       description: 'Search recorded session history (/search <terms>)',
+      availableDuringRun: true,
       // Dynamic query, so it calls the App-injected fail-soft search provider (stubbable in tests).
       run: (ctx, args) => ({ notice: searchNotice(args, ctx.historySearch) }),
     },
     {
       name: 'insights',
       description: 'Show local analytics over recorded sessions (tokens, cost, top tools)',
+      availableDuringRun: true,
       run: (ctx) => ({ notice: insightsNotice(ctx.insightsSummary) }),
     },
     {
       name: 'model',
       description: 'Show the current model / provider',
+      availableDuringRun: true,
       run: (ctx) => ({
         notice: {
           title: `Model: ${ctx.modelDisplayName || 'unknown'}`,
@@ -420,11 +476,17 @@ export function formatHelp(registry: SlashCommand[]): SlashCommandNotice {
  * Dispatch a parsed command against a registry. Unknown commands return a friendly hint
  * rather than throwing, so the component can render it as a system line and never forward
  * the text to the model.
+ *
+ * EXT-12 — when `options.duringRun` is set (a turn is streaming), commands that are not marked
+ * {@link SlashCommand.availableDuringRun} are refused with a friendly notice rather than run,
+ * so mid-turn input can only reach the safe, non-mutating commands (`/auto-approve`, `/tools`,
+ * `/debug`, …). `/help` is always allowed.
  */
 export function dispatchSlashCommand(
   parsed: ParsedSlashCommand,
   registry: SlashCommand[],
-  ctx: SlashCommandContext
+  ctx: SlashCommandContext,
+  options: { duringRun?: boolean } = {}
 ): SlashCommandResult {
   if (parsed.name === 'help') {
     return { notice: formatHelp(registry) };
@@ -435,6 +497,18 @@ export function dispatchSlashCommand(
       notice: {
         title: `Unknown command: /${parsed.name}`,
         lines: ["That isn't a recognized slash command.", 'Run /help to see everything available.'],
+        tone: 'warn',
+      },
+    };
+  }
+  if (options.duringRun && !command.availableDuringRun) {
+    return {
+      notice: {
+        title: `/${command.name} is not available while the agent is working`,
+        lines: [
+          'Wait for the current turn to finish, then run it again.',
+          'Commands like /auto-approve, /tools and /debug do work mid-turn.',
+        ],
         tone: 'warn',
       },
     };

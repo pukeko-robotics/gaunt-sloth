@@ -12,8 +12,9 @@ import type { PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
  * suspends the normal prompt, so the command can't be typed into the chat box.
  *
  * Pure/presentational: it only renders the pending command + the choices. The key handling
- * (o/s/a → approve, anything else → reject) lives in `<App>`'s `useInput`, mirroring the way
- * the debug panel's scroll keys are owned by the root component.
+ * (o/s/a → approve, y → auto-approve the rest of the session, anything else → reject) lives in
+ * `<App>`'s `useInput`, mirroring the way the debug panel's scroll keys are owned by the root
+ * component.
  */
 export function ApprovalPrompt({
   pending,
@@ -37,7 +38,9 @@ export function ApprovalPrompt({
       {verdict ? (
         <Text color="yellow">{`⚠ safety judge (${verdict.risk}): ${verdict.reason}`}</Text>
       ) : null}
-      <Text dimColor>{'Approve?  [o]nce   [s]ession   [a]lways   [N]o'}</Text>
+      <Text dimColor>
+        {'Approve?  [o]nce   [s]ession   [a]lways   [y] auto-approve all   [N]o'}
+      </Text>
     </Box>
   );
 }

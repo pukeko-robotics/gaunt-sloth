@@ -14,6 +14,7 @@ export function StatusBar({
   modelDisplayName,
   turnCount,
   debugHint,
+  autoApprove,
 }: {
   running: boolean;
   mode: string;
@@ -21,13 +22,29 @@ export function StatusBar({
   turnCount?: number;
   /** When the docked debug panel is open but unfocused, surface how to step into it. */
   debugHint?: boolean;
+  /**
+   * EXT-12 — when session auto-approve is ON, surface a persistent, unmissable indicator so the
+   * user always knows shell commands run without asking. Shown in both the running and idle
+   * states (yellow, matching the warn tone of the /auto-approve ON notice).
+   */
+  autoApprove?: boolean;
 }): React.ReactElement {
+  // A single, always-visible badge so the user can never lose track of the fact that shell
+  // commands are auto-approved (rendered next to the spinner while running, in the status line
+  // when idle). Kept terse so it fits the one-line status bar.
+  const autoApproveBadge = autoApprove ? (
+    <Text color="yellow" bold>
+      {' ⚡ auto-approve ON'}
+    </Text>
+  ) : null;
+
   if (running) {
     return (
       <Box>
         <Text color="yellow">
           <Spinner type="dots" /> Thinking… (Esc to interrupt)
         </Text>
+        {autoApproveBadge}
       </Box>
     );
   }
@@ -42,6 +59,7 @@ export function StatusBar({
   return (
     <Box>
       <Text dimColor>{segments.join('  ·  ')}</Text>
+      {autoApproveBadge}
       {debugHint ? <Text dimColor>{'  ·  Tab: focus debug panel'}</Text> : null}
     </Box>
   );

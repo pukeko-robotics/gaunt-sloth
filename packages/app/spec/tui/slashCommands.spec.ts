@@ -104,26 +104,72 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     expect(result.notice?.lines[0]).toContain('single summary line');
   });
 
-  it('/yolo requests a session-yolo toggle (App owns the runner flag + state-aware notice)', async () => {
+  it('/auto-approve with no arg requests a toggle (App owns the runner flag + state-aware notice)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('#src/tui/slashCommands.js');
-    const result = dispatchSlashCommand(parseSlashCommand('/yolo')!, createCommandRegistry(), ctx);
-    // The command is pure: it only requests the toggle; the App flips the runner flag and commits
+    const result = dispatchSlashCommand(
+      parseSlashCommand('/auto-approve')!,
+      createCommandRegistry(),
+      ctx
+    );
+    // The command is pure: it only requests the change; the App applies the runner flag and commits
     // the notice for the resulting state (the command can't read the flag).
-    expect(result.toggleYolo).toBe(true);
+    expect(result.autoApprove).toBe('toggle');
     expect(result.notice).toBeUndefined();
     expect(result.exit).toBeUndefined();
   });
 
-  it('yoloToggleNotice copy: ON is warn-tone and mentions the hardline floor; OFF is info', async () => {
-    const { yoloToggleNotice } = await import('#src/tui/slashCommands.js');
-    const on = yoloToggleNotice(true);
-    expect(on.title).toContain('yolo ON');
+  it('/auto-approve on|off request explicit states; an unknown arg returns a usage notice', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const registry = createCommandRegistry();
+    expect(
+      dispatchSlashCommand(parseSlashCommand('/auto-approve on')!, registry, ctx).autoApprove
+    ).toBe('on');
+    expect(
+      dispatchSlashCommand(parseSlashCommand('/auto-approve off')!, registry, ctx).autoApprove
+    ).toBe('off');
+    const bad = dispatchSlashCommand(parseSlashCommand('/auto-approve maybe')!, registry, ctx);
+    expect(bad.autoApprove).toBeUndefined();
+    expect(bad.notice?.tone).toBe('warn');
+    expect(bad.notice?.title).toContain('maybe');
+  });
+
+  it('/yolo remains a back-compat alias that requests a toggle', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const result = dispatchSlashCommand(parseSlashCommand('/yolo')!, createCommandRegistry(), ctx);
+    expect(result.autoApprove).toBe('toggle');
+  });
+
+  it('autoApproveNotice copy: ON is warn-tone and mentions the hardline floor; OFF is info', async () => {
+    const { autoApproveNotice } = await import('#src/tui/slashCommands.js');
+    const on = autoApproveNotice(true);
+    expect(on.title).toContain('Auto-approve ON');
     expect(on.tone).toBe('warn');
     expect(on.lines.join(' ')).toContain('hardline');
-    const off = yoloToggleNotice(false);
-    expect(off.title).toContain('yolo OFF');
+    const off = autoApproveNotice(false);
+    expect(off.title).toContain('Auto-approve OFF');
     expect(off.tone).toBeUndefined();
+  });
+
+  it('dispatch during a run refuses idle-only commands but allows availableDuringRun ones', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const registry = createCommandRegistry();
+    // /auto-approve is run-safe → still requests the change mid-turn.
+    expect(
+      dispatchSlashCommand(parseSlashCommand('/auto-approve on')!, registry, ctx, {
+        duringRun: true,
+      }).autoApprove
+    ).toBe('on');
+    // /clear is NOT run-safe → refused with a friendly warn notice, no clear requested.
+    const refused = dispatchSlashCommand(parseSlashCommand('/clear')!, registry, ctx, {
+      duringRun: true,
+    });
+    expect(refused.clearTranscript).toBeUndefined();
+    expect(refused.notice?.tone).toBe('warn');
+    expect(refused.notice?.title).toContain('not available while the agent is working');
   });
 
   it('/exit requests an app quit', async () => {

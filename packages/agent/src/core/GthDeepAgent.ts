@@ -76,9 +76,12 @@ export interface GthDeepAgentParams {
    * `__interrupt__` (a `HITLRequest`) so a consumer can approve/reject before the tool runs;
    * resume with `new Command({ resume: { decisions: [...] } })` on the same `thread_id`.
    *
-   * gsloth currently sets this only for the opt-in `run_shell_command` tool (when its
-   * `devTools.shell` is enabled and `devTools.shellYolo` is NOT). Left `undefined` otherwise —
-   * including under yolo — so no tool is gated and runs never suspend for approval.
+   * gsloth sets this for the opt-in `run_shell_command` tool whenever `devTools.shell` is
+   * enabled — including under `devTools.shellYolo` in interactive `code` mode, where the tool
+   * stays gated so the runtime `/auto-approve` flag governs it (the runner seeds that flag ON
+   * from shellYolo and auto-approves silently). It is left `undefined` only for a non-interactive
+   * yolo run (exec / ask --write), whose single-shot path does not drain interrupts, so the tool
+   * there runs inline without suspending. See `getAgentBuildParams`.
    */
   interruptOn?: Record<string, boolean | InterruptOnConfig>;
 }
@@ -530,20 +533,34 @@ export class GthDeepAgent extends GthAbstractAgent {
     // Gate the opt-in run_shell_command tool behind a per-command approval interrupt. The tool
     // is only emitted (by GthDevToolkit, via builtInToolsConfig) when its devTools.shell flag is
     // set; mirror the same per-command devTools resolution here so the interrupt is wired only
-    // when the tool actually exists. yolo (shellYolo) opts OUT of the confirmation: leave
-    // interruptOn undefined so the tool runs without suspending.
+    // when the tool actually exists.
     const devTools = this.getEffectiveDevToolsConfig();
     // EXT-12 — pass the active command so the absent-config default (shell ON in `code`)
     // is applied consistently with where the tool is actually emitted (GthDevToolkit).
     const shellEnabled = isShellToolEnabled(devTools, this.command);
-    const interruptOn =
-      shellEnabled && devTools?.shellYolo !== true
-        ? ({ run_shell_command: { allowedDecisions: ['approve', 'reject'] } } as Record<
-            string,
-            boolean | InterruptOnConfig
-          >)
-        : undefined;
-    if (interruptOn) {
+    // EXT-12 — auto-approve (shellYolo) interplay with gating:
+    //   • In interactive `code` mode we KEEP the tool gated even when shellYolo pre-enables
+    //     auto-approval, so the runner's session flag governs it and `/auto-approve off` can
+    //     restore the per-command prompt mid-session. The runner seeds that flag ON from
+    //     shellYolo (see GthAgentRunner.init), so the user still sees no prompt by default; the
+    //     interactive event/stream path drains the interrupt and auto-approves silently.
+    //   • In non-interactive modes (exec / ask --write) a single-shot run does NOT drain
+    //     interrupts, so shellYolo keeps the tool UNGATED (runs inline without suspending),
+    //     preserving prior behaviour. There is no slash-command surface there to toggle anyway.
+    const isInteractive = this.command === 'code';
+    const gateShell = shellEnabled && (devTools?.shellYolo !== true || isInteractive);
+    const interruptOn = gateShell
+      ? ({ run_shell_command: { allowedDecisions: ['approve', 'reject'] } } as Record<
+          string,
+          boolean | InterruptOnConfig
+        >)
+      : undefined;
+    if (gateShell && devTools?.shellYolo === true) {
+      this.statusUpdate(
+        StatusLevel.INFO,
+        'Shell tool (run_shell_command) auto-approved by config (shellYolo). Type /auto-approve off to require per-command approval.'
+      );
+    } else if (interruptOn) {
       this.statusUpdate(
         StatusLevel.INFO,
         'Shell tool (run_shell_command) enabled with per-command approval (interruptOn).'

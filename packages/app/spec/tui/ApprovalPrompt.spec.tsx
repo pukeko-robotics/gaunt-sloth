@@ -57,6 +57,7 @@ describe('tui <ApprovalPrompt>', () => {
     expect(f).toContain('[o]nce');
     expect(f).toContain('[s]ession');
     expect(f).toContain('[a]lways');
+    expect(f).toContain('[y] auto-approve all'); // EXT-12 — turn on session auto-approve
     expect(f).toContain('[N]o');
     unmount();
   });
