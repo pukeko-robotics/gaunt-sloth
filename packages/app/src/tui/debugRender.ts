@@ -2,6 +2,9 @@ import type { BaseMessage } from '@langchain/core/messages';
 import { mapChatMessagesToStoredMessages } from '@langchain/core/messages';
 import { z } from 'zod';
 import type { DebugRequestExtras, DebugToolDef } from '@gaunt-sloth/agent/core/debugCapture.js';
+import type { GthConfig } from '@gaunt-sloth/core/config.js';
+import type { AgentResolvers, McpServerInstruction } from '@gaunt-sloth/core/core/types.js';
+import { MCP_TOOL_NAME_PREFIX } from '@gaunt-sloth/core/constants.js';
 
 /**
  * Pure renderers turning the deep agent's debug captures into the JSON strings the `/debug`
@@ -117,6 +120,85 @@ export function renderToolDetails(extras: DebugRequestExtras | undefined): strin
   }
 
   return withDescription(TOOLS_TAB_DESCRIPTION, sections.join('\n'));
+}
+
+const MCP_TAB_DESCRIPTION =
+  'MCP server overview. For each connected MCP server: its discovery instructions and the tools it ' +
+  'contributes (shown with the same server-prefixed names the model calls). This is the overview, ' +
+  "not the schemas. For a tool's full description and parameter schema, see the Tools tab.";
+
+/**
+ * TUI-C20: gather the session-stable inputs the MCP debug tab needs — the configured MCP server
+ * list and each server's captured discovery instructions. Instructions come from EXT-32's
+ * {@link AgentResolvers.getMcpServerInstructions} accessor (captured once during tool resolution and
+ * reused here, NOT re-queried), so the tab shows exactly the same instruction text the system prompt
+ * was composed with. React-free + defensive (missing config / accessor → empty) so it is unit
+ * testable and can never blank or crash the panel. The per-server tool grouping is left to
+ * {@link renderMcpDetails}, which reads the live per-request tool catalogue.
+ */
+export function collectMcpOverview(
+  config: Pick<GthConfig, 'mcpServers'> | undefined,
+  resolvers: Pick<AgentResolvers, 'getMcpServerInstructions'> | undefined
+): { servers: string[]; instructions: McpServerInstruction[] } {
+  const servers = Object.keys(config?.mcpServers ?? {});
+  const instructions = resolvers?.getMcpServerInstructions?.() ?? [];
+  return { servers, instructions };
+}
+
+/**
+ * Render the "MCP" tab (TUI-C20): a per-server overview of the connected MCP servers. Under each
+ * server it shows (a) its discovery `instructions` (from EXT-32's captured accessor, threaded in via
+ * `instructions`; a server that supplied none gets a neutral line, never an empty block) and (b) its
+ * contributed tools by their server-prefixed name (`mcp__<server>__<tool>`) with a one-line
+ * description. Tool SCHEMAS are deliberately NOT rendered here — the intro points at the Tools tab
+ * for those. `servers` is the full configured server list; `extras.tools` is the live per-turn tool
+ * catalogue, regrouped by the shared {@link MCP_TOOL_NAME_PREFIX} prefix so the grouping can't drift
+ * from how the resolver named them. No servers → a neutral empty state (never a throw).
+ */
+export function renderMcpDetails(
+  extras: DebugRequestExtras | undefined,
+  servers: string[],
+  instructions: McpServerInstruction[]
+): string {
+  const sections: string[] = [];
+  sections.push(`=== MCP SERVERS (${servers.length}) ===`);
+
+  if (servers.length === 0) {
+    sections.push('(no MCP servers configured)');
+    return withDescription(MCP_TAB_DESCRIPTION, sections.join('\n'));
+  }
+
+  const instructionByServer = new Map(instructions.map((i) => [i.server, i.instructions]));
+  const tools = extras?.tools ?? [];
+
+  for (const server of servers) {
+    sections.push('');
+    sections.push(`── ${server} ──`);
+
+    // (a) discovery instructions — the SAME text EXT-32 injected into the system prompt.
+    const serverInstructions = instructionByServer.get(server);
+    sections.push('instructions:');
+    if (serverInstructions) {
+      for (const line of serverInstructions.split('\n')) sections.push(`  ${line}`);
+    } else {
+      sections.push('  (no instructions provided)');
+    }
+
+    // (b) the server's tools by their server-prefixed name + a one-line description.
+    const prefix = `${MCP_TOOL_NAME_PREFIX}__${server}__`;
+    const serverTools = tools.filter((t) => t.name.startsWith(prefix));
+    sections.push(`tools (${serverTools.length}):`);
+    if (serverTools.length > 0) {
+      for (const tool of serverTools) {
+        const oneLine = tool.description ? tool.description.split('\n')[0].trim() : '';
+        sections.push(oneLine ? `  • ${tool.name}: ${oneLine}` : `  • ${tool.name}`);
+      }
+    } else {
+      sections.push('  (no tools loaded for this server)');
+    }
+  }
+
+  return withDescription(MCP_TAB_DESCRIPTION, sections.join('\n'));
 }
 
 /** Format one tool definition: name, description, then its JSON-schema params. */

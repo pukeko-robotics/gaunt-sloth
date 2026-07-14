@@ -205,6 +205,26 @@ their config has a problem.
 Defaults are beginner-safe (DL-9): tool detail collapsed, debug panel hidden — the expert opts into
 depth.
 
+## Debug panel tabs (DL-4 inspectability, DL-2 progressive disclosure)
+
+The docked `/debug` panel (`tui/components/DebugPanel.tsx`) is the inspectability surface (DL-4):
+each tab exposes one slice of what actually shaped the turn, one keystroke deep (DL-2). The tab set,
+in cycle order, is **Subagents · System prompt · Tools · MCP · Chat history · Raw response**.
+
+- **Each tab opens with a short, plain-language description that scrolls WITH its content** (not a
+  fixed header, so it costs no permanent estate; the `withDescription` idiom in `debugRender.ts`).
+  A tab that overviews something another tab details **must name that other tab** so the two don't
+  read as duplicates.
+- **MCP tab (TUI-C20).** The MCP-server *overview*: per connected server, its discovery
+  `instructions` and the tools it contributes, shown by their server-prefixed names
+  (`mcp__<server>__<tool>`) with a one-line description. It renders the **same** captured
+  instructions the system prompt was composed with (EXT-32's `getMcpServerInstructions()`: capture
+  once, consume in both places, never a second query), so the panel can't drift from what the model
+  saw (DL-4). It is deliberately **not** the tool schemas; its intro points at the **Tools** tab
+  for the full description + parameter schema (DL-2: overview here, detail one tab over). A server
+  that supplied no instructions shows a neutral line, and a session with no MCP servers shows a
+  neutral empty state rather than a blank or a crash (DL-7 graceful degradation).
+
 ## Colour & tone semantics (DL-8)
 
 Colour is **meaningful, not decorative**. Use the shared palette consistently:

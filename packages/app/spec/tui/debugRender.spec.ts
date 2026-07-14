@@ -95,4 +95,87 @@ describe('tui/debugRender', () => {
     expect(renderSystemDetails(undefined)).toContain('no request details captured');
     expect(renderToolDetails(undefined)).toContain('no request details captured');
   });
+
+  // ── TUI-C20: the MCP overview tab ────────────────────────────────────────────
+  it('renderMcpDetails lists each server, its instructions and server-prefixed tools, and names the Tools tab', async () => {
+    const { renderMcpDetails } = await import('#src/tui/debugRender.js');
+    const out = renderMcpDetails(
+      {
+        tools: [
+          // MCP tools carry the `mcp__<server>__` prefix the resolver assigns …
+          {
+            name: 'mcp__ctx7__get_docs',
+            description: 'Fetch docs for a library\n(second line ignored)',
+          },
+          { name: 'mcp__ctx7__resolve_id', description: 'Resolve a library id' },
+          // … a non-MCP built-in tool must NOT be grouped under any server.
+          { name: 'read_file', description: 'Reads a file' },
+        ],
+      },
+      ['ctx7'],
+      [{ server: 'ctx7', instructions: 'Use resolve_id before get_docs.' }]
+    );
+
+    // Intro points at the Tools tab for the full definitions (this is the overview, not the schemas).
+    expect(out).toContain('Tools tab');
+    // The server heading and its captured instructions.
+    expect(out).toContain('ctx7');
+    expect(out).toContain('Use resolve_id before get_docs.');
+    // Its tools, by their server-prefixed name + a one-line description (first line only).
+    expect(out).toContain('mcp__ctx7__get_docs: Fetch docs for a library');
+    expect(out).toContain('mcp__ctx7__resolve_id: Resolve a library id');
+    expect(out).not.toContain('second line ignored');
+    // A built-in (non-prefixed) tool is not attributed to the server.
+    expect(out).not.toContain('read_file');
+    // Instruction text renders ABOVE the tool list under each server.
+    expect(out.indexOf('Use resolve_id')).toBeLessThan(out.indexOf('mcp__ctx7__get_docs'));
+  });
+
+  it('renderMcpDetails shows a neutral line for a server that supplied no instructions', async () => {
+    const { renderMcpDetails } = await import('#src/tui/debugRender.js');
+    // `github` is in the server list but absent from the captured instructions array.
+    const out = renderMcpDetails(
+      { tools: [{ name: 'mcp__github__list_prs', description: 'List PRs' }] },
+      ['github'],
+      []
+    );
+    expect(out).toContain('github');
+    expect(out).toContain('(no instructions provided)');
+    // The tool list still renders even without instructions.
+    expect(out).toContain('mcp__github__list_prs');
+  });
+
+  it('renderMcpDetails renders a neutral empty state (no crash) when no MCP servers are configured', async () => {
+    const { renderMcpDetails } = await import('#src/tui/debugRender.js');
+    const out = renderMcpDetails(undefined, [], []);
+    expect(out).toContain('MCP SERVERS (0)');
+    expect(out).toContain('(no MCP servers configured)');
+    // Still names the Tools tab so the tab reads consistently even when empty.
+    expect(out).toContain('Tools tab');
+  });
+
+  it('collectMcpOverview sources instructions from the EXT-32 getMcpServerInstructions accessor', async () => {
+    const { collectMcpOverview } = await import('#src/tui/debugRender.js');
+    const captured = [{ server: 'ctx7', instructions: 'Use library IDs.' }];
+    const getMcpServerInstructions = vi.fn(() => captured);
+
+    const out = collectMcpOverview({ mcpServers: { ctx7: {}, github: {} } } as never, {
+      getMcpServerInstructions,
+    });
+
+    // The tab's instructions come from the accessor (called once), not a re-capture.
+    expect(getMcpServerInstructions).toHaveBeenCalledTimes(1);
+    expect(out.instructions).toEqual(captured);
+    // The server list is the full configured set (both connected servers), from config.mcpServers.
+    expect(out.servers).toEqual(['ctx7', 'github']);
+  });
+
+  it('collectMcpOverview is defensive: no config / no accessor yields an empty overview', async () => {
+    const { collectMcpOverview } = await import('#src/tui/debugRender.js');
+    expect(collectMcpOverview(undefined, undefined)).toEqual({ servers: [], instructions: [] });
+    expect(collectMcpOverview({ mcpServers: undefined } as never, {})).toEqual({
+      servers: [],
+      instructions: [],
+    });
+  });
 });

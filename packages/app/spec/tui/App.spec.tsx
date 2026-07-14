@@ -495,7 +495,13 @@ describe('tui <App>', () => {
     await vi.waitFor(() => expect(lastFrame()).toContain('>'));
     // Distinct content per section so we can tell which tab's body is shown (TUI-C16: system and
     // tools are now separate tabs).
-    emit?.({ kind: 'request', text: 'HISTORY_BODY', system: 'SYSTEM_BODY', tools: 'TOOLS_BODY' });
+    emit?.({
+      kind: 'request',
+      text: 'HISTORY_BODY',
+      system: 'SYSTEM_BODY',
+      tools: 'TOOLS_BODY',
+      mcp: 'MCP_BODY',
+    });
     emit?.({ kind: 'response', text: 'RESPONSE_BODY' });
 
     stdin.write('/debug');
@@ -511,9 +517,12 @@ describe('tui <App>', () => {
     stdin.write(SHIFT_TAB);
     await vi.waitFor(() => expect(lastFrame()).toContain('RESPONSE_BODY'));
 
-    // Order is subagents · system · tools · history · response, so stepping back visits each.
+    // Order is subagents · system · tools · mcp · history · response (TUI-C20 inserts mcp after
+    // tools), so stepping back visits each of the six sections in turn.
     stdin.write(SHIFT_TAB); // -> history
     await vi.waitFor(() => expect(lastFrame()).toContain('HISTORY_BODY'));
+    stdin.write(SHIFT_TAB); // -> mcp
+    await vi.waitFor(() => expect(lastFrame()).toContain('MCP_BODY'));
     stdin.write(SHIFT_TAB); // -> tools
     await vi.waitFor(() => expect(lastFrame()).toContain('TOOLS_BODY'));
     stdin.write(SHIFT_TAB); // -> system
@@ -589,6 +598,7 @@ describe('tui <App>', () => {
       text: '[]',
       system: '=== MODEL PARAMS ===\n{"model":"claude-opus-4"}',
       tools: '=== TOOLS (1) ===\n• read_file',
+      mcp: '=== MCP SERVERS (0) ===\n(no MCP servers configured)',
     });
 
     stdin.write('/debug');
@@ -609,6 +619,58 @@ describe('tui <App>', () => {
     // One more Tab reaches the Tools tab, which leads with the tool name list.
     stdin.write(TAB); // -> tools
     await vi.waitFor(() => expect(lastFrame()).toContain('read_file'));
+
+    unmount();
+  });
+
+  it('shows the MCP tab: per-server instructions + server-prefixed tools, intro naming the Tools tab (TUI-C20)', async () => {
+    const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
+    let emit: ((c: import('#src/tui/types.js').TuiDebugCapture) => void) | undefined;
+    const subscribeDebug = (cb: (c: import('#src/tui/types.js').TuiDebugCapture) => void) => {
+      emit = cb;
+      return () => {};
+    };
+    const { stdin, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} subscribeDebug={subscribeDebug} />
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    // A pre-rendered MCP capture: one server, its instructions, and a server-prefixed tool.
+    emit?.({
+      kind: 'request',
+      text: '[]',
+      system: 'SYSTEM_BODY',
+      tools: 'TOOLS_BODY',
+      mcp:
+        'MCP server overview. See the Tools tab for full definitions.\n' +
+        '────────\n\n' +
+        '=== MCP SERVERS (1) ===\n\n── ctx7 ──\ninstructions:\n  Use library IDs.\n' +
+        'tools (1):\n  • mcp__ctx7__get_docs: Fetch docs for a library',
+    });
+
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('MCP'));
+
+    // Tab to focus, then step subagents -> system -> tools -> mcp (the sixth-tab insertion point).
+    stdin.write(TAB); // focus
+    await vi.waitFor(() => expect(lastFrame()).toContain('Tab: section'));
+    stdin.write(TAB); // -> system
+    stdin.write(TAB); // -> tools
+    stdin.write(TAB); // -> mcp
+    await vi.waitFor(() => expect(lastFrame()).toContain('MCP server overview'));
+    // Maximise so the whole overview (which overflows the default 8-row viewport) is visible.
+    stdin.write('m');
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      // The intro names the Tools tab (this is the overview, not the schemas).
+      expect(f).toContain('Tools tab');
+      // The server, its captured instructions, and its server-prefixed tool all render.
+      expect(f).toContain('ctx7');
+      expect(f).toContain('Use library IDs.');
+      expect(f).toContain('mcp__ctx7__get_docs');
+    });
 
     unmount();
   });

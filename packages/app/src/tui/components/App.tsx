@@ -83,6 +83,8 @@ export function App(props: TuiAppProps): React.ReactElement {
   // TUI-C16: the old combined "system + tools" capture is split across two tabs.
   const [debugSystem, setDebugSystem] = useState<string[]>([]);
   const [debugTools, setDebugTools] = useState<string[]>([]);
+  // TUI-C20: the MCP-server overview tab (per-server instructions + prefixed tools).
+  const [debugMcp, setDebugMcp] = useState<string[]>([]);
   const [debugResponse, setDebugResponse] = useState<string[]>([]);
   // Whether tool-call panels show their args/result body. Collapsed by default (compact
   // summary lines) so the transcript stays readable; Ctrl+T flips the whole turn's detail,
@@ -144,10 +146,11 @@ export function App(props: TuiAppProps): React.ReactElement {
         historyLines: debugHistory,
         systemLines: debugSystem,
         toolsLines: debugTools,
+        mcpLines: debugMcp,
         responseLines: debugResponse,
         activeTab: debugTab,
       }).length,
-    [subagents, debugHistory, debugSystem, debugTools, debugResponse, debugTab]
+    [subagents, debugHistory, debugSystem, debugTools, debugMcp, debugResponse, debugTab]
   );
   const debugMaxOffset = Math.max(0, debugLineCount - debugViewport);
   // Clamp helper shared by every downward scroll (page + arrow) so the offset never exceeds the
@@ -344,6 +347,7 @@ export function App(props: TuiAppProps): React.ReactElement {
           setDebugHistory([]);
           setDebugSystem([]);
           setDebugTools([]);
+          setDebugMcp([]);
           setDebugResponse([]);
           // Show visible feedback for the clear. Rendered outside <Static> (see clearedBanner)
           // so the known index-reset swallow quirk can't eat it (TUI-C12).
@@ -544,6 +548,7 @@ export function App(props: TuiAppProps): React.ReactElement {
         setDebugHistory(capture.text.split('\n'));
         setDebugSystem(capture.system.split('\n'));
         setDebugTools(capture.tools.split('\n'));
+        setDebugMcp(capture.mcp.split('\n'));
       } else setDebugResponse(capture.text.split('\n'));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -578,6 +583,7 @@ export function App(props: TuiAppProps): React.ReactElement {
           historyLines={debugHistory}
           systemLines={debugSystem}
           toolsLines={debugTools}
+          mcpLines={debugMcp}
           responseLines={debugResponse}
           activeTab={debugTab}
           scrollOffset={debugScroll}

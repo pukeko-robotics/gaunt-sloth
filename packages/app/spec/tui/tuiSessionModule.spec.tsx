@@ -79,6 +79,9 @@ vi.mock('#src/tui/debugRender.js', () => ({
   renderSystemDetails: vi.fn(),
   renderToolDetails: vi.fn(),
   renderResponse: vi.fn(),
+  // TUI-C20 — the MCP overview tab's collector + renderer, threaded through the debug bridge.
+  collectMcpOverview: vi.fn(() => ({ servers: [], instructions: [] })),
+  renderMcpDetails: vi.fn(),
 }));
 
 const sessionConfig = {

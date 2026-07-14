@@ -44,11 +44,12 @@ export interface TuiAgent {
  * One debug capture from the agent's `wrapModelCall` middleware. `kind: 'request'`
  * carries the full message history (`text`) sent to the model plus the non-message request parts
  * pre-rendered for two dedicated tabs (TUI-C16): `system` (model params, tool-choice, system
- * prompt) and `tools` (the tool catalogue). `kind: 'response'` carries the resolved raw model
+ * prompt) and `tools` (the tool catalogue), plus `mcp` (TUI-C20: the per-server MCP overview —
+ * instructions + server-prefixed tools). `kind: 'response'` carries the resolved raw model
  * response. All arrive pre-rendered as strings so the panel just slices lines.
  */
 export type TuiDebugCapture =
-  | { kind: 'request'; text: string; system: string; tools: string }
+  | { kind: 'request'; text: string; system: string; tools: string; mcp: string }
   | { kind: 'response'; text: string };
 
 /** A committed line in the scrollback (rendered via Ink `<Static>`). */

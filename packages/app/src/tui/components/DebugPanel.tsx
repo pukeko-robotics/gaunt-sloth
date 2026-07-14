@@ -7,13 +7,14 @@ import type { SubagentTreeViewModel } from '#src/tui/viewModel.js';
  * "Sent to model (system + tools)" section into two tabs — `system` and `tools` — so the tool
  * catalogue no longer sits below the whole system prompt.
  */
-export const DEBUG_TABS = ['subagents', 'system', 'tools', 'history', 'response'] as const;
+export const DEBUG_TABS = ['subagents', 'system', 'tools', 'mcp', 'history', 'response'] as const;
 export type DebugTab = (typeof DEBUG_TABS)[number];
 
 const TAB_LABELS: Record<DebugTab, string> = {
   subagents: 'Subagents',
   system: 'System prompt',
   tools: 'Tools',
+  mcp: 'MCP',
   history: 'Chat history',
   response: 'Raw response',
 };
@@ -27,6 +28,8 @@ export interface DebugPanelProps {
   systemLines: string[];
   /** Rendered lines for the "Tools" tab — tool name list then per-tool descriptors (TUI-C16). */
   toolsLines: string[];
+  /** Rendered lines for the "MCP" tab — per-server instructions + prefixed tool names (TUI-C20). */
+  mcpLines: string[];
   /** Rendered lines for the "Raw response" tab (already split on newlines). */
   responseLines: string[];
   /** Which tab is shown. */
@@ -47,6 +50,7 @@ export interface DebugPanelLinesInput {
   historyLines: string[];
   systemLines: string[];
   toolsLines: string[];
+  mcpLines: string[];
   responseLines: string[];
   activeTab: DebugTab;
 }
@@ -61,6 +65,7 @@ export function debugPanelLines({
   historyLines,
   systemLines,
   toolsLines,
+  mcpLines,
   responseLines,
   activeTab,
 }: DebugPanelLinesInput): string[] {
@@ -71,6 +76,8 @@ export function debugPanelLines({
       return systemLines.length ? systemLines : ['(no request details captured yet)'];
     case 'tools':
       return toolsLines.length ? toolsLines : ['(no tools captured yet)'];
+    case 'mcp':
+      return mcpLines.length ? mcpLines : ['(no MCP details captured yet)'];
     case 'history':
       return historyLines.length ? historyLines : ['(no model call captured yet)'];
     case 'response':
@@ -106,6 +113,7 @@ export function DebugPanel({
   historyLines,
   systemLines,
   toolsLines,
+  mcpLines,
   responseLines,
   activeTab,
   scrollOffset,
@@ -118,6 +126,7 @@ export function DebugPanel({
     historyLines,
     systemLines,
     toolsLines,
+    mcpLines,
     responseLines,
     activeTab,
   });
@@ -159,7 +168,7 @@ export function DebugPanel({
           })}
         </Text>
       </Box>
-      {/* Hint on its own row so it never competes with the (now five) tab labels for width
+      {/* Hint on its own row so it never competes with the (now six) tab labels for width
           and wraps mid-phrase. */}
       <Box>
         <Text dimColor>

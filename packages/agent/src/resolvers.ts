@@ -24,6 +24,7 @@ import { formatMcpConnectFailureMessage } from '#src/utils/mcpAuthError.js';
 import { createAuthProviderAndAuthenticate } from '#src/mcp/OAuthClientProviderImpl.js';
 import { MultiServerMCPClient, type StreamableHTTPConnection } from '@langchain/mcp-adapters';
 import type { StatusLevel, StatusUpdateCallback } from '@gaunt-sloth/core/core/types.js';
+import { MCP_TOOL_NAME_PREFIX } from '@gaunt-sloth/core/constants.js';
 
 /**
  * Create a full set of resolvers for the GthLangChainAgent.
@@ -197,7 +198,8 @@ async function getMcpClient(config: GthConfig): Promise<MultiServerMCPClient | n
     return new MultiServerMCPClient({
       throwOnLoadError: true,
       prefixToolNameWithServerName: true,
-      additionalToolNamePrefix: 'mcp',
+      // TUI-C20: single-sourced so the MCP debug tab can regroup tools back by server prefix.
+      additionalToolNamePrefix: MCP_TOOL_NAME_PREFIX,
       mcpServers: mcpServers,
       // EXT-31: per-server surfacing. The function form of onConnectionError lets a failed server be
       // classified + surfaced and then SKIPPED (added to the client's failedServers set) rather than

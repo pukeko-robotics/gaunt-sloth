@@ -36,11 +36,14 @@ import { App } from '#src/tui/components/App.js';
 import { formatConfigSummary } from '#src/tui/slashCommands.js';
 import type { PendingApproval, TuiAgent, TuiDebugCapture } from '#src/tui/types.js';
 import {
+  collectMcpOverview,
   renderHistory,
+  renderMcpDetails,
   renderSystemDetails,
   renderToolDetails,
   renderResponse,
 } from '#src/tui/debugRender.js';
+import type { AgentResolvers } from '@gaunt-sloth/core/core/types.js';
 import { viewportBumpSequence } from '#src/tui/terminal.js';
 import type { DebugRequestExtras } from '@gaunt-sloth/agent/core/debugCapture.js';
 
@@ -110,8 +113,16 @@ function createStatusBridge() {
 
 type DebugListener = (capture: TuiDebugCapture) => void;
 
-/** Fan-out so the deep agent's wrapModelCall debug sink can reach the mounted React app. */
-function createDebugBridge() {
+/**
+ * Fan-out so the deep agent's wrapModelCall debug sink can reach the mounted React app.
+ *
+ * TUI-C20: `config` + `resolvers` are threaded in so each request capture can also carry the MCP
+ * tab's overview. The per-server discovery instructions come from EXT-32's
+ * {@link AgentResolvers.getMcpServerInstructions} accessor (captured once, reused here — never
+ * re-queried), collected via `collectMcpOverview`; the per-server tools are regrouped from the same
+ * `extras.tools` catalogue the Tools tab renders.
+ */
+function createDebugBridge(config: GthConfig, resolvers: AgentResolvers) {
   const listeners = new Set<DebugListener>();
   const emit = (capture: TuiDebugCapture) => {
     for (const l of listeners) l(capture);
@@ -124,13 +135,16 @@ function createDebugBridge() {
       };
     },
     capture: {
-      onRequest: (messages: BaseMessage[], extras?: DebugRequestExtras) =>
+      onRequest: (messages: BaseMessage[], extras?: DebugRequestExtras) => {
+        const { servers, instructions } = collectMcpOverview(config, resolvers);
         emit({
           kind: 'request',
           text: renderHistory(messages),
           system: renderSystemDetails(extras),
           tools: renderToolDetails(extras),
-        }),
+          mcp: renderMcpDetails(extras, servers, instructions),
+        });
+      },
       onResponse: (response: unknown) => emit({ kind: 'response', text: renderResponse(response) }),
     },
   };
@@ -251,17 +265,16 @@ export async function createTuiSession(
   }
 
   const bridge = createStatusBridge();
-  const debugBridge = createDebugBridge();
+  // TUI-C20: the resolvers are hoisted so the debug bridge can read the SAME MCP instructions the
+  // agent captured (via getMcpServerInstructions) for the /debug MCP tab — not a second capture.
+  const resolvers = createResolvers();
+  const debugBridge = createDebugBridge(config, resolvers);
   const approvalBridge = createApprovalBridge();
   // B5: TUI code/chat default to the LEAN backend; an explicit config.agent.backend overrides it
   // (deep is now opt-in / experimental). Mirrors the readline path in createInteractiveSession,
   // askCommand, and execCommand — the TUI is the default interactive surface, so it must match.
   // createResolvers() is unchanged, so a lean session keeps the full toolset.
-  const runner = new GthAgentRunner(
-    bridge.emit,
-    createResolvers(),
-    resolveAgentFactory(config, 'lean')
-  );
+  const runner = new GthAgentRunner(bridge.emit, resolvers, resolveAgentFactory(config, 'lean'));
 
   try {
     await runner.init(sessionConfig.mode, config, checkpointSaver);

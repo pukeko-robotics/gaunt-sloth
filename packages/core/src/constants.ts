@@ -36,3 +36,12 @@ export const CONFIG_SCHEMA_POINTER = 'https://gauntsloth.app/schema/v2/gsloth-co
  * Lives under `.gsloth/.gsloth-settings/` like other project settings.
  */
 export const SHELL_ALLOWLIST_FILE = 'shell-allowlist.json';
+
+/**
+ * The `additionalToolNamePrefix` handed to `MultiServerMCPClient` so every MCP tool name is
+ * namespaced. Combined with `prefixToolNameWithServerName`, the adapter emits tool names shaped
+ * `${MCP_TOOL_NAME_PREFIX}__<serverName>__<toolName>` (the `__` separator is the mcp-adapters
+ * convention). Single-sourced here so the resolver that sets the prefix (EXT-32) and any consumer
+ * that groups tools back by server (the [[TUI-C20]] MCP debug tab) can never silently drift apart.
+ */
+export const MCP_TOOL_NAME_PREFIX = 'mcp';
