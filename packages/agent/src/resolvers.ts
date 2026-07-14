@@ -10,7 +10,11 @@
  */
 
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
-import type { GthCommand, AgentResolvers } from '@gaunt-sloth/core/core/types.js';
+import type {
+  GthCommand,
+  AgentResolvers,
+  McpServerInstruction,
+} from '@gaunt-sloth/core/core/types.js';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
 import { displayInfo } from '@gaunt-sloth/core/utils/consoleUtils.js';
@@ -28,12 +32,18 @@ import type { StatusLevel, StatusUpdateCallback } from '@gaunt-sloth/core/core/t
  */
 export function createResolvers(): AgentResolvers {
   let mcpClientInstance: MultiServerMCPClient | null = null;
+  // EXT-32: per-server MCP discovery `instructions` captured during the most recent resolveTools.
+  // Kept on the resolver so the composed system prompt (via getMcpServerInstructions) AND a future
+  // MCP debug tab ([[TUI-C20]]) can read the SAME captured text without re-querying the servers.
+  let mcpServerInstructions: McpServerInstruction[] = [];
 
   const resolveTools = async (
     config: GthConfig,
     command?: GthCommand
   ): Promise<StructuredToolInterface[]> => {
     const tools: StructuredToolInterface[] = [];
+    // Fresh capture per resolution; a stale value must never leak across re-inits.
+    mcpServerInstructions = [];
 
     // 1. Get built-in tools (filesystem, devTools, customTools, etc.)
     try {
@@ -60,6 +70,29 @@ export function createResolvers(): AgentResolvers {
       }
     } catch (error) {
       debugLog(`MCP tools error: ${error}`);
+    }
+
+    // 2b. EXT-32: capture each connected MCP server's discovery `instructions` string (from its MCP
+    // `initialize` handshake, exposed by the SDK Client via getInstructions()). This is ISOLATED
+    // from the getTools() block above so a getClient/getInstructions failure can never discard
+    // successfully-loaded MCP tools nor log a misleading "MCP tools error". Per-server try/catch so
+    // one unreachable/instruction-less server does not abort the rest. Absent/empty/whitespace-only
+    // instructions contribute nothing (trimmed, then omitted). The captured value is injected —
+    // fenced + per-server-labelled — into the composed system prompt on BOTH backends.
+    if (mcpClientInstance) {
+      const serverNames = Object.keys(config.mcpServers || {});
+      for (const serverName of serverNames) {
+        try {
+          const client = await mcpClientInstance.getClient(serverName);
+          const instructions = client?.getInstructions()?.trim();
+          if (instructions) {
+            mcpServerInstructions.push({ server: serverName, instructions });
+          }
+        } catch (error) {
+          debugLog(`MCP instructions capture error for '${serverName}': ${error}`);
+        }
+      }
+      debugLog(`MCP servers with instructions: ${mcpServerInstructions.length}`);
     }
 
     // 3. Get A2A tools
@@ -100,11 +133,17 @@ export function createResolvers(): AgentResolvers {
     // No cleanup needed for middleware currently
   };
 
+  // EXT-32: expose the captured per-server MCP instructions for the shared prompt composition (and,
+  // later, the [[TUI-C20]] MCP debug tab). Returns a defensive copy so callers can't mutate the
+  // captured state. Empty until resolveTools has run (or when no server supplied instructions).
+  const getMcpServerInstructions = (): McpServerInstruction[] => [...mcpServerInstructions];
+
   return {
     resolveTools,
     cleanupTools,
     resolveMiddleware,
     cleanupMiddleware,
+    getMcpServerInstructions,
   };
 }
 

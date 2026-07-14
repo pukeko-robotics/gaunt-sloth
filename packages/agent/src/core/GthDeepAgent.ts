@@ -15,7 +15,11 @@ import { getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
 // run_shell_command and run on the real-fs cwd), so their canonical source moved to core so the
 // lean backend composes them too. Imported here for GthDeepAgent.init()'s code-mode composition and
 // re-exported so existing importers of this module keep working.
-import { appendOsShellNote, appendCwdNote } from '@gaunt-sloth/core/utils/systemPromptNotes.js';
+import {
+  appendOsShellNote,
+  appendCwdNote,
+  appendMcpServerInstructionsNote,
+} from '@gaunt-sloth/core/utils/systemPromptNotes.js';
 export {
   appendOsShellNote,
   appendCwdNote,
@@ -263,7 +267,7 @@ export class GthDeepAgent extends GthAbstractAgent {
     // POSIX). This is ORTHOGONAL to the path-namespace notes above (those say WHERE it is; this
     // says WHAT shell it speaks) and applies in BOTH code-mode branches, independent of
     // virtualMode — the shell dialect matters on every platform. Non-code paths get nothing new.
-    const systemPrompt =
+    const codeNotesPrompt =
       this.command === 'code'
         ? appendOsShellNote(
             useVirtualFs
@@ -271,6 +275,22 @@ export class GthDeepAgent extends GthAbstractAgent {
               : appendCwdNote(params.systemPrompt, getCurrentWorkDir())
           )
         : params.systemPrompt;
+
+    // EXT-32: inject the connected MCP servers' discovery `instructions` (captured by the resolver
+    // during buildDeepAgentParams' resolveTools call, above) into the prompt — fenced + per-server-
+    // labelled as untrusted server-provided context. Mode-independent (MCP tools load in every
+    // mode). This mirrors the lean backend's GthLangChainAgent seam so both backends compose the
+    // same shared note (GS2-27 shared-path parity). Lives in init() like the cwd note, so the ACP
+    // buildDeepAgentParams entry is intentionally unaffected. Empty capture adds nothing.
+    // When tools are disabled, buildDeepAgentParams skips resolveTools (no MCP contact), so a REUSED
+    // resolver could still hold a prior run's capture — gate on toolsDisabled (recomputed from the
+    // effective config buildDeepAgentParams set on `this.config`) so no stale instructions leak.
+    const deepToolsDisabled =
+      Array.isArray(this.config?.allowedTools) && this.config.allowedTools.length === 0;
+    const mcpInstructions = deepToolsDisabled
+      ? []
+      : (this.resolvers?.getMcpServerInstructions?.() ?? []);
+    const systemPrompt = appendMcpServerInstructionsNote(codeNotesPrompt, mcpInstructions);
 
     this.agent = createDeepAgent({
       model: params.model,

@@ -10,7 +10,11 @@ import {
   readExecPrompt,
 } from '#src/utils/llmUtils.js';
 import { getCurrentWorkDir } from '#src/utils/systemUtils.js';
-import { appendOsShellNote, appendCwdNote } from '#src/utils/systemPromptNotes.js';
+import {
+  appendOsShellNote,
+  appendCwdNote,
+  appendMcpServerInstructionsNote,
+} from '#src/utils/systemPromptNotes.js';
 import { isShellCommandFailedError } from '#src/core/shell/ShellCommandFailedError.js';
 import { extractDebugRequestExtras } from '#src/core/debugCapture.js';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
@@ -234,10 +238,23 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // notes stay deep-only (lean never runs virtualMode). Same order the deep backend's real-path
     // branch uses: cwd note first, OS/shell note last. `getCurrentWorkDir()` is already read above
     // for the status line, so the value is free.
-    const systemPrompt =
+    const codeNotesPrompt =
       this.command === 'code'
         ? appendOsShellNote(appendCwdNote(baseSystemPrompt, getCurrentWorkDir()))
         : baseSystemPrompt;
+
+    // EXT-32: inject each connected MCP server's discovery `instructions` (captured during tool
+    // resolution) into the prompt — fenced + per-server-labelled as untrusted server-provided
+    // context. Mode-independent: MCP tools load in every mode, so their usage guidance applies in
+    // every mode (not just `code`). Empty/absent capture (or a resolver without the accessor) adds
+    // nothing. Composed through this shared path so it reaches the lean AND deep backends alike.
+    // When tools are disabled, resolveTools is skipped entirely (no MCP contact), so a REUSED
+    // resolver could still hold a prior run's capture — gate on toolsDisabled so no stale
+    // instructions leak into a tools-disabled session.
+    const mcpInstructions = toolsDisabled
+      ? []
+      : (this.resolvers?.getMcpServerInstructions?.() ?? []);
+    const systemPrompt = appendMcpServerInstructionsNote(codeNotesPrompt, mcpInstructions);
 
     // Create agent with configured middleware. Only pass systemPrompt when non-empty so we never
     // hand createAgent an empty system message.

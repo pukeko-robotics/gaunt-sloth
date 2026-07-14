@@ -234,9 +234,30 @@ export type MiddlewareResolver = (
 ) => Promise<any[]>;
 export type MiddlewareCleanup = () => Promise<void>;
 
+/**
+ * EXT-32 — one connected MCP server's discovery `instructions` string (from its MCP `initialize`
+ * handshake), paired with the server name it came from. Captured once during tool resolution and
+ * reused: injected (fenced + per-server-labelled) into the composed system prompt, and available
+ * for [[TUI-C20]]'s MCP debug tab to render the same captured text. Only servers that actually
+ * supplied non-empty instructions appear here.
+ */
+export interface McpServerInstruction {
+  /** The configured MCP server name (the key under `config.mcpServers`). */
+  server: string;
+  /** The server-provided instructions text (trimmed, non-empty). */
+  instructions: string;
+}
+
 export interface AgentResolvers {
   resolveTools?: ToolsResolver;
   cleanupTools?: ToolsCleanup;
   resolveMiddleware?: MiddlewareResolver;
   cleanupMiddleware?: MiddlewareCleanup;
+  /**
+   * EXT-32 — the per-server MCP discovery instructions captured during the most recent
+   * {@link ToolsResolver} call (empty when no MCP servers are configured or none supplied
+   * instructions). Optional: resolvers without MCP support simply omit it, and the prompt
+   * composition treats an absent accessor as "no instructions" (no MCP section is emitted).
+   */
+  getMcpServerInstructions?(): McpServerInstruction[];
 }
