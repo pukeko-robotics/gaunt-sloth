@@ -144,3 +144,46 @@ test.describe('gth chat TUI — slow fixture (interrupt)', () => {
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
   });
 });
+
+test.describe('gth chat TUI — debug pane `/` search (search fixture, TUI-C21)', () => {
+  test.use({
+    program: { file: 'node', args: [cli, 'chat', '--tui'] },
+    env: envFor('search.json'),
+    columns: 100,
+    rows: 30,
+  });
+
+  // `/` in a FOCUSED debug pane runs a less-style search over the tab's lines and jumps the
+  // viewport to a match that was clipped below the 8-row fold — the real integration jump.
+  test('searches the focused pane and scrolls the viewport to a match below the fold', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+    terminal.write('go');
+    await expect(terminal.getByText('> go')).toBeVisible();
+    terminal.submit();
+    // Turn completes (the subagent tree is captured for the panel).
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+
+    // Open the debug panel and focus it (Tab). The panel opens on the Subagents tab.
+    terminal.write('/debug');
+    await expect(terminal.getByText('> /debug')).toBeVisible();
+    terminal.submit();
+    await expect(terminal.getByText('Subagents')).toBeVisible();
+    terminal.write('\t'); // Tab → focus the pane
+    await expect(terminal.getByText('Tab: section')).toBeVisible();
+
+    // "line-30" is below the 8-row viewport fold before searching.
+    await expect(terminal.getByText('line-30', { full: true })).not.toBeVisible();
+
+    // Open search (`/`) then type "30": the sole match is the body line "line-30".
+    terminal.write('/');
+    await expect(terminal.getByText('type to search')).toBeVisible();
+    terminal.write('3');
+    terminal.write('0');
+
+    // The viewport jumped to the match (query echo is only "30"), and the indicator reads 1/1.
+    await expect(terminal.getByText('line-30', { full: true })).toBeVisible();
+    await expect(terminal.getByText('1/1')).toBeVisible();
+  });
+});

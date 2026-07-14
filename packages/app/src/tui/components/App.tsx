@@ -32,6 +32,7 @@ import {
   toolsToggleNotice,
 } from '#src/tui/slashCommands.js';
 import { viewportBumpSequence } from '#src/tui/terminal.js';
+import { findMatches, scrollOffsetForLine, stepMatch } from '#src/tui/debugSearch.js';
 
 /** Rows of clipping viewport in the docked debug panel (default / restored size). */
 const DEBUG_VIEWPORT_HEIGHT = 8;
@@ -86,6 +87,13 @@ export function App(props: TuiAppProps): React.ReactElement {
   // TUI-C20: the MCP-server overview tab (per-server instructions + prefixed tools).
   const [debugMcp, setDebugMcp] = useState<string[]>([]);
   const [debugResponse, setDebugResponse] = useState<string[]>([]);
+  // TUI-C21 — `less`-style incremental search over the focused pane's shared line model. Scoped to
+  // debug-pane focus (see the useInput handler): `/` opens the query, `n`/`N` step matches, `Esc`
+  // clears. `searchInput` is the "typing the query" mode (owns keys); `searchQuery` is the live
+  // query (highlights + count); `searchCurrent` is the 0-based cursor into the match list.
+  const [debugSearchInput, setDebugSearchInput] = useState(false);
+  const [debugSearchQuery, setDebugSearchQuery] = useState('');
+  const [debugSearchCurrent, setDebugSearchCurrent] = useState(0);
   // Whether tool-call panels show their args/result body. Collapsed by default (compact
   // summary lines) so the transcript stays readable; Ctrl+T flips the whole turn's detail,
   // mirroring the docked debug panel's single-key detail toggle.
@@ -139,7 +147,7 @@ export function App(props: TuiAppProps): React.ReactElement {
   // step nor the arrow step can push the offset past the end (the over-scroll bug that left
   // PgUp/↑ burning through phantom offset before anything moved — TUI-C11). Single-sourced with
   // DebugPanel via the exported `debugPanelLines` so the clamp matches exactly what is rendered.
-  const debugLineCount = useMemo(
+  const debugLines = useMemo(
     () =>
       debugPanelLines({
         subagents,
@@ -149,13 +157,70 @@ export function App(props: TuiAppProps): React.ReactElement {
         mcpLines: debugMcp,
         responseLines: debugResponse,
         activeTab: debugTab,
-      }).length,
+      }),
     [subagents, debugHistory, debugSystem, debugTools, debugMcp, debugResponse, debugTab]
   );
+  const debugLineCount = debugLines.length;
   const debugMaxOffset = Math.max(0, debugLineCount - debugViewport);
+  // Mirror the active tab's lines for the synchronous key handler, so `/`-search can compute
+  // matches + the jump offset off the exact lines being rendered without a stale closure (TUI-C21).
+  const debugLinesRef = useRef<string[]>([]);
+  debugLinesRef.current = debugLines;
+  // Match line-indices for the current query over the active tab's lines — one search, every tab
+  // uniformly (it runs over whatever `debugPanelLines` produced). Mirrored into refs so the
+  // synchronous key handler (n/N, Esc) reads the current matches + cursor without a stale closure.
+  const debugMatches = useMemo(
+    () => findMatches(debugLines, debugSearchQuery),
+    [debugLines, debugSearchQuery]
+  );
+  const debugMatchesRef = useRef<number[]>([]);
+  debugMatchesRef.current = debugMatches;
+  const debugSearchInputRef = useRef(false);
+  debugSearchInputRef.current = debugSearchInput;
+  const debugSearchQueryRef = useRef('');
+  debugSearchQueryRef.current = debugSearchQuery;
+  const debugSearchCurrentRef = useRef(0);
+  debugSearchCurrentRef.current = debugSearchCurrent;
+  // The absolute line index of the current match (or -1) — DebugPanel paints it distinctly.
+  const currentMatchLine =
+    debugMatches.length > 0
+      ? debugMatches[Math.min(debugSearchCurrent, debugMatches.length - 1)]
+      : -1;
   // Clamp helper shared by every downward scroll (page + arrow) so the offset never exceeds the
   // real maximum; the upward floor stays Math.max(0, …).
   const clampDebugScroll = (next: number) => Math.min(Math.max(0, next), debugMaxOffset);
+
+  // ── TUI-C21 search helpers (drive state + refs together so the synchronous handler stays fresh) ──
+  // Clear the search entirely (query, matches, input mode). Leaves the viewport where it is.
+  const clearDebugSearch = () => {
+    debugSearchInputRef.current = false;
+    debugSearchQueryRef.current = '';
+    debugSearchCurrentRef.current = 0;
+    setDebugSearchInput(false);
+    setDebugSearchQuery('');
+    setDebugSearchCurrent(0);
+  };
+  // Set the query, recompute matches off the current lines, reset the cursor to the first match and
+  // jump the viewport to it (reusing TUI-C11's scroll offset). Incremental: called on every keystroke.
+  const setDebugSearch = (query: string) => {
+    debugSearchQueryRef.current = query;
+    setDebugSearchQuery(query);
+    const matches = findMatches(debugLinesRef.current, query);
+    debugSearchCurrentRef.current = 0;
+    setDebugSearchCurrent(0);
+    if (matches.length > 0) {
+      setDebugScroll(scrollOffsetForLine(matches[0], debugViewport, debugLinesRef.current.length));
+    }
+  };
+  // Move to the next (+1) / previous (-1) match with wrap-around and jump the viewport to it.
+  const stepDebugSearch = (dir: number) => {
+    const matches = debugMatchesRef.current;
+    if (matches.length === 0) return;
+    const next = stepMatch(matches, debugSearchCurrentRef.current, dir);
+    debugSearchCurrentRef.current = next;
+    setDebugSearchCurrent(next);
+    setDebugScroll(scrollOffsetForLine(matches[next], debugViewport, debugLinesRef.current.length));
+  };
 
   // Built once per session; a plain array so later layers (EXT-5) could append commands.
   const registry = useMemo(() => createCommandRegistry(), []);
@@ -393,6 +458,8 @@ export function App(props: TuiAppProps): React.ReactElement {
               setDebugFocused(false);
               debugFocusedRef.current = false;
               setDebugMaximized(false);
+              // Drop any active search so the pane reopens clean (TUI-C21).
+              clearDebugSearch();
             }
             return next;
           });
@@ -463,9 +530,70 @@ export function App(props: TuiAppProps): React.ReactElement {
     }
 
     if (debugFocusedRef.current) {
+      // TUI-C21 — while TYPING the query, the search input OWNS the keyboard: printable chars
+      // extend the query, Backspace trims it, Enter confirms (keeps the highlights, leaves input
+      // mode), Esc clears. This must come first so `m`/`n`/Tab are typed into the query rather than
+      // maximising / navigating / cycling. `/` here is not the app slash line — the prompt is
+      // unmounted while the pane is focused, so `/` can only mean "search this pane" (the seam).
+      if (debugSearchInputRef.current) {
+        if (key.escape) {
+          clearDebugSearch();
+          return;
+        }
+        if (key.return) {
+          // Confirm: leave typing mode but keep the query + highlights (n/N now navigate).
+          debugSearchInputRef.current = false;
+          setDebugSearchInput(false);
+          return;
+        }
+        if (key.backspace || key.delete) {
+          setDebugSearch(debugSearchQueryRef.current.slice(0, -1));
+          return;
+        }
+        // Ignore navigation keys while typing; only literal characters extend the query.
+        if (
+          key.tab ||
+          key.upArrow ||
+          key.downArrow ||
+          key.leftArrow ||
+          key.rightArrow ||
+          key.pageUp ||
+          key.pageDown
+        ) {
+          return;
+        }
+        if (input && !key.ctrl && !key.meta) {
+          setDebugSearch(debugSearchQueryRef.current + input);
+        }
+        return;
+      }
+      // Esc layering: clear an active search first (less-style), else unfocus the pane.
       if (key.escape) {
+        if (debugSearchQueryRef.current) {
+          clearDebugSearch();
+          return;
+        }
         setDebugFocused(false);
         debugFocusedRef.current = false;
+        return;
+      }
+      // `/` opens the search input (scoped to pane focus — the seam).
+      if (input === '/') {
+        debugSearchInputRef.current = true;
+        debugSearchQueryRef.current = '';
+        debugSearchCurrentRef.current = 0;
+        setDebugSearchInput(true);
+        setDebugSearchQuery('');
+        setDebugSearchCurrent(0);
+        return;
+      }
+      // n / N step to the next / previous match with wrap-around (only when a search is active).
+      if (input === 'n') {
+        stepDebugSearch(1);
+        return;
+      }
+      if (input === 'N') {
+        stepDebugSearch(-1);
         return;
       }
       // Tab cycles sections forward; Shift+Tab steps back to the previous section (Ink reports
@@ -476,6 +604,10 @@ export function App(props: TuiAppProps): React.ReactElement {
           (t) => DEBUG_TABS[(DEBUG_TABS.indexOf(t) + step + DEBUG_TABS.length) % DEBUG_TABS.length]
         );
         setDebugScroll(0);
+        // Matches are tab-local; recompute happens via the memo, reset the cursor to the first
+        // match of the new tab (the query persists across tabs).
+        debugSearchCurrentRef.current = 0;
+        setDebugSearchCurrent(0);
         return;
       }
       // 'm' toggles maximise: grow the pane to (most of) the terminal height so long
@@ -590,6 +722,11 @@ export function App(props: TuiAppProps): React.ReactElement {
           focused={debugFocused}
           viewportHeight={debugViewport}
           maximized={debugMaximized}
+          searchQuery={debugSearchQuery}
+          searchActive={debugSearchInput}
+          matchCount={debugMatches.length}
+          currentMatchIndex={debugSearchCurrent}
+          currentMatchLine={currentMatchLine}
         />
       ) : null}
       {/* Input dock: bracketed top and bottom by rules so the status bar, prompt and hint

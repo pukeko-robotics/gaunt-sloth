@@ -200,6 +200,10 @@ their config has a problem.
   (`Shift+Tab` reverses), `↑`/`↓` scroll one line and `PageUp`/`PageDown` page-step (arrows are the
   documented scroll keys since Mac/compact keyboards lack dedicated `PageUp`/`PageDown` — DL-9, DL-5,
   DL-7), `m` maximises, `Esc` unfocuses.
+- **`/` in the focused debug pane** — a `less`-style incremental search over the current tab (see
+  *Debug pane search* below). `/` here means "search this pane", **not** the app slash line — that
+  is safe because the prompt is unmounted while the pane is focused, so the two `/` meanings never
+  contend (DL-9 keyboard-first, DL-4 inspectability).
 - **arrows / Enter** — select / submit in the prompt.
 
 Defaults are beginner-safe (DL-9): tool detail collapsed, debug panel hidden — the expert opts into
@@ -224,6 +228,27 @@ in cycle order, is **Subagents · System prompt · Tools · MCP · Chat history 
   for the full description + parameter schema (DL-2: overview here, detail one tab over). A server
   that supplied no instructions shows a neutral line, and a session with no MCP servers shows a
   neutral empty state rather than a blank or a crash (DL-7 graceful degradation).
+
+## Debug pane search (DL-4 inspectability, DL-2 progressive disclosure, DL-9 keyboard-first, TUI-C21)
+
+The `/debug` captures (full raw response, whole chat history, full tool descriptors) are long, so
+linear scroll can't find a specific string. A **`less`-style incremental search** sits over the
+**shared `debugPanelLines()` line model** (`tui/debugSearch.ts`), so **every tab gets it once** — one
+search over whatever the active tab rendered, never a per-tab reimplementation, and it reuses the
+TUI-C11 viewport offset to jump to a match rather than re-inventing scrolling.
+
+- **Scoped to pane focus (the seam).** `/` opens the search **only while the debug pane is focused**.
+  It does not hijack the global `/` slash line: while the pane is focused the prompt is unmounted, so
+  the keystroke can only reach the pane. When the pane is not focused, `/` is the app slash line as
+  ever (DL-9 — one key, unambiguous by context).
+- **The loop.** `/` opens a query input (case-insensitive by default); typing filters incrementally
+  and highlights every match in view, jumping the viewport to the first. `Enter` confirms (keeps the
+  highlights, leaves typing mode); `n` / `N` step to the next / previous match with **wrap-around**;
+  `Esc` clears the search (a second `Esc`, with no active search, unfocuses the pane).
+- **Always answer "where am I?" (DL-1).** A search line shows the typed query and a **match indicator
+  `3/12`** (current / total), or a friendly **`no matches`** when the query has no hits — never a
+  silent empty result. Matches are highlighted (yellow), the current match distinctly (cyan), so the
+  eye lands on where the viewport jumped (DL-8 meaningful colour).
 
 ## Colour & tone semantics (DL-8)
 

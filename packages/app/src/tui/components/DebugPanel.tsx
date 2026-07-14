@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { SubagentTreeViewModel } from '#src/tui/viewModel.js';
+import { highlightSegments } from '#src/tui/debugSearch.js';
 
 /**
  * The selectable sections of the docked panel, in tab order. TUI-C16 split the old combined
@@ -42,6 +43,16 @@ export interface DebugPanelProps {
   viewportHeight: number;
   /** Whether the pane is maximised (grown to most of the terminal height). */
   maximized: boolean;
+  /** Active `less`-style search query (empty when no search) — matches are highlighted (TUI-C21). */
+  searchQuery: string;
+  /** Whether the search input is actively being typed (draws the caret + a "type to search" hint). */
+  searchActive: boolean;
+  /** Number of matching lines for the current query (drives the `3/12` / `no matches` indicator). */
+  matchCount: number;
+  /** 0-based cursor into the match list (the `n`/`N` current match); only meaningful when count > 0. */
+  currentMatchIndex: number;
+  /** Absolute line index of the current match, or -1 — highlighted distinctly from the rest. */
+  currentMatchLine: number;
 }
 
 /** The data a debug section needs to resolve into renderable lines. */
@@ -120,6 +131,11 @@ export function DebugPanel({
   focused,
   viewportHeight,
   maximized,
+  searchQuery,
+  searchActive,
+  matchCount,
+  currentMatchIndex,
+  currentMatchLine,
 }: DebugPanelProps): React.ReactElement {
   const lines = debugPanelLines({
     subagents,
@@ -173,17 +189,58 @@ export function DebugPanel({
       <Box>
         <Text dimColor>
           {focused
-            ? `[Tab: section · ↑/↓: scroll · m: ${
+            ? `[Tab: section · ↑/↓: scroll · /: search · n/N: next/prev · m: ${
                 maximized ? 'restore' : 'maximise'
-              } · Esc: unfocus]`
+              } · Esc: ${searchQuery ? 'clear search' : 'unfocus'}]`
             : '[/debug to hide]'}
         </Text>
       </Box>
       <Box height={viewportHeight} overflow="hidden" flexDirection="column">
-        {visible.map((line, i) => (
-          <Text key={top + i}>{line}</Text>
-        ))}
+        {visible.map((line, i) => {
+          const abs = top + i;
+          // No active query → render the raw line (the common, zero-cost path). With a query, split
+          // the line into match / non-match runs and paint the matches; the CURRENT match line gets
+          // a distinct colour so the eye lands on where the viewport jumped (TUI-C21).
+          if (!searchQuery) return <Text key={abs}>{line}</Text>;
+          const segs = highlightSegments(line, searchQuery);
+          return (
+            <Text key={abs}>
+              {segs.map((seg, j) =>
+                seg.match ? (
+                  <Text
+                    key={j}
+                    backgroundColor={abs === currentMatchLine ? 'cyan' : 'yellow'}
+                    color="black"
+                  >
+                    {seg.text}
+                  </Text>
+                ) : (
+                  <Text key={j}>{seg.text}</Text>
+                )
+              )}
+            </Text>
+          );
+        })}
       </Box>
+      {/* `less`-style search line (TUI-C21): the typed query with a caret while active, plus the
+          match indicator (`3/12` / `no matches`). Only present while searching so it costs no
+          estate otherwise. */}
+      {searchActive || searchQuery ? (
+        <Box>
+          <Text>
+            <Text color="cyan">/</Text>
+            <Text>{searchQuery}</Text>
+            {searchActive ? <Text color="cyan">▏</Text> : null}
+            <Text dimColor>
+              {searchQuery.length === 0
+                ? '  (type to search)'
+                : matchCount === 0
+                  ? '  no matches'
+                  : `  ${currentMatchIndex + 1}/${matchCount}`}
+            </Text>
+          </Text>
+        </Box>
+      ) : null}
       {/* Always-present bottom status: makes "is there more below?" unambiguous. */}
       <Box>
         <Text dimColor>{footer}</Text>

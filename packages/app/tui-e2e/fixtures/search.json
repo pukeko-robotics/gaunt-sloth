@@ -1,0 +1,32 @@
+{
+  "defaultDelayMs": 6,
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "tool_start",
+          "id": "s1",
+          "name": "task"
+        },
+        {
+          "type": "tool_args",
+          "id": "s1",
+          "delta": "{\"subagent_type\":\"worker\",\"description\":\"big\"}"
+        },
+        {
+          "type": "tool_end",
+          "id": "s1"
+        },
+        {
+          "type": "tool_result",
+          "id": "s1",
+          "content": "line-0\nline-1\nline-2\nline-3\nline-4\nline-5\nline-6\nline-7\nline-8\nline-9\nline-10\nline-11\nline-12\nline-13\nline-14\nline-15\nline-16\nline-17\nline-18\nline-19\nline-20\nline-21\nline-22\nline-23\nline-24\nline-25\nline-26\nline-27\nline-28\nline-29\nline-30\nline-31\nline-32\nline-33\nline-34\nline-35\nline-36\nline-37\nline-38\nline-39"
+        },
+        {
+          "type": "text",
+          "delta": "ok"
+        }
+      ]
+    }
+  ]
+}

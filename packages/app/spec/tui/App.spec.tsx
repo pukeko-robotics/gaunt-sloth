@@ -996,6 +996,141 @@ describe('tui <App>', () => {
     unmount();
   });
 
+  // ── TUI-C21: `less`-style `/` search across the focused debug pane ───────────────────────────
+  describe('debug pane search (TUI-C21)', () => {
+    // A subagent whose 40-line result overflows the 8-row viewport, so a match can be off-screen.
+    const longResultAgent = () => {
+      const longResult = Array.from({ length: 40 }, (_, i) => `line-${i}`).join('\n');
+      return scriptedAgent([
+        { type: 'tool_start', id: 's1', name: 'task' },
+        { type: 'tool_args', id: 's1', delta: '{"subagent_type":"worker","description":"big"}' },
+        { type: 'tool_end', id: 's1' },
+        { type: 'tool_result', id: 's1', content: longResult },
+        { type: 'text', delta: 'ok' },
+      ]);
+    };
+
+    it('scopes `/` to pane focus: searches the focused pane, jumps the viewport to a match, shows N/M', async () => {
+      const { stdin, lastFrame, unmount } = render(
+        <App {...baseProps} agent={longResultAgent()} initialMessage="go" />
+      );
+      await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+      stdin.write('/debug');
+      await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+      stdin.write('\r');
+      await vi.waitFor(() => expect(lastFrame()).toContain('worker'));
+
+      // Focus the pane; now the prompt is unmounted, so `/` can only mean "search this pane".
+      stdin.write(TAB);
+      await vi.waitFor(() => expect(lastFrame()).toContain('Tab: section'));
+      // "line-30" is clipped by the 8-row viewport before searching.
+      expect(lastFrame()).not.toContain('line-30');
+
+      // Open search and type "30": the sole match is the body line "line-30", far below the fold.
+      stdin.write('/');
+      stdin.write('3');
+      stdin.write('0');
+      await vi.waitFor(() => {
+        const f = lastFrame() ?? '';
+        // The viewport jumped to the match — the query echo is only "30", so "line-30" in the
+        // frame proves the BODY line is now visible (the reused TUI-C11 scroll offset).
+        expect(f).toContain('line-30');
+        expect(f).toContain('1/1'); // footer match indicator
+      });
+      unmount();
+    });
+
+    it('leaves the global slash line intact when the pane is NOT focused (`/` opens the command menu)', async () => {
+      const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
+      const { stdin, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
+      await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+      stdin.write('/debug');
+      await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+      stdin.write('\r');
+      // Panel is open but UNFOCUSED (no Tab): the prompt still owns `/`.
+      await vi.waitFor(() => expect(lastFrame()).toContain('Subagents'));
+
+      stdin.write('/');
+      await vi.waitFor(() => {
+        const f = lastFrame() ?? '';
+        expect(f).toContain('❯'); // the slash-command discovery menu cursor (global slash intact)
+        expect(f).toContain('/help'); // a discovered command
+      });
+      // …and `/` did NOT open a pane search.
+      expect(lastFrame()).not.toContain('no matches');
+      expect(lastFrame()).not.toContain('(type to search)');
+      unmount();
+    });
+
+    it('navigates matches with n/N (wrap-around) and clears the search on Esc while keeping focus', async () => {
+      const body = ['alpha', 'needle one', 'beta', 'needle two', 'gamma', 'needle three'].join(
+        '\n'
+      );
+      const agent = scriptedAgent([
+        { type: 'tool_start', id: 's1', name: 'task' },
+        { type: 'tool_args', id: 's1', delta: '{"subagent_type":"worker","description":"big"}' },
+        { type: 'tool_end', id: 's1' },
+        { type: 'tool_result', id: 's1', content: body },
+        { type: 'text', delta: 'ok' },
+      ]);
+      const { stdin, lastFrame, unmount } = render(
+        <App {...baseProps} agent={agent} initialMessage="go" />
+      );
+      await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+      stdin.write('/debug');
+      await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+      stdin.write('\r');
+      await vi.waitFor(() => expect(lastFrame()).toContain('worker'));
+      stdin.write(TAB);
+      await vi.waitFor(() => expect(lastFrame()).toContain('Tab: section'));
+
+      // Search "needle": three matches, cursor on the first → 1/3.
+      stdin.write('/');
+      for (const ch of 'needle') stdin.write(ch);
+      await vi.waitFor(() => expect(lastFrame()).toContain('1/3'));
+      stdin.write('\r'); // confirm: leave typing mode, keep highlights (n/N now navigate)
+
+      // n steps forward; a third n wraps back to the first.
+      stdin.write('n');
+      await vi.waitFor(() => expect(lastFrame()).toContain('2/3'));
+      stdin.write('n');
+      await vi.waitFor(() => expect(lastFrame()).toContain('3/3'));
+      stdin.write('n');
+      await vi.waitFor(() => expect(lastFrame()).toContain('1/3')); // wrapped forward
+
+      // N (previous) wraps backward from the first to the last.
+      stdin.write('N');
+      await vi.waitFor(() => expect(lastFrame()).toContain('3/3'));
+
+      // Esc clears the search (indicator gone) but keeps the pane focused.
+      stdin.write(ESC);
+      await vi.waitFor(() => {
+        const f = lastFrame() ?? '';
+        expect(f).not.toContain('3/3');
+        expect(f).toContain('Tab: section'); // still focused (Esc cleared search, did not unfocus)
+      });
+      unmount();
+    });
+
+    it('shows the no-match state (count 0, friendly) for a query with no hits', async () => {
+      const { stdin, lastFrame, unmount } = render(
+        <App {...baseProps} agent={longResultAgent()} initialMessage="go" />
+      );
+      await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+      stdin.write('/debug');
+      await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+      stdin.write('\r');
+      await vi.waitFor(() => expect(lastFrame()).toContain('worker'));
+      stdin.write(TAB);
+      await vi.waitFor(() => expect(lastFrame()).toContain('Tab: section'));
+
+      stdin.write('/');
+      for (const ch of 'zzq') stdin.write(ch);
+      await vi.waitFor(() => expect(lastFrame()).toContain('no matches'));
+      unmount();
+    });
+  });
+
   // TUI-C19 — persistent config-advisory line in the chrome (outside <Static>), plus /config
   // surfacing the actual warning text.
   describe('config-advisory notice (TUI-C19)', () => {
