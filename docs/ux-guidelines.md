@@ -201,6 +201,14 @@ The TUI has two zones and the boundary is a hard design constraint:
 - **The live region** (live turn, debug panel, `ClearBanner`, status bar, prompt) is the only part
   that re-renders. Anything that must update in place, or must survive a `setTranscript([])`, belongs
   here — not in `<Static>`.
+- **Recall, don't retro-mutate (`/reasoning`, TUI-C18).** Because a committed turn's thinking is
+  frozen collapsed and can never re-expand in place, `/reasoning [n]` **reprints** a past turn's
+  thinking as a *fresh* committed block instead of mutating the old one. No number recalls the most
+  recent turn that recorded thinking; `<n>` recalls that 1-based turn (out-of-range / no-thinking
+  give a friendly notice). The reprint reuses the same `ReasoningPanel` (💭 + cyan `│` gutter, DL-8)
+  so a recalled block looks identical to the original, tagged `Thinking · turn <n> (recalled)`. It is
+  `availableDuringRun` (read-only recall, DL-9). This is the sanctioned pattern for surfacing frozen
+  `<Static>` content: emit anew, never reach back in.
 
 ## Copy voice (DL-1, beginner-first)
 

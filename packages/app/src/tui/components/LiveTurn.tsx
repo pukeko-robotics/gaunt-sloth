@@ -80,21 +80,28 @@ function ToolCallPanel({
  * dim-only region reads as the answer. Cyan carries the layer boundary as colour; the body stays
  * dim+italic underneath the coloured gutter.
  */
-function ReasoningPanel({
+export function ReasoningPanel({
   reasoning,
   expanded,
   live,
+  label = 'Thinking',
 }: {
   reasoning: string;
   expanded: boolean;
   /** True for the in-progress turn, where Ctrl+T can toggle the detail in place. */
   live: boolean;
+  /**
+   * Header text after the `💭` glyph. Defaults to `Thinking` for the in-turn region; the
+   * `/reasoning` reprint (TUI-C18) passes a turn-tagged label so a recalled block is single-sourced
+   * with the live styling yet says which committed turn it came from.
+   */
+  label?: string;
 }): React.ReactElement {
   const caret = expanded ? '▾' : '▸';
   return (
     <Box flexDirection="column">
       <Text color="cyan">
-        {`${caret} 💭 Thinking`}
+        {`${caret} 💭 ${label}`}
         {live && !expanded ? <Text dimColor>{'  (Ctrl+T to expand)'}</Text> : null}
       </Text>
       {expanded

@@ -63,6 +63,10 @@ const isPlainExit = (s: string): boolean => s.trim().toLowerCase() === 'exit';
 export function App(props: TuiAppProps): React.ReactElement {
   const { agent, mode, modelDisplayName, readyMessage, exitMessage, initialMessage } = props;
   const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
+  // Mirror for the slash-command dispatch (memoized without transcript in deps): lets /reasoning
+  // read the committed turns' thinking without a stale closure or re-binding the handler (TUI-C18).
+  const transcriptRef = useRef<TranscriptItem[]>([]);
+  transcriptRef.current = transcript;
   const [live, setLive] = useState<TurnViewModel | null>(null);
   const [running, setRunning] = useState(false);
   const [turnCount, setTurnCount] = useState(0);
@@ -321,6 +325,10 @@ export function App(props: TuiAppProps): React.ReactElement {
             historySummary: props.historySummary,
             insightsSummary: props.insightsSummary,
             historySearch: props.historySearch,
+            // Committed turns' thinking, in transcript order (index 0 = turn 1), for /reasoning.
+            turnReasonings: transcriptRef.current
+              .filter((i): i is Extract<TranscriptItem, { kind: 'assistant' }> => i.kind === 'assistant')
+              .map((i) => i.turn.reasoning),
           },
           { duringRun: running }
         );
@@ -378,6 +386,11 @@ export function App(props: TuiAppProps): React.ReactElement {
             }
             return next;
           });
+        }
+        // TUI-C18 — /reasoning reprint: commit a reasoning block that reuses the TUI-C15 styling
+        // (the original committed turn is frozen in <Static> and can't re-expand in place).
+        if (result.reprintReasoning) {
+          push({ kind: 'reasoning', ...result.reprintReasoning });
         }
         // Commit a structured notice (TUI-C14). /tools and /auto-approve own their notices above
         // (the state-aware copy is committed there), so skip result.notice in those cases.

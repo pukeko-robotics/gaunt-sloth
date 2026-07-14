@@ -3,7 +3,7 @@ import React from 'react';
 import { render } from 'ink-testing-library';
 import chalk from 'chalk';
 import stripAnsi from 'strip-ansi';
-import { LiveTurn } from '#src/tui/components/LiveTurn.js';
+import { LiveTurn, ReasoningPanel } from '#src/tui/components/LiveTurn.js';
 import type { TurnViewModel } from '#src/tui/viewModel.js';
 
 const turn = (over: Partial<TurnViewModel> = {}): TurnViewModel => ({
@@ -213,6 +213,40 @@ describe('tui <LiveTurn>', () => {
       const raw = lastFrame() ?? '';
       // chalk.level=3 → cyan foreground is SGR 36; the label text is styled with it.
       expect(raw).toContain('[36m');
+      unmount();
+    });
+  });
+
+  // TUI-C18 — the `/reasoning` reprint renders the exported ReasoningPanel directly (expanded,
+  // non-live) with a turn-tagged label. Asserting the panel itself (not through <Transcript>/<Static>)
+  // because ink-testing-library's lastFrame() returns the last DYNAMIC frame — <Static> content is
+  // written once above it and would be absent here.
+  describe('reprinted reasoning block (ReasoningPanel export, TUI-C18)', () => {
+    it('carries the recalled thinking text with the TUI-C15 💭 + gutter styling', () => {
+      const { lastFrame, unmount } = render(
+        <ReasoningPanel
+          reasoning={'First I weigh it.\nThen I choose.'}
+          expanded
+          live={false}
+          label={'Thinking · turn 2 (recalled)'}
+        />
+      );
+      const f = stripAnsi(lastFrame() ?? '');
+      expect(f).toContain('💭 Thinking · turn 2 (recalled)'); // turn-tagged header
+      expect(f).toContain('▾'); // expanded caret
+      expect(f).toContain('│'); // TUI-C15 gutter
+      expect(f).toContain('First I weigh it.'); // the reprinted thinking, line 1
+      expect(f).toContain('Then I choose.'); // line 2
+      expect(f).not.toContain('Ctrl+T to expand'); // non-live: no live-only hint
+      unmount();
+    });
+
+    it('label + gutter use colour, not dim alone (DL-8): the frame carries the cyan SGR', () => {
+      const { lastFrame, unmount } = render(
+        <ReasoningPanel reasoning={'thinking'} expanded live={false} label={'Thinking · turn 1'} />
+      );
+      // chalk.level=3 (beforeEach) → cyan foreground is SGR 36; proves the layer boundary is colour.
+      expect(lastFrame() ?? '').toContain('[36m');
       unmount();
     });
   });

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Static, Text } from 'ink';
 import type { TranscriptItem } from '#src/tui/types.js';
-import { LiveTurn } from '#src/tui/components/LiveTurn.js';
+import { LiveTurn, ReasoningPanel } from '#src/tui/components/LiveTurn.js';
 import { Rule } from '#src/tui/components/Rule.js';
 import { CommandNotice } from '#src/tui/components/CommandNotice.js';
 
@@ -67,5 +67,20 @@ function renderItem(item: TranscriptItem, toolsExpanded: boolean): React.ReactEl
     case 'notice':
       // Structured command feedback (TUI-C14): a noticeable title + explanatory body lines.
       return <CommandNotice title={item.title} lines={item.lines} tone={item.tone} />;
+    case 'reasoning':
+      // TUI-C18 — `/reasoning` reprint: a dim Rule brackets it like a notice, then the shared
+      // TUI-C15 ReasoningPanel (expanded, non-live) reuses the 💭/gutter styling, tagged with the
+      // turn it was recalled from so the block is self-describing.
+      return (
+        <Box flexDirection="column">
+          <Rule />
+          <ReasoningPanel
+            reasoning={item.reasoning}
+            expanded
+            live={false}
+            label={`Thinking · turn ${item.turnNumber} (recalled)`}
+          />
+        </Box>
+      );
   }
 }

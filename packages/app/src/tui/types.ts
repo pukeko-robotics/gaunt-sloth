@@ -58,7 +58,11 @@ export type TranscriptItem =
   | { kind: 'system'; id: number; level: string; text: string }
   // A structured command-feedback notice (TUI-C14), rendered via <CommandNotice>: a coloured
   // title that states WHAT happened plus body lines explaining HOW it affects the user.
-  | { kind: 'notice'; id: number; title: string; lines: string[]; tone: CommandNoticeTone };
+  | { kind: 'notice'; id: number; title: string; lines: string[]; tone: CommandNoticeTone }
+  // TUI-C18 — a committed turn's thinking reprinted by `/reasoning`. Rendered via the shared
+  // TUI-C15 <ReasoningPanel> (expanded) so a recalled block matches the original 💭/gutter styling;
+  // `turnNumber` is the 1-based transcript turn it was recalled from.
+  | { kind: 'reasoning'; id: number; reasoning: string; turnNumber: number };
 
 /** Props for the root `<App>`; the real session wires these to a `GthAgentRunner`. */
 export interface TuiAppProps {

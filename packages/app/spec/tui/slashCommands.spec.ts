@@ -295,6 +295,106 @@ describe('tui/slashCommands formatConfigSummary (GS2-1)', () => {
   });
 });
 
+describe('tui/slashCommands /reasoning (TUI-C18 recall a turn’s thinking)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  // Fixture where a LATER turn lacks reasoning, so "no-arg = most recent WITH reasoning" is a real
+  // assertion (turn 3, not the newest turn 4). Index 0 = turn 1.
+  const reasonings = ['A thought', '', 'C thought', ''];
+
+  it('is listed in the registry (so it appears in /help + the / menu) and is run-safe', async () => {
+    const { createCommandRegistry } = await import('#src/tui/slashCommands.js');
+    const cmd = createCommandRegistry().find((c) => c.name === 'reasoning');
+    expect(cmd).toBeDefined();
+    expect(cmd?.availableDuringRun).toBe(true);
+  });
+
+  it('no arg resolves to the most recent turn that HAS reasoning (turn 3, skipping the empty turn 4)', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const result = dispatchSlashCommand(parseSlashCommand('/reasoning')!, createCommandRegistry(), {
+      ...ctx,
+      turnReasonings: reasonings,
+    });
+    expect(result.reprintReasoning).toEqual({ reasoning: 'C thought', turnNumber: 3 });
+    expect(result.notice).toBeUndefined();
+  });
+
+  it('/reasoning <n> resolves to that 1-based turn', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const result = dispatchSlashCommand(
+      parseSlashCommand('/reasoning 1')!,
+      createCommandRegistry(),
+      { ...ctx, turnReasonings: reasonings }
+    );
+    expect(result.reprintReasoning).toEqual({ reasoning: 'A thought', turnNumber: 1 });
+  });
+
+  it('a turn with no thinking gives a friendly info notice, not a reprint', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const result = dispatchSlashCommand(
+      parseSlashCommand('/reasoning 2')!,
+      createCommandRegistry(),
+      { ...ctx, turnReasonings: reasonings }
+    );
+    expect(result.reprintReasoning).toBeUndefined();
+    expect(result.notice?.title).toBe('Turn 2 has no thinking');
+    expect(result.notice?.tone).toBeUndefined(); // info
+  });
+
+  it('an out-of-range <n> gives a warn notice (never throws / mis-indexes)', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const registry = createCommandRegistry();
+    const withReasonings = { ...ctx, turnReasonings: reasonings };
+    for (const n of ['5', '0', '-1', 'abc']) {
+      const result = dispatchSlashCommand(
+        parseSlashCommand(`/reasoning ${n}`)!,
+        registry,
+        withReasonings
+      );
+      expect(result.reprintReasoning).toBeUndefined();
+      expect(result.notice?.tone).toBe('warn');
+      expect(result.notice?.title).toContain(`No turn ${n}`);
+    }
+  });
+
+  it('no committed reasoning anywhere gives the "nothing to show" notice', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const registry = createCommandRegistry();
+    // Empty transcript.
+    const none = dispatchSlashCommand(parseSlashCommand('/reasoning')!, registry, {
+      ...ctx,
+      turnReasonings: [],
+    });
+    expect(none.reprintReasoning).toBeUndefined();
+    expect(none.notice?.title).toBe('No thinking to show');
+    // Turns exist but none recorded thinking.
+    const allEmpty = dispatchSlashCommand(parseSlashCommand('/reasoning')!, registry, {
+      ...ctx,
+      turnReasonings: ['', ''],
+    });
+    expect(allEmpty.notice?.title).toBe('No thinking to show');
+  });
+
+  it('stays run-safe: it still resolves during inference', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const result = dispatchSlashCommand(
+      parseSlashCommand('/reasoning')!,
+      createCommandRegistry(),
+      { ...ctx, turnReasonings: reasonings },
+      { duringRun: true }
+    );
+    expect(result.reprintReasoning).toEqual({ reasoning: 'C thought', turnNumber: 3 });
+  });
+});
+
 describe('tui/slashCommands slashMenuQuery (TUI-C10 menu trigger)', () => {
   beforeEach(() => {
     vi.resetAllMocks();

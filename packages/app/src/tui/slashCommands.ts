@@ -45,6 +45,13 @@ export interface SlashCommandContext {
    * available, in which case `/search` reports that history is unavailable.
    */
   historySearch?: (query: string) => string[];
+  /**
+   * TUI-C18 — the reasoning text of each committed assistant turn, in transcript order (index 0 =
+   * turn 1). `''` for a turn that produced no thinking layer. Drives `/reasoning`, which reprints a
+   * committed turn's thinking (frozen in `<Static>`, so it can never re-expand in place). The App
+   * builds this from the transcript; omitted (empty) where there are no committed turns yet.
+   */
+  turnReasonings?: string[];
 }
 
 /**
@@ -178,6 +185,15 @@ export interface SlashCommandResult {
    * / `/debug` defer their state-aware copy to the App).
    */
   autoApprove?: 'on' | 'off' | 'toggle';
+  /**
+   * TUI-C18 — a committed turn's thinking to REPRINT into the transcript (the `/reasoning` command).
+   * Committed reasoning is frozen in Ink's `<Static>` and can never re-expand in place, so instead of
+   * mutating the old turn we emit a fresh block that reuses the TUI-C15 `💭`/gutter styling. The App
+   * turns this into a `reasoning` transcript item; the command stays pure (it resolves the target from
+   * `turnReasonings`). Absent when the command instead returns a friendly `notice` (no reasoning /
+   * out-of-range).
+   */
+  reprintReasoning?: { reasoning: string; turnNumber: number };
   /** When true, the component quits the app (runs `onExit`). */
   exit?: boolean;
 }
@@ -336,6 +352,75 @@ export function parseAutoApproveArg(args: string[]): 'on' | 'off' | 'toggle' | n
 }
 
 /**
+ * TUI-C18 — resolve a `/reasoning` invocation against the committed turns' reasoning (in transcript
+ * order, index 0 = turn 1). Pure, so the whole selection + friendly-notice logic is unit-testable
+ * without React:
+ *
+ * - **no arg** → the most recent turn that actually recorded thinking; if none exists, a friendly
+ *   info notice (nothing to show).
+ * - **`<n>`** → turn `n` (1-based). A non-positive / non-integer / out-of-range `n` → a warn notice;
+ *   a valid turn that recorded no thinking → an info notice. Otherwise a `reprintReasoning` request.
+ *
+ * The App renders a `reprintReasoning` result as a fresh reasoning block (reusing the TUI-C15
+ * styling) and a `notice` result via the shared `CommandNotice`.
+ */
+export function resolveReasoning(reasonings: string[], args: string[]): SlashCommandResult {
+  const count = reasonings.length;
+  const has = (i: number): boolean => (reasonings[i] ?? '').trim().length > 0;
+
+  if (args.length > 0) {
+    // `Number(...)` (not parseInt) so "2x"/"1.5"/"" don't silently coerce to a valid index.
+    const raw = args[0];
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1 || n > count) {
+      return {
+        notice: {
+          title: `No turn ${raw}`,
+          lines:
+            count === 0
+              ? [
+                  'This session has no committed turns yet.',
+                  'Ask something first, then run /reasoning.',
+                ]
+              : [
+                  `Pick a turn between 1 and ${count} (this session has ${count} so far).`,
+                  'Run /reasoning with no number for the most recent turn that recorded thinking.',
+                ],
+          tone: 'warn',
+        },
+      };
+    }
+    const idx = n - 1;
+    if (!has(idx)) {
+      return {
+        notice: {
+          title: `Turn ${n} has no thinking`,
+          lines: [
+            `Turn ${n} didn't record a thinking layer (only some models stream one).`,
+            'Run /reasoning (no number) to jump to the most recent turn that did.',
+          ],
+        },
+      };
+    }
+    return { reprintReasoning: { reasoning: reasonings[idx], turnNumber: n } };
+  }
+
+  // No arg: walk back to the most recent turn that recorded thinking.
+  for (let i = count - 1; i >= 0; i--) {
+    if (has(i)) return { reprintReasoning: { reasoning: reasonings[i], turnNumber: i + 1 } };
+  }
+  return {
+    notice: {
+      title: 'No thinking to show',
+      lines: [
+        'No turn in this session has recorded a thinking layer yet.',
+        'Reasoning appears for models that stream a thinking / chain-of-thought layer.',
+      ],
+    },
+  };
+}
+
+/**
  * Build the default command registry. Returns a fresh array each call so callers may push
  * extension commands onto it (EXT-5) without sharing mutable module state.
  */
@@ -461,6 +546,15 @@ export function createCommandRegistry(): SlashCommand[] {
           ],
         },
       }),
+    },
+    {
+      name: 'reasoning',
+      description: "Reprint a turn's thinking (/reasoning [n]; no number = latest with thinking)",
+      // Read-only recall of a past turn's thinking — safe to run mid-turn, like /history and /config.
+      availableDuringRun: true,
+      // Pure: resolve the target from the App-provided committed reasonings; the App renders the
+      // reprint (reusing TUI-C15 styling) or the friendly notice.
+      run: (ctx, args) => resolveReasoning(ctx.turnReasonings ?? [], args),
     },
   ];
 }
