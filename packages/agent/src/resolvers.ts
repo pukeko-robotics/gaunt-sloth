@@ -17,9 +17,10 @@ import type {
 } from '@gaunt-sloth/core/core/types.js';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
-import { displayInfo } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import { displayInfo, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { createA2AAgentTool } from '#src/tools/A2AAgentTool.js';
 import { prepareMcpTools } from '#src/utils/mcpUtils.js';
+import { formatMcpConnectFailureMessage } from '#src/utils/mcpAuthError.js';
 import { createAuthProviderAndAuthenticate } from '#src/mcp/OAuthClientProviderImpl.js';
 import { MultiServerMCPClient, type StreamableHTTPConnection } from '@langchain/mcp-adapters';
 import type { StatusLevel, StatusUpdateCallback } from '@gaunt-sloth/core/core/types.js';
@@ -70,6 +71,15 @@ export function createResolvers(): AgentResolvers {
       }
     } catch (error) {
       debugLog(`MCP tools error: ${error}`);
+      // EXT-31: connection-level failures (incl. expired/invalid auth) are surfaced per-server via
+      // the onConnectionError callback in getMcpClient, which does NOT re-throw. This backstop only
+      // catches anything else (e.g. tool-schema load errors under throwOnLoadError, or an unexpected
+      // client failure) — surface it neutrally so MCP tool loading can never fail silently, while
+      // the session degrades gracefully (built-in and A2A tools below still load).
+      displayWarning(
+        `MCP integration tools could not be fully loaded; continuing without them. ` +
+          `Underlying error: ${error}`
+      );
     }
 
     // 2b. EXT-32: capture each connected MCP server's discovery `instructions` string (from its MCP
@@ -164,11 +174,18 @@ async function getMcpClient(config: GthConfig): Promise<MultiServerMCPClient | n
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if (server.url && server && (server.authProvider as any) === 'OAuth') {
       displayInfo(`Starting OAuth for ${server.url}`);
-      const authProvider = await createAuthProviderAndAuthenticate(server);
-      mcpServers[serverName] = {
-        ...server,
-        authProvider,
-      };
+      try {
+        const authProvider = await createAuthProviderAndAuthenticate(server);
+        mcpServers[serverName] = {
+          ...server,
+          authProvider,
+        };
+      } catch (error) {
+        // EXT-31: an OAuth handshake/refresh failure happens BEFORE the MCP client exists, so it
+        // can't reach the connect-time onConnectionError callback below. Surface it here (named +
+        // actionable) and skip only THIS server so the others still load — never a silent drop.
+        displayWarning(formatMcpConnectFailureMessage(serverName, error, { oauth: true }));
+      }
     } else {
       mcpServers[serverName] = server;
     }
@@ -181,6 +198,16 @@ async function getMcpClient(config: GthConfig): Promise<MultiServerMCPClient | n
       prefixToolNameWithServerName: true,
       additionalToolNamePrefix: 'mcp',
       mcpServers: mcpServers,
+      // EXT-31: per-server surfacing. The function form of onConnectionError lets a failed server be
+      // classified + surfaced and then SKIPPED (added to the client's failedServers set) rather than
+      // aborting getTools() — so one integration's expired auth no longer swallows every other
+      // server's tools. Auth failures (401/403/expired token/refused handshake) get a named re-auth
+      // message; other failures are surfaced plainly as non-auth. Degradation stays graceful.
+      onConnectionError: ({ serverName, error }: { serverName: string; error?: unknown }) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const oauth = (rawMcpServers[serverName]?.authProvider as any) === 'OAuth';
+        displayWarning(formatMcpConnectFailureMessage(serverName, error, { oauth }));
+      },
     });
   } else {
     debugLog('No MCP servers configured');
