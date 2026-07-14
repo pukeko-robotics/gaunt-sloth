@@ -11,6 +11,7 @@ import { getCommand } from '#src/commands/getCommand.js';
 import { configCommand } from '#src/commands/configCommand.js';
 import { historyCommand } from '#src/commands/historyCommand.js';
 import { insightsCommand } from '#src/commands/insightsCommand.js';
+import { modelsCommand } from '#src/commands/modelsCommand.js';
 import { argv, getSlothVersion, readStdin } from '@gaunt-sloth/core/utils/systemUtils.js';
 import type { CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
 
@@ -90,5 +91,8 @@ configCommand(program, cliConfigOverrides);
 // default or --db) and do not build the LLM, so they stay decoupled from config/provider setup.
 historyCommand(program);
 insightsCommand(program);
+// GS2-6 (B16) — model catalog: lists providers/models enriched with models.dev cost/limit metadata.
+// Read-only; enrichment never gates what `/v1/models` reports as callable.
+modelsCommand(program);
 
 await readStdin(program);

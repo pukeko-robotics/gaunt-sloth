@@ -342,6 +342,42 @@ curl -X POST http://localhost:3000/agents/default/run \
   -d '{"threadId":"t1","messages":[{"role":"user","content":"Hello","id":"1"}]}'
 ```
 
+## models
+
+List the models available on this machine, enriched with cost, context-limit and capability
+metadata from [models.dev](https://models.dev) (MIT-licensed).
+
+### Options
+
+- `--refresh` – force a models.dev catalog re-fetch past the local cache TTL before listing
+- `--provider <id>` – only list one provider (e.g. `anthropic`, `openai`, `openrouter`)
+
+### Description
+
+`/v1/models` live discovery stays authoritative for **what is callable**; models.dev only
+**enriches** cloud model ids with metadata (`ctx`/`out` limits, `in`/`out` price per 1M tokens,
+`tools`, `reasoning`). Enrichment never gates: a cloud model models.dev has never heard of is still
+listed and callable, just unenriched, and if models.dev is unreachable (offline / on-prem no-egress)
+the full list still prints without metadata. Local/self-hosted providers (Ollama) get no catalog
+lookup at all.
+
+The catalog is cached **per provider** under `~/.gsloth/model-catalog/<provider>.json` and served
+cache-first, refreshed on a 24h TTL or on demand with `--refresh`. Where enriched prices are shown a
+`*` marks the line and a footer reads `* model prices provided by models.dev`.
+
+### Examples
+
+```bash
+# List every detected provider and its (enriched) models
+gth models
+
+# Force-refresh the models.dev catalog, then list
+gth models --refresh
+
+# Only show one provider
+gth models --provider anthropic
+```
+
 ## Command-Specific Configuration
 
 Commands can be configured individually in your configuration file. See [CONFIGURATION.md](./CONFIGURATION.md) for detailed configuration options.
