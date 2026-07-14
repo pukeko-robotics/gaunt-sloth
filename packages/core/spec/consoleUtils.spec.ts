@@ -580,4 +580,42 @@ describe('consoleUtils', () => {
       expect(coerceBooleanOrString('   ')).toBeUndefined();
     });
   });
+
+  // TUI-C19 — the warning-capture window the TUI uses to thread transient load-time advisories
+  // (config-validation warnings) into its persistent notice surface.
+  describe('warning capture (TUI-C19)', () => {
+    afterEach(async () => {
+      // Always close any open window so a test can't leak capture state into the next.
+      const { endWarningCapture } = await import('#src/utils/consoleUtils.js');
+      endWarningCapture();
+    });
+
+    it('collects displayWarning messages emitted inside a begin/end window', async () => {
+      const { beginWarningCapture, endWarningCapture, displayWarning } =
+        await import('#src/utils/consoleUtils.js');
+      beginWarningCapture();
+      displayWarning('Unknown top-level config key: pullrequest. Check for typos.');
+      displayWarning('Deprecated config key `pr`; use `commands.pr`.');
+      const captured = endWarningCapture();
+      expect(captured).toEqual([
+        'Unknown top-level config key: pullrequest. Check for typos.',
+        'Deprecated config key `pr`; use `commands.pr`.',
+      ]);
+      // Still printed transiently as before (capture is IN ADDITION, not instead).
+      expect(systemUtilsMock.warn).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns an empty list for a clean window (no warnings)', async () => {
+      const { beginWarningCapture, endWarningCapture } = await import('#src/utils/consoleUtils.js');
+      beginWarningCapture();
+      expect(endWarningCapture()).toEqual([]);
+    });
+
+    it('does not collect warnings emitted outside a window (default = off)', async () => {
+      const { displayWarning, endWarningCapture } = await import('#src/utils/consoleUtils.js');
+      displayWarning('a warning with no capture window open');
+      expect(endWarningCapture()).toEqual([]);
+      expect(systemUtilsMock.warn).toHaveBeenCalledTimes(1);
+    });
+  });
 });

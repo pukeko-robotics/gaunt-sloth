@@ -260,6 +260,41 @@ describe('tui/slashCommands /config (GS2-1 read-only)', () => {
     const { createCommandRegistry } = await import('#src/tui/slashCommands.js');
     expect(createCommandRegistry().some((c) => c.name === 'config')).toBe(true);
   });
+
+  // TUI-C19 — /config renders the actual validation warnings the standing advisory line points at.
+  it('renders the config-validation warnings above the summary when present (TUI-C19)', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const warning =
+      'Unknown top-level config key in .gsloth.config.json: pullrequest. It is kept as-is but ignored by Gaunt Sloth; check for typos.';
+    const result = dispatchSlashCommand(parseSlashCommand('/config')!, createCommandRegistry(), {
+      ...ctx,
+      configSummary: ['Model: claude-x', 'Agent backend: lean'],
+      configWarnings: [warning],
+    });
+    const joined = result.notice?.lines.join('\n') ?? '';
+    // The actual warning text is shown (not just the resolved summary)…
+    expect(joined).toContain('pullrequest');
+    expect(joined).toContain('check for typos');
+    expect(joined).toContain('Config warning');
+    // …and the resolved summary still follows it.
+    expect(joined).toContain('Model: claude-x');
+    // Warnings present ⇒ caution tone.
+    expect(result.notice?.tone).toBe('warn');
+  });
+
+  it('shows NO warnings and no warn tone when the config is clean (TUI-C19)', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const result = dispatchSlashCommand(parseSlashCommand('/config')!, createCommandRegistry(), {
+      ...ctx,
+      configSummary: ['Model: claude-x', 'Agent backend: lean'],
+      configWarnings: [],
+    });
+    expect(result.notice?.lines).toEqual(['Model: claude-x', 'Agent backend: lean']);
+    expect(result.notice?.lines.join('\n')).not.toContain('Config warning');
+    expect(result.notice?.tone).toBeUndefined();
+  });
 });
 
 describe('tui/slashCommands formatConfigSummary (GS2-1)', () => {

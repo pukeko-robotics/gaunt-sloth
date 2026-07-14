@@ -38,6 +38,9 @@ vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
   flushSessionLog: vi.fn(),
   initSessionLogging: vi.fn(),
   stopSessionLogging: vi.fn(),
+  // TUI-C19 — the load-time warning-capture window wrapped around initConfig.
+  beginWarningCapture: vi.fn(),
+  endWarningCapture: vi.fn(() => []),
 }));
 vi.mock('@gaunt-sloth/core/utils/fileUtils.js', () => ({
   appendToFile: vi.fn(),

@@ -92,6 +92,15 @@ export interface TuiAppProps {
   historySummary?: string[];
   insightsSummary?: string[];
   historySearch?: (query: string) => string[];
+  /**
+   * TUI-C19 — non-fatal startup advisories to surface persistently (currently the load-time
+   * config-validation warnings — unknown keys, deprecated names — captured around `initConfig`).
+   * When non-empty, the chrome shows a standing "config has problems" line OUTSIDE `<Static>` (so
+   * it never scrolls away) and `/config` renders the actual warning text. Kept a generic string
+   * list so other non-fatal startup advisories can post here later without a schema change; the
+   * fixture/AG-UI paths omit it. Absent/empty ⇒ no standing line and `/config` shows no warnings.
+   */
+  advisories?: string[];
   /** Greeting shown before the first prompt (mirrors the readline `readyMessage`). */
   readyMessage: string;
   /** Hint shown in the status bar / on start (mirrors the readline `exitMessage`). */

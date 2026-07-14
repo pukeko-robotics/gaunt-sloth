@@ -112,8 +112,41 @@ export function displayError(message: string): void {
   su.log(coloredMessage);
 }
 
+/**
+ * Optional capture buffer for warning advisories (TUI-C19). When a capture window is open
+ * (see {@link beginWarningCapture}), every {@link displayWarning} message is also collected
+ * here so a surface that takes over the screen — the Ink TUI — can re-surface warnings that
+ * would otherwise print once and scroll out of sight. `null` when no window is open, so the
+ * plain-CLI path and the session log are entirely untouched.
+ */
+let warningCapture: string[] | null = null;
+
+/**
+ * Open a warning-capture window: from now until {@link endWarningCapture}, each
+ * `displayWarning` message is buffered (IN ADDITION to being printed/logged as usual). Used by
+ * the TUI session module to grab the transient load-time config advisories and thread them into
+ * the persistent notice surface. Idempotent-ish: a second call starts a fresh buffer.
+ */
+export const beginWarningCapture = (): void => {
+  warningCapture = [];
+};
+
+/**
+ * Close the warning-capture window opened by {@link beginWarningCapture} and return everything
+ * collected (empty array if none / never opened). Always call this — a `try/finally` around the
+ * captured work — so a throw can't leak the capture state into later warnings.
+ */
+export const endWarningCapture = (): string[] => {
+  const captured = warningCapture ?? [];
+  warningCapture = null;
+  return captured;
+};
+
 export function displayWarning(message: string): void {
   if (!shouldDisplayLevel(StatusLevel.WARNING)) return;
+  // Collect into the active capture window (if any) so the TUI can re-surface it later. Done
+  // after the level guard so a user who quieted warnings sees them neither printed nor captured.
+  if (warningCapture) warningCapture.push(message);
   const coloredMessage = colorText(message, 'yellow');
   writeToSessionLog(message + '\n');
   su.warn(coloredMessage);

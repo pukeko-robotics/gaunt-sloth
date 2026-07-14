@@ -223,9 +223,7 @@ describe('tui <App>', () => {
 
   it('initialAutoApprove seeds the status-bar indicator (config-enabled auto-approve)', async () => {
     const agent = scriptedAgent([]);
-    const { lastFrame, unmount } = render(
-      <App {...baseProps} agent={agent} initialAutoApprove />
-    );
+    const { lastFrame, unmount } = render(<App {...baseProps} agent={agent} initialAutoApprove />);
     await vi.waitFor(() => expect(lastFrame()).toContain('auto-approve ON'));
     unmount();
   });
@@ -934,5 +932,107 @@ describe('tui <App>', () => {
     await vi.waitFor(() => expect(aborted).toBe(true));
 
     unmount();
+  });
+
+  // TUI-C19 — persistent config-advisory line in the chrome (outside <Static>), plus /config
+  // surfacing the actual warning text.
+  describe('config-advisory notice (TUI-C19)', () => {
+    const CONFIG_WARNING =
+      'Unknown top-level config key in .gsloth.config.json: pullrequest. It is kept as-is but ignored by Gaunt Sloth; check for typos.';
+    const STANDING_LINE = '⚠ Your config has problems';
+
+    it('shows the standing "config has problems" line when there are advisories', async () => {
+      const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
+      const { lastFrame, unmount } = render(
+        <App {...baseProps} agent={agent} advisories={[CONFIG_WARNING]} />
+      );
+
+      await vi.waitFor(() => {
+        const frame = lastFrame() ?? '';
+        expect(frame).toContain(STANDING_LINE);
+        expect(frame).toContain('/config'); // points the user at the details
+      });
+
+      unmount();
+    });
+
+    it('shows NO standing line when the config is clean (no advisories)', async () => {
+      const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
+      const { lastFrame, unmount } = render(
+        <App {...baseProps} agent={agent} advisories={[]} initialMessage="go" />
+      );
+
+      // Wait until the session is idle so the chrome has fully rendered, then assert the line is
+      // absent.
+      await vi.waitFor(() => expect(lastFrame()).toContain('ready'));
+      expect(lastFrame() ?? '').not.toContain('config has problems');
+
+      unmount();
+    });
+
+    it('renders the line in the dock chrome OUTSIDE <Static> — below the transcript, above the status bar', async () => {
+      // ink-testing-library renders with Ink's debug mode, so every frame is a full composite of
+      // all committed <Static> output + the live region — a plain `frame.toContain(line)` after a
+      // turn therefore CANNOT discriminate Static from non-Static placement (both show up). The
+      // real discriminator is POSITION: Ink lays the tree out top-to-bottom, so the write-once
+      // <Static> transcript sits at the TOP and the live dock chrome (Rule → NoticeBar → StatusBar
+      // → prompt) at the BOTTOM. So the standing advisory line must appear:
+      //   - AFTER the committed transcript text (it's below the scrollback, not interleaved in it),
+      //   - and BEFORE the status-bar 'ready' segment (it sits with the dock chrome).
+      // If NoticeBar were (mis)placed inside <Transcript>'s <Static>, it would render at the top,
+      // ABOVE the transcript text, and the first assertion would flip red.
+      const agent = scriptedAgent([{ type: 'text', delta: 'committed answer' }]);
+      const { lastFrame, unmount } = render(
+        <App {...baseProps} agent={agent} advisories={[CONFIG_WARNING]} initialMessage="hello" />
+      );
+
+      // Turn commits (assistant text in <Static>) and the session returns to idle (status bar shows
+      // 'ready'), so the frame now contains both the transcript content and the full dock chrome.
+      await vi.waitFor(() => {
+        const frame = lastFrame() ?? '';
+        expect(frame).toContain('committed answer');
+        expect(frame).toContain('ready');
+      });
+
+      const frame = lastFrame() ?? '';
+      const linePos = frame.indexOf(STANDING_LINE);
+      const transcriptPos = frame.indexOf('committed answer');
+      const statusPos = frame.indexOf('ready');
+      expect(linePos).toBeGreaterThan(-1); // present at all (advisories → shown)
+      // Below the committed transcript (outside/after the write-once <Static> region)…
+      expect(linePos).toBeGreaterThan(transcriptPos);
+      // …and up in the dock with the status bar (pinned live chrome, not the scrollback).
+      expect(linePos).toBeLessThan(statusPos);
+
+      unmount();
+    });
+
+    it('surfaces the actual warning text via /config (the details the line points at)', async () => {
+      const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
+      const { stdin, lastFrame, frames, unmount } = render(
+        <App
+          {...baseProps}
+          agent={agent}
+          advisories={[CONFIG_WARNING]}
+          configSummary={['Model: claude-x', 'Agent backend: lean']}
+        />
+      );
+
+      // Idle first so the prompt is mounted, type /config, wait for it to register, then Enter
+      // (mirrors the /help dispatch test's stdin pattern).
+      await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+      stdin.write('/config');
+      await vi.waitFor(() => expect(lastFrame()).toContain('/config'));
+      stdin.write('\r');
+
+      await vi.waitFor(() => {
+        const all = frames.join('\n');
+        expect(all).toContain('Resolved configuration'); // the /config notice title
+        expect(all).toContain('pullrequest'); // the actual validation-warning text
+        expect(all).toContain('check for typos');
+      });
+
+      unmount();
+    });
   });
 });

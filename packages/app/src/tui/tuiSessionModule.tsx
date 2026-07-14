@@ -3,11 +3,10 @@ import { render } from 'ink';
 import { type CommandLineConfigOverrides, initConfig } from '@gaunt-sloth/core/config.js';
 import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
 import { StatusLevel } from '@gaunt-sloth/core/core/types.js';
-import type {
-  PendingToolInterrupt,
-  ToolApprovalDecision,
-} from '@gaunt-sloth/core/core/types.js';
+import type { PendingToolInterrupt, ToolApprovalDecision } from '@gaunt-sloth/core/core/types.js';
 import {
+  beginWarningCapture,
+  endWarningCapture,
   flushSessionLog,
   initSessionLogging,
   stopSessionLogging,
@@ -18,10 +17,7 @@ import {
   openConversationSafe,
   recordSessionSafe,
 } from '@gaunt-sloth/core/history/recordSession.js';
-import {
-  openHistoryStore,
-  resolveHistoryDbPath,
-} from '@gaunt-sloth/core/history/historyStore.js';
+import { openHistoryStore, resolveHistoryDbPath } from '@gaunt-sloth/core/history/historyStore.js';
 import {
   formatConversationList,
   formatInsightsSummary,
@@ -227,7 +223,18 @@ export async function createTuiSession(
     return;
   }
 
-  const config = { ...(await initConfig(commandLineConfigOverrides)) };
+  // TUI-C19: capture the transient load-time advisories (config validation warnings — unknown
+  // keys, deprecated names — emitted via `displayWarning` inside `initConfig`) so they can be
+  // threaded into the TUI's persistent notice surface instead of scrolling out of sight the moment
+  // Ink takes over the screen. try/finally so a config throw can't leak the capture window.
+  let startupAdvisories: string[] = [];
+  let config: GthConfig;
+  beginWarningCapture();
+  try {
+    config = { ...(await initConfig(commandLineConfigOverrides)) };
+  } finally {
+    startupAdvisories = endWarningCapture();
+  }
   const checkpointSaver = new MemorySaver();
   // GS2-19: one conversation per TUI session; each completed turn (logTurn) is stamped with its id
   // so the whole chat groups under one conversation. Opt-in / fail-soft (undefined unless history
@@ -250,7 +257,11 @@ export async function createTuiSession(
   // (deep is now opt-in / experimental). Mirrors the readline path in createInteractiveSession,
   // askCommand, and execCommand — the TUI is the default interactive surface, so it must match.
   // createResolvers() is unchanged, so a lean session keeps the full toolset.
-  const runner = new GthAgentRunner(bridge.emit, createResolvers(), resolveAgentFactory(config, 'lean'));
+  const runner = new GthAgentRunner(
+    bridge.emit,
+    createResolvers(),
+    resolveAgentFactory(config, 'lean')
+  );
 
   try {
     await runner.init(sessionConfig.mode, config, checkpointSaver);
@@ -346,6 +357,7 @@ export async function createTuiSession(
         modelDisplayName={config.modelDisplayName}
         initialAutoApprove={runner.isSessionYolo()}
         configSummary={formatConfigSummary(config)}
+        advisories={startupAdvisories}
         {...buildHistorySlashProps(config)}
         readyMessage={sessionConfig.readyMessage}
         exitMessage={sessionConfig.exitMessage}

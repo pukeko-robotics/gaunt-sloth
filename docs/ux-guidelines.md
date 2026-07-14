@@ -158,6 +158,34 @@ not chatter (DL-1 no important action is silent). Plain (non-TUI) CLI keeps all 
   progress (that belongs to the live turn) so it never flickers. When session auto-approve is ON it
   additionally carries the yellow **`⚡ auto-approve ON`** badge in both states (see `/auto-approve`).
 
+## Persistent startup advisories (DL-1 nothing important is silent, TUI-C19)
+
+Non-fatal startup advisories must not scroll out of sight the moment Ink takes over the screen. A
+genuine config *error* is unmissable (`displayError` + `exit(1)` before the TUI ever renders), but a
+config *warning* (an unknown top-level key, a deprecated name) is emitted once via `displayWarning`
+and would otherwise vanish under the first frame. That is a DL-1 violation: the user is left unaware
+their config has a problem.
+
+- **Capture, don't let it scroll away.** The session module opens a warning-capture window
+  (`beginWarningCapture` / `endWarningCapture` in `consoleUtils`) around `initConfig`, so the
+  load-time validation warnings are collected as data and threaded into the TUI as the generic
+  `advisories` prop. Validation itself is untouched (GS2-1 owns it); this only re-surfaces what it
+  already produced. Keep the plumbing generic (a plain string list) so other non-fatal startup
+  advisories can post here later without a schema change.
+- **A standing line in the live chrome, OUTSIDE `<Static>`.** When there is at least one advisory,
+  `NoticeBar` renders a single yellow line by the status bar: `⚠ Your config has problems · type
+  /config to see details`. It lives in the live (non-`<Static>`) frame (like the status bar and the
+  `⚡ auto-approve ON` badge), so it stays pinned and survives transcript growth rather than
+  flushing away with the write-once scrollback. A clean config renders nothing (no advisories, no
+  line), so the chrome is unchanged when there is nothing to say.
+- **The pointer resolves to the detail (DL-2 progressive disclosure).** The standing line is a
+  compact pointer, not the full text; `/config` renders the actual validation warnings above the
+  resolved summary (and flips to `warn` tone while warnings are present), so the user gets the
+  orienting line in the chrome and the specifics on demand. This mirrors how `/reasoning` and the
+  debug panel keep depth one keystroke away.
+- **Colour (DL-8).** Yellow + `⚠` for the standing line and `warn` tone for the `/config` block,
+  matching the caution register the rest of the chrome already uses for warnings.
+
 ## Keyboard model (DL-9 keyboard-first)
 
 - **`Esc`** — abort the in-flight turn (only while running).

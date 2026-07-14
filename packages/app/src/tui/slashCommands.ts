@@ -27,6 +27,12 @@ export interface SlashCommandContext {
    */
   configSummary?: string[];
   /**
+   * TUI-C19 — the actual config-validation warnings (unknown keys / deprecated names) captured at
+   * load, so `/config` can render the DETAILS the standing "config has problems" advisory line
+   * points at. Empty/omitted ⇒ `/config` shows only the resolved summary (a clean config).
+   */
+  configWarnings?: string[];
+  /**
    * GS2-7 (B20) / GS2-19 — pre-rendered recent-conversation lines for `/history`. The App builds
    * these fail-soft from the local history store (see `formatConversationList`); omitted when no
    * store is available (history never enabled / DB missing), in which case `/history` shows an
@@ -90,14 +96,35 @@ export function formatConfigSummary(config: ConfigSummaryInput): string[] {
   return lines;
 }
 
-/** The `/config` notice, from the pre-rendered summary lines (or an unavailable fallback). */
-export function configNotice(summary: string[] | undefined): SlashCommandNotice {
+/**
+ * The `/config` notice, from the pre-rendered summary lines (or an unavailable fallback).
+ *
+ * TUI-C19 — when config-validation `warnings` are present (unknown keys / deprecated names), they
+ * are rendered FIRST, as the details the standing "config has problems" advisory line points at,
+ * then a blank spacer, then the resolved summary. A clean config (no warnings) reads exactly as
+ * before. Tone flips to `warn` (yellow) while there are warnings so the block reads as caution.
+ */
+export function configNotice(
+  summary: string[] | undefined,
+  warnings?: string[]
+): SlashCommandNotice {
+  const summaryLines =
+    summary && summary.length > 0
+      ? summary
+      : ['Configuration details are not available in this session.'];
+  const hasWarnings = !!warnings && warnings.length > 0;
+  const lines = hasWarnings
+    ? [
+        `${warnings.length === 1 ? 'Config warning' : `Config warnings (${warnings.length})`}:`,
+        ...warnings.map((w) => `  • ${w}`),
+        '',
+        ...summaryLines,
+      ]
+    : summaryLines;
   return {
     title: 'Resolved configuration',
-    lines:
-      summary && summary.length > 0
-        ? summary
-        : ['Configuration details are not available in this session.'],
+    lines,
+    ...(hasWarnings ? { tone: 'warn' as const } : {}),
   };
 }
 
@@ -510,8 +537,10 @@ export function createCommandRegistry(): SlashCommand[] {
       description: 'Show the resolved configuration (read-only)',
       availableDuringRun: true,
       // Read-only discovery: surface the pre-rendered, secret-free summary the App computed from
-      // the resolved config. Editing lives in `gth init` / the config file, not here (GS2-1).
-      run: (ctx) => ({ notice: configNotice(ctx.configSummary) }),
+      // the resolved config, prefixed with any load-time validation warnings (TUI-C19 — the
+      // details the standing advisory line points at). Editing lives in `gth init` / the config
+      // file, not here (GS2-1).
+      run: (ctx) => ({ notice: configNotice(ctx.configSummary, ctx.configWarnings) }),
     },
     {
       name: 'history',
