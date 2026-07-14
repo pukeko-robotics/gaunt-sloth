@@ -62,6 +62,35 @@ describe('history/conversations (GS2-19)', () => {
       store.close();
     });
 
+    it('a conversation opened with ZERO turns is suppressed from listConversations (0-turn path)', () => {
+      const store = HistoryStore.open(':memory:', { create: true })!;
+      // A session that opens its conversation then exits before any turn (0-turn case).
+      const empty = store.openConversation({ command: 'chat', model: 'gpt-5' })!;
+      // A populated conversation alongside it.
+      const populated = store.openConversation({ command: 'ask', model: 'gpt-5' })!;
+      store.record({ conversationId: populated, command: 'ask', prompt: 'a real turn' });
+
+      const conversations = store.listConversations();
+      // The empty conversation never appears; only the populated one does (list stays 0-safe).
+      expect(conversations.map((c) => c.id)).toEqual([populated]);
+      expect(conversations[0].turnCount).toBe(1);
+      // The empty conversation still exists and is addressable, it just has no turns to show.
+      expect(store.getConversationThread(empty)).toEqual([]);
+      store.close();
+    });
+
+    it('a conversation opened via the opt-in bridge with zero turns is likewise suppressed', () => {
+      const dbPath = resolve(dir, 'history.db');
+      const config = { history: { enabled: true, dbPath } };
+      // openConversationSafe commits the row, but no recordSessionSafe follows.
+      const empty = openConversationSafe(config, { command: 'chat', model: 'gpt-5' });
+      expect(empty).toBeTypeOf('number');
+
+      const store = openHistoryStore(dbPath, { create: false })!;
+      expect(store.listConversations()).toEqual([]); // no contentless row surfaces
+      store.close();
+    });
+
     it('a single-shot record (no conversationId) becomes its OWN 1-turn conversation', () => {
       const store = HistoryStore.open(':memory:', { create: true })!;
       store.record({ command: 'ask', prompt: 'one-shot' });

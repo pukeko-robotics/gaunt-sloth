@@ -414,8 +414,12 @@ export class HistoryStore {
   /**
    * GS2-19 — conversations newest-first, each with its turn count, timespan, and a preview of the
    * last turn. This is the top-level unit for `gth history list` (the turn-grained {@link listRecent}
-   * remains for callers that want raw turns). Fail-soft ([] on error). A conversation with no turns
-   * yet (opened, then the session exited before a turn) shows `turnCount: 0`.
+   * remains for callers that want raw turns). Fail-soft ([] on error).
+   *
+   * Empty conversations are **excluded** (`HAVING COUNT(s.id) > 0`): a session opens its conversation
+   * at start (before any turn), so one that exits with zero turns would otherwise show as a
+   * contentless `turnCount: 0` row. The LEFT JOIN still keeps every conversation that has ≥1 turn —
+   * including back-filled 1-turn conversations, whose single turn satisfies the HAVING.
    */
   listConversations(limit = 20): ConversationSummary[] {
     try {
@@ -427,6 +431,7 @@ export class HistoryStore {
              FROM conversations c
              LEFT JOIN sessions s ON s.conversation_id = c.id
             GROUP BY c.id
+           HAVING COUNT(s.id) > 0
             ORDER BY c.id DESC
             LIMIT ?`
         )
