@@ -1990,7 +1990,7 @@ describe('config', async () => {
       }
 
       expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
-        'Unknown config type: invalid-config. Available options: vertexai, anthropic, groq, deepseek, openai, google-genai, xai, openrouter, ollama'
+        'Unknown config type: invalid-config. Available options: vertexai, anthropic, groq, deepseek, openai, google-genai, xai, openrouter, huggingface, ollama'
       );
       expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
     });

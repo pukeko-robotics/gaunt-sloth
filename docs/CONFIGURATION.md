@@ -306,7 +306,7 @@ It is always worth checking sourcecode in [config.ts](../src/config.ts) for more
 
 Configuration can be created with `gsloth init` command. When called without arguments, it detects available API keys in the environment and prompts you to select a provider.
 You can also specify a provider directly: `gsloth init [vendor]`.
-Currently, anthropic, groq, deepseek, openai, google-genai, vertexai, openrouter and xai can be configured with `gsloth init [vendor]`.
+Currently, anthropic, groq, deepseek, openai, google-genai, vertexai, openrouter, huggingface and xai can be configured with `gsloth init [vendor]`.
 For providers using OpenAI format (like Inception), use `gsloth init openai` and then modify the configuration.
 
 By default, `gsloth init` creates a `.gsloth` directory in the project root and places configuration files in `.gsloth/.gsloth-settings/`. Project root configuration is still supported for backward compatibility.
@@ -372,6 +372,99 @@ gsloth init openrouter
 ```
 
 Make sure you either define `OPEN_ROUTER_API_KEY` environment variable or edit your configuration file and set up your key.
+
+### Hugging Face (Inference Providers)
+
+Hugging Face exposes a single **OpenAI-compatible router** at
+`https://router.huggingface.co/v1` that fans requests out to the underlying
+inference providers (Cerebras, Groq, Together, SambaNova, hf-inference, …) with
+full tool/function calling, streaming and structured output. Gaunt Sloth talks
+to it directly via the built-in `huggingface` provider, with no extra dependency.
+
+```bash
+cd ./your-project
+gsloth init huggingface
+```
+
+Make sure you either define an `HF_TOKEN` environment variable (a Hugging Face
+[user access token](https://huggingface.co/settings/tokens) with the **"Inference
+Providers"** permission) or edit your configuration file and set up your key.
+`HUGGINGFACEHUB_API_TOKEN` and `HF_API_KEY` are accepted as aliases.
+
+```json
+{
+  "llm": {
+    "type": "huggingface",
+    "model": "openai/gpt-oss-120b"
+  }
+}
+```
+
+**Configuration notes:**
+
+- The `model` is the **Hub repo id**, e.g. `openai/gpt-oss-120b` or
+  `Qwen/Qwen3-Coder-480B-A35B-Instruct`.
+- You may append a routing suffix that the router understands to pin or
+  auto-select the backend provider / cost policy: `:groq`, `:cheapest`,
+  `:fastest` (e.g. `"openai/gpt-oss-120b:groq"`). The suffix is part of the model
+  id and passes straight through.
+- Tool-calling quality is model-dependent; `openai/gpt-oss-120b` is a strong
+  tool-calling pick.
+- Any extra field under `configuration` is passed straight to the underlying
+  `ChatOpenAI` client, so provider-routing preferences can go there too.
+
+#### Local Hugging Face models
+
+To run a Hugging Face model **locally** you do not need a dedicated provider:
+every mainstream local runtime exposes an OpenAI-compatible endpoint, and Gaunt
+Sloth already speaks to those via the `openai` provider + `configuration.baseURL`
+(see [LM Studio](#lm-studio) below). The only "bridge" is pulling the HF model
+into one of those runtimes:
+
+**llama.cpp (`llama-server`)** downloads GGUF straight from the Hub with `-hf`:
+
+```bash
+llama-server -hf ggml-org/gemma-3-1b-it-GGUF        # downloads + serves on :8080
+# or a specific quant:
+llama-server -hf bartowski/Qwen2.5-7B-Instruct-GGUF:Q4_K_M
+```
+
+```json
+{
+  "llm": {
+    "type": "openai",
+    "apiKey": "none",
+    "model": "gpt-oss",
+    "configuration": {
+      "baseURL": "http://127.0.0.1:8080/v1"
+    }
+  }
+}
+```
+
+**Ollama** pulls any GGUF on the Hub via the `hf.co/` namespace and serves an
+OpenAI-compatible API on `:11434/v1`. Gaunt Sloth ships a first-class `ollama`
+provider, so you can point at it directly:
+
+```bash
+ollama run hf.co/bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M
+```
+
+```json
+{
+  "llm": {
+    "type": "ollama",
+    "model": "hf.co/bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M"
+  }
+}
+```
+
+**LM Studio** lets you search and download the HF model in-app; start its server
+and point `baseURL` at `http://127.0.0.1:1234/v1` (see the LM Studio section below).
+
+**Note:** tool-calling reliability is model- and runtime-dependent for small
+local models. Prefer tool-tuned models (e.g. Qwen2.5-Coder/-Instruct, gpt-oss)
+for agent work.
 
 ### LM Studio
 

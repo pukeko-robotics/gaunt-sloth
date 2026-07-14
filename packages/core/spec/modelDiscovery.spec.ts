@@ -57,6 +57,42 @@ describe('modelDiscovery', () => {
       const descriptor = PROVIDER_DESCRIPTORS.find((d) => d.id === 'anthropic')!;
       expect(findApiKeyEnvVar(descriptor)).toBeUndefined();
     });
+
+    it('resolves the huggingface key from HF_TOKEN first, then its aliases in order', async () => {
+      const { findApiKeyEnvVar, PROVIDER_DESCRIPTORS } =
+        await import('#src/providers/modelDiscovery.js');
+      const descriptor = PROVIDER_DESCRIPTORS.find((d) => d.id === 'huggingface')!;
+
+      // HF_TOKEN is canonical and wins when set.
+      systemUtilsMock.env.HF_TOKEN = 'hf_canonical';
+      systemUtilsMock.env.HUGGINGFACEHUB_API_TOKEN = 'hf_hub';
+      expect(findApiKeyEnvVar(descriptor)).toBe('HF_TOKEN');
+
+      // HUGGINGFACEHUB_API_TOKEN is the next alias when HF_TOKEN is unset.
+      systemUtilsMock.env.HF_TOKEN = undefined;
+      expect(findApiKeyEnvVar(descriptor)).toBe('HUGGINGFACEHUB_API_TOKEN');
+
+      // HF_API_KEY is the final alias.
+      systemUtilsMock.env.HUGGINGFACEHUB_API_TOKEN = undefined;
+      systemUtilsMock.env.HF_API_KEY = 'hf_api';
+      expect(findApiKeyEnvVar(descriptor)).toBe('HF_API_KEY');
+    });
+  });
+
+  describe('huggingface descriptor', () => {
+    it('carries the curated preferred models', async () => {
+      const { PROVIDER_DESCRIPTORS } = await import('#src/providers/modelDiscovery.js');
+      const descriptor = PROVIDER_DESCRIPTORS.find((d) => d.id === 'huggingface')!;
+      expect(descriptor.apiKeyEnvironmentVariables).toEqual([
+        'HF_TOKEN',
+        'HUGGINGFACEHUB_API_TOKEN',
+        'HF_API_KEY',
+      ]);
+      expect(descriptor.preferredModels).toEqual([
+        'openai/gpt-oss-120b',
+        'Qwen/Qwen3-Coder-480B-A35B-Instruct',
+      ]);
+    });
   });
 
   describe('buildModelList', () => {
@@ -323,7 +359,7 @@ describe('modelDiscovery', () => {
       const { detectProviders } = await import('#src/providers/modelDiscovery.js');
 
       const all = await detectProviders();
-      expect(all.length).toBe(9); // all descriptors
+      expect(all.length).toBe(10); // all descriptors
 
       const availableOnly = await detectProviders({ includeUnavailable: false });
       expect(availableOnly.map((p) => p.id)).toEqual(['openai']);

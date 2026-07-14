@@ -242,6 +242,19 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     },
   },
   {
+    id: 'huggingface',
+    label: 'Hugging Face (Inference Providers)',
+    apiKeyEnvironmentVariables: ['HF_TOKEN', 'HUGGINGFACEHUB_API_TOKEN', 'HF_API_KEY'],
+    preferredModels: ['openai/gpt-oss-120b', 'Qwen/Qwen3-Coder-480B-A35B-Instruct'],
+    discovery: {
+      kind: 'openai',
+      // HF's OpenAI-compatible router exposes /v1/models across all inference providers.
+      modelsUrl: () => 'https://router.huggingface.co/v1/models',
+      authHeader: bearer,
+      filter: chatOnly,
+    },
+  },
+  {
     id: 'ollama',
     label: 'Ollama (local)',
     apiKeyEnvironmentVariables: [],
