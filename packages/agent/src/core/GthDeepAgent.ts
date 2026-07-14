@@ -11,6 +11,16 @@ import {
   readExecPrompt,
 } from '@gaunt-sloth/core/utils/llmUtils.js';
 import { getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
+// GS2-27: the OS/shell-dialect and real-cwd notes are backend-agnostic (both backends expose
+// run_shell_command and run on the real-fs cwd), so their canonical source moved to core so the
+// lean backend composes them too. Imported here for GthDeepAgent.init()'s code-mode composition and
+// re-exported so existing importers of this module keep working.
+import { appendOsShellNote, appendCwdNote } from '@gaunt-sloth/core/utils/systemPromptNotes.js';
+export {
+  appendOsShellNote,
+  appendCwdNote,
+  OS_SHELL_GUIDANCE,
+} from '@gaunt-sloth/core/utils/systemPromptNotes.js';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import type { BaseCheckpointSaver } from '@langchain/langgraph';
@@ -670,75 +680,6 @@ export function createPathNamespaceCorrectionMiddleware(appendCorrection: boolea
       return handler({ ...request, systemMessage: request.systemMessage.concat(correction) });
     },
   });
-}
-
-/**
- * EXT-13 (part b): append a real-cwd / path-model note to the composed code-mode system prompt.
- *
- * The default code-mode backend runs in REAL-path mode (no virtualMode), so the deepagents fs
- * tools and `run_shell_command` share one real-absolute-path namespace rooted at `cwd`. Neither
- * deepagents' base prompt nor `.gsloth.code.md` states the actual cwd, so without this the model
- * assumes `/` is cwd and hands `/`-rooted paths to the real-fs shell. The cwd is injected
- * dynamically (never baked into the .md). Returns the note alone when there is no base prompt.
- */
-export function appendCwdNote(systemPrompt: string | undefined, cwd: string): string {
-  const cwdNote =
-    `Working directory: ${cwd}\n` +
-    'Paths are real absolute filesystem paths (there is no virtual root). The working directory ' +
-    'above is where this session runs; relative paths resolve against it, and both the filesystem ' +
-    'tools (ls/glob/read_file/write_file/edit_file/grep) and run_shell_command operate on these ' +
-    'same real paths. Check the current directory before filesystem operations and prefer absolute ' +
-    'paths (or paths relative to the working directory); do not assume the current directory is "/".';
-  return systemPrompt ? `${systemPrompt}\n\n${cwdNote}` : cwdNote;
-}
-
-/**
- * EXT-26: the platform-agnostic tail shared by both {@link appendOsShellNote} branches.
- *
- * The recurring failure mode on non-POSIX hosts is not just wrong command NAMES but shell
- * REDIRECTION quoting: a grouped/multi-line `echo` redirect on cmd.exe reported success yet wrote
- * a 0-byte file. So on every platform we steer file creation/mutation to the deepagents built-in
- * `write_file`/`edit_file` tools (which never touch the shell's quoting) and keep each shell
- * command a single line. Kept short — this is prompt text an LLM reads, not documentation.
- */
-export const OS_SHELL_GUIDANCE =
-  'Prefer the built-in write_file / edit_file tools over shell echo/redirection to create or ' +
-  'modify files: shell redirection quoting is unreliable and can silently write an empty ' +
-  '(0-byte) file. Keep each run_shell_command a single line.';
-
-/**
- * EXT-26: append an OS + shell-dialect note to the composed code-mode system prompt.
- *
- * The deep-agent model was never told its host OS or which shell `run_shell_command` uses, so on
- * non-POSIX hosts it defaulted to POSIX idioms that fail (ran `ls` where cmd.exe has `dir`, a
- * multi-line echo-redirect that wrote 0 bytes, a PowerShell here-string, `python -c` multi-line).
- * This is ORTHOGONAL to the EXT-13/16/22 path-namespace notes: those say WHERE the model is (path
- * form); this says WHAT shell it speaks (dialect).
- *
- * The shell is derived from the SAME rule Node's `spawn(command, { shell: true })` uses — exactly
- * how `run_shell_command` spawns (GthDevToolkit spawn) — so on `win32` it is cmd.exe (via
- * `%ComSpec%`) and on POSIX it is `/bin/sh` (POSIX sh, NOT guaranteed bash). Computed from
- * `process.platform` at call time so the text is correct per host. Returns the note alone when
- * there is no base prompt. A single injection is authoritative (nothing in deepagents' base prompt
- * contradicts shell dialect), so unlike EXT-22 no correction middleware is needed.
- */
-export function appendOsShellNote(systemPrompt: string | undefined): string {
-  let note: string;
-  if (process.platform === 'win32') {
-    note =
-      'Host operating system: Windows. `run_shell_command` runs in cmd.exe. Use native cmd ' +
-      'syntax: `dir` (not `ls`), `type` (not `cat`), `copy` / `move` / `del`, `%VAR%` for ' +
-      'environment variables, and backslash paths. Do NOT use POSIX-only idioms: no sh/bash ' +
-      'heredocs (`<< EOF`), no here-strings (`<<<`), no multi-line quoted command blocks, and do ' +
-      `not assume POSIX quoting. ${OS_SHELL_GUIDANCE}`;
-  } else {
-    const osName = process.platform === 'darwin' ? 'macOS' : 'Linux';
-    note =
-      `Host operating system: ${osName}. \`run_shell_command\` runs in /bin/sh (POSIX sh, not ` +
-      'necessarily bash). Stick to POSIX sh syntax and avoid bash-only constructs such as ' +
-      `here-strings (\`<<<\`) and \`[[ ]]\` tests. ${OS_SHELL_GUIDANCE}`;
-  }
-  return systemPrompt ? `${systemPrompt}\n\n${note}` : note;
 }
 
 // The `/debug` request-extras extraction (extractDebugRequestExtras + its model-param / tool-def

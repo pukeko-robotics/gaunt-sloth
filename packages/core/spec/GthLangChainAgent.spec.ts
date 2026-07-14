@@ -603,7 +603,11 @@ describe('GthLangChainAgent', () => {
         expect(readCodePromptMock).toHaveBeenCalled();
         expect(readChatPromptMock).not.toHaveBeenCalled();
         expect(buildSystemMessagesMock).toHaveBeenCalledWith(expect.anything(), 'code-mode-prompt');
-        expect(createAgentMock.mock.calls.at(-1)?.[0].systemPrompt).toBe('SYSTEM PROMPT');
+        // GS2-27: code mode now composes the SHARED code-mode notes on top of the base prompt (the
+        // cwd/path-model note + OS/shell-dialect note the deep backend has always carried), so the
+        // systemPrompt starts with the base and is no longer bare.
+        const systemPrompt = createAgentMock.mock.calls.at(-1)?.[0].systemPrompt as string;
+        expect(systemPrompt.startsWith('SYSTEM PROMPT')).toBe(true);
       });
 
       it('selects the exec-mode prompt for the exec command', async () => {
@@ -612,6 +616,36 @@ describe('GthLangChainAgent', () => {
 
         expect(readExecPromptMock).toHaveBeenCalled();
         expect(buildSystemMessagesMock).toHaveBeenCalledWith(expect.anything(), 'exec-mode-prompt');
+      });
+
+      // GS2-27: the OS + shell-dialect note (EXT-26) and the real-cwd / path-model note (EXT-13)
+      // were composed ONLY in the deep backend, so a lean code session (e.g. on Windows) got NO
+      // shell-dialect guidance and NO cwd value even though lean ALSO exposes run_shell_command and
+      // runs on the real fs. Both are now composed in the shared code-mode path so the lean model
+      // receives them too. (The deepagents virtual-fs-namespace note stays deep-only.)
+      it('composes the OS/shell-dialect note and the real-cwd note into the lean code prompt', async () => {
+        systemUtilsMock.getCurrentWorkDir.mockReturnValue('/proj/work');
+
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        await agent.init('code', mockConfig);
+
+        const systemPrompt = createAgentMock.mock.calls.at(-1)?.[0].systemPrompt as string;
+        // OS/shell-dialect note (EXT-26): host OS + shell + the file-write steer.
+        expect(systemPrompt).toContain('Host operating system:');
+        expect(systemPrompt).toContain('run_shell_command');
+        expect(systemPrompt).toContain('Prefer the built-in write_file / edit_file tools');
+        // Real-cwd note (EXT-13): the dynamic cwd value, previously never provided to the lean model.
+        expect(systemPrompt).toContain('Working directory: /proj/work');
+        expect(systemPrompt).toContain('real absolute filesystem paths');
+      });
+
+      it('does NOT compose the code-mode notes for non-code commands (chat keeps the bare prompt)', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        await agent.init('chat', mockConfig);
+
+        // Chat mode has no run_shell_command / real-fs cwd concern, so the shared code notes are
+        // absent and the composed prompt is exactly what buildSystemMessages returned.
+        expect(createAgentMock.mock.calls.at(-1)?.[0].systemPrompt).toBe('SYSTEM PROMPT');
       });
 
       it('omits systemPrompt entirely when no prompt content is composed', async () => {

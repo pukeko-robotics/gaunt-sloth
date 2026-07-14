@@ -10,6 +10,7 @@ import {
   readExecPrompt,
 } from '#src/utils/llmUtils.js';
 import { getCurrentWorkDir } from '#src/utils/systemUtils.js';
+import { appendOsShellNote, appendCwdNote } from '#src/utils/systemPromptNotes.js';
 import { isShellCommandFailedError } from '#src/core/shell/ShellCommandFailedError.js';
 import { extractDebugRequestExtras } from '#src/core/debugCapture.js';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
@@ -222,8 +223,21 @@ export class GthLangChainAgent extends GthAbstractAgent {
           ? readExecPrompt(this.config)
           : readChatPrompt(this.config);
     const systemMessages = buildSystemMessages(this.config, modePrompt);
-    const systemPrompt =
+    const baseSystemPrompt =
       typeof systemMessages[0]?.content === 'string' ? systemMessages[0].content : undefined;
+
+    // GS2-27: in `code` mode append the SHARED code-mode notes the deep backend has always carried
+    // — the real-cwd / path-model note (EXT-13) and the OS + shell-dialect note (EXT-26). Both are
+    // backend-agnostic (the lean backend also exposes `run_shell_command` and runs on the real-fs
+    // cwd), so composing them here closes the deep-only drift that left a lean code session with no
+    // cwd value and no shell-dialect guidance (e.g. on Windows). The deepagents virtual-fs-namespace
+    // notes stay deep-only (lean never runs virtualMode). Same order the deep backend's real-path
+    // branch uses: cwd note first, OS/shell note last. `getCurrentWorkDir()` is already read above
+    // for the status line, so the value is free.
+    const systemPrompt =
+      this.command === 'code'
+        ? appendOsShellNote(appendCwdNote(baseSystemPrompt, getCurrentWorkDir()))
+        : baseSystemPrompt;
 
     // Create agent with configured middleware. Only pass systemPrompt when non-empty so we never
     // hand createAgent an empty system message.
