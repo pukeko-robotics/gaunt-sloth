@@ -14,13 +14,16 @@ import {
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
 import { env, getProjectDir, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
-import { recordSessionSafe } from '@gaunt-sloth/core/history/recordSession.js';
+import {
+  openConversationSafe,
+  recordSessionSafe,
+} from '@gaunt-sloth/core/history/recordSession.js';
 import {
   openHistoryStore,
   resolveHistoryDbPath,
 } from '@gaunt-sloth/core/history/historyStore.js';
 import {
-  formatHistoryList,
+  formatConversationList,
   formatInsightsSummary,
   formatSearchResults,
 } from '@gaunt-sloth/core/history/historyFormat.js';
@@ -64,7 +67,7 @@ function buildHistorySlashProps(config: GthConfig): HistorySlashProps {
     const store = openHistoryStore(dbPath, { create: false });
     if (!store) return {};
     try {
-      const historySummary = formatHistoryList(store.listRecent(20));
+      const historySummary = formatConversationList(store.listConversations(20));
       const insightsSummary = formatInsightsSummary(store.insights());
       // Search runs later (at dispatch), so it re-opens read-only per call rather than holding a
       // connection open for the session; still fully fail-soft.
@@ -226,6 +229,15 @@ export async function createTuiSession(
 
   const config = { ...(await initConfig(commandLineConfigOverrides)) };
   const checkpointSaver = new MemorySaver();
+  // GS2-19: one conversation per TUI session; each completed turn (logTurn) is stamped with its id
+  // so the whole chat groups under one conversation. Opt-in / fail-soft (undefined unless history
+  // is enabled and the store opened); turns fall back to per-turn conversations otherwise.
+  const conversationId =
+    openConversationSafe(config, {
+      command: sessionConfig.mode,
+      project: getProjectDir(),
+      model: config.modelDisplayName,
+    }) ?? undefined;
   const logFileName = getCommandOutputFilePath(config, sessionConfig.mode);
   if (logFileName) {
     initSessionLogging(logFileName, config.streamSessionInferenceLog);
@@ -280,6 +292,7 @@ export async function createTuiSession(
       // writeOutputToFile off) and fully guarded, so it never affects the session.
       // GS2-16 threads token/tool/duration analytics; costUsd is left unset (no reliable price).
       recordSessionSafe(config, {
+        conversationId, // GS2-19: group every turn under this session's conversation
         command: sessionConfig.mode,
         project: getProjectDir(),
         model: config.modelDisplayName,

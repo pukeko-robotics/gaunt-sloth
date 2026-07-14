@@ -28,6 +28,7 @@ vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => ({
   createInterface: vi.fn(() => ({ question: rlQuestionMock, close: rlCloseMock })),
   error: vi.fn(),
   exit: vi.fn(),
+  getProjectDir: vi.fn(() => '/proj'),
   refStdin: refStdinMock,
   setRawMode: setRawModeMock,
   stdin: { isTTY: true },

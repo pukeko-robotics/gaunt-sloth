@@ -12,12 +12,14 @@ import type { SessionConfig } from '#src/modules/interactiveSessionModule.js';
 // The recorder + store are REAL here (temp DB); everything else (readline, runner, agent) is
 // mocked so nothing actually talks to a model. One user turn ('hello') then 'exit'.
 
-// readline / stdin — first '>' prompt returns the user turn, the next returns 'exit'.
+// readline / stdin — the `>` prompt returns each scripted user turn in order, then 'exit'.
 let turnsAsked = 0;
+let scriptedTurns: string[] = ['hello there'];
 const rlQuestionMock = vi.fn(async (prompt: string) => {
   if (typeof prompt === 'string' && prompt.includes('>')) {
+    const turn = scriptedTurns[turnsAsked] ?? 'exit';
     turnsAsked += 1;
-    return turnsAsked === 1 ? 'hello there' : 'exit';
+    return turn;
   }
   return '';
 });
@@ -82,6 +84,7 @@ describe('interactiveSessionModule readline history recording (GS2-18 / GS2-16)'
   let dir: string;
   beforeEach(() => {
     turnsAsked = 0;
+    scriptedTurns = ['hello there'];
     dir = mkdtempSync(resolve(tmpdir(), 'gsloth-readline-hist-'));
     vi.clearAllMocks();
     runnerInstanceMock.init.mockResolvedValue(undefined);
@@ -121,6 +124,34 @@ describe('interactiveSessionModule readline history recording (GS2-18 / GS2-16)'
     expect(recent[0].tokensOutput).toBe(5);
     expect(recent[0].tools).toEqual(['read_file']);
     expect(typeof recent[0].durationMs).toBe('number');
+    store.close();
+  });
+
+  it('groups multiple turns of one session under a SINGLE conversation (GS2-19)', async () => {
+    const dbPath = resolve(dir, 'history.db');
+    scriptedTurns = ['first turn', 'second turn']; // two real turns, then 'exit'
+    initConfigMock.mockResolvedValue({
+      streamSessionInferenceLog: false,
+      modelDisplayName: 'test-model',
+      history: { enabled: true, dbPath },
+    });
+
+    const { createInteractiveSession } = await import('#src/modules/interactiveSessionModule.js');
+    await createInteractiveSession(sessionConfig, {});
+
+    const { openHistoryStore } = await import('@gaunt-sloth/core/history/historyStore.js');
+    const store = openHistoryStore(dbPath, { create: false })!;
+    // Both turns were recorded...
+    const recent = store.listRecent(10);
+    expect(recent.map((r) => r.prompt)).toEqual(['second turn', 'first turn']);
+    // ...but they belong to exactly ONE conversation, with turnCount 2 (not two flat rows).
+    const conversations = store.listConversations();
+    expect(conversations).toHaveLength(1);
+    expect(conversations[0].turnCount).toBe(2);
+    // And both turns carry the same parent conversation id.
+    const parentIds = new Set(recent.map((r) => r.conversationId));
+    expect(parentIds.size).toBe(1);
+    expect(parentIds.has(conversations[0].id)).toBe(true);
     store.close();
   });
 

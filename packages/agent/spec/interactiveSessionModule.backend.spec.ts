@@ -15,6 +15,7 @@ vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => ({
   createInterface: vi.fn(() => ({ question: rlQuestionMock, close: vi.fn() })),
   error: vi.fn(),
   exit: vi.fn(),
+  getProjectDir: vi.fn(() => '/proj'),
   refStdin: vi.fn(),
   setRawMode: vi.fn(),
   stdin: { isTTY: true },

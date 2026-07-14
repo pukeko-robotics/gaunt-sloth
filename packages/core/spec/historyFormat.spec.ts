@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
-  formatHistoryList,
+  formatConversationList,
+  formatConversationThread,
   formatInsightsSummary,
   formatSearchResults,
 } from '#src/history/historyFormat.js';
-import type { HistoryInsights, SessionSearchResult } from '#src/history/historyStore.js';
+import type {
+  ConversationSummary,
+  HistoryInsights,
+  SessionRecord,
+  SessionSearchResult,
+} from '#src/history/historyStore.js';
 
 const hit = (over: Partial<SessionSearchResult> = {}): SessionSearchResult => ({
   id: 1,
@@ -35,17 +41,62 @@ describe('history/historyFormat', () => {
     });
   });
 
-  describe('formatHistoryList', () => {
-    it('lists sessions newest-first with previews', () => {
-      const lines = formatHistoryList([
-        hit({ id: 2, prompt: 'second' }),
-        hit({ id: 1, prompt: 'first' }),
-      ]);
-      expect(lines[0]).toContain('#2');
-      expect(lines.some((l) => l.includes('second'))).toBe(true);
+  describe('formatConversationList (GS2-19)', () => {
+    const conv = (over: Partial<ConversationSummary> = {}): ConversationSummary => ({
+      id: 5,
+      startedTs: '2026-07-03T10:00:00.000Z',
+      command: 'chat',
+      model: 'gpt-5',
+      turnCount: 3,
+      firstTs: '2026-07-03T10:00:00.000Z',
+      lastTs: '2026-07-03T10:05:00.000Z',
+      lastPrompt: 'the last thing I asked',
+      lastResponse: 'the last answer',
+      ...over,
     });
-    it('reports an enable hint when empty', () => {
-      expect(formatHistoryList([])[0]).toContain('history.enabled');
+
+    it('renders a conversation-grained header: id, timespan, command, model, turn count', () => {
+      const lines = formatConversationList([conv()]);
+      expect(lines[0]).toContain('#5');
+      expect(lines[0]).toContain('[chat]');
+      expect(lines[0]).toContain('gpt-5');
+      expect(lines[0]).toContain('→'); // timespan first → last
+      expect(lines[0]).toContain('(3 turns)');
+      expect(lines[1].trim()).toBe('the last thing I asked'); // last-message preview
+    });
+
+    it('singularises one turn and collapses a same-instant timespan to a single timestamp', () => {
+      const lines = formatConversationList([
+        conv({ turnCount: 1, firstTs: 'T', lastTs: 'T', lastPrompt: 'only' }),
+      ]);
+      expect(lines[0]).toContain('(1 turn)');
+      expect(lines[0]).not.toContain('→');
+    });
+
+    it('reports an enable hint when there are no conversations', () => {
+      expect(formatConversationList([])[0]).toContain('history.enabled');
+    });
+  });
+
+  describe('formatConversationThread (GS2-19)', () => {
+    it('renders every turn in order with prompt + response previews', () => {
+      const turns: SessionRecord[] = [
+        { ts: '2026-07-03T10:00:00.000Z', prompt: 'first q', response: 'first a' },
+        { ts: '2026-07-03T10:01:00.000Z', prompt: 'second q', response: 'second a' },
+      ];
+      const lines = formatConversationThread(turns);
+      expect(lines.some((l) => l.startsWith('Turn 1'))).toBe(true);
+      expect(lines.some((l) => l.startsWith('Turn 2'))).toBe(true);
+      expect(lines.some((l) => l.includes('first q'))).toBe(true);
+      expect(lines.some((l) => l.includes('second a'))).toBe(true);
+      // Order preserved: Turn 1 appears before Turn 2.
+      expect(lines.findIndex((l) => l.startsWith('Turn 1'))).toBeLessThan(
+        lines.findIndex((l) => l.startsWith('Turn 2'))
+      );
+    });
+
+    it('reports a friendly line for an unknown / empty conversation', () => {
+      expect(formatConversationThread([])).toEqual(['No turns found for that conversation.']);
     });
   });
 

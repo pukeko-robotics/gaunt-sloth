@@ -11,7 +11,10 @@ import {
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
-import { recordSessionSafe } from '@gaunt-sloth/core/history/recordSession.js';
+import {
+  openConversationSafe,
+  recordSessionSafe,
+} from '@gaunt-sloth/core/history/recordSession.js';
 import {
   createInterface,
   error,
@@ -43,6 +46,18 @@ export async function createInteractiveSession(
 ) {
   const config = { ...(await initConfig(commandLineConfigOverrides)) };
   const checkpointSaver = new MemorySaver();
+
+  // GS2-19: open ONE conversation for this interactive session up-front; every turn below is stamped
+  // with its id so a multi-turn chat groups under one conversation (not N unrelated rows). Opt-in /
+  // fail-soft: a no-op returning undefined unless `history.enabled`, in which case turns fall back to
+  // per-turn 1-turn conversations. Never affects a default run.
+  const conversationId =
+    openConversationSafe(config, {
+      command: sessionConfig.mode,
+      project: getProjectDir(),
+      model: config.modelDisplayName,
+    }) ?? undefined;
+
   // Initialize Runner
 
   const logFileName = getCommandOutputFilePath(config, sessionConfig.mode);
@@ -159,6 +174,7 @@ export async function createInteractiveSession(
         /* fail-soft: analytics must never affect the session */
       }
       recordSessionSafe(config, {
+        conversationId, // GS2-19: group every turn under this session's conversation
         command: sessionConfig.mode,
         project: getProjectDir(),
         model: config.modelDisplayName,

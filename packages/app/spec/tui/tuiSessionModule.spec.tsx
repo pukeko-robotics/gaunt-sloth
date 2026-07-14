@@ -49,6 +49,7 @@ vi.mock('@gaunt-sloth/core/utils/fileUtils.js', () => ({
 // mutate properties rather than reassigning.
 const systemUtilsMock = {
   env: {} as Record<string, string | undefined>,
+  getProjectDir: vi.fn(() => '/proj'),
   stdout: { isTTY: true, rows: 24, write: vi.fn() } as {
     isTTY?: boolean;
     rows?: number;

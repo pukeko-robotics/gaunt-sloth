@@ -27,9 +27,10 @@ export interface SlashCommandContext {
    */
   configSummary?: string[];
   /**
-   * GS2-7 (B20) — pre-rendered recent-session lines for `/history`. The App builds these fail-soft
-   * from the local history store (see `formatHistoryList`); omitted when no store is available
-   * (history never enabled / DB missing), in which case `/history` shows an "unavailable" notice.
+   * GS2-7 (B20) / GS2-19 — pre-rendered recent-conversation lines for `/history`. The App builds
+   * these fail-soft from the local history store (see `formatConversationList`); omitted when no
+   * store is available (history never enabled / DB missing), in which case `/history` shows an
+   * "unavailable" notice.
    */
   historySummary?: string[];
   /**

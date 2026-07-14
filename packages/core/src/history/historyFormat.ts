@@ -7,7 +7,12 @@
  * DB or a terminal. Every function is a pure `data -> string[]` transform (one display line per
  * element); no I/O, no colour codes.
  */
-import type { HistoryInsights, SessionSearchResult } from '#src/history/historyStore.js';
+import type {
+  ConversationSummary,
+  HistoryInsights,
+  SessionRecord,
+  SessionSearchResult,
+} from '#src/history/historyStore.js';
 
 /** Collapse whitespace and clip to `max` chars with an ellipsis, for one-line previews. */
 function oneLine(text: string | undefined, max = 80): string {
@@ -15,11 +20,14 @@ function oneLine(text: string | undefined, max = 80): string {
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
 }
 
-/** A compact `#id  <ts>  [command] model` header line for one session. */
+/** A compact `#id  <ts>  [command] model  (conversation #cid)` header line for one turn. */
 function headerLine(r: SessionSearchResult): string {
   const parts = [`#${r.id}`, r.ts];
   if (r.command) parts.push(`[${r.command}]`);
   if (r.model) parts.push(r.model);
+  // GS2-19: a search hit resolves to the conversation it belongs to, so the reader can pull up the
+  // whole thread (`gth history show <cid>`). Older rows migrated from GS2-7 always have one now.
+  if (r.conversationId != null) parts.push(`(conversation #${r.conversationId})`);
   return parts.join('  ');
 }
 
@@ -39,19 +47,52 @@ export function formatSearchResults(results: SessionSearchResult[]): string[] {
   return lines;
 }
 
-/** Render a recent-sessions listing: one header + prompt-preview pair per session. */
-export function formatHistoryList(results: SessionSearchResult[]): string[] {
-  if (results.length === 0) {
+/**
+ * GS2-19 — render a conversation-grained listing: one header + last-turn preview per conversation.
+ * The header carries the count / timespan / last message that make the conversation the top-level
+ * unit (`gth history list`), replacing the old flat per-turn list.
+ */
+export function formatConversationList(conversations: ConversationSummary[]): string[] {
+  if (conversations.length === 0) {
     return [
-      'No sessions recorded yet. Enable history with `history.enabled: true` in your config.',
+      'No conversations recorded yet. Enable history with `history.enabled: true` in your config.',
     ];
   }
   const lines: string[] = [];
-  for (const r of results) {
-    lines.push(headerLine(r));
-    const preview = oneLine(r.prompt, 100);
+  for (const c of conversations) {
+    const parts = [`#${c.id}`];
+    // Timespan across the conversation's turns; a 1-turn (or not-yet-started) conversation collapses
+    // to a single instant, so show one timestamp rather than an `a → a` range.
+    if (c.firstTs && c.lastTs && c.firstTs !== c.lastTs) {
+      parts.push(`${c.firstTs} → ${c.lastTs}`);
+    } else {
+      parts.push(c.lastTs ?? c.firstTs ?? c.startedTs);
+    }
+    if (c.command) parts.push(`[${c.command}]`);
+    if (c.model) parts.push(c.model);
+    parts.push(`(${c.turnCount} ${c.turnCount === 1 ? 'turn' : 'turns'})`);
+    lines.push(parts.join('  '));
+    const preview = oneLine(c.lastPrompt, 100);
     if (preview) lines.push(`    ${preview}`);
   }
+  return lines;
+}
+
+/**
+ * GS2-19 — render one conversation's full thread (all turns in order) for `gth history show <id>`.
+ * Each turn shows its prompt and response preview so a search hit can be expanded into context.
+ */
+export function formatConversationThread(turns: SessionRecord[]): string[] {
+  if (turns.length === 0) return ['No turns found for that conversation.'];
+  const lines: string[] = [];
+  turns.forEach((t, i) => {
+    const header = t.ts ? `Turn ${i + 1}  ${t.ts}` : `Turn ${i + 1}`;
+    lines.push(header);
+    const prompt = oneLine(t.prompt, 200);
+    if (prompt) lines.push(`  > ${prompt}`);
+    const response = oneLine(t.response, 200);
+    if (response) lines.push(`    ${response}`);
+  });
   return lines;
 }
 
