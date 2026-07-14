@@ -45,8 +45,11 @@ function httpStatusOf(error: unknown, message: string): number | undefined {
 }
 
 // Credential-failure phrasing across MCP adapter wrapping, transports, and common upstream servers.
+// Includes the canonical OAuth error codes (`invalid_grant` = expired/revoked refresh token,
+// `invalid_token`, `unauthorized_client`) and generic `oauth …` credential phrasing, so a keyword-
+// bearing OAuth failure is classified as auth even when it does NOT arrive via the OAuth catch site.
 const AUTH_KEYWORDS =
-  /\b(unauthorized|forbidden|authentication failed|authenti[sc]ation (?:error|required)|authorization (?:error|failed|required)|invalid (?:token|credentials?|api[\s-]?key|authorization)|(?:token|credentials?|session|api[\s-]?key)s? (?:has |have )?(?:expired|is expired|are expired)|expired (?:token|credentials?|session)|access denied|401 unauthorized|403 forbidden)\b/i;
+  /\b(unauthorized|forbidden|authentication failed|authenti[sc]ation (?:error|required)|authorization (?:error|failed|required)|invalid (?:token|credentials?|api[\s-]?key|authorization)|invalid_grant|invalid_token|unauthorized_client|oauth[\s_-]?(?:error|failed|failure|denied|token|authorization|handshake|login)|(?:token|credentials?|session|api[\s-]?key)s? (?:has |have )?(?:expired|is expired|are expired)|expired (?:token|credentials?|session)|access denied|401 unauthorized|403 forbidden)\b/i;
 
 /**
  * Classify an MCP connect/tool-load failure as a credential problem (`auth`) or anything else
@@ -76,7 +79,11 @@ export function formatMcpConnectFailureMessage(
   error: unknown,
   options: McpConnectFailureOptions = {}
 ): string {
-  const kind = classifyMcpConnectError(error);
+  // Reaching the OAuth surfacing site means createAuthProviderAndAuthenticate() threw, i.e. the
+  // OAuth handshake/refresh itself failed — that is inherently an auth failure regardless of the
+  // message text (e.g. a keyword-less `invalid_grant`). Force `auth` here rather than inferring it
+  // from keywords, so an OAuth credential failure never mis-surfaces as "not an authentication error".
+  const kind: McpConnectErrorKind = options.oauth ? 'auth' : classifyMcpConnectError(error);
   const name = serverName ? `"${serverName}"` : 'an MCP server';
   const configHint = serverName
     ? `check the ${name} entry under mcpServers in your gth config`

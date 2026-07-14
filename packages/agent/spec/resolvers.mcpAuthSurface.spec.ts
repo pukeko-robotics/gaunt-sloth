@@ -30,9 +30,10 @@ vi.mock('#src/utils/mcpUtils.js', () => ({
   prepareMcpTools: vi.fn((_cb: unknown, _config: unknown, raw: unknown[]) => raw),
 }));
 
-// OAuth is never exercised in these cases (no authProvider: 'OAuth'); stub to be safe.
+// OAuth: default resolves; a test drives a rejection to exercise the OAuth surfacing site.
+const createAuthProviderAndAuthenticateMock = vi.fn();
 vi.mock('#src/mcp/OAuthClientProviderImpl.js', () => ({
-  createAuthProviderAndAuthenticate: vi.fn(),
+  createAuthProviderAndAuthenticate: createAuthProviderAndAuthenticateMock,
 }));
 
 /**
@@ -130,6 +131,29 @@ describe('resolveTools MCP auth surfacing (EXT-31)', () => {
     resolvers = createResolvers();
     await resolvers.resolveTools!(makeConfig({}));
     expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an AUTH message for a keyword-less OAuth handshake failure (not "not an auth error")', async () => {
+    // createAuthProviderAndAuthenticate throws BEFORE the MCP client exists, so this exercises the
+    // OAuth catch site, not the onConnectionError callback. A keyword-less error (canonical
+    // invalid_grant/expired refresh token surfaced with no auth wording) must still read as auth.
+    createAuthProviderAndAuthenticateMock.mockRejectedValueOnce(
+      new Error('token endpoint returned status the client could not use')
+    );
+
+    const { createResolvers } = await import('#src/resolvers.js');
+    const resolvers = createResolvers();
+    await resolvers.resolveTools!(
+      makeConfig({ jira: { url: 'https://jira.example/mcp', authProvider: 'OAuth' } })
+    );
+
+    expect(consoleUtilsMock.displayWarning).toHaveBeenCalledTimes(1);
+    const surfaced = consoleUtilsMock.displayWarning.mock.calls[0][0] as string;
+    expect(surfaced).toContain('"jira"');
+    expect(surfaced).toContain('expired or invalid');
+    expect(surfaced).toContain('re-authenticate');
+    expect(surfaced).toContain('OAuth login flow');
+    expect(surfaced).not.toContain('not an authentication error');
   });
 
   it('degrades gracefully: one server auth failure keeps the healthy server and built-in tools', async () => {

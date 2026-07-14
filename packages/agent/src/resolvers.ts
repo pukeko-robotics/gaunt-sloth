@@ -71,11 +71,12 @@ export function createResolvers(): AgentResolvers {
       }
     } catch (error) {
       debugLog(`MCP tools error: ${error}`);
-      // EXT-31: connection-level failures (incl. expired/invalid auth) are surfaced per-server via
-      // the onConnectionError callback in getMcpClient, which does NOT re-throw. This backstop only
-      // catches anything else (e.g. tool-schema load errors under throwOnLoadError, or an unexpected
-      // client failure) — surface it neutrally so MCP tool loading can never fail silently, while
-      // the session degrades gracefully (built-in and A2A tools below still load).
+      // EXT-31: both connection-level failures (incl. expired/invalid auth) AND per-tool schema-load
+      // errors under throwOnLoadError are caught inside the adapter's _initializeConnection and
+      // routed to the function-form onConnectionError callback in getMcpClient (surface + skip, no
+      // re-throw), so they do NOT reach here. This backstop therefore only catches a wholesale
+      // getTools() throw (belt-and-braces) — surface it neutrally so MCP tool loading can never fail
+      // silently, while the session degrades gracefully (built-in and A2A tools below still load).
       displayWarning(
         `MCP integration tools could not be fully loaded; continuing without them. ` +
           `Underlying error: ${error}`

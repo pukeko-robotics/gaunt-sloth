@@ -42,6 +42,16 @@ describe('classifyMcpConnectError (EXT-31)', () => {
   });
 
   it.each([
+    'invalid_grant', // expired/revoked OAuth refresh token
+    'invalid_token',
+    'unauthorized_client',
+    'OAuth authorization failed',
+    'oauth_error: consent revoked',
+  ])('classifies OAuth error codes/phrasing as auth: %s', (msg) => {
+    expect(classifyMcpConnectError(new Error(msg))).toBe('auth');
+  });
+
+  it.each([
     'Failed to connect to streamable HTTP server "jira": ECONNREFUSED',
     'connect ETIMEDOUT 10.0.0.1:443',
     'getaddrinfo ENOTFOUND jira.example',
@@ -77,6 +87,18 @@ describe('formatMcpConnectFailureMessage (EXT-31)', () => {
     const msg = formatMcpConnectFailureMessage('jira', authErr, { oauth: true });
     expect(msg).toContain('OAuth login flow');
     expect(msg).not.toContain('apiKeyEnvironmentVariable');
+  });
+
+  it('forces the AUTH message on the oauth path even when the error text has no auth keywords', () => {
+    // An OAuth handshake/refresh throw is an auth failure by construction, regardless of message.
+    const keywordless = new Error('request to token endpoint returned a bad response');
+    expect(classifyMcpConnectError(keywordless)).toBe('other'); // classifier alone would miss it
+    const msg = formatMcpConnectFailureMessage('jira', keywordless, { oauth: true });
+    expect(msg).toContain('"jira"');
+    expect(msg).toContain('expired or invalid');
+    expect(msg).toContain('re-authenticate');
+    expect(msg).toContain('OAuth login flow');
+    expect(msg).not.toContain('not an authentication error');
   });
 
   it('non-auth message says explicitly it is NOT an auth error and does not nudge re-auth', () => {
