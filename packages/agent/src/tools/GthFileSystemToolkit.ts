@@ -78,6 +78,14 @@ const WriteFileArgsSchema = z.object({
 const EditOperation = z.object({
   oldText: z.string().describe('Text to search for - must match exactly'),
   newText: z.string().describe('Text to replace with'),
+  replaceAll: z
+    .boolean()
+    .default(false)
+    .describe(
+      'Replace all occurrences of oldText. Default false requires a unique match: if oldText ' +
+        'appears more than once the edit fails so you can add surrounding context to disambiguate; ' +
+        'set true to replace every occurrence.'
+    ),
 });
 
 const EditFileArgsSchema = z.object({
@@ -399,20 +407,54 @@ export default class GthFileSystemToolkit extends BaseToolkit {
     );
   }
 
+  /**
+   * Count non-overlapping exact occurrences of `search` in `content`.
+   * Uses an indexOf scan (no regex) so arbitrary text is matched literally.
+   */
+  private countOccurrences(content: string, search: string): number {
+    if (search === '') return 0;
+    let count = 0;
+    let offset = 0;
+    let idx = content.indexOf(search, offset);
+    while (idx !== -1) {
+      count++;
+      offset = idx + search.length;
+      idx = content.indexOf(search, offset);
+    }
+    return count;
+  }
+
   private async applyFileEdits(
     filePath: string,
-    edits: Array<{ oldText: string; newText: string }>,
+    edits: Array<{ oldText: string; newText: string; replaceAll?: boolean }>,
     dryRun = false
   ): Promise<string> {
     const content = this.normalizeLineEndings(await fs.readFile(filePath, 'utf-8'));
 
     let modifiedContent = content;
+    const summaries: string[] = [];
+    let editIndex = 0;
     for (const edit of edits) {
+      editIndex++;
       const normalizedOld = this.normalizeLineEndings(edit.oldText);
       const normalizedNew = this.normalizeLineEndings(edit.newText);
 
-      if (modifiedContent.includes(normalizedOld)) {
-        modifiedContent = modifiedContent.replace(normalizedOld, normalizedNew);
+      const occurrences = this.countOccurrences(modifiedContent, normalizedOld);
+      if (occurrences > 0) {
+        if (occurrences > 1 && edit.replaceAll !== true) {
+          // Ambiguous match: refuse rather than silently editing the first occurrence.
+          throw new Error(
+            `Found ${occurrences} occurrences of the oldText in ${filePath}. ` +
+              'Provide more surrounding context to make it unique, or set replaceAll: true.\n' +
+              edit.oldText
+          );
+        }
+        // split/join replaces every occurrence without regex escaping and, unlike
+        // String.replace, does NOT interpret `$`-patterns ($&, $`, $', $$) in the
+        // replacement text; for a unique match (occurrences === 1) it replaces exactly
+        // that one occurrence.
+        modifiedContent = modifiedContent.split(normalizedOld).join(normalizedNew);
+        summaries.push(`edit ${editIndex}: replaced ${occurrences} occurrence(s)`);
         continue;
       }
 
@@ -451,6 +493,9 @@ export default class GthFileSystemToolkit extends BaseToolkit {
       if (!matchFound) {
         throw new Error(`Could not find exact match for edit:\n${edit.oldText}`);
       }
+      // Fuzzy (trim-based line) match applied: flag it so the model knows the edit
+      // landed on a near-match, not an exact one.
+      summaries.push(`edit ${editIndex}: applied via fuzzy line-match (no exact match)`);
     }
 
     const diff = this.createUnifiedDiff(content, modifiedContent, filePath);
@@ -465,7 +510,9 @@ export default class GthFileSystemToolkit extends BaseToolkit {
       await fs.writeFile(filePath, modifiedContent, 'utf-8');
     }
 
-    return formattedDiff;
+    // Per-edit machine-readable summary, prepended so the diff block stays intact.
+    const summaryBlock = summaries.length > 0 ? `${summaries.join('\n')}\n\n` : '';
+    return summaryBlock + formattedDiff;
   }
 
   private formatSize(bytes: number): string {
