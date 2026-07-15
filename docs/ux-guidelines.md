@@ -53,8 +53,8 @@ toggles. The runtime flag lives at the approval-decision layer (`GthAgentRunner.
 top of `decideToolApproval`.
 
 - **Config seeds it, but it stays toggleable (DL-4).** In interactive `code` mode the shell tool
-  stays gated even when `devTools.shellYolo` pre-enables auto-approval: `GthAgentRunner.init` seeds
-  the session flag ON from `shellYolo`, so the user sees no prompt by default **but can still restore
+  stays gated even when `run_shell_command.yolo` pre-enables auto-approval: `GthAgentRunner.init` seeds
+  the session flag ON from `run_shell_command.yolo`, so the user sees no prompt by default **but can still restore
   it** with `/auto-approve off`. (Only a non-interactive `exec` / `ask --write` yolo run keeps the
   tool ungated, since its single-shot path never drains interrupts.)
 - **State-aware copy.** Like `/tools` and `/debug`, the App owns the runner flag, so it applies the

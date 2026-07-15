@@ -6,11 +6,12 @@
   "commands": {
     "ask": {
       "filesystem": "read",
-      "devTools": {
-        "run_build": "pnpm run build",
-        "run_tests": "pnpm test",
-        "run_lint": "pnpm run lint-n-fix",
-        "run_single_test": "pnpm test"
+      "builtInTools": {
+        "gth_checklist": true,
+        "run_build": { "command": "pnpm run build" },
+        "run_tests": { "command": "pnpm test" },
+        "run_lint": { "command": "pnpm run lint-n-fix" },
+        "run_single_test": { "command": "pnpm test" }
       }
     }
   },

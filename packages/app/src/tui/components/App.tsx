@@ -99,7 +99,7 @@ export function App(props: TuiAppProps): React.ReactElement {
   // mirroring the docked debug panel's single-key detail toggle.
   const [toolsExpanded, setToolsExpanded] = useState(false);
   // EXT-12 — session auto-approve (shell commands run without the per-command prompt). Seeded from
-  // props (config may pre-enable it via devTools.shellYolo); the runner owns the authoritative
+  // props (config may pre-enable it via run_shell_command.yolo); the runner owns the authoritative
   // flag, this mirror drives the persistent status-bar indicator and the state-aware notice.
   const [autoApprove, setAutoApprove] = useState(!!props.initialAutoApprove);
   // Mirror for the synchronous approval useInput handler, so `y` (auto-approve all) can read the
