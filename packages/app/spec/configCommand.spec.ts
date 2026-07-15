@@ -121,8 +121,7 @@ describe('configCommand', () => {
       configMock.validateConfig.mockResolvedValue({
         found: true,
         ok: true,
-        warnings: [],
-        sourceLabel: '/proj/.gsloth.config.json',
+        layers: [{ sourceLabel: '/proj/.gsloth.config.json', ok: true, warnings: [] }],
       });
 
       await run('validate');
@@ -137,9 +136,14 @@ describe('configCommand', () => {
       configMock.validateConfig.mockResolvedValue({
         found: true,
         ok: false,
-        warnings: [],
-        sourceLabel: '.gsloth.config.json',
-        errorMessage: '  - streamOutput: Invalid input: expected boolean',
+        layers: [
+          {
+            sourceLabel: '.gsloth.config.json',
+            ok: false,
+            warnings: [],
+            errorMessage: '  - streamOutput: Invalid input: expected boolean',
+          },
+        ],
       });
 
       await run('validate');
@@ -151,21 +155,50 @@ describe('configCommand', () => {
       expect(consoleUtilsMock.displaySuccess).not.toHaveBeenCalled();
     });
 
-    it('emits each warning before the verdict', async () => {
+    it('GS2-29: names the offending layer when the GLOBAL layer is invalid but the project is clean', async () => {
+      configMock.validateConfig.mockResolvedValue({
+        found: true,
+        ok: false,
+        layers: [
+          { sourceLabel: '/proj/.gsloth.config.json', ok: true, warnings: [] },
+          {
+            sourceLabel: '.gsloth.config.json (global)',
+            ok: false,
+            warnings: [],
+            errorMessage: '  - contentProvider: Config property "contentProvider" was renamed…',
+          },
+        ],
+      });
+
+      await run('validate');
+
+      // The error must name the GLOBAL layer (so the user knows which file to fix), not the project.
+      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+        expect.stringContaining('.gsloth.config.json (global)')
+      );
+      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+        expect.stringContaining('contentProvider')
+      );
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(1);
+      expect(consoleUtilsMock.displaySuccess).not.toHaveBeenCalled();
+    });
+
+    it('emits each warning, prefixed with its source layer, before the verdict', async () => {
       configMock.validateConfig.mockResolvedValue({
         found: true,
         ok: true,
-        warnings: ['Unknown top-level config key: foo (…).'],
-        sourceLabel: 'x',
+        layers: [
+          { sourceLabel: 'x', ok: true, warnings: ['Unknown top-level config key: foo (…).'] },
+        ],
       });
       await run('validate');
       expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
-        'Unknown top-level config key: foo (…).'
+        'x: Unknown top-level config key: foo (…).'
       );
     });
 
     it('exits non-zero when no config is found', async () => {
-      configMock.validateConfig.mockResolvedValue({ found: false, ok: false, warnings: [] });
+      configMock.validateConfig.mockResolvedValue({ found: false, ok: false, layers: [] });
       await run('validate');
       expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
         expect.stringContaining('No configuration file found')

@@ -119,18 +119,29 @@ export function configCommand(
           return;
         }
 
-        for (const warning of report.warnings) {
-          displayWarning(warning);
+        // GS2-29 — a run validates every layer (project + global), so the report carries a
+        // per-layer verdict. Prefix each warning/error with its source label so the user knows
+        // which file to fix.
+        for (const layer of report.layers) {
+          for (const warning of layer.warnings) {
+            displayWarning(`${layer.sourceLabel}: ${warning}`);
+          }
         }
 
-        if (report.ok) {
-          displaySuccess(`Configuration is valid: ${report.sourceLabel}`);
+        const invalidLayers = report.layers.filter((layer) => !layer.ok);
+        if (invalidLayers.length === 0) {
+          displaySuccess(
+            `Configuration is valid: ${report.layers.map((layer) => layer.sourceLabel).join(', ')}`
+          );
           return;
         }
 
-        displayError(
-          `Invalid configuration in ${report.sourceLabel}:\n${report.errorMessage ?? ''}`
-        );
+        // Report EVERY failing layer, not just the first, so the user fixes all offending files.
+        for (const layer of invalidLayers) {
+          displayError(
+            `Invalid configuration in ${layer.sourceLabel}:\n${layer.errorMessage ?? ''}`
+          );
+        }
         setExitCode(1);
       } catch (error) {
         // A JSONC/module parse failure lands here — surface it as an invalid-config error.
