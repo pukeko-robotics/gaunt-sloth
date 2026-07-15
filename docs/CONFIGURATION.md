@@ -1246,6 +1246,10 @@ The dev-command tools are defined in `src/tools/GthDevToolkit.ts`; each is confi
 
 These tools execute the configured shell commands and capture their output.
 
+**Note:** a per-command `builtInTools` object (like the root one) **replaces** the root set entirely,
+including the default `gth_checklist` planning tool. List `"gth_checklist": true` explicitly in the
+command's registry to keep it (as the examples below do).
+
 Example configuration including dev tools (from .gsloth.config.json):
 
 ```json
@@ -1258,6 +1262,7 @@ Example configuration including dev tools (from .gsloth.config.json):
     "code": {
       "filesystem": "all",
       "builtInTools": {
+        "gth_checklist": true,
         "run_build": { "command": "npm build" },
         "run_tests": { "command": "npm test" },
         "run_lint": { "command": "npm run lint-n-fix" },
@@ -1466,6 +1471,7 @@ Both can be used together:
     "code": {
       "filesystem": "all",
       "builtInTools": {
+        "gth_checklist": true,
         "run_tests": { "command": "npm test" },
         "run_lint": { "command": "npm run lint-n-fix" }
       }
@@ -1539,6 +1545,7 @@ Example of a secure custom tool that accepts a file path:
     "code": {
       "filesystem": "all",
       "builtInTools": {
+        "gth_checklist": true,
         "run_tests": { "command": "npm test" },
         "run_lint": { "command": "npm run lint-n-fix" }
       }

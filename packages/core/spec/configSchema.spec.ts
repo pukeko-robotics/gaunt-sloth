@@ -113,6 +113,41 @@ describe('config schema (GS2-1 B1)', () => {
     });
   });
 
+  // CFG-18: the golden snapshot pins the schema SHAPE; these assert the schema→resolver VALUE seam —
+  // a full builtInTools registry parses through the real schema and preserves every field (not only
+  // the hand-built resolver object).
+  describe('builtInTools registry round-trip (CFG-18)', () => {
+    it('parses a full run_shell_command config and preserves every field', () => {
+      const builtInTools = {
+        gth_checklist: true,
+        run_tests: { command: 'npm test' },
+        run_shell_command: {
+          enabled: true,
+          timeout: 300000,
+          maxOutputBytes: 200000,
+          allowlist: false,
+          persistAllowlist: false,
+          judge: { enabled: true, autoApproveLow: false, blockHigh: true },
+          yolo: true,
+        },
+      };
+      const result = rawGthConfigSchema.safeParse({ llm: { type: 'openai' }, builtInTools });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect((result.data as Record<string, unknown>).builtInTools).toEqual(builtInTools);
+      }
+    });
+
+    it('parses the boolean-in-record force-disable arm ({ run_shell_command: false })', () => {
+      const builtInTools = { run_shell_command: false, gth_checklist: true };
+      const result = rawGthConfigSchema.safeParse({ llm: { type: 'openai' }, builtInTools });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect((result.data as Record<string, unknown>).builtInTools).toEqual(builtInTools);
+      }
+    });
+  });
+
   describe('deprecated-shape rejection (GS2-28)', () => {
     it('flags a top-level command key, naming commands.<cmd> + migration path', () => {
       const issues = findDeprecatedConfigIssues({ llm: { type: 'openai' }, pr: { rating: {} } });

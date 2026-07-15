@@ -144,6 +144,27 @@ describe('Config Tool Functions', () => {
       );
     });
 
+    // CFG-18 (assembly-level, beyond the resolver): the object form force-disables a default-on
+    // built-in tool and enables a default-off one — asserted through the real getBuiltInTools
+    // assembly (dynamic import), not just the resolver.
+    it('object form force-disables a default-on built-in tool and enables a default-off one', async () => {
+      // Baseline: the default-on gth_checklist is loaded when present.
+      const withChecklist = await getDefaultTools({
+        filesystem: 'none',
+        builtInTools: { gth_checklist: true },
+      } as Partial<GthConfig> as GthConfig);
+      expect(withChecklist.map((t) => t.name)).toContain('gth_checklist');
+
+      // Force-disable gth_checklist (bare false) AND enable a default-off tool (gth_status_update).
+      const result = await getDefaultTools({
+        filesystem: 'none',
+        builtInTools: { gth_checklist: false, gth_status_update: true },
+      } as Partial<GthConfig> as GthConfig);
+      const names = result.map((t) => t.name);
+      expect(names).not.toContain('gth_checklist'); // force-disabled
+      expect(names).toContain('gth_status_update'); // enabled via the object form
+    });
+
     it('enables dev tools for the exec command from commands.exec.devTools', async () => {
       const result = await getDefaultTools(
         {
