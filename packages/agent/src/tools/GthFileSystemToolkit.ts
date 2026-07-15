@@ -449,12 +449,11 @@ export default class GthFileSystemToolkit extends BaseToolkit {
               edit.oldText
           );
         }
-        // split/join replaces every occurrence without regex escaping; for a unique
-        // match (occurrences === 1) it is equivalent to a single replace.
-        modifiedContent =
-          edit.replaceAll === true
-            ? modifiedContent.split(normalizedOld).join(normalizedNew)
-            : modifiedContent.replace(normalizedOld, normalizedNew);
+        // split/join replaces every occurrence without regex escaping and, unlike
+        // String.replace, does NOT interpret `$`-patterns ($&, $`, $', $$) in the
+        // replacement text; for a unique match (occurrences === 1) it replaces exactly
+        // that one occurrence.
+        modifiedContent = modifiedContent.split(normalizedOld).join(normalizedNew);
         summaries.push(`edit ${editIndex}: replaced ${occurrences} occurrence(s)`);
         continue;
       }

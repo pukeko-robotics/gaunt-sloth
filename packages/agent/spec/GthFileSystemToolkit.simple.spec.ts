@@ -262,6 +262,24 @@ describe('GthFileSystemToolkit - Basic Tests', () => {
       expect(fsMock.writeFile).toHaveBeenCalledWith(testPath, 'alpha\nBETA\ngamma\n', 'utf-8');
     });
 
+    it('unique match inserts a $-pattern in newText literally (no String.replace $-substitution)', async () => {
+      // String.replace(str, str) would interpret $&, $`, $', $$ in the replacement string:
+      // for oldText 'X', newText '$& $$ done' would become 'X $ done'. split/join must not.
+      fsMock.readFile.mockResolvedValue('price is X here\n');
+
+      const result: string = await editTool.invoke({
+        path: testPath,
+        edits: [{ oldText: 'X', newText: '$& $$ done' }],
+      });
+
+      expect(result).toContain('edit 1: replaced 1 occurrence(s)');
+      expect(fsMock.writeFile).toHaveBeenCalledWith(
+        testPath,
+        'price is $& $$ done here\n',
+        'utf-8'
+      );
+    });
+
     it('ambiguous match with replaceAll: true replaces ALL occurrences and annotates the count', async () => {
       fsMock.readFile.mockResolvedValue('x = foo\ny = foo\nz = foo\n');
 
