@@ -500,4 +500,159 @@ describe('modelDiscovery', () => {
       expect(await resolveInitModel('nope' as any)).toBeUndefined();
     });
   });
+
+  // CFG-21 — provenance (live | fallback | curated) + a per-call timeout, so the interactive
+  // first-run dialog can wait longer AND tell an honest "couldn't reach" degrade apart from a
+  // by-design curated list, while the background probes keep the short 2s timeout.
+  describe('discoverModelsWithProvenance + interactive timeout (CFG-21)', () => {
+    it('exposes a generous interactive timeout constant, longer than the 2s probe', async () => {
+      const { INTERACTIVE_MODEL_FETCH_TIMEOUT_MS } =
+        await import('#src/providers/modelDiscovery.js');
+      expect(INTERACTIVE_MODEL_FETCH_TIMEOUT_MS).toBe(12_000);
+    });
+
+    it('status "live" for a successful, non-empty live query', async () => {
+      systemUtilsMock.env.OPENAI_API_KEY = 'sk-openai-123';
+      vi.stubGlobal('fetch', okJson({ data: [{ id: 'gpt-live-chat' }] }));
+      const { discoverModelsWithProvenance } = await import('#src/providers/modelDiscovery.js');
+
+      const { models, status } = await discoverModelsWithProvenance('openai');
+      expect(status).toBe('live');
+      expect(models.map((m) => m.id)).toContain('gpt-live-chat');
+    });
+
+    it('status "fallback" when a live query was ATTEMPTED and failed (network error)', async () => {
+      systemUtilsMock.env.OPENAI_API_KEY = 'sk-openai-123';
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          throw new Error('timeout');
+        })
+      );
+      const { discoverModelsWithProvenance, PROVIDER_DESCRIPTORS } =
+        await import('#src/providers/modelDiscovery.js');
+      const descriptor = PROVIDER_DESCRIPTORS.find((d) => d.id === 'openai')!;
+
+      const { models, status } = await discoverModelsWithProvenance('openai');
+      // Attempted-and-failed → the "couldn't reach" case; models are the curated stub.
+      expect(status).toBe('fallback');
+      expect(models.map((m) => m.id)).toEqual(descriptor.preferredModels);
+    });
+
+    it('status "fallback" on a non-2xx response', async () => {
+      systemUtilsMock.env.OPENAI_API_KEY = 'sk-openai-123';
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}) }))
+      );
+      const { discoverModelsWithProvenance } = await import('#src/providers/modelDiscovery.js');
+      expect((await discoverModelsWithProvenance('openai')).status).toBe('fallback');
+    });
+
+    it('status "fallback" on an empty live catalog', async () => {
+      systemUtilsMock.env.OPENAI_API_KEY = 'sk-openai-123';
+      vi.stubGlobal('fetch', okJson({ data: [] }));
+      const { discoverModelsWithProvenance } = await import('#src/providers/modelDiscovery.js');
+      expect((await discoverModelsWithProvenance('openai')).status).toBe('fallback');
+    });
+
+    it('status "curated" (NOT fallback) for a cloud provider with no API key — no fetch attempted', async () => {
+      const fetchMock = vi.fn(async () => {
+        throw new Error('should not be called');
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const { discoverModelsWithProvenance } = await import('#src/providers/modelDiscovery.js');
+
+      const { status } = await discoverModelsWithProvenance('openai');
+      expect(status).toBe('curated');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('status "curated" (NOT fallback) for a kind:"none" provider even with a key set — no fetch', async () => {
+      systemUtilsMock.env.GOOGLE_API_KEY = 'g-123';
+      const fetchMock = vi.fn(async () => {
+        throw new Error('should not be called');
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const { discoverModelsWithProvenance } = await import('#src/providers/modelDiscovery.js');
+
+      const { status } = await discoverModelsWithProvenance('google-genai');
+      expect(status).toBe('curated');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('threads the interactive timeout to the live fetch while the default stays 2s', async () => {
+      systemUtilsMock.env.OPENAI_API_KEY = 'sk-openai-123';
+      vi.stubGlobal('fetch', okJson({ data: [{ id: 'gpt-live-chat' }] }));
+      const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+      const { discoverModelsWithProvenance, discoverModels, INTERACTIVE_MODEL_FETCH_TIMEOUT_MS } =
+        await import('#src/providers/modelDiscovery.js');
+
+      await discoverModelsWithProvenance('openai', {
+        timeoutMs: INTERACTIVE_MODEL_FETCH_TIMEOUT_MS,
+      });
+      expect(timeoutSpy).toHaveBeenLastCalledWith(INTERACTIVE_MODEL_FETCH_TIMEOUT_MS);
+
+      await discoverModels('openai'); // no options → the short default probe timeout
+      expect(timeoutSpy).toHaveBeenLastCalledWith(2000);
+
+      timeoutSpy.mockRestore();
+    });
+
+    it('detectProviders keeps the short 2s probe (never the long interactive timeout)', async () => {
+      // Only ollama actually fetches here (no cloud keys set), so its liveness probe is what must
+      // stay short — a long global would hang the provider step when the daemon is down.
+      vi.stubGlobal('fetch', okJson({ data: [{ id: 'qwen3:latest' }] }));
+      const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+      const { detectProviders, INTERACTIVE_MODEL_FETCH_TIMEOUT_MS } =
+        await import('#src/providers/modelDiscovery.js');
+
+      await detectProviders();
+      expect(timeoutSpy).toHaveBeenCalledWith(2000);
+      expect(timeoutSpy).not.toHaveBeenCalledWith(INTERACTIVE_MODEL_FETCH_TIMEOUT_MS);
+
+      timeoutSpy.mockRestore();
+    });
+
+    it('behaviorally: a never-resolving fetch falls back under a short timeout', async () => {
+      systemUtilsMock.env.OPENAI_API_KEY = 'sk-openai-123';
+      // A fetch that NEVER resolves on its own — it settles only by rejecting when the caller's
+      // AbortSignal fires. The outcome is therefore decided purely by whether the timeout elapses.
+      const abortableFetch = vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+          })
+      );
+      vi.stubGlobal('fetch', abortableFetch);
+      const { discoverModelsWithProvenance, PROVIDER_DESCRIPTORS } =
+        await import('#src/providers/modelDiscovery.js');
+      const descriptor = PROVIDER_DESCRIPTORS.find((d) => d.id === 'openai')!;
+
+      const { models, status } = await discoverModelsWithProvenance('openai', { timeoutMs: 5 });
+      expect(status).toBe('fallback');
+      expect(models.map((m) => m.id)).toEqual(descriptor.preferredModels);
+    });
+
+    it('behaviorally: a fast fetch returns live under the long interactive timeout', async () => {
+      systemUtilsMock.env.OPENAI_API_KEY = 'sk-openai-123';
+      // Resolves immediately, well before the 12s interactive timeout → the live catalog wins.
+      vi.stubGlobal('fetch', okJson({ data: [{ id: 'gpt-live-chat' }] }));
+      const { discoverModelsWithProvenance, INTERACTIVE_MODEL_FETCH_TIMEOUT_MS } =
+        await import('#src/providers/modelDiscovery.js');
+
+      const { models, status } = await discoverModelsWithProvenance('openai', {
+        timeoutMs: INTERACTIVE_MODEL_FETCH_TIMEOUT_MS,
+      });
+      expect(status).toBe('live');
+      expect(models.map((m) => m.id)).toContain('gpt-live-chat');
+    });
+
+    it('throws for an unknown provider (mirrors discoverModels)', async () => {
+      const { discoverModelsWithProvenance } = await import('#src/providers/modelDiscovery.js');
+      await expect(discoverModelsWithProvenance('nope' as any)).rejects.toThrow(
+        'Unknown provider: nope'
+      );
+    });
+  });
 });

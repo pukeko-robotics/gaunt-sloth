@@ -398,8 +398,56 @@ export function buildInitConfigContent(providerId: ProviderId, model?: string): 
   return JSON.stringify({ $schema: CONFIG_SCHEMA_POINTER, llm }, null, 2);
 }
 
-/** Live-fetch timeout: short enough to never block first-run for long. */
+/**
+ * Live-fetch timeout for the NON-interactive probes: provider detection's Ollama
+ * liveness check and `resolveInitModel`. Short enough to never block for long when
+ * a daemon is down or a key is dead — every current caller keeps this default.
+ */
 const DISCOVERY_TIMEOUT_MS = 2000;
+
+/**
+ * CFG-21 — the timeout for the *interactive* first-run model fetch. The dialog is
+ * blocking on a human who just picked a provider, so it can afford to wait a lot
+ * longer than the background probes for a large cloud catalog (OpenRouter ~300
+ * models) to arrive over a cold connection, rather than losing the 2s race and
+ * silently dropping to a 3-item curated stub. Threaded per-call so ONLY the dialog
+ * uses it — `detectProviders` / `resolveInitModel` stay on the short
+ * {@link DISCOVERY_TIMEOUT_MS} probe (a long global would hang the *provider* step
+ * whenever the local Ollama daemon is down).
+ */
+export const INTERACTIVE_MODEL_FETCH_TIMEOUT_MS = 12_000;
+
+/**
+ * Provenance of a returned model list (CFG-21). Distinguishes the three outcomes so
+ * an interactive caller can tell an honest "couldn't reach the provider" degrade
+ * apart from a by-design curated list:
+ *
+ * - `live`     — a successful, non-empty live `/v1/models` query.
+ * - `fallback` — a live query WAS attempted (key present / ollama probed) but
+ *   failed: network error/timeout, non-2xx, or an empty/malformed payload. THIS is
+ *   the "couldn't reach" case the first-run dialog surfaces.
+ * - `curated`  — no live query was attempted, by design: a `kind:'none'` provider
+ *   (google-genai, vertexai) or a cloud provider with no API key present. The
+ *   curated catalog is the expected result here, NOT a degrade, so the dialog must
+ *   NOT show a "couldn't reach" notice for it.
+ */
+export type ModelDiscoveryStatus = 'live' | 'fallback' | 'curated';
+
+/** Per-call discovery options (CFG-21). */
+export interface ModelDiscoveryOptions {
+  /**
+   * Live-fetch timeout in ms. Defaults to the short {@link DISCOVERY_TIMEOUT_MS} so
+   * every existing caller is unchanged; the interactive first-run dialog passes the
+   * generous {@link INTERACTIVE_MODEL_FETCH_TIMEOUT_MS}.
+   */
+  timeoutMs?: number;
+}
+
+/** A model list plus its {@link ModelDiscoveryStatus} provenance (CFG-21). */
+export interface ModelDiscoveryResult {
+  models: ModelInfo[];
+  status: ModelDiscoveryStatus;
+}
 
 /**
  * Parse the `id`s out of a models-endpoint payload. Both the OpenAI-compatible
@@ -416,23 +464,33 @@ function parseModelIds(body: unknown): string[] {
 
 /**
  * Internal: run live discovery for one descriptor, distinguishing a successful
- * live query from a curated fallback.
+ * live query from a curated fallback and — via {@link ModelDiscoveryStatus} —
+ * a by-design curated result from an attempted-and-failed one (CFG-21).
  *
- * @returns `{ models, live }` where `live` is true only when the models came
- *   from a successful, non-empty live `/v1/models` query (used as the Ollama
- *   availability signal). `live` is false for curated/fallback results.
+ * @param options.timeoutMs live-fetch timeout, defaulting to the short
+ *   {@link DISCOVERY_TIMEOUT_MS} so background probes are unchanged.
+ * @returns `{ models, live, status }`. `live` is true only when the models came
+ *   from a successful, non-empty live `/v1/models` query (kept as the Ollama
+ *   availability signal). `status` is `live` in that case, `fallback` when a live
+ *   query was attempted but failed (network/timeout/non-2xx/empty), and `curated`
+ *   when no live query was attempted (`kind:'none'` or no API key).
  */
 async function discoverModelsInternal(
-  descriptor: ProviderDescriptor
-): Promise<{ models: ModelInfo[]; live: boolean }> {
-  const curated = (): { models: ModelInfo[]; live: boolean } => ({
+  descriptor: ProviderDescriptor,
+  options: ModelDiscoveryOptions = {}
+): Promise<{ models: ModelInfo[]; live: boolean; status: ModelDiscoveryStatus }> {
+  const timeoutMs = options.timeoutMs ?? DISCOVERY_TIMEOUT_MS;
+  const curated = (
+    status: Exclude<ModelDiscoveryStatus, 'live'>
+  ): { models: ModelInfo[]; live: boolean; status: ModelDiscoveryStatus } => ({
     models: buildModelList(descriptor),
     live: false,
+    status,
   });
 
   const { discovery } = descriptor;
   if (discovery.kind === 'none' || !discovery.modelsUrl) {
-    return curated();
+    return curated('curated');
   }
 
   // Resolve an API key for cloud providers; ollama needs none.
@@ -440,8 +498,9 @@ async function discoverModelsInternal(
   if (descriptor.id !== 'ollama') {
     const envVar = findApiKeyEnvVar(descriptor);
     if (!envVar) {
-      // No key → don't hit the network; show the curated catalog.
-      return curated();
+      // No key → don't hit the network; show the curated catalog. This is the
+      // by-design path, NOT a "couldn't reach" degrade — hence `curated`.
+      return curated('curated');
     }
     key = env[envVar] ?? '';
   }
@@ -455,11 +514,11 @@ async function discoverModelsInternal(
     const res = await fetch(url, {
       method: 'GET',
       headers,
-      signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) {
       displayDebug(`Model discovery for "${descriptor.id}" returned HTTP ${res.status}.`);
-      return curated();
+      return curated('fallback');
     }
     const body = await res.json();
     let ids = parseModelIds(body);
@@ -468,14 +527,14 @@ async function discoverModelsInternal(
     }
     if (ids.length === 0) {
       displayDebug(`Model discovery for "${descriptor.id}" returned no usable models.`);
-      return curated();
+      return curated('fallback');
     }
-    return { models: buildModelList(descriptor, ids), live: true };
+    return { models: buildModelList(descriptor, ids), live: true, status: 'live' };
   } catch (e) {
     displayDebug(
       `Model discovery for "${descriptor.id}" failed: ${e instanceof Error ? e.message : String(e)}`
     );
-    return curated();
+    return curated('fallback');
   }
 }
 
@@ -495,12 +554,15 @@ async function discoverModelsInternal(
  * the curated catalog is returned directly. Ollama (no key, local daemon) is
  * always probed.
  */
-export async function discoverModels(providerId: ProviderId): Promise<ModelInfo[]> {
+export async function discoverModels(
+  providerId: ProviderId,
+  options?: ModelDiscoveryOptions
+): Promise<ModelInfo[]> {
   const descriptor = PROVIDER_DESCRIPTORS.find((d) => d.id === providerId);
   if (!descriptor) {
     throw new Error(`Unknown provider: ${providerId}`);
   }
-  const { models } = await discoverModelsInternal(descriptor);
+  const { models } = await discoverModelsInternal(descriptor, options);
   return models;
 }
 
@@ -510,9 +572,38 @@ export async function discoverModels(providerId: ProviderId): Promise<ModelInfo[
  * Live-discovers from the provider's models endpoint where possible (with a
  * curated fallback); returns the curated set for `kind: 'none'` providers. Does
  * not require the provider to be "available".
+ *
+ * `options.timeoutMs` (CFG-21) overrides the default short live-fetch timeout; the
+ * bare `listModels(providerId)` call is unchanged.
  */
-export async function listModels(providerId: ProviderId): Promise<ModelInfo[]> {
-  return discoverModels(providerId);
+export async function listModels(
+  providerId: ProviderId,
+  options?: ModelDiscoveryOptions
+): Promise<ModelInfo[]> {
+  return discoverModels(providerId, options);
+}
+
+/**
+ * CFG-21 — like {@link discoverModels} but also returns the model list's
+ * {@link ModelDiscoveryStatus} provenance, so an interactive caller (the first-run
+ * dialog) can tell an honest "couldn't reach the provider" degrade (`fallback`)
+ * apart from a by-design curated list (`curated`) and a real live catalog (`live`).
+ * Kept as a separate export so `listModels` / `discoverModels` keep their existing
+ * `(providerId) => ModelInfo[]` signatures other callers rely on.
+ *
+ * Never throws for a discovery failure (that degrades to `fallback`); it only
+ * throws for an unknown provider id, mirroring {@link discoverModels}.
+ */
+export async function discoverModelsWithProvenance(
+  providerId: ProviderId,
+  options?: ModelDiscoveryOptions
+): Promise<ModelDiscoveryResult> {
+  const descriptor = PROVIDER_DESCRIPTORS.find((d) => d.id === providerId);
+  if (!descriptor) {
+    throw new Error(`Unknown provider: ${providerId}`);
+  }
+  const { models, status } = await discoverModelsInternal(descriptor, options);
+  return { models, status };
 }
 
 /**
