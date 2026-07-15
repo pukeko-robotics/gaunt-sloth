@@ -2,16 +2,140 @@
  * @packageDocumentation
  * Shell / dev-tools policy: the {@link GthDevToolsConfig} type plus all the resolvers
  * that interpret it (shell enablement, timeouts, output budget, allow-list, the EXT-10
- * LLM-as-judge gate, and per-command dev-tools selection). Extracted verbatim from the
- * former `config.ts` god-file; behaviour is unchanged.
+ * LLM-as-judge gate, and per-command dev-tools selection).
+ *
+ * CFG-18 — the dev/shell tools are now configured through the unified {@link GthConfig.builtInTools}
+ * registry (`string[] | Record<string, boolean | BuiltInToolConfig>`), NOT the removed per-command
+ * `commands.<mode>.devTools` key. {@link GthDevToolsConfig} is therefore no longer an on-disk shape:
+ * it is the internal, resolved view that {@link getEffectiveDevToolsConfig} builds from the effective
+ * `builtInTools` registry, and that {@link GthDevToolkit} + the shell accessors below consume. This
+ * keeps the toolkit/accessor surface stable while the single config surface is `builtInTools`.
  */
 import type { GthCommand } from '#src/core/types.js';
 import type { GthConfig, LLMConfig } from '#src/config/types.js';
 
 /**
- * Config for {@link GthDevToolkit}.
- * Tools are not applied when config is not provided.
- * Only available in `code`/`exec` mode (and `ask --write`).
+ * CFG-18 — the per-tool config object carried as a value in the {@link GthConfig.builtInTools}
+ * registry (the object form's values, alongside a bare boolean that enables/force-disables a tool).
+ * Heterogeneous by tool, modelled as one permissive object (all fields optional) rather than a
+ * discriminated union so the registry can carry every tool's shape:
+ * - the fixed dev-command tools (`run_tests`/`run_lint`/`run_build`/`run_single_test`) read
+ *   {@link command} — the shell command to run; its presence enables the tool;
+ * - `run_shell_command` reads the EXT-9/10/12 knobs ({@link enabled}/{@link timeout}/
+ *   {@link maxOutputBytes}/{@link allowlist}/{@link persistAllowlist}/{@link judge}/{@link yolo} —
+ *   `yolo` is the folded former `shellYolo`);
+ * - a plain built-in tool (`gth_checklist`, `gth_web_fetch`, …) reads {@link enabled} (or is
+ *   toggled with a bare boolean in the registry).
+ */
+export interface BuiltInToolConfig {
+  /**
+   * Enable / force-disable this tool. For `run_shell_command` the resolution is `enabled ?? default`
+   * (EXT-12: default ON in `code` mode, OFF elsewhere), so an object entry WITHOUT `enabled` still
+   * defaults ON in `code`; `enabled: false` is the hard escape hatch that disables it even in `code`.
+   * For a plain built-in tool, `enabled: false` removes it from the loaded set.
+   */
+  enabled?: boolean;
+  /** The shell command for a fixed dev-command tool (`run_tests`/`run_lint`/`run_build`/`run_single_test`). */
+  command?: string;
+  /** `run_shell_command`: per-command wall-clock timeout (ms). See {@link SHELL_DEFAULT_TIMEOUT_MS}. */
+  timeout?: number;
+  /** `run_shell_command`: captured-output byte budget. See {@link SHELL_DEFAULT_MAX_OUTPUT_BYTES}. */
+  maxOutputBytes?: number;
+  /** `run_shell_command`: EXT-9 Tier-2 scoped allow-list master switch (default `true`). */
+  allowlist?: boolean;
+  /** `run_shell_command`: persist `always`-scoped approvals to the project file (default `true`). */
+  persistAllowlist?: boolean;
+  /** `run_shell_command`: EXT-10 LLM-as-judge safety gate (default OFF). */
+  judge?:
+    | boolean
+    | {
+        enabled?: boolean;
+        autoApproveLow?: boolean;
+        blockHigh?: boolean;
+        model?: LLMConfig;
+      };
+  /**
+   * `run_shell_command`: opt out of the per-command approval prompt — the explicit "yolo" bypass
+   * (folded former top-level `shellYolo`). Dangerous by design; off by default. Example:
+   * `{ "run_shell_command": { "yolo": true } }`.
+   */
+  yolo?: boolean;
+}
+
+/**
+ * CFG-18 — the widened `builtInTools` setting. Either the legacy `string[]` (each named tool
+ * enabled) or a registry keyed by tool name whose values **enable** (`true`), **force-disable**
+ * (`false`), or **configure** ({@link BuiltInToolConfig}) each tool. This single key replaces the
+ * former split of `builtInTools: string[]` (which tools are on) + per-command `devTools` (how each
+ * dev/shell tool is configured).
+ *
+ * Example — keep the checklist, add web fetch, and configure the shell:
+ * ```json
+ * { "builtInTools": {
+ *     "gth_checklist": true,
+ *     "gth_web_fetch": true,
+ *     "run_shell_command": { "timeout": 300000, "judge": { "enabled": true } }
+ * } }
+ * ```
+ * Turn the (code-mode default-on) shell OFF: `{ "builtInTools": { "run_shell_command": false } }`.
+ */
+export type BuiltInToolsSetting = string[] | Record<string, boolean | BuiltInToolConfig>;
+
+/**
+ * The fixed dev-command tools: each maps a `command` string (from its {@link BuiltInToolConfig})
+ * to a run_* tool emitted by {@link GthDevToolkit}.
+ */
+export const DEV_COMMAND_TOOL_NAMES = [
+  'run_tests',
+  'run_lint',
+  'run_build',
+  'run_single_test',
+] as const;
+
+/** The opt-in general-purpose shell tool name. */
+export const SHELL_TOOL_NAME = 'run_shell_command';
+
+/**
+ * All dev/shell tool names carried in the {@link GthConfig.builtInTools} registry. These are emitted
+ * by {@link GthDevToolkit} via the dev-tools bucket, NOT loaded as plain built-in tools — so
+ * `getBuiltInTools` skips them (a `run_shell_command` entry in `builtInTools` is legitimate, not an
+ * "unknown built-in tool").
+ */
+export const DEV_TOOL_NAMES: readonly string[] = [...DEV_COMMAND_TOOL_NAMES, SHELL_TOOL_NAME];
+
+/**
+ * Normalize the widened {@link BuiltInToolsSetting} to a plain lookup keyed by tool name. The array
+ * form maps each name to `true`; the object form passes through unchanged; absent → `{}`.
+ */
+export function normalizeBuiltInTools(
+  builtInTools: BuiltInToolsSetting | undefined
+): Record<string, boolean | BuiltInToolConfig> {
+  if (!builtInTools) return {};
+  if (Array.isArray(builtInTools)) {
+    const out: Record<string, boolean | BuiltInToolConfig> = {};
+    for (const name of builtInTools) out[name] = true;
+    return out;
+  }
+  return builtInTools;
+}
+
+/**
+ * Whether a plain built-in tool's registry entry is enabled: a bare `true`, or an object entry that
+ * is not `{ enabled: false }` (configuring a tool enables it). A bare `false` force-disables it.
+ * Dev/shell tools ({@link DEV_TOOL_NAMES}) are NOT resolved through this — they go through
+ * {@link getEffectiveDevToolsConfig} / {@link isShellToolEnabled}.
+ */
+export function isBuiltInToolEntryEnabled(value: boolean | BuiltInToolConfig | undefined): boolean {
+  if (value === undefined) return false;
+  if (typeof value === 'boolean') return value;
+  return value.enabled !== false;
+}
+
+/**
+ * Config for {@link GthDevToolkit} — the INTERNAL, resolved dev/shell view (CFG-18: no longer an
+ * on-disk shape; built from the {@link GthConfig.builtInTools} registry by
+ * {@link getEffectiveDevToolsConfig}). Tools are not applied when the config is empty. Only active
+ * in `code`/`exec` mode (and `ask --write`).
  */
 export interface GthDevToolsConfig {
   /**
@@ -69,8 +193,9 @@ export interface GthDevToolsConfig {
    * to a block device, fork bomb, shutdown/reboot, …) is refused even under
    * {@link shellYolo}; that floor is not configurable.
    *
-   * Example: `{ "shell": true }`,
-   * `{ "shell": { "enabled": true, "timeout": 300000, "maxOutputBytes": 200000 } }`.
+   * On-disk (CFG-18) these live on the `run_shell_command` entry of `builtInTools`, e.g.
+   * `{ "builtInTools": { "run_shell_command": true } }` or
+   * `{ "builtInTools": { "run_shell_command": { "timeout": 300000, "maxOutputBytes": 200000 } } }`.
    *
    * The object form additionally accepts EXT-9 Tier-2 allow-list knobs:
    * - `allowlist`: master switch for the scoped approval allow-list (session +
@@ -123,7 +248,8 @@ export interface GthDevToolsConfig {
    * is enabled, the shell tool runs without any approval interrupt: the model's
    * commands execute immediately. Dangerous by design; off by default.
    *
-   * Example: `{ "shell": true, "shellYolo": true }`.
+   * On-disk (CFG-18) this is the `yolo` knob of the `run_shell_command` entry, e.g.
+   * `{ "builtInTools": { "run_shell_command": { "yolo": true } } }`.
    */
   shellYolo?: boolean;
 }
@@ -147,14 +273,16 @@ export const SHELL_DEFAULT_MAX_OUTPUT_BYTES = 100_000;
  * `{ enabled }`) to a plain boolean. Centralized so the toolkit (tool emission)
  * and the deep agent (interrupt wiring) agree on what "shell enabled" means.
  *
- * EXT-12 — default-resolution: an EXPLICIT value always wins (a bare boolean, or the
- * object form's `enabled`), so `shell: false` / `{ enabled: false }` remains a hard
- * escape hatch that fully disables the tool. Only when `shell` is ABSENT/undefined does
- * the per-mode default apply: in `code` mode the shell tool is ON by default (still
- * gated — the per-command approval interrupt is wired separately and is NOT bypassed by
- * this), and OFF everywhere else (`exec`, `ask --write`, …) to preserve prior behaviour.
- * The default is `code`-mode only because `code` is the interactive agentic-coding surface
- * where a TTY can answer the approval prompt; the absent-config default never implies yolo.
+ * EXT-12 / CFG-18 — default-resolution is `enabled ?? default`. An EXPLICIT `enabled` always wins
+ * (a bare boolean, or the object form's `enabled`), so `shell: false` / `{ enabled: false }` remains
+ * a hard escape hatch that fully disables the tool. When `enabled` is ABSENT — whether `shell` is
+ * undefined OR an object that omits `enabled` (e.g. `{ timeout: 300000 }`, i.e. a
+ * `{ "run_shell_command": { "timeout": 300000 } }` registry entry) — the per-mode default applies:
+ * ON in `code` mode (still gated — the per-command approval interrupt is wired separately and is NOT
+ * bypassed by this), OFF everywhere else (`exec`, `ask --write`, …). This is the CFG-18 change from
+ * the old `enabled === true` object semantics: configuring the shell no longer silently turns it off.
+ * The default is `code`-mode only because `code` is the interactive agentic-coding surface where a
+ * TTY can answer the approval prompt; the absent-config default never implies yolo.
  *
  * @param command The active command, so the absent-config default can be scoped to `code`.
  *   Omit (or pass a non-`code` command) to keep the historical OFF-by-default behaviour.
@@ -165,7 +293,8 @@ export function isShellToolEnabled(
 ): boolean {
   const shell = devTools?.shell;
   if (typeof shell === 'boolean') return shell;
-  if (shell && typeof shell === 'object') return shell.enabled === true;
+  // Object form: `enabled ?? default` — an object without `enabled` still defaults ON in `code`.
+  if (shell && typeof shell === 'object') return shell.enabled ?? command === 'code';
   // Absent/undefined shell: ON by default for `code` mode (gated), OFF elsewhere.
   return command === 'code';
 }
@@ -269,21 +398,74 @@ export function getShellJudgeSettings(devTools: GthDevToolsConfig | undefined): 
 }
 
 /**
- * Resolve the {@link GthDevToolsConfig} that applies to the active command, mirroring the
- * per-command selection in `builtInToolsConfig.getDefaultTools` (which is what actually emits
- * the dev tools) and `GthDeepAgent.getEffectiveDevToolsConfig`: `exec` → `commands.exec`,
- * `ask --write` → `commands.ask`, `code` → `commands.code`; `undefined` elsewhere (the
- * toolkit is inert there). Shared in core so the runner's allow-list gate stays in lockstep
- * with where the shell tool is actually emitted.
+ * Build the internal, resolved {@link GthDevToolsConfig} from a normalized `builtInTools` registry:
+ * the fixed dev-command tools read their `command` string, and `run_shell_command` maps to the
+ * `shell` (+ `shellYolo`) view the accessors below consume. Returns `undefined` when the registry
+ * carries no dev/shell entry at all, so callers treat it exactly like an unset `devTools` (the
+ * `code`-mode shell default still applies downstream via {@link isShellToolEnabled}).
+ */
+function devToolsConfigFromRegistry(
+  registry: Record<string, boolean | BuiltInToolConfig>
+): GthDevToolsConfig | undefined {
+  const resolved: GthDevToolsConfig = {};
+  let hasAny = false;
+
+  for (const name of DEV_COMMAND_TOOL_NAMES) {
+    const entry = registry[name];
+    const cmd = entry && typeof entry === 'object' ? entry.command : undefined;
+    if (typeof cmd === 'string' && cmd.length > 0) {
+      resolved[name] = cmd;
+      hasAny = true;
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(registry, SHELL_TOOL_NAME)) {
+    const entry = registry[SHELL_TOOL_NAME];
+    if (typeof entry === 'boolean') {
+      resolved.shell = entry;
+    } else if (entry && typeof entry === 'object') {
+      resolved.shell = {
+        enabled: entry.enabled,
+        timeout: entry.timeout,
+        maxOutputBytes: entry.maxOutputBytes,
+        allowlist: entry.allowlist,
+        persistAllowlist: entry.persistAllowlist,
+        judge: entry.judge,
+      };
+      if (entry.yolo !== undefined) resolved.shellYolo = entry.yolo;
+    }
+    hasAny = true;
+  }
+
+  return hasAny ? resolved : undefined;
+}
+
+/**
+ * Resolve the {@link GthDevToolsConfig} that applies to the active command from the unified
+ * {@link GthConfig.builtInTools} registry (CFG-18 — replaces the removed per-command `devTools`).
+ * Mirrors the per-command selection used by `builtInToolsConfig.getDefaultTools`: `exec` →
+ * `commands.exec`, `ask --write` → `commands.ask`, `code` → `commands.code`; `undefined` elsewhere
+ * (the dev/shell tools are inert there). The effective registry for the scope is the per-command
+ * `builtInTools` if set, else the root `builtInTools` — matching `getEffectiveConfig`'s replace
+ * merge. Shared in core so the runner's allow-list/judge gates stay in lockstep with where the
+ * shell tool is actually emitted.
  */
 export function getEffectiveDevToolsConfig(
-  config: Pick<GthConfig, 'commands' | 'askWriteMode'> | undefined,
+  config: Pick<GthConfig, 'commands' | 'builtInTools' | 'askWriteMode'> | undefined,
   command: GthCommand | undefined
 ): GthDevToolsConfig | undefined {
   if (!config) return undefined;
   const askWrite = command === 'ask' && config.askWriteMode === true;
-  if (command === 'exec') return config.commands?.exec?.devTools;
-  if (askWrite) return config.commands?.ask?.devTools;
-  if (command === 'code') return config.commands?.code?.devTools;
-  return undefined;
+  const cmdConfig =
+    command === 'exec'
+      ? config.commands?.exec
+      : askWrite
+        ? config.commands?.ask
+        : command === 'code'
+          ? config.commands?.code
+          : undefined;
+  // Only the do-the-job commands (code/exec/ask --write) carry dev/shell tools.
+  if (command !== 'exec' && command !== 'code' && !askWrite) return undefined;
+  const effective = cmdConfig?.builtInTools ?? config.builtInTools;
+  return devToolsConfigFromRegistry(normalizeBuiltInTools(effective));
 }

@@ -28,6 +28,7 @@ these before you upgrade.
 | --- | --- | --- |
 | `rating` is now an object | `rating: false` (or any boolean) is a validation abort: `expected object, received boolean` | `rating: { enabled: false }` |
 | Command configs must nest under `commands.*` | A top-level command key (e.g. `pr`) is a validation abort: `Top-level command config "pr" is no longer supported in 2.0. Move it under "commands.pr".` | Move it under `commands.<cmd>` |
+| Per-command `devTools` folded into `builtInTools` | `commands.<cmd>.devTools` is a validation abort: `Config property "devTools" in commands.code is no longer supported in 2.0. Configure tools under "builtInTools" instead.` | Move the dev/shell tools into the `builtInTools` registry (see section G) |
 | Deprecated `*Provider*` config keys | `contentProvider` / `requirementsProvider` (and the `*ProviderConfig` variants) are rejected: `Config property "contentProvider" was renamed in 2.0. Use "contentSource" instead.` | Rename to `contentSource` / `requirementSource` (and `*SourceConfig`) |
 | `--content-provider` / `--requirements-provider` CLI flags removed | Scripts passing those flags error out | `--content-source` / `--requirements-source` (`-p` still aliases `--requirements-source`) |
 | `ContentProviderType` / `RequirementsProviderType` type exports removed, and the runtime `contentProvider` / `requirementsProvider` fields removed | TypeScript / programmatic configs that import those types or read those fields fail to compile or resolve | Use `contentSource` / `requirementSource` (and their `string` types) |
@@ -264,6 +265,63 @@ These are new capabilities, not breaking changes, but they are useful while migr
   (`print`, add `--json` for machine-readable output). Both honour `--config` and
   `--identity-profile`.
 
+## G. `devTools` folded into `builtInTools` (HARD)
+
+In 1.x the dev/shell tools were split across two keys: `builtInTools: string[]` (which built-in
+tools are on) and a per-command `commands.<cmd>.devTools` (how the `run_*` commands and the
+`run_shell_command` shell tool were configured). 2.0 unifies both into a single **`builtInTools`
+registry**. A leftover `commands.<cmd>.devTools` is now a hard validation error:
+`Config property "devTools" in commands.code is no longer supported in 2.0. Configure tools under
+"builtInTools" instead.`
+
+`builtInTools` now accepts an **object** (keyed by tool name) in addition to the string array. The
+object's values enable (`true`), force-disable (`false`), or configure (an object) each tool. The
+`run_*` dev-command tools take `{ "command": "…" }`; the shell tool takes the EXT-9/10/12 knobs, and
+the former top-level `shellYolo` is now the shell entry's `yolo` knob.
+
+Before:
+
+```json
+{
+  "builtInTools": ["gth_checklist"],
+  "commands": {
+    "code": {
+      "devTools": {
+        "run_tests": "npm test",
+        "run_lint": "npm run lint-n-fix",
+        "shell": { "enabled": true, "timeout": 300000 },
+        "shellYolo": true
+      }
+    }
+  }
+}
+```
+
+After:
+
+```json
+{
+  "commands": {
+    "code": {
+      "builtInTools": {
+        "gth_checklist": true,
+        "run_tests": { "command": "npm test" },
+        "run_lint": { "command": "npm run lint-n-fix" },
+        "run_shell_command": { "enabled": true, "timeout": 300000, "yolo": true }
+      }
+    }
+  }
+}
+```
+
+Notes:
+- The object form (like the array form) **replaces** the default `["gth_checklist"]` set, so list
+  `"gth_checklist": true` if you want to keep it.
+- `run_shell_command` is **ON by default in `code` mode** (still human-gated); turn it off with
+  `{ "run_shell_command": false }`.
+- The string-array form still works for tools that need no configuration
+  (`"builtInTools": ["gth_checklist", "gth_web_fetch"]`).
+
 ## Migration checklist
 
 1. Move top-level command keys (`pr`, `review`, `ask`, `chat`, `code`, `exec`, `api`) under
@@ -275,4 +333,6 @@ These are new capabilities, not breaking changes, but they are useful while migr
 4. If you split config across global + project, re-check arrays that used to merge (D).
 5. If you relied on the auto-saved `gth_<timestamp>_<COMMAND>.md` output files, set
    `writeOutputToFile: true` (or a string path) — the default is now `false` (E).
-6. Run `gth config validate` (and optionally `gth config print`) to confirm the result.
+6. Move any `commands.<cmd>.devTools` into the `builtInTools` registry (`run_*` → `{ "command": … }`,
+   `shell`/`shellYolo` → the `run_shell_command` entry with `yolo`) (G).
+7. Run `gth config validate` (and optionally `gth config print`) to confirm the result.

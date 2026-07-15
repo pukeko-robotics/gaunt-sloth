@@ -616,7 +616,7 @@ describe('GthDeepAgent', () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
     const config = makeConfig({
-      commands: { code: { devTools: { shell: false } } } as any,
+      commands: { code: { builtInTools: { run_shell_command: false } } } as any,
     });
 
     await agent.init('code', config);
@@ -628,7 +628,7 @@ describe('GthDeepAgent', () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
     const config = makeConfig({
-      commands: { code: { devTools: { shell: true } } } as any,
+      commands: { code: { builtInTools: { run_shell_command: true } } } as any,
     });
 
     await agent.init('code', config);
@@ -642,7 +642,9 @@ describe('GthDeepAgent', () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
     const config = makeConfig({
-      commands: { code: { devTools: { shell: true, shellYolo: true } } } as any,
+      commands: {
+        code: { builtInTools: { run_shell_command: { enabled: true, yolo: true } } },
+      } as any,
     });
 
     await agent.init('code', config);
@@ -663,7 +665,9 @@ describe('GthDeepAgent', () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
     const config = makeConfig({
-      commands: { exec: { devTools: { shell: true, shellYolo: true } } } as any,
+      commands: {
+        exec: { builtInTools: { run_shell_command: { enabled: true, yolo: true } } },
+      } as any,
     });
 
     await agent.init('exec', config);
@@ -680,7 +684,7 @@ describe('GthDeepAgent', () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
     const config = makeConfig({
-      commands: { exec: { devTools: { shell: true } } } as any,
+      commands: { exec: { builtInTools: { run_shell_command: true } } } as any,
     });
 
     await agent.init('exec', config);

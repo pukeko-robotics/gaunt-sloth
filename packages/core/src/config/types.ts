@@ -7,7 +7,7 @@
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import type { BaseToolkit, StructuredToolInterface } from '@langchain/core/tools';
 import type { StatusLevel } from '#src/core/types.js';
-import type { GthDevToolsConfig } from '#src/config/shell-policy.js';
+import type { BuiltInToolsSetting } from '#src/config/shell-policy.js';
 
 /**
  * Shared per-command tooling configuration (the knobs every actionable command carries).
@@ -19,7 +19,7 @@ import type { GthDevToolsConfig } from '#src/config/shell-policy.js';
  */
 export interface CommandToolingConfig {
   filesystem?: string[] | 'all' | 'read' | 'none';
-  builtInTools?: string[];
+  builtInTools?: BuiltInToolsSetting;
   customTools?: CustomToolsConfig | false;
   /** See {@link GthConfig.allowedTools}. */
   allowedTools?: string[];
@@ -111,7 +111,16 @@ export interface GthConfig {
    */
   noDefaultPrompts?: boolean;
   filesystem: string[] | 'all' | 'read' | 'none';
-  builtInTools?: string[];
+  /**
+   * Selects and configures the built-in tools the agent loads. Either a `string[]` of tool names
+   * (each enabled) or a registry keyed by tool name whose values enable (`true`), force-disable
+   * (`false`), or configure ({@link BuiltInToolConfig}) each tool. CFG-18 folded the former
+   * per-command `devTools` (the `run_*` commands + `run_shell_command`'s EXT-9/10/12 config) into
+   * this single registry: e.g. `{ "run_tests": { "command": "npm test" }, "run_shell_command": {
+   * "timeout": 300000 } }`. Settable at the root or per command (`commands.<command>.builtInTools`);
+   * a per-command value replaces the top-level one.
+   */
+  builtInTools?: BuiltInToolsSetting;
   tools?: StructuredToolInterface[] | BaseToolkit[] | ServerTool[];
   /**
    * Restrict the agent to this allow-list of tool names, applied after every tool source
@@ -243,27 +252,21 @@ export interface GthConfig {
       requirementSource?: string;
       rating?: RatingConfig;
     };
-    ask?: CommandToolingConfig & {
-      /**
-       * Dev tools (run commands etc.) for `ask --write` runs. Normally inherited from
-       * `commands.exec` / `commands.code` by the `--write` flag rather than set directly.
-       */
-      devTools?: GthDevToolsConfig;
-    };
+    ask?: CommandToolingConfig;
     chat?: CommandToolingConfig;
-    code?: CommandToolingConfig & {
-      devTools?: GthDevToolsConfig;
-    };
+    /**
+     * `gth code` — interactive coding session. Carries the do-the-job tool/filesystem knobs; the
+     * dev/shell tools (CFG-18) are configured via {@link CommandToolingConfig.builtInTools}.
+     */
+    code?: CommandToolingConfig;
     /**
      * `gth exec` — prompt-as-script runtime. Like `code`, an exec run may need to actually
      * do the job (read/write files, run commands), so it carries the same tool/filesystem knobs.
      */
-    exec?: CommandToolingConfig & {
-      devTools?: GthDevToolsConfig;
-    };
+    exec?: CommandToolingConfig;
     api?: {
       filesystem?: string[] | 'all' | 'read' | 'none';
-      builtInTools?: string[];
+      builtInTools?: BuiltInToolsSetting;
       port?: number;
       cors?: {
         allowOrigin?: string;

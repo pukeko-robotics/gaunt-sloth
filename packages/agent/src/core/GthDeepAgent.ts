@@ -1,5 +1,5 @@
-import type { GthConfig, GthDevToolsConfig } from '@gaunt-sloth/core/config.js';
-import { isShellToolEnabled } from '@gaunt-sloth/core/config.js';
+import type { GthConfig } from '@gaunt-sloth/core/config.js';
+import { isShellToolEnabled, getEffectiveDevToolsConfig } from '@gaunt-sloth/core/config.js';
 import { GthAbstractAgent } from '@gaunt-sloth/core/core/GthAbstractAgent.js';
 import { type GthCommand, StatusLevel } from '@gaunt-sloth/core/core/types.js';
 import { debugLog, debugLogObject } from '@gaunt-sloth/core/utils/debugUtils.js';
@@ -558,11 +558,11 @@ export class GthDeepAgent extends GthAbstractAgent {
     const systemPrompt =
       typeof systemMessages[0]?.content === 'string' ? systemMessages[0].content : undefined;
 
-    // Gate the opt-in run_shell_command tool behind a per-command approval interrupt. The tool
-    // is only emitted (by GthDevToolkit, via builtInToolsConfig) when its devTools.shell flag is
-    // set; mirror the same per-command devTools resolution here so the interrupt is wired only
-    // when the tool actually exists.
-    const devTools = this.getEffectiveDevToolsConfig();
+    // Gate the opt-in run_shell_command tool behind a per-command approval interrupt. The tool is
+    // only emitted (by GthDevToolkit, via builtInToolsConfig) when its `run_shell_command`
+    // builtInTools entry enables it; use the shared core resolver so the interrupt wiring stays in
+    // lockstep with where the tool is actually emitted (CFG-18: resolved from `builtInTools`).
+    const devTools = getEffectiveDevToolsConfig(this.config ?? undefined, this.command);
     // EXT-12 — pass the active command so the absent-config default (shell ON in `code`)
     // is applied consistently with where the tool is actually emitted (GthDevToolkit).
     const shellEnabled = isShellToolEnabled(devTools, this.command);
@@ -608,25 +608,6 @@ export class GthDeepAgent extends GthAbstractAgent {
       systemPrompt,
       interruptOn,
     };
-  }
-
-  /**
-   * Resolve the {@link GthDevToolsConfig} that applies to the active command, mirroring the
-   * per-command selection in `builtInToolsConfig.getDefaultTools` (which is what actually emits
-   * the dev tools): `exec` → `commands.exec.devTools`, `ask --write` → `commands.ask.devTools`,
-   * otherwise (`code`) → `commands.code.devTools`. Returns `undefined` for any other command,
-   * matching the toolkit being inert there. Kept private and side-effect-free so the interrupt
-   * wiring above and the tool emission stay in lockstep.
-   */
-  private getEffectiveDevToolsConfig(): GthDevToolsConfig | undefined {
-    const config = this.config;
-    if (!config) return undefined;
-    const command = this.command;
-    const askWrite = command === 'ask' && config.askWriteMode === true;
-    if (command === 'exec') return config.commands?.exec?.devTools;
-    if (askWrite) return config.commands?.ask?.devTools;
-    if (command === 'code') return config.commands?.code?.devTools;
-    return undefined;
   }
 }
 

@@ -113,6 +113,41 @@ describe('config schema (GS2-1 B1)', () => {
     });
   });
 
+  // CFG-18: the golden snapshot pins the schema SHAPE; these assert the schema→resolver VALUE seam —
+  // a full builtInTools registry parses through the real schema and preserves every field (not only
+  // the hand-built resolver object).
+  describe('builtInTools registry round-trip (CFG-18)', () => {
+    it('parses a full run_shell_command config and preserves every field', () => {
+      const builtInTools = {
+        gth_checklist: true,
+        run_tests: { command: 'npm test' },
+        run_shell_command: {
+          enabled: true,
+          timeout: 300000,
+          maxOutputBytes: 200000,
+          allowlist: false,
+          persistAllowlist: false,
+          judge: { enabled: true, autoApproveLow: false, blockHigh: true },
+          yolo: true,
+        },
+      };
+      const result = rawGthConfigSchema.safeParse({ llm: { type: 'openai' }, builtInTools });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect((result.data as Record<string, unknown>).builtInTools).toEqual(builtInTools);
+      }
+    });
+
+    it('parses the boolean-in-record force-disable arm ({ run_shell_command: false })', () => {
+      const builtInTools = { run_shell_command: false, gth_checklist: true };
+      const result = rawGthConfigSchema.safeParse({ llm: { type: 'openai' }, builtInTools });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect((result.data as Record<string, unknown>).builtInTools).toEqual(builtInTools);
+      }
+    });
+  });
+
   describe('deprecated-shape rejection (GS2-28)', () => {
     it('flags a top-level command key, naming commands.<cmd> + migration path', () => {
       const issues = findDeprecatedConfigIssues({ llm: { type: 'openai' }, pr: { rating: {} } });
@@ -152,6 +187,30 @@ describe('config schema (GS2-1 B1)', () => {
       const byPath = Object.fromEntries(issues.map((i) => [i.path, i.message]));
       expect(byPath['commands.pr.requirementsProvider']).toContain('requirementSource');
       expect(byPath['commands.pr.contentProvider']).toContain('contentSource');
+    });
+
+    it('flags a removed per-command devTools key, naming builtInTools + the migration path (CFG-18)', () => {
+      const issues = findDeprecatedConfigIssues({
+        llm: { type: 'openai' },
+        commands: { code: { devTools: { run_tests: 'npm test' } } },
+      });
+      expect(issues).toHaveLength(1);
+      expect(issues[0].path).toBe('commands.code.devTools');
+      expect(issues[0].message).toContain('no longer supported in 2.0');
+      expect(issues[0].message).toContain('builtInTools');
+      expect(issues[0].message).toContain('gth config migrate');
+    });
+
+    it('validateRawGthConfig HARD-rejects commands.<cmd>.devTools (NOT a silent strip)', () => {
+      const result = validateRawGthConfig({
+        llm: { type: 'openai' },
+        commands: { exec: { devTools: { run_shell_command: { yolo: true } } } },
+      });
+      expect(result.ok).toBe(false);
+      expect(result.errorMessage).toContain('commands.exec.devTools');
+      expect(result.errorMessage).toContain('builtInTools');
+      // The removed shape is rejected, not doubled as an unknown-key warning.
+      expect(result.warnings).toEqual([]);
     });
 
     it('does NOT flag a genuinely-unknown key or the canonical shapes', () => {

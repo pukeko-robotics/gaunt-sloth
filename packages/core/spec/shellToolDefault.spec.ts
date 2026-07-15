@@ -39,4 +39,19 @@ describe('isShellToolEnabled (EXT-12 default resolution)', () => {
       expect(isShellToolEnabled(dt(true))).toBe(true);
     });
   });
+
+  // CFG-18: `enabled ?? default` — an object entry WITHOUT `enabled` (e.g. only configuring the
+  // timeout/allowlist) no longer silently disables the shell; it falls back to the per-mode default
+  // (ON in `code`, OFF elsewhere). This is the behavioural change from the old `enabled === true`.
+  describe('object form WITHOUT `enabled` falls back to the per-mode default', () => {
+    it('resolves ENABLED in code mode when only knobs are set', () => {
+      expect(isShellToolEnabled(dt({ timeout: 5000 }), 'code')).toBe(true);
+      expect(isShellToolEnabled(dt({ allowlist: false, judge: true }), 'code')).toBe(true);
+    });
+
+    it('resolves DISABLED for non-code commands (and no command) when only knobs are set', () => {
+      expect(isShellToolEnabled(dt({ timeout: 5000 }), 'exec')).toBe(false);
+      expect(isShellToolEnabled(dt({ timeout: 5000 }))).toBe(false);
+    });
+  });
 });

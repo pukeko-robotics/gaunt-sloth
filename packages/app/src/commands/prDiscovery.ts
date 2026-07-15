@@ -1,4 +1,9 @@
-import type { CustomToolsConfig, GthConfig, ServerTool } from '@gaunt-sloth/core/config.js';
+import type {
+  BuiltInToolsSetting,
+  CustomToolsConfig,
+  GthConfig,
+  ServerTool,
+} from '@gaunt-sloth/core/config.js';
 import type { AgentResolvers } from '@gaunt-sloth/core/core/types.js';
 import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
 import {
@@ -44,7 +49,7 @@ export interface PrDiscoveryConfig {
    * When omitted, the normal configured tools remain available.
    */
   filesystem?: string[] | 'all' | 'read' | 'none';
-  builtInTools?: string[];
+  builtInTools?: BuiltInToolsSetting;
   customTools?: CustomToolsConfig | false;
   tools?: StructuredToolInterface[] | BaseToolkit[] | ServerTool[];
   /**

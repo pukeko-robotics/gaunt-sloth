@@ -295,6 +295,21 @@ describe('Custom Tools Configuration', () => {
   });
 
   describe('integration with dev tools', () => {
+    // CFG-18 (assembly-level, real GthDevToolkit): force-disabling run_shell_command really removes
+    // the default-on code-mode shell from the assembled tool list, not just the resolver.
+    it('force-disabling run_shell_command removes the default-on code-mode shell', async () => {
+      // Baseline: code mode emits run_shell_command by default (EXT-12 default-on, still gated).
+      const withShell = await getDefaultTools(createMockConfig({ filesystem: 'all' }), 'code');
+      expect(withShell.map((t) => t.name)).toContain('run_shell_command');
+
+      // { run_shell_command: false } really turns it off, even in code mode.
+      const noShell = await getDefaultTools(
+        createMockConfig({ filesystem: 'all', builtInTools: { run_shell_command: false } }),
+        'code'
+      );
+      expect(noShell.map((t) => t.name)).not.toContain('run_shell_command');
+    });
+
     it('should load both custom tools and dev tools in code command', async () => {
       const config = createMockConfig({
         customTools: {
@@ -305,9 +320,9 @@ describe('Custom Tools Configuration', () => {
         },
         commands: {
           code: {
-            devTools: {
-              run_tests: 'npm test',
-              run_lint: 'npm run lint',
+            builtInTools: {
+              run_tests: { command: 'npm test' },
+              run_lint: { command: 'npm run lint' },
             },
           },
         },
@@ -330,8 +345,8 @@ describe('Custom Tools Configuration', () => {
         },
         commands: {
           code: {
-            devTools: {
-              run_tests: 'npm test',
+            builtInTools: {
+              run_tests: { command: 'npm test' },
             },
             customTools: {
               code_custom: {

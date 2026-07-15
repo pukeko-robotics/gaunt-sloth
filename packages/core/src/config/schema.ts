@@ -88,32 +88,39 @@ const shellJudgeSchema = z.union([
   }),
 ]);
 
-const shellConfigSchema = z.union([
-  z.boolean(),
-  z.object({
-    enabled: z.boolean().optional(),
-    timeout: z.number().optional(),
-    maxOutputBytes: z.number().optional(),
-    allowlist: z.boolean().optional(),
-    persistAllowlist: z.boolean().optional(),
-    judge: shellJudgeSchema.optional(),
-  }),
-]);
-
-const devToolsConfigSchema = z.object({
-  run_tests: z.string().optional(),
-  run_lint: z.string().optional(),
-  run_build: z.string().optional(),
-  run_single_test: z.string().optional(),
-  shell: shellConfigSchema.optional(),
-  shellYolo: z.boolean().optional(),
+/**
+ * CFG-18 — the per-tool config object carried as a value in the widened `builtInTools` registry.
+ * One permissive shape covering every tool: `command` for the fixed dev-command tools
+ * (run_tests/run_lint/run_build/run_single_test), the EXT-9/10/12 knobs for `run_shell_command`
+ * (`yolo` is the folded former `shellYolo`), and `enabled` for a plain built-in tool.
+ */
+const builtInToolConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  command: z.string().optional(),
+  timeout: z.number().optional(),
+  maxOutputBytes: z.number().optional(),
+  allowlist: z.boolean().optional(),
+  persistAllowlist: z.boolean().optional(),
+  judge: shellJudgeSchema.optional(),
+  yolo: z.boolean().optional(),
 });
+
+/**
+ * CFG-18 — the widened `builtInTools` setting: either the legacy `string[]` (each name enabled) or
+ * a registry keyed by tool name whose values enable (`true`), force-disable (`false`), or configure
+ * ({@link builtInToolConfigSchema}) each tool. Replaces `builtInTools: string[]` + per-command
+ * `devTools`.
+ */
+const builtInToolsSchema = z.union([
+  z.array(z.string()),
+  z.record(z.string(), z.union([z.boolean(), builtInToolConfigSchema])),
+]);
 
 const prCommandSchema = z.object({
   contentSource: z.string().optional(),
   requirementSource: z.string().optional(),
   filesystem: filesystemSchema.optional(),
-  builtInTools: z.array(z.string()).optional(),
+  builtInTools: builtInToolsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
   logWorkForReviewInSeconds: z.number().optional(),
@@ -125,7 +132,7 @@ const reviewCommandSchema = z.object({
   contentSource: z.string().optional(),
   requirementSource: z.string().optional(),
   filesystem: filesystemSchema.optional(),
-  builtInTools: z.array(z.string()).optional(),
+  builtInTools: builtInToolsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
   rating: ratingConfigSchema.optional(),
@@ -134,16 +141,15 @@ const reviewCommandSchema = z.object({
 
 const askCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
-  builtInTools: z.array(z.string()).optional(),
+  builtInTools: builtInToolsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
-  devTools: devToolsConfigSchema.optional(),
   binaryFormats: binaryFormatsSchema.optional(),
 });
 
 const chatCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
-  builtInTools: z.array(z.string()).optional(),
+  builtInTools: builtInToolsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
   binaryFormats: binaryFormatsSchema.optional(),
@@ -151,25 +157,23 @@ const chatCommandSchema = z.object({
 
 const codeCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
-  builtInTools: z.array(z.string()).optional(),
+  builtInTools: builtInToolsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
-  devTools: devToolsConfigSchema.optional(),
   binaryFormats: binaryFormatsSchema.optional(),
 });
 
 const execCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
-  builtInTools: z.array(z.string()).optional(),
+  builtInTools: builtInToolsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
-  devTools: devToolsConfigSchema.optional(),
   binaryFormats: binaryFormatsSchema.optional(),
 });
 
 const apiCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
-  builtInTools: z.array(z.string()).optional(),
+  builtInTools: builtInToolsSchema.optional(),
   port: z.number().optional(),
   cors: z
     .object({
@@ -248,7 +252,7 @@ export const rawGthConfigSchema = z.looseObject({
   projectReviewInstructions: z.string().optional(),
   noDefaultPrompts: z.boolean().optional(),
   filesystem: filesystemSchema.optional(),
-  builtInTools: z.array(z.string()).optional(),
+  builtInTools: builtInToolsSchema.optional(),
   // Live tool instances / toolkits in JS configs — kept permissive.
   tools: z.array(z.unknown()).optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -354,6 +358,17 @@ const DEPRECATED_COMMAND_PAIRS: ReadonlyArray<readonly [string, string]> = [
 ];
 
 /**
+ * CFG-18 — removed per-command keys with no 1:1 rename: the config they carried was FOLDED into
+ * another key. `[removed, replacement]`. `devTools` (the split dev/shell config) is now configured
+ * under the unified `builtInTools` registry. Rejected here specifically because `devTools` lived
+ * under a per-command `z.object`, which SILENTLY STRIPS unknown keys — so without this pre-parse
+ * reject an old `commands.<cmd>.devTools` block would vanish with no error (worse than today).
+ */
+const REMOVED_COMMAND_KEYS: ReadonlyArray<readonly [string, string]> = [
+  ['devTools', 'builtInTools'],
+];
+
+/**
  * Pointer to the migration path, appended to every deprecated-shape error so the user
  * always learns HOW to fix it, not just that it broke. Matches the guidance the 2.0
  * migration notes carry.
@@ -378,7 +393,9 @@ export interface DeprecatedConfigIssue {
  * Detects:
  * - (A) a COMMAND name ({@link COMMAND_KEYS}) at the config ROOT — must move under `commands.<cmd>`;
  * - (C) a deprecated `*Provider*` name ({@link DEPRECATED_ROOT_PAIRS} at root,
- *   {@link DEPRECATED_COMMAND_PAIRS} per command) — must use its `*Source*` replacement.
+ *   {@link DEPRECATED_COMMAND_PAIRS} per command) — must use its `*Source*` replacement;
+ * - (D, CFG-18) a removed per-command key folded into another ({@link REMOVED_COMMAND_KEYS}, e.g.
+ *   `commands.<cmd>.devTools` → configure under `builtInTools`).
  *
  * Runs on the raw input specifically so nested `commands.*.contentProvider` is still visible
  * (zod's per-command `z.object` would strip it before any schema-embedded check could fire).
@@ -412,7 +429,7 @@ export function findDeprecatedConfigIssues(raw: Record<string, unknown>): Deprec
     }
   }
 
-  // (C) Deprecated *Provider* names inside each commands.<name> block.
+  // (C) Deprecated *Provider* names + (CFG-18) removed keys inside each commands.<name> block.
   const commands = raw.commands;
   if (commands && typeof commands === 'object' && !Array.isArray(commands)) {
     for (const [name, cmd] of Object.entries(commands as Record<string, unknown>)) {
@@ -424,6 +441,17 @@ export function findDeprecatedConfigIssues(raw: Record<string, unknown>): Deprec
               message:
                 `Config property "${deprecated}" in commands.${name} was renamed in 2.0. ` +
                 `Use "${canonical}" instead. ${MIGRATION_HINT}`,
+            });
+          }
+        }
+        // (CFG-18) removed per-command keys folded into another key (e.g. devTools → builtInTools).
+        for (const [removed, replacement] of REMOVED_COMMAND_KEYS) {
+          if (Object.prototype.hasOwnProperty.call(cmd, removed)) {
+            issues.push({
+              path: `commands.${name}.${removed}`,
+              message:
+                `Config property "${removed}" in commands.${name} is no longer supported in 2.0. ` +
+                `Configure tools under "${replacement}" instead. ${MIGRATION_HINT}`,
             });
           }
         }

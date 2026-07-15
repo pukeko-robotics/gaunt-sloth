@@ -161,7 +161,7 @@ always runs the deep backend regardless of this setting.
 
 ## Built-in Tools (`builtInTools`)
 
-`builtInTools` is a string array selecting which built-in tools the agent loads. It can be set at the
+`builtInTools` selects **and configures** which built-in tools the agent loads. It can be set at the
 top level or per command (`commands.<command>.builtInTools`); a per-command value replaces the
 top-level one. Available tools:
 
@@ -171,16 +171,46 @@ top-level one. Available tools:
 | `gth_web_fetch` | Fetch content from an HTTP/HTTPS URL. |
 | `gth_status_update` | Print a short status line to the console. |
 | `show_a2ui_surface` | (AG-UI) render an A2UI surface in the web client. |
+| `run_tests` / `run_lint` / `run_build` / `run_single_test` | Dev-command tools — run the configured shell command. Only active in `code` / `exec` (and `ask --write`). See [Development Tools](#development-tools-configuration). |
+| `run_shell_command` | Opt-in general-purpose shell tool (arbitrary commands, human-approved). **On by default in `code` mode.** See [Shell tool](#development-tools-configuration). |
+
+`builtInTools` accepts **two shapes**:
+
+- a **string array** — each named tool is enabled: `["gth_checklist", "gth_web_fetch"]`;
+- an **object registry** keyed by tool name, whose values **enable** (`true`), **force-disable**
+  (`false`), or **configure** (an object) each tool.
 
 The default is `["gth_checklist"]`. Setting your own `builtInTools` **replaces** this set entirely, so
-include `gth_checklist` in your list if you want to keep it. Example — add web fetch while keeping the
-checklist:
+include `gth_checklist` in your list (or `"gth_checklist": true`) if you want to keep it. Example — add
+web fetch while keeping the checklist:
 
 ```json
 {
   "builtInTools": ["gth_checklist", "gth_web_fetch"]
 }
 ```
+
+The object form also carries the dev/shell tool configuration (in 1.x this lived in a separate
+per-command `devTools` key, now removed — see [Migration](MIGRATION.md)). Example — keep the
+checklist, add web fetch, configure the test/build commands, and tune the shell:
+
+```json
+{
+  "builtInTools": {
+    "gth_checklist": true,
+    "gth_web_fetch": true,
+    "run_tests": { "command": "npm test" },
+    "run_build": { "command": "npm run build" },
+    "run_shell_command": { "timeout": 300000, "judge": { "enabled": true } }
+  }
+}
+```
+
+Turn the (code-mode default-on) shell OFF with `{ "run_shell_command": false }`.
+
+> **Note:** because the object form (like the array form) **replaces** the default set, disabling one
+> tool (e.g. `{ "run_shell_command": false }`) also drops `gth_checklist` unless you list it too. To
+> keep it, add `"gth_checklist": true` to the registry.
 
 ## AI Ignore (.aiignore)
 
@@ -1202,9 +1232,12 @@ export async function configure() {
 
 ## Development Tools Configuration
 
-The `code` command can be configured with development tools via `commands.code.devTools`. These tools allow the AI to run build, tests, lint, and single tests using the specified commands.
+The `code` / `exec` commands (and `ask --write`) can run development tools, configured under the
+unified [`builtInTools`](#built-in-tools-builtintools) registry (in 1.x this was a separate
+per-command `devTools` key, now removed — see [Migration](MIGRATION.md)).
 
-The tools are defined in `src/tools/GthDevToolkit.ts` and include:
+The dev-command tools are defined in `src/tools/GthDevToolkit.ts`; each is configured with a
+`{ "command": "…" }` object:
 
 - **run_tests**: Executes the full test suite.
 - **run_single_test**: Runs a single test file. The test path must be relative.
@@ -1212,6 +1245,10 @@ The tools are defined in `src/tools/GthDevToolkit.ts` and include:
 - **run_build**: Builds the project.
 
 These tools execute the configured shell commands and capture their output.
+
+**Note:** a per-command `builtInTools` object (like the root one) **replaces** the root set entirely,
+including the default `gth_checklist` planning tool. List `"gth_checklist": true` explicitly in the
+command's registry to keep it (as the examples below do).
 
 Example configuration including dev tools (from .gsloth.config.json):
 
@@ -1224,11 +1261,12 @@ Example configuration including dev tools (from .gsloth.config.json):
   "commands": {
     "code": {
       "filesystem": "all",
-      "devTools": {
-        "run_build": "npm build",
-        "run_tests": "npm test",
-        "run_lint": "npm run lint-n-fix",
-        "run_single_test": "npm test"
+      "builtInTools": {
+        "gth_checklist": true,
+        "run_build": { "command": "npm build" },
+        "run_tests": { "command": "npm test" },
+        "run_lint": { "command": "npm run lint-n-fix" },
+        "run_single_test": { "command": "npm test" }
       }
     }
   }
@@ -1237,6 +1275,40 @@ Example configuration including dev tools (from .gsloth.config.json):
 
 Note: For `run_single_test`, the command can include a placeholder like `${testPath}` for the test file path.
 Security validations are in place to prevent path traversal or injection.
+
+### General-purpose shell tool (`run_shell_command`)
+
+`run_shell_command` lets the agent run arbitrary shell commands it composes itself. It is **ON by
+default in `code` mode** (each invocation still gated behind a per-command human-approval prompt),
+and OFF in `exec` / `ask --write` unless enabled. Configure it via its `builtInTools` entry:
+
+- `true` / `false` — enable / force-disable (an object without `enabled` also defaults ON in `code`).
+- `timeout` — per-command wall-clock limit in **milliseconds** (default `120000`).
+- `maxOutputBytes` — byte budget for the captured output returned to the model (default `100000`).
+- `allowlist` — master switch for the scoped approval allow-list (default `true`).
+- `persistAllowlist` — persist `always`-scoped approvals to `.gsloth/.gsloth-settings/shell-allowlist.json` (default `true`).
+- `judge` — the LLM-as-judge safety gate (default OFF): `true`, or `{ "enabled": true, "autoApproveLow": true, "blockHigh": false, "model": { … } }`.
+- `yolo` — opt out of the per-command approval prompt (dangerous; off by default).
+
+A hardcoded blocklist of catastrophic commands is always refused, even under `yolo`.
+
+```json
+{
+  "commands": {
+    "code": {
+      "filesystem": "all",
+      "builtInTools": {
+        "gth_checklist": true,
+        "run_shell_command": {
+          "timeout": 300000,
+          "maxOutputBytes": 200000,
+          "judge": { "enabled": true, "blockHigh": true }
+        }
+      }
+    }
+  }
+}
+```
 
 ## Custom Tools Configuration
 
@@ -1377,13 +1449,13 @@ You can override or disable custom tools for specific commands:
 
 ### Custom Tools vs Development Tools
 
-| Feature          | Custom Tools                | Dev Tools                        |
-| ---------------- | --------------------------- | -------------------------------- |
-| **Location**     | Root-level `customTools`    | `commands.code.devTools`         |
-| **Availability** | All commands                | Code command only                |
-| **Purpose**      | User-defined shell commands | Predefined build/test/lint tools |
-| **Per-Command**  | Yes                         | No (code only)                   |
-| **Parameters**   | Yes                         | Limited (run_single_test only)   |
+| Feature          | Custom Tools                | Dev Tools                                 |
+| ---------------- | --------------------------- | ----------------------------------------- |
+| **Location**     | Root-level `customTools`    | `builtInTools` registry (root or command) |
+| **Availability** | All commands                | `code` / `exec` (and `ask --write`)       |
+| **Purpose**      | User-defined shell commands | Predefined build/test/lint + shell tools  |
+| **Per-Command**  | Yes                         | Yes (via `commands.<cmd>.builtInTools`)   |
+| **Parameters**   | Yes                         | Limited (run_single_test only)            |
 
 Both can be used together:
 
@@ -1398,9 +1470,10 @@ Both can be used together:
   "commands": {
     "code": {
       "filesystem": "all",
-      "devTools": {
-        "run_tests": "npm test",
-        "run_lint": "npm run lint-n-fix"
+      "builtInTools": {
+        "gth_checklist": true,
+        "run_tests": { "command": "npm test" },
+        "run_lint": { "command": "npm run lint-n-fix" }
       }
     }
   }
@@ -1471,9 +1544,10 @@ Example of a secure custom tool that accepts a file path:
     },
     "code": {
       "filesystem": "all",
-      "devTools": {
-        "run_tests": "npm test",
-        "run_lint": "npm run lint-n-fix"
+      "builtInTools": {
+        "gth_checklist": true,
+        "run_tests": { "command": "npm test" },
+        "run_lint": { "command": "npm run lint-n-fix" }
       }
     }
   }

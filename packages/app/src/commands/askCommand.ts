@@ -24,8 +24,9 @@ interface AskCommandOptions {
  *
  * Filesystem mode is overridden on the per-command `commands.ask` slice (where
  * `getEffectiveConfig` reads it from), and `askWriteMode` is set so the agent's tool resolution
- * enables dev tools for `ask`. Dev tools reuse exec's (falling back to code's) `devTools` config
- * so users don't have to configure a separate `commands.ask.devTools`. Returns the config
+ * enables dev tools for `ask`. CFG-18: the dev/shell tools live in the unified `builtInTools`
+ * registry, so `ask --write` reuses exec's (falling back to code's) `builtInTools` config — copied
+ * onto `commands.ask.builtInTools` — rather than a separate `devTools` key. Returns the config
  * untouched when `--write` is not set.
  *
  * Exported for unit testing.
@@ -37,7 +38,8 @@ export function applyAskWriteMode(config: GthConfig, options: AskCommandOptions)
   displayWarning(
     'ask --write: filesystem and dev tools enabled — this run can read/write files and run commands.'
   );
-  const askDevTools = config.commands?.exec?.devTools ?? config.commands?.code?.devTools;
+  const askBuiltInTools =
+    config.commands?.exec?.builtInTools ?? config.commands?.code?.builtInTools;
   return {
     ...config,
     askWriteMode: true,
@@ -46,7 +48,7 @@ export function applyAskWriteMode(config: GthConfig, options: AskCommandOptions)
       ask: {
         ...config.commands?.ask,
         filesystem: 'all',
-        ...(askDevTools ? { devTools: askDevTools } : {}),
+        ...(askBuiltInTools ? { builtInTools: askBuiltInTools } : {}),
       },
     },
   };
