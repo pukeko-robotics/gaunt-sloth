@@ -93,8 +93,8 @@ export interface GthDeepAgentParams {
    * `__interrupt__` (a `HITLRequest`) so a consumer can approve/reject before the tool runs;
    * resume with `new Command({ resume: { decisions: [...] } })` on the same `thread_id`.
    *
-   * gsloth sets this for the opt-in `run_shell_command` tool whenever `devTools.shell` is
-   * enabled — including under `devTools.shellYolo` in interactive `code` mode, where the tool
+   * gsloth sets this for the opt-in `run_shell_command` tool whenever the shell tool is
+   * enabled — including under `run_shell_command.yolo` in interactive `code` mode, where the tool
    * stays gated so the runtime `/auto-approve` flag governs it (the runner seeds that flag ON
    * from shellYolo and auto-approves silently). It is left `undefined` only for a non-interactive
    * yolo run (exec / ask --write), whose single-shot path does not drain interrupts, so the tool
