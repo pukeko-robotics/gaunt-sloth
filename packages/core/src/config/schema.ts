@@ -295,6 +295,18 @@ export const KNOWN_TOP_LEVEL_KEYS: ReadonlySet<string> = new Set(
 );
 
 /**
+ * True when a raw config value is a plain (non-null, non-array) object, so the key scans
+ * ({@link findDeprecatedConfigIssues}, {@link findUnknownTopLevelKeys}) are safe to run. A
+ * `null`/array/primitive config (e.g. a JSON file that is just `null`, or a module
+ * `configure()` returning null) must NOT reach those scans — they'd throw on
+ * `hasOwnProperty`/`Object.keys`; the entry points instead hand it straight to
+ * `rawGthConfigSchema.safeParse`, which reports a clean "expected object" error.
+ */
+export function isRecordConfig(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
  * Return the top-level keys present in `raw` that are not part of the known config
  * surface. KNOWN deprecated names are rejected earlier by {@link findDeprecatedConfigIssues}
  * (the entry points short-circuit on those), so a key that reaches here is a genuinely
@@ -466,24 +478,30 @@ export interface RawConfigValidationResult {
  * mutate `raw`, so no defensive copy is needed.
  */
 export function validateRawGthConfig(raw: Record<string, unknown>): RawConfigValidationResult {
-  // Removed pre-2.0 shapes short-circuit before the unknown-key warning: any deprecated name
-  // present is hard-rejected here (and so never doubles as an unknown-key warning).
-  const deprecatedIssues = findDeprecatedConfigIssues(raw);
-  if (deprecatedIssues.length > 0) {
-    return {
-      ok: false,
-      warnings: [],
-      errorMessage: formatDeprecatedConfigIssues(deprecatedIssues),
-    };
-  }
-
   const warnings: string[] = [];
-  const unknownKeys = findUnknownTopLevelKeys(raw);
-  if (unknownKeys.length > 0) {
-    warnings.push(
-      `Unknown top-level config ${unknownKeys.length === 1 ? 'key' : 'keys'}: ` +
-        `${unknownKeys.join(', ')} (kept as-is but ignored by Gaunt Sloth; check for typos).`
-    );
+
+  // Only an object config can carry deprecated/unknown keys. A null/array/primitive config is
+  // handed straight to safeParse (below), which returns a clean "expected object" failure — the
+  // scans would otherwise throw a raw TypeError, and coercing to {} would wrongly report ok:true.
+  if (isRecordConfig(raw)) {
+    // Removed pre-2.0 shapes short-circuit before the unknown-key warning: any deprecated name
+    // present is hard-rejected here (and so never doubles as an unknown-key warning).
+    const deprecatedIssues = findDeprecatedConfigIssues(raw);
+    if (deprecatedIssues.length > 0) {
+      return {
+        ok: false,
+        warnings: [],
+        errorMessage: formatDeprecatedConfigIssues(deprecatedIssues),
+      };
+    }
+
+    const unknownKeys = findUnknownTopLevelKeys(raw);
+    if (unknownKeys.length > 0) {
+      warnings.push(
+        `Unknown top-level config ${unknownKeys.length === 1 ? 'key' : 'keys'}: ` +
+          `${unknownKeys.join(', ')} (kept as-is but ignored by Gaunt Sloth; check for typos).`
+      );
+    }
   }
 
   const result = rawGthConfigSchema.safeParse(raw);

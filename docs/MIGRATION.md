@@ -11,42 +11,40 @@ gth config validate
 ```
 
 It validates your effective config against the 2.0 schema **without** building an LLM or
-running anything. Warnings (deprecated names, unknown keys) print but do not fail; a real
-schema violation prints a path-scoped message and exits non-zero. Use `gth config print`
-to see the fully-resolved config (secrets redacted) after your edits.
+running anything. Unknown top-level keys (likely typos) print a warning but do not fail; a
+deprecated config-file shape or a real schema violation prints a path-scoped message and
+exits non-zero. Use `gth config print` to see the fully-resolved config (secrets redacted)
+after your edits.
 
 ## Severity at a glance
 
-Changes split into two buckets. Fix the HARD ones before you upgrade; the SOFT ones keep
-working but you should migrate them (the deprecation bridges are temporary).
+Every deprecated config-file shape is now a HARD error: 2.0 has no back-compat coercion, so
+gth aborts on the old shape with a path-scoped message naming the replacement. Fix all of
+these before you upgrade.
 
 ### HARD (gth aborts, or scripts break)
 
 | Change | What breaks | Fix |
 | --- | --- | --- |
 | `rating` is now an object | `rating: false` (or any boolean) is a validation abort: `expected object, received boolean` | `rating: { enabled: false }` |
+| Command configs must nest under `commands.*` | A top-level command key (e.g. `pr`) is a validation abort: `Top-level command config "pr" is no longer supported in 2.0. Move it under "commands.pr".` | Move it under `commands.<cmd>` |
+| Deprecated `*Provider*` config keys | `contentProvider` / `requirementsProvider` (and the `*ProviderConfig` variants) are rejected: `Config property "contentProvider" was renamed in 2.0. Use "contentSource" instead.` | Rename to `contentSource` / `requirementSource` (and `*SourceConfig`) |
 | `--content-provider` / `--requirements-provider` CLI flags removed | Scripts passing those flags error out | `--content-source` / `--requirements-source` (`-p` still aliases `--requirements-source`) |
 | `ContentProviderType` / `RequirementsProviderType` type exports removed, and the runtime `contentProvider` / `requirementsProvider` fields removed | TypeScript / programmatic configs that import those types or read those fields fail to compile or resolve | Use `contentSource` / `requirementSource` (and their `string` types) |
-
-### SOFT (still loads, prints a warning)
-
-| Change | Behaviour | Fix |
-| --- | --- | --- |
-| Command configs must nest under `commands.*` | A top-level command key (e.g. `pr`) is preserved but warns as an unknown top-level key | Move it under `commands.<cmd>` |
-| Deprecated `*Provider*` config keys | `contentProvider` / `requirementsProvider` (and the `*ProviderConfig` variants) still load, remapped with a deprecation warning | Rename to `contentSource` / `requirementSource` (and `*SourceConfig`) |
 
 There is also one behaviour change (array merge across config layers) that is not a
 validation error but can change results silently. It is covered in section D below.
 
 ---
 
-## A. Command configs nest under `commands.*` (SOFT)
+## A. Command configs nest under `commands.*` (HARD)
 
 In 2.0 the per-command settings (`pr`, `review`, `ask`, `chat`, `code`, `exec`, `api`)
-live under a top-level `commands` object. The config root is a loose schema, so a leftover
-top-level command key is not a hard error: it is kept as-is but ignored, and you get an
-"Unknown top-level config key" warning (which usually means a typo). Since the key is
-ignored, your settings silently stop taking effect, so migrate it.
+live under a top-level `commands` object. A leftover top-level command key is now a hard
+validation error that aborts the run, naming the fix:
+`Top-level command config "pr" is no longer supported in 2.0. Move it under "commands.pr".`
+(A genuinely-unrelated unknown top-level key, i.e. a real typo, still just warns; only the
+known command names hard-fail.)
 
 Before:
 
@@ -107,14 +105,15 @@ After:
 If you were relying on the default (rating on), you do not need to add anything; only an
 explicit `rating: false` (or `rating: true`) needs migrating.
 
-## C. `*Provider*` names renamed to `*Source*` (mixed)
+## C. `*Provider*` names renamed to `*Source*` (HARD)
 
-The historical `*Provider*` naming was renamed to `*Source*` across the board. This one is
-part SOFT, part HARD depending on how you configured it.
+The historical `*Provider*` naming was renamed to `*Source*` across the board, and every
+form of it is now a hard break: config-file keys, CLI flags, and TypeScript types.
 
-**Config file keys (SOFT).** In `.gsloth.config.*` the old keys still load, remapped
-one-way to the canonical names with a deprecation warning. This bridge is temporary, so
-rename them now. The renames:
+**Config file keys (HARD).** In `.gsloth.config.*` the old keys are now rejected with a
+validation error that names the replacement (e.g. `Config property "contentProvider" was
+renamed in 2.0. Use "contentSource" instead.`). There is no one-way remap bridge anymore,
+so rename them. The renames:
 
 - `contentProvider` -> `contentSource`
 - `requirementsProvider` -> `requirementSource`

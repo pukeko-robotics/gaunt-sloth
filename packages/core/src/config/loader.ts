@@ -25,6 +25,7 @@ import {
   findUnknownTopLevelKeys,
   formatConfigValidationError,
   formatDeprecatedConfigIssues,
+  isRecordConfig,
   rawGthConfigSchema,
   validateRawGthConfig,
   type RawConfigValidationResult,
@@ -75,24 +76,29 @@ import type {
  * @param sourceLabel Human-readable source name for messages (e.g. the filename).
  */
 function validateRawConfigLayer<T extends Record<string, unknown>>(raw: T, sourceLabel: string): T {
-  const deprecatedIssues = findDeprecatedConfigIssues(raw);
-  if (deprecatedIssues.length > 0) {
-    displayError(
-      `Invalid configuration in ${sourceLabel}:\n${formatDeprecatedConfigIssues(deprecatedIssues)}`
-    );
-    exit(1);
-    // Unreachable past exit(1) in production; keeps the mocked-exit test path from falling
-    // through into the schema parse below.
-    return raw;
-  }
+  // Only an object config can carry deprecated/unknown keys; a null/array/primitive config skips
+  // the scans (they'd throw a raw TypeError) and falls to safeParse, which emits a clean
+  // "expected object" error + exit — never a coercion to {} (which would wrongly pass).
+  if (isRecordConfig(raw)) {
+    const deprecatedIssues = findDeprecatedConfigIssues(raw);
+    if (deprecatedIssues.length > 0) {
+      displayError(
+        `Invalid configuration in ${sourceLabel}:\n${formatDeprecatedConfigIssues(deprecatedIssues)}`
+      );
+      exit(1);
+      // Unreachable past exit(1) in production; keeps the mocked-exit test path from falling
+      // through into the schema parse below.
+      return raw;
+    }
 
-  const unknownKeys = findUnknownTopLevelKeys(raw);
-  if (unknownKeys.length > 0) {
-    displayWarning(
-      `Unknown top-level config ${unknownKeys.length === 1 ? 'key' : 'keys'} in ${sourceLabel}: ` +
-        `${unknownKeys.join(', ')}. ${unknownKeys.length === 1 ? 'It is' : 'They are'} kept as-is ` +
-        'but ignored by Gaunt Sloth; check for typos.'
-    );
+    const unknownKeys = findUnknownTopLevelKeys(raw);
+    if (unknownKeys.length > 0) {
+      displayWarning(
+        `Unknown top-level config ${unknownKeys.length === 1 ? 'key' : 'keys'} in ${sourceLabel}: ` +
+          `${unknownKeys.join(', ')}. ${unknownKeys.length === 1 ? 'It is' : 'They are'} kept as-is ` +
+          'but ignored by Gaunt Sloth; check for typos.'
+      );
+    }
   }
 
   const result = rawGthConfigSchema.safeParse(raw);

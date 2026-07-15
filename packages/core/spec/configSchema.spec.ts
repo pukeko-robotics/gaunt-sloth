@@ -202,6 +202,16 @@ describe('config schema (GS2-1 B1)', () => {
       expect(result.ok).toBe(true);
       expect(result.warnings).toEqual([]);
     });
+
+    it('validateRawGthConfig does NOT throw on a non-object config (null/array); clean ok:false', () => {
+      // A config file that is just `null` (or a module configure() returning null/an array) must
+      // not throw a raw TypeError from the key scans — safeParse reports an "expected object" error.
+      for (const bad of [null, [], 'oops'] as const) {
+        const result = validateRawGthConfig(bad as unknown as Record<string, unknown>);
+        expect(result.ok).toBe(false);
+        expect(result.errorMessage?.toLowerCase()).toContain('object');
+      }
+    });
   });
 
   describe('agent.backend selector (GS2-2 B5)', () => {
