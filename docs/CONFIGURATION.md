@@ -449,7 +449,8 @@ To run a Hugging Face model **locally** you do not need a dedicated provider:
 every mainstream local runtime exposes an OpenAI-compatible endpoint, and Gaunt
 Sloth already speaks to those via the `openai` provider + `configuration.baseURL`
 (see [LM Studio](#lm-studio) below). The only "bridge" is pulling the HF model
-into one of those runtimes:
+into one of those runtimes (for example, Google's `gemma-4-12B` QAT `Q4_0` quant,
+pulled from the Hub, is verified working in Gaunt Sloth via Ollama):
 
 **llama.cpp (`llama-server`)** downloads GGUF straight from the Hub with `-hf`:
 
@@ -474,17 +475,18 @@ llama-server -hf bartowski/Qwen2.5-7B-Instruct-GGUF:Q4_K_M
 
 **Ollama** pulls any GGUF on the Hub via the `hf.co/` namespace and serves an
 OpenAI-compatible API on `:11434/v1`. Gaunt Sloth ships a first-class `ollama`
-provider, so you can point at it directly:
+provider, so you can point at it directly. Pull the model once (the Ollama daemon
+then serves it on demand); the example below is verified working in Gaunt Sloth:
 
 ```bash
-ollama run hf.co/bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M
+ollama pull hf.co/google/gemma-4-12B-it-qat-q4_0-gguf:Q4_0
 ```
 
 ```json
 {
   "llm": {
     "type": "ollama",
-    "model": "hf.co/bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M"
+    "model": "hf.co/google/gemma-4-12B-it-qat-q4_0-gguf:Q4_0"
   }
 }
 ```
