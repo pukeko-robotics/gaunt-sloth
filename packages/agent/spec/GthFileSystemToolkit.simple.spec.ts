@@ -219,6 +219,94 @@ describe('GthFileSystemToolkit - Basic Tests', () => {
     });
   });
 
+  describe('edit_file (applyFileEdits ambiguity guard + replaceAll)', () => {
+    const testPath = path.join(process.cwd(), 'edit.txt');
+    let editTool: any;
+
+    beforeEach(() => {
+      toolkit = new GthFileSystemToolkit({ allowedDirectories: [process.cwd()] });
+      editTool = toolkit.tools.find((t) => t.name === 'edit_file')!;
+      // realpath echoes its input (outer beforeEach), so testPath validates.
+    });
+
+    it('ambiguous match without replaceAll throws a count-naming error and does NOT write', async () => {
+      fsMock.readFile.mockResolvedValue('x = foo\ny = foo\n');
+
+      await expect(
+        editTool.invoke({ path: testPath, edits: [{ oldText: 'foo', newText: 'bar' }] })
+      ).rejects.toThrow(/Found 2 occurrences of the oldText/);
+
+      expect(fsMock.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('no match at all throws the existing "Could not find exact match" error and does NOT write', async () => {
+      fsMock.readFile.mockResolvedValue('nothing to see here\n');
+
+      await expect(
+        editTool.invoke({ path: testPath, edits: [{ oldText: 'zzz', newText: 'yyy' }] })
+      ).rejects.toThrow(/Could not find exact match/);
+
+      expect(fsMock.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('unique exact match replaces the one occurrence and annotates "replaced 1 occurrence(s)"', async () => {
+      fsMock.readFile.mockResolvedValue('alpha\nbeta\ngamma\n');
+
+      const result: string = await editTool.invoke({
+        path: testPath,
+        edits: [{ oldText: 'beta', newText: 'BETA' }],
+      });
+
+      expect(result).toContain('edit 1: replaced 1 occurrence(s)');
+      expect(result).toContain('```diff');
+      expect(fsMock.writeFile).toHaveBeenCalledWith(testPath, 'alpha\nBETA\ngamma\n', 'utf-8');
+    });
+
+    it('ambiguous match with replaceAll: true replaces ALL occurrences and annotates the count', async () => {
+      fsMock.readFile.mockResolvedValue('x = foo\ny = foo\nz = foo\n');
+
+      const result: string = await editTool.invoke({
+        path: testPath,
+        edits: [{ oldText: 'foo', newText: 'bar', replaceAll: true }],
+      });
+
+      expect(result).toContain('edit 1: replaced 3 occurrence(s)');
+      expect(fsMock.writeFile).toHaveBeenCalledWith(
+        testPath,
+        'x = bar\ny = bar\nz = bar\n',
+        'utf-8'
+      );
+    });
+
+    it('no exact match but fuzzy line-match hits: applies via fuzzy path and annotates it', async () => {
+      // 'a();\nb();' is NOT a contiguous substring (the indented '\n    b' breaks it),
+      // so the exact branch misses and the trim-based fuzzy fallback matches at the block.
+      fsMock.readFile.mockResolvedValue('function f() {\n    a();\n    b();\n}\n');
+
+      const result: string = await editTool.invoke({
+        path: testPath,
+        edits: [{ oldText: 'a();\nb();', newText: 'c();\nd();' }],
+      });
+
+      expect(result).toContain('edit 1: applied via fuzzy line-match (no exact match)');
+      expect(fsMock.writeFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('dryRun returns the diff without writing (diff formatting preserved)', async () => {
+      fsMock.readFile.mockResolvedValue('alpha\nbeta\n');
+
+      const result: string = await editTool.invoke({
+        path: testPath,
+        edits: [{ oldText: 'beta', newText: 'BETA' }],
+        dryRun: true,
+      });
+
+      expect(result).toContain('```diff');
+      expect(result).toContain('edit 1: replaced 1 occurrence(s)');
+      expect(fsMock.writeFile).not.toHaveBeenCalled();
+    });
+  });
+
   describe('utility methods', () => {
     beforeEach(() => {
       toolkit = new GthFileSystemToolkit({ allowedDirectories: [process.cwd()] });
