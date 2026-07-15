@@ -4,14 +4,21 @@ import { render } from 'ink-testing-library';
 import {
   SelectList,
   clampWindowStart,
+  filterSelectItems,
+  matchesFilter,
   windowSize,
 } from '#src/tui/components/SelectList.js';
 
 const DOWN = '\x1b[B'; // Down arrow CSI sequence
 const UP = '\x1b[A'; // Up arrow CSI sequence
 const ENTER = '\r';
+const ESC = '\x1b'; // lone Escape
+const CTRL_C = '\x03'; // Ctrl+C (SIGINT byte)
+const BACKSPACE = '\x7f'; // DEL / backspace
 
-const tick = () => new Promise((r) => setTimeout(r, 10));
+// 20ms so a lone ESC byte resolves: Ink briefly waits after \x1b to disambiguate a bare
+// Escape from the start of a CSI sequence (e.g. an arrow key) before dispatching key.escape.
+const tick = () => new Promise((r) => setTimeout(r, 20));
 
 /** Build a list of `n` uniquely-labelled items (`opt-00`, `opt-01`, …). */
 const makeItems = (n: number) =>
@@ -77,6 +84,193 @@ describe('tui <SelectList> (CFG-11 keyboard select)', () => {
     await tick();
 
     expect(onSelect).toHaveBeenCalledWith(1);
+  });
+});
+
+describe('CFG-20 filterSelectItems / matchesFilter predicate', () => {
+  const items = [
+    { label: '⭐ gpt-5.5' },
+    { label: '⭐ gpt-5.4-mini' },
+    { label: '   claude-sonnet-5' },
+    { label: '   gemini-3.5-flash' },
+    { label: '   grok-4.3' },
+  ];
+
+  it('matchesFilter is a case-insensitive substring test on the label', () => {
+    expect(matchesFilter('⭐ gpt-5.5', 'gpt')).toBe(true);
+    expect(matchesFilter('⭐ gpt-5.5', 'GPT')).toBe(true); // case-insensitive
+    expect(matchesFilter('claude-sonnet-5', 'sonnet')).toBe(true); // mid-string substring
+    expect(matchesFilter('claude-sonnet-5', 'gpt')).toBe(false);
+  });
+
+  it('empty (or whitespace) filter returns the full list, as a copy', () => {
+    const full = filterSelectItems(items, '');
+    expect(full).toEqual(items);
+    expect(full).not.toBe(items); // fresh array, not the same reference
+    expect(filterSelectItems(items, '   ')).toEqual(items);
+  });
+
+  it('narrows to substring matches, preserving the source (preferred-first) order', () => {
+    // "5" hits both ⭐ gpt rows, claude-sonnet-5 and gemini-3.5-flash — in their original order.
+    expect(filterSelectItems(items, '5').map((i) => i.label)).toEqual([
+      '⭐ gpt-5.5',
+      '⭐ gpt-5.4-mini',
+      '   claude-sonnet-5',
+      '   gemini-3.5-flash',
+    ]);
+    // Case-insensitive, and a filter that hits a single non-first row.
+    expect(filterSelectItems(items, 'GROK').map((i) => i.label)).toEqual(['   grok-4.3']);
+  });
+
+  it('returns an empty list on a no-match filter', () => {
+    expect(filterSelectItems(items, 'zzz')).toEqual([]);
+  });
+});
+
+describe('CFG-20 type-to-filter interaction', () => {
+  const models = [
+    { label: '⭐ gpt-5.5' }, // 0 (preferred, initial cursor)
+    { label: '⭐ gpt-5.4-mini' }, // 1 (preferred)
+    { label: '   claude-sonnet-5' }, // 2
+    { label: '   gemini-3.5-flash' }, // 3
+    { label: '   grok-4.3' }, // 4
+  ];
+
+  it('typing narrows the visible list and shows the active filter string', async () => {
+    const { lastFrame, stdin } = render(
+      <SelectList title="Pick a model" items={models} initialIndex={0} onSelect={vi.fn()} />
+    );
+    stdin.write('gpt');
+    await tick();
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('filter: gpt');
+    // Only the two ⭐ gpt rows survive; the others are filtered out.
+    expect(frame).toContain('gpt-5.5');
+    expect(frame).toContain('gpt-5.4-mini');
+    expect(frame).not.toContain('claude-sonnet-5');
+    expect(frame).not.toContain('grok-4.3');
+    // Filtered set keeps preferred-first order: the top (highlighted) row is gpt-5.5.
+    expect(frame).toMatch(/❯ ⭐ gpt-5\.5/);
+  });
+
+  it('Enter after filtering returns the ORIGINAL absolute index, not the filtered position', async () => {
+    const onSelect = vi.fn();
+    const { stdin } = render(
+      <SelectList title="Pick a model" items={models} initialIndex={0} onSelect={onSelect} />
+    );
+    // Filter to a single non-first row (grok, absolute index 4). Its filtered position is 0.
+    stdin.write('grok');
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith(4); // absolute index, not 0
+  });
+
+  it('navigation within the filtered set resolves the right absolute index', async () => {
+    const onSelect = vi.fn();
+    const { stdin } = render(
+      <SelectList title="Pick a model" items={models} initialIndex={0} onSelect={onSelect} />
+    );
+    stdin.write('gpt'); // filtered -> [0, 1]
+    await tick();
+    stdin.write(DOWN); // move to filtered position 1 => absolute index 1
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    expect(onSelect).toHaveBeenCalledWith(1);
+  });
+
+  it('Backspace edits the filter and Esc clears it back to the full list', async () => {
+    const { lastFrame, stdin } = render(
+      <SelectList title="Pick a model" items={models} initialIndex={0} onSelect={vi.fn()} />
+    );
+    stdin.write('grok');
+    await tick();
+    stdin.write(BACKSPACE); // "grok" -> "gro"
+    await tick();
+    expect(lastFrame() ?? '').toContain('filter: gro');
+    stdin.write(ESC); // clears the filter
+    await tick();
+    const frame = lastFrame() ?? '';
+    expect(frame).not.toContain('filter:');
+    // Full list is back.
+    expect(frame).toContain('claude-sonnet-5');
+    expect(frame).toContain('grok-4.3');
+  });
+
+  it('shows a no-matches state and Enter does nothing while unmatched', async () => {
+    const onSelect = vi.fn();
+    const { lastFrame, stdin } = render(
+      <SelectList title="Pick a model" items={models} initialIndex={0} onSelect={onSelect} />
+    );
+    stdin.write('zzz');
+    await tick();
+    expect(lastFrame() ?? '').toContain('no matches for "zzz"');
+    stdin.write(ENTER);
+    await tick();
+    expect(onSelect).not.toHaveBeenCalled(); // nothing to select under a no-match filter
+  });
+
+  it('Ctrl+C invokes onCancel (abort) without selecting', async () => {
+    const onSelect = vi.fn();
+    const onCancel = vi.fn();
+    const { stdin } = render(
+      <SelectList
+        title="Pick a model"
+        items={models}
+        initialIndex={0}
+        onSelect={onSelect}
+        onCancel={onCancel}
+      />
+    );
+    stdin.write(CTRL_C);
+    await tick();
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('Ctrl+C aborts even with an active filter typed', async () => {
+    const onSelect = vi.fn();
+    const onCancel = vi.fn();
+    const { stdin } = render(
+      <SelectList
+        title="Pick a model"
+        items={models}
+        initialIndex={0}
+        onSelect={onSelect}
+        onCancel={onCancel}
+      />
+    );
+    stdin.write('gpt');
+    await tick();
+    stdin.write(CTRL_C);
+    await tick();
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('Esc on an empty filter aborts (second Esc after a clear)', async () => {
+    const onSelect = vi.fn();
+    const onCancel = vi.fn();
+    const { stdin } = render(
+      <SelectList
+        title="Pick a model"
+        items={models}
+        initialIndex={0}
+        onSelect={onSelect}
+        onCancel={onCancel}
+      />
+    );
+    stdin.write('gpt'); // filter active
+    await tick();
+    stdin.write(ESC); // first Esc clears the filter
+    await tick();
+    expect(onCancel).not.toHaveBeenCalled();
+    stdin.write(ESC); // second Esc, empty filter -> abort
+    await tick();
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });
 
