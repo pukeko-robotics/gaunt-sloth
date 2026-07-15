@@ -3,11 +3,13 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  findDeprecatedConfigIssues,
   findUnknownTopLevelKeys,
   formatConfigValidationError,
+  formatDeprecatedConfigIssues,
   generateConfigJsonSchema,
-  preMapDeprecatedConfigNames,
   rawGthConfigSchema,
+  validateRawGthConfig,
 } from '#src/config/schema.js';
 import { DEFAULT_CONFIG } from '#src/config.js';
 
@@ -111,39 +113,94 @@ describe('config schema (GS2-1 B1)', () => {
     });
   });
 
-  describe('deprecated-name pre-map (B3)', () => {
-    it('maps contentProvider to contentSource and warns', () => {
-      const { config, warnings } = preMapDeprecatedConfigNames({ contentProvider: 'github' });
-      expect(config.contentSource).toBe('github');
-      expect('contentProvider' in config).toBe(false);
-      expect(
-        warnings.some((w) => w.includes('contentProvider') && w.includes('contentSource'))
-      ).toBe(true);
+  describe('deprecated-shape rejection (GS2-28)', () => {
+    it('flags a top-level command key, naming commands.<cmd> + migration path', () => {
+      const issues = findDeprecatedConfigIssues({ llm: { type: 'openai' }, pr: { rating: {} } });
+      expect(issues).toHaveLength(1);
+      expect(issues[0].path).toBe('pr');
+      expect(issues[0].message).toContain('commands.pr');
+      expect(issues[0].message).toContain('gth config migrate');
     });
 
-    it('maps deprecated names per command and root *Config aliases', () => {
-      const { config, warnings } = preMapDeprecatedConfigNames({
-        requirementsProviderConfig: { jira: { cloudId: 'X' } },
+    it('flags every command name used at the root', () => {
+      const raw: Record<string, unknown> = { llm: { type: 'openai' } };
+      for (const cmd of ['pr', 'review', 'ask', 'chat', 'code', 'exec', 'api']) {
+        raw[cmd] = {};
+      }
+      const paths = findDeprecatedConfigIssues(raw).map((i) => i.path);
+      expect(paths).toEqual(['pr', 'review', 'ask', 'chat', 'code', 'exec', 'api']);
+    });
+
+    it('flags deprecated *Provider* names at the root, naming the *Source* replacement', () => {
+      const issues = findDeprecatedConfigIssues({
+        contentProvider: 'github',
+        requirementsProvider: 'jira',
+        contentProviderConfig: {},
+        requirementsProviderConfig: {},
+      });
+      const byPath = Object.fromEntries(issues.map((i) => [i.path, i.message]));
+      expect(byPath.contentProvider).toContain('contentSource');
+      expect(byPath.requirementsProvider).toContain('requirementSource');
+      expect(byPath.contentProviderConfig).toContain('contentSourceConfig');
+      expect(byPath.requirementsProviderConfig).toContain('requirementSourceConfig');
+    });
+
+    it('flags deprecated *Provider* names inside a commands.<name> block', () => {
+      const issues = findDeprecatedConfigIssues({
         commands: { pr: { requirementsProvider: 'jira', contentProvider: 'github' } },
       });
-      expect(config.requirementSourceConfig).toEqual({ jira: { cloudId: 'X' } });
-      expect('requirementsProviderConfig' in config).toBe(false);
-      const pr = (config.commands as Record<string, Record<string, unknown>>).pr;
-      expect(pr.requirementSource).toBe('jira');
-      expect(pr.contentSource).toBe('github');
-      expect('requirementsProvider' in pr).toBe(false);
-      expect('contentProvider' in pr).toBe(false);
-      // root *Config + two per-command keys = 3 warnings.
-      expect(warnings).toHaveLength(3);
+      const byPath = Object.fromEntries(issues.map((i) => [i.path, i.message]));
+      expect(byPath['commands.pr.requirementsProvider']).toContain('requirementSource');
+      expect(byPath['commands.pr.contentProvider']).toContain('contentSource');
     });
 
-    it('keeps the canonical value when both canonical and deprecated are present', () => {
-      const { config } = preMapDeprecatedConfigNames({
-        contentSource: 'canonical',
-        contentProvider: 'deprecated',
+    it('does NOT flag a genuinely-unknown key or the canonical shapes', () => {
+      expect(
+        findDeprecatedConfigIssues({
+          llm: { type: 'openai' },
+          pulrequest: {},
+          contentSource: 'file',
+          commands: { pr: { contentSource: 'github', requirementSource: 'jira' } },
+        })
+      ).toEqual([]);
+    });
+
+    it('formats issues as the same `  - <path>: <message>` block as schema errors', () => {
+      const rendered = formatDeprecatedConfigIssues(
+        findDeprecatedConfigIssues({ pr: {}, contentProvider: 'github' })
+      );
+      expect(rendered).toContain('  - pr: ');
+      expect(rendered).toContain('  - contentProvider: ');
+    });
+
+    it('validateRawGthConfig hard-rejects a top-level command key (ok:false, no warning)', () => {
+      const result = validateRawGthConfig({ llm: { type: 'openai' }, review: {} });
+      expect(result.ok).toBe(false);
+      expect(result.errorMessage).toContain('commands.review');
+      // The removed shape is rejected, not doubled as an unknown-key warning.
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('validateRawGthConfig hard-rejects a deprecated *Provider* name naming its *Source*', () => {
+      const result = validateRawGthConfig({ llm: { type: 'openai' }, contentProvider: 'github' });
+      expect(result.ok).toBe(false);
+      expect(result.errorMessage).toContain('contentSource');
+    });
+
+    it('validateRawGthConfig still WARNS (does not fail) on a genuine typo key', () => {
+      const result = validateRawGthConfig({ llm: { type: 'openai' }, pulrequest: 123 });
+      expect(result.ok).toBe(true);
+      expect(result.warnings.some((w) => w.includes('pulrequest'))).toBe(true);
+    });
+
+    it('validateRawGthConfig accepts the canonical shapes clean', () => {
+      const result = validateRawGthConfig({
+        llm: { type: 'openai' },
+        contentSource: 'file',
+        commands: { pr: { contentSource: 'github', rating: { enabled: false } } },
       });
-      expect(config.contentSource).toBe('canonical');
-      expect('contentProvider' in config).toBe(false);
+      expect(result.ok).toBe(true);
+      expect(result.warnings).toEqual([]);
     });
   });
 

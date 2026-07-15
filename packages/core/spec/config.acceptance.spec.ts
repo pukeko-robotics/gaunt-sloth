@@ -3,14 +3,14 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveConfig } from '#src/config/loader.js';
-import { preMapDeprecatedConfigNames } from '#src/config/schema.js';
 
 /**
  * Effective-merged acceptance gate (B2b). Runs the real example configs and the consumer-shaped
- * fixture through the SAME pre-map + merge pipeline the loader uses (deprecated-name pre-map →
- * resolveConfig: deep-merge with DEFAULT_CONFIG + per-command merge + array policy) and pins the
- * effective output via a committed snapshot. If the array merge policy (or any merge change)
- * silently shifts how a real config resolves, the snapshot breaks.
+ * fixture through the SAME merge pipeline the loader uses (resolveConfig: deep-merge with
+ * DEFAULT_CONFIG + per-command merge + array policy) and pins the effective output via a committed
+ * snapshot. If the array merge policy (or any merge change) silently shifts how a real config
+ * resolves, the snapshot breaks. The example configs use only canonical names (2.0 rejects the
+ * deprecated shapes outright — see GS2-28), so no pre-map step is involved.
  *
  * `resolveConfig` is the pure merge (no LLM instantiation, no global side effects), so `llm`
  * stays the raw spec object — fine for a deterministic snapshot.
@@ -19,8 +19,7 @@ const here = resolve(fileURLToPath(import.meta.url), '..');
 const repoRoot = resolve(here, '..', '..', '..');
 
 function effective(raw: Record<string, unknown>): Record<string, unknown> {
-  const { config } = preMapDeprecatedConfigNames(structuredClone(raw));
-  return resolveConfig(config as never, {}) as unknown as Record<string, unknown>;
+  return resolveConfig(structuredClone(raw) as never, {}) as unknown as Record<string, unknown>;
 }
 
 function readExample(relPath: string): Record<string, unknown> {

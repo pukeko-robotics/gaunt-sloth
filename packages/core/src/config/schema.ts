@@ -6,15 +6,22 @@
  * JSON Schema (`packages/core/schema/gsloth-config.schema.json`). It models the
  * canonical config shape only — the deprecated aliases (`contentProvider`,
  * `requirementsProvider`, `contentProviderConfig`, `requirementsProviderConfig`)
- * are intentionally NOT part of the schema. The loader maps those one-way to the
- * canonical names ({@link preMapDeprecatedConfigNames}) BEFORE validating, so by
- * the time a config reaches the schema it only uses canonical names.
+ * are intentionally NOT part of the schema. GS2-28 (a 2.0 breaking release with NO
+ * back-compat coercion) turns those deprecated shapes into HARD validation errors:
+ * {@link findDeprecatedConfigIssues} detects them on the raw input BEFORE the schema
+ * parse and each entry point (loader `validateRawConfigLayer`, read-side
+ * {@link validateRawGthConfig}) rejects the config with a message naming the canonical
+ * replacement + migration path. Detection runs on the RAW input on purpose: zod's
+ * per-command `z.object` strips unknown keys, so a nested `commands.*.contentProvider`
+ * would vanish before any schema-embedded check could see it.
  *
  * Design notes:
  * - The top-level object is a {@link z.looseObject} so unknown keys PASS THROUGH
  *   (they are neither stripped nor a hard failure). The loader separately diffs
  *   present-vs-known top-level keys ({@link findUnknownTopLevelKeys}) to warn about
- *   likely typos without failing.
+ *   likely typos without failing. That typo-tolerance is deliberate: only the KNOWN
+ *   deprecated names ({@link findDeprecatedConfigIssues}) hard-fail; a genuine typo
+ *   (e.g. `pulrequest`) still only warns.
  * - Every field is optional. The schema validates the *shape/type of what is
  *   present*, not requiredness. In particular `llm` is optional so the loader's
  *   existing "must at least define llm.type" checks remain the authority on llm
@@ -184,6 +191,15 @@ const commandsSchema = z.object({
 });
 
 /**
+ * The command names, derived from {@link commandsSchema}'s own shape so it can never drift
+ * from the schema. A command config must live under `commands.<cmd>`; the SAME name appearing
+ * at the config ROOT is the removed pre-2.0 top-level shape and is hard-rejected by
+ * {@link findDeprecatedConfigIssues}. (None of these are valid top-level keys, so there is no
+ * collision with {@link KNOWN_TOP_LEVEL_KEYS}.)
+ */
+const COMMAND_KEYS: readonly string[] = Object.keys(commandsSchema.shape);
+
+/**
  * Zod schema for the raw, on-disk Gaunt Sloth config. Loose at the top level so
  * unknown keys are preserved (warn-only via {@link findUnknownTopLevelKeys}).
  */
@@ -280,11 +296,22 @@ export const KNOWN_TOP_LEVEL_KEYS: ReadonlySet<string> = new Set(
 
 /**
  * Return the top-level keys present in `raw` that are not part of the known config
- * surface. Deprecated aliases should be pre-mapped away first (see
- * {@link preMapDeprecatedConfigNames}) so they do not show up here.
+ * surface. KNOWN deprecated names are rejected earlier by {@link findDeprecatedConfigIssues}
+ * (the entry points short-circuit on those), so a key that reaches here is a genuinely
+ * unknown key (a likely typo) that only warrants a warning.
  */
 export function findUnknownTopLevelKeys(raw: Record<string, unknown>): string[] {
   return Object.keys(raw).filter((key) => !KNOWN_TOP_LEVEL_KEYS.has(key));
+}
+
+/**
+ * Render `  - <path>: <message>` lines (one per issue), with `(root)` for an empty
+ * path. Shared by {@link formatConfigValidationError} (Zod issues) and
+ * {@link formatDeprecatedConfigIssues} (deprecated-shape issues) so both surfaces read
+ * identically.
+ */
+function formatIssueLines(issues: ReadonlyArray<{ path: string; message: string }>): string {
+  return issues.map((issue) => `  - ${issue.path || '(root)'}: ${issue.message}`).join('\n');
 }
 
 /**
@@ -292,15 +319,15 @@ export function findUnknownTopLevelKeys(raw: Record<string, unknown>): string[] 
  * becomes a line `  - <path>: <message>`, with `(root)` for top-level issues.
  */
 export function formatConfigValidationError(error: z.ZodError): string {
-  return error.issues
-    .map((issue) => {
-      const path = issue.path.length > 0 ? issue.path.join('.') : '(root)';
-      return `  - ${path}: ${issue.message}`;
-    })
-    .join('\n');
+  return formatIssueLines(
+    error.issues.map((issue) => ({
+      path: issue.path.length > 0 ? issue.path.join('.') : '',
+      message: issue.message,
+    }))
+  );
 }
 
-/** Deprecated → canonical key pairs at the config root. */
+/** Deprecated → canonical key pairs at the config root (SSOT for the rejecter). */
 const DEPRECATED_ROOT_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ['contentProvider', 'contentSource'],
   ['requirementsProvider', 'requirementSource'],
@@ -308,59 +335,100 @@ const DEPRECATED_ROOT_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ['requirementsProviderConfig', 'requirementSourceConfig'],
 ];
 
-/** Deprecated → canonical key pairs inside a `commands.<name>` block. */
+/** Deprecated → canonical key pairs inside a `commands.<name>` block (SSOT for the rejecter). */
 const DEPRECATED_COMMAND_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ['contentProvider', 'contentSource'],
   ['requirementsProvider', 'requirementSource'],
 ];
 
-function remapDeprecated(
-  obj: Record<string, unknown>,
-  pairs: ReadonlyArray<readonly [string, string]>,
-  scope: string,
-  warnings: string[]
-): void {
-  for (const [deprecated, canonical] of pairs) {
-    if (Object.prototype.hasOwnProperty.call(obj, deprecated)) {
-      warnings.push(
-        `Config property "${deprecated}"${scope} is deprecated. Use "${canonical}" instead.`
-      );
-      // Canonical wins when both are present; otherwise adopt the deprecated value.
-      if (obj[canonical] === undefined) {
-        obj[canonical] = obj[deprecated];
-      }
-      delete obj[deprecated];
-    }
-  }
+/**
+ * Pointer to the migration path, appended to every deprecated-shape error so the user
+ * always learns HOW to fix it, not just that it broke. Matches the guidance the 2.0
+ * migration notes carry.
+ */
+const MIGRATION_HINT =
+  'See the 2.0 migration notes (or run `gth config migrate` / `gth doctor --fix`).';
+
+/** A single deprecated-config-shape rejection: the offending `path` and the migration message. */
+export interface DeprecatedConfigIssue {
+  /** Dotted path of the offending key (e.g. `pr`, `commands.pr.contentProvider`). */
+  path: string;
+  /** Human message naming the canonical replacement + migration path. */
+  message: string;
 }
 
 /**
- * B3 — one-way pre-map of deprecated config key names to their canonical names, at
- * the config root AND per-command. Mutates `raw` in place (it is always a freshly
- * loaded config layer) and returns it alongside a list of deprecation warnings the
- * caller should emit via `displayWarning`. Canonical names win when both are
- * present; the deprecated key is always removed so it does not later surface as an
- * "unknown top-level key".
+ * GS2-28 — detect the removed pre-2.0 config shapes on the RAW input (read-only; no
+ * mutation), returning one {@link DeprecatedConfigIssue} per occurrence. A non-empty
+ * result is a HARD validation failure: 2.0 dropped back-compat coercion, so an old shape
+ * must error and point at the fix rather than be silently remapped or ignored.
+ *
+ * Detects:
+ * - (A) a COMMAND name ({@link COMMAND_KEYS}) at the config ROOT — must move under `commands.<cmd>`;
+ * - (C) a deprecated `*Provider*` name ({@link DEPRECATED_ROOT_PAIRS} at root,
+ *   {@link DEPRECATED_COMMAND_PAIRS} per command) — must use its `*Source*` replacement.
+ *
+ * Runs on the raw input specifically so nested `commands.*.contentProvider` is still visible
+ * (zod's per-command `z.object` would strip it before any schema-embedded check could fire).
+ * A genuinely-unknown key is NOT flagged here (it stays a warn-only unknown key), preserving
+ * the deliberate typo-tolerance.
  */
-export function preMapDeprecatedConfigNames<T extends Record<string, unknown>>(
-  raw: T
-): { config: T; warnings: string[] } {
-  const warnings: string[] = [];
-  remapDeprecated(raw, DEPRECATED_ROOT_PAIRS, '', warnings);
+export function findDeprecatedConfigIssues(raw: Record<string, unknown>): DeprecatedConfigIssue[] {
+  const issues: DeprecatedConfigIssue[] = [];
+
+  // (A) Command name used as a top-level key — command configs must live under commands.<cmd>.
+  for (const command of COMMAND_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(raw, command)) {
+      issues.push({
+        path: command,
+        message:
+          `Top-level command config "${command}" is no longer supported in 2.0. ` +
+          `Move it under "commands.${command}". ${MIGRATION_HINT}`,
+      });
+    }
+  }
+
+  // (C) Deprecated *Provider* names at the config root.
+  for (const [deprecated, canonical] of DEPRECATED_ROOT_PAIRS) {
+    if (Object.prototype.hasOwnProperty.call(raw, deprecated)) {
+      issues.push({
+        path: deprecated,
+        message:
+          `Config property "${deprecated}" was renamed in 2.0. Use "${canonical}" instead. ` +
+          MIGRATION_HINT,
+      });
+    }
+  }
+
+  // (C) Deprecated *Provider* names inside each commands.<name> block.
   const commands = raw.commands;
-  if (commands && typeof commands === 'object') {
+  if (commands && typeof commands === 'object' && !Array.isArray(commands)) {
     for (const [name, cmd] of Object.entries(commands as Record<string, unknown>)) {
-      if (cmd && typeof cmd === 'object') {
-        remapDeprecated(
-          cmd as Record<string, unknown>,
-          DEPRECATED_COMMAND_PAIRS,
-          ` in commands.${name}`,
-          warnings
-        );
+      if (cmd && typeof cmd === 'object' && !Array.isArray(cmd)) {
+        for (const [deprecated, canonical] of DEPRECATED_COMMAND_PAIRS) {
+          if (Object.prototype.hasOwnProperty.call(cmd, deprecated)) {
+            issues.push({
+              path: `commands.${name}.${deprecated}`,
+              message:
+                `Config property "${deprecated}" in commands.${name} was renamed in 2.0. ` +
+                `Use "${canonical}" instead. ${MIGRATION_HINT}`,
+            });
+          }
+        }
       }
     }
   }
-  return { config: raw, warnings };
+
+  return issues;
+}
+
+/**
+ * Render {@link DeprecatedConfigIssue}s as the same `  - <path>: <message>` block used for
+ * Zod validation errors, so a deprecated-shape rejection reads identically to a type-mismatch
+ * rejection (loader wraps it with `Invalid configuration in <source>:`).
+ */
+export function formatDeprecatedConfigIssues(issues: ReadonlyArray<DeprecatedConfigIssue>): string {
+  return formatIssueLines(issues);
 }
 
 /**
@@ -381,7 +449,7 @@ export function generateConfigJsonSchema(): Record<string, unknown> {
 export interface RawConfigValidationResult {
   /** True when the config parses against the schema (unknown keys do NOT make it false). */
   ok: boolean;
-  /** Non-fatal advisories: deprecated-name remaps (B3) and unknown top-level keys. */
+  /** Non-fatal advisories: unknown top-level keys (likely typos). Deprecated shapes are hard errors, not warnings. */
   warnings: string[];
   /** Present only when `ok` is false: the path-scoped, multi-line validation message. */
   errorMessage?: string;
@@ -390,19 +458,27 @@ export interface RawConfigValidationResult {
 /**
  * Validate a freshly-loaded raw config object against {@link rawGthConfigSchema} and
  * report the outcome as data (a pure function — no `displayWarning`/`exit`). Mirrors the
- * loader's policy: deprecated key names are pre-mapped (each yielding a warning), unknown
- * top-level keys warn but do not fail, and a genuine type mismatch on a known field fails
- * with a path-scoped message.
+ * loader's policy: a removed pre-2.0 shape (a top-level command key or a deprecated
+ * `*Provider*` name) is a HARD failure that names the fix, unknown top-level keys warn but
+ * do not fail, and a genuine type mismatch on a known field fails with a path-scoped message.
  *
- * A shallow copy is taken before the (mutating) deprecated-name pre-map so the caller's
- * top-level object is not modified.
+ * Read-only: `findDeprecatedConfigIssues`, `findUnknownTopLevelKeys` and `safeParse` never
+ * mutate `raw`, so no defensive copy is needed.
  */
 export function validateRawGthConfig(raw: Record<string, unknown>): RawConfigValidationResult {
-  const warnings: string[] = [];
-  const { config, warnings: deprecationWarnings } = preMapDeprecatedConfigNames({ ...raw });
-  warnings.push(...deprecationWarnings);
+  // Removed pre-2.0 shapes short-circuit before the unknown-key warning: any deprecated name
+  // present is hard-rejected here (and so never doubles as an unknown-key warning).
+  const deprecatedIssues = findDeprecatedConfigIssues(raw);
+  if (deprecatedIssues.length > 0) {
+    return {
+      ok: false,
+      warnings: [],
+      errorMessage: formatDeprecatedConfigIssues(deprecatedIssues),
+    };
+  }
 
-  const unknownKeys = findUnknownTopLevelKeys(config);
+  const warnings: string[] = [];
+  const unknownKeys = findUnknownTopLevelKeys(raw);
   if (unknownKeys.length > 0) {
     warnings.push(
       `Unknown top-level config ${unknownKeys.length === 1 ? 'key' : 'keys'}: ` +
@@ -410,7 +486,7 @@ export function validateRawGthConfig(raw: Record<string, unknown>): RawConfigVal
     );
   }
 
-  const result = rawGthConfigSchema.safeParse(config);
+  const result = rawGthConfigSchema.safeParse(raw);
   if (!result.success) {
     return { ok: false, warnings, errorMessage: formatConfigValidationError(result.error) };
   }
