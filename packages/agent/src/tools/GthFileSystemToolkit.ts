@@ -38,8 +38,22 @@ function createGthTool<T extends z.ZodSchema>(
 // Schema definitions
 const ReadFileArgsSchema = z.object({
   path: z.string(),
-  tail: z.number().optional().describe('If provided, returns only the last N lines of the file'),
-  head: z.number().optional().describe('If provided, returns only the first N lines of the file'),
+  tail: z
+    .number()
+    .optional()
+    .describe(
+      'If provided, returns only the last N lines of the file. May be combined with head ' +
+        '(no longer mutually exclusive): head+tail returns the first head lines, a ' +
+        '`... [N lines skipped] ...` marker, then the last tail lines.'
+    ),
+  head: z
+    .number()
+    .optional()
+    .describe(
+      'If provided, returns only the first N lines of the file. May be combined with tail ' +
+        '(no longer mutually exclusive): head+tail returns the first head lines, a ' +
+        '`... [N lines skipped] ...` marker, then the last tail lines.'
+    ),
 });
 
 const ReadBinaryArgsSchema = z.object({
@@ -543,6 +557,27 @@ export default class GthFileSystemToolkit extends BaseToolkit {
     }
   }
 
+  /**
+   * Returns the first `head` lines and the last `tail` lines of a file, separated by a
+   * `... [N lines skipped] ...` marker. When the two windows cover or overlap the whole
+   * file (`head + tail >= total`) the entire file is returned unchanged (no marker, no
+   * duplicated lines).
+   */
+  private async headAndTailFile(filePath: string, head: number, tail: number): Promise<string> {
+    const content = await fs.readFile(filePath, 'utf-8');
+    const lines = this.normalizeLineEndings(content).split('\n');
+    const total = lines.length;
+
+    if (head + tail >= total) {
+      return content;
+    }
+
+    const skipped = total - head - tail;
+    const headContent = lines.slice(0, head).join('\n');
+    const tailContent = lines.slice(total - tail).join('\n');
+    return headContent + '\n... [' + skipped + ' lines skipped] ...\n' + tailContent;
+  }
+
   private createReadBinaryTool(): StructuredToolInterface {
     return createGthTool(
       async (args: z.infer<typeof ReadBinaryArgsSchema>): Promise<string> => {
@@ -628,7 +663,7 @@ export default class GthFileSystemToolkit extends BaseToolkit {
           const validPath = await this.validatePath(args.path);
 
           if (args.head && args.tail) {
-            throw new Error('Cannot specify both head and tail parameters simultaneously');
+            return await this.headAndTailFile(validPath, args.head, args.tail);
           }
 
           if (args.tail) {
@@ -649,7 +684,9 @@ export default class GthFileSystemToolkit extends BaseToolkit {
             'if the file cannot be read. Use this tool when you need to examine ' +
             "the contents of a single file. Use the 'head' parameter to read only " +
             "the first N lines of a file, or the 'tail' parameter to read only " +
-            'the last N lines of a file. Only works within allowed directories.',
+            "the last N lines of a file. The 'head' and 'tail' parameters may be " +
+            'combined to get the first N lines, a `... [N lines skipped] ...` ' +
+            'marker, and the last M lines in a single call. Only works within allowed directories.',
           schema: ReadFileArgsSchema,
         },
         'read'

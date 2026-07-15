@@ -146,6 +146,79 @@ describe('GthFileSystemToolkit - Basic Tests', () => {
     });
   });
 
+  describe('read_file head+tail combined', () => {
+    const testPath = path.join(process.cwd(), 'file.txt');
+    let readFileTool: any;
+
+    beforeEach(() => {
+      toolkit = new GthFileSystemToolkit({ allowedDirectories: [process.cwd()] });
+      readFileTool = toolkit.tools.find((t) => t.name === 'read_file')!;
+      // realpath echoes its input (set in the outer beforeEach), so testPath validates.
+    });
+
+    it('gap case: head+tail < total returns head, one skipped marker, then tail', async () => {
+      const content = Array.from({ length: 20 }, (_, i) => `line${i + 1}`).join('\n');
+      fsMock.readFile.mockResolvedValue(content);
+
+      const result: string = await readFileTool.invoke({ path: testPath, head: 3, tail: 2 });
+      const lines = result.split('\n');
+
+      // Starts with the 3 head lines
+      expect(lines.slice(0, 3)).toEqual(['line1', 'line2', 'line3']);
+      // Contains exactly one skipped marker for 20 - 3 - 2 = 15 lines
+      expect(result).toContain('... [15 lines skipped] ...');
+      expect(result.match(/\[15 lines skipped\]/g)).toHaveLength(1);
+      // Ends with the 2 tail lines
+      expect(lines.slice(-2)).toEqual(['line19', 'line20']);
+    });
+
+    it('overlap case: head+tail > total returns the whole file with no skipped marker', async () => {
+      const content = ['a', 'b', 'c', 'd'].join('\n'); // 4 lines
+      fsMock.readFile.mockResolvedValue(content);
+
+      const result: string = await readFileTool.invoke({ path: testPath, head: 3, tail: 3 });
+
+      expect(result).toBe(content);
+      expect(result).not.toContain('skipped');
+    });
+
+    it('exact-boundary case: head+tail === total returns whole file, no separator, no double-print', async () => {
+      const content = ['a', 'b', 'c', 'd', 'e'].join('\n'); // 5 lines, head 3 + tail 2 === 5
+      fsMock.readFile.mockResolvedValue(content);
+
+      const result: string = await readFileTool.invoke({ path: testPath, head: 3, tail: 2 });
+
+      expect(result).toBe(content);
+      expect(result).not.toContain('skipped');
+      // Nothing duplicated at the boundary
+      expect(result.split('\n')).toEqual(['a', 'b', 'c', 'd', 'e']);
+    });
+
+    it('sanity: head-only still routes to headFile (combined path not used)', async () => {
+      const headSpy = vi.spyOn(toolkit as any, 'headFile').mockResolvedValue('HEAD_ONLY');
+      const tailSpy = vi.spyOn(toolkit as any, 'tailFile').mockResolvedValue('TAIL_ONLY');
+
+      const result: string = await readFileTool.invoke({ path: testPath, head: 3 });
+
+      expect(result).toBe('HEAD_ONLY');
+      expect(headSpy).toHaveBeenCalledWith(testPath, 3);
+      expect(tailSpy).not.toHaveBeenCalled();
+      expect(fsMock.readFile).not.toHaveBeenCalled();
+    });
+
+    it('sanity: tail-only still routes to tailFile (combined path not used)', async () => {
+      const headSpy = vi.spyOn(toolkit as any, 'headFile').mockResolvedValue('HEAD_ONLY');
+      const tailSpy = vi.spyOn(toolkit as any, 'tailFile').mockResolvedValue('TAIL_ONLY');
+
+      const result: string = await readFileTool.invoke({ path: testPath, tail: 2 });
+
+      expect(result).toBe('TAIL_ONLY');
+      expect(tailSpy).toHaveBeenCalledWith(testPath, 2);
+      expect(headSpy).not.toHaveBeenCalled();
+      expect(fsMock.readFile).not.toHaveBeenCalled();
+    });
+  });
+
   describe('utility methods', () => {
     beforeEach(() => {
       toolkit = new GthFileSystemToolkit({ allowedDirectories: [process.cwd()] });
