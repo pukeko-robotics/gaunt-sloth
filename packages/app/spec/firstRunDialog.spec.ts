@@ -12,10 +12,20 @@ vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
   display: vi.fn(),
 }));
 
-import { displayInfo, displaySuccess } from '@gaunt-sloth/core/utils/consoleUtils.js';
+// CFG-21 — force canUseInkSelect() to false so makeDefaultProgress()/makeDefaultSelect() take the
+// readline / non-TTY branch under test (a plain printed line, no real Ink). The runFirstRunDialog
+// tests inject their own select/withProgress, so they never reach this path.
+vi.mock('#src/tui/shouldUseTui.js', () => ({ shouldUseTui: vi.fn(() => false) }));
+
+import {
+  displayInfo,
+  displaySuccess,
+  displayWarning,
+} from '@gaunt-sloth/core/utils/consoleUtils.js';
 import {
   buildConfigContent,
   defaultModelIndex,
+  makeDefaultProgress,
   orderProviders,
   parseMenuSelection,
   providerReadinessLabel,
@@ -140,7 +150,11 @@ describe('runFirstRunDialog', () => {
     configExists = vi.fn(() => false);
     deps = {
       detectProviders: vi.fn(),
-      listModels: vi.fn(),
+      // CFG-21 — the model fetch is now a provenance-returning fetchModels wrapped in a withProgress
+      // indicator seam. The default withProgress here is a transparent passthrough (runs the work,
+      // no indicator) so the existing flow assertions are unchanged; dedicated tests below spy it.
+      fetchModels: vi.fn(),
+      withProgress: vi.fn((_label: string, run: () => Promise<unknown>) => run()),
       ensureGslothDir,
       writeProjectReviewPreamble,
       resolveConfigPath,
@@ -159,9 +173,10 @@ describe('runFirstRunDialog', () => {
         apiKeyEnvironmentVariable: 'ANTHROPIC_API_KEY',
       }),
     ]);
-    deps.listModels = vi
-      .fn()
-      .mockResolvedValue([model('claude-haiku-4-5'), model('claude-sonnet-4-5', true)]);
+    deps.fetchModels = vi.fn().mockResolvedValue({
+      models: [model('claude-haiku-4-5'), model('claude-sonnet-4-5', true)],
+      status: 'live',
+    });
     // provider 0, model: default (preferred), scope: default (project)
     deps.select = scriptedSelect([0, undefined, undefined]);
 
@@ -184,7 +199,9 @@ describe('runFirstRunDialog', () => {
       .mockResolvedValue([
         provider({ id: 'openai', available: true, apiKeyEnvironmentVariable: 'OPENAI_API_KEY' }),
       ]);
-    deps.listModels = vi.fn().mockResolvedValue([model('gpt-4o', true), model('gpt-4o-mini')]);
+    deps.fetchModels = vi
+      .fn()
+      .mockResolvedValue({ models: [model('gpt-4o', true), model('gpt-4o-mini')], status: 'live' });
     // provider 0, model index 1 (gpt-4o-mini), scope index 1 (global)
     deps.select = scriptedSelect([0, 1, 1]);
 
@@ -204,7 +221,10 @@ describe('runFirstRunDialog', () => {
     deps.detectProviders = vi
       .fn()
       .mockResolvedValue([provider({ id: 'deepseek', available: false })]);
-    deps.listModels = vi.fn().mockResolvedValue([model('deepseek-chat', true)]);
+    // No key → the by-design curated list (status 'curated'), NOT a "couldn't reach" degrade.
+    deps.fetchModels = vi
+      .fn()
+      .mockResolvedValue({ models: [model('deepseek-chat', true)], status: 'curated' });
     deps.select = scriptedSelect([0, undefined, undefined]);
 
     await runFirstRunDialog(deps);
@@ -217,7 +237,7 @@ describe('runFirstRunDialog', () => {
     deps.detectProviders = vi
       .fn()
       .mockResolvedValue([provider({ id: 'ollama', available: true, requiresExternalAuth: true })]);
-    deps.listModels = vi.fn().mockResolvedValue([]);
+    deps.fetchModels = vi.fn().mockResolvedValue({ models: [], status: 'fallback' });
     // provider 0 (select); empty model list -> free-text via ask; scope 0 project (select)
     deps.select = scriptedSelect([0, 0]);
     deps.ask = scriptedAsk(['qwen3-coder']);
@@ -229,11 +249,16 @@ describe('runFirstRunDialog', () => {
       $schema: CONFIG_SCHEMA_POINTER,
       llm: { type: 'ollama', model: 'qwen3-coder' },
     });
+    // CFG-21 — the degrade notice must NOT fire on the empty-list free-text path (no curated list
+    // is actually shown), even though the fetch reported a fallback.
+    expect(vi.mocked(displayWarning)).not.toHaveBeenCalledWith(
+      expect.stringContaining("Couldn't reach")
+    );
   });
 
   it('aborts without writing when no model is entered for an empty list', async () => {
     deps.detectProviders = vi.fn().mockResolvedValue([provider({ id: 'ollama', available: true })]);
-    deps.listModels = vi.fn().mockResolvedValue([]);
+    deps.fetchModels = vi.fn().mockResolvedValue({ models: [], status: 'fallback' });
     deps.select = scriptedSelect([0]); // provider 0
     deps.ask = scriptedAsk(['   ']); // blank model id
 
@@ -250,9 +275,10 @@ describe('runFirstRunDialog', () => {
         apiKeyEnvironmentVariable: 'ANTHROPIC_API_KEY',
       }),
     ]);
-    deps.listModels = vi
-      .fn()
-      .mockResolvedValue([model('claude-haiku-4-5'), model('claude-sonnet-4-5', true)]);
+    deps.fetchModels = vi.fn().mockResolvedValue({
+      models: [model('claude-haiku-4-5'), model('claude-sonnet-4-5', true)],
+      status: 'live',
+    });
     configExists.mockReturnValue(true);
     // provider 0, model default, scope default (project), overwrite prompt -> 1 (Yes)
     deps.select = scriptedSelect([0, undefined, undefined, 1]);
@@ -272,9 +298,10 @@ describe('runFirstRunDialog', () => {
         apiKeyEnvironmentVariable: 'ANTHROPIC_API_KEY',
       }),
     ]);
-    deps.listModels = vi
-      .fn()
-      .mockResolvedValue([model('claude-haiku-4-5'), model('claude-sonnet-4-5', true)]);
+    deps.fetchModels = vi.fn().mockResolvedValue({
+      models: [model('claude-haiku-4-5'), model('claude-sonnet-4-5', true)],
+      status: 'live',
+    });
     configExists.mockReturnValue(true);
     // provider 0, model default, scope default (project), overwrite prompt -> 0 (No, the default)
     deps.select = scriptedSelect([0, undefined, undefined, 0]);
@@ -300,7 +327,7 @@ describe('runFirstRunDialog', () => {
         apiKeyEnvironmentVariable: 'ANTHROPIC_API_KEY',
       }),
     ]);
-    deps.listModels = vi.fn();
+    deps.fetchModels = vi.fn();
     // The very first (provider) select aborts — Esc on the first step raises the cancel sentinel
     // that the Ink selector throws (runInkSelect rejects with it).
     deps.select = vi.fn(() => Promise.reject(new SelectCancelledError()));
@@ -308,7 +335,7 @@ describe('runFirstRunDialog', () => {
     await runFirstRunDialog(deps);
 
     // Never advanced past step 1, and nothing was written or scaffolded.
-    expect(deps.listModels).not.toHaveBeenCalled();
+    expect(deps.fetchModels).not.toHaveBeenCalled();
     expect(writeConfig).not.toHaveBeenCalled();
     expect(ensureGslothDir).not.toHaveBeenCalled();
     expect(writeProjectReviewPreamble).not.toHaveBeenCalled();
@@ -325,9 +352,10 @@ describe('runFirstRunDialog', () => {
         apiKeyEnvironmentVariable: 'ANTHROPIC_API_KEY',
       }),
     ]);
-    deps.listModels = vi
-      .fn()
-      .mockResolvedValue([model('claude-haiku-4-5'), model('claude-sonnet-4-5', true)]);
+    deps.fetchModels = vi.fn().mockResolvedValue({
+      models: [model('claude-haiku-4-5'), model('claude-sonnet-4-5', true)],
+      status: 'live',
+    });
     // Provider (call 1) and model (call 2) are chosen; the scope select (call 3) is where the
     // user hits Ctrl+C, which the Ink selector surfaces as a rejected cancel sentinel.
     let call = 0;
@@ -359,9 +387,10 @@ describe('runFirstRunDialog', () => {
         apiKeyEnvironmentVariable: 'ANTHROPIC_API_KEY',
       }),
     ]);
-    deps.listModels = vi
-      .fn()
-      .mockResolvedValue([model('claude-haiku-4-5'), model('claude-sonnet-4-5', true)]);
+    deps.fetchModels = vi.fn().mockResolvedValue({
+      models: [model('claude-haiku-4-5'), model('claude-sonnet-4-5', true)],
+      status: 'live',
+    });
     configExists.mockReturnValue(true);
     // Only provider/model/scope selections; NO overwrite prompt is expected when force is set.
     const select = vi.fn(scriptedSelect([0, undefined, undefined]));
@@ -373,5 +402,91 @@ describe('runFirstRunDialog', () => {
     expect(select).toHaveBeenCalledTimes(3);
     expect(writeConfig).toHaveBeenCalledTimes(1);
     expect(vi.mocked(displaySuccess)).toHaveBeenCalledWith(expect.stringContaining('Configured'));
+  });
+
+  // CFG-21 — the model fetch is no longer silent (part a) and an attempted-and-failed fetch is
+  // surfaced honestly (part c), without over-firing for a by-design curated list.
+  describe('CFG-21 loading indicator + honest degrade', () => {
+    function availableOpenAi() {
+      return provider({
+        id: 'openai',
+        available: true,
+        apiKeyEnvironmentVariable: 'OPENAI_API_KEY',
+      });
+    }
+
+    it('routes the model fetch through the withProgress indicator seam (part a)', async () => {
+      deps.detectProviders = vi.fn().mockResolvedValue([availableOpenAi()]);
+      deps.fetchModels = vi
+        .fn()
+        .mockResolvedValue({ models: [model('gpt-5.5', true)], status: 'live' });
+      const withProgress = vi.fn((_label: string, run: () => Promise<unknown>) => run());
+      deps.withProgress = withProgress as unknown as FirstRunDialogDeps['withProgress'];
+      deps.select = scriptedSelect([0, undefined, undefined]);
+
+      await runFirstRunDialog(deps);
+
+      // The wait is never silent: the fetch ran inside withProgress with a labelled message.
+      expect(withProgress).toHaveBeenCalledTimes(1);
+      expect(withProgress.mock.calls[0][0]).toBe('Fetching models from openai…');
+      expect(deps.fetchModels).toHaveBeenCalledWith('openai');
+      expect(writeConfig).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows an honest degrade notice when a live fetch was attempted and fell back (part c)', async () => {
+      deps.detectProviders = vi.fn().mockResolvedValue([availableOpenAi()]);
+      // The live fetch failed → curated stub carried with status 'fallback'.
+      deps.fetchModels = vi
+        .fn()
+        .mockResolvedValue({ models: [model('gpt-5.5', true)], status: 'fallback' });
+      deps.select = scriptedSelect([0, undefined, undefined]);
+
+      await runFirstRunDialog(deps);
+
+      expect(vi.mocked(displayWarning)).toHaveBeenCalledWith(
+        "Couldn't reach openai; showing a short curated list."
+      );
+      // It still proceeds to configure from the curated list — a fallback is not an abort.
+      expect(writeConfig).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT show the degrade notice for a by-design curated list (kind:none / no key) (part c)', async () => {
+      deps.detectProviders = vi.fn().mockResolvedValue([
+        provider({
+          id: 'google-genai',
+          available: true,
+          apiKeyEnvironmentVariable: 'GOOGLE_API_KEY',
+        }),
+      ]);
+      // A kind:'none' provider never does a live query → status 'curated', not "couldn't reach".
+      deps.fetchModels = vi
+        .fn()
+        .mockResolvedValue({ models: [model('gemini-3.5-flash', true)], status: 'curated' });
+      deps.select = scriptedSelect([0, undefined, undefined]);
+
+      await runFirstRunDialog(deps);
+
+      expect(vi.mocked(displayWarning)).not.toHaveBeenCalledWith(
+        expect.stringContaining("Couldn't reach")
+      );
+      expect(writeConfig).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
+// CFG-21 — the default progress indicator's non-TTY branch. shouldUseTui is mocked false (top of
+// file), so canUseInkSelect() is false and makeDefaultProgress() prints a plain line instead of Ink.
+describe('makeDefaultProgress (CFG-21 part a, non-TTY path)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('prints a plain progress line and still returns the wrapped result', async () => {
+    const withProgress = makeDefaultProgress();
+
+    const result = await withProgress('Fetching models from OpenAI…', async () => 'RESULT');
+
+    expect(result).toBe('RESULT');
+    expect(vi.mocked(displayInfo)).toHaveBeenCalledWith('Fetching models from OpenAI…');
   });
 });

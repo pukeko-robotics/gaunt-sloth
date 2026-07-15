@@ -2,8 +2,10 @@ import { USER_PROJECT_CONFIG_JSON } from '@gaunt-sloth/core/constants.js';
 import {
   buildInitConfigContent,
   detectProviders,
-  listModels,
+  discoverModelsWithProvenance,
+  INTERACTIVE_MODEL_FETCH_TIMEOUT_MS,
   type DetectedProvider,
+  type ModelDiscoveryResult,
   type ModelInfo,
   type ProviderId,
 } from '@gaunt-sloth/core/providers/modelDiscovery.js';
@@ -55,7 +57,19 @@ export type SelectFn = (title: string, options: string[], defaultIndex: number) 
  */
 export interface FirstRunDialogDeps {
   detectProviders: typeof detectProviders;
-  listModels: typeof listModels;
+  /**
+   * CFG-21 — fetches the chosen provider's model list WITH its {@link ModelDiscoveryResult}
+   * provenance, baking in the generous interactive timeout by default. Returns `{ models, status }`
+   * so the dialog can surface an honest degrade notice when a live fetch was attempted and failed
+   * (`status: 'fallback'`) rather than silently swapping in a by-design curated list (`'curated'`).
+   */
+  fetchModels: (providerId: ProviderId) => Promise<ModelDiscoveryResult>;
+  /**
+   * CFG-21 — runs `run` while a visible "working" indicator is shown (an Ink spinner on an
+   * interactive TTY, a plain printed line otherwise), clearing it when `run` settles. The model
+   * fetch is routed through this seam so the wait is never silent and a test can assert it fired.
+   */
+  withProgress: <T>(label: string, run: () => Promise<T>) => Promise<T>;
   ensureGslothDir: typeof ensureGslothDir;
   writeProjectReviewPreamble: typeof writeProjectReviewPreamble;
   /** Resolves the config file path for the chosen scope (does not write). */
@@ -213,6 +227,24 @@ function makeDefaultSelect(ask: AskFn): SelectFn {
 }
 
 /**
+ * CFG-21 — the default {@link FirstRunDialogDeps.withProgress}: an Ink spinner while `run` is in
+ * flight when the environment can drive interactive Ink (the same activation policy as
+ * {@link makeDefaultSelect}), otherwise a plain printed line via {@link displayInfo} on the
+ * readline / non-TTY path. Either way the wait is visible, never silent. The Ink module is
+ * imported lazily so a readline-only run never loads React/Ink.
+ */
+export function makeDefaultProgress(): <T>(label: string, run: () => Promise<T>) => Promise<T> {
+  return async (label, run) => {
+    if (await canUseInkSelect()) {
+      const { runWithInkProgress } = await import('#src/tui/components/FetchProgress.js');
+      return runWithInkProgress(label, run);
+    }
+    displayInfo(label);
+    return run();
+  };
+}
+
+/**
  * CFG-2 — the first-run configuration dialog.
  *
  * Walks the user through: (1) picking a provider (usable ones first, detected via
@@ -238,7 +270,9 @@ export async function runFirstRunDialog(
     });
   const deps: FirstRunDialogDeps = {
     detectProviders,
-    listModels,
+    fetchModels: (providerId) =>
+      discoverModelsWithProvenance(providerId, { timeoutMs: INTERACTIVE_MODEL_FETCH_TIMEOUT_MS }),
+    withProgress: makeDefaultProgress(),
     ensureGslothDir,
     writeProjectReviewPreamble,
     resolveConfigPath: resolveConfigWritePath,
@@ -271,8 +305,14 @@ export async function runFirstRunDialog(
       );
     }
 
-    // 2. Model.
-    const models = await deps.listModels(provider.id);
+    // 2. Model. The live fetch can take a moment for a large cloud catalog (OpenRouter ~300
+    //    models), so show a visible indicator while it runs (CFG-21) instead of a silent pause,
+    //    and fetch with the generous interactive timeout (baked into deps.fetchModels) so a big
+    //    list is not lost to the short 2s probe race and silently replaced by a curated stub.
+    const { models, status } = await deps.withProgress(
+      `Fetching models from ${provider.label}…`,
+      () => deps.fetchModels(provider.id)
+    );
     let model: string;
     if (models.length === 0) {
       displayWarning(`No models discovered for ${provider.label}.`);
@@ -282,6 +322,13 @@ export async function runFirstRunDialog(
         return;
       }
     } else {
+      // CFG-21 — when a live fetch WAS attempted and fell back to the curated stub, say so, so a
+      // short curated list is never mistaken for the provider's full catalog. Fires ONLY on
+      // `status: 'fallback'` (attempted-and-failed) — never for a by-design `curated` list
+      // (`kind:'none'` provider or no API key present), and never on the empty-list path above.
+      if (status === 'fallback') {
+        displayWarning(`Couldn't reach ${provider.label}; showing a short curated list.`);
+      }
       const fallback = defaultModelIndex(models);
       const modelOptions = models.map((m) => `${m.preferred ? '⭐ ' : '   '}${m.id}`);
       model =
