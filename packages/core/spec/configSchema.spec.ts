@@ -154,6 +154,30 @@ describe('config schema (GS2-1 B1)', () => {
       expect(byPath['commands.pr.contentProvider']).toContain('contentSource');
     });
 
+    it('flags a removed per-command devTools key, naming builtInTools + the migration path (CFG-18)', () => {
+      const issues = findDeprecatedConfigIssues({
+        llm: { type: 'openai' },
+        commands: { code: { devTools: { run_tests: 'npm test' } } },
+      });
+      expect(issues).toHaveLength(1);
+      expect(issues[0].path).toBe('commands.code.devTools');
+      expect(issues[0].message).toContain('no longer supported in 2.0');
+      expect(issues[0].message).toContain('builtInTools');
+      expect(issues[0].message).toContain('gth config migrate');
+    });
+
+    it('validateRawGthConfig HARD-rejects commands.<cmd>.devTools (NOT a silent strip)', () => {
+      const result = validateRawGthConfig({
+        llm: { type: 'openai' },
+        commands: { exec: { devTools: { run_shell_command: { yolo: true } } } },
+      });
+      expect(result.ok).toBe(false);
+      expect(result.errorMessage).toContain('commands.exec.devTools');
+      expect(result.errorMessage).toContain('builtInTools');
+      // The removed shape is rejected, not doubled as an unknown-key warning.
+      expect(result.warnings).toEqual([]);
+    });
+
     it('does NOT flag a genuinely-unknown key or the canonical shapes', () => {
       expect(
         findDeprecatedConfigIssues({

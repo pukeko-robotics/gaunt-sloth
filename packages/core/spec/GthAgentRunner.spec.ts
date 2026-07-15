@@ -338,7 +338,9 @@ describe('GthAgentRunner', () => {
     // EXT-9 Tier-2: session-scoped allow-list config (persistence off so no disk writes).
     const ALLOWLIST_CONFIG = {
       streamOutput: true as const,
-      commands: { code: { devTools: { shell: { enabled: true, persistAllowlist: false } } } },
+      commands: {
+        code: { builtInTools: { run_shell_command: { enabled: true, persistAllowlist: false } } },
+      },
     };
 
     it('records a session-scoped approval, then auto-approves a variant without re-prompting', async () => {
@@ -515,11 +517,11 @@ describe('GthAgentRunner', () => {
       expect(runner.isSessionYolo()).toBe(false);
     });
 
-    it('init seeds the auto-approve flag ON from devTools.shellYolo config (EXT-12)', async () => {
+    it('init seeds the auto-approve flag ON from run_shell_command.yolo config (EXT-12)', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       await runner.init('code', {
         ...mockConfig,
-        commands: { code: { devTools: { shell: true, shellYolo: true } } },
+        commands: { code: { builtInTools: { run_shell_command: { enabled: true, yolo: true } } } },
       } as typeof mockConfig);
       // Config pre-enabled auto-approval, but the flag remains toggleable (/auto-approve off).
       expect(runner.isSessionYolo()).toBe(true);
@@ -567,7 +569,9 @@ describe('GthAgentRunner', () => {
       await runner.init('code', {
         ...mockConfig,
         streamOutput: true,
-        commands: { code: { devTools: { shell: { enabled: true, allowlist: false } } } },
+        commands: {
+          code: { builtInTools: { run_shell_command: { enabled: true, allowlist: false } } },
+        },
       } as any);
       const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
       runner.setToolApprovalCallback(human);
@@ -610,8 +614,8 @@ describe('GthAgentRunner', () => {
           streamOutput: true as const,
           commands: {
             code: {
-              devTools: {
-                shell: { enabled: true, allowlist: false, judge: true, ...extra },
+              builtInTools: {
+                run_shell_command: { enabled: true, allowlist: false, judge: true, ...extra },
               },
             },
           },
@@ -698,7 +702,9 @@ describe('GthAgentRunner', () => {
         llm,
         streamOutput: true,
         commands: {
-          code: { devTools: { shell: { enabled: true, allowlist: false, judge: true } } },
+          code: {
+            builtInTools: { run_shell_command: { enabled: true, allowlist: false, judge: true } },
+          },
         },
       } as any);
       const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
@@ -764,7 +770,9 @@ describe('GthAgentRunner', () => {
         llm: model,
         streamOutput: true,
         // shell enabled, but judge OFF (default) and allow-list off.
-        commands: { code: { devTools: { shell: { enabled: true, allowlist: false } } } },
+        commands: {
+          code: { builtInTools: { run_shell_command: { enabled: true, allowlist: false } } },
+        },
       } as any);
       const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
       runner.setToolApprovalCallback(human);
@@ -798,7 +806,9 @@ describe('GthAgentRunner', () => {
         // allow-list ON + judge ON.
         commands: {
           code: {
-            devTools: { shell: { enabled: true, persistAllowlist: false, judge: true } },
+            builtInTools: {
+              run_shell_command: { enabled: true, persistAllowlist: false, judge: true },
+            },
           },
         },
       } as any);

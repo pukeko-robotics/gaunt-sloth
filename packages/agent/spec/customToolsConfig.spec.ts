@@ -305,9 +305,9 @@ describe('Custom Tools Configuration', () => {
         },
         commands: {
           code: {
-            devTools: {
-              run_tests: 'npm test',
-              run_lint: 'npm run lint',
+            builtInTools: {
+              run_tests: { command: 'npm test' },
+              run_lint: { command: 'npm run lint' },
             },
           },
         },
@@ -330,8 +330,8 @@ describe('Custom Tools Configuration', () => {
         },
         commands: {
           code: {
-            devTools: {
-              run_tests: 'npm test',
+            builtInTools: {
+              run_tests: { command: 'npm test' },
             },
             customTools: {
               code_custom: {

@@ -282,41 +282,45 @@ describe('askCommand', () => {
     expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
   });
 
-  it('applyAskWriteMode upgrades filesystem to all, sets askWriteMode, warns, and inherits exec devTools', async () => {
+  it('applyAskWriteMode upgrades filesystem to all, sets askWriteMode, warns, and inherits exec builtInTools', async () => {
     const { applyAskWriteMode } = await import('#src/commands/askCommand.js');
     const cfg = {
       ...mockConfig,
       commands: {
         ask: { filesystem: 'read' },
-        exec: { devTools: { run_shell_command: true } },
+        exec: { builtInTools: { run_shell_command: true } },
       },
     } as any;
     const result = applyAskWriteMode(cfg, { write: true });
 
     expect(result.askWriteMode).toBe(true);
     expect(result.commands.ask.filesystem).toBe('all');
-    // Dev tools are inherited from commands.exec so the user need not configure commands.ask.devTools.
-    expect(result.commands.ask.devTools).toEqual({ run_shell_command: true });
+    // Dev/shell tools are inherited from commands.exec.builtInTools so the user need not configure
+    // commands.ask separately (CFG-18: dev tools live in the unified builtInTools registry).
+    expect(result.commands.ask.builtInTools).toEqual({ run_shell_command: true });
     expect(consoleUtilsMock.displayWarning).toHaveBeenCalledTimes(1);
   });
 
-  it('applyAskWriteMode falls back to code devTools when exec has none', async () => {
+  it('applyAskWriteMode falls back to code builtInTools when exec has none', async () => {
     const { applyAskWriteMode } = await import('#src/commands/askCommand.js');
     const cfg = {
       ...mockConfig,
       commands: {
         ask: { filesystem: 'read' },
-        code: { devTools: { run_shell_command: true } },
+        code: { builtInTools: { run_shell_command: true } },
       },
     } as any;
     const result = applyAskWriteMode(cfg, { write: true });
-    expect(result.commands.ask.devTools).toEqual({ run_shell_command: true });
+    expect(result.commands.ask.builtInTools).toEqual({ run_shell_command: true });
   });
 
   it('ask --write passes the write-enabled config (filesystem all + askWriteMode) to runSingleShot', async () => {
     configMock.initConfig.mockResolvedValue({
       ...mockConfig,
-      commands: { ask: { filesystem: 'read' }, exec: { devTools: { run_shell_command: true } } },
+      commands: {
+        ask: { filesystem: 'read' },
+        exec: { builtInTools: { run_shell_command: true } },
+      },
     });
     const { askCommand } = await import('#src/commands/askCommand.js');
     const program = new Command();
@@ -326,6 +330,6 @@ describe('askCommand', () => {
     const calledConfig = runSingleShot.mock.calls[0][3];
     expect(calledConfig.askWriteMode).toBe(true);
     expect(calledConfig.commands.ask.filesystem).toBe('all');
-    expect(calledConfig.commands.ask.devTools).toEqual({ run_shell_command: true });
+    expect(calledConfig.commands.ask.builtInTools).toEqual({ run_shell_command: true });
   });
 });

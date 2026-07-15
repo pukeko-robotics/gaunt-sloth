@@ -4,7 +4,15 @@
  */
 import GthFileSystemToolkit from '#src/tools/GthFileSystemToolkit.js';
 import { StructuredToolInterface } from '@langchain/core/tools';
-import { GthDevToolsConfig, GthConfig, CustomToolsConfig } from '@gaunt-sloth/core/config.js';
+import {
+  GthDevToolsConfig,
+  GthConfig,
+  CustomToolsConfig,
+  getEffectiveDevToolsConfig,
+  normalizeBuiltInTools,
+  isBuiltInToolEntryEnabled,
+  DEV_TOOL_NAMES,
+} from '@gaunt-sloth/core/config.js';
 import { displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { GthCommand } from '@gaunt-sloth/core/core/types.js';
@@ -50,16 +58,11 @@ export async function getDefaultTools(
   );
   const builtInTools = await getBuiltInTools(config);
   // Dev tools (run commands etc.) are available to the interactive `code` command and to the
-  // scripted `exec` command — both are "do-the-job" runs — each via its own per-command config.
-  // `ask --write` (config.askWriteMode) opts `ask` into the same do-the-job tools, reusing the
-  // devTools config the --write flag copied onto commands.ask.
+  // scripted `exec` command — both are "do-the-job" runs. `ask --write` (config.askWriteMode) opts
+  // `ask` into the same do-the-job tools. CFG-18: the dev/shell config is resolved from the unified
+  // `builtInTools` registry by the shared core resolver (was per-command `devTools`).
   const askWrite = command === 'ask' && config.askWriteMode === true;
-  const devToolConfig =
-    command === 'exec'
-      ? config.commands?.exec?.devTools
-      : askWrite
-        ? config.commands?.ask?.devTools
-        : config.commands?.code?.devTools;
+  const devToolConfig = getEffectiveDevToolsConfig(config, command);
   const devTools = await filterDevTools(askWrite ? 'code' : command, devToolConfig);
   const customTools = getCustomTools(config, command);
   return [...filesystemTools, ...devTools, ...customTools, ...builtInTools];
@@ -181,11 +184,18 @@ function filterFilesystemTools(
 async function getBuiltInTools(config: GthConfig): Promise<StructuredToolInterface[]> {
   const tools: StructuredToolInterface[] = [];
 
-  if (!config.builtInTools) {
-    return tools;
-  }
+  // CFG-18: `builtInTools` may be a string[] or the widened registry — normalize to a name→value
+  // lookup. Dev/shell tools (run_*, run_shell_command) are emitted by GthDevToolkit via the dev
+  // bucket, so skip them here (a registry entry for them is legitimate, not an unknown built-in).
+  const registry = normalizeBuiltInTools(config.builtInTools);
 
-  for (const toolName of config.builtInTools) {
+  for (const [toolName, value] of Object.entries(registry)) {
+    if (DEV_TOOL_NAMES.includes(toolName)) {
+      continue;
+    }
+    if (!isBuiltInToolEntryEnabled(value)) {
+      continue;
+    }
     if (toolName in AVAILABLE_BUILT_IN_TOOLS) {
       try {
         const tool = await import(

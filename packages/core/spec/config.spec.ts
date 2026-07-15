@@ -1502,7 +1502,7 @@ describe('config', async () => {
       expect(config.builtInTools).toEqual(['jira', 'github']);
     });
 
-    it('Should handle configuration with devTools', async () => {
+    it('Should handle configuration with dev tools in the builtInTools registry', async () => {
       const jsonConfig = {
         llm: {
           type: 'vertexai',
@@ -1512,11 +1512,11 @@ describe('config', async () => {
         commands: {
           code: {
             filesystem: 'all',
-            builtInTools: ['jira', 'dev-tools'],
-            devTools: {
-              run_tests: 'npm test',
-              run_lint: 'npm run lint',
-              run_build: 'npm run build',
+            // CFG-18: dev/shell tools are configured under the unified builtInTools registry.
+            builtInTools: {
+              run_tests: { command: 'npm test' },
+              run_lint: { command: 'npm run lint' },
+              run_build: { command: 'npm run build' },
             },
           },
         },
@@ -1530,10 +1530,10 @@ describe('config', async () => {
       const { tryJsonConfig } = await import('#src/config.js');
       const config = await tryJsonConfig(jsonConfig, {});
 
-      expect(config.commands?.code?.devTools).toEqual({
-        run_tests: 'npm test',
-        run_lint: 'npm run lint',
-        run_build: 'npm run build',
+      expect(config.commands?.code?.builtInTools).toEqual({
+        run_tests: { command: 'npm test' },
+        run_lint: { command: 'npm run lint' },
+        run_build: { command: 'npm run build' },
       });
     });
 

@@ -148,7 +148,7 @@ describe('Config Tool Functions', () => {
       const result = await getDefaultTools(
         {
           filesystem: 'none',
-          commands: { exec: { devTools: { run_shell_command: true } } },
+          commands: { exec: { builtInTools: { run_shell_command: true } } },
         } as Partial<GthConfig> as GthConfig,
         'exec'
       );
@@ -159,7 +159,7 @@ describe('Config Tool Functions', () => {
       const result = await getDefaultTools(
         {
           filesystem: 'read',
-          commands: { ask: { devTools: { run_shell_command: true } } },
+          commands: { ask: { builtInTools: { run_shell_command: true } } },
         } as Partial<GthConfig> as GthConfig,
         'ask'
       );
@@ -171,7 +171,7 @@ describe('Config Tool Functions', () => {
         {
           filesystem: 'all',
           askWriteMode: true,
-          commands: { ask: { devTools: { run_shell_command: true } } },
+          commands: { ask: { builtInTools: { run_shell_command: true } } },
         } as Partial<GthConfig> as GthConfig,
         'ask'
       );

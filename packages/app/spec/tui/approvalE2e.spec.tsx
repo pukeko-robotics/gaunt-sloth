@@ -163,7 +163,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     // Shell gate enabled, allow-list + judge OFF → the command escalates straight to the human.
     const { runner, bridge, tuiAgent, command } = wireRunner(agent, {
       ...FULL_CONFIG,
-      commands: { code: { devTools: { shell: { enabled: true, allowlist: false } } } },
+      commands: { code: { builtInTools: { run_shell_command: { enabled: true, allowlist: false } } } },
     } as Partial<GthConfig>);
     await runner.init(command as never, { ...FULL_CONFIG } as GthConfig);
     runner.setToolApprovalCallback((pending) => bridge.request(pending));
@@ -206,7 +206,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     });
     const { runner, bridge, tuiAgent, command } = wireRunner(agent, {
       ...FULL_CONFIG,
-      commands: { code: { devTools: { shell: { enabled: true, allowlist: false } } } },
+      commands: { code: { builtInTools: { run_shell_command: { enabled: true, allowlist: false } } } },
     } as Partial<GthConfig>);
     await runner.init(command as never, { ...FULL_CONFIG } as GthConfig);
     runner.setToolApprovalCallback((pending) => bridge.request(pending));
@@ -260,7 +260,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     const { runner, bridge, tuiAgent } = wireRunner(agent, {}, 'code');
     await runner.init('code' as never, {
       ...FULL_CONFIG,
-      commands: { code: { devTools: { shell: { enabled: true, persistAllowlist: false } } } },
+      commands: { code: { builtInTools: { run_shell_command: { enabled: true, persistAllowlist: false } } } },
     } as GthConfig);
 
     let promptCount = 0;
@@ -314,7 +314,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     const { runner, bridge, tuiAgent } = wireRunner(agent, {}, 'code');
     await runner.init('code' as never, {
       ...FULL_CONFIG,
-      commands: { code: { devTools: { shell: { enabled: true, allowlist: false } } } },
+      commands: { code: { builtInTools: { run_shell_command: { enabled: true, allowlist: false } } } },
     } as GthConfig);
 
     let promptCount = 0;
@@ -368,7 +368,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       ...FULL_CONFIG,
       llm: judgeLlm,
       commands: {
-        code: { devTools: { shell: { enabled: true, allowlist: false, judge: true } } },
+        code: { builtInTools: { run_shell_command: { enabled: true, allowlist: false, judge: true } } },
       },
     } as GthConfig);
     runner.setToolApprovalCallback((pending) => bridge.request(pending));
