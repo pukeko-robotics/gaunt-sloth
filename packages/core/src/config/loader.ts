@@ -814,6 +814,12 @@ async function readRawConfigAtPath(path: string): Promise<Record<string, unknown
  * Global config read for the read-side {@link validateConfig}: mirrors
  * {@link loadGlobalRawConfig}'s lookup order (JSON → JS → MJS) but does NOT validate or
  * `exit` — it just returns the raw object + a source label so the validator owns the verdict.
+ *
+ * Ignore-on-error, exactly like {@link loadGlobalRawConfig}: a parse/module failure of the
+ * global file is swallowed (debug-logged, then `undefined`), NOT surfaced as a hard error. A
+ * real run treats a broken global config as absent (see `loadGlobalRawConfig`'s catch), so the
+ * diagnostic must too — otherwise a clean project + an unparseable global would fail
+ * `gth config validate` while the run silently ignores it (the inverse of the GS2-29 bug).
  */
 async function loadGlobalRawConfigUnvalidated(): Promise<
   { raw: Record<string, unknown>; label: string } | undefined
@@ -821,59 +827,108 @@ async function loadGlobalRawConfigUnvalidated(): Promise<
   const jsonPath = getGlobalGslothConfigReadPath(USER_PROJECT_CONFIG_JSON);
   if (existsSync(jsonPath)) {
     const label = `${USER_PROJECT_CONFIG_JSON} (global)`;
-    return {
-      raw: parseJsonc(readFileSync(jsonPath, 'utf8'), label) as Record<string, unknown>,
-      label,
-    };
+    try {
+      return {
+        raw: parseJsonc(readFileSync(jsonPath, 'utf8'), label) as Record<string, unknown>,
+        label,
+      };
+    } catch (e) {
+      displayDebug(e instanceof Error ? e : String(e));
+      return undefined;
+    }
   }
   for (const filename of [USER_PROJECT_CONFIG_JS, USER_PROJECT_CONFIG_MJS]) {
     const modulePath = getGlobalGslothConfigReadPath(filename);
     if (existsSync(modulePath)) {
-      const imported = await importExternalFile(modulePath);
-      return {
-        raw: (await imported.configure()) as Record<string, unknown>,
-        label: `${filename} (global)`,
-      };
+      try {
+        const imported = await importExternalFile(modulePath);
+        return {
+          raw: (await imported.configure()) as Record<string, unknown>,
+          label: `${filename} (global)`,
+        };
+      } catch (e) {
+        displayDebug(e instanceof Error ? e : String(e));
+        return undefined;
+      }
     }
   }
   return undefined;
 }
 
 /**
- * The outcome of `gth config validate`: whether a config was found, where, and whether it
- * validates. Pure/read-side — it neither builds an LLM nor mutates process globals, so it can
- * report a verdict without the run-path's side effects. The command layer turns this into
- * console output + an exit code.
+ * One config LAYER's validation outcome inside a {@link ConfigValidationReport}: the pure
+ * read-side result ({@link validateRawGthConfig}) plus the source label so a consumer can name
+ * WHICH file carried a warning/error (the project path, or `"<name> (global)"`).
  */
-export interface ConfigValidationReport extends RawConfigValidationResult {
-  /** False when no project or global config exists within the discovery boundary. */
+export interface ConfigLayerValidationReport extends RawConfigValidationResult {
+  /** The resolved config path (project layer) or `"<name> (global)"` (global layer). */
+  sourceLabel: string;
+}
+
+/**
+ * The outcome of `gth config validate`: whether any config was found, and the per-layer verdict
+ * for EVERY layer a run would validate. Pure/read-side — it neither builds an LLM nor mutates
+ * process globals, so it can report a verdict without the run-path's side effects. The command
+ * layer turns this into console output + an exit code.
+ *
+ * GS2-29 — `validateConfig` mirrors the layer set `initConfig` validates: the discovered PROJECT
+ * layer (if any) AND the GLOBAL layer (if any). A run validates both and exits(1) if EITHER
+ * carries a problem, so a removed shape in the global config (with a clean project config) shows
+ * up here exactly as the run would reject it. Both layers are kept in {@link layers} (in run
+ * order) so the offending file is always identifiable.
+ */
+export interface ConfigValidationReport {
+  /** False when neither a project nor a global config exists within the discovery boundary. */
   found: boolean;
-  /** The resolved config path (or `"<name> (global)"`) when one was found. */
-  sourceLabel?: string;
+  /** True only when a config was found AND every present layer validates OK. */
+  ok: boolean;
+  /**
+   * Each config layer a run would load + validate, in run order: the discovered PROJECT layer
+   * (if any) first, then the GLOBAL layer (if any). Empty when `found` is false.
+   */
+  layers: ConfigLayerValidationReport[];
 }
 
 /**
  * Locate and validate the effective raw config against the schema WITHOUT building the LLM
- * or merging defaults (the read-side of GS2-1). Honours `--config`, up-tree discovery, and
- * the identity profile via {@link findProjectConfigPath}, falling back to a standalone global
- * config (CFG-8 order) when no project config exists. A JSONC/module parse failure is thrown
- * to the caller (surfaced as a clear "invalid config" error + non-zero exit).
+ * or merging defaults (the read-side of GS2-1). Honours `--config`, up-tree discovery, and the
+ * identity profile via {@link findProjectConfigPath}.
+ *
+ * GS2-29 — validates the SAME layer set a real run does: the discovered PROJECT layer (if any)
+ * AND the GLOBAL layer (if any), mirroring `initConfig`'s `validateRawConfigLayer(project)` +
+ * `applyGlobalConfigBase` → `loadGlobalRawConfig(global)`. Each present layer is validated
+ * independently ({@link validateRawGthConfig}) and its outcome recorded in {@link
+ * ConfigValidationReport.layers}, so a removed shape in EITHER file is reported (labelled with
+ * its source) rather than under-reported.
+ *
+ * A PROJECT-layer JSONC/module parse failure is thrown to the caller (surfaced as a clear
+ * "invalid config" error + non-zero exit). A GLOBAL-layer parse failure is IGNORED (the global
+ * layer is treated as absent), exactly as a run treats it — see {@link
+ * loadGlobalRawConfigUnvalidated}.
  */
 export async function validateConfig(
   commandLineConfigOverrides: CommandLineConfigOverrides
 ): Promise<ConfigValidationReport> {
+  const layers: ConfigLayerValidationReport[] = [];
+
+  // Project layer first (run order): initConfig validates the discovered project config before
+  // applying the global base. A parse failure here propagates (surfaced by the caller).
   const discovered = findProjectConfigPath(commandLineConfigOverrides);
   if (discovered) {
     const raw = await readRawConfigAtPath(discovered.path);
-    return { found: true, sourceLabel: discovered.path, ...validateRawGthConfig(raw) };
+    layers.push({ sourceLabel: discovered.path, ...validateRawGthConfig(raw) });
   }
 
+  // Global layer next: a run ALWAYS applies it (applyGlobalConfigBase in the project path,
+  // loadGlobalRawConfig in the no-project path), so the diagnostic must validate it too — this is
+  // the layer the previous single-layer validateConfig skipped whenever a project config existed.
   const globalRaw = await loadGlobalRawConfigUnvalidated();
   if (globalRaw) {
-    return { found: true, sourceLabel: globalRaw.label, ...validateRawGthConfig(globalRaw.raw) };
+    layers.push({ sourceLabel: globalRaw.label, ...validateRawGthConfig(globalRaw.raw) });
   }
 
-  return { found: false, ok: false, warnings: [] };
+  // Vacuous-truth guard: `every` is true on an empty array, so gate `ok` on a config existing.
+  return { found: layers.length > 0, ok: layers.length > 0 && layers.every((l) => l.ok), layers };
 }
 
 /**
