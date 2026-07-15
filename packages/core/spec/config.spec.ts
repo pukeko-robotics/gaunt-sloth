@@ -455,7 +455,9 @@ describe('config', async () => {
       expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
     });
 
-    it('Should pre-map deprecated contentProvider to contentSource and warn (B3)', async () => {
+    it('Should HARD-reject deprecated *Provider* names naming their *Source* fix (GS2-28)', async () => {
+      // 2.0 dropped back-compat coercion: a deprecated `*Provider*` name (root or per-command)
+      // is a validation error that names the canonical `*Source*` replacement, not a remap.
       const jsonConfig = {
         llm: { type: 'vertexai' },
         contentProvider: 'github',
@@ -479,23 +481,60 @@ describe('config', async () => {
       }));
 
       const { initConfig } = await import('#src/config.js');
-      const config = await initConfig({});
+      try {
+        // The mocked exit() does not stop execution, so guard the subsequent throw.
+        await initConfig({});
+      } catch {
+        // Expected: downstream code may throw after the mocked exit(1).
+      }
 
-      // Deprecated config-file keys resolve one-way to canonical; the deprecated runtime
-      // fields no longer exist on the effective config (B3 clean break).
-      expect(config.contentSource).toBe('github');
-      expect('contentProvider' in config).toBe(false);
-      expect(config.commands?.pr?.requirementSource).toBe('jira');
-      expect('requirementsProvider' in (config.commands?.pr ?? {})).toBe(false);
-
-      // A deprecation warning is emitted per occurrence (root + per-command).
-      expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
+      const errorOutput = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
+      expect(errorOutput).toContain('Invalid configuration');
+      expect(errorOutput).toContain('contentSource'); // root contentProvider → contentSource
+      expect(errorOutput).toContain('commands.pr.requirementsProvider');
+      expect(errorOutput).toContain('requirementSource'); // per-command fix named
+      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      // A removed shape errors; it is NOT remapped-and-warned.
+      expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalledWith(
         expect.stringContaining('"contentProvider"')
       );
-      expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
-        expect.stringContaining('"requirementsProvider"')
-      );
-      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+    });
+
+    it('Should HARD-reject a top-level command key naming commands.<cmd> (GS2-28)', async () => {
+      // A command config placed at the config ROOT (the removed pre-2.0 shape) must move under
+      // `commands.<cmd>`; it hard-fails rather than being kept as a warn-only unknown key.
+      const jsonConfig = {
+        llm: { type: 'vertexai' },
+        pr: { contentSource: 'github' },
+      } as unknown as RawGthConfig;
+
+      fsMock.existsSync.mockImplementation((path: string) => {
+        return path && path.includes('.gsloth.config.json');
+      });
+      fsMock.readFileSync.mockImplementation((path: string) => {
+        if (path && path.includes('.gsloth.config.json')) return JSON.stringify(jsonConfig);
+        return '';
+      });
+      fileUtilsMock.getGslothConfigReadPath.mockImplementation((filename: string) => {
+        return `/mock/read/${filename}`;
+      });
+
+      vi.doMock('#src/providers/vertexai.js', () => ({
+        processJsonConfig: vi.fn().mockResolvedValue({ type: 'vertexai' }),
+        postProcessJsonConfig: undefined,
+      }));
+
+      const { initConfig } = await import('#src/config.js');
+      try {
+        await initConfig({});
+      } catch {
+        // Expected: downstream code may throw after the mocked exit(1).
+      }
+
+      const errorOutput = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
+      expect(errorOutput).toContain('Invalid configuration');
+      expect(errorOutput).toContain('commands.pr');
+      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
     });
 
     it('Should fail with a path-scoped error and exit on schema type mismatch (B1)', async () => {

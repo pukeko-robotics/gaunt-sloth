@@ -68,11 +68,40 @@ describe('validateConfig (GS2-1 `gth config validate`)', () => {
     expect(report.warnings.some((w) => w.includes('totallyMadeUpKey'))).toBe(true);
   });
 
-  it('warns on a deprecated key name (mapped, not failed)', async () => {
+  it('HARD-rejects a deprecated *Provider* name, naming its *Source* replacement (GS2-28)', async () => {
     project('{"llm":{"type":"openai"},"contentProvider":"github"}');
     const report = await validateConfig({});
+    expect(report.ok).toBe(false);
+    expect(report.errorMessage).toContain('contentSource');
+    // The removed shape errors; it is not doubled as an unknown-key warning.
+    expect(report.warnings).toEqual([]);
+  });
+
+  it('HARD-rejects a deprecated *Provider* name inside commands.<name> (GS2-28)', async () => {
+    project('{"llm":{"type":"openai"},"commands":{"pr":{"requirementsProvider":"jira"}}}');
+    const report = await validateConfig({});
+    expect(report.ok).toBe(false);
+    expect(report.errorMessage).toContain('commands.pr.requirementsProvider');
+    expect(report.errorMessage).toContain('requirementSource');
+  });
+
+  it('HARD-rejects a top-level command key, naming commands.<cmd> (GS2-28)', async () => {
+    project('{"llm":{"type":"openai"},"pr":{"contentSource":"github"},"review":{}}');
+    const report = await validateConfig({});
+    expect(report.ok).toBe(false);
+    expect(report.errorMessage).toContain('commands.pr');
+    expect(report.errorMessage).toContain('commands.review');
+  });
+
+  it('accepts the canonical shapes clean (commands.pr, contentSource, rating.enabled)', async () => {
+    project(
+      '{"llm":{"type":"openai"},"contentSource":"file",' +
+        '"commands":{"pr":{"contentSource":"github","rating":{"enabled":false}}}}'
+    );
+    const report = await validateConfig({});
     expect(report.ok).toBe(true);
-    expect(report.warnings.some((w) => w.includes('contentProvider'))).toBe(true);
+    expect(report.errorMessage).toBeUndefined();
+    expect(report.warnings).toEqual([]);
   });
 
   it('throws a clear error on a malformed config file', async () => {

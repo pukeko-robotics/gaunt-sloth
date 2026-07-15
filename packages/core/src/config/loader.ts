@@ -21,9 +21,11 @@ import {
   setConsoleLevel,
 } from '#src/utils/consoleUtils.js';
 import {
+  findDeprecatedConfigIssues,
   findUnknownTopLevelKeys,
   formatConfigValidationError,
-  preMapDeprecatedConfigNames,
+  formatDeprecatedConfigIssues,
+  isRecordConfig,
   rawGthConfigSchema,
   validateRawGthConfig,
   type RawConfigValidationResult,
@@ -58,36 +60,48 @@ import type {
  * config shape.
  *
  * Steps, in order:
- * 1. B3 pre-map: map deprecated key names one-way to their canonical names (root +
- *    per-command) via {@link preMapDeprecatedConfigNames}, emitting a deprecation
- *    `displayWarning` for each occurrence. This runs FIRST so renamed keys are not
- *    later mistaken for unknown keys.
+ * 1. Deprecated-shape reject (GS2-28): a removed pre-2.0 shape — a top-level command key
+ *    or a deprecated `*Provider*` name (root + per-command), detected by
+ *    {@link findDeprecatedConfigIssues} — is a HARD error naming the canonical replacement +
+ *    migration path, then exit. 2.0 dropped back-compat coercion, so these fail rather than
+ *    remap. Runs FIRST so a deprecated name never merely surfaces as an unknown-key warning.
  * 2. Unknown top-level keys: warn (do NOT fail) so likely typos are surfaced while
  *    forward-compatible / extension keys still pass through untouched.
  * 3. Schema parse: on a genuine type mismatch on a known field, emit a friendly,
  *    path-scoped error and exit (matching the loader's existing invalid-config
  *    behaviour). Validation is shape-only — the loose schema preserves unknown keys,
- *    so the original `raw` (pre-mapped) is returned unchanged on success.
+ *    so the original `raw` is returned unchanged on success.
  *
- * @param raw The freshly loaded config layer (mutated in place by the pre-map).
+ * @param raw The freshly loaded config layer (read-only here).
  * @param sourceLabel Human-readable source name for messages (e.g. the filename).
  */
 function validateRawConfigLayer<T extends Record<string, unknown>>(raw: T, sourceLabel: string): T {
-  const { config, warnings } = preMapDeprecatedConfigNames(raw);
-  for (const warning of warnings) {
-    displayWarning(warning);
+  // Only an object config can carry deprecated/unknown keys; a null/array/primitive config skips
+  // the scans (they'd throw a raw TypeError) and falls to safeParse, which emits a clean
+  // "expected object" error + exit — never a coercion to {} (which would wrongly pass).
+  if (isRecordConfig(raw)) {
+    const deprecatedIssues = findDeprecatedConfigIssues(raw);
+    if (deprecatedIssues.length > 0) {
+      displayError(
+        `Invalid configuration in ${sourceLabel}:\n${formatDeprecatedConfigIssues(deprecatedIssues)}`
+      );
+      exit(1);
+      // Unreachable past exit(1) in production; keeps the mocked-exit test path from falling
+      // through into the schema parse below.
+      return raw;
+    }
+
+    const unknownKeys = findUnknownTopLevelKeys(raw);
+    if (unknownKeys.length > 0) {
+      displayWarning(
+        `Unknown top-level config ${unknownKeys.length === 1 ? 'key' : 'keys'} in ${sourceLabel}: ` +
+          `${unknownKeys.join(', ')}. ${unknownKeys.length === 1 ? 'It is' : 'They are'} kept as-is ` +
+          'but ignored by Gaunt Sloth; check for typos.'
+      );
+    }
   }
 
-  const unknownKeys = findUnknownTopLevelKeys(config);
-  if (unknownKeys.length > 0) {
-    displayWarning(
-      `Unknown top-level config ${unknownKeys.length === 1 ? 'key' : 'keys'} in ${sourceLabel}: ` +
-        `${unknownKeys.join(', ')}. ${unknownKeys.length === 1 ? 'It is' : 'They are'} kept as-is ` +
-        'but ignored by Gaunt Sloth; check for typos.'
-    );
-  }
-
-  const result = rawGthConfigSchema.safeParse(config);
+  const result = rawGthConfigSchema.safeParse(raw);
   if (!result.success) {
     displayError(
       `Invalid configuration in ${sourceLabel}:\n${formatConfigValidationError(result.error)}`
@@ -95,7 +109,7 @@ function validateRawConfigLayer<T extends Record<string, unknown>>(raw: T, sourc
     exit(1);
   }
 
-  return config;
+  return raw;
 }
 
 /**
