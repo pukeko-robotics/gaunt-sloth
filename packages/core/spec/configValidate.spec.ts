@@ -13,12 +13,20 @@ import { resolve } from 'node:path';
 // vi.hoisted so the mock fn exists when loader.ts is statically imported below (which pulls in
 // globalConfigUtils and triggers the factory during module evaluation, before a plain top-level
 // const would be initialized).
-const { getGlobalGslothConfigReadPathMock } = vi.hoisted(() => ({
+const { getGlobalGslothConfigReadPathMock, displayWarningMock } = vi.hoisted(() => ({
   getGlobalGslothConfigReadPathMock: vi.fn<(_filename: string) => string>(),
+  displayWarningMock: vi.fn<(_message: string) => void>(),
 }));
 vi.mock('#src/utils/globalConfigUtils.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#src/utils/globalConfigUtils.js')>();
   return { ...actual, getGlobalGslothConfigReadPath: getGlobalGslothConfigReadPathMock };
+});
+// GS2-29 parity — a present-but-unparseable GLOBAL config must surface a user-facing warning
+// (mirroring a real run's loadGlobalRawConfig), not stay silent. Override ONLY `displayWarning`
+// so we can assert it; every other console fn stays real (minimal blast radius on this real-fs file).
+vi.mock('#src/utils/consoleUtils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#src/utils/consoleUtils.js')>();
+  return { ...actual, displayWarning: displayWarningMock };
 });
 
 import { validateConfig } from '#src/config/loader.js';
@@ -31,6 +39,7 @@ describe('validateConfig (GS2-1 `gth config validate`)', () => {
   const origInitCwd = process.env.INIT_CWD;
 
   beforeEach(() => {
+    vi.resetAllMocks(); // AGENTS.md — reset first; re-apply the read-path impl below.
     root = mkdtempSync(resolve(tmpdir(), 'gsloth-validate-'));
     // A dedicated, EMPTY global dir per test: `getGlobalGslothConfigReadPath('<name>')` resolves
     // inside it, so with no global file written the global layer is simply absent (the historical
@@ -215,6 +224,8 @@ describe('validateConfig (GS2-1 `gth config validate`)', () => {
       expect(report.layers).toHaveLength(2);
       expect(report.layers.every((l) => l.ok)).toBe(true);
       expect(report.layers.map((l) => l.sourceLabel)).toContain(GLOBAL_JSON_LABEL);
+      // A readable global must NOT trigger the "failed to read global config" advisory.
+      expect(displayWarningMock).not.toHaveBeenCalled();
     });
 
     it('reports a deprecated shape in a global-only config (no project config)', async () => {
@@ -258,6 +269,23 @@ describe('validateConfig (GS2-1 `gth config validate`)', () => {
       expect(report.ok).toBe(true);
       expect(report.layers).toHaveLength(1);
       expect(report.layers[0].sourceLabel).not.toBe(GLOBAL_JSON_LABEL);
+    });
+
+    it('SURFACES a warning for a present-but-unparseable global (parity with a run, verdict stays ok)', async () => {
+      project('{"llm":{"type":"openai"}}');
+      const globalPath = global('{ this is not valid json');
+
+      const report = await validateConfig({});
+
+      // The read-side must not stay silent about a broken global the way it did before GS2-29: a
+      // real run's loadGlobalRawConfig emits this exact displayWarning while ignoring the value.
+      expect(displayWarningMock).toHaveBeenCalledWith(
+        `Failed to read global config from ${globalPath}, ignoring it.`
+      );
+      // Verdict is unchanged — the broken global is treated as absent, so a clean project still ok.
+      expect(report.ok).toBe(true);
+      expect(report.found).toBe(true);
+      expect(report.layers).toHaveLength(1);
     });
   });
 });

@@ -816,10 +816,15 @@ async function readRawConfigAtPath(path: string): Promise<Record<string, unknown
  * `exit` — it just returns the raw object + a source label so the validator owns the verdict.
  *
  * Ignore-on-error, exactly like {@link loadGlobalRawConfig}: a parse/module failure of the
- * global file is swallowed (debug-logged, then `undefined`), NOT surfaced as a hard error. A
- * real run treats a broken global config as absent (see `loadGlobalRawConfig`'s catch), so the
- * diagnostic must too — otherwise a clean project + an unparseable global would fail
- * `gth config validate` while the run silently ignores it (the inverse of the GS2-29 bug).
+ * global file is treated as an ABSENT global (returns `undefined`), NOT a hard error — a real
+ * run does the same, so the diagnostic must too, else a clean project + an unparseable global
+ * would fail `gth config validate` while the run keeps going (the inverse of the GS2-29 bug).
+ *
+ * The failure is BOTH debug-logged AND surfaced as a user-facing `displayWarning` with the same
+ * message `loadGlobalRawConfig` emits (`Failed to read global config from <path>, ignoring it.`).
+ * A run warns the user while ignoring the broken global's VALUE; matching that message is what
+ * keeps `gth config validate` a faithful mirror of the run rather than staying silent about a
+ * problem the run flags.
  */
 async function loadGlobalRawConfigUnvalidated(): Promise<
   { raw: Record<string, unknown>; label: string } | undefined
@@ -834,6 +839,7 @@ async function loadGlobalRawConfigUnvalidated(): Promise<
       };
     } catch (e) {
       displayDebug(e instanceof Error ? e : String(e));
+      displayWarning(`Failed to read global config from ${jsonPath}, ignoring it.`);
       return undefined;
     }
   }
@@ -848,6 +854,7 @@ async function loadGlobalRawConfigUnvalidated(): Promise<
         };
       } catch (e) {
         displayDebug(e instanceof Error ? e : String(e));
+        displayWarning(`Failed to read global config from ${modulePath}, ignoring it.`);
         return undefined;
       }
     }
@@ -902,8 +909,9 @@ export interface ConfigValidationReport {
  * its source) rather than under-reported.
  *
  * A PROJECT-layer JSONC/module parse failure is thrown to the caller (surfaced as a clear
- * "invalid config" error + non-zero exit). A GLOBAL-layer parse failure is IGNORED (the global
- * layer is treated as absent), exactly as a run treats it — see {@link
+ * "invalid config" error + non-zero exit). A GLOBAL-layer parse failure is treated as an absent
+ * global (no layer added) but is surfaced with a `displayWarning` — exactly as a run does (it
+ * warns the user while ignoring the broken global's value) — see {@link
  * loadGlobalRawConfigUnvalidated}.
  */
 export async function validateConfig(
