@@ -10,26 +10,41 @@ export interface SelectItem {
 /**
  * CFG-20 — the pure "does this row match the typed filter?" predicate: a case-insensitive
  * substring test on the row label (the model id, with its ⭐/padding prefix — a substring
- * match on the id still hits). Mirrors the TUI-C10 slash-command filter's shape (lower-case
- * both sides, empty query is handled by the caller / {@link filterSelectItems}).
+ * match on the id still hits). The raw substring test; query trimming is done once by the
+ * callers ({@link filteredItemIndices} / {@link filterSelectItems}), not here.
  */
 export function matchesFilter(label: string, query: string): boolean {
   return label.toLowerCase().includes(query.toLowerCase());
 }
 
 /**
- * CFG-20 — filter a list of items down to those whose label matches `query`, preserving the
- * incoming order. Mirrors the shape of TUI-C10's `filterSlashCommands` (pure, case-insensitive,
- * empty query returns a full copy) but deliberately does NOT re-rank prefix-before-substring:
- * the model list arrives already ordered ⭐ preferred-first then alphabetical (CFG-14), and that
- * order must be preserved within the filtered set, so we keep the source order rather than
- * bucketing. Exported for direct unit testing; the widget itself filters by index (below) so it
- * can map a filtered-view selection back to the original absolute index.
+ * CFG-20 — **the single production filter path**: the absolute indices (into `items`) of the rows
+ * whose label matches `query`, in source order. The query is trimmed, so a leading/trailing space
+ * filters like the trimmed text and an all-whitespace query is treated as "no filter" (all rows).
+ * The widget's live filter calls exactly this (see the `filteredIndices` memo below), and
+ * {@link filterSelectItems} is a thin view over it — so a unit test can never validate a matcher
+ * the widget doesn't actually run. Indices (not items) so the widget can map a filtered-view
+ * selection back to the original absolute index even if two labels were to coincide.
+ */
+export function filteredItemIndices(items: SelectItem[], query: string): number[] {
+  const q = query.trim();
+  const indices: number[] = [];
+  items.forEach((item, i) => {
+    if (!q || matchesFilter(item.label, q)) indices.push(i);
+  });
+  return indices;
+}
+
+/**
+ * CFG-20 — the items (not indices) surviving the filter, in source order: a thin view over the
+ * production {@link filteredItemIndices}, so it can never diverge from the widget's live filter.
+ * Mirrors the shape of TUI-C10's `filterSlashCommands` (pure, case-insensitive, empty/whitespace
+ * query returns the full list) but deliberately does NOT re-rank prefix-before-substring: the
+ * model list arrives already ordered ⭐ preferred-first then alphabetical (CFG-14), and that order
+ * must be preserved within the filtered set, so the source order is kept rather than bucketed.
  */
 export function filterSelectItems(items: SelectItem[], query: string): SelectItem[] {
-  const q = query.trim();
-  if (!q) return [...items];
-  return items.filter((item) => matchesFilter(item.label, q));
+  return filteredItemIndices(items, query).map((i) => items[i]);
 }
 
 /** Window size used when the terminal height is unknown (non-TTY / tests). */
@@ -150,11 +165,9 @@ export function SelectList({
   }, [stdout]);
 
   // The absolute indices of the rows that survive the current filter, in source order. Selection
-  // maps back through this array so `onSelect` always reports the original index into `items`.
-  const filteredIndices = useMemo(
-    () => items.map((_item, i) => i).filter((i) => matchesFilter(items[i].label, filter)),
-    [items, filter]
-  );
+  // maps back through this array so `onSelect` always reports the original index into `items`. This
+  // is THE filter path — the same trimmed predicate the unit tests exercise via filterSelectItems.
+  const filteredIndices = useMemo(() => filteredItemIndices(items, filter), [items, filter]);
   const count = filteredIndices.length;
 
   // Re-filter the list from the current query, resetting the cursor to the top of the narrowed set.
@@ -239,22 +252,39 @@ export function SelectList({
 }
 
 /**
+ * The subset of Ink's `render` that {@link runInkSelect} relies on: mount a node and expose a
+ * promise that settles when the app exits. Declared as a seam so a test can inject a fake-stream
+ * renderer and drive the real Ctrl+C→reject / Enter→resolve wire without a live TTY (the default
+ * dynamic-`import('ink')` path is otherwise un-unit-testable, since Ink's `useInput` needs raw mode).
+ */
+export type InkRenderFn = (
+  node: React.ReactElement,
+  options?: { exitOnCtrlC?: boolean }
+  // `unknown` (not `void`) so Ink's own `render` — whose `waitUntilExit()` resolves `unknown` — is
+  // directly assignable; runInkSelect ignores the resolved value anyway.
+) => { waitUntilExit: () => Promise<unknown> };
+
+/**
  * Renders {@link SelectList} with Ink and resolves with the chosen absolute index — or **rejects
  * with a {@link SelectCancelledError}** when the user aborts (Ctrl+C, or Esc with an empty
- * filter). Imports `ink` dynamically so this module never pulls Ink into a readline-only run.
- * Intended to be used only after the caller has confirmed an interactive TTY + Ink availability.
+ * filter). Imports `ink` dynamically (unless a `render` is injected) so this module never pulls
+ * Ink into a readline-only run. Intended to be used only after the caller has confirmed an
+ * interactive TTY + Ink availability.
  *
  * `exitOnCtrlC: false` — Ink's default would unmount on Ctrl+C and let `waitUntilExit()` resolve
  * normally, so the host would `resolve(chosen)` with the untouched default index (the CFG-20 bug:
  * Ctrl+C read as "picked the default"). We own Ctrl+C in {@link SelectList} instead and route it
  * to the reject path.
+ *
+ * @param render - injectable Ink renderer (defaults to Ink's `render`); for tests only.
  */
 export async function runInkSelect(
   title: string,
   items: SelectItem[],
-  initialIndex = 0
+  initialIndex = 0,
+  render?: InkRenderFn
 ): Promise<number> {
-  const { render } = await import('ink');
+  const renderFn: InkRenderFn = render ?? (await import('ink')).render;
   return await new Promise<number>((resolve, reject) => {
     let chosen = initialIndex;
     let cancelled = false;
@@ -277,7 +307,7 @@ export async function runInkSelect(
       );
     };
     // Own Ctrl+C ourselves (see the doc comment) rather than letting Ink silently unmount.
-    const instance = render(<Host />, { exitOnCtrlC: false });
+    const instance = renderFn(<Host />, { exitOnCtrlC: false });
     instance
       .waitUntilExit()
       .then(() => (cancelled ? reject(new SelectCancelledError()) : resolve(chosen)));

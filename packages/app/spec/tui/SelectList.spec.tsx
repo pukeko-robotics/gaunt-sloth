@@ -1,13 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import React from 'react';
+import { EventEmitter } from 'node:events';
 import { render } from 'ink-testing-library';
+import { render as inkRender } from 'ink';
 import {
   SelectList,
   clampWindowStart,
   filterSelectItems,
+  filteredItemIndices,
   matchesFilter,
+  runInkSelect,
   windowSize,
+  type InkRenderFn,
 } from '#src/tui/components/SelectList.js';
+import { SelectCancelledError } from '#src/tui/selectCancelled.js';
 
 const DOWN = '\x1b[B'; // Down arrow CSI sequence
 const UP = '\x1b[A'; // Up arrow CSI sequence
@@ -125,6 +131,29 @@ describe('CFG-20 filterSelectItems / matchesFilter predicate', () => {
   it('returns an empty list on a no-match filter', () => {
     expect(filterSelectItems(items, 'zzz')).toEqual([]);
   });
+
+  it('trims the query, so leading/trailing (or all) whitespace filters like the trimmed text', () => {
+    // A trailing/leading space must NOT turn a real match into "no matches".
+    expect(filterSelectItems(items, 'grok ').map((i) => i.label)).toEqual(['   grok-4.3']);
+    expect(filterSelectItems(items, '  gpt').map((i) => i.label)).toEqual([
+      '⭐ gpt-5.5',
+      '⭐ gpt-5.4-mini',
+    ]);
+    // All-whitespace is "no filter" (not "match rows containing a space" — which would hide the
+    // ⭐ preferred rows whose labels have no space in the id).
+    expect(filterSelectItems(items, '  ')).toEqual(items);
+  });
+
+  it('filteredItemIndices (the production path) returns absolute indices in source order', () => {
+    expect(filteredItemIndices(items, '')).toEqual([0, 1, 2, 3, 4]); // no filter = every index
+    expect(filteredItemIndices(items, '   ')).toEqual([0, 1, 2, 3, 4]); // whitespace = no filter
+    expect(filteredItemIndices(items, 'grok')).toEqual([4]); // absolute index, not 0
+    expect(filteredItemIndices(items, 'GROK ')).toEqual([4]); // case-insensitive + trimmed
+    expect(filteredItemIndices(items, '5')).toEqual([0, 1, 2, 3]); // source order preserved
+    expect(filteredItemIndices(items, 'zzz')).toEqual([]); // no match
+    // filterSelectItems is exactly this path mapped back to items — proving they cannot diverge.
+    expect(filterSelectItems(items, '5')).toEqual(filteredItemIndices(items, '5').map((i) => items[i]));
+  });
 });
 
 describe('CFG-20 type-to-filter interaction', () => {
@@ -151,6 +180,21 @@ describe('CFG-20 type-to-filter interaction', () => {
     expect(frame).not.toContain('grok-4.3');
     // Filtered set keeps preferred-first order: the top (highlighted) row is gpt-5.5.
     expect(frame).toMatch(/❯ ⭐ gpt-5\.5/);
+  });
+
+  it('a trailing space in the typed filter still matches (widget trims, like the predicate)', async () => {
+    const onSelect = vi.fn();
+    const { lastFrame, stdin } = render(
+      <SelectList title="Pick a model" items={models} initialIndex={0} onSelect={onSelect} />
+    );
+    stdin.write('grok '); // note the trailing space
+    await tick();
+    const frame = lastFrame() ?? '';
+    expect(frame).not.toContain('no matches'); // the space must not break the match
+    expect(frame).toMatch(/❯ {4}grok-4\.3/);
+    stdin.write(ENTER);
+    await tick();
+    expect(onSelect).toHaveBeenCalledWith(4);
   });
 
   it('Enter after filtering returns the ORIGINAL absolute index, not the filtered position', async () => {
@@ -271,6 +315,86 @@ describe('CFG-20 type-to-filter interaction', () => {
     await tick();
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onSelect).not.toHaveBeenCalled();
+  });
+});
+
+describe('CFG-20 runInkSelect abort wire (real Ink render, fake streams)', () => {
+  // Minimal fake TTY streams (mirrors ink-testing-library) so the REAL Ink `render` can mount and
+  // `useInput` can run without a live terminal. This drives the exact code path the SelectList /
+  // firstRunDialog unit tests skip: runInkSelect's `exitOnCtrlC: false` + cancelled→reject glue.
+  class FakeStdout extends EventEmitter {
+    get columns(): number {
+      return 100;
+    }
+    frames: string[] = [];
+    write = (frame: string): void => {
+      this.frames.push(frame);
+    };
+    lastFrame = (): string | undefined => this.frames.at(-1);
+  }
+  class FakeStdin extends EventEmitter {
+    isTTY = true;
+    private data: string | null = null;
+    write = (data: string): void => {
+      this.data = data;
+      this.emit('readable');
+      this.emit('data', data);
+    };
+    setEncoding(): void {}
+    setRawMode(): void {}
+    resume(): void {}
+    pause(): void {}
+    ref(): void {}
+    unref(): void {}
+    read = (): string | null => {
+      const { data } = this;
+      this.data = null;
+      return data;
+    };
+  }
+
+  /** An injectable {@link InkRenderFn} backed by the real Ink render + fake streams. Captures the
+   *  options runInkSelect passes (so `exitOnCtrlC:false` is asserted directly) and forwards them
+   *  faithfully to Ink, so reverting that flag actually changes Ink's behaviour. */
+  function makeTestRenderer(): {
+    render: InkRenderFn;
+    stdin: FakeStdin;
+    options: { exitOnCtrlC?: boolean };
+  } {
+    const stdin = new FakeStdin();
+    const options: { exitOnCtrlC?: boolean } = {};
+    const render: InkRenderFn = (node, opts) => {
+      Object.assign(options, opts);
+      const instance = inkRender(node, {
+        stdout: new FakeStdout() as unknown as NodeJS.WriteStream,
+        stdin: stdin as unknown as NodeJS.ReadStream,
+        debug: true,
+        exitOnCtrlC: opts?.exitOnCtrlC ?? true,
+        patchConsole: false,
+      });
+      return { waitUntilExit: () => instance.waitUntilExit() };
+    };
+    return { render, stdin, options };
+  }
+
+  const items = [{ label: 'alpha' }, { label: 'beta' }, { label: 'gamma' }];
+
+  it('rejects with SelectCancelledError when the host receives Ctrl+C', async () => {
+    const { render, stdin, options } = makeTestRenderer();
+    const promise = runInkSelect('Pick', items, 1, render);
+    await tick(); // let the component mount + register useInput
+    stdin.write(CTRL_C);
+    await expect(promise).rejects.toBeInstanceOf(SelectCancelledError);
+    // Directly guard the flag whose default reintroduced the bug (Ctrl+C reading as "the default").
+    expect(options.exitOnCtrlC).toBe(false);
+  });
+
+  it('resolves the chosen index on Enter (normal confirm still works)', async () => {
+    const { render, stdin } = makeTestRenderer();
+    const promise = runInkSelect('Pick', items, 1, render); // initial highlight = index 1
+    await tick();
+    stdin.write(ENTER);
+    await expect(promise).resolves.toBe(1);
   });
 });
 
