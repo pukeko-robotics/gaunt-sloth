@@ -73,7 +73,7 @@ export interface TuiAppProps {
   modelDisplayName?: string;
   /**
    * EXT-12 — initial state of the session auto-approve flag, so the status bar shows the
-   * indicator from the first frame when `devTools.shellYolo` pre-enabled it in config. The App
+   * indicator from the first frame when `run_shell_command.yolo` pre-enabled it in config. The App
    * keeps its own state after this; the session module seeds it from `runner.isSessionYolo()`.
    * Defaults to off (undefined) — the fixture / non-shell sessions omit it.
    */

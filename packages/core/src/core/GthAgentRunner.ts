@@ -83,7 +83,7 @@ export class GthAgentRunner {
    * interactive `code` mode, this flag is consulted at the TOP of {@link decideToolApproval}:
    * when ON, a gated `run_shell_command` is auto-approved WITHOUT prompting for the rest of this
    * runner's life. Never persisted, but INITIALIZED at {@link init} from the static
-   * `devTools.shellYolo` config flag — so a config that pre-enables auto-approval still keeps the
+   * `run_shell_command.yolo` config knob — so a config that pre-enables auto-approval still keeps the
    * tool gated and therefore toggleable (`/auto-approve off` restores the per-command prompt).
    * It does NOT disable the hardline floor — catastrophic commands are still refused at exec time
    * in `GthDevToolkit.executeCommand`.
@@ -171,7 +171,7 @@ export class GthAgentRunner {
     this.config = configIn;
     this.command = command;
 
-    // EXT-12 — seed the runtime auto-approve flag from the static `devTools.shellYolo` config so a
+    // EXT-12 — seed the runtime auto-approve flag from the static `run_shell_command.yolo` config so a
     // config that pre-enables auto-approval starts ON, while the shell tool stays gated (see
     // GthDeepAgent) and therefore remains toggleable (`/auto-approve off`). Resolved per-command,
     // mirroring where the shell tool is actually emitted; no effect where the tool is ungated.
