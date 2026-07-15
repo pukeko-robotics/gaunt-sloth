@@ -28,6 +28,7 @@ import { ensureGslothDir, writeProjectReviewPreamble } from '#src/commands/confi
 import { existsSync } from 'node:fs';
 import { shouldUseTui } from '#src/tui/shouldUseTui.js';
 import { isInkAvailable } from '#src/tui/loadInk.js';
+import { SelectCancelledError } from '#src/tui/selectCancelled.js';
 
 /**
  * Where the first-run dialog (CFG-2) persists the chosen provider/model config.
@@ -329,6 +330,17 @@ export async function runFirstRunDialog(
     } else if (!provider.available && !provider.requiresExternalAuth) {
       displayInfo('Remember to set your API key environment variable before running gsloth.');
     }
+  } catch (e) {
+    // CFG-20 — a Ctrl+C (any step) or an Esc on the first step aborts the whole dialog: unwind
+    // out of whichever `select` was open and return WITHOUT writing a config and WITHOUT the false
+    // "Configured … / Config written to …" success line (mirroring CFG-19's honest-skip contract).
+    // The caller (startSession / initCommand) sees no config was written and does not launch a
+    // session. Any non-abort error still propagates.
+    if (e instanceof SelectCancelledError) {
+      displayWarning('Setup cancelled. No configuration was written.');
+      return;
+    }
+    throw e;
   } finally {
     rlHolder.current?.close();
   }

@@ -23,6 +23,7 @@ import {
   type FirstRunDialogDeps,
   type SelectFn,
 } from '#src/commands/firstRunDialog.js';
+import { SelectCancelledError } from '#src/tui/selectCancelled.js';
 
 function provider(
   over: Partial<DetectedProvider> & Pick<DetectedProvider, 'id'>
@@ -288,6 +289,65 @@ describe('runFirstRunDialog', () => {
     );
     expect(vi.mocked(displaySuccess)).not.toHaveBeenCalledWith(
       expect.stringContaining('Configured')
+    );
+  });
+
+  it('aborts cleanly on a first-step Esc: no config, no scaffold, no success line (CFG-20)', async () => {
+    deps.detectProviders = vi.fn().mockResolvedValue([
+      provider({
+        id: 'anthropic',
+        available: true,
+        apiKeyEnvironmentVariable: 'ANTHROPIC_API_KEY',
+      }),
+    ]);
+    deps.listModels = vi.fn();
+    // The very first (provider) select aborts — Esc on the first step raises the cancel sentinel
+    // that the Ink selector throws (runInkSelect rejects with it).
+    deps.select = vi.fn(() => Promise.reject(new SelectCancelledError()));
+
+    await runFirstRunDialog(deps);
+
+    // Never advanced past step 1, and nothing was written or scaffolded.
+    expect(deps.listModels).not.toHaveBeenCalled();
+    expect(writeConfig).not.toHaveBeenCalled();
+    expect(ensureGslothDir).not.toHaveBeenCalled();
+    expect(writeProjectReviewPreamble).not.toHaveBeenCalled();
+    expect(vi.mocked(displaySuccess)).not.toHaveBeenCalledWith(
+      expect.stringContaining('Configured')
+    );
+  });
+
+  it('aborts cleanly on a mid-dialog Ctrl+C: no config and no success line (CFG-20)', async () => {
+    deps.detectProviders = vi.fn().mockResolvedValue([
+      provider({
+        id: 'anthropic',
+        available: true,
+        apiKeyEnvironmentVariable: 'ANTHROPIC_API_KEY',
+      }),
+    ]);
+    deps.listModels = vi
+      .fn()
+      .mockResolvedValue([model('claude-haiku-4-5'), model('claude-sonnet-4-5', true)]);
+    // Provider (call 1) and model (call 2) are chosen; the scope select (call 3) is where the
+    // user hits Ctrl+C, which the Ink selector surfaces as a rejected cancel sentinel.
+    let call = 0;
+    deps.select = vi.fn((_title: string, _options: string[], defaultIndex: number) => {
+      call += 1;
+      if (call === 3) return Promise.reject(new SelectCancelledError());
+      return Promise.resolve(defaultIndex);
+    });
+
+    await runFirstRunDialog(deps);
+
+    // The abort must unwind before any write / project scaffold, even though we got past model pick.
+    expect(writeConfig).not.toHaveBeenCalled();
+    expect(ensureGslothDir).not.toHaveBeenCalled();
+    expect(writeProjectReviewPreamble).not.toHaveBeenCalled();
+    expect(vi.mocked(displaySuccess)).not.toHaveBeenCalledWith(
+      expect.stringContaining('Configured')
+    );
+    expect(vi.mocked(displayInfo)).not.toHaveBeenCalledWith(
+      expect.stringContaining('Config written to')
     );
   });
 
