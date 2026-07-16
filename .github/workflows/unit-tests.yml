@@ -8,13 +8,13 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
-    
+
     strategy:
       matrix:
         node-version: [24.x]
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
@@ -22,7 +22,7 @@ jobs:
       run: corepack enable
 
     - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v6
+      uses: actions/setup-node@v7
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'pnpm'
@@ -35,3 +35,33 @@ jobs:
 
     - name: Run Tests
       run: pnpm test
+
+  test-platforms:
+    permissions:
+      contents: read
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        node-version: [24.x, latest]
+        os: [macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Tests
+        run: pnpm test
