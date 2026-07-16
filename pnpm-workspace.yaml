@@ -19,3 +19,7 @@ overrides:
 allowBuilds:
   '@swc/core': true
   node-pty: true
+
+minimumReleaseAgeExclude:
+  - deepagents-acp@0.1.19
+  - deepagents@1.11.0
