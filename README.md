@@ -80,8 +80,7 @@ Unlike autonomous coding agents or hosted review services, GSloth is a **configu
 - Google AI Studio and Google Vertex AI;
 - Anthropic;
 - OpenAI (and other providers using OpenAI format, such as Inception);
-- Local AI: LM Studio, Ollama, llama.cpp (Via OpenAI compatibitlity)
-- Ollama with JS config (some of the models, see https://github.com/pukeko-robotics/gaunt-sloth/discussions/107)
+- Local AI: LM Studio, Ollama, llama.cpp, vllm (Via OpenAI endpoint)
 - xAI;
 
 `*` Any other provider supported by LangChain.JS should also work with [JS config](./docs/CONFIGURATION.md#javascript-configuration).
