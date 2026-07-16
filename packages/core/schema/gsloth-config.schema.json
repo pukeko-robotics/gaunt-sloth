@@ -380,6 +380,20 @@
       },
       "additionalProperties": {}
     },
+    "tls": {
+      "type": "object",
+      "properties": {
+        "extraCaCerts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rejectUnauthorized": {
+          "type": "boolean"
+        }
+      }
+    },
     "a2aAgents": {
       "type": "object",
       "propertyNames": {

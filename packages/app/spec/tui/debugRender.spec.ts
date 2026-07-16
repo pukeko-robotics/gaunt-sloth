@@ -172,10 +172,43 @@ describe('tui/debugRender', () => {
 
   it('collectMcpOverview is defensive: no config / no accessor yields an empty overview', async () => {
     const { collectMcpOverview } = await import('#src/tui/debugRender.js');
-    expect(collectMcpOverview(undefined, undefined)).toEqual({ servers: [], instructions: [] });
+    expect(collectMcpOverview(undefined, undefined)).toEqual({
+      servers: [],
+      instructions: [],
+      failures: [],
+    });
     expect(collectMcpOverview({ mcpServers: undefined } as never, {})).toEqual({
       servers: [],
       instructions: [],
+      failures: [],
     });
+  });
+
+  it('collectMcpOverview sources connection failures from the getMcpConnectionFailures accessor', async () => {
+    const { collectMcpOverview } = await import('#src/tui/debugRender.js');
+    const failures = [{ server: 'orgname', reason: 'fetch failed' }];
+    const getMcpConnectionFailures = vi.fn(() => failures);
+
+    const out = collectMcpOverview({ mcpServers: { orgname: {} } } as never, {
+      getMcpConnectionFailures,
+    });
+
+    expect(getMcpConnectionFailures).toHaveBeenCalledTimes(1);
+    expect(out.failures).toEqual(failures);
+  });
+
+  it('renderMcpDetails names a failed server with its reason instead of a bare "no tools" line', async () => {
+    const { renderMcpDetails } = await import('#src/tui/debugRender.js');
+    const out = renderMcpDetails(
+      { tools: [] },
+      ['orgname'],
+      [],
+      [{ server: 'orgname', reason: 'TypeError: fetch failed' }]
+    );
+    // The failure is surfaced with its reason …
+    expect(out).toContain('connection failed: TypeError: fetch failed');
+    // … and the misleading "connected but empty" wording is not used for a failed server.
+    expect(out).not.toContain('(no tools loaded for this server)');
+    expect(out).toContain('server unavailable');
   });
 });

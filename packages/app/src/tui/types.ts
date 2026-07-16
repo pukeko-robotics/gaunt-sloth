@@ -2,6 +2,7 @@ import type {
   AgentStreamEvent,
   PendingToolInterrupt,
   ToolApprovalDecision,
+  McpConnectionFailure,
 } from '@gaunt-sloth/core/core/types.js';
 import type { TurnViewModel } from '#src/tui/viewModel.js';
 import type { CommandNoticeTone } from '#src/tui/components/CommandNotice.js';
@@ -102,6 +103,15 @@ export interface TuiAppProps {
    * fixture/AG-UI paths omit it. Absent/empty ⇒ no standing line and `/config` shows no warnings.
    */
   advisories?: string[];
+  /**
+   * Per-server MCP connection failures captured during agent init (resolveTools). When non-empty,
+   * the chrome shows a standing line naming the unavailable server(s) OUTSIDE `<Static>` — a
+   * connection failure is otherwise only a transient `displayWarning` that Ink paints over. Kept
+   * separate from `advisories` because those are config-validation warnings pointing at `/config`;
+   * an MCP failure is not a config problem and points at the `/debug` MCP tab instead. The
+   * fixture/AG-UI paths omit it. Absent/empty ⇒ no standing line.
+   */
+  mcpFailures?: McpConnectionFailure[];
   /** Greeting shown before the first prompt (mirrors the readline `readyMessage`). */
   readyMessage: string;
   /** Hint shown in the status bar / on start (mirrors the readline `exitMessage`). */

@@ -80,7 +80,7 @@ vi.mock('#src/tui/debugRender.js', () => ({
   renderToolDetails: vi.fn(),
   renderResponse: vi.fn(),
   // TUI-C20 — the MCP overview tab's collector + renderer, threaded through the debug bridge.
-  collectMcpOverview: vi.fn(() => ({ servers: [], instructions: [] })),
+  collectMcpOverview: vi.fn(() => ({ servers: [], instructions: [], failures: [] })),
   renderMcpDetails: vi.fn(),
 }));
 

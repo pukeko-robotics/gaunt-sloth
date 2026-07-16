@@ -136,13 +136,13 @@ function createDebugBridge(config: GthConfig, resolvers: AgentResolvers) {
     },
     capture: {
       onRequest: (messages: BaseMessage[], extras?: DebugRequestExtras) => {
-        const { servers, instructions } = collectMcpOverview(config, resolvers);
+        const { servers, instructions, failures } = collectMcpOverview(config, resolvers);
         emit({
           kind: 'request',
           text: renderHistory(messages),
           system: renderSystemDetails(extras),
           tools: renderToolDetails(extras),
-          mcp: renderMcpDetails(extras, servers, instructions),
+          mcp: renderMcpDetails(extras, servers, instructions, failures),
         });
       },
       onResponse: (response: unknown) => emit({ kind: 'response', text: renderResponse(response) }),
@@ -279,6 +279,11 @@ export async function createTuiSession(
   try {
     await runner.init(sessionConfig.mode, config, checkpointSaver);
 
+    // Any MCP server that failed to connect during init (resolveTools ran inside runner.init).
+    // Captured here so the persistent NoticeBar can name it — otherwise the only signal is a
+    // displayWarning that Ink has already painted over, which is the bug this surfaces.
+    const mcpFailures = resolvers?.getMcpConnectionFailures?.() ?? [];
+
     // Tool-approval (human-in-the-loop) prompt for gated tools — the readline counterpart in
     // interactiveSessionModule. The runner consults the allow-list BEFORE calling this, so
     // trusted commands never reach the TUI prompt; otherwise the bridge surfaces the pending
@@ -371,6 +376,7 @@ export async function createTuiSession(
         initialAutoApprove={runner.isSessionYolo()}
         configSummary={formatConfigSummary(config)}
         advisories={startupAdvisories}
+        mcpFailures={mcpFailures}
         {...buildHistorySlashProps(config)}
         readyMessage={sessionConfig.readyMessage}
         exitMessage={sessionConfig.exitMessage}

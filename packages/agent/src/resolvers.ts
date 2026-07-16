@@ -14,6 +14,7 @@ import type {
   GthCommand,
   AgentResolvers,
   McpServerInstruction,
+  McpConnectionFailure,
 } from '@gaunt-sloth/core/core/types.js';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
@@ -22,6 +23,7 @@ import { createA2AAgentTool } from '#src/tools/A2AAgentTool.js';
 import { prepareMcpTools } from '#src/utils/mcpUtils.js';
 import { formatMcpConnectFailureMessage } from '#src/utils/mcpAuthError.js';
 import { createAuthProviderAndAuthenticate } from '#src/mcp/OAuthClientProviderImpl.js';
+import { installMcpTlsTrust } from '#src/mcp/tlsTrust.js';
 import { MultiServerMCPClient, type StreamableHTTPConnection } from '@langchain/mcp-adapters';
 import type { StatusLevel, StatusUpdateCallback } from '@gaunt-sloth/core/core/types.js';
 import { MCP_TOOL_NAME_PREFIX } from '@gaunt-sloth/core/constants.js';
@@ -38,6 +40,19 @@ export function createResolvers(): AgentResolvers {
   // Kept on the resolver so the composed system prompt (via getMcpServerInstructions) AND a future
   // MCP debug tab ([[TUI-C20]]) can read the SAME captured text without re-querying the servers.
   let mcpServerInstructions: McpServerInstruction[] = [];
+  // Per-server MCP connection failures captured during the most recent resolveTools. Kept on the
+  // resolver (like mcpServerInstructions) so the TUI can re-surface a failure that would otherwise
+  // print once via displayWarning and scroll out of sight the moment Ink repaints — both as a
+  // persistent chrome notice and as a per-server line in the /debug MCP tab.
+  let mcpConnectionFailures: McpConnectionFailure[] = [];
+  // Record a failure by server name; dedup so a retry (or the getTools backstop firing after
+  // onConnectionError already recorded) can't list the same server twice.
+  const recordMcpFailure = (server: string, error: unknown): void => {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (!mcpConnectionFailures.some((f) => f.server === server)) {
+      mcpConnectionFailures.push({ server, reason });
+    }
+  };
 
   const resolveTools = async (
     config: GthConfig,
@@ -46,6 +61,7 @@ export function createResolvers(): AgentResolvers {
     const tools: StructuredToolInterface[] = [];
     // Fresh capture per resolution; a stale value must never leak across re-inits.
     mcpServerInstructions = [];
+    mcpConnectionFailures = [];
 
     // 1. Get built-in tools (filesystem, devTools, customTools, etc.)
     try {
@@ -59,7 +75,7 @@ export function createResolvers(): AgentResolvers {
 
     // 2. Get MCP tools
     try {
-      mcpClientInstance = await getMcpClient(config);
+      mcpClientInstance = await getMcpClient(config, recordMcpFailure);
       if (mcpClientInstance) {
         const rawMcpTools = await mcpClientInstance.getTools();
         // Use a simple status callback for prepareMcpTools
@@ -82,6 +98,14 @@ export function createResolvers(): AgentResolvers {
         `MCP integration tools could not be fully loaded; continuing without them. ` +
           `Underlying error: ${error}`
       );
+      // A wholesale throw here isn't per-server, so onConnectionError may not have recorded anything.
+      // If nothing was captured, attribute the failure to every configured server so the TUI notice
+      // and MCP tab still name what's unavailable rather than silently showing empty tool lists.
+      if (mcpConnectionFailures.length === 0) {
+        for (const serverName of Object.keys(config.mcpServers || {})) {
+          recordMcpFailure(serverName, error);
+        }
+      }
     }
 
     // 2b. EXT-32: capture each connected MCP server's discovery `instructions` string (from its MCP
@@ -150,19 +174,31 @@ export function createResolvers(): AgentResolvers {
   // captured state. Empty until resolveTools has run (or when no server supplied instructions).
   const getMcpServerInstructions = (): McpServerInstruction[] => [...mcpServerInstructions];
 
+  // Defensive copy so callers can't mutate the captured state. Empty until resolveTools has run
+  // (or when every configured server connected). Read by the TUI notice bar and the /debug MCP tab.
+  const getMcpConnectionFailures = (): McpConnectionFailure[] => [...mcpConnectionFailures];
+
   return {
     resolveTools,
     cleanupTools,
     resolveMiddleware,
     cleanupMiddleware,
     getMcpServerInstructions,
+    getMcpConnectionFailures,
   };
 }
 
 // --- Private helpers ---
 
-async function getMcpClient(config: GthConfig): Promise<MultiServerMCPClient | null> {
+async function getMcpClient(
+  config: GthConfig,
+  recordFailure: (server: string, error: unknown) => void
+): Promise<MultiServerMCPClient | null> {
   debugLog('Setting up MCP client...');
+
+  // Install any configured TLS trust (custom CA / insecure latch) BEFORE the client connects.
+  // Process-global (see tlsTrust.ts) and idempotent, so it also covers LLM/tool fetches — desired.
+  installMcpTlsTrust(config);
 
   const rawMcpServers = { ...(config.mcpServers || {}) } as Record<
     string,
@@ -186,6 +222,7 @@ async function getMcpClient(config: GthConfig): Promise<MultiServerMCPClient | n
         // EXT-31: an OAuth handshake/refresh failure happens BEFORE the MCP client exists, so it
         // can't reach the connect-time onConnectionError callback below. Surface it here (named +
         // actionable) and skip only THIS server so the others still load — never a silent drop.
+        recordFailure(serverName, error);
         displayWarning(formatMcpConnectFailureMessage(serverName, error, { oauth: true }));
       }
     } else {
@@ -209,6 +246,7 @@ async function getMcpClient(config: GthConfig): Promise<MultiServerMCPClient | n
       onConnectionError: ({ serverName, error }: { serverName: string; error?: unknown }) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const oauth = (rawMcpServers[serverName]?.authProvider as any) === 'OAuth';
+        recordFailure(serverName, error);
         displayWarning(formatMcpConnectFailureMessage(serverName, error, { oauth }));
       },
     });

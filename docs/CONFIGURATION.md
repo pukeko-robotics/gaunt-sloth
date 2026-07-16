@@ -990,6 +990,52 @@ for example, configuration for reference sequential thinking MCP follows:
 
 This configuration launches the MCP filesystem server using npx, providing the LLM with access to the specified directory. The server uses stdio for communication with the LLM.
 
+### TLS trust for HTTPS MCP servers (custom CA / self-signed certs)
+
+An `http`/`sse` MCP server behind a **private or corporate CA** (for example a dev backend with a
+self-signed certificate) makes Node's `fetch` reject the connection — you'll see the server "detected"
+but with **no tools**, and `gth <cmd> ask` prints `TypeError: fetch failed`
+(`SELF_SIGNED_CERT_IN_CHAIN`). This is common when a team is developing a new MCP server.
+
+Add a top-level `tls` block to trust the extra CA — no need to prepend `NODE_EXTRA_CA_CERTS` on
+every invocation:
+
+```jsonc
+{
+  "llm": { "type": "vertexai", "model": "gemini-3.5-flash" },
+  "tls": {
+    // CA cert file(s) to trust IN ADDITION to Node's built-in roots.
+    // Paths resolve relative to the project dir, or use ~ / an absolute path.
+    "extraCaCerts": ["support/security-material/my-dev-ca.crt"]
+  },
+  "mcpServers": {
+    "my-server": {
+      "transport": "http",
+      "url": "https://my-dev-host:8443/mcp"
+    }
+  }
+}
+```
+
+A cert path that can't be read is warned about and skipped (fail-soft), never fatal.
+
+**Escape hatch — disabling verification (insecure):**
+
+```jsonc
+{
+  "tls": {
+    "rejectUnauthorized": false // DANGER — see below
+  }
+}
+```
+
+> ⚠️ **Security:** `rejectUnauthorized: false` disables TLS certificate verification for **all**
+> outbound HTTPS this process makes — **not just MCP, but LLM provider calls too** — which exposes
+> them to man-in-the-middle attacks. Gaunt Sloth prints a loud warning every session while it is
+> active. Use it only against trusted dev endpoints; prefer `tls.extraCaCerts` to trust a specific
+> CA. Both settings are **process-global** (the underlying trust store applies to the whole process),
+> so they apply to every server and every LLM call, not one MCP entry.
+
 ## Content sources
 
 ### GitHub Issues

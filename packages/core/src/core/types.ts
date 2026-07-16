@@ -248,6 +248,21 @@ export interface McpServerInstruction {
   instructions: string;
 }
 
+/**
+ * A per-server MCP connection failure captured during the most recent {@link ToolsResolver} call.
+ * Recorded when a configured MCP server can't be reached (connection/handshake/auth error), so the
+ * failure — otherwise a transient `displayWarning` that scrolls away the moment the Ink TUI takes
+ * over the screen — can be re-surfaced persistently in the chrome AND named in the /debug MCP tab
+ * (which renders per configured server and would otherwise show only a bare "no tools" line, with
+ * no hint that the server never connected). Mirrors {@link McpServerInstruction}.
+ */
+export interface McpConnectionFailure {
+  /** The configured MCP server name (the key under `config.mcpServers`). */
+  server: string;
+  /** A concise, human-readable reason (the underlying connection error's message). */
+  reason: string;
+}
+
 export interface AgentResolvers {
   resolveTools?: ToolsResolver;
   cleanupTools?: ToolsCleanup;
@@ -260,4 +275,11 @@ export interface AgentResolvers {
    * composition treats an absent accessor as "no instructions" (no MCP section is emitted).
    */
   getMcpServerInstructions?(): McpServerInstruction[];
+  /**
+   * The per-server MCP connection failures captured during the most recent {@link ToolsResolver}
+   * call (empty when every configured server connected, or none is configured). Optional: resolvers
+   * without MCP support omit it, and callers treat an absent accessor as "no failures". Read by the
+   * TUI to surface a persistent notice and to annotate the /debug MCP tab.
+   */
+  getMcpConnectionFailures?(): McpConnectionFailure[];
 }

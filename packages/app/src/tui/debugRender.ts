@@ -3,7 +3,11 @@ import { mapChatMessagesToStoredMessages } from '@langchain/core/messages';
 import { z } from 'zod';
 import type { DebugRequestExtras, DebugToolDef } from '@gaunt-sloth/agent/core/debugCapture.js';
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
-import type { AgentResolvers, McpServerInstruction } from '@gaunt-sloth/core/core/types.js';
+import type {
+  AgentResolvers,
+  McpServerInstruction,
+  McpConnectionFailure,
+} from '@gaunt-sloth/core/core/types.js';
 import { MCP_TOOL_NAME_PREFIX } from '@gaunt-sloth/core/constants.js';
 
 /**
@@ -138,11 +142,18 @@ const MCP_TAB_DESCRIPTION =
  */
 export function collectMcpOverview(
   config: Pick<GthConfig, 'mcpServers'> | undefined,
-  resolvers: Pick<AgentResolvers, 'getMcpServerInstructions'> | undefined
-): { servers: string[]; instructions: McpServerInstruction[] } {
+  resolvers:
+    | Pick<AgentResolvers, 'getMcpServerInstructions' | 'getMcpConnectionFailures'>
+    | undefined
+): {
+  servers: string[];
+  instructions: McpServerInstruction[];
+  failures: McpConnectionFailure[];
+} {
   const servers = Object.keys(config?.mcpServers ?? {});
   const instructions = resolvers?.getMcpServerInstructions?.() ?? [];
-  return { servers, instructions };
+  const failures = resolvers?.getMcpConnectionFailures?.() ?? [];
+  return { servers, instructions, failures };
 }
 
 /**
@@ -158,7 +169,8 @@ export function collectMcpOverview(
 export function renderMcpDetails(
   extras: DebugRequestExtras | undefined,
   servers: string[],
-  instructions: McpServerInstruction[]
+  instructions: McpServerInstruction[],
+  failures: McpConnectionFailure[] = []
 ): string {
   const sections: string[] = [];
   sections.push(`=== MCP SERVERS (${servers.length}) ===`);
@@ -169,11 +181,20 @@ export function renderMcpDetails(
   }
 
   const instructionByServer = new Map(instructions.map((i) => [i.server, i.instructions]));
+  const failureByServer = new Map(failures.map((f) => [f.server, f.reason]));
   const tools = extras?.tools ?? [];
 
   for (const server of servers) {
     sections.push('');
     sections.push(`── ${server} ──`);
+
+    // A server that failed to connect contributes no tools — say so, with the reason, instead of
+    // leaving a bare "(no tools loaded)" line that reads as "connected, but empty". Shown first so
+    // the failure is the headline for this server; instructions/tools are naturally empty below.
+    const failureReason = failureByServer.get(server);
+    if (failureReason) {
+      sections.push(`  ⚠ connection failed: ${failureReason}`);
+    }
 
     // (a) discovery instructions — the SAME text EXT-32 injected into the system prompt.
     const serverInstructions = instructionByServer.get(server);
@@ -193,6 +214,8 @@ export function renderMcpDetails(
         const oneLine = tool.description ? tool.description.split('\n')[0].trim() : '';
         sections.push(oneLine ? `  • ${tool.name}: ${oneLine}` : `  • ${tool.name}`);
       }
+    } else if (failureReason) {
+      sections.push('  (none — server unavailable, see above)');
     } else {
       sections.push('  (no tools loaded for this server)');
     }

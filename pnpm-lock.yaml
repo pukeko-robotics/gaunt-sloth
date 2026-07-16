@@ -104,6 +104,9 @@ importers:
       langchain:
         specifier: ^1.5.2
         version: 1.5.2(@langchain/core@1.2.1(openai@6.45.0(ws@8.21.0)(zod@4.4.3))(ws@8.21.0))(openai@6.45.0(ws@8.21.0)(zod@4.4.3))(react@19.2.7)(ws@8.21.0)
+      undici:
+        specifier: ^7.16.0
+        version: 7.28.0
       uuid:
         specifier: '>=11.1.1'
         version: 14.0.1
@@ -2275,6 +2278,10 @@ packages:
 
   undici-types@8.3.0:
     resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
+
+  undici@7.28.0:
+    resolution: {integrity: sha512-cRZYrTDwWznlnRiPjggAGxZXanty6M8RV1ff8Wm4LWXBp7/IG8v5DnOm74DtUBp9OONpK75YlPnIjQqX0dBDtA==}
+    engines: {node: '>=20.18.1'}
 
   unpipe@1.0.0:
     resolution: {integrity: sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ==}
@@ -4522,6 +4529,8 @@ snapshots:
   uc.micro@2.1.0: {}
 
   undici-types@8.3.0: {}
+
+  undici@7.28.0: {}
 
   unpipe@1.0.0: {}
 

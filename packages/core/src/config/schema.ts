@@ -38,6 +38,21 @@ import { z } from 'zod';
 
 const filesystemSchema = z.union([z.array(z.string()), z.enum(['all', 'read', 'none'])]);
 
+/**
+ * TLS trust for outbound HTTPS (MCP servers over `http` transport, and — because the mechanism is
+ * a process-global undici dispatcher — every other `fetch`, including LLM provider calls). Lets a
+ * config point Node's `fetch` at a private/corporate CA without prepending `NODE_EXTRA_CA_CERTS`
+ * on every invocation (that env var is read once at Node startup and can't be set from config).
+ */
+const tlsSchema = z.object({
+  // Extra CA cert file(s) to TRUST in ADDITION to Node's built-in roots. Paths resolve
+  // relative-to-project (or `~`/absolute). Additive — this never removes a default root.
+  extraCaCerts: z.array(z.string()).optional(),
+  // DANGER: `false` disables TLS certificate verification for ALL outbound HTTPS this process makes
+  // (not just MCP — LLM calls too). Escape hatch only; emits a loud security warning every session.
+  rejectUnauthorized: z.boolean().optional(),
+});
+
 const llmConfigSchema = z.looseObject({
   type: z.string().optional(),
   model: z.string().optional(),
@@ -269,6 +284,7 @@ export const rawGthConfigSchema = z.looseObject({
   consoleLevel: z.union([z.string(), z.number()]).optional(),
   customTools: customToolsConfigSchema.optional(),
   mcpServers: z.record(z.string(), z.unknown()).optional(),
+  tls: tlsSchema.optional(),
   a2aAgents: z.record(z.string(), z.unknown()).optional(),
   builtInToolsConfig: z.record(z.string(), z.unknown()).optional(),
   aiignore: z

@@ -14,7 +14,7 @@ import { Transcript } from '#src/tui/components/Transcript.js';
 import { ApprovalPrompt } from '#src/tui/components/ApprovalPrompt.js';
 import { LiveTurn } from '#src/tui/components/LiveTurn.js';
 import { StatusBar } from '#src/tui/components/StatusBar.js';
-import { NoticeBar } from '#src/tui/components/NoticeBar.js';
+import { NoticeBar, McpFailureBar } from '#src/tui/components/NoticeBar.js';
 import { PromptInput } from '#src/tui/components/PromptInput.js';
 import { Rule } from '#src/tui/components/Rule.js';
 import { ClearBanner } from '#src/tui/components/ClearBanner.js';
@@ -740,6 +740,10 @@ export function App(props: TuiAppProps): React.ReactElement {
           transcript growth instead of scrolling away the moment Ink takes over (DL-1). Renders
           nothing when there are no advisories. */}
       <NoticeBar advisories={props.advisories} />
+      {/* Companion to NoticeBar for MCP connection failures (own line, own pointer → /debug MCP
+          tab). Without it a failed MCP server is invisible in the TUI — the connect-time
+          displayWarning scrolls under Ink's first frame. */}
+      <McpFailureBar failures={props.mcpFailures} />
       <StatusBar
         running={running}
         mode={mode}

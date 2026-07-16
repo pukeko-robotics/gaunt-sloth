@@ -233,6 +233,24 @@ export interface GthConfig {
    */
   mcpServers?: Record<string, unknown>;
   /**
+   * TLS trust for outbound HTTPS. Primarily so an `http`-transport MCP server behind a
+   * private/corporate CA can be reached without prepending `NODE_EXTRA_CA_CERTS` on every
+   * invocation. The mechanism is a process-global undici dispatcher, so it applies to ALL
+   * outbound `fetch` this process makes (LLM provider calls included), not only MCP.
+   */
+  tls?: {
+    /**
+     * Extra CA certificate file(s) to trust IN ADDITION to Node's built-in roots. Paths resolve
+     * relative to the project dir (or `~`/absolute). Additive — never removes a default root.
+     */
+    extraCaCerts?: string[];
+    /**
+     * DANGER — `false` disables TLS certificate verification for ALL outbound HTTPS this process
+     * makes, not just MCP. Escape hatch only; a loud security warning is emitted every session.
+     */
+    rejectUnauthorized?: boolean;
+  };
+  /**
    * A2A (Agent-to-Agent) protocol agents configuration.
    * Enables delegation of tasks to external AI agents.
    * Each agent becomes available as a tool named `a2a_agent_<agentId>`.
