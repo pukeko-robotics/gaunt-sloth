@@ -54,8 +54,7 @@ class MultiServerMCPClientStub {
       const behavior = serverBehaviors[name];
       if (behavior?.fail) {
         const cb = this._config.onConnectionError as
-          | ((_a: { serverName: string; error: unknown }) => void)
-          | undefined;
+          ((_a: { serverName: string; error: unknown }) => void) | undefined;
         cb?.({ serverName: name, error: behavior.fail });
         continue; // failed server contributes no tools
       }

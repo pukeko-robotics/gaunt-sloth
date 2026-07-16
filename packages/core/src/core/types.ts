@@ -130,8 +130,7 @@ export type ToolApprovalScope = 'once' | 'session' | 'always';
  * a single-shot approval that persists nothing).
  */
 export type ToolApprovalDecision =
-  | { type: 'approve'; scope?: ToolApprovalScope }
-  | { type: 'reject'; message?: string };
+  { type: 'approve'; scope?: ToolApprovalScope } | { type: 'reject'; message?: string };
 
 /**
  * Callback the {@link GthAgentRunner} invokes when a run suspends on a tool-approval

@@ -84,8 +84,7 @@ export function readGuidelines(
 
 export function readReviewInstructions(
   config:
-    | Pick<GthConfig, 'projectReviewInstructions' | 'identityProfile' | 'noDefaultPrompts'>
-    | string
+    Pick<GthConfig, 'projectReviewInstructions' | 'identityProfile' | 'noDefaultPrompts'> | string
 ): string {
   if (typeof config === 'string') {
     return readPromptFile(config, undefined);

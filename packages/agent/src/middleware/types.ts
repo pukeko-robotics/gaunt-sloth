@@ -13,9 +13,7 @@ import { AgentMiddleware } from 'langchain';
  * Predefined middleware types that can be configured via JSON config.
  */
 export type PredefinedMiddlewareName =
-  | 'anthropic-prompt-caching'
-  | 'summarization'
-  | 'binary-content-injection';
+  'anthropic-prompt-caching' | 'summarization' | 'binary-content-injection';
 
 /**
  * Configuration for Anthropic prompt caching middleware.

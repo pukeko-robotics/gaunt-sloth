@@ -590,8 +590,7 @@ describe('GthLangChainAgent', () => {
           'chat-mode-prompt'
         );
         const systemPrompt = createAgentMock.mock.calls.at(-1)?.[0].systemPrompt as
-          | string
-          | undefined;
+          string | undefined;
         expect(typeof systemPrompt).toBe('string');
         expect(systemPrompt).toContain(sentinel);
       });

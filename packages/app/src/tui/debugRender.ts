@@ -143,8 +143,7 @@ const MCP_TAB_DESCRIPTION =
 export function collectMcpOverview(
   config: Pick<GthConfig, 'mcpServers'> | undefined,
   resolvers:
-    | Pick<AgentResolvers, 'getMcpServerInstructions' | 'getMcpConnectionFailures'>
-    | undefined
+    Pick<AgentResolvers, 'getMcpServerInstructions' | 'getMcpConnectionFailures'> | undefined
 ): {
   servers: string[];
   instructions: McpServerInstruction[];

@@ -342,9 +342,7 @@ export interface ServerTool extends Record<string, unknown> {
  * Raw, unprocessed Gaunt Sloth config.
  */
 export type ConsoleLevelInput =
-  | StatusLevel
-  | keyof typeof StatusLevel
-  | Lowercase<keyof typeof StatusLevel>;
+  StatusLevel | keyof typeof StatusLevel | Lowercase<keyof typeof StatusLevel>;
 
 export interface RawGthConfig extends Omit<GthConfig, 'llm' | 'consoleLevel'> {
   llm: LLMConfig;
@@ -418,10 +416,7 @@ export interface RatingConfig {
  * - `null-bytes`: Allow null bytes in values
  */
 export type ValidationCheck =
-  | 'absolute-paths'
-  | 'directory-traversal'
-  | 'shell-injection'
-  | 'null-bytes';
+  'absolute-paths' | 'directory-traversal' | 'shell-injection' | 'null-bytes';
 
 /**
  * Configuration for a custom command parameter.

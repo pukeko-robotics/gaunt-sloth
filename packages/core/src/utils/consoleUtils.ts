@@ -237,9 +237,7 @@ export const defaultStatusCallback: StatusUpdateCallback = (
  * When kind === 'none', no usable value was provided (undefined/null/empty).
  */
 export type BooleanOrStringParseResult =
-  | { kind: 'boolean'; value: boolean }
-  | { kind: 'string'; value: string }
-  | { kind: 'none' };
+  { kind: 'boolean'; value: boolean } | { kind: 'string'; value: string } | { kind: 'none' };
 
 /**
  * Parse a CLI option value into either:

@@ -194,8 +194,7 @@ function normaliseEntry(raw: unknown): ModelCatalogEntry {
  */
 function sliceProvider(payload: unknown, providerKey: string): Record<string, ModelCatalogEntry> {
   const providerBlock = (payload as Record<string, unknown> | null)?.[providerKey] as
-    | { models?: Record<string, unknown> }
-    | undefined;
+    { models?: Record<string, unknown> } | undefined;
   const models = providerBlock?.models;
   if (!models || typeof models !== 'object') return {};
   const out: Record<string, ModelCatalogEntry> = {};
