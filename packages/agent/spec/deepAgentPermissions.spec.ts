@@ -59,7 +59,13 @@ describe('deepAgentPermissions', () => {
     });
   });
 
-  describe('allowDirsToPermissions', () => {
+  // These fixtures mock getCurrentWorkDir() to a POSIX literal ('/work/proj') and rely on
+  // path.resolve() to leave it alone. On win32, node:path resolves natively: `/tmp/out` is
+  // drive-relative, not absolute, so `path.resolve('/work/proj', '/tmp/out')` yields
+  // `D:\tmp\out`, not `/tmp/out`. This function is only ever called in production in real
+  // (non-virtual) mode, which EXT-16 never selects on Windows — so it's a test-fixture gap,
+  // not a real Windows code path.
+  describe.skipIf(process.platform === 'win32')('allowDirsToPermissions', () => {
     it('allow-lists cwd + each (resolved) extra dir, then denies everything else', () => {
       const rules = allowDirsToPermissions(['../shared', '/tmp/out']);
       expect(rules).toEqual([
@@ -106,22 +112,27 @@ describe('deepAgentPermissions', () => {
       ]);
     });
 
-    it('an allow-list resolves each dir against the real cwd then denies everything else', () => {
-      const rules = filesystemModeToPermissions(['src', './docs/']);
-      expect(rules).toEqual([
-        {
-          operations: ['read', 'write'],
-          paths: ['/work/proj/src/**', '/work/proj/src'],
-          mode: 'allow',
-        },
-        {
-          operations: ['read', 'write'],
-          paths: ['/work/proj/docs/**', '/work/proj/docs'],
-          mode: 'allow',
-        },
-        { operations: ['read', 'write'], paths: ['/**'], mode: 'deny' },
-      ]);
-    });
+    // Same win32 path.resolve() gap as allowDirsToPermissions above (POSIX-literal cwd fixture),
+    // and same reason it's test-only: this real-mode allow-list branch never runs on Windows.
+    it.skipIf(process.platform === 'win32')(
+      'an allow-list resolves each dir against the real cwd then denies everything else',
+      () => {
+        const rules = filesystemModeToPermissions(['src', './docs/']);
+        expect(rules).toEqual([
+          {
+            operations: ['read', 'write'],
+            paths: ['/work/proj/src/**', '/work/proj/src'],
+            mode: 'allow',
+          },
+          {
+            operations: ['read', 'write'],
+            paths: ['/work/proj/docs/**', '/work/proj/docs'],
+            mode: 'allow',
+          },
+          { operations: ['read', 'write'], paths: ['/**'], mode: 'deny' },
+        ]);
+      }
+    );
 
     it('accepts an explicit cwd argument (overrides getCurrentWorkDir)', () => {
       expect(filesystemModeToPermissions('all', '/custom/root')).toEqual([
@@ -239,14 +250,19 @@ describe('deepAgentPermissions', () => {
       expect(buildPermissions({ filesystem: 'all', aiignore: { patterns: [] } })).toEqual(expected);
     });
 
-    it('allowDirs replaces filesystem-mode rules with the cwd + dirs allow-list (real paths)', () => {
-      const rules = buildPermissions({ filesystem: 'all', allowDirs: ['/tmp/out'] });
-      expect(rules).toEqual([
-        { operations: ['read', 'write'], paths: ['/work/proj/**', '/work/proj'], mode: 'allow' },
-        { operations: ['read', 'write'], paths: ['/tmp/out/**', '/tmp/out'], mode: 'allow' },
-        { operations: ['read', 'write'], paths: ['/**'], mode: 'deny' },
-      ]);
-    });
+    // Same win32 path.resolve() gap: allowDirs widening goes through allowDirsToPermissions,
+    // which never runs in real (non-virtual) mode on Windows in production (EXT-16).
+    it.skipIf(process.platform === 'win32')(
+      'allowDirs replaces filesystem-mode rules with the cwd + dirs allow-list (real paths)',
+      () => {
+        const rules = buildPermissions({ filesystem: 'all', allowDirs: ['/tmp/out'] });
+        expect(rules).toEqual([
+          { operations: ['read', 'write'], paths: ['/work/proj/**', '/work/proj'], mode: 'allow' },
+          { operations: ['read', 'write'], paths: ['/tmp/out/**', '/tmp/out'], mode: 'allow' },
+          { operations: ['read', 'write'], paths: ['/**'], mode: 'deny' },
+        ]);
+      }
+    );
 
     it('with allowDirs, .aiignore deny rules are anchored at the absolute cwd and come first', () => {
       const rules = buildPermissions({
