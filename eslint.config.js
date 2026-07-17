@@ -96,6 +96,7 @@ export default defineConfig([
   pkgSourceConfig('core'),
   pkgSourceConfig('agent'),
   pkgSourceConfig('review'),
+  pkgSourceConfig('batch'),
   pkgSourceConfig('app'),
   // Test TypeScript files with separate project reference
   {
