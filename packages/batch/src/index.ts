@@ -13,3 +13,29 @@ export type {
   RunCellFn,
 } from '#src/types.js';
 export { DEFAULT_CONCURRENCY } from '#src/types.js';
+
+// BATCH-2 — `gth eval`'s suite parsing, deterministic checks, judge, runner, and output writer.
+export { parseEvalSuite } from '#src/evalSuite.js';
+export { runDeterministicChecks } from '#src/deterministicChecks.js';
+export {
+  judgeEvalCase,
+  buildJudgeMessages,
+  EvalVerdictSchema,
+  EVAL_JUDGE_DEFAULT_TIMEOUT_MS,
+} from '#src/judge.js';
+export type { EvalJudgeVerdict } from '#src/judge.js';
+export { runEvalSuite } from '#src/evalRunner.js';
+export { writeEvalOutput } from '#src/evalOutput.js';
+export type {
+  DeterministicCheckResult,
+  EvalCase,
+  EvalCaseResult,
+  EvalSuite,
+  EvalSuiteSummary,
+  EvalTarget,
+  JudgeFn,
+  JudgeOutcome,
+  JudgeVerdict,
+} from '#src/evalTypes.js';
+export type { RunEvalSuiteOptions } from '#src/evalRunner.js';
+export { DEFAULT_EVAL_PASS_THRESHOLD } from '#src/evalTypes.js';

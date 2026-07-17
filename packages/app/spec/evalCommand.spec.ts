@@ -1,0 +1,322 @@
+import { Command } from 'commander';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+// Make randomUUID deterministic across this spec (used by wrapContent block ids)
+vi.mock('node:crypto', async () => {
+  const actual = await vi.importActual<typeof import('node:crypto')>('node:crypto');
+  return {
+    ...actual,
+    randomUUID: () => '12345678-aaaa-bbbb-cccc-1234567890ab',
+  };
+});
+
+const resolversMock = {
+  createResolvers: vi.fn(),
+};
+vi.mock('@gaunt-sloth/agent/resolvers.js', () => resolversMock);
+
+const resolvedFactory = vi.fn();
+const resolveAgentFactoryMock = {
+  resolveAgentFactory: vi.fn(() => resolvedFactory),
+};
+vi.mock('@gaunt-sloth/agent/core/resolveAgentFactory.js', () => resolveAgentFactoryMock);
+
+const runSingleShot = vi.fn();
+vi.mock('@gaunt-sloth/core/runtime/singleShot.js', () => ({ runSingleShot }));
+
+const prompt = {
+  readExecPrompt: vi.fn(),
+  readBackstory: vi.fn(),
+  readGuidelines: vi.fn(),
+  readSystemPrompt: vi.fn(),
+  buildSystemMessages: vi.fn(),
+};
+vi.mock('@gaunt-sloth/core/utils/llmUtils.js', async () => {
+  const actual = await vi.importActual<typeof import('@gaunt-sloth/core/utils/llmUtils.js')>(
+    '@gaunt-sloth/core/utils/llmUtils.js'
+  );
+  return {
+    ...actual,
+    readExecPrompt: prompt.readExecPrompt,
+    readBackstory: prompt.readBackstory,
+    readGuidelines: prompt.readGuidelines,
+    readSystemPrompt: prompt.readSystemPrompt,
+    buildSystemMessages: prompt.buildSystemMessages,
+  };
+});
+
+// A safe (non-root, cleaned-up-per-test) stand-in for where getGslothFilePath would place a
+// default-named report/dir in a real project.
+const defaultOutputRoot = join(tmpdir(), 'gth-eval-command-default-output');
+
+const fileUtilsMock = {
+  readFileFromProjectDir: vi.fn(),
+  getGslothFilePath: vi.fn((name: string) => join(defaultOutputRoot, name)),
+  fileSafeLocalDate: vi.fn(() => '2026-07-18_00-00-00'),
+};
+vi.mock('@gaunt-sloth/core/utils/fileUtils.js', () => fileUtilsMock);
+
+const consoleUtilsMock = {
+  display: vi.fn(),
+  displaySuccess: vi.fn(),
+  displayWarning: vi.fn(),
+  displayError: vi.fn(),
+};
+vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => consoleUtilsMock);
+
+const systemUtilsMock = {
+  setExitCode: vi.fn(),
+};
+vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => systemUtilsMock);
+
+// The judge model: `withStructuredOutput` defaults to a high-rate PASS so tests that don't care
+// about judge grading (checks-only cases) never need to think about it. Individual tests override
+// this per case via a fresh `structuredInvoke` implementation.
+const structuredInvoke = vi.fn(async () => ({ rate: 9, reason: 'Good answer.' }));
+const withStructuredOutput = vi.fn(() => ({ invoke: structuredInvoke }));
+
+const mockConfig = {
+  llm: { invoke: vi.fn(), model: 'base-model', withStructuredOutput },
+  projectGuidelines: '.gsloth.guidelines.md',
+  streamOutput: true,
+  writeOutputToFile: true,
+  canInterruptInferenceWithEsc: true,
+  commands: { exec: { filesystem: 'all' } },
+};
+
+const configMock = {
+  initConfig: vi.fn(),
+};
+vi.mock('@gaunt-sloth/core/config.js', () => configMock);
+
+const SIMPLE_SUITE = `
+target: { type: gth-agent }
+cases:
+  - id: greets-politely
+    prompt: "greet the user"
+    must_contain: ["hello"]
+`;
+
+const JUDGE_SUITE = `
+target: { type: gth-agent }
+defaults: { pass_threshold: 6 }
+cases:
+  - id: judged-case
+    prompt: "explain the thing"
+    judge: "Explains clearly."
+`;
+
+describe('evalCommand', () => {
+  let outputDir: string;
+
+  beforeEach(async () => {
+    vi.resetAllMocks();
+    vi.clearAllMocks();
+    vi.resetModules();
+
+    outputDir = mkdtempSync(join(tmpdir(), 'gth-eval-command-'));
+
+    configMock.initConfig.mockResolvedValue({ ...mockConfig, llm: { ...mockConfig.llm } });
+    runSingleShot.mockResolvedValue({
+      ok: true,
+      answer: 'hello there',
+      tokensInput: 12,
+      tokensOutput: 34,
+      tools: ['read_file'],
+    });
+    resolversMock.createResolvers.mockImplementation(() => ({
+      resolveTools: vi.fn(),
+      cleanupTools: vi.fn(),
+    }));
+    structuredInvoke.mockResolvedValue({ rate: 9, reason: 'Good answer.' });
+
+    prompt.readSystemPrompt.mockReturnValue('');
+    prompt.readBackstory.mockReturnValue('BACKSTORY');
+    prompt.readGuidelines.mockReturnValue('GUIDELINES');
+    prompt.buildSystemMessages.mockReturnValue([{ content: 'ASK SYSTEM PROMPT' }]);
+
+    fileUtilsMock.readFileFromProjectDir.mockImplementation((file: string) => {
+      if (file === 'suite.yaml') return SIMPLE_SUITE;
+      if (file === 'judge-suite.yaml') return JUDGE_SUITE;
+      throw new Error(`unexpected file read: ${file}`);
+    });
+  });
+
+  afterEach(() => {
+    rmSync(outputDir, { recursive: true, force: true });
+    rmSync(defaultOutputRoot, { recursive: true, force: true });
+  });
+
+  it('registers the eval command with a description', async () => {
+    const { evalCommand } = await import('#src/commands/evalCommand.js');
+    const program = new Command();
+    evalCommand(program, {});
+    expect(program.commands[0].name()).toEqual('eval');
+    expect(program.commands[0].description()).toContain('judge');
+  });
+
+  it('runs a checks-only case through runSingleShot in ask mode and exits 0 on PASS', async () => {
+    const { evalCommand } = await import('#src/commands/evalCommand.js');
+    const program = new Command();
+    evalCommand(program, {});
+    await program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-o', outputDir]);
+
+    expect(runSingleShot).toHaveBeenCalledTimes(1);
+    const [source, preamble, content, config, , command, agentFactory] =
+      runSingleShot.mock.calls[0];
+    expect(source).toEqual('EVAL-greets-politely');
+    expect(preamble).toEqual('BACKSTORY\nGUIDELINES');
+    expect(content).toContain('greet the user');
+    expect(command).toEqual('ask');
+    expect(config.writeOutputToFile).toBe(false);
+    expect(agentFactory).toBe(resolvedFactory);
+
+    expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+
+    const resultsJson = JSON.parse(readFileSync(join(outputDir, 'results.json'), 'utf8'));
+    expect(resultsJson).toMatchObject({ total: 1, passed: 1, failed: 0 });
+
+    const caseJson = JSON.parse(readFileSync(join(outputDir, 'greets-politely.json'), 'utf8'));
+    expect(caseJson).toMatchObject({
+      id: 'greets-politely',
+      verdict: 'PASS',
+      answer: 'hello there',
+      tokensInput: 12,
+      tokensOutput: 34,
+      tools: ['read_file'],
+    });
+
+    expect(consoleUtilsMock.display).toHaveBeenCalledWith('PASS  greets-politely');
+    expect(consoleUtilsMock.displaySuccess).toHaveBeenCalledWith(
+      expect.stringContaining('EVAL RESULT: 1/1 case(s) passed')
+    );
+  });
+
+  it('sets a non-zero exit code when a case FAILs its deterministic checks', async () => {
+    runSingleShot.mockResolvedValue({ ok: true, answer: 'goodbye only', tools: [] });
+    const { evalCommand } = await import('#src/commands/evalCommand.js');
+    const program = new Command();
+    evalCommand(program, {});
+    await program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-o', outputDir]);
+
+    expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(1);
+    const resultsJson = JSON.parse(readFileSync(join(outputDir, 'results.json'), 'utf8'));
+    expect(resultsJson).toMatchObject({ total: 1, passed: 0, failed: 1 });
+    expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
+      expect.stringContaining('FAIL  greets-politely')
+    );
+  });
+
+  it('grades a judge-rubric case via config.llm.withStructuredOutput and PASSes at/above threshold', async () => {
+    runSingleShot.mockResolvedValue({ ok: true, answer: 'a clear explanation', tools: [] });
+    structuredInvoke.mockResolvedValue({ rate: 8, reason: 'Clear and correct.' });
+
+    const { evalCommand } = await import('#src/commands/evalCommand.js');
+    const program = new Command();
+    evalCommand(program, {});
+    await program.parseAsync(['na', 'na', 'eval', 'judge-suite.yaml', '-o', outputDir]);
+
+    expect(withStructuredOutput).toHaveBeenCalledOnce();
+    expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+    const caseJson = JSON.parse(readFileSync(join(outputDir, 'judged-case.json'), 'utf8'));
+    expect(caseJson).toMatchObject({
+      verdict: 'PASS',
+      judge: { attempted: true, ok: true, verdict: { rate: 8, reason: 'Clear and correct.' } },
+    });
+  });
+
+  it('FAILs a judge-rubric case below threshold and sets a non-zero exit code', async () => {
+    runSingleShot.mockResolvedValue({ ok: true, answer: 'a confusing mess', tools: [] });
+    structuredInvoke.mockResolvedValue({ rate: 2, reason: 'Unclear.' });
+
+    const { evalCommand } = await import('#src/commands/evalCommand.js');
+    const program = new Command();
+    evalCommand(program, {});
+    await program.parseAsync(['na', 'na', 'eval', 'judge-suite.yaml', '-o', outputDir]);
+
+    expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(1);
+    const resultsJson = JSON.parse(readFileSync(join(outputDir, 'results.json'), 'utf8'));
+    expect(resultsJson.cases[0].reasons).toEqual(['judge rate 2/10 below threshold 6: Unclear.']);
+  });
+
+  it('FAILs the case (without crashing) when the judge call throws', async () => {
+    runSingleShot.mockResolvedValue({ ok: true, answer: 'anything', tools: [] });
+    structuredInvoke.mockRejectedValue(new Error('judge model unavailable'));
+
+    const { evalCommand } = await import('#src/commands/evalCommand.js');
+    const program = new Command();
+    evalCommand(program, {});
+    await program.parseAsync(['na', 'na', 'eval', 'judge-suite.yaml', '-o', outputDir]);
+
+    expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(1);
+    const resultsJson = JSON.parse(readFileSync(join(outputDir, 'results.json'), 'utf8'));
+    expect(resultsJson.cases[0].judge).toMatchObject({
+      ok: false,
+      error: 'judge model unavailable',
+    });
+  });
+
+  it('propagates a malformed suite file as a harness-level throw (uncaught by the action)', async () => {
+    fileUtilsMock.readFileFromProjectDir.mockImplementation(() => 'not: [valid yaml');
+    const { evalCommand } = await import('#src/commands/evalCommand.js');
+    const program = new Command();
+    evalCommand(program, {});
+
+    await expect(
+      program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-o', outputDir])
+    ).rejects.toThrow(/Failed to parse eval suite YAML/);
+
+    expect(runSingleShot).not.toHaveBeenCalled();
+  });
+
+  it('respects -j/--concurrency pass-through to the eval runner', async () => {
+    let maxInFlight = 0;
+    let inFlight = 0;
+    fileUtilsMock.readFileFromProjectDir.mockImplementation(
+      () => `
+target: { type: gth-agent }
+cases:
+  - id: c0
+    prompt: "p0"
+    must_contain: ["ok"]
+  - id: c1
+    prompt: "p1"
+    must_contain: ["ok"]
+  - id: c2
+    prompt: "p2"
+    must_contain: ["ok"]
+  - id: c3
+    prompt: "p3"
+    must_contain: ["ok"]
+`
+    );
+    runSingleShot.mockImplementation(async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return { ok: true, answer: 'ok', tools: [] };
+    });
+
+    const { evalCommand } = await import('#src/commands/evalCommand.js');
+    const program = new Command();
+    evalCommand(program, {});
+    await program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-j', '2', '-o', outputDir]);
+
+    expect(maxInFlight).toBe(2);
+  });
+
+  it('uses the default timestamped output dir when -o is omitted', async () => {
+    const { evalCommand, defaultEvalOutputDir } = await import('#src/commands/evalCommand.js');
+    const program = new Command();
+    evalCommand(program, {});
+    await program.parseAsync(['na', 'na', 'eval', 'suite.yaml']);
+
+    expect(consoleUtilsMock.displaySuccess).toHaveBeenCalledWith(
+      expect.stringContaining(defaultEvalOutputDir())
+    );
+  });
+});
