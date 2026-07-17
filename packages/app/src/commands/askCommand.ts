@@ -2,8 +2,8 @@ import { Command } from 'commander';
 import { CommandLineConfigOverrides, initConfig } from '@gaunt-sloth/core/config.js';
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import { getAskSystemPrompt } from '#src/commands/commandIntrospection.js';
-import { getStringFromStdin } from '@gaunt-sloth/core/utils/systemUtils.js';
-import { displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import { getStringFromStdin, setExitCode } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { displayError, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { wrapContent } from '@gaunt-sloth/core/utils/llmUtils.js';
 
 import { readMultipleFilesFromProjectDir } from '@gaunt-sloth/core/utils/fileUtils.js';
@@ -99,15 +99,25 @@ export function askCommand(
       const { createResolvers } = await import('@gaunt-sloth/agent/resolvers.js');
       const { resolveAgentFactory } =
         await import('@gaunt-sloth/agent/core/resolveAgentFactory.js');
-      await runSingleShot(
-        'ASK',
-        getAskSystemPrompt(config),
-        content.join('\n'),
-        config,
-        createResolvers(),
-        'ask',
-        // ask defaults to the lean backend; an explicit config.agent.backend overrides it.
-        resolveAgentFactory(config, 'lean')
-      );
+      let ok = false;
+      try {
+        ok = await runSingleShot(
+          'ASK',
+          getAskSystemPrompt(config),
+          content.join('\n'),
+          config,
+          createResolvers(),
+          'ask',
+          // ask defaults to the lean backend; an explicit config.agent.backend overrides it.
+          resolveAgentFactory(config, 'lean')
+        );
+      } catch (error) {
+        displayError(error instanceof Error ? error.message : String(error));
+        ok = false;
+      }
+
+      if (!ok) {
+        setExitCode(1);
+      }
     });
 }

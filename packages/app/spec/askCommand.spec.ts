@@ -80,10 +80,13 @@ vi.mock('#src/utils/llmUtils.js', async () => {
   };
 });
 vi.mock('@gaunt-sloth/core/runtime/singleShot.js', () => singleShotModule);
-vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => ({
+const systemUtilsMock = {
   getStringFromStdin: vi.fn().mockReturnValue(''),
-}));
+  setExitCode: vi.fn(),
+};
+vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => systemUtilsMock);
 const consoleUtilsMock = {
+  displayError: vi.fn(),
   displayWarning: vi.fn(),
 };
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => consoleUtilsMock);
@@ -103,6 +106,9 @@ describe('askCommand', () => {
     // Set up config mock
     configMock.initConfig.mockResolvedValue(mockConfig);
     configMock.createDefaultConfig.mockReturnValue(mockConfig);
+
+    // A run succeeds unless a test says otherwise.
+    runSingleShot.mockResolvedValue(true);
 
     // Mock the util functions
     fileUtilsMock.readMultipleFilesFromProjectDir.mockImplementation((files: string[]) => {
@@ -143,6 +149,28 @@ describe('askCommand', () => {
     );
     // ask defaults to the lean backend; an explicit agent.backend would override it.
     expect(resolveAgentFactoryMock.resolveAgentFactory).toHaveBeenCalledWith(mockConfig, 'lean');
+    expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+  });
+
+  it('sets a non-zero exit code when the run fails', async () => {
+    runSingleShot.mockResolvedValue(false);
+    const { askCommand } = await import('#src/commands/askCommand.js');
+    const program = new Command();
+    askCommand(program, {});
+    await program.parseAsync(['na', 'na', 'ask', 'test message']);
+
+    expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(1);
+  });
+
+  it('sets a non-zero exit code when the run throws', async () => {
+    runSingleShot.mockRejectedValue(new Error('boom'));
+    const { askCommand } = await import('#src/commands/askCommand.js');
+    const program = new Command();
+    askCommand(program, {});
+    await program.parseAsync(['na', 'na', 'ask', 'test message']);
+
+    expect(consoleUtilsMock.displayError).toHaveBeenCalled();
+    expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(1);
   });
 
   it('Should call runSingleShot with message and file content', async () => {
