@@ -84,7 +84,7 @@ const systemUtilsMock = {
   getStringFromStdin: vi.fn().mockReturnValue(''),
   setExitCode: vi.fn(),
 };
-vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
+vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => systemUtilsMock);
 const consoleUtilsMock = {
   displayError: vi.fn(),
   displayWarning: vi.fn(),
