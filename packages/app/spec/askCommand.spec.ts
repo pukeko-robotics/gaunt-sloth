@@ -80,7 +80,7 @@ vi.mock('#src/utils/llmUtils.js', async () => {
   };
 });
 vi.mock('@gaunt-sloth/core/runtime/singleShot.js', () => singleShotModule);
-vi.mock('#src/utils/systemUtils.js', () => ({
+vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => ({
   getStringFromStdin: vi.fn().mockReturnValue(''),
 }));
 const consoleUtilsMock = {
