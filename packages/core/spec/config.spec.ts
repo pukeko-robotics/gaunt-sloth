@@ -1591,6 +1591,124 @@ describe('config', async () => {
       expect(postProcessJsonConfigMock).toHaveBeenCalledOnce();
       expect(finalConfig).toEqual(postProcessedConfig);
     });
+
+    describe('commandLineConfigOverrides.model (BATCH-1)', () => {
+      it('overrides llmConfig.model before the provider builds the instance', async () => {
+        const jsonConfig = {
+          llm: {
+            type: 'vertexai',
+            model: 'configured-model',
+          },
+        } as RawGthConfig;
+
+        const processJsonConfigMock = vi
+          .fn()
+          .mockImplementation(async (llmConfig: Record<string, unknown>) => ({
+            type: 'vertexai',
+            model: llmConfig.model,
+          }));
+        vi.doMock('#src/providers/vertexai.js', () => ({
+          processJsonConfig: processJsonConfigMock,
+          postProcessJsonConfig: undefined,
+        }));
+
+        const { tryJsonConfig } = await import('#src/config.js');
+        const config = await tryJsonConfig(jsonConfig, { model: 'override-model' });
+
+        // The override must reach the provider's own construction call (the raw LLM *spec*),
+        // not be applied after the fact to whatever instance was already built.
+        expect(processJsonConfigMock).toHaveBeenCalledWith(
+          expect.objectContaining({ model: 'override-model' })
+        );
+        expect(config.llm).toEqual({ type: 'vertexai', model: 'override-model' });
+        // modelDisplayName is derived from the (now-overridden) raw jsonConfig.llm.model.
+        expect(config.modelDisplayName).toEqual('override-model');
+      });
+
+      it(
+        'regression (BATCH-1 finding 1): builds a genuine instance via the provider factory, so ' +
+          'a provider class with a real private field keeps working — no Object.create/' +
+          'getOwnPropertyDescriptors structural clone anywhere in this path',
+        async () => {
+          // A minimal stand-in for a LangChain chat-model class whose methods touch a genuine
+          // private (#) field — the exact shape the old `cloneLlmWithModel` (Object.create +
+          // getOwnPropertyDescriptors) could never support, because a structurally-cloned object
+          // never runs the constructor and so never gets the original instance's private slots.
+          class FakeProviderModelWithPrivateField {
+            model: string;
+            #internalClient: { greet: () => string };
+
+            constructor(fields: { model: string }) {
+              this.model = fields.model;
+              // A "real internal client cache" a provider might build in its constructor —
+              // exactly the kind of state a structural clone would never receive.
+              this.#internalClient = { greet: () => `hello from ${fields.model}` };
+            }
+
+            // Any real call path (e.g. `.invoke()`) would touch private state like this;
+            // this throws `TypeError: Cannot read private member ...` on an Object.create clone.
+            callPrivate(): string {
+              return this.#internalClient.greet();
+            }
+          }
+
+          const jsonConfig = {
+            llm: {
+              type: 'vertexai',
+              model: 'configured-model',
+            },
+          } as RawGthConfig;
+
+          vi.doMock('#src/providers/vertexai.js', () => ({
+            processJsonConfig: vi
+              .fn()
+              .mockImplementation(
+                async (llmConfig: Record<string, unknown>) =>
+                  new FakeProviderModelWithPrivateField({ model: llmConfig.model as string })
+              ),
+            postProcessJsonConfig: undefined,
+          }));
+
+          const { tryJsonConfig } = await import('#src/config.js');
+          const config = await tryJsonConfig(jsonConfig, { model: 'model-with-private-state' });
+
+          const llm = config.llm as unknown as FakeProviderModelWithPrivateField;
+          expect(llm).toBeInstanceOf(FakeProviderModelWithPrivateField);
+          // The critical assertion: calling a method that reaches into the private field does
+          // NOT throw. A structurally-cloned object (Object.create + getOwnPropertyDescriptors)
+          // would throw here, because it never ran the constructor that sets #internalClient.
+          expect(llm.callPrivate()).toEqual('hello from model-with-private-state');
+        }
+      );
+
+      it('leaves llmConfig.model untouched when no override is given', async () => {
+        const jsonConfig = {
+          llm: {
+            type: 'vertexai',
+            model: 'configured-model',
+          },
+        } as RawGthConfig;
+
+        const processJsonConfigMock = vi
+          .fn()
+          .mockImplementation(async (llmConfig: Record<string, unknown>) => ({
+            type: 'vertexai',
+            model: llmConfig.model,
+          }));
+        vi.doMock('#src/providers/vertexai.js', () => ({
+          processJsonConfig: processJsonConfigMock,
+          postProcessJsonConfig: undefined,
+        }));
+
+        const { tryJsonConfig } = await import('#src/config.js');
+        const config = await tryJsonConfig(jsonConfig, {});
+
+        expect(processJsonConfigMock).toHaveBeenCalledWith(
+          expect.objectContaining({ model: 'configured-model' })
+        );
+        expect(config.modelDisplayName).toEqual('configured-model');
+      });
+    });
   });
 
   describe('custom config path', () => {

@@ -1,5 +1,5 @@
 {
-  "//1": "Root workspace package — not published. Publishable packages live in packages/* (gaunt-sloth [dir: app], agent, core, review).",
+  "//1": "Root workspace package — not published. Publishable packages live in packages/* (gaunt-sloth [dir: app], agent, batch, core, review).",
   "name": "gaunt-sloth-workspace",
   "version": "0.0.0",
   "private": true,
@@ -18,7 +18,7 @@
   "packageManager": "pnpm@11.3.0",
   "scripts": {
     "clean": "pnpm -r --if-present run clean",
-    "build": "pnpm --filter @gaunt-sloth/core run build && pnpm --filter @gaunt-sloth/agent run build && pnpm --filter @gaunt-sloth/review run build && pnpm --filter gaunt-sloth run build",
+    "build": "pnpm --filter @gaunt-sloth/core run build && pnpm --filter @gaunt-sloth/agent run build && pnpm --filter @gaunt-sloth/review run build && pnpm --filter @gaunt-sloth/batch run build && pnpm --filter gaunt-sloth run build",
     "unit": "vitest run",
     "test": "pnpm run build && vitest run",
     "it": "pnpm run build && node it.js",
@@ -35,7 +35,7 @@
     "release:tag": "./tag-packages.sh",
     "release:publish": "./publish-all.sh"
   },
-  "//2": "Root workspace package — not published, holds dev dependencies. Publishable packages live in packages/* (gaunt-sloth [dir: app], agent, core, review).",
+  "//2": "Root workspace package — not published, holds dev dependencies. Publishable packages live in packages/* (gaunt-sloth [dir: app], agent, batch, core, review).",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/express": "^5.0.6",

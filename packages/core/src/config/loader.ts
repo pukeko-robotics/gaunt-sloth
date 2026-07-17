@@ -543,6 +543,12 @@ export async function tryJsonConfig(
         // Necessary to avoid https://github.com/langchain-ai/langchainjs/issues/8705
         llmConfig.verbose = commandLineConfigOverrides.verbose;
       }
+      if (commandLineConfigOverrides.model) {
+        // BATCH-1 fix — see CommandLineConfigOverrides.model: retarget the raw LLM *spec* before
+        // the provider builds an instance from it, rather than cloning/mutating an already-built
+        // instance. `gth batch --models` is the only current caller.
+        llmConfig.model = commandLineConfigOverrides.model;
+      }
       // Import the appropriate config module
       const configModule = await import(`#src/providers/${llmType}.js`);
       if (configModule.processJsonConfig) {

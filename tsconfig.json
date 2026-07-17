@@ -12,6 +12,7 @@
     { "path": "packages/core" },
     { "path": "packages/agent" },
     { "path": "packages/review" },
+    { "path": "packages/batch" },
     { "path": "packages/app" }
   ],
   "files": [],

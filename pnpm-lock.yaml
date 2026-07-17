@@ -122,6 +122,9 @@ importers:
       '@gaunt-sloth/agent':
         specifier: workspace:*
         version: link:../agent
+      '@gaunt-sloth/batch':
+        specifier: workspace:*
+        version: link:../batch
       '@gaunt-sloth/core':
         specifier: workspace:*
         version: link:../core
@@ -184,6 +187,12 @@ importers:
       react:
         specifier: ^19.2.7
         version: 19.2.7
+
+  packages/batch:
+    dependencies:
+      '@gaunt-sloth/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/core:
     dependencies:

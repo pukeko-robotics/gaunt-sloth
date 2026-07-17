@@ -1,0 +1,45 @@
+{
+  "name": "@gaunt-sloth/batch",
+  "version": "2.0.0-alpha.19",
+  "description": "Batch matrix runtime for Gaunt Sloth (BATCH-1): run a prompt-executable over a matrix of models and/or content-bound inputs",
+  "license": "MIT",
+  "author": "Andrew Kondratev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pukeko-robotics/gaunt-sloth.git",
+    "directory": "packages/batch"
+  },
+  "bugs": {
+    "url": "https://github.com/pukeko-robotics/gaunt-sloth/issues"
+  },
+  "homepage": "https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/batch#readme",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "batch",
+    "cli"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./*.js": "./dist/*.js"
+  },
+  "imports": {
+    "#src/*.js": "./dist/*.js"
+  },
+  "dependencies": {
+    "@gaunt-sloth/core": "workspace:*"
+  },
+  "files": [
+    "./dist/*"
+  ],
+  "scripts": {
+    "build": "tsc"
+  },
+  "publishConfig": {
+    "tag": "alpha"
+  }
+}

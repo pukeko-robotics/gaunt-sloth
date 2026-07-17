@@ -10,7 +10,7 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
  * source files in the workspace packages. This ensures that vi.mock() and
  * dynamic imports all resolve to the same module identity.
  *
- * Packages are scanned in dependency order: core → agent → tools → review → api → app.
+ * Packages are scanned in dependency order: core → agent → review → batch → app.
  * The review package has re-export stubs that delegate to core; those are
  * detected and skipped so the canonical core module is always used.
  */
@@ -34,7 +34,7 @@ function resolveWorkspaceImports() {
         const relative = id.replace('#src/', '').replace(/\.js$/, '');
 
         // Try each package in dependency order
-        for (const pkg of ['core', 'agent', 'review', 'app']) {
+        for (const pkg of ['core', 'agent', 'review', 'batch', 'app']) {
           const found = resolveSource(resolve(__dirname, `packages/${pkg}/src/${relative}`));
           if (found) {
             // Skip re-export stubs (files that just re-export from @gaunt-sloth/)
@@ -51,7 +51,7 @@ function resolveWorkspaceImports() {
       }
 
       // Handle @gaunt-sloth/X/path.js -> packages/X/src/path.{ts,tsx}
-      const scopedMatch = id.match(/^@gaunt-sloth\/(core|agent|review)\/(.+)\.js$/);
+      const scopedMatch = id.match(/^@gaunt-sloth\/(core|agent|review|batch)\/(.+)\.js$/);
       if (scopedMatch) {
         const [, pkg, path] = scopedMatch;
         return resolveSource(resolve(__dirname, `packages/${pkg}/src/${path}`));
