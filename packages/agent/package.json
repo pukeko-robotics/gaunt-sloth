@@ -1,6 +1,6 @@
 {
   "name": "@gaunt-sloth/agent",
-  "version": "2.0.0-alpha.18",
+  "version": "2.0.0-alpha.19",
   "description": "Deep agent runtime for Gaunt Sloth: tools, middleware, MCP/A2A clients and the AG-UI server",
   "license": "MIT",
   "author": "Andrew Kondratev",
