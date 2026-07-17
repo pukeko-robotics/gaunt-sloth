@@ -530,4 +530,19 @@ export interface CommandLineConfigOverrides {
    * The decision itself lives in `gaunt-sloth`'s `shouldUseTui`; this only carries the flag.
    */
   tui?: boolean;
+  /**
+   * BATCH-1 fix — run with a different model than the configured `llm.model`, just for this
+   * `initConfig()` call. Used by `gth batch --models a,b,c` to build one genuinely fresh
+   * `GthConfig` (with its own freshly-constructed `.llm`) per distinct model in the matrix,
+   * instead of structurally cloning an already-instantiated LangChain model object (unsafe for
+   * any provider class that keeps state behind private `#fields`). Applied in
+   * {@link tryJsonConfig} by overriding `llmConfig.model` before the provider's
+   * `processJsonConfig()` builds the instance, so it flows through the same supported
+   * construction path every other model comes from.
+   *
+   * Only takes effect for JSON (`.gsloth.config.json`) configs — a `configure()`-style JS/MJS/TS
+   * module config already returns a fully-built `GthConfig` (LLM included) with no generic seam
+   * to re-target its model.
+   */
+  model?: string;
 }

@@ -1,7 +1,6 @@
 import { Command } from 'commander';
 import { CommandLineConfigOverrides, initConfig } from '@gaunt-sloth/core/config.js';
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
-import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { getExecSystemPrompt } from '#src/commands/commandIntrospection.js';
 import { displaySuccess, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { wrapContent } from '@gaunt-sloth/core/utils/llmUtils.js';
@@ -27,34 +26,45 @@ interface BatchCommandOptions {
 }
 
 /**
- * Give a cell its own model, without mutating the config's shared `BaseChatModel` instance.
+ * Build a per-model {@link GthConfig} cache: one genuinely fresh `initConfig()` call (fresh `.llm`
+ * instance included) per DISTINCT `--models` value, not one per cell — a 20-cell matrix over 3
+ * models must only construct 3 model instances.
  *
- * `GthConfig.llm` is already an *instantiated* LangChain chat model by the time `initConfig()`
- * returns it (not a raw `{ type, model, apiKey, ... }` config record) — the resolved shape
- * `buildExecConfig`'s temperature knob also works against, via `execConfig.llm.temperature = …`.
- * That in-place mutation is safe for `exec` (one config, one run), but batch can run several
- * models concurrently, so mutating one shared instance's `.model` would race between cells.
+ * BATCH-1 fix (CI review finding, critical): the previous approach gave a cell its own model by
+ * structurally cloning the shared `GthConfig.llm` instance (`Object.create` +
+ * `getOwnPropertyDescriptors`) and setting `.model` on the clone. That never runs the original
+ * class's constructor, so it never gets that instance's private (`#field`) slots — any LangChain
+ * chat-model class whose methods touch a `#privateField` internally (not just the public `model`
+ * field the old code checked for) would throw `TypeError: Cannot read private member from an
+ * object whose class did not declare it` the moment such a method ran on the clone. That risk is
+ * not provider-specific and cannot be ruled out by inspecting today's installed provider
+ * versions. This replaces cloning with construction: each distinct model gets a real
+ * `initConfig({ ...overrides, model })` call, which threads the override through
+ * `tryJsonConfig` (`packages/core/src/config/loader.ts`) so the provider's own
+ * `processJsonConfig()` builds the instance from scratch — the same supported path every other
+ * model comes from, correct for any provider.
  *
- * Instead this clones the instance with `Object.create` + `getOwnPropertyDescriptors` — same
- * prototype (so `.invoke`/`.bindTools`/etc. keep working), independent own properties (so setting
- * `.model` on the clone can't be seen by any other cell) — and sets `.model` on the clone. Every
- * built-in provider (`packages/core/src/providers/*.ts`) constructs its LangChain class with a
- * plain `model: llmConfig.model` field (not a private `#` field), which is the same assumption the
- * temperature knob already relies on; this has not been verified against a live provider call in
- * this task (see the task report's known-gaps section) — a class that keeps model-selection state
- * behind a private field or a lazily-built client would silently keep calling the original model.
- * Providers that don't expose `model` at all are left untouched rather than guessed at.
+ * Cached by `Promise<GthConfig>` (not just by resolved value) so concurrent cells requesting the
+ * same not-yet-resolved model share one in-flight `initConfig()` call instead of racing to build
+ * the model twice.
  */
-function cloneLlmWithModel(llm: BaseChatModel, model: string): BaseChatModel {
-  if (!('model' in llm)) {
-    return llm;
-  }
-  const clone = Object.create(
-    Object.getPrototypeOf(llm) as object,
-    Object.getOwnPropertyDescriptors(llm)
-  ) as BaseChatModel;
-  (clone as unknown as { model: string }).model = model;
-  return clone;
+function createCellConfigResolver(
+  baseConfig: GthConfig,
+  commandLineConfigOverrides: CommandLineConfigOverrides
+): (model: string | undefined) => Promise<GthConfig> {
+  const configForModel = new Map<string, Promise<GthConfig>>();
+
+  return (model: string | undefined): Promise<GthConfig> => {
+    if (!model) {
+      return Promise.resolve(baseConfig);
+    }
+    let cached = configForModel.get(model);
+    if (!cached) {
+      cached = initConfig({ ...commandLineConfigOverrides, model });
+      configForModel.set(model, cached);
+    }
+    return cached;
+  };
 }
 
 /**
@@ -69,29 +79,39 @@ function cloneLlmWithModel(llm: BaseChatModel, model: string): BaseChatModel {
  * not wanted here. `command: 'exec'` is passed through so cells get the same near-deterministic,
  * exec-mode prompt as `gth exec` — batch is "exec over a matrix" (docs/batch-eval-cli-surface.md).
  */
-async function buildProductionRunCell(baseConfig: GthConfig, preamble: string): Promise<RunCellFn> {
+async function buildProductionRunCell(
+  baseConfig: GthConfig,
+  preamble: string,
+  commandLineConfigOverrides: CommandLineConfigOverrides
+): Promise<RunCellFn> {
   const { runSingleShot } = await import('@gaunt-sloth/core/runtime/singleShot.js');
   const { createResolvers } = await import('@gaunt-sloth/agent/resolvers.js');
   const { resolveAgentFactory } = await import('@gaunt-sloth/agent/core/resolveAgentFactory.js');
 
+  const resolveCellModelConfig = createCellConfigResolver(baseConfig, commandLineConfigOverrides);
+
   return async (cell) => {
+    const modelConfig = await resolveCellModelConfig(cell.model);
     const cellConfig: GthConfig = {
-      ...baseConfig,
+      ...modelConfig,
       canInterruptInferenceWithEsc: false,
       writeOutputToFile: false,
-      ...(cell.model
-        ? { llm: cloneLlmWithModel(baseConfig.llm, cell.model), modelDisplayName: cell.model }
-        : {}),
     };
     const content = wrapContent(cell.content, 'script', 'prompt-executable script', true);
 
+    // BATCH-1 fix (CI review finding, critical): keep the resolvers reference and clean it up
+    // unconditionally (success or failure) — the previous code passed `createResolvers()` inline
+    // into `runSingleShot(...)` and discarded the reference, so `cleanupTools()` (which tears
+    // down any MCP-server-backed tools/processes the cell's resolution opened) was never called —
+    // an orphaned-process leak, one per cell.
+    const resolvers = createResolvers();
     try {
       const ok = await runSingleShot(
         `BATCH-${cell.id}`,
         preamble,
         content,
         cellConfig,
-        createResolvers(),
+        resolvers,
         'exec',
         // batch defaults to the lean backend, same as exec; an explicit config.agent.backend wins.
         resolveAgentFactory(cellConfig, 'lean')
@@ -102,6 +122,17 @@ async function buildProductionRunCell(baseConfig: GthConfig, preamble: string): 
       // returns false instead); this guards the rare case of a genuinely unexpected exception so
       // one bad cell can never take the whole batch run down.
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    } finally {
+      try {
+        await resolvers.cleanupTools?.();
+      } catch (cleanupError) {
+        // A cleanup failure must never mask or override the cell's real result (already returned
+        // above) — surface it as a warning only.
+        displayWarning(
+          `Failed to clean up tools for cell ${cell.id}: ` +
+            `${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`
+        );
+      }
     }
   };
 }
@@ -199,7 +230,7 @@ export function batchCommand(
       const cells = buildMatrix(scriptContent, models, rows);
 
       const preamble = getExecSystemPrompt(config);
-      const runCell = await buildProductionRunCell(config, preamble);
+      const runCell = await buildProductionRunCell(config, preamble, commandLineConfigOverrides);
 
       const results = await runBatchMatrix(cells, {
         runCell,
