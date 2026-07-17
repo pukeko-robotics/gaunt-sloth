@@ -106,7 +106,7 @@ async function buildProductionRunCell(
     // an orphaned-process leak, one per cell.
     const resolvers = createResolvers();
     try {
-      const ok = await runSingleShot(
+      const { ok, answer, tokensInput, tokensOutput, tools } = await runSingleShot(
         `BATCH-${cell.id}`,
         preamble,
         content,
@@ -116,7 +116,7 @@ async function buildProductionRunCell(
         // batch defaults to the lean backend, same as exec; an explicit config.agent.backend wins.
         resolveAgentFactory(cellConfig, 'lean')
       );
-      return { ok };
+      return { ok, answer, tokensInput, tokensOutput, tools };
     } catch (error) {
       // runSingleShot itself is documented to never throw for a normal LLM/tool failure (it
       // returns false instead); this guards the rare case of a genuinely unexpected exception so

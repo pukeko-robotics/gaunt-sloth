@@ -153,7 +153,7 @@ export function execCommand(
 
       let ok = false;
       try {
-        ok = await runSingleShot(
+        ({ ok } = await runSingleShot(
           'EXEC',
           getExecSystemPrompt(execConfig),
           content.join('\n'),
@@ -162,7 +162,7 @@ export function execCommand(
           'exec',
           // exec defaults to the lean backend; an explicit config.agent.backend overrides it.
           resolveAgentFactory(execConfig, 'lean')
-        );
+        ));
       } catch (error) {
         displayError(error instanceof Error ? error.message : String(error));
         ok = false;

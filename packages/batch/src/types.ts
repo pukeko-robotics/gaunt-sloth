@@ -42,8 +42,9 @@ export interface CellRunOutcome {
   ok: boolean;
   /**
    * The model's final answer text, when the injected run-cell function can cleanly obtain it.
-   * The production adapter (wired around `runSingleShot`) cannot — see the BATCH-1 task report for
-   * why — so this is `undefined` for real runs today; fakes used in tests may populate it.
+   * The production adapter (wired around `runSingleShot`) populates this from
+   * `runSingleShot`'s `SingleShotResult.answer` (BATCH-2); still optional because fakes used in
+   * tests, or a future non-`runSingleShot`-backed `RunCellFn`, may leave it unset.
    */
   answer?: string;
   /** Total prompt/input tokens for the run, when available (see {@link answer}'s caveat). */

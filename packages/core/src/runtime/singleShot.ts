@@ -19,6 +19,19 @@ import type { GthRunStats } from '#src/core/types.js';
 import { getProjectDir } from '#src/utils/systemUtils.js';
 
 /**
+ * Result of a {@link runSingleShot} run: the pass/fail contract callers such as `ask`/`exec` have
+ * always used (`ok`), plus the SUT's answer text and run stats (GS2-16's {@link GthRunStats}) that
+ * were already computed internally but previously discarded. Extends `GthRunStats` rather than
+ * restating `tokensInput`/`tokensOutput`/`tools` as parallel fields.
+ */
+export interface SingleShotResult extends GthRunStats {
+  /** `true` when the run completed without error, `false` when it failed. */
+  ok: boolean;
+  /** The SUT's full answer text (`runner.processMessages()`'s return value). Empty on failure. */
+  answer: string;
+}
+
+/**
  * Ask a question and get an answer from the LLM.
  *
  * This is the shared, non-interactive single-shot runtime behind both the conversational
@@ -34,8 +47,10 @@ import { getProjectDir } from '#src/utils/systemUtils.js';
  * @param agentFactory - Optional backend factory (B5). When omitted the runner uses its built-in
  *   lean {@link GthLangChainAgent} default (unchanged behavior for existing callers). The app
  *   layer passes `resolveAgentFactory(config, 'lean')` so an explicit `agent.backend` is honored.
- * @returns `true` when the run completed without error, `false` when it failed (so callers
- *   such as `exec` can set a non-zero exit code).
+ * @returns A {@link SingleShotResult}: `ok` is `true` when the run completed without error, `false`
+ *   when it failed (so callers such as `exec` can set a non-zero exit code); `answer`/`tokensInput`/
+ *   `tokensOutput`/`tools` carry the SUT's answer text and run stats for callers that need them
+ *   (e.g. `gth batch`/`gth eval`).
  */
 export async function runSingleShot(
   source: string,
@@ -45,7 +60,7 @@ export async function runSingleShot(
   resolvers?: AgentResolvers,
   command: GthCommand = 'ask',
   agentFactory?: GthAgentFactory
-): Promise<boolean> {
+): Promise<SingleShotResult> {
   const progressIndicator = config.streamOutput ? undefined : new ProgressIndicator('Thinking.');
   const messages = [new SystemMessage(preamble), new HumanMessage(content)];
 
@@ -112,5 +127,5 @@ export async function runSingleShot(
     }
   }
 
-  return succeeded;
+  return { ok: succeeded, answer: responseText, ...runStats };
 }
