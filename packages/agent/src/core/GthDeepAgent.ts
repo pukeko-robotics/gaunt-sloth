@@ -512,6 +512,49 @@ export class GthDeepAgent extends GthAbstractAgent {
       },
     });
 
+    // MCP tool-execution errors are spec-compliant RESULTS, not fatal faults. Per the MCP spec
+    // (2025-11-25 & draft, "Server › Tools › Error Handling"), a tool that hits an API failure, an
+    // input-validation problem, or a business-logic error (e.g. a disabled capability) returns a
+    // normal tools/call result with `isError: true`, and the CLIENT *SHOULD* hand that error to the
+    // model so it can self-correct. `@langchain/mcp-adapters` instead surfaces such a result by
+    // THROWING a ToolException at call time (its `_convertCallToolResult`). Because we install a
+    // wrapToolCall middleware, langchain's ToolNode treats any error a middleware rethrows as a fatal
+    // "middleware error" (`errorFromMiddleware && handleToolErrors !== true` → throw) and aborts the
+    // whole turn instead of relaying the error to the model — the opposite of the spec's client
+    // SHOULD. This middleware closes that gap: it catches a thrown ToolException and RETURNS it as a
+    // status:'error' ToolMessage (→ isError → ✗), so the model observes the error and can retry or
+    // explain (matching the non-stream invoke path's ToolException handling). Scope & safety: matched
+    // by name === 'ToolException' (the adapter's marker), so GraphInterrupt and every non-MCP throw
+    // fall through the final rethrow untouched. The adapter ALSO wraps a call-time AbortError into a
+    // ToolException (its `_callTool` catch-all), so we RETHROW when the run's abort signal is set —
+    // otherwise softening here would swallow user cancellation that ToolNode's own `signal?.aborted`
+    // guard normally enforces (bypassed once we handle the error in middleware). MCP connect/auth
+    // (401/403) and load failures are handled at CONNECT time (resolvers.ts throwOnLoadError +
+    // onConnectionError), not here, so they stay fatal as intended.
+    const mcpToolErrorSoftening = createMiddleware({
+      name: 'GthMcpToolErrorSoftening',
+      wrapToolCall: async (request, handler) => {
+        try {
+          return await handler(request);
+        } catch (e) {
+          if (
+            e instanceof Error &&
+            e.name === 'ToolException' &&
+            !request.runtime?.signal?.aborted
+          ) {
+            debugLog(`Softened MCP tool error into an error ToolMessage: ${e.message}`);
+            return new ToolMessage({
+              content: e.message,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              tool_call_id: (request.toolCall as any)?.id ?? '',
+              status: 'error',
+            });
+          }
+          throw e;
+        }
+      },
+    });
+
     // fsDenialSoftening first so it is the outermost wrapToolCall — it must see the throw from
     // deepagents' permission-enforcing fs tools. shellExitSoftening sits right after it (still
     // outboard of any user-configured middleware, so it always sees the raw ShellCommandFailedError
@@ -519,8 +562,16 @@ export class GthDeepAgent extends GthAbstractAgent {
     // load-bearing: they catch DISJOINT conditions (a permission-denied regex vs an
     // `instanceof ShellCommandFailedError`) and each rethrows what it doesn't recognize, so neither
     // can swallow the other. The console-bound tool-call-status middleware is NOT added here (see
-    // GthDeepAgentParams.middleware); the runner appends it.
-    const middleware = [fsDenialSoftening, shellExitSoftening, ...configuredMiddleware];
+    // GthDeepAgentParams.middleware); the runner appends it. mcpToolErrorSoftening sits alongside the
+    // other two softeners (still outboard of user middleware); it catches a DISJOINT condition
+    // (name==='ToolException') and rethrows everything else, so ordering among the three is not
+    // load-bearing.
+    const middleware = [
+      fsDenialSoftening,
+      shellExitSoftening,
+      mcpToolErrorSoftening,
+      ...configuredMiddleware,
+    ];
 
     // Map gsloth's .aiignore + filesystem mode onto deepagents permission rules. When
     // `--allow-dir` widens the sandbox, the backend runs without virtualMode, so paths are REAL

@@ -326,6 +326,10 @@ describe('GthDeepAgent', () => {
     expect(params.middleware.map((m: { name: string }) => m.name)).toEqual([
       'GthDeepFsDenialSoftening',
       'GthDeepShellExitSoftening',
+      // Sibling softener: turns a thrown MCP ToolException (isError result) into an error
+      // ToolMessage so the model self-corrects instead of aborting the turn. Outboard of user
+      // middleware, alongside the fs/shell softeners; disjoint condition so order among them is free.
+      'GthMcpToolErrorSoftening',
       'custom-mw',
       'GthMiddlewareToolCallStatusUpdate',
       'GthMiddlewareDebugCapture',

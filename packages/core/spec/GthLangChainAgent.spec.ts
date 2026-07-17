@@ -476,6 +476,119 @@ describe('GthLangChainAgent', () => {
       });
     });
 
+    // An MCP tool that returns an `isError` result is surfaced by @langchain/mcp-adapters as a THROWN
+    // ToolException; because gth installs wrapToolCall middleware, langchain's ToolNode would treat
+    // that rethrow as a fatal "middleware error" and abort the turn. This middleware must instead
+    // convert it into a status:'error' ToolMessage so the model can self-correct (MCP spec: clients
+    // SHOULD relay tool-execution errors), while a user-cancellation (abort) still propagates.
+    describe('GthMcpToolErrorSoftening (MCP isError → model, not abort)', () => {
+      const getSoftening = () => {
+        const middleware = createAgentMock.mock.calls.at(-1)?.[0].middleware as {
+          name: string;
+          wrapToolCall?: (
+            _request: unknown,
+            _handler: (_r: unknown) => Promise<unknown>
+          ) => Promise<ToolMessage>;
+        }[];
+        return middleware.find((m) => m.name === 'GthMcpToolErrorSoftening');
+      };
+      // A ToolException as thrown by @langchain/mcp-adapters: an Error whose name is 'ToolException'.
+      const toolException = (message: string) =>
+        Object.assign(new Error(message), { name: 'ToolException' });
+
+      it('is installed right after the shell softener (outboard of user middleware)', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('exec', mockConfig);
+
+        const middleware = createAgentMock.mock.calls.at(-1)?.[0].middleware as { name: string }[];
+        expect(middleware[0]?.name).toBe('GthLeanShellExitSoftening');
+        expect(middleware[1]?.name).toBe('GthMcpToolErrorSoftening');
+      });
+
+      it('converts a thrown ToolException into an error ToolMessage, message preserved', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('exec', mockConfig);
+
+        const softening = getSoftening();
+        expect(softening).toBeDefined();
+        const message =
+          "MCP tool 'contract_search' on server 'unimarket' returned an error: " +
+          '{"code":"MODULE_NOT_ENABLED","message":"The CONTRACT module is not enabled."}';
+        const handler = vi.fn().mockRejectedValue(toolException(message));
+
+        const result = await softening!.wrapToolCall!(
+          { toolCall: { id: 'tc-mcp' }, runtime: { signal: undefined } },
+          handler
+        );
+        // The adapter's message (which carries the server's error body) reaches the model verbatim...
+        expect(String(result.content)).toBe(message);
+        expect(result.tool_call_id).toBe('tc-mcp');
+        // ...as a status:'error' observation (→ isError → ✗), NOT a turn-aborting throw.
+        expect(result.status).toBe('error');
+      });
+
+      it('rethrows a ToolException when the run was aborted (user cancellation is never swallowed)', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('exec', mockConfig);
+
+        const softening = getSoftening();
+        // The adapter wraps a call-time AbortError into a ToolException; when the run's signal is
+        // aborted we must rethrow so the graph cancels rather than reporting a benign tool result.
+        const err = toolException('Error calling tool contract_search: AbortError');
+        const handler = vi.fn().mockRejectedValue(err);
+
+        await expect(
+          softening!.wrapToolCall!(
+            { toolCall: { id: 'tc-abort' }, runtime: { signal: { aborted: true } } },
+            handler
+          )
+        ).rejects.toBe(err);
+      });
+
+      it('rethrows a non-ToolException error untouched', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('exec', mockConfig);
+
+        const softening = getSoftening();
+        const err = new Error('boom');
+        const handler = vi.fn().mockRejectedValue(err);
+
+        await expect(
+          softening!.wrapToolCall!({ toolCall: { id: 'tc-other' }, runtime: {} }, handler)
+        ).rejects.toBe(err);
+      });
+
+      it('passes a successful tool result straight through', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('exec', mockConfig);
+
+        const softening = getSoftening();
+        const ok = new ToolMessage({ content: 'done', tool_call_id: 'tc-ok', status: 'success' });
+        const handler = vi.fn().mockResolvedValue(ok);
+
+        const result = await softening!.wrapToolCall!(
+          { toolCall: { id: 'tc-ok' }, runtime: {} },
+          handler
+        );
+        expect(result).toBe(ok);
+      });
+    });
+
     // The lean agent must install the SAME `/debug` capture middleware as the deep agent, so the
     // TUI's System-prompt / Tools / Chat-history panels populate on the (now default) lean backend.
     // Regression guard: before this, capture was deep-only and the panels stayed empty.
