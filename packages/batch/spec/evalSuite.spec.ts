@@ -149,6 +149,61 @@ cases:
     ).toThrow(/duplicate case id "dup"/);
   });
 
+  // CI review finding (BATCH-2 PR #410, critical): case ids double as output filenames
+  // (`evalOutput.ts` does `writeFileSync(join(outputDir, `${result.id}.json`), ...)`), so an
+  // unvalidated id like `../../etc/passwd` would let a suite author write outside `outputDir`.
+  // These must be rejected here, at parse time, not sanitized and not deferred to the write.
+  it('rejects a case id containing a path traversal sequence', async () => {
+    const { parseEvalSuite } = await import('#src/evalSuite.js');
+    expect(() =>
+      parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: "../../etc/passwd"
+    prompt: "p"
+    must_contain: ["x"]
+`)
+    ).toThrow(/case id must be a valid filename/);
+  });
+
+  it('rejects a case id containing a path separator', async () => {
+    const { parseEvalSuite } = await import('#src/evalSuite.js');
+    expect(() =>
+      parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: "sub/dir"
+    prompt: "p"
+    must_contain: ["x"]
+`)
+    ).toThrow(/case id must be a valid filename/);
+  });
+
+  it('rejects a case id with characters unsafe on some filesystems', async () => {
+    const { parseEvalSuite } = await import('#src/evalSuite.js');
+    expect(() =>
+      parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: "bad:id"
+    prompt: "p"
+    must_contain: ["x"]
+`)
+    ).toThrow(/case id must be a valid filename/);
+  });
+
+  it('accepts a case id made only of alphanumerics, dashes, underscores, and dots', async () => {
+    const { parseEvalSuite } = await import('#src/evalSuite.js');
+    const suite = parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: "Case_1.smoke-test"
+    prompt: "p"
+    must_contain: ["x"]
+`);
+    expect(suite.cases[0].id).toBe('Case_1.smoke-test');
+  });
+
   it('rejects a suite with zero cases', async () => {
     const { parseEvalSuite } = await import('#src/evalSuite.js');
     expect(() =>

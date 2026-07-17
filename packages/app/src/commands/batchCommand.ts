@@ -3,6 +3,7 @@ import { CommandLineConfigOverrides, initConfig } from '@gaunt-sloth/core/config
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import type { GthCommand } from '@gaunt-sloth/core/core/types.js';
 import { getExecSystemPrompt } from '#src/commands/commandIntrospection.js';
+import { parseIntOption } from '#src/commands/cliOptionParsers.js';
 import { displaySuccess, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { wrapContent } from '@gaunt-sloth/core/utils/llmUtils.js';
 import {
@@ -176,14 +177,6 @@ export function parseModelsOption(models: string | undefined): string[] | undefi
 /** Default output dir when `-o/--output` is omitted: a timestamped dir next to other gth reports. */
 export function defaultBatchOutputDir(): string {
   return getGslothFilePath(`gth_${fileSafeLocalDate()}_BATCH`);
-}
-
-function parseIntOption(value: string): number {
-  const parsed = parseInt(value, 10);
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`Expected an integer, got "${value}"`);
-  }
-  return parsed;
 }
 
 /**

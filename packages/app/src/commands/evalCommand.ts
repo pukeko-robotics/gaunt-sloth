@@ -3,6 +3,7 @@ import { CommandLineConfigOverrides, initConfig } from '@gaunt-sloth/core/config
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import { getAskSystemPrompt } from '#src/commands/commandIntrospection.js';
 import { buildProductionRunCell } from '#src/commands/batchCommand.js';
+import { parseIntOption } from '#src/commands/cliOptionParsers.js';
 import { display, displaySuccess, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { setExitCode } from '@gaunt-sloth/core/utils/systemUtils.js';
 import {
@@ -17,14 +18,6 @@ interface EvalCommandOptions {
   concurrency?: number;
   /** `-o/--output <dir>` — where structured per-case + summary output is written. */
   output?: string;
-}
-
-function parseIntOption(value: string): number {
-  const parsed = parseInt(value, 10);
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`Expected an integer, got "${value}"`);
-  }
-  return parsed;
 }
 
 /** Default output dir when `-o/--output` is omitted: a timestamped dir next to other gth reports —

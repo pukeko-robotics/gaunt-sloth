@@ -23,7 +23,14 @@ import type { EvalCase, EvalSuite } from '#src/evalTypes.js';
  * ```
  */
 const RawCaseSchema = z.object({
-  id: z.string().min(1, 'case id must be a non-empty string'),
+  id: z
+    .string()
+    .min(1, 'case id must be a non-empty string')
+    .regex(
+      /^[\w.-]+$/,
+      'case id must be a valid filename (alphanumeric, dashes, underscores, dots) — case ids ' +
+        'double as output filenames, so path separators and other special characters are rejected'
+    ),
   prompt: z.string().min(1, 'case prompt must be a non-empty string'),
   must_contain: z.array(z.string()).optional(),
   must_not_contain: z.array(z.string()).optional(),
@@ -56,6 +63,9 @@ const RawSuiteSchema = z.object({
  * - `target.profile` set to anything other than `"default"`/absent — a single suite-wide profile
  *   switch is the same `--identities` direction the brief scopes out; this task's target is always
  *   whatever profile `gth eval` itself was invoked under (`-i/--identity-profile`, if any).
+ * - A case `id` containing anything other than alphanumerics, dashes, underscores, or dots (case
+ *   ids double as output filenames — see `#src/evalOutput.js` — so a path separator or traversal
+ *   sequence like `../../etc/passwd` is rejected here, not sanitized).
  * - A duplicate case `id` (case ids double as output filenames — see `#src/evalOutput.js`).
  * - A case with **no** deterministic checks (`must_contain`/`must_not_contain`/
  *   `should_contain_any` all absent/empty) **and no** `judge` rubric: nothing would ever grade it,
