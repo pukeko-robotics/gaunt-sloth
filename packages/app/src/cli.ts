@@ -37,7 +37,8 @@ program
   )
   .option('--tui', 'Force the interactive Ink TUI for chat/code sessions (overrides CI auto-off)')
   .option('--no-tui', 'Force the plain readline session for chat/code (disable the TUI)')
-  .addOption(new Option('--nopipe').hideHelp(true));
+  .addOption(new Option('--nopipe').hideHelp(true))
+  .addOption(new Option('--no-pipe').hideHelp(true));
 
 const cliConfigOverrides: CommandLineConfigOverrides = {};
 

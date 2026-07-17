@@ -291,7 +291,11 @@ export const setEntryPoint = (indexJs: string): void => {
  */
 export function readStdin(program: ProgramLike): Promise<void> {
   return new Promise((resolvePromise) => {
-    if (stdin.isTTY || program.getOptionValue('nopipe')) {
+    // `--no-pipe` is registered as a plain negated Option (cli.ts), so Commander maps it to
+    // `pipe === false` rather than `nopipe === true` — see EXT-39. Both spellings mean the same
+    // thing: skip the piped-stdin wait.
+    const nopipe = program.getOptionValue('nopipe') || program.getOptionValue('pipe') === false;
+    if (stdin.isTTY || nopipe) {
       program.parseAsync().then(() => resolvePromise());
     } else {
       // Support piping diff into gsloth
