@@ -32,8 +32,9 @@ import { resolveAgentFactory } from '@gaunt-sloth/agent/core/resolveAgentFactory
 import { GthAbstractAgent } from '@gaunt-sloth/core/core/GthAbstractAgent.js';
 import type { SessionConfig } from '@gaunt-sloth/agent/modules/interactiveSessionModule.js';
 import type { BaseMessage } from '@langchain/core/messages';
+import { writeDebugDump } from '@gaunt-sloth/core/utils/debugDump.js';
 import { App } from '#src/tui/components/App.js';
-import { formatConfigSummary } from '#src/tui/slashCommands.js';
+import { formatConfigSummary, type DebugDumpInput } from '#src/tui/slashCommands.js';
 import type { PendingApproval, TuiAgent, TuiDebugCapture } from '#src/tui/types.js';
 import {
   collectMcpOverview,
@@ -90,6 +91,21 @@ function buildHistorySlashProps(config: GthConfig): HistorySlashProps {
   } catch {
     return {};
   }
+}
+
+/**
+ * GS2-46 — the real `/debug-dump` writer, injected into `<App>` the same way `historySearch` is:
+ * forwards the App-assembled input straight to the core writer, which does the actual fs I/O
+ * (mkdir + writeFileSync per file under the GLOBAL `~/.gsloth/debug-dumps/<timestamp>/`) plus
+ * gathers env/version info, the in-memory debugLog ring buffer, and best-effort git repo state
+ * itself. Dumped raw/unsanitized per this node's explicit scope (GS2-47 adds redaction later).
+ */
+function dumpDebugSession(input: DebugDumpInput): { archiveDir: string } {
+  return writeDebugDump({
+    transcript: input.transcript,
+    config: input.config,
+    modelDisplayName: input.modelDisplayName,
+  });
 }
 
 type StatusListener = (level: string, message: string) => void;
@@ -375,6 +391,8 @@ export async function createTuiSession(
         modelDisplayName={config.modelDisplayName}
         initialAutoApprove={runner.isSessionYolo()}
         configSummary={formatConfigSummary(config)}
+        resolvedConfig={config}
+        dumpDebugSession={dumpDebugSession}
         advisories={startupAdvisories}
         mcpFailures={mcpFailures}
         {...buildHistorySlashProps(config)}

@@ -6,6 +6,7 @@ import type {
 } from '@gaunt-sloth/core/core/types.js';
 import type { TurnViewModel } from '#src/tui/viewModel.js';
 import type { CommandNoticeTone } from '#src/tui/components/CommandNotice.js';
+import type { DebugDumpInput } from '#src/tui/slashCommands.js';
 
 /**
  * One in-flight tool-approval request bridged from the runner into the mounted `<App>`
@@ -94,6 +95,20 @@ export interface TuiAppProps {
   historySummary?: string[];
   insightsSummary?: string[];
   historySearch?: (query: string) => string[];
+  /**
+   * GS2-46 — the resolved config (the live `GthConfig`), for `/debug-dump`. Kept `unknown` here
+   * (this component never inspects it — it just forwards it into `dumpDebugSession`) so the TUI
+   * layer stays decoupled from the core config type. Omitted by the fixture agent, where
+   * `/debug-dump` reports itself unavailable.
+   */
+  resolvedConfig?: unknown;
+  /**
+   * GS2-46 — fs-writing implementation for `/debug-dump` (an UNSANITIZED diagnostic archive:
+   * transcript, resolved config, env/version info, the in-memory debugLog ring buffer, and
+   * best-effort git repo state), wired to `packages/core/src/utils/debugDump.ts#writeDebugDump`
+   * the same way `historySearch` wires to the local history store. Omitted by the fixture agent.
+   */
+  dumpDebugSession?: (input: DebugDumpInput) => { archiveDir: string };
   /**
    * TUI-C19 — non-fatal startup advisories to surface persistently (currently the load-time
    * config-validation warnings — unknown keys, deprecated names — captured around `initConfig`).

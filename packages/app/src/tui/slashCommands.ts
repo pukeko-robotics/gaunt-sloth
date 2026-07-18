@@ -58,6 +58,37 @@ export interface SlashCommandContext {
    * builds this from the transcript; omitted (empty) where there are no committed turns yet.
    */
   turnReasonings?: string[];
+  /**
+   * GS2-46 — the live transcript (all committed turns, tool calls + results) and the resolved
+   * config, for `/debug-dump`. Kept opaque (`unknown`) so this pure module stays decoupled from
+   * the TUI's `TranscriptItem` type and `GthConfig` — forwarded as-is into the injected
+   * `dumpDebugSession` writer (see {@link DebugDumpInput}). Omitted where no session state is
+   * available (e.g. the fixture agent), in which case `/debug-dump` reports itself unavailable.
+   */
+  transcript?: unknown[];
+  /** GS2-46 — see {@link SlashCommandContext.transcript}. */
+  resolvedConfig?: unknown;
+  /**
+   * GS2-46 — fs-writing implementation for `/debug-dump`: writes an UNSANITIZED archive
+   * (transcript, resolved config, env/version info, the in-memory debugLog ring buffer, and
+   * best-effort git repo state) to `~/.gsloth/debug-dumps/<timestamp>/` and returns its path.
+   * Injected by the App the same way `historySearch` is (GS2-7), so this module stays pure and
+   * testable with a fake — the real writer (`packages/core/src/utils/debugDump.ts`) does the
+   * actual I/O. Omitted ⇒ `/debug-dump` reports itself unavailable (fixture / no session state).
+   */
+  dumpDebugSession?: (input: DebugDumpInput) => { archiveDir: string };
+}
+
+/**
+ * GS2-46 — the input `/debug-dump` assembles from context and hands to the injected
+ * `dumpDebugSession` writer. `transcript`/`config` are opaque to this pure module (the real
+ * writer, not this file, interprets them); `modelDisplayName` mirrors the field already on
+ * {@link SlashCommandContext}.
+ */
+export interface DebugDumpInput {
+  transcript: unknown[];
+  config: unknown;
+  modelDisplayName: string;
 }
 
 /**
@@ -447,6 +478,32 @@ export function resolveReasoning(reasonings: string[], args: string[]): SlashCom
   };
 }
 
+/** `/debug-dump` when no `dumpDebugSession` writer is injected (fixture agent / no session state). */
+const DEBUG_DUMP_UNAVAILABLE_LINES = [
+  'No debug-dump writer is available in this session.',
+  'This is only available in a real session (not the fixture/demo agent).',
+];
+
+/**
+ * The `/debug-dump` success notice (GS2-46): the archive path plus a loud, impossible-to-miss
+ * warning. This node ships deliberately UNSANITIZED — the user ran this command themselves,
+ * mid-session, knowingly — so the warning stands in for the redaction GS2-47 adds later. `tone:
+ * 'warn'` (yellow, bold title) so the block itself reads as caution, not just its body text.
+ */
+export function debugDumpNotice(archiveDir: string): SlashCommandNotice {
+  return {
+    title: '⚠️  Debug dump written — UNSANITIZED, review before sharing',
+    lines: [
+      `Archive: ${archiveDir}`,
+      '',
+      'This archive contains the full transcript, resolved config, env info, debug log and git',
+      'state AS-IS — it may include secrets: API keys, tokens, file contents, env vars.',
+      'Review it carefully before sending it anywhere.',
+    ],
+    tone: 'warn',
+  };
+}
+
 /**
  * Build the default command registry. Returns a fresh array each call so callers may push
  * extension commands onto it (EXT-5) without sharing mutable module state.
@@ -584,6 +641,32 @@ export function createCommandRegistry(): SlashCommand[] {
       // Pure: resolve the target from the App-provided committed reasonings; the App renders the
       // reprint (reusing TUI-C15 styling) or the friendly notice.
       run: (ctx, args) => resolveReasoning(ctx.turnReasonings ?? [], args),
+    },
+    {
+      name: 'debug-dump',
+      description:
+        'Dump transcript + config + env + debug log to ~/.gsloth/debug-dumps (UNSANITIZED — may contain secrets)',
+      // Read-only from the transcript/thread's perspective (it only writes a diagnostic archive,
+      // never mutates session state), so it's useful precisely when something is going wrong
+      // mid-turn — mirrors /history, /config, /debug being availableDuringRun.
+      availableDuringRun: true,
+      run: (ctx) => {
+        if (!ctx.dumpDebugSession) {
+          return {
+            notice: {
+              title: 'Debug dump unavailable',
+              lines: DEBUG_DUMP_UNAVAILABLE_LINES,
+              tone: 'warn',
+            },
+          };
+        }
+        const { archiveDir } = ctx.dumpDebugSession({
+          transcript: ctx.transcript ?? [],
+          config: ctx.resolvedConfig,
+          modelDisplayName: ctx.modelDisplayName,
+        });
+        return { notice: debugDumpNotice(archiveDir) };
+      },
     },
   ];
 }

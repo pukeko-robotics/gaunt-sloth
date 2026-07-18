@@ -430,6 +430,97 @@ describe('tui/slashCommands /reasoning (TUI-C18 recall a turn’s thinking)', ()
   });
 });
 
+describe('tui/slashCommands /debug-dump (GS2-46)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('calls the injected dumpDebugSession with the transcript/config/model and renders the path + sensitive-data warning', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const dumpDebugSession = vi.fn().mockReturnValue({
+      archiveDir: '/home/user/.gsloth/debug-dumps/2026-07-18T12-00-00-000Z',
+    });
+    const fakeTranscript = [{ kind: 'user', id: 1, text: 'hi' }];
+    const fakeConfig = { modelDisplayName: 'claude-opus-4' };
+
+    const result = dispatchSlashCommand(
+      parseSlashCommand('/debug-dump')!,
+      createCommandRegistry(),
+      {
+        ...ctx,
+        transcript: fakeTranscript,
+        resolvedConfig: fakeConfig,
+        dumpDebugSession,
+      }
+    );
+
+    expect(dumpDebugSession).toHaveBeenCalledWith({
+      transcript: fakeTranscript,
+      config: fakeConfig,
+      modelDisplayName: ctx.modelDisplayName,
+    });
+
+    // Acceptance criteria: the returned notice contains BOTH the archive path and the warning.
+    const allText = [result.notice?.title, ...(result.notice?.lines ?? [])].join('\n');
+    expect(allText).toContain('/home/user/.gsloth/debug-dumps/2026-07-18T12-00-00-000Z');
+    expect(allText.toLowerCase()).toContain('secrets');
+    expect(allText.toLowerCase()).toContain('unsanitized');
+    expect(result.notice?.tone).toBe('warn');
+  });
+
+  it('defaults transcript to [] and passes through an undefined resolvedConfig when the context omits them', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const dumpDebugSession = vi.fn().mockReturnValue({ archiveDir: '/tmp/whatever' });
+
+    dispatchSlashCommand(parseSlashCommand('/debug-dump')!, createCommandRegistry(), {
+      ...ctx,
+      dumpDebugSession,
+    });
+
+    expect(dumpDebugSession).toHaveBeenCalledWith({
+      transcript: [],
+      config: undefined,
+      modelDisplayName: ctx.modelDisplayName,
+    });
+  });
+
+  it('reports itself unavailable (never throws) when no dumpDebugSession writer is injected', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const result = dispatchSlashCommand(
+      parseSlashCommand('/debug-dump')!,
+      createCommandRegistry(),
+      ctx // fixture-style context: no dumpDebugSession
+    );
+    expect(result.notice?.title).toBe('Debug dump unavailable');
+    expect(result.notice?.lines.join(' ')).toContain('No debug-dump writer is available');
+  });
+
+  it('stays run-safe: it is dispatchable while a turn is streaming', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const dumpDebugSession = vi.fn().mockReturnValue({ archiveDir: '/tmp/mid-turn-dump' });
+    const result = dispatchSlashCommand(
+      parseSlashCommand('/debug-dump')!,
+      createCommandRegistry(),
+      { ...ctx, dumpDebugSession },
+      { duringRun: true }
+    );
+    expect(dumpDebugSession).toHaveBeenCalled();
+    expect(result.notice?.title).toContain('Debug dump written');
+  });
+
+  it('is listed in /help', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const registry = createCommandRegistry();
+    const result = dispatchSlashCommand(parseSlashCommand('/help')!, registry, ctx);
+    expect(result.notice?.lines.some((l) => l.startsWith('/debug-dump —'))).toBe(true);
+  });
+});
+
 describe('tui/slashCommands slashMenuQuery (TUI-C10 menu trigger)', () => {
   beforeEach(() => {
     vi.resetAllMocks();
