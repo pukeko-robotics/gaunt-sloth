@@ -1,0 +1,43 @@
+name: Windows debug (fast iteration)
+
+# Standalone, manually-dispatched, windows-latest-only runner for fast iteration on
+# Windows-specific bugs (GS2-42: win32 SQLite file-handle leak in historyStore).
+#
+# unit-tests.yml already has a workflow_dispatch-gated `test-platforms` matrix
+# (macos-latest/windows-latest x node 24.x/latest), but a full dispatch there costs 4
+# runner-jobs and several minutes per iteration. This workflow runs a single, targeted
+# test file on a single windows-latest job so each debug iteration is cheap.
+#
+# Deliberately NOT wired into unit-tests.yml or release.yml — it is a permanent dev
+# tool (like tui-e2e.yml), useful for any future Windows-specific debugging, not a
+# one-off throwaway for GS2-42.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  win-debug:
+    name: win-debug (windows-latest)
+    permissions:
+      contents: read
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Use Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run targeted historyStore spec
+        run: pnpm vitest run packages/core/spec/historyStore.spec.ts
