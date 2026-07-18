@@ -539,6 +539,7 @@ export default class GthFileSystemToolkit extends BaseToolkit {
       let chunk = Buffer.alloc(CHUNK_SIZE);
       let linesFound = 0;
       let remainingText = '';
+      let firstChunk = true;
 
       while (position > 0 && linesFound < numLines) {
         const size = Math.min(CHUNK_SIZE, position);
@@ -550,7 +551,18 @@ export default class GthFileSystemToolkit extends BaseToolkit {
         const readData = chunk.slice(0, bytesRead).toString('utf-8');
         const chunkText = readData + remainingText;
 
-        const chunkLines = this.normalizeLineEndings(chunkText).split('\n');
+        const normalizedChunk = this.normalizeLineEndings(chunkText);
+        const chunkLines = normalizedChunk.split('\n');
+
+        // We read backward from EOF, so the file's terminating newline (if any) is only
+        // ever in this first chunk. Its split yields a phantom trailing empty element that
+        // must not be counted as the last line. Drop exactly one here so tail counting
+        // matches head/full reads; a file without a trailing newline is untouched and a
+        // genuine blank last line ("...\n\n") is preserved (only one element removed).
+        if (firstChunk && normalizedChunk.endsWith('\n')) {
+          chunkLines.pop();
+        }
+        firstChunk = false;
 
         if (position > 0) {
           remainingText = chunkLines[0];
@@ -612,7 +624,17 @@ export default class GthFileSystemToolkit extends BaseToolkit {
    */
   private async headAndTailFile(filePath: string, head: number, tail: number): Promise<string> {
     const content = await fs.readFile(filePath, 'utf-8');
-    const lines = this.normalizeLineEndings(content).split('\n');
+    const normalized = this.normalizeLineEndings(content);
+    const lines = normalized.split('\n');
+    // A terminating newline yields a phantom trailing empty element that would be
+    // miscounted as a real line (inflating `total`, so the true last line gets pushed
+    // into the "skipped" gap and the tail comes back empty). Drop exactly one when the
+    // file ends in a newline so counting/slicing matches head/full reads. Files without a
+    // trailing newline are untouched, and a genuine blank last line ("...\n\n") is
+    // preserved because only a single element is removed.
+    if (normalized.endsWith('\n')) {
+      lines.pop();
+    }
     const total = lines.length;
 
     if (head + tail >= total) {
