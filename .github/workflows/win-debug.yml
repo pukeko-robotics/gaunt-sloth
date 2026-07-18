@@ -73,11 +73,15 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $failures = @()
 
-          # Make sure npm's global bin dir is on PATH for this session even before the
-          # first global install creates it (a stale PATH here would look like a shim
-          # conflict but is actually just harness setup -- see win-debug.yml header).
-          $npmGlobalBin = "$env:APPDATA\npm"
-          $env:PATH = "$npmGlobalBin;$env:PATH"
+          # npm's global bin dir is NOT always %APPDATA%\npm -- on GitHub-hosted
+          # windows-latest runners it's C:\npm\prefix (set by the runner image), while a
+          # real interactive Windows install defaults to %APPDATA%\npm (see
+          # docs/windows-vm-testing.md). Ask npm itself so the shim-path checks below are
+          # correct in either environment, and so this dir is on PATH before the first
+          # global install creates it.
+          $npmPrefix = (npm config get prefix 2>$null | Out-String).Trim()
+          Write-Host "npm global prefix: $npmPrefix"
+          $env:PATH = "$npmPrefix;$env:PATH"
 
           function Test-Cmd {
             param([string]$Label, [scriptblock]$Block)
@@ -88,6 +92,31 @@ jobs:
                 $script:failures += "$Label (exit $LASTEXITCODE)"
               } else {
                 Write-Host "OK: $Label"
+              }
+            } catch {
+              Write-Host "FAIL: $Label (exception: $($_.Exception.Message))"
+              $script:failures += "$Label (exception: $($_.Exception.Message))"
+            }
+          }
+
+          # Checks the reported version starts with "2." (the 2.x line) -- not just that
+          # the command exits 0. A cross-package shim conflict can leave npm's global bin
+          # pointing at the OLD package while still exiting 0, so a plain --version-runs
+          # check silently passes on a broken upgrade. This is what actually caught the
+          # real bug (see run evidence in the REL-8 report).
+          function Test-Version2x {
+            param([string]$Label, [scriptblock]$Block)
+            try {
+              $out = & $Block 2>&1 | Out-String
+              $out = $out.Trim()
+              if ($LASTEXITCODE -ne 0) {
+                Write-Host "FAIL: $Label (exit $LASTEXITCODE, output: $out)"
+                $script:failures += "$Label (exit $LASTEXITCODE, output: $out)"
+              } elseif ($out -notmatch '^2\.') {
+                Write-Host "FAIL: $Label (expected 2.x, got: $out)"
+                $script:failures += "$Label (expected 2.x, got: $out)"
+              } else {
+                Write-Host "OK: $Label ($out)"
               }
             } catch {
               Write-Host "FAIL: $Label (exception: $($_.Exception.Message))"
@@ -112,15 +141,21 @@ jobs:
 
             Write-Host "-- installing gaunt-sloth@alpha (2.x) ON TOP, NOT removing 1.x first --"
             npm i -g gaunt-sloth@alpha 2>&1 | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "FAIL: iter$iter npm i -g gaunt-sloth@alpha (exit $LASTEXITCODE)"
+              $failures += "iter$iter npm i -g gaunt-sloth@alpha failed (exit $LASTEXITCODE) -- likely EEXIST on a bin shared with gaunt-sloth-assistant"
+            } else {
+              Write-Host "OK: iter$iter npm i -g gaunt-sloth@alpha (exit 0)"
+            }
 
-            Test-Cmd "iter$iter 2.x: gth --version" { gth --version }
-            Test-Cmd "iter$iter 2.x: gsloth --version" { gsloth --version }
-            Test-Cmd "iter$iter 2.x: gaunt-sloth --version" { gaunt-sloth --version }
+            Test-Version2x "iter$iter 2.x: gth --version" { gth --version }
+            Test-Version2x "iter$iter 2.x: gsloth --version" { gsloth --version }
+            Test-Version2x "iter$iter 2.x: gaunt-sloth --version" { gaunt-sloth --version }
 
-            $shimPath = "$env:APPDATA\npm\gth.ps1"
+            $shimPath = Join-Path $npmPrefix 'gth.ps1'
             try {
               $firstLine = Get-Content -Path $shimPath -TotalCount 1 -ErrorAction Stop
-              Write-Host "iter$iter gth.ps1 first line: [$firstLine]"
+              Write-Host "iter$iter gth.ps1 ($shimPath) first line: [$firstLine]"
               if ($firstLine -match '^#!' -or $firstLine -match '\$basedir=') {
                 Write-Host "OK: iter$iter gth.ps1 looks like a healthy shim"
               } else {
@@ -128,22 +163,50 @@ jobs:
                 $failures += "iter$iter gth.ps1 corrupt/unexpected first line: [$firstLine]"
               }
             } catch {
-              Write-Host "FAIL: iter$iter gth.ps1 unreadable: $($_.Exception.Message)"
-              $failures += "iter$iter gth.ps1 unreadable: $($_.Exception.Message)"
+              Write-Host "FAIL: iter$iter gth.ps1 ($shimPath) unreadable: $($_.Exception.Message)"
+              $failures += "iter$iter gth.ps1 ($shimPath) unreadable: $($_.Exception.Message)"
             }
 
-            Test-Cmd "iter$iter cmd.exe: gth --version" { cmd /c "gth --version" }
+            Test-Version2x "iter$iter cmd.exe: gth --version" { cmd /c "gth --version" }
 
             Write-Host "========== End iteration $iter/3 =========="
           }
 
           Write-Host ""
+          Write-Host "========== Workaround check: remove gaunt-sloth-assistant before installing gaunt-sloth@alpha =========="
+          Write-Host "-- clean slate --"
+          npm rm -g gaunt-sloth-assistant 2>&1 | Out-Host
+          npm rm -g gaunt-sloth 2>&1 | Out-Host
+
+          Write-Host "-- installing gaunt-sloth-assistant (1.x) --"
+          npm i -g gaunt-sloth-assistant 2>&1 | Out-Host
+
+          Write-Host "-- applying documented workaround: npm rm -g gaunt-sloth-assistant --"
+          npm rm -g gaunt-sloth-assistant 2>&1 | Out-Host
+
+          Write-Host "-- installing gaunt-sloth@alpha (2.x) after the workaround --"
+          npm i -g gaunt-sloth@alpha 2>&1 | Out-Host
+          $workaroundInstallExit = $LASTEXITCODE
+          if ($workaroundInstallExit -ne 0) {
+            Write-Host "FAIL: workaround npm i -g gaunt-sloth@alpha (exit $workaroundInstallExit)"
+            $failures += "workaround npm i -g gaunt-sloth@alpha failed (exit $workaroundInstallExit) -- workaround did NOT fix the install"
+          } else {
+            Write-Host "OK: workaround npm i -g gaunt-sloth@alpha (exit 0)"
+          }
+
+          Test-Version2x "workaround: gth --version" { gth --version }
+          Test-Version2x "workaround: gsloth --version" { gsloth --version }
+          Test-Version2x "workaround: gaunt-sloth --version" { gaunt-sloth --version }
+          Test-Version2x "workaround cmd.exe: gth --version" { cmd /c "gth --version" }
+          Write-Host "========== End workaround check =========="
+
+          Write-Host ""
           Write-Host "================ SUMMARY ================"
           if ($failures.Count -eq 0) {
-            Write-Host "All checks passed across 3 iterations. Cross-package shim conflict NOT reproduced this run."
+            Write-Host "All checks passed across 3 iterations plus the workaround check. Cross-package shim conflict NOT reproduced this run."
             exit 0
           } else {
-            Write-Host "$($failures.Count) check(s) FAILED across 3 iterations:"
+            Write-Host "$($failures.Count) check(s) FAILED:"
             foreach ($f in $failures) { Write-Host " - $f" }
             Write-Host "Cross-package shim conflict REPRODUCED this run."
             exit 1
