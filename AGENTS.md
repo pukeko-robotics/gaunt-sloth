@@ -18,7 +18,7 @@ Vendor and system abstractions and wrappers should be used in most cases.
 ### UX / TUI guidelines
 
 Any change to the terminal UI (`packages/app/src/tui/`) or user-facing CLI feedback must follow
-the **[TUI / CLI UX Guidelines](docs/ux-guidelines.md)** — the code-grounded ruleset for command
+the **[TUI / CLI UX Guidelines](maintenance/ux-guidelines.md)** — the code-grounded ruleset for command
 notices, `/clear` behaviour, tool-call panels, markdown, layout, the keyboard model, and colour
 semantics. It implements Project TAKAHĒ's cross-surface Design Language (the `DL-n` principles).
 When you add or change a user-facing behaviour, cite the DL principle it serves and update that doc.
@@ -378,7 +378,7 @@ version, not the one being published.
 
 Don't drive the publish steps (`release:bump`, `release:publish`, etc.) by hand;
 use the pipeline. For the full procedure see
-[docs/RELEASE-HOWTO.md](./docs/RELEASE-HOWTO.md).
+[maintenance/RELEASE-HOWTO.md](./maintenance/RELEASE-HOWTO.md).
 
 ## Development Workflow
 

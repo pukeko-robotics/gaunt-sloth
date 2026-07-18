@@ -10,10 +10,25 @@ This formalizes and extends a convention that was already partly in place: `docs
 mandatory, extend it to `--help`/`/help` output, and add the checks (source-tracing, rendering)
 that were previously implicit or skipped.
 
+## Scope: `docs/` is public, `maintenance/` is internal
+
+This is the foundational classification everything else in this file assumes: **`docs/` is
+reserved for the source of the public, user-facing docs site** — command references, config
+guides, migration notes, feature walkthroughs (`COMMANDS.md`, `CONFIGURATION.md`, `MIGRATION.md`,
+`debug-dump.md`, …). **Internal engineering/contributor/release-process content lives in
+`maintenance/` instead** — TUI implementation rulesets for contributors, release/versioning
+mechanics, test-deploy runbooks, and similar maintainer-facing material never belong in `docs/`,
+however useful they are to have written down.
+
+Before adding a new page, ask: would this make sense to a user reading the public docs site, or is
+it instructions for someone hacking on this repo? If it's the latter, it goes in `maintenance/`,
+not `docs/` — a docs-site build should never have to filter contributor content out of `docs/`
+after the fact.
+
 ## 1. One page per distinct concept, feature, or surface
 
 Each doc page owns exactly one concept (a command family, a config domain, a subsystem). When a
-change would make an existing page (`COMMANDS.md`, `CONFIGURATION.md`, `ux-guidelines.md`, …) cover
+change would make an existing page (`COMMANDS.md`, `CONFIGURATION.md`, `debug-dump.md`, …) cover
 an unrelated concept, **split a new page** instead of growing the old one into two topics.
 
 - Before adding a section, ask: does this belong to the page's existing concept, or is it a new
@@ -26,7 +41,7 @@ an unrelated concept, **split a new page** instead of growing the old one into t
   existing page needs a section, not a sibling file.
 - Filename convention: cardinal/index docs are UPPERCASE (`COMMANDS.md`, `CONFIGURATION.md`,
   `DOC-STYLE.md` — like `README`/`CLAUDE`); topical or single-feature docs are kebab-case
-  (`ux-guidelines.md`, `debug-dump.md`).
+  (`debug-dump.md`).
 
 ## 2. Exactly one worked use case per page
 
