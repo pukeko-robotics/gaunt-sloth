@@ -172,18 +172,19 @@ describe('history/historyStore', () => {
       expect(openHistoryStore(missing, { create: false })).toBeNull();
     });
 
-    // GS2-42: temporarily unskipped (unconditionally) to get a real red Windows CI run and
-    // confirm the win32 EPERM repro before fixing HistoryStore.open()'s leaked file handle.
-    it(
-      'returns null (does not throw) when opening a corrupt DB file',
-      () => {
-        const corrupt = resolve(dir, 'corrupt.db');
-        writeFileSync(corrupt, 'this is not a sqlite database at all, just text\n');
-        // create:false so we open the existing (garbage) file; must fail soft, not throw.
-        expect(() => openHistoryStore(corrupt, { create: false })).not.toThrow();
-        expect(openHistoryStore(corrupt, { create: false })).toBeNull();
-      }
-    );
+    // GS2-42: previously skipped on win32 — opening a corrupt DB threw inside initSchema(),
+    // and the outer catch in HistoryStore.open() returned null without closing the DatabaseSync
+    // handle it had already created, leaking an OS-level file handle. On Windows that leak blocked
+    // afterEach's rmSync(dir) with EPERM (POSIX allows unlinking an open fd, which is why the leak
+    // was invisible there). open() now closes the handle in the catch before returning null, so
+    // this runs unconditionally on every platform, including win32.
+    it('returns null (does not throw) when opening a corrupt DB file', () => {
+      const corrupt = resolve(dir, 'corrupt.db');
+      writeFileSync(corrupt, 'this is not a sqlite database at all, just text\n');
+      // create:false so we open the existing (garbage) file; must fail soft, not throw.
+      expect(() => openHistoryStore(corrupt, { create: false })).not.toThrow();
+      expect(openHistoryStore(corrupt, { create: false })).toBeNull();
+    });
 
     it('persists to a file and reopens it read-only across store instances', () => {
       const dbPath = resolve(dir, 'history.db');

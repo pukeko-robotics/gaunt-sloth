@@ -170,12 +170,24 @@ export class HistoryStore {
     if (!create && dbPath !== ':memory:' && !existsSync(dbPath)) {
       return null;
     }
+    let db: DatabaseSync | undefined;
     try {
-      const db = new DatabaseSync(dbPath);
+      db = new DatabaseSync(dbPath);
       const store = new HistoryStore(db);
       store.initSchema();
       return store;
     } catch {
+      // GS2-42: initSchema() (or the DatabaseSync constructor itself) can throw after the OS-level
+      // file handle is already open (e.g. a corrupt/garbage DB file — SQLite doesn't validate the
+      // file header until the first statement executes). Fail-soft-close it here before returning
+      // null, mirroring close()'s own try/catch, since on win32 an unclosed handle blocks the file
+      // from being deleted/replaced/reopened until the process exits (POSIX allows unlinking an
+      // open fd, which is why this leak was invisible there).
+      try {
+        db?.close();
+      } catch {
+        /* ignore: db may already be in a broken state */
+      }
       return null;
     }
   }
