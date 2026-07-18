@@ -403,6 +403,11 @@ export function App(props: TuiAppProps): React.ReactElement {
                 (i): i is Extract<TranscriptItem, { kind: 'assistant' }> => i.kind === 'assistant'
               )
               .map((i) => i.turn.reasoning),
+            // GS2-46 — the full live transcript + resolved config for /debug-dump, plus the
+            // injected fs-writing implementation (undefined for the fixture agent).
+            transcript: transcriptRef.current,
+            resolvedConfig: props.resolvedConfig,
+            dumpDebugSession: props.dumpDebugSession,
           },
           { duringRun: running }
         );

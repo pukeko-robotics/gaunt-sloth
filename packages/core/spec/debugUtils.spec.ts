@@ -142,4 +142,78 @@ describe('debugUtils', () => {
       );
     });
   });
+
+  // GS2-46: the in-memory debugLog ring buffer that `/debug-dump` (and later GS2-48's crash
+  // handler) reads. It must be populated by every debugLog* variant regardless of whether
+  // debugEnabled (the on-disk gate) is on — assertions here are delta-based (buffer length
+  // before/after, or unique markers) because the module-level buffer is shared across `it`s
+  // within this file (dynamic import resolves the same cached module instance).
+  describe('getDebugLogBuffer', () => {
+    it('is populated by debugLog even when debug logging is disabled', async () => {
+      const { initDebugLogging, debugLog, getDebugLogBuffer } =
+        await import('#src/utils/debugUtils.js');
+
+      initDebugLogging(false); // on-disk logging OFF
+      const before = getDebugLogBuffer().length;
+      debugLog('GS2-46 marker: buffered-without-debugEnabled');
+      const after = getDebugLogBuffer();
+
+      expect(fsMock.appendFileSync).not.toHaveBeenCalled();
+      expect(after.length).toBe(before + 1);
+      expect(after[after.length - 1]).toContain('GS2-46 marker: buffered-without-debugEnabled');
+    });
+
+    it('debugLogMultiline, debugLogObject and debugLogError all buffer regardless of debugEnabled', async () => {
+      const {
+        initDebugLogging,
+        debugLogMultiline,
+        debugLogObject,
+        debugLogError,
+        getDebugLogBuffer,
+      } = await import('#src/utils/debugUtils.js');
+
+      initDebugLogging(false);
+      const before = getDebugLogBuffer().length;
+
+      debugLogMultiline('GS2-46 Multiline', 'body line');
+      debugLogObject('GS2-46 Object', { foo: 'bar' });
+      debugLogError('GS2-46 context', new Error('boom'));
+
+      const after = getDebugLogBuffer();
+      expect(after.length).toBeGreaterThan(before);
+      expect(after.some((l) => l.includes('=== GS2-46 Multiline ==='))).toBe(true);
+      expect(after.some((l) => l.includes('=== GS2-46 Object ==='))).toBe(true);
+      expect(after.some((l) => l.includes("foo: 'bar'"))).toBe(true);
+      expect(after.some((l) => l.includes('❌ Error in GS2-46 context:'))).toBe(true);
+    });
+
+    it('caps the buffer at 1000 entries, evicting the oldest first', async () => {
+      const { initDebugLogging, debugLog, getDebugLogBuffer } =
+        await import('#src/utils/debugUtils.js');
+      initDebugLogging(false); // independent of test order — this test only cares about the buffer
+
+      for (let i = 0; i < 1005; i++) {
+        debugLog(`GS2-46 ring-test entry ${String(i).padStart(5, '0')}`);
+      }
+
+      const buffer = getDebugLogBuffer();
+      expect(buffer.length).toBeLessThanOrEqual(1000);
+      expect(buffer.length).toBe(1000);
+      // The most recent entries must have survived the cap.
+      expect(buffer[buffer.length - 1]).toContain('GS2-46 ring-test entry 01004');
+      // The earliest entries pushed in this test must have been evicted.
+      expect(buffer.some((l) => l.includes('GS2-46 ring-test entry 00000'))).toBe(false);
+    });
+
+    it('returns a copy — mutating the result does not affect the live buffer', async () => {
+      const { debugLog, getDebugLogBuffer } = await import('#src/utils/debugUtils.js');
+
+      debugLog('GS2-46 copy-safety marker');
+      const snapshot = getDebugLogBuffer();
+      const originalLength = snapshot.length;
+      snapshot.push('mutated externally');
+
+      expect(getDebugLogBuffer().length).toBe(originalLength);
+    });
+  });
 });
