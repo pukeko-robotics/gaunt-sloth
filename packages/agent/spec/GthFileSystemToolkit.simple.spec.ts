@@ -219,6 +219,131 @@ describe('GthFileSystemToolkit - Basic Tests', () => {
     });
   });
 
+  describe('trailing-newline line counting (GS2-40)', () => {
+    const testPath = path.join(process.cwd(), 'file.txt');
+    let readFileTool: any;
+
+    beforeEach(() => {
+      toolkit = new GthFileSystemToolkit({ allowedDirectories: [process.cwd()] });
+      readFileTool = toolkit.tools.find((t) => t.name === 'read_file')!;
+      // realpath echoes its input (set in the outer beforeEach), so testPath validates.
+    });
+
+    // Drives the real tailFile() chunk-reader by backing fs.open/fs.stat with an
+    // in-memory buffer, so the reverse-scan line counting is exercised end to end.
+    const backTailFileWith = (content: string) => {
+      const buf = Buffer.from(content, 'utf-8');
+      fsMock.stat.mockResolvedValue({
+        isDirectory: () => false,
+        isFile: () => true,
+        size: buf.length,
+        birthtime: new Date('2023-01-01'),
+        mtime: new Date('2023-01-02'),
+        atime: new Date('2023-01-03'),
+        mode: 0o644,
+      });
+      fsMock.open.mockResolvedValue({
+        read: vi.fn(async (target: Buffer, offset: number, length: number, position: number) => {
+          const end = Math.min(position + length, buf.length);
+          const bytesRead = Math.max(0, end - position);
+          buf.copy(target, offset, position, end);
+          return { bytesRead, buffer: target };
+        }),
+        close: vi.fn(async () => undefined),
+      });
+    };
+
+    describe('headAndTailFile', () => {
+      it('newline-terminated file: last line is NOT stolen into the skipped gap', async () => {
+        // Old code counted the phantom trailing "" as line 4, skipping the real L3.
+        fsMock.readFile.mockResolvedValue('L1\nL2\nL3\nL4\n');
+
+        const result: string = await readFileTool.invoke({ path: testPath, head: 2, tail: 1 });
+
+        expect(result).toBe('L1\nL2\n... [1 lines skipped] ...\nL4');
+      });
+
+      it('newline-terminated file: head+tail cover it -> whole file, no marker, no phantom skip', async () => {
+        // 3 real lines; head 2 + tail 1 === total, so the entire file comes back verbatim.
+        fsMock.readFile.mockResolvedValue('L1\nL2\nL3\n');
+
+        const result: string = await readFileTool.invoke({ path: testPath, head: 2, tail: 1 });
+
+        expect(result).toBe('L1\nL2\nL3\n');
+        expect(result).not.toContain('skipped');
+      });
+
+      it('genuine trailing blank last line is preserved (drops exactly one element)', async () => {
+        // "a\nb\nc\n\n" is 4 lines: a, b, c, "". Dropping one terminator empty leaves the
+        // blank line, so skipped is 1 (not 2 if none dropped, not 0/overlap if two dropped).
+        fsMock.readFile.mockResolvedValue('a\nb\nc\n\n');
+
+        const result: string = await readFileTool.invoke({ path: testPath, head: 2, tail: 1 });
+
+        expect(result).toBe('a\nb\n... [1 lines skipped] ...\n');
+        expect(result.match(/\[\d+ lines skipped\]/g)).toHaveLength(1);
+      });
+
+      it('file without a trailing newline is counted unchanged', async () => {
+        fsMock.readFile.mockResolvedValue('L1\nL2\nL3\nL4\nL5'); // 5 lines, no terminator
+
+        const result: string = await readFileTool.invoke({ path: testPath, head: 2, tail: 1 });
+
+        expect(result).toBe('L1\nL2\n... [2 lines skipped] ...\nL5');
+      });
+
+      it('CRLF-terminated file: the normalized trailing empty is dropped too', async () => {
+        fsMock.readFile.mockResolvedValue('L1\r\nL2\r\nL3\r\nL4\r\n'); // 4 lines, CRLF
+
+        const result: string = await readFileTool.invoke({ path: testPath, head: 2, tail: 1 });
+
+        expect(result).toBe('L1\nL2\n... [1 lines skipped] ...\nL4');
+      });
+    });
+
+    describe('tailFile', () => {
+      it('newline-terminated file: tail=1 returns the last real line, not ""', async () => {
+        backTailFileWith('L1\nL2\nL3\n');
+
+        const result: string = await readFileTool.invoke({ path: testPath, tail: 1 });
+
+        expect(result).toBe('L3');
+      });
+
+      it('newline-terminated file: tail=2 returns the last two real lines', async () => {
+        backTailFileWith('L1\nL2\nL3\n');
+
+        const result: string = await readFileTool.invoke({ path: testPath, tail: 2 });
+
+        expect(result).toBe('L2\nL3');
+      });
+
+      it('file without a trailing newline is unchanged (firstChunk pop does not over-fire)', async () => {
+        backTailFileWith('L1\nL2\nL3');
+
+        const result: string = await readFileTool.invoke({ path: testPath, tail: 1 });
+
+        expect(result).toBe('L3');
+      });
+
+      it('genuine trailing blank last line: tail=1 returns the blank line', async () => {
+        backTailFileWith('a\n\n');
+
+        const result: string = await readFileTool.invoke({ path: testPath, tail: 1 });
+
+        expect(result).toBe('');
+      });
+
+      it('CRLF-terminated file: tail=1 returns the last real line', async () => {
+        backTailFileWith('L1\r\nL2\r\nL3\r\n');
+
+        const result: string = await readFileTool.invoke({ path: testPath, tail: 1 });
+
+        expect(result).toBe('L3');
+      });
+    });
+  });
+
   describe('edit_file (applyFileEdits ambiguity guard + replaceAll)', () => {
     const testPath = path.join(process.cwd(), 'edit.txt');
     let editTool: any;
