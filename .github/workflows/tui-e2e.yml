@@ -1,0 +1,45 @@
+name: TUI PTY e2e (it-tui)
+
+# Standalone, manually-dispatched runner for the Ink TUI's PTY-level e2e suite
+# (`@microsoft/tui-test`, packages/app/tui-e2e/, run via `pnpm run it-tui`).
+#
+# Deliberately NOT wired into unit-tests.yml or release.yml yet (OPS-14 item 4): this
+# suite is hermetic and key-free (drives a fixture agent, no live model / API key), but
+# PTY/terminal-rendering assertions are more timing-sensitive than plain unit tests, so
+# it needs to soak green across several runs before it becomes a hard release gate.
+# Until then, dispatch it by hand (or point a scheduled/other workflow at it later).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  it-tui:
+    name: it-tui (${{ matrix.os }})
+    permissions:
+      contents: read
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Use Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run TUI PTY e2e
+        run: pnpm run it-tui
