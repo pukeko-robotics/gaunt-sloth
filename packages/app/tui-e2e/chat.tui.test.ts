@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { test, expect } from '@microsoft/tui-test';
 import type { Terminal } from '@microsoft/tui-test';
@@ -185,5 +187,79 @@ test.describe('gth chat TUI — debug pane `/` search (search fixture, TUI-C21)'
     // The viewport jumped to the match (query echo is only "30"), and the indicator reads 1/1.
     await expect(terminal.getByText('line-30', { full: true })).toBeVisible();
     await expect(terminal.getByText('1/1')).toBeVisible();
+  });
+});
+
+test.describe('gth chat TUI — /debug-dump (GS2-46, greeting fixture)', () => {
+  // Hermetic $HOME for this describe block (QA-6): writeDebugDump()'s ensureGlobalGslothDir()
+  // resolves its archive path via `resolve(homedir(), '.gsloth')`, and Node's os.homedir()
+  // respects $HOME on POSIX — so overriding it here keeps the archive write off the real
+  // developer's home directory. One fresh tmp dir for the whole block (single test uses it),
+  // removed in afterAll.
+  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gth-e2e-home-'));
+
+  test.use({
+    program: { file: 'node', args: [cli, 'chat', '--tui'] },
+    env: { ...envFor('greeting.json'), HOME: tmpHome },
+    // Wide enough that "Archive: <tmpHome>/.gsloth/debug-dumps/<timestamp>" never line-wraps.
+    // The archive path is one unbroken token (no spaces) and tui-test's getByText joins buffer
+    // rows with no separator, so a mid-token wrap would otherwise split the match across rows.
+    columns: 240,
+    rows: 30,
+  });
+
+  test.afterAll(() => {
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  // GS2-46 — exercises the real archive-write path (not the fixture's "unavailable" fallback):
+  // run one turn so there's a non-empty transcript, then /debug-dump, and assert both the
+  // notice (archive path + sensitive-data warning) and the actual files written to disk.
+  test('writes an UNSANITIZED archive and prints its path + warning', async ({ terminal }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    terminal.write('hello');
+    await expect(terminal.getByText('> hello')).toBeVisible();
+    terminal.submit();
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+
+    terminal.write('/debug-dump');
+    await expect(terminal.getByText('> /debug-dump')).toBeVisible();
+    terminal.submit();
+
+    // Notice title — stable substring, skipping the leading emoji (debugDumpNotice, slashCommands.ts).
+    await expect(
+      terminal.getByText('Debug dump written — UNSANITIZED, review before sharing', { full: true })
+    ).toBeVisible();
+    // The loud sensitive-data warning body.
+    await expect(
+      terminal.getByText('it may include secrets: API keys, tokens, file contents, env vars.', {
+        full: true,
+      })
+    ).toBeVisible();
+    // The printed archive path sits under the tmp $HOME we set, not the real home directory —
+    // proof the HOME override actually took effect.
+    await expect(terminal.getByText(tmpHome, { full: true })).toBeVisible();
+
+    // Filesystem assertion: prove the write actually happened, not just the UI text.
+    const dumpsDir = path.join(tmpHome, '.gsloth', 'debug-dumps');
+    const entries = fs.readdirSync(dumpsDir);
+    expect(entries.length).toBe(1);
+    const archiveDir = path.join(dumpsDir, entries[0]);
+
+    // transcript.json/env.json carry real content from this turn (non-empty).
+    for (const file of ['transcript.json', 'env.json']) {
+      const contents = fs.readFileSync(path.join(archiveDir, file), 'utf8');
+      expect(contents.length).toBeGreaterThan(0);
+    }
+    // debug-log.txt is written unconditionally, but its ring buffer (debugUtils.ts) is only
+    // populated by debugLog() calls inside the real GthAgentRunner/GthAbstractAgent code paths —
+    // which this fixture-driven session never runs (createFixtureTuiAgent replays canned events
+    // instead of exercising the real agent). So it legitimately exists but is empty here; just
+    // assert it was written and is readable text, not that it's non-empty.
+    expect(typeof fs.readFileSync(path.join(archiveDir, 'debug-log.txt'), 'utf8')).toBe('string');
+    // transcript.json actually reflects this session's turn — not just non-empty boilerplate.
+    const transcriptJson = fs.readFileSync(path.join(archiveDir, 'transcript.json'), 'utf8');
+    expect(transcriptJson).toContain('hello');
   });
 });

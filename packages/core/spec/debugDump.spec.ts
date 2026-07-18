@@ -109,6 +109,27 @@ describe('utils/debugDump', () => {
     ).not.toThrow();
   });
 
+  it('never throws when config is undefined (e.g. no resolved session config available)', async () => {
+    // QA-6 regression: JSON.stringify(undefined, replacer, 2) returns `undefined`, not a string,
+    // so writeFileSync used to throw ERR_INVALID_ARG_TYPE for this — legitimate — input shape
+    // (DebugDumpInput.config is optional upstream). Caught via the e2e fixture harness, which
+    // wires the real writer with no resolved config.
+    const { writeDebugDump } = await import('#src/utils/debugDump.js');
+
+    let archiveDir = '';
+    expect(() => {
+      ({ archiveDir } = writeDebugDump({
+        transcript: [],
+        config: undefined,
+        modelDisplayName: 'test-model',
+        cwd: notGitDir,
+      }));
+    }).not.toThrow();
+
+    const configOut = readFileSync(resolve(archiveDir, 'config.json'), 'utf8');
+    expect(configOut).toBe('null');
+  });
+
   it('writes a distinct, filesystem-safe timestamped directory on each call', async () => {
     const { writeDebugDump } = await import('#src/utils/debugDump.js');
 

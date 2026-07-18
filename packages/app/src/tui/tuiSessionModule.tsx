@@ -245,6 +245,12 @@ export async function createTuiSession(
         readyMessage={sessionConfig.readyMessage}
         exitMessage={sessionConfig.exitMessage}
         initialMessage={message}
+        // QA-6: wire the real /debug-dump writer into the fixture branch too (same function
+        // reference the non-fixture render uses below) so the e2e PTY suite can exercise the
+        // actual archive-write path instead of only ever hitting the "unavailable" fallback.
+        // resolvedConfig is deliberately left unset here — DebugDumpInput.config is
+        // optional/opaque and the command already handles it being undefined.
+        dumpDebugSession={dumpDebugSession}
         onResetFrame={() => resetFrame?.()}
       />
     );

@@ -79,11 +79,19 @@ function collectGitState(cwd: string): GitState | undefined {
  * functions/bigints are stringified and circular references are broken rather than throwing.
  * Falls back to `util.inspect` if `JSON.stringify` still fails for some other reason, so writing
  * the dump can never throw partway through the archive.
+ *
+ * QA-6: `JSON.stringify` returns `undefined` (not a string) for a handful of top-level inputs —
+ * notably `undefined` itself, which `DebugDumpInput.config` legitimately is when the caller has
+ * no resolved config (verified live via the e2e fixture harness, which wires the real writer with
+ * `config` omitted). Passing `undefined` straight to `writeFileSync` throws
+ * `ERR_INVALID_ARG_TYPE`, defeating the "never throw partway through the archive" contract this
+ * function documents. Fall back to the literal `'null'` in that case, same as `JSON.stringify`
+ * would for a *nested* `undefined` value.
  */
 function safeStringify(value: unknown): string {
   const seen = new WeakSet<object>();
   try {
-    return JSON.stringify(
+    const json = JSON.stringify(
       value,
       (_key, val) => {
         if (typeof val === 'function') return `[Function: ${val.name || 'anonymous'}]`;
@@ -96,6 +104,7 @@ function safeStringify(value: unknown): string {
       },
       2
     );
+    return json ?? 'null';
   } catch {
     return inspect(value, { showHidden: false, depth: 5, colors: false });
   }
