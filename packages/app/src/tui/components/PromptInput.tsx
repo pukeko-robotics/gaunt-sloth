@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Text, useInput } from 'ink';
+import { Box, Text, useInput, usePaste } from 'ink';
 import TextInput from 'ink-text-input';
 import { SlashCommandMenu } from '#src/tui/components/SlashCommandMenu.js';
 import { filterSlashCommands, slashMenuQuery, type SlashCommand } from '#src/tui/slashCommands.js';
+import { normalizePastedText } from '#src/tui/pasteParser.js';
 
 /**
  * The user prompt line. Mirrors the readline `  > ` prompt. Clears on submit; the parent
@@ -16,6 +17,16 @@ import { filterSlashCommands, slashMenuQuery, type SlashCommand } from '#src/tui
  * `onSubmit` on Enter, so this component's `useInput` owns the arrows/Tab/Esc while `onSubmit` owns
  * Enter — no double-handling. A fully-typed command still dispatches exactly as before (Enter with
  * the menu open just submits the highlighted command, which equals what was typed).
+ *
+ * TUI-C24 — multiline paste. `ink-text-input` is single-line: an embedded newline in a pasted
+ * burst would otherwise be read as Enter and submit the turn mid-paste (or jam the lines together).
+ * `usePaste` puts the terminal into bracketed-paste mode (`\x1b[?2004h`) while the prompt is mounted
+ * and disables it on unmount, and Ink delivers the pasted text on a channel separate from
+ * `useInput` — so the payload never reaches `TextInput`'s Enter handling. We append the normalized
+ * paste (CRLF/CR → `\n`) to the buffer without submitting; a subsequent explicit Enter submits the
+ * whole multi-line value through the existing `onSubmit` path. Rich multi-line cursor editing /
+ * continuation-line rendering is intentionally NOT handled here — that is node TUI-C25; a buffered
+ * multi-line value may render imperfectly, but the submitted value is correct and intact.
  */
 export function PromptInput({
   onSubmit,
@@ -47,6 +58,21 @@ export function PromptInput({
   useEffect(() => {
     onMenuStateChange?.(menuActive);
   }, [menuActive, onMenuStateChange]);
+
+  // TUI-C24 — capture a bracketed paste as buffered text instead of keystrokes. Ink enables
+  // bracketed-paste mode while this hook is mounted and routes the pasted payload here (off the
+  // `useInput` channel), so its embedded newlines never reach TextInput's Enter handling. We append
+  // the normalized paste to the buffer and do NOT submit — a later explicit Enter submits it all.
+  // (Appending, rather than inserting at TextInput's internal cursor, is deliberate: multi-line
+  // cursor editing is TUI-C25's scope; the submitted value stays correct and intact.)
+  usePaste((text) => {
+    const pasted = normalizePastedText(text);
+    if (!pasted) return;
+    setValue((current) => current + pasted);
+    // Mirror onChange's menu bookkeeping so a paste can't leave a stale/incorrectly-open menu.
+    setDismissed(false);
+    setCursor(0);
+  });
 
   useInput(
     (_input, key) => {
