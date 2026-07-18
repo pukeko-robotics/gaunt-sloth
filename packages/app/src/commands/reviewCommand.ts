@@ -53,6 +53,14 @@ export function reviewCommand(
       )
     )
     .option('-m, --message <message>', 'Extra message to provide just before the content')
+    .addHelpText(
+      'after',
+      '\n' +
+        'Examples:\n' +
+        '  $ git --no-pager diff | gsloth review\n' +
+        '  $ gsloth review -r requirements.md\n' +
+        '  $ git diff | gsloth review -m "Please focus on security implications"\n'
+    )
     .action(async (contentId: string | undefined, options: ReviewCommandOptions) => {
       const { initConfig } = await import('@gaunt-sloth/core/config.js');
       const config = await initConfig(cliConfigOverrides); // Initialize and get config

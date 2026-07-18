@@ -223,6 +223,8 @@ Opens an interactive chat session where you can have a conversation with the AI.
 - Interactive conversation with context memory
 - Type 'exit' or press Ctrl+C to end the session
 - Chat history saved to file when `writeOutputToFile` is enabled
+- `/debug-dump` writes a diagnostic archive to attach to a bug report — see
+  [debug-dump.md](debug-dump.md)
 
 ### Examples
 ```bash
@@ -255,6 +257,8 @@ Opens an interactive coding session where the AI has full read access to your pr
 - Type 'exit' or press Ctrl+C to end the session
 - Code history saved to file when `writeOutputToFile` is enabled
 - Streaming disabled for better interactive experience
+- `/debug-dump` writes a diagnostic archive to attach to a bug report — see
+  [debug-dump.md](debug-dump.md)
 
 ### Examples
 ```bash

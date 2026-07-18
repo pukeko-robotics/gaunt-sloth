@@ -76,6 +76,14 @@ export function askCommand(
       'Let ask act, not just chat: enable full filesystem + dev tools (like exec/code) so it can ' +
         'read/write files and run commands. Grants write access — use with care.'
     )
+    .addHelpText(
+      'after',
+      '\n' +
+        'Examples:\n' +
+        '  $ gsloth ask "which types of primitives are available in JavaScript?"\n' +
+        '  $ gsloth ask "Please explain this code" -f index.js\n' +
+        '  $ cat error.log | gsloth ask "What might be causing these errors?"\n'
+    )
     .action(async (message: string, options: AskCommandOptions) => {
       const config = applyAskWriteMode(await initConfig(commandLineConfigOverrides), options);
       const content = [];

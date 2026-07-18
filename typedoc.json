@@ -5,7 +5,12 @@
   "entryPointStrategy": "packages",
   "categorizeByGroup": false,
   "out": "./docs-generated",
-  "projectDocuments": ["docs/COMMANDS.md", "docs/CONFIGURATION.md", "CONTRIBUTING.md"],
+  "projectDocuments": [
+    "docs/COMMANDS.md",
+    "docs/CONFIGURATION.md",
+    "docs/debug-dump.md",
+    "CONTRIBUTING.md"
+  ],
   "sourceLinkExternal": true,
   "includeVersion": false,
   "navigationLinks": {

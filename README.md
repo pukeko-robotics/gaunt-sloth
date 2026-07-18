@@ -381,5 +381,8 @@ Contributions are welcome through GitHub Issues and pull requests.
 For contributor workflow, local setup, testing expectations, and PR guidance, see [CONTRIBUTING.md](./CONTRIBUTING.md).
 Project participation is also covered by the [Code of Conduct](./CODE_OF_CONDUCT.md).
 
+Filing a bug? Run `/debug-dump` in your `chat`/`code` session to attach a diagnostic archive to
+the issue — see [docs/debug-dump.md](./docs/debug-dump.md).
+
 ## License
 License is [MIT](https://opensource.org/license/mit). See [LICENSE](LICENSE)
