@@ -42,6 +42,14 @@ export const AVAILABLE_BUILT_IN_TOOLS = {
    * by default (see {@link DEFAULT_CONFIG}); disable by setting your own `builtInTools`.
    */
   gth_checklist: '#src/tools/gthChecklistTool.js',
+  /**
+   * Content-search (grep) tool: ripgrep-backed regex search over file CONTENTS, with an
+   * in-process JS fallback when `rg` is absent. Permission-light (no shell approval) and
+   * available in every mode. Named `gth_grep` to avoid colliding with the deep backend's
+   * built-in `grep`. Register-only here — not in {@link DEFAULT_CONFIG.builtInTools}; enable it
+   * via a `builtInTools` setting until the default is flipped.
+   */
+  gth_grep: '#src/tools/gthGrepTool.js',
 } as const;
 
 /**
