@@ -41,3 +41,110 @@ jobs:
 
       - name: Run targeted historyStore spec
         run: pnpm vitest run packages/core/spec/historyStore.spec.ts
+
+  rel8-shim-conflict:
+    name: rel8-shim-conflict (windows-latest)
+    # REL-8: cross-package bin-shim conflict. gaunt-sloth-assistant (1.x) and gaunt-sloth
+    # (2.x) both declare the same four bins (gth/gsloth/gaunt-sloth/gaunt-sloth-assistant ->
+    # cli.js). A user who has the 1.x package installed and then installs the 2.x package on
+    # top, without removing the old one first, has two global npm packages fighting over the
+    # same shim files. This job installs real, already-published packages from the registry
+    # (no repo checkout needed) and probes for the corrupted-gth.ps1 symptom seen manually on
+    # 2026-06-29, in a loop, across several fresh windows-latest VMs (one per dispatch) plus
+    # several in-job iterations, to separate a reproducible defect from a one-off glitch.
+    #
+    # Permanent regression check for this class of bug (like win-debug above), not a
+    # throwaway for the REL-8 investigation.
+    permissions:
+      contents: read
+    runs-on: windows-latest
+
+    steps:
+      - name: Use Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+
+      - name: Probe cross-package shim conflict (gaunt-sloth-assistant -> gaunt-sloth@alpha)
+        shell: pwsh
+        run: |
+          # Deliberately NOT `$ErrorActionPreference = 'Stop'`: we want every iteration's
+          # checks to run to completion and be recorded, not die on the first failure.
+          $ErrorActionPreference = 'Continue'
+          $failures = @()
+
+          # Make sure npm's global bin dir is on PATH for this session even before the
+          # first global install creates it (a stale PATH here would look like a shim
+          # conflict but is actually just harness setup -- see win-debug.yml header).
+          $npmGlobalBin = "$env:APPDATA\npm"
+          $env:PATH = "$npmGlobalBin;$env:PATH"
+
+          function Test-Cmd {
+            param([string]$Label, [scriptblock]$Block)
+            try {
+              & $Block
+              if ($LASTEXITCODE -ne 0) {
+                Write-Host "FAIL: $Label (exit $LASTEXITCODE)"
+                $script:failures += "$Label (exit $LASTEXITCODE)"
+              } else {
+                Write-Host "OK: $Label"
+              }
+            } catch {
+              Write-Host "FAIL: $Label (exception: $($_.Exception.Message))"
+              $script:failures += "$Label (exception: $($_.Exception.Message))"
+            }
+          }
+
+          for ($iter = 1; $iter -le 3; $iter++) {
+            Write-Host ""
+            Write-Host "========== Iteration $iter/3 =========="
+
+            Write-Host "-- clean slate: removing both packages (errors ignored) --"
+            npm rm -g gaunt-sloth-assistant 2>&1 | Out-Host
+            npm rm -g gaunt-sloth 2>&1 | Out-Host
+
+            Write-Host "-- installing gaunt-sloth-assistant (1.x) --"
+            npm i -g gaunt-sloth-assistant 2>&1 | Out-Host
+
+            Test-Cmd "iter$iter 1.x: gth --version" { gth --version }
+            Test-Cmd "iter$iter 1.x: gsloth --version" { gsloth --version }
+            Test-Cmd "iter$iter 1.x: gaunt-sloth --version" { gaunt-sloth --version }
+
+            Write-Host "-- installing gaunt-sloth@alpha (2.x) ON TOP, NOT removing 1.x first --"
+            npm i -g gaunt-sloth@alpha 2>&1 | Out-Host
+
+            Test-Cmd "iter$iter 2.x: gth --version" { gth --version }
+            Test-Cmd "iter$iter 2.x: gsloth --version" { gsloth --version }
+            Test-Cmd "iter$iter 2.x: gaunt-sloth --version" { gaunt-sloth --version }
+
+            $shimPath = "$env:APPDATA\npm\gth.ps1"
+            try {
+              $firstLine = Get-Content -Path $shimPath -TotalCount 1 -ErrorAction Stop
+              Write-Host "iter$iter gth.ps1 first line: [$firstLine]"
+              if ($firstLine -match '^#!' -or $firstLine -match '\$basedir=') {
+                Write-Host "OK: iter$iter gth.ps1 looks like a healthy shim"
+              } else {
+                Write-Host "FAIL: iter$iter gth.ps1 does not look like a healthy shim"
+                $failures += "iter$iter gth.ps1 corrupt/unexpected first line: [$firstLine]"
+              }
+            } catch {
+              Write-Host "FAIL: iter$iter gth.ps1 unreadable: $($_.Exception.Message)"
+              $failures += "iter$iter gth.ps1 unreadable: $($_.Exception.Message)"
+            }
+
+            Test-Cmd "iter$iter cmd.exe: gth --version" { cmd /c "gth --version" }
+
+            Write-Host "========== End iteration $iter/3 =========="
+          }
+
+          Write-Host ""
+          Write-Host "================ SUMMARY ================"
+          if ($failures.Count -eq 0) {
+            Write-Host "All checks passed across 3 iterations. Cross-package shim conflict NOT reproduced this run."
+            exit 0
+          } else {
+            Write-Host "$($failures.Count) check(s) FAILED across 3 iterations:"
+            foreach ($f in $failures) { Write-Host " - $f" }
+            Write-Host "Cross-package shim conflict REPRODUCED this run."
+            exit 1
+          }
