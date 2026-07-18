@@ -1,7 +1,9 @@
 import { Command } from 'commander';
 import { CommandLineConfigOverrides, initConfig } from '@gaunt-sloth/core/config.js';
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
+import type { GthCommand } from '@gaunt-sloth/core/core/types.js';
 import { getExecSystemPrompt } from '#src/commands/commandIntrospection.js';
+import { parseIntOption } from '#src/commands/cliOptionParsers.js';
 import { displaySuccess, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { wrapContent } from '@gaunt-sloth/core/utils/llmUtils.js';
 import {
@@ -67,6 +69,24 @@ function createCellConfigResolver(
   };
 }
 
+/** Options for {@link buildProductionRunCell} — the bits that differ between `batch` (exec-mode,
+ * script content) and `eval` (ask-mode, a case's user-message prompt); everything else about the
+ * adapter (model-resolver cache, resolver cleanup, error handling) is shared. */
+export interface ProductionRunCellOptions {
+  /** The `GthCommand` mode forwarded to `runSingleShot` — selects the agent's mode prompt/behavior
+   * (`'exec'` for `batch`, `'ask'` for `eval`). */
+  command: GthCommand;
+  /** Prefix for `runSingleShot`'s `source` naming (`<prefix>-<cell.id>`), used for output/session
+   * file naming — `'BATCH'` for `batch`, `'EVAL'` for `eval`. */
+  sourcePrefix: string;
+  /** `wrapContent` block-prefix label for the cell's content — `'script'` for `batch`'s
+   * prompt-executable scripts, `'message'` for `eval`'s case prompts. */
+  wrapBlockPrefix: string;
+  /** `wrapContent` human-readable prefix paired with {@link wrapBlockPrefix} (e.g.
+   * `'prompt-executable script'` / `'user message'`). */
+  wrapPrefix: string;
+}
+
 /**
  * Build the injectable {@link RunCellFn} that adapts the shared single-shot runtime
  * (`runSingleShot`) to one matrix cell. Isolated in its own function so each cell run gets a fresh
@@ -74,15 +94,21 @@ function createCellConfigResolver(
  * contract (docs/batch-mechanism-vs-judgment.md) rather than sharing one resolver/client across
  * concurrent cells.
  *
- * batch writes its own structured JSON per cell (via `writeBatchOutput`), so `writeOutputToFile` is
- * forced off for every cell run — the per-cell `.md` report `runSingleShot` would otherwise write is
- * not wanted here. `command: 'exec'` is passed through so cells get the same near-deterministic,
- * exec-mode prompt as `gth exec` — batch is "exec over a matrix" (docs/batch-eval-cli-surface.md).
+ * Shared between `gth batch` and `gth eval` (BATCH-2): both run N isolated single-shot calls
+ * through this exact `runSingleShot` wiring (model-resolver cache, resolver cleanup-on-every-path,
+ * error containment), differing only in which agent mode/prompt they run cells through and how the
+ * cell's content is framed — see {@link ProductionRunCellOptions}. `gth eval`'s wiring lives in
+ * `evalCommand.ts`, which imports this function rather than re-deriving it.
+ *
+ * batch/eval each write their own structured JSON per cell/case (`writeBatchOutput`/
+ * `writeEvalOutput`), so `writeOutputToFile` is forced off for every cell run — the per-cell `.md`
+ * report `runSingleShot` would otherwise write is not wanted here.
  */
-async function buildProductionRunCell(
+export async function buildProductionRunCell(
   baseConfig: GthConfig,
   preamble: string,
-  commandLineConfigOverrides: CommandLineConfigOverrides
+  commandLineConfigOverrides: CommandLineConfigOverrides,
+  options: ProductionRunCellOptions
 ): Promise<RunCellFn> {
   const { runSingleShot } = await import('@gaunt-sloth/core/runtime/singleShot.js');
   const { createResolvers } = await import('@gaunt-sloth/agent/resolvers.js');
@@ -97,7 +123,7 @@ async function buildProductionRunCell(
       canInterruptInferenceWithEsc: false,
       writeOutputToFile: false,
     };
-    const content = wrapContent(cell.content, 'script', 'prompt-executable script', true);
+    const content = wrapContent(cell.content, options.wrapBlockPrefix, options.wrapPrefix, true);
 
     // BATCH-1 fix (CI review finding, critical): keep the resolvers reference and clean it up
     // unconditionally (success or failure) — the previous code passed `createResolvers()` inline
@@ -106,17 +132,18 @@ async function buildProductionRunCell(
     // an orphaned-process leak, one per cell.
     const resolvers = createResolvers();
     try {
-      const ok = await runSingleShot(
-        `BATCH-${cell.id}`,
+      const { ok, answer, tokensInput, tokensOutput, tools } = await runSingleShot(
+        `${options.sourcePrefix}-${cell.id}`,
         preamble,
         content,
         cellConfig,
         resolvers,
-        'exec',
-        // batch defaults to the lean backend, same as exec; an explicit config.agent.backend wins.
+        options.command,
+        // batch/eval default to the lean backend, same as exec/ask; an explicit
+        // config.agent.backend wins.
         resolveAgentFactory(cellConfig, 'lean')
       );
-      return { ok };
+      return { ok, answer, tokensInput, tokensOutput, tools };
     } catch (error) {
       // runSingleShot itself is documented to never throw for a normal LLM/tool failure (it
       // returns false instead); this guards the rare case of a genuinely unexpected exception so
@@ -150,14 +177,6 @@ export function parseModelsOption(models: string | undefined): string[] | undefi
 /** Default output dir when `-o/--output` is omitted: a timestamped dir next to other gth reports. */
 export function defaultBatchOutputDir(): string {
   return getGslothFilePath(`gth_${fileSafeLocalDate()}_BATCH`);
-}
-
-function parseIntOption(value: string): number {
-  const parsed = parseInt(value, 10);
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`Expected an integer, got "${value}"`);
-  }
-  return parsed;
 }
 
 /**
@@ -230,7 +249,12 @@ export function batchCommand(
       const cells = buildMatrix(scriptContent, models, rows);
 
       const preamble = getExecSystemPrompt(config);
-      const runCell = await buildProductionRunCell(config, preamble, commandLineConfigOverrides);
+      const runCell = await buildProductionRunCell(config, preamble, commandLineConfigOverrides, {
+        command: 'exec',
+        sourcePrefix: 'BATCH',
+        wrapBlockPrefix: 'script',
+        wrapPrefix: 'prompt-executable script',
+      });
 
       const results = await runBatchMatrix(cells, {
         runCell,

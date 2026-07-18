@@ -101,7 +101,7 @@ export function askCommand(
         await import('@gaunt-sloth/agent/core/resolveAgentFactory.js');
       let ok = false;
       try {
-        ok = await runSingleShot(
+        ({ ok } = await runSingleShot(
           'ASK',
           getAskSystemPrompt(config),
           content.join('\n'),
@@ -110,7 +110,7 @@ export function askCommand(
           'ask',
           // ask defaults to the lean backend; an explicit config.agent.backend overrides it.
           resolveAgentFactory(config, 'lean')
-        );
+        ));
       } catch (error) {
         displayError(error instanceof Error ? error.message : String(error));
         ok = false;

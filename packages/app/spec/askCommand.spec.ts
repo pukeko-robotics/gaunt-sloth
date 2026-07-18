@@ -108,7 +108,7 @@ describe('askCommand', () => {
     configMock.createDefaultConfig.mockReturnValue(mockConfig);
 
     // A run succeeds unless a test says otherwise.
-    runSingleShot.mockResolvedValue(true);
+    runSingleShot.mockResolvedValue({ ok: true, answer: 'test answer', tools: [] });
 
     // Mock the util functions
     fileUtilsMock.readMultipleFilesFromProjectDir.mockImplementation((files: string[]) => {
@@ -153,7 +153,7 @@ describe('askCommand', () => {
   });
 
   it('sets a non-zero exit code when the run fails', async () => {
-    runSingleShot.mockResolvedValue(false);
+    runSingleShot.mockResolvedValue({ ok: false, answer: '', tools: [] });
     const { askCommand } = await import('#src/commands/askCommand.js');
     const program = new Command();
     askCommand(program, {});

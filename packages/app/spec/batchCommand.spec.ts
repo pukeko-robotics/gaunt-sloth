@@ -110,7 +110,13 @@ describe('batchCommand', () => {
       }
       return { ...mockConfig, llm: { ...mockConfig.llm } };
     });
-    runSingleShot.mockResolvedValue(true);
+    runSingleShot.mockResolvedValue({
+      ok: true,
+      answer: 'CELL ANSWER',
+      tokensInput: 12,
+      tokensOutput: 34,
+      tools: ['read_file'],
+    });
     // A fresh resolvers object (with its own spy-able cleanupTools) per call, so per-cell
     // cleanup tests below can tell which cell's resolvers were cleaned up.
     resolversMock.createResolvers.mockImplementation(() => ({
@@ -168,6 +174,17 @@ describe('batchCommand', () => {
       passed: 1,
       failed: 0,
       cells: [{ id: 'cell-0-0', model: undefined, inputIndex: 0, ok: true, retries: 0 }],
+    });
+
+    // BATCH-2: the production RunCellFn now threads runSingleShot's answer/tokens/tools through
+    // to the cell's full JSON record (results.json's per-cell summary stays lightweight).
+    const cellJson = JSON.parse(readFileSync(join(outputDir, 'cell-0-0.json'), 'utf8'));
+    expect(cellJson).toMatchObject({
+      ok: true,
+      answer: 'CELL ANSWER',
+      tokensInput: 12,
+      tokensOutput: 34,
+      tools: ['read_file'],
     });
   });
 
@@ -259,7 +276,9 @@ describe('batchCommand', () => {
   });
 
   it('never sets a non-zero exit code just because a cell failed (exit-code contract)', async () => {
-    runSingleShot.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    runSingleShot
+      .mockResolvedValueOnce({ ok: true, answer: 'CELL ANSWER', tools: [] })
+      .mockResolvedValueOnce({ ok: false, answer: '', tools: [] });
     const { batchCommand } = await import('#src/commands/batchCommand.js');
     const program = new Command();
     batchCommand(program, {});
@@ -314,7 +333,9 @@ describe('batchCommand', () => {
     'regression (BATCH-1 finding 2): calls cleanupTools() exactly once per cell even when the ' +
       'cell throws',
     async () => {
-      runSingleShot.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(true);
+      runSingleShot
+        .mockRejectedValueOnce(new Error('boom'))
+        .mockResolvedValueOnce({ ok: true, answer: 'CELL ANSWER', tools: [] });
       const { batchCommand } = await import('#src/commands/batchCommand.js');
       const program = new Command();
       batchCommand(program, {});
@@ -381,7 +402,7 @@ describe('batchCommand', () => {
     let calls = 0;
     runSingleShot.mockImplementation(async () => {
       calls++;
-      return calls > 1;
+      return { ok: calls > 1, answer: '', tools: [] };
     });
     const { batchCommand } = await import('#src/commands/batchCommand.js');
     const program = new Command();

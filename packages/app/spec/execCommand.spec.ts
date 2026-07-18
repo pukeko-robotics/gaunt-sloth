@@ -85,7 +85,7 @@ describe('execCommand', () => {
     vi.resetModules();
 
     configMock.initConfig.mockResolvedValue({ ...mockConfig, llm: { ...mockConfig.llm } });
-    runSingleShot.mockResolvedValue(true);
+    runSingleShot.mockResolvedValue({ ok: true, answer: 'test answer', tools: [] });
     resolversMock.createResolvers.mockReturnValue({ resolveTools: vi.fn(), cleanupTools: vi.fn() });
 
     // The introspection prompt is built via buildSystemMessages (flattened to a string).
@@ -177,7 +177,7 @@ describe('execCommand', () => {
   });
 
   it('sets a non-zero exit code when the run fails', async () => {
-    runSingleShot.mockResolvedValue(false);
+    runSingleShot.mockResolvedValue({ ok: false, answer: '', tools: [] });
     const { execCommand } = await import('#src/commands/execCommand.js');
     const program = new Command();
     execCommand(program, {});
