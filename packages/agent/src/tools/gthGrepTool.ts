@@ -33,6 +33,13 @@ const IGNORED_DIRS = new Set(['.git', 'node_modules', 'dist', '.idea']);
 /** Longest matching-line preview kept before truncation, so one minified line can't blow context. */
 const MAX_LINE_LENGTH = 250;
 const TRUNCATION_MARKER = ' … (line truncated)';
+/**
+ * JS-fallback only: cap the length of text fed to the regex per line. A single huge/minified line
+ * would otherwise let a model-supplied pattern block the event loop (large linear scans, and
+ * catastrophic backtracking grows with input length). rg (native, non-backtracking) is immune, so
+ * this bounds the fallback only. Matches beyond the cap on such a line are not found.
+ */
+const MAX_SCAN_LINE_LENGTH = 4096;
 /** Ceiling on rg stdout we buffer (matches are sliced to `limit` anyway). */
 const RG_MAX_BUFFER = 32 * 1024 * 1024;
 
@@ -121,6 +128,10 @@ function escapeRegExp(s: string): string {
 /**
  * Compile an include glob (matched against a file's basename in the JS fallback) to a RegExp.
  * Supports `*`, `?`, and `{a,b,c}` brace alternation, e.g. `*.ts`, `*.{ts,tsx}`.
+ *
+ * NOTE (rg-vs-JS divergence): this matches the basename only, whereas rg applies `--glob` with full
+ * gitignore-style path-glob semantics (a glob can match against the path, not just the basename).
+ * For the common `*.ext` case the two agree; more elaborate globs may differ between the two paths.
  */
 export function globToRegExp(glob: string): RegExp {
   let re = '';
@@ -160,6 +171,30 @@ interface ResolvedTarget {
 }
 
 /**
+ * Resolve a path to its real, symlink-free location, walking up to the nearest EXISTING ancestor
+ * when the path itself does not exist yet. Only an existing component can be (or sit behind) a
+ * symlink, so resolving the nearest real ancestor is enough to catch an intermediate symlinked
+ * directory. Terminates because `path.dirname` strictly shortens the path to the filesystem root.
+ */
+async function realpathNearestExisting(absPath: string): Promise<string> {
+  let current = absPath;
+  for (;;) {
+    try {
+      return await fs.realpath(current);
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return current; // filesystem root; nothing left to resolve
+      current = parent;
+    }
+  }
+}
+
+/** True when `child` equals `root` or is a descendant of it. */
+function isWithin(child: string, root: string): boolean {
+  return child === root || child.startsWith(`${root}${path.sep}`);
+}
+
+/**
  * Resolve `path` under the working directory and refuse anything that escapes it. The whole tool
  * is sandboxed to this boundary.
  */
@@ -171,6 +206,19 @@ async function resolveTarget(
   const requested = path.resolve(absWorkDir, inputPath ?? '.');
   const rel = path.relative(absWorkDir, requested);
   if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new GrepError(
+      `Refusing to search '${inputPath}': path escapes the working directory (${absWorkDir}).`
+    );
+  }
+  // Symlink containment: the lexical check above cannot catch a symlink INSIDE the workdir that
+  // points outside it (rel would not start with `..`, and stat/rg/the walk would then follow it out
+  // of the sandbox). Resolve real paths and re-assert containment. The workdir root is realpath'd
+  // too, since its own path may contain symlinks (e.g. /tmp -> /private/tmp). A not-yet-existing
+  // target resolves via its nearest existing ancestor, so a missing path is contained here and then
+  // reported as "not found" by the stat below, rather than crashing.
+  const realRoot = await realpathNearestExisting(absWorkDir);
+  const realTarget = await realpathNearestExisting(requested);
+  if (!isWithin(realTarget, realRoot)) {
     throw new GrepError(
       `Refusing to search '${inputPath}': path escapes the working directory (${absWorkDir}).`
     );
@@ -208,6 +256,11 @@ function parseRipgrepOutput(stdout: string): GrepMatch[] {
 }
 
 function buildRipgrepArgs(pattern: string, target: ResolvedTarget, include?: string): string[] {
+  // NOTE (rg-vs-JS divergence): rg additionally honours `.gitignore`/`.ignore` files and skips
+  // hidden dot-files by default, whereas the JS fallback ({@link collectFiles}) only skips
+  // IGNORED_DIRS. So the set of files searched can differ depending on whether ripgrep is installed.
+  // This gitignore/hidden behaviour is left as-is deliberately (open product decision); do not
+  // "fix" it by passing --no-ignore / --hidden without a decision.
   const args = ['--line-number', '--no-heading', '--with-filename', '--color=never'];
   // Exclude the same noise dirs the JS fallback skips, so the two paths stay consistent. rg only
   // auto-skips node_modules etc. when a .gitignore says so; outside a git repo it descends into
@@ -261,7 +314,15 @@ function runRipgrep(
   });
 }
 
-/** Recursively collect regular files under `dir`, skipping {@link IGNORED_DIRS}. */
+/**
+ * Recursively collect regular files under `dir`, skipping {@link IGNORED_DIRS}. Symlinked entries
+ * (dirs and files) report `isDirectory()`/`isFile()` as false here, so the walk never follows them
+ * out of the sandbox — only the explicit target path needs the realpath guard in {@link resolveTarget}.
+ *
+ * NOTE (rg-vs-JS divergence): unlike rg, this does NOT consult `.gitignore`/`.ignore` and does NOT
+ * skip hidden dot-files; it only skips IGNORED_DIRS. The searched file-set can therefore differ from
+ * the rg path. Deliberately left as-is (open product decision).
+ */
 async function collectFiles(dir: string, out: string[]): Promise<void> {
   let entries: Dirent[];
   try {
@@ -293,6 +354,10 @@ async function runJsScanner(
 ): Promise<GrepMatch[]> {
   let regex: RegExp;
   try {
+    // NOTE (rg-vs-JS divergence): the fallback uses the ECMAScript regex dialect (`new RegExp`),
+    // whereas rg uses the Rust `regex` crate. Host-specific features differ — notably lookaround
+    // and backreferences work here but are unsupported by rg — so the same pattern can behave
+    // differently depending on which path runs.
     regex = new RegExp(pattern);
   } catch (e) {
     throw new GrepError(`Search failed: invalid regular expression: ${(e as Error).message}`);
@@ -320,8 +385,14 @@ async function runJsScanner(
     const lines = content.split('\n');
     for (let i = 0; i < lines.length; i++) {
       if (matches.length >= limit) break;
-      if (regex.test(lines[i])) {
-        matches.push({ path: rel, line: i + 1, text: lines[i] });
+      const line = lines[i];
+      // Bound the regex input per line (see MAX_SCAN_LINE_LENGTH): a huge/minified line must not
+      // block the event loop. We test a truncated view but store the original line (its preview is
+      // bounded again at format time); a match beyond the cap on such a line is not reported.
+      const scanText =
+        line.length > MAX_SCAN_LINE_LENGTH ? line.slice(0, MAX_SCAN_LINE_LENGTH) : line;
+      if (regex.test(scanText)) {
+        matches.push({ path: rel, line: i + 1, text: line });
       }
     }
   }

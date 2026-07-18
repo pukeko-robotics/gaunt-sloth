@@ -297,6 +297,27 @@ describe('gthGrepTool', () => {
       expect(out).toContain('Search failed');
       expect(out).toContain('invalid regular expression');
     });
+
+    it('bounds per-line scan length so a huge single line cannot hang (perf guard)', async () => {
+      // near.min.js has the token within the scan cap (found); far.min.js has it ~1MB in on one
+      // line (beyond the cap -> guarded out). Both complete promptly instead of scanning megabytes.
+      const nearFile = path.join(tmpDir, 'near.min.js');
+      const farFile = path.join(tmpDir, 'far.min.js');
+      await fsp.writeFile(nearFile, 'NEEDLE' + 'a'.repeat(1_000_000));
+      await fsp.writeFile(farFile, 'a'.repeat(1_000_000) + 'NEEDLE');
+      try {
+        const { get } = await import('#src/tools/gthGrepTool.js');
+        const started = Date.now();
+        const near = (await get(cfg).invoke({ pattern: 'NEEDLE', path: 'near.min.js' })) as string;
+        const far = (await get(cfg).invoke({ pattern: 'NEEDLE', path: 'far.min.js' })) as string;
+        expect(near).toContain('near.min.js:');
+        expect(far).toBe('No matches found');
+        expect(Date.now() - started).toBeLessThan(3000);
+      } finally {
+        await fsp.rm(nearFile, { force: true });
+        await fsp.rm(farFile, { force: true });
+      }
+    });
   });
 
   // --- sandbox boundary: independent of which execution path would run -------------------------
@@ -337,6 +358,24 @@ describe('gthGrepTool', () => {
       const { get } = await import('#src/tools/gthGrepTool.js');
       const out = (await get(cfg).invoke({ pattern: 'x', path: 'does-not-exist' })) as string;
       expect(out).toContain('Path not found');
+    });
+
+    it('refuses a symlink inside the workdir that points outside it', async () => {
+      // A symlink whose *lexical* path stays inside the workdir but resolves out of it: the lexical
+      // check passes, only the realpath containment guard catches it.
+      const outside = await fsp.mkdtemp(path.join(os.tmpdir(), 'gth-grep-outside-'));
+      await fsp.writeFile(path.join(outside, 'secret.txt'), 'top secret needle');
+      const linkPath = path.join(tmpDir, 'escape-link');
+      await fsp.symlink(outside, linkPath, 'dir');
+      try {
+        const { get } = await import('#src/tools/gthGrepTool.js');
+        const out = (await get(cfg).invoke({ pattern: 'secret', path: 'escape-link' })) as string;
+        expect(out).toContain('escapes the working directory');
+        expect(out).not.toContain('top secret');
+      } finally {
+        await fsp.rm(linkPath, { force: true });
+        await fsp.rm(outside, { recursive: true, force: true });
+      }
     });
   });
 });
