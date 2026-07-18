@@ -181,6 +181,13 @@ Tested with Node 22 LTS.
 npm install gaunt-sloth -g
 ```
 
+The 2.0 line is still prerelease, published under `@alpha`/`@beta`/`@rc` tags rather than
+`@latest` — a bare `npm install gaunt-sloth -g` currently installs the 1.x bridge release.
+Use `npm install gaunt-sloth@alpha -g` (or `@beta`/`@rc`) to get 2.0. Upgrading from the old
+`gaunt-sloth-assistant` package? See
+[Upgrading from `gaunt-sloth-assistant` (1.x)?](docs/MIGRATION.md#upgrading-from-gaunt-sloth-assistant-1x)
+in `docs/MIGRATION.md` first.
+
 ## Configuration
 
 > Gaunt Sloth currently only functions from the directory which has a configuration file (`.gsloth.config.js`, `.gsloth.config.json`, or `.gsloth.config.mjs`) and `.gsloth.guidelines.md`. Configuration files can be located in the project root or in the `.gsloth/.gsloth-settings/` directory.

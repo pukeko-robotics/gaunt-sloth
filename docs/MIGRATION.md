@@ -16,6 +16,34 @@ deprecated config-file shape or a real schema violation prints a path-scoped mes
 exits non-zero. Use `gth config print` to see the fully-resolved config (secrets redacted)
 after your edits.
 
+## Upgrading from `gaunt-sloth-assistant` (1.x)?
+
+The 2.0 line ships under a **renamed package**, `gaunt-sloth` — not `gaunt-sloth-assistant`,
+which is the 1.x package name. Read this section before you run the install command, not
+after.
+
+**If `gaunt-sloth-assistant` is still installed globally, installing `gaunt-sloth` on top of
+it can fail outright.** Both packages declare the same four bins (`gth`, `gsloth`,
+`gaunt-sloth`, `gaunt-sloth-assistant`), so `npm i -g gaunt-sloth` can hit `npm error EEXIST`
+on a bin shim the old package already owns, and the **entire install aborts** — not just
+that one shim. Confirmed via automated Windows CI (`windows-latest`, run
+[29638001306](https://github.com/pukeko-robotics/gaunt-sloth/actions/runs/29638001306)):
+after the failed install, `gth`/`gsloth`/`gaunt-sloth --version` (PowerShell *and*
+`cmd.exe`) all kept silently reporting the **old 1.x version**, with no further error
+surfaced — a user who doesn't notice the failed `npm i` output itself would have no other
+sign they're still on 1.x. That CI run only exercised `windows-latest`; other platforms
+were not separately verified either way, so treat the fix below as the safe, universal step
+regardless of platform:
+
+```bash
+npm rm -g gaunt-sloth-assistant
+npm i  -g gaunt-sloth@alpha
+gth --version   # should now report the 2.x version, e.g. 2.0.0-alpha.18
+```
+
+Remove the old package **first**, then install the new one — do not install `gaunt-sloth`
+while `gaunt-sloth-assistant` is still present.
+
 ## Severity at a glance
 
 Every deprecated config-file shape is now a HARD error: 2.0 has no back-compat coercion, so
