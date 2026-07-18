@@ -172,12 +172,9 @@ describe('history/historyStore', () => {
       expect(openHistoryStore(missing, { create: false })).toBeNull();
     });
 
-    // TAKAHE follow-up filed: openHistoryStore's fail-soft corrupt-DB path appears to leave a
-    // SQLite file handle open on win32 — afterEach's rmSync(dir) then hits EPERM (Windows locks
-    // open file handles; POSIX allows unlinking them, which is why this passes there). That's a
-    // real resource-lifecycle bug, not a path-format test artifact, so skipping rather than
-    // adjusting the assertion — see docs/attention/ in the takahe repo for the filed follow-up.
-    it.skipIf(process.platform === 'win32')(
+    // GS2-42: temporarily unskipped (unconditionally) to get a real red Windows CI run and
+    // confirm the win32 EPERM repro before fixing HistoryStore.open()'s leaked file handle.
+    it(
       'returns null (does not throw) when opening a corrupt DB file',
       () => {
         const corrupt = resolve(dir, 'corrupt.db');
