@@ -10,6 +10,10 @@ const UP = '\x1b[A'; // Up arrow CSI sequence
 const ENTER = '\r';
 const TAB = '\t';
 const ESC = '\x1b';
+// Bracketed-paste markers (TUI-C24): the terminal wraps pasted content between these.
+const PASTE_START = '\x1b[200~';
+const PASTE_END = '\x1b[201~';
+const paste = (body: string): string => PASTE_START + body + PASTE_END;
 
 const tick = () => new Promise((r) => setTimeout(r, 20));
 
@@ -177,5 +181,76 @@ describe('tui <PromptInput> slash-command menu (TUI-C10 interaction)', () => {
     stdin.write(ENTER);
     await tick();
     expect(onSubmit).toHaveBeenCalledWith('hello');
+  });
+});
+
+describe('tui <PromptInput> multiline paste (TUI-C24)', () => {
+  it('buffers a multiline paste without submitting; a later Enter submits the whole value', async () => {
+    const onSubmit = vi.fn();
+    const { stdin } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write(paste('line one\nline two\nline three'));
+    await tick();
+    // The embedded newlines must NOT trigger submit mid-paste (the core bug this fixes).
+    expect(onSubmit).not.toHaveBeenCalled();
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenCalledWith('line one\nline two\nline three');
+  });
+
+  it('assembles a paste whose markers are split across two stdin chunks', async () => {
+    const onSubmit = vi.fn();
+    const { stdin } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write(PASTE_START + 'alpha\nbe'); // start marker + partial body
+    await tick();
+    expect(onSubmit).not.toHaveBeenCalled();
+    stdin.write('ta\ngamma' + PASTE_END); // rest of body + end marker
+    await tick();
+    expect(onSubmit).not.toHaveBeenCalled();
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('alpha\nbeta\ngamma');
+  });
+
+  it('appends a paste after already-typed text (mixed typed + pasted)', async () => {
+    const onSubmit = vi.fn();
+    const { stdin } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write('note: ');
+    await tick();
+    stdin.write(paste('first\nsecond'));
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('note: first\nsecond');
+  });
+
+  it('normalizes CRLF / CR in the pasted payload to LF', async () => {
+    const onSubmit = vi.fn();
+    const { stdin } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write(paste('a\r\nb\rc'));
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('a\nb\nc');
+  });
+
+  it('a multiline paste that starts with "/" does not open the slash menu and does not submit', async () => {
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write(paste('/mode\nsomething'));
+    await tick();
+    // The newline is whitespace, so this is not a bare-slash menu query.
+    expect(lastFrame() ?? '').not.toMatch(/❯/);
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });

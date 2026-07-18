@@ -205,6 +205,13 @@ their config has a problem.
   is safe because the prompt is unmounted while the pane is focused, so the two `/` meanings never
   contend (DL-9 keyboard-first, DL-4 inspectability).
 - **arrows / Enter** — select / submit in the prompt.
+- **multiline paste** — pasting text with newlines buffers it into the prompt intact; the embedded
+  newlines do **not** submit — only an explicit `Enter` sends the whole buffered value (DL-9
+  keyboard-first, DL-3 preserve the user's content, TUI-C24). The prompt enables the terminal's
+  bracketed-paste mode while mounted (via Ink's `usePaste`) so a paste is captured as content rather
+  than misread as keystrokes; newlines are normalized to `\n`. Rich multiline cursor editing /
+  continuation-line rendering is a later step (TUI-C25) — a buffered multiline value may render
+  imperfectly, but the submitted value is correct and intact (DL-7 graceful degradation).
 
 Defaults are beginner-safe (DL-9): tool detail collapsed, debug panel hidden — the expert opts into
 depth.
