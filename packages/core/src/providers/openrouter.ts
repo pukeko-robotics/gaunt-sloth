@@ -27,6 +27,11 @@ export async function processJsonConfig(
     ...llmConfig,
     apiKey: openRouterApiKey,
     model: llmConfig.model || getCuratedFallbackModel('openrouter'),
+    // TUI-C22 — OpenRouter returns a thinking model's reasoning in a top-level `reasoning` field
+    // that the ChatOpenAI completions converter drops. `__includeRawResponse` stashes the raw
+    // provider response under `additional_kwargs.__raw_response`, which GthAbstractAgent reads
+    // (`choices[0].delta.reasoning`) to populate the /reasoning panel. Kept opt-out via config.
+    __includeRawResponse: llmConfig.__includeRawResponse ?? true,
     configuration: {
       baseURL: 'https://openrouter.ai/api/v1',
       ...(llmConfig.configuration || {}),

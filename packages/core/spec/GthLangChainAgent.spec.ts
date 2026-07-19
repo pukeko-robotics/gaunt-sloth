@@ -1575,6 +1575,193 @@ describe('GthLangChainAgent', () => {
     });
   });
 
+  describe('reasoning capture (TUI-C22)', () => {
+    // Drive processEventStream with a hand-built [chunk, metadata] sequence and collect the typed
+    // events, exercising the exact production path streamWithEvents uses.
+    async function runStream(
+      chunks: Array<[unknown, Record<string, unknown>]>
+    ): Promise<Array<{ type: string; delta?: string }>> {
+      const agent = new GthLangChainAgent(statusUpdateCallback);
+      const fakeListChatModel = new FakeListChatModel({ responses: [] });
+      fakeListChatModel.bindTools = vi.fn().mockReturnValue(fakeListChatModel);
+      await agent.init(undefined, { ...mockConfig, llm: fakeListChatModel });
+      async function* streamed() {
+        for (const c of chunks) yield c;
+      }
+      agentMock.stream.mockResolvedValue(streamed());
+      const events: Array<{ type: string; delta?: string }> = [];
+      for await (const ev of agent.streamWithEvents([new HumanMessage('go')], {
+        recursionLimit: 1000,
+        configurable: { thread_id: 'tui-c22' },
+      })) {
+        events.push(ev as { type: string; delta?: string });
+      }
+      return events;
+    }
+    const reasoningText = (evs: Array<{ type: string; delta?: string }>) =>
+      evs
+        .filter((e) => e.type === 'reasoning_delta')
+        .map((e) => e.delta)
+        .join('');
+    const answerText = (evs: Array<{ type: string; delta?: string }>) =>
+      evs
+        .filter((e) => e.type === 'text')
+        .map((e) => e.delta)
+        .join('');
+
+    it('peels an inline <think>...</think> block within one chunk into reasoning and strips it', async () => {
+      const events = await runStream([
+        [new AIMessageChunk({ content: 'Hello <think>secret reasoning</think>world' }), {}],
+      ]);
+      expect(reasoningText(events)).toBe('secret reasoning');
+      expect(answerText(events)).toBe('Hello world');
+      expect(events.map((e) => e.type)).toEqual([
+        'text',
+        'reasoning_start',
+        'reasoning_delta',
+        'reasoning_end',
+        'text',
+      ]);
+    });
+
+    it('detects a <think> whose open AND close tags are split across chunk boundaries', async () => {
+      // Neither `<think>` nor `</think>` lands whole in any single chunk.
+      const events = await runStream([
+        [new AIMessageChunk({ content: 'answer1 <thi' }), {}],
+        [new AIMessageChunk({ content: 'nk>hidden th' }), {}],
+        [new AIMessageChunk({ content: 'oughts</thi' }), {}],
+        [new AIMessageChunk({ content: 'nk> answer2' }), {}],
+      ]);
+      expect(reasoningText(events)).toBe('hidden thoughts');
+      // The literal answer text is preserved byte-for-byte (note the two spaces around the block).
+      expect(answerText(events)).toBe('answer1  answer2');
+    });
+
+    it('handles multiple think blocks in one stream', async () => {
+      const events = await runStream([
+        [new AIMessageChunk({ content: '<think>a</think>mid<think>b</think>end' }), {}],
+      ]);
+      expect(reasoningText(events)).toBe('ab');
+      expect(answerText(events)).toBe('midend');
+    });
+
+    it('treats an unterminated <think> at stream end as reasoning (answer keeps only pre-tag text)', async () => {
+      const events = await runStream([
+        [new AIMessageChunk({ content: 'visible <think>dangling reasoning' }), {}],
+      ]);
+      expect(reasoningText(events)).toBe('dangling reasoning');
+      expect(answerText(events)).toBe('visible ');
+      // The block is still closed exactly once at stream end.
+      expect(events.filter((e) => e.type === 'reasoning_end')).toHaveLength(1);
+    });
+
+    it('REGRESSION: plain text with a literal `<` (no think tags) streams byte-identical', async () => {
+      // The trailing-`<` hold-back must always be flushed — across a chunk boundary and at EOF —
+      // so a non-thinking model streaming code like `a < b` / `<div>` loses nothing and emits no
+      // spurious reasoning events. This is the real risk of routing all text through the splitter.
+      const events = await runStream([
+        [new AIMessageChunk({ content: 'if a <' }), {}],
+        [new AIMessageChunk({ content: ' b then <div>' }), {}],
+        [new AIMessageChunk({ content: ' done <' }), {}], // ends the whole stream on a bare `<`
+      ]);
+      expect(answerText(events)).toBe('if a < b then <div> done <');
+      expect(events.some((e) => e.type.startsWith('reasoning'))).toBe(false);
+    });
+
+    it('REGRESSION: the reasoning_content happy path is unchanged (streaming chunk)', async () => {
+      // DeepSeek/vLLM/Anthropic surface thinking in additional_kwargs.reasoning_content. This path
+      // must route to the reasoning channel with the exact pre-existing event sequence.
+      const events = await runStream([
+        [
+          new AIMessageChunk({
+            content: 'Answer',
+            additional_kwargs: { reasoning_content: 'thought' },
+          }),
+          {},
+        ],
+      ]);
+      expect(events.map((e) => e.type)).toEqual([
+        'reasoning_start',
+        'reasoning_delta',
+        'reasoning_end',
+        'text',
+      ]);
+      expect(events.find((e) => e.type === 'reasoning_delta')?.delta).toBe('thought');
+      expect(events.find((e) => e.type === 'text')?.delta).toBe('Answer');
+    });
+
+    it('captures a top-level `reasoning` field from the raw response on a streaming chunk (OpenRouter)', async () => {
+      // The ChatOpenAI converter drops top-level `reasoning`; with __includeRawResponse it is
+      // reachable at additional_kwargs.__raw_response.choices[0].delta.reasoning.
+      const events = await runStream([
+        [
+          new AIMessageChunk({
+            content: 'The answer.',
+            additional_kwargs: {
+              __raw_response: { choices: [{ delta: { reasoning: 'raw thinking' } }] },
+            },
+          }),
+          {},
+        ],
+      ]);
+      expect(reasoningText(events)).toBe('raw thinking');
+      expect(answerText(events)).toBe('The answer.');
+    });
+
+    it('captures a top-level `reasoning` field on a non-chunk AIMessage (resumed/replayed)', async () => {
+      const events = await runStream([
+        [
+          new AIMessage({
+            content: 'Final.',
+            additional_kwargs: {
+              __raw_response: { choices: [{ message: { reasoning: 'msg thinking' } }] },
+            },
+          }),
+          {},
+        ],
+      ]);
+      expect(reasoningText(events)).toBe('msg thinking');
+      expect(answerText(events)).toBe('Final.');
+    });
+
+    it('prefers reasoning_content over a raw-response `reasoning` (no double emit)', async () => {
+      const events = await runStream([
+        [
+          new AIMessageChunk({
+            content: 'Answer',
+            additional_kwargs: {
+              reasoning_content: 'primary',
+              __raw_response: { choices: [{ delta: { reasoning: 'secondary' } }] },
+            },
+          }),
+          {},
+        ],
+      ]);
+      expect(reasoningText(events)).toBe('primary');
+    });
+
+    it('keeps think-derived reasoning and answer ordered around an interleaving tool call', async () => {
+      // A think block in round 1, a tool call, then answer text in round 2. The splitter state must
+      // not leak the (closed) block across the ToolMessage boundary, and ordering must hold.
+      const events = await runStream([
+        [new AIMessageChunk({ content: '<think>plan</think>' }), {}],
+        [
+          new AIMessageChunk({
+            content: '',
+            tool_call_chunks: [{ id: 'tc-1', name: 'do_it', args: '{}', index: 0 }],
+          }),
+          {},
+        ],
+        [new ToolMessage({ content: 'ok', tool_call_id: 'tc-1' }), {}],
+        [new AIMessageChunk({ content: 'All done.' }), {}],
+      ]);
+      expect(reasoningText(events)).toBe('plan');
+      expect(answerText(events)).toBe('All done.');
+      const toolResult = events.find((e) => e.type === 'tool_result');
+      expect(toolResult).toBeDefined();
+    });
+  });
+
   describe('streamWithEventsResume', () => {
     it('should throw if not initialized', async () => {
       const agent = new GthLangChainAgent(statusUpdateCallback);
