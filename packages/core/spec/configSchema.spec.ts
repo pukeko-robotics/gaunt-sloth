@@ -73,6 +73,25 @@ describe('config schema (GS2-1 B1)', () => {
       expect(result.success).toBe(true);
     });
 
+    // GS2-35 — the config-driven commit co-author identity.
+    it('accepts commit.coAuthor and rejects a non-string name', () => {
+      expect(
+        rawGthConfigSchema.safeParse({
+          llm: { type: 'anthropic' },
+          commit: { coAuthor: { name: 'Acme Bot', email: 'bot@acme.test' } },
+        }).success
+      ).toBe(true);
+      // A partial identity (either field alone) is valid; both fields are optional.
+      expect(
+        rawGthConfigSchema.safeParse({ commit: { coAuthor: { name: 'Only Name' } } }).success
+      ).toBe(true);
+      const bad = rawGthConfigSchema.safeParse({ commit: { coAuthor: { name: 123 } } });
+      expect(bad.success).toBe(false);
+      if (!bad.success) {
+        expect(formatConfigValidationError(bad.error)).toContain('commit.coAuthor.name');
+      }
+    });
+
     it.each([
       'examples/jira-mcp/.gsloth.config.json',
       'examples/lmstudio/.gsloth.config.json',

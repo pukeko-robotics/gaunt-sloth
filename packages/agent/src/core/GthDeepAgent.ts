@@ -18,11 +18,13 @@ import { getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
 import {
   appendOsShellNote,
   appendCwdNote,
+  appendCommitCoAuthorNote,
   appendMcpServerInstructionsNote,
 } from '@gaunt-sloth/core/utils/systemPromptNotes.js';
 export {
   appendOsShellNote,
   appendCwdNote,
+  appendCommitCoAuthorNote,
   OS_SHELL_GUIDANCE,
 } from '@gaunt-sloth/core/utils/systemPromptNotes.js';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
@@ -267,12 +269,19 @@ export class GthDeepAgent extends GthAbstractAgent {
     // POSIX). This is ORTHOGONAL to the path-namespace notes above (those say WHERE it is; this
     // says WHAT shell it speaks) and applies in BOTH code-mode branches, independent of
     // virtualMode — the shell dialect matters on every platform. Non-code paths get nothing new.
+    // GS2-35: append the commit co-authoring rule (config `commit.coAuthor`, defaulting to the Gaunt
+    // Sloth account) so agent-authored commits credit Gaunt Sloth in the `Co-Authored-By` trailer and
+    // never the underlying model name. Mirrors the lean backend seam so both compose the same shared
+    // note (GS2-27 parity); same code-mode gate as the shell/cwd notes and independent of virtualMode.
     const codeNotesPrompt =
       this.command === 'code'
-        ? appendOsShellNote(
-            useVirtualFs
-              ? appendVirtualCwdNote(params.systemPrompt)
-              : appendCwdNote(params.systemPrompt, getCurrentWorkDir())
+        ? appendCommitCoAuthorNote(
+            appendOsShellNote(
+              useVirtualFs
+                ? appendVirtualCwdNote(params.systemPrompt)
+                : appendCwdNote(params.systemPrompt, getCurrentWorkDir())
+            ),
+            this.config?.commit?.coAuthor
           )
         : params.systemPrompt;
 
