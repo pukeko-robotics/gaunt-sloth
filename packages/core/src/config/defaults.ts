@@ -25,10 +25,12 @@ export const DEFAULT_CONFIG = {
   includeCurrentDateAfterGuidelines: false,
   projectReviewInstructions: PROJECT_REVIEW_INSTRUCTIONS,
   filesystem: 'none',
-  // Enabled built-in tools. `gth_checklist` (the lean agent's planning/todo tool) is on by
-  // default across commands; a user `builtInTools` setting replaces this set entirely.
-  // Cast keeps it a mutable `string[]` under the surrounding `as const`.
-  builtInTools: ['gth_checklist'] as string[],
+  // Enabled built-in tools. `gth_checklist` (the lean agent's planning/todo tool) and `gth_grep`
+  // (the permission-light content-search tool, GS2-51) are on by default across commands; a user
+  // `builtInTools` setting replaces this set entirely. Both are named to coexist with the deep
+  // backend's own `write_todos`/`grep` built-ins. Cast keeps it a mutable `string[]` under the
+  // surrounding `as const`.
+  builtInTools: ['gth_checklist', 'gth_grep'] as string[],
   debugLog: false,
   consoleLevel: StatusLevel.INFO, // Default to INFO level, not debug
   /**

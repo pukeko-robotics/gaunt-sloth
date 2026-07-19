@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getDefaultTools } from '#src/builtInToolsConfig.js';
+import { DEFAULT_CONFIG } from '#src/config.js';
 import type { GthConfig } from '#src/config.js';
 
 const consoleUtilsMock = vi.hoisted(() => ({
@@ -163,6 +164,25 @@ describe('Config Tool Functions', () => {
       const names = result.map((t) => t.name);
       expect(names).not.toContain('gth_checklist'); // force-disabled
       expect(names).toContain('gth_status_update'); // enabled via the object form
+    });
+
+    // GS2-51: gth_grep enablement rides on the existing CFG-18 builtInTools system. The shipped
+    // default (DEFAULT_CONFIG.builtInTools) turns it ON for the lean agent; the object form's
+    // `enabled: false` removes it. No parallel enablement mechanism.
+    it('gth_grep is ON under the shipped default builtInTools (enabled for the lean agent)', async () => {
+      const result = await getDefaultTools({
+        filesystem: 'none',
+        builtInTools: DEFAULT_CONFIG.builtInTools,
+      } as Partial<GthConfig> as GthConfig);
+      expect(result.map((t) => t.name)).toContain('gth_grep');
+    });
+
+    it('builtInTools { gth_grep: { enabled: false } } removes gth_grep from the tool set', async () => {
+      const result = await getDefaultTools({
+        filesystem: 'none',
+        builtInTools: { gth_grep: { enabled: false } },
+      } as Partial<GthConfig> as GthConfig);
+      expect(result.map((t) => t.name)).not.toContain('gth_grep');
     });
 
     it('enables dev tools for the exec command from commands.exec.devTools', async () => {

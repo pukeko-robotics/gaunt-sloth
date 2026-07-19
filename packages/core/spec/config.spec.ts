@@ -140,7 +140,7 @@ describe('config', async () => {
 
       expect(config).toEqual({
         consoleLevel: StatusLevel.INFO,
-        builtInTools: ['gth_checklist'],
+        builtInTools: ['gth_checklist', 'gth_grep'],
         llm: { type: 'vertexai' },
         contentSource: 'file',
         requirementSource: 'file',
@@ -238,7 +238,7 @@ describe('config', async () => {
 
       expect(config).toEqual({
         consoleLevel: StatusLevel.INFO,
-        builtInTools: ['gth_checklist'],
+        builtInTools: ['gth_checklist', 'gth_grep'],
         llm: { type: 'anthropic' },
         contentSource: 'file',
         requirementSource: 'file',
@@ -369,7 +369,7 @@ describe('config', async () => {
 
       expect(config).toEqual({
         consoleLevel: StatusLevel.INFO,
-        builtInTools: ['gth_checklist'],
+        builtInTools: ['gth_checklist', 'gth_grep'],
         llm: { type: 'groq' },
         contentSource: 'file',
         requirementSource: 'file',
@@ -1290,7 +1290,7 @@ describe('config', async () => {
 
       expect(config).toEqual({
         consoleLevel: StatusLevel.INFO,
-        builtInTools: ['gth_checklist'],
+        builtInTools: ['gth_checklist', 'gth_grep'],
         llm: mockLlm,
         modelDisplayName: 'test-model',
         contentSource: 'file',
@@ -1742,7 +1742,7 @@ describe('config', async () => {
 
       expect(config).toEqual({
         consoleLevel: StatusLevel.INFO,
-        builtInTools: ['gth_checklist'],
+        builtInTools: ['gth_checklist', 'gth_grep'],
         llm: { type: 'vertexai' },
         modelDisplayName: undefined,
         contentSource: 'file',
@@ -1825,7 +1825,7 @@ describe('config', async () => {
 
       expect(config).toEqual({
         consoleLevel: StatusLevel.INFO,
-        builtInTools: ['gth_checklist'],
+        builtInTools: ['gth_checklist', 'gth_grep'],
         llm: { type: 'anthropic' },
         contentSource: 'file',
         requirementSource: 'file',
@@ -1907,7 +1907,7 @@ describe('config', async () => {
 
       expect(config).toEqual({
         consoleLevel: StatusLevel.INFO,
-        builtInTools: ['gth_checklist'],
+        builtInTools: ['gth_checklist', 'gth_grep'],
         llm: { type: 'groq' },
         contentSource: 'file',
         requirementSource: 'file',
