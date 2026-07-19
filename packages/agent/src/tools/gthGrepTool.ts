@@ -116,7 +116,7 @@ const schema = z.object({
   limit: z
     .number()
     .int()
-    .positive()
+    .min(1)
     .optional()
     .describe(`Maximum number of matches to return (default ${DEFAULT_LIMIT}).`),
 });
