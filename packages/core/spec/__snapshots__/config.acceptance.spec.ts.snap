@@ -14,6 +14,7 @@ exports[`effective-merged acceptance (B2b) > resolves examples/a2a/.gsloth.confi
   },
   "builtInTools": [
     "gth_checklist",
+    "gth_grep",
   ],
   "canInterruptInferenceWithEsc": false,
   "commands": {
@@ -88,6 +89,7 @@ exports[`effective-merged acceptance (B2b) > resolves examples/jira-mcp/.gsloth.
   },
   "builtInTools": [
     "gth_checklist",
+    "gth_grep",
   ],
   "canInterruptInferenceWithEsc": false,
   "commands": {
@@ -174,6 +176,7 @@ exports[`effective-merged acceptance (B2b) > resolves examples/lmstudio/.gsloth.
   },
   "builtInTools": [
     "gth_checklist",
+    "gth_grep",
   ],
   "canInterruptInferenceWithEsc": false,
   "commands": {
@@ -251,6 +254,7 @@ exports[`effective-merged acceptance (B2b) > resolves examples/simple-DIY-helper
   },
   "builtInTools": [
     "gth_checklist",
+    "gth_grep",
   ],
   "canInterruptInferenceWithEsc": false,
   "commands": {

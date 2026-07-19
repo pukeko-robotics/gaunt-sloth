@@ -24,6 +24,7 @@ import type { GthConfig, LLMConfig } from '#src/config/types.js';
  * - `run_shell_command` reads the EXT-9/10/12 knobs ({@link enabled}/{@link timeout}/
  *   {@link maxOutputBytes}/{@link allowlist}/{@link persistAllowlist}/{@link judge}/{@link yolo} —
  *   `yolo` is the folded former `shellYolo`);
+ * - `gth_grep` reads {@link fileSet} (GS2-51) — which corpus to search;
  * - a plain built-in tool (`gth_checklist`, `gth_web_fetch`, …) reads {@link enabled} (or is
  *   toggled with a bare boolean in the registry).
  */
@@ -60,6 +61,22 @@ export interface BuiltInToolConfig {
    * `{ "run_shell_command": { "yolo": true } }`.
    */
   yolo?: boolean;
+  /**
+   * `gth_grep` (GS2-51): which corpus the content-search tool scans, applied consistently to BOTH
+   * execution engines (native ripgrep and the in-process JS fallback):
+   * - `gitignore` (DEFAULT) — respect `.gitignore`/`.ignore` and skip hidden dot-files. This is the
+   *   best code-search UX and is already ripgrep's own default, so rg-present machines see NO
+   *   behaviour change; only the corpus *selection* becomes explicit.
+   * - `all` — scan everything except the noise dirs (`node_modules`/`dist`/`.git`/`.idea`); for rg
+   *   this passes `--no-ignore --hidden`.
+   *
+   * Example: `{ "builtInTools": { "gth_grep": { "fileSet": "all" } } }`.
+   *
+   * NOTE: under `gitignore` the JS fallback is a best-effort approximation (skip noise dirs + hidden
+   * dot-files); it does NOT parse arbitrary `.gitignore` rules the way rg does. See the residual
+   * rg-vs-JS divergence note in `gthGrepTool.ts`.
+   */
+  fileSet?: 'gitignore' | 'all';
 }
 
 /**

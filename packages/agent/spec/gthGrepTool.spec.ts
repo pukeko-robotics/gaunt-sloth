@@ -175,6 +175,28 @@ describe('gthGrepTool', () => {
       expect(options.cwd).toBe(tmpDir);
     });
 
+    it('does NOT pass --no-ignore/--hidden under the gitignore default (rg native default)', async () => {
+      execFileMock.mockImplementation(rgStdout('a.ts:1:hit\n'));
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      await get(cfg).invoke({ pattern: 'foo' });
+      const [, args] = execFileMock.mock.calls[0];
+      expect(args).not.toContain('--no-ignore');
+      expect(args).not.toContain('--hidden');
+    });
+
+    it('passes --no-ignore and --hidden when fileSet is "all" (still excluding noise dirs)', async () => {
+      execFileMock.mockImplementation(rgStdout('a.ts:1:hit\n'));
+      const allCfg = { builtInTools: { gth_grep: { fileSet: 'all' } } } as unknown as GthConfig;
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      await get(allCfg).invoke({ pattern: 'foo' });
+      const [, args] = execFileMock.mock.calls[0];
+      expect(args).toContain('--no-ignore');
+      expect(args).toContain('--hidden');
+      // "scan-all-but-noise": the IGNORED_DIRS excludes are still applied.
+      expect(args).toEqual(expect.arrayContaining(['--glob', '!node_modules']));
+      expect(args).toEqual(expect.arrayContaining(['--glob', '!.git']));
+    });
+
     it('returns No matches found on rg exit code 1', async () => {
       execFileMock.mockImplementation(rgNoMatches);
       const { get } = await import('#src/tools/gthGrepTool.js');
@@ -317,6 +339,56 @@ describe('gthGrepTool', () => {
         await fsp.rm(nearFile, { force: true });
         await fsp.rm(farFile, { force: true });
       }
+    });
+  });
+
+  // --- JS-fallback corpus selection (GS2-51): its own temp tree so hidden dot-entries never leak
+  // into the shared JS-fallback tree above --------------------------------------------------------
+  describe('JS scanner fallback — fileSet corpus (GS2-51)', () => {
+    let tmpDir: string;
+    let originalInitCwd: string | undefined;
+
+    beforeAll(async () => {
+      tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'gth-grep-fileset-'));
+      await fsp.writeFile(path.join(tmpDir, 'visible.ts'), 'const token = 1;');
+      await fsp.writeFile(path.join(tmpDir, '.hidden.ts'), 'hidden token here');
+      await fsp.mkdir(path.join(tmpDir, '.hiddendir'), { recursive: true });
+      await fsp.writeFile(path.join(tmpDir, '.hiddendir', 'inside.ts'), 'token in a hidden dir');
+    });
+    afterAll(async () => {
+      await fsp.rm(tmpDir, { recursive: true, force: true });
+    });
+    beforeEach(() => {
+      originalInitCwd = process.env.INIT_CWD;
+      process.env.INIT_CWD = tmpDir;
+      execFileMock.mockImplementation(rgAbsent); // force the fallback
+    });
+    afterAll(() => {
+      if (originalInitCwd === undefined) delete process.env.INIT_CWD;
+      else process.env.INIT_CWD = originalInitCwd;
+    });
+
+    it('under the gitignore default skips hidden dot-files and dot-dirs', async () => {
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(cfg).invoke({ pattern: 'token' })) as string;
+      expect(out).toContain('visible.ts');
+      expect(out).not.toContain('.hidden.ts');
+      expect(out).not.toContain('.hiddendir');
+    });
+
+    it('under fileSet "all" includes hidden dot-files and dot-dirs', async () => {
+      const allCfg = { builtInTools: { gth_grep: { fileSet: 'all' } } } as unknown as GthConfig;
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(allCfg).invoke({ pattern: 'token' })) as string;
+      expect(out).toContain('visible.ts');
+      expect(out).toContain('.hidden.ts');
+      expect(out).toContain('.hiddendir');
+    });
+
+    it('still searches an explicitly-named hidden file under the gitignore default', async () => {
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(cfg).invoke({ pattern: 'token', path: '.hidden.ts' })) as string;
+      expect(out).toContain('.hidden.ts');
     });
   });
 

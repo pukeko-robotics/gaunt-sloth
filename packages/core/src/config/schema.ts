@@ -107,7 +107,8 @@ const shellJudgeSchema = z.union([
  * CFG-18 — the per-tool config object carried as a value in the widened `builtInTools` registry.
  * One permissive shape covering every tool: `command` for the fixed dev-command tools
  * (run_tests/run_lint/run_build/run_single_test), the EXT-9/10/12 knobs for `run_shell_command`
- * (`yolo` is the folded former `shellYolo`), and `enabled` for a plain built-in tool.
+ * (`yolo` is the folded former `shellYolo`), `fileSet` for `gth_grep` (GS2-51), and `enabled` for a
+ * plain built-in tool.
  */
 const builtInToolConfigSchema = z.object({
   enabled: z.boolean().optional(),
@@ -118,6 +119,9 @@ const builtInToolConfigSchema = z.object({
   persistAllowlist: z.boolean().optional(),
   judge: shellJudgeSchema.optional(),
   yolo: z.boolean().optional(),
+  // GS2-51 — `gth_grep`: which corpus to search. `gitignore` (default) respects .gitignore/.ignore
+  // and skips hidden dot-files; `all` scans everything but the noise dirs. See BuiltInToolConfig.
+  fileSet: z.enum(['gitignore', 'all']).optional(),
 });
 
 /**

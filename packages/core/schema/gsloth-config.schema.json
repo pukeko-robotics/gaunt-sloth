@@ -257,6 +257,13 @@
                   },
                   "yolo": {
                     "type": "boolean"
+                  },
+                  "fileSet": {
+                    "type": "string",
+                    "enum": [
+                      "gitignore",
+                      "all"
+                    ]
                   }
                 }
               }
@@ -536,6 +543,13 @@
                           },
                           "yolo": {
                             "type": "boolean"
+                          },
+                          "fileSet": {
+                            "type": "string",
+                            "enum": [
+                              "gitignore",
+                              "all"
+                            ]
                           }
                         }
                       }
@@ -795,6 +809,13 @@
                           },
                           "yolo": {
                             "type": "boolean"
+                          },
+                          "fileSet": {
+                            "type": "string",
+                            "enum": [
+                              "gitignore",
+                              "all"
+                            ]
                           }
                         }
                       }
@@ -1045,6 +1066,13 @@
                           },
                           "yolo": {
                             "type": "boolean"
+                          },
+                          "fileSet": {
+                            "type": "string",
+                            "enum": [
+                              "gitignore",
+                              "all"
+                            ]
                           }
                         }
                       }
@@ -1275,6 +1303,13 @@
                           },
                           "yolo": {
                             "type": "boolean"
+                          },
+                          "fileSet": {
+                            "type": "string",
+                            "enum": [
+                              "gitignore",
+                              "all"
+                            ]
                           }
                         }
                       }
@@ -1505,6 +1540,13 @@
                           },
                           "yolo": {
                             "type": "boolean"
+                          },
+                          "fileSet": {
+                            "type": "string",
+                            "enum": [
+                              "gitignore",
+                              "all"
+                            ]
                           }
                         }
                       }
@@ -1735,6 +1777,13 @@
                           },
                           "yolo": {
                             "type": "boolean"
+                          },
+                          "fileSet": {
+                            "type": "string",
+                            "enum": [
+                              "gitignore",
+                              "all"
+                            ]
                           }
                         }
                       }
@@ -1965,6 +2014,13 @@
                           },
                           "yolo": {
                             "type": "boolean"
+                          },
+                          "fileSet": {
+                            "type": "string",
+                            "enum": [
+                              "gitignore",
+                              "all"
+                            ]
                           }
                         }
                       }
