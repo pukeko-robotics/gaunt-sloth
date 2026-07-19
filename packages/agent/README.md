@@ -15,11 +15,12 @@ The deep-agent runtime for Gaunt Sloth. Consolidates what were previously
 It builds on `@gaunt-sloth/core` (config, provider factory, lean langchain runtime).
 
 > **Running the ACP server:** prefer `gaunt-sloth --acp-agent` from the
-> [`gaunt-sloth`](../app) app, not the standalone `gaunt-sloth-acp` binary. The LLM
-> providers are `peerDependencies` of `@gaunt-sloth/core` that only the app declares, so a
-> bare `@gaunt-sloth/agent` install has no providers to construct a model from. See the
-> [app README → ACP server](../app/README.md#acp-server-editor-integration) for setup and a
-> Zed `settings.json` example.
+> [`gaunt-sloth`](https://www.npmjs.com/package/gaunt-sloth) app, not the standalone
+> `gaunt-sloth-acp` binary. The LLM providers are `peerDependencies` of `@gaunt-sloth/core` that
+> only the app declares, so a bare `@gaunt-sloth/agent` install has no providers to construct a
+> model from. See the
+> [app README → ACP server](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/packages/app/README.md#acp-server-editor-integration)
+> for setup and a Zed `settings.json` example.
 
 > `@gaunt-sloth/tools` and `@gaunt-sloth/api` are deprecated and now re-export
 > from this package.

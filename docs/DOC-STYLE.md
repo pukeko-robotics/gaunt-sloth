@@ -151,3 +151,44 @@ Then load the changed page in a browser and confirm:
 Record what you checked and what you saw (which page, which browser/tooling, screenshot if
 available) in the PR description or task report — "I looked at a diff" is not evidence this gate
 was met.
+
+## 9. Publishable package READMEs use absolute links, never relative ones
+
+A package's `README.md` is its **npm landing page** — npmjs.com renders it for anyone viewing
+`@gaunt-sloth/<pkg>`. This rule governs every **published** package README (`packages/*/README.md`).
+It does **not** apply to the workspace-root `README.md`: the root package is private and never
+published to npm, and that README is only ever read on GitHub, where relative links work — leave its
+relative links alone.
+
+**The rule:** in a published README, any link that points *outside the package's own published
+files* — to a sibling `@gaunt-sloth/*` package, to a repo file like `docs/COMMANDS.md` or the root
+README, or to an image — must be an **absolute URL**, never a repo-relative path (`../core`,
+`../../README.md`, `./assets/x.png`).
+
+**Why relative links don't work on npm.** npmjs.com does not serve the sibling files. It rewrites a
+relative link against the package's `repository.directory` into a link to the **GitHub source tree**,
+and drops relative images entirely. So ``[`@gaunt-sloth/core`](../core)`` on `@gaunt-sloth/batch`'s
+npm page never takes the reader to core's npm page — at best it lands them in GitHub source, at worst
+it 404s. A reader on npm who wants the sibling package wants its **npm page**, which a relative link
+can never express.
+
+**For a cross-package reference, give both absolute links — npm and GitHub source:**
+
+```markdown
+- [`@gaunt-sloth/core`](https://www.npmjs.com/package/@gaunt-sloth/core) — Core utilities, config,
+  and agent infrastructure
+  ([source](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/core))
+```
+
+- **npm page** (the primary link, since the README is read on npm):
+  `https://www.npmjs.com/package/<name>` — e.g. `.../package/@gaunt-sloth/core`; the app package is
+  `.../package/gaunt-sloth`.
+- **GitHub source:** a package →
+  `https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/<dir>`; a repo file (root
+  README, `docs/COMMANDS.md`, another package's README section) →
+  `https://github.com/pukeko-robotics/gaunt-sloth/blob/main/<path>` (append `#anchor` to deep-link a
+  heading). The org is `pukeko-robotics` — not the pre-move org.
+
+**Self-check (must pass before you ship):** `grep -nE '\]\(\.\.?/' packages/*/README.md` returns
+nothing. Every match is a relative link that will misresolve on npm; replace it with the absolute
+npm+GitHub form above.

@@ -39,7 +39,7 @@ This is the only package in the workspace that pulls in AI vendor dependencies d
 npm install -g gaunt-sloth
 ```
 
-For full usage documentation see the [root README](../../README.md) and [docs/COMMANDS.md](../../docs/COMMANDS.md).
+For full usage documentation see the [root README](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/README.md) and [docs/COMMANDS.md](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/docs/COMMANDS.md).
 
 ## ACP server (editor integration)
 
@@ -92,7 +92,8 @@ the same `command` + `args` pair.
 
 ## Related packages
 
-- [`@gaunt-sloth/core`](../core) — Core utilities, config, and agent infrastructure
-- [`@gaunt-sloth/agent`](../agent) — Agent runtime, built-in tools, API/AG-UI/ACP server
-- [`@gaunt-sloth/review`](../review) — Review and Q&A modules with standalone CLI
-- [`gaunt-sloth`](../app) — Main CLI application (this package)
+- [`@gaunt-sloth/core`](https://www.npmjs.com/package/@gaunt-sloth/core) — Core utilities, config, and agent infrastructure ([source](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/core))
+- [`@gaunt-sloth/agent`](https://www.npmjs.com/package/@gaunt-sloth/agent) — Agent runtime, built-in tools, API/AG-UI/ACP server ([source](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/agent))
+- [`@gaunt-sloth/review`](https://www.npmjs.com/package/@gaunt-sloth/review) — Review and Q&A modules with standalone CLI ([source](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/review))
+- [`@gaunt-sloth/batch`](https://www.npmjs.com/package/@gaunt-sloth/batch) — Batch / eval / workflow runtime ([source](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/batch))
+- [`gaunt-sloth`](https://www.npmjs.com/package/gaunt-sloth) — Main CLI application (this package) ([source](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/app))

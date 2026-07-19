@@ -22,7 +22,7 @@ npm install -g @gaunt-sloth/review @langchain/anthropic
 npm install -g @gaunt-sloth/review @langchain/groq
 ```
 
-See [`@gaunt-sloth/core`](../core) for the full list of supported providers.
+See [`@gaunt-sloth/core`](https://www.npmjs.com/package/@gaunt-sloth/core) for the full list of supported providers.
 
 ## Contents
 
@@ -71,7 +71,8 @@ import { commandUtils } from '@gaunt-sloth/review/commandUtils.js';
 
 ## Related packages
 
-- [`@gaunt-sloth/core`](../core) — Core utilities, config, and agent infrastructure
-- [`@gaunt-sloth/agent`](../agent) — Agent runtime: built-in tools, filesystem toolkit, middleware registry, API server, AG-UI, MCP, and A2A integration
-- [`@gaunt-sloth/review`](../review) — Review and Q&A modules with standalone CLI (this package)
-- [`gaunt-sloth`](../app) — Main CLI application
+- [`@gaunt-sloth/core`](https://www.npmjs.com/package/@gaunt-sloth/core) — Core utilities, config, and agent infrastructure ([source](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/core))
+- [`@gaunt-sloth/agent`](https://www.npmjs.com/package/@gaunt-sloth/agent) — Agent runtime: built-in tools, filesystem toolkit, middleware registry, API server, AG-UI, MCP, and A2A integration ([source](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/agent))
+- [`@gaunt-sloth/review`](https://www.npmjs.com/package/@gaunt-sloth/review) — Review and Q&A modules with standalone CLI (this package) ([source](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/review))
+- [`@gaunt-sloth/batch`](https://www.npmjs.com/package/@gaunt-sloth/batch) — Batch / eval / workflow runtime ([source](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/batch))
+- [`gaunt-sloth`](https://www.npmjs.com/package/gaunt-sloth) — Main CLI application ([source](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/app))
