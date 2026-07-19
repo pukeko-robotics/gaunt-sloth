@@ -98,13 +98,17 @@ function buildHistorySlashProps(config: GthConfig): HistorySlashProps {
  * forwards the App-assembled input straight to the core writer, which does the actual fs I/O
  * (mkdir + writeFileSync per file under the GLOBAL `~/.gsloth/debug-dumps/<timestamp>/`) plus
  * gathers env/version info, the in-memory debugLog ring buffer, and best-effort git repo state
- * itself. Dumped raw/unsanitized per this node's explicit scope (GS2-47 adds redaction later).
+ * itself. GS2-47 — the writer applies the shared secret-redaction pass (ON by default) unless the
+ * caller-resolved `redact` flag opts out; the flag is forwarded verbatim.
  */
 function dumpDebugSession(input: DebugDumpInput): { archiveDir: string } {
   return writeDebugDump({
     transcript: input.transcript,
     config: input.config,
     modelDisplayName: input.modelDisplayName,
+    // GS2-47 — the slash command resolved redact-on-by-default (config + `--unsafe-no-redact`);
+    // forward it so the writer applies (or skips) the shared secret-redaction pass.
+    redact: input.redact,
   });
 }
 

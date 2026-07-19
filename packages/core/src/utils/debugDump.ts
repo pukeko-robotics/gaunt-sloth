@@ -3,17 +3,24 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { inspect } from 'node:util';
 import { ensureGlobalGslothDir } from '#src/utils/globalConfigUtils.js';
-import { getSlothVersion } from '#src/utils/systemUtils.js';
+import { env, getSlothVersion } from '#src/utils/systemUtils.js';
 import { getDebugLogBuffer } from '#src/utils/debugUtils.js';
+import {
+  REDACTED,
+  collectSecretValues,
+  redactText,
+  redactValue,
+} from '#src/utils/redactSecrets.js';
 
 /**
- * GS2-46 — `/debug-dump`: a live-session diagnostic archive, written UNSANITIZED (that's GS2-47's
- * job on top of this). The user typed the command themselves, mid-session, knowingly, so the
- * caller (the slash command) is responsible for the loud "may contain secrets" warning — this
- * module only writes the files.
+ * GS2-46/GS2-47 — `/debug-dump`: a live-session diagnostic archive. GS2-46 shipped it raw; GS2-47
+ * adds a shared secret-redaction pass ({@link file://./redactSecrets.ts}) that is ON BY DEFAULT and
+ * applied to EVERY artifact before it hits disk. The caller opts out via `redact: false`, in which
+ * case the archive is raw and the caller surfaces the loud "may contain secrets" warning; when
+ * redaction is on the caller shows a softened "secrets redacted; review before sharing" note.
  */
 
-/** Input to {@link writeDebugDump}. `transcript`/`config` are dumped as-is (raw, unsanitized). */
+/** Input to {@link writeDebugDump}. */
 export interface WriteDebugDumpInput {
   /** The full transcript (all turns, tool calls + results). Opaque — serialized as JSON. */
   transcript: unknown;
@@ -21,6 +28,13 @@ export interface WriteDebugDumpInput {
   config: unknown;
   /** Model display name, already resolved by the caller. */
   modelDisplayName?: string;
+  /**
+   * GS2-47 — apply the shared secret-redaction pass to every artifact before writing. Defaults to
+   * ON: omitted or any value other than the literal `false` redacts (read-site `!== false`, matching
+   * the config default so an opt-out has to be explicit). `false` writes a RAW archive (the caller
+   * is then responsible for the loud "may contain secrets" warning).
+   */
+  redact?: boolean;
   /**
    * Working directory for git-state collection. Defaults to `process.cwd()`; overridable for
    * tests so the "not a git repo" / "inside a git repo" paths are both exercisable without
@@ -124,21 +138,65 @@ export function debugDumpDirName(date: Date = new Date()): string {
 }
 
 /**
+ * GS2-47 — render the CONFIG artifact: {@link redactValue} applies sensitive-field masking (keys
+ * kept, values masked) plus literal/pattern string redaction, then {@link safeStringify}. Fail-safe:
+ * any throw yields the fully-withheld marker rather than raw content ("redact more on error, never
+ * write a raw artifact because redaction hiccuped").
+ */
+function renderConfig(config: unknown, redact: boolean, secrets: readonly string[]): string {
+  if (!redact) return safeStringify(config);
+  try {
+    return safeStringify(redactValue(config, secrets));
+  } catch {
+    return REDACTED;
+  }
+}
+
+/**
+ * GS2-47 — render a non-config STRUCTURED artifact (transcript, env, git-state): stringify (never
+ * throws), then literal/pattern-redact the text. Structural field-masking is intentionally NOT
+ * applied here (config-only, per the brief) so a legitimately `token`/`secret`-named field in tool
+ * output is not blanket-masked. {@link redactText} is itself fail-safe.
+ */
+function renderStructured(value: unknown, redact: boolean, secrets: readonly string[]): string {
+  const raw = safeStringify(value);
+  return redact ? redactText(raw, secrets) : raw;
+}
+
+/**
  * Write one timestamped `/debug-dump` archive under the GLOBAL `~/.gsloth/debug-dumps/<timestamp>/`
  * (via `ensureGlobalGslothDir()` — mirrors how `resolveHistoryDbPath()` builds its path under the
  * same dir — NOT the per-project cwd-relative helper of the same name elsewhere in this codebase).
  * Contains: the full transcript, the resolved config, env/version info, the in-memory debugLog
- * ring buffer, and (best-effort) git repo state. Everything is dumped raw/unsanitized — this node
- * ships deliberately unsanitized (GS2-47 adds redaction on top later); the caller is responsible
- * for surfacing the "may contain secrets" warning to the user.
+ * ring buffer, and (best-effort) git repo state.
+ *
+ * GS2-47 — unless `input.redact === false`, the shared secret-redaction pass
+ * ({@link file://./redactSecrets.ts}) is applied to EVERY artifact before it is written: the literal
+ * values of secret-named env vars + inline config secrets are substituted everywhere, a tight set of
+ * provider-key/auth-header patterns is masked, and the config's sensitive fields are masked in place.
+ * On opt-out the archive is raw and the caller surfaces the loud "may contain secrets" warning.
  */
 export function writeDebugDump(input: WriteDebugDumpInput): WriteDebugDumpResult {
+  const redact = input.redact !== false; // default ON; only an explicit `false` opts out
   const timestamp = debugDumpDirName();
   const archiveDir = resolve(ensureGlobalGslothDir(), 'debug-dumps', timestamp);
   mkdirSync(archiveDir, { recursive: true });
 
-  writeFileSync(resolve(archiveDir, 'transcript.json'), safeStringify(input.transcript), 'utf8');
-  writeFileSync(resolve(archiveDir, 'config.json'), safeStringify(input.config), 'utf8');
+  // Technique 1 (load-bearing): the literal secret values to scrub across ALL artifacts, gathered
+  // from env (by secret-named var) + the config (apiKeyEnvironmentVariable's target + inline
+  // secrets). `env` is the systemUtils accessor (process.env); collection is itself fail-safe.
+  const secrets = redact ? collectSecretValues(input.config, env) : [];
+
+  writeFileSync(
+    resolve(archiveDir, 'transcript.json'),
+    renderStructured(input.transcript, redact, secrets),
+    'utf8'
+  );
+  writeFileSync(
+    resolve(archiveDir, 'config.json'),
+    renderConfig(input.config, redact, secrets),
+    'utf8'
+  );
 
   // getSlothVersion() reads the installed package.json via the install dir set at CLI startup
   // (setEntryPoint); guarded so a dump can never fail just because that wasn't wired (e.g. an
@@ -155,13 +213,25 @@ export function writeDebugDump(input: WriteDebugDumpInput): WriteDebugDumpResult
     platform: process.platform,
     model: input.modelDisplayName ?? 'unknown',
   };
-  writeFileSync(resolve(archiveDir, 'env.json'), safeStringify(envInfo), 'utf8');
+  writeFileSync(
+    resolve(archiveDir, 'env.json'),
+    renderStructured(envInfo, redact, secrets),
+    'utf8'
+  );
 
-  writeFileSync(resolve(archiveDir, 'debug-log.txt'), getDebugLogBuffer().join('\n'), 'utf8');
+  writeFileSync(
+    resolve(archiveDir, 'debug-log.txt'),
+    redact ? redactText(getDebugLogBuffer().join('\n'), secrets) : getDebugLogBuffer().join('\n'),
+    'utf8'
+  );
 
   const gitState = collectGitState(input.cwd ?? process.cwd());
   if (gitState) {
-    writeFileSync(resolve(archiveDir, 'git-state.json'), safeStringify(gitState), 'utf8');
+    writeFileSync(
+      resolve(archiveDir, 'git-state.json'),
+      renderStructured(gitState, redact, secrets),
+      'utf8'
+    );
   }
 
   return { archiveDir };
