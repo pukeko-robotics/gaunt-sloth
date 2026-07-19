@@ -975,7 +975,15 @@ export default class GthFileSystemToolkit extends BaseToolkit {
               try {
                 const validPath = await this.validatePath(filePath);
                 const content = await fs.readFile(validPath, 'utf-8');
-                return `${filePath}:\n${content}\n`;
+                // Apply the same whole-file read safety envelope as read_file's default path
+                // (GS2-39/GS2-52): a single oversized file — or a one-line minified bundle — in a
+                // multi-file read must not blow the context window. maxLines = MAX_READ_LINES,
+                // startLine = 1, lineCapIsHard = true mirror read_file's whole-file read, so a
+                // capped file carries the "resume with offset:N" notice; the model pages the rest
+                // with read_file on that path. Sub-cap files come back byte-identical (verbatim
+                // fast-path). There is no offset/limit here on purpose — read_file is the pager.
+                const capped = this.capReadContent(content, MAX_READ_LINES, 1, true);
+                return `${filePath}:\n${capped}\n`;
               } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
                 return `${filePath}: Error - ${errorMessage}`;
@@ -991,7 +999,13 @@ export default class GthFileSystemToolkit extends BaseToolkit {
             'efficient than reading files one by one when you need to analyze ' +
             "or compare multiple files. Each file's content is returned with its " +
             "path as a reference. Failed reads for individual files won't stop " +
-            'the entire operation. Only works within allowed directories.',
+            'the entire operation. ' +
+            `Each file is subject to the same per-file read cap as read_file: at most ${MAX_READ_LINES} ` +
+            `lines or ${MAX_READ_BYTES / 1024} KB are returned and any line longer than ` +
+            `${MAX_LINE_LENGTH} characters is truncated; when a file is capped a ` +
+            '`... [read_file: output truncated ...] ...` notice is appended — page past it by ' +
+            'reading that file individually with read_file (offset/limit). ' +
+            'Only works within allowed directories.',
           schema: ReadMultipleFilesArgsSchema,
         },
         'read'

@@ -539,6 +539,91 @@ describe('GthFileSystemToolkit - Basic Tests', () => {
     });
   });
 
+  describe('read_multiple_files safety envelope (GS2-52)', () => {
+    const smallPath = path.join(process.cwd(), 'small.txt');
+    const bigPath = path.join(process.cwd(), 'big.txt');
+    let readMultipleTool: any;
+
+    beforeEach(() => {
+      toolkit = new GthFileSystemToolkit({ allowedDirectories: [process.cwd()] });
+      readMultipleTool = toolkit.tools.find((t) => t.name === 'read_multiple_files')!;
+      // realpath echoes its input (outer beforeEach), so both paths validate.
+    });
+
+    it('small file stays byte-identical (verbatim fast-path, no cap notice)', async () => {
+      fsMock.readFile.mockResolvedValue('alpha\nbeta\ngamma');
+
+      const result: string = await readMultipleTool.invoke({ paths: [smallPath] });
+
+      expect(result).toBe(`${smallPath}:\nalpha\nbeta\ngamma\n`);
+      expect(result).not.toContain('read cap');
+    });
+
+    it('oversized file is capped to 2000 lines with a resume notice, not the whole file', async () => {
+      const bigContent = Array.from({ length: 5000 }, (_, i) => `L${i + 1}`).join('\n');
+      fsMock.readFile.mockResolvedValue(bigContent);
+
+      const result: string = await readMultipleTool.invoke({ paths: [bigPath] });
+
+      expect(result).toContain('read cap');
+      // Resume points at the first dropped line so the model can page it with read_file.
+      expect(result).toContain('offset:2001');
+      expect(result).toContain('L2000'); // last kept line
+      expect(result).not.toContain('L2001'); // first dropped line absent
+      expect(result).not.toContain('L5000'); // late dropped line absent
+    });
+
+    it('mixed call: one small byte-identical + one oversized capped, each in its own segment', async () => {
+      const bigContent = Array.from({ length: 5000 }, (_, i) => `L${i + 1}`).join('\n');
+      fsMock.readFile.mockImplementation((p: string) =>
+        Promise.resolve(p.includes('big') ? bigContent : 'alpha\nbeta\ngamma')
+      );
+
+      const result: string = await readMultipleTool.invoke({ paths: [smallPath, bigPath] });
+      const segments = result.split('\n---\n');
+
+      expect(segments).toHaveLength(2);
+      // Small file: exact byte-identity (verbatim fast-path preserved through the multi-file path).
+      expect(segments[0]).toBe(`${smallPath}:\nalpha\nbeta\ngamma\n`);
+      expect(segments[0]).not.toContain('read cap');
+      // Big file: capped with the resume notice.
+      expect(segments[1]).toContain(`${bigPath}:`);
+      expect(segments[1]).toContain('read cap');
+      expect(segments[1]).toContain('offset:2001');
+    });
+
+    it('pathological single long line is per-line truncated with the marker and NO global notice', async () => {
+      fsMock.readFile.mockResolvedValue('a'.repeat(5000)); // one line, no newline
+
+      const result: string = await readMultipleTool.invoke({ paths: [bigPath] });
+
+      expect(result).toBe(
+        `${bigPath}:\n` + 'a'.repeat(2000) + '... (line truncated to 2000 chars)\n'
+      );
+      // A per-line cut is signalled ONLY by the inline suffix, never the global cap notice.
+      expect(result).not.toContain('read cap');
+    });
+
+    it('a failing read returns its recoverable error string while siblings read normally', async () => {
+      // The good path reads fine; the bad path rejects. The error is surfaced per-file and the
+      // other file in the same call still returns its content.
+      fsMock.readFile.mockImplementation((p: string) => {
+        if (p.includes('big')) {
+          return Promise.reject(Object.assign(new Error('EACCES: denied'), { code: 'EACCES' }));
+        }
+        return Promise.resolve('alpha\nbeta\ngamma');
+      });
+
+      const result: string = await readMultipleTool.invoke({ paths: [smallPath, bigPath] });
+      const segments = result.split('\n---\n');
+
+      expect(segments).toHaveLength(2);
+      expect(segments[0]).toBe(`${smallPath}:\nalpha\nbeta\ngamma\n`);
+      expect(segments[1]).toContain(`${bigPath}: Error -`);
+      expect(segments[1]).toContain('EACCES');
+    });
+  });
+
   describe('read_file offset/limit vs head/tail combination (GS2-39)', () => {
     const testPath = path.join(process.cwd(), 'file.txt');
     let readFileTool: any;
