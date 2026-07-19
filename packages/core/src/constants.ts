@@ -26,7 +26,7 @@ export const AIIGNORE_FILE = '.aiignore';
  * The channel is **major-pinned** (`/schema/v2/…`, not `latest` or `alpha`) so a config never
  * revalidates against a future major it was not written for. The hosted copy is kept in sync with
  * this package's generated schema by the deploy runbook in
- * `websites/gauntsloth.app/schema/README.md` (interim, hand-run) and, in time, PLAT-9's automated
+ * `websites/gauntsloth-site/schema/README.md` (interim, hand-run) and, in time, PLAT-9's automated
  * release step. The schema still ships inside the package (`files: ["./schema/*"]`) as an offline
  * artifact and golden-snapshot source of truth; it is just no longer what the pointer references.
  */
