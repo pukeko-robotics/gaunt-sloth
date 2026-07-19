@@ -19,6 +19,18 @@ import { getFormatForExtension, getMimeType, readBinaryFile } from '#src/tools/b
 // TODO make it configurable
 const IGNORED_DIRS = ['node_modules', '.git', '.idea', 'dist'];
 
+// read_file safety envelope (GS2-39). A single large file — or a minified bundle that is one
+// multi-MB line — must not consume the whole context window in one uncapped read. Defaults are
+// adopted from opencode's read tool (packages/core/src/tool/read-filesystem.ts): at most
+// MAX_READ_LINES lines or MAX_READ_BYTES bytes are returned, and any single line longer than
+// MAX_LINE_LENGTH characters is truncated with LINE_TRUNCATED_SUFFIX. offset/limit paging is the
+// escape hatch to fetch whatever the cap dropped. This bounds context, not process memory: like
+// the existing head/tail helpers the file is still read whole and then trimmed.
+const MAX_READ_LINES = 2000;
+const MAX_READ_BYTES = 50 * 1024;
+const MAX_LINE_LENGTH = 2000;
+const LINE_TRUNCATED_SUFFIX = `... (line truncated to ${MAX_LINE_LENGTH} chars)`;
+
 // Helper function to create a tool with filesystem type
 function createGthTool<T extends z.ZodSchema>(
   fn: (args: z.infer<T>) => Promise<string>,
@@ -38,13 +50,31 @@ function createGthTool<T extends z.ZodSchema>(
 // Schema definitions
 const ReadFileArgsSchema = z.object({
   path: z.string(),
+  offset: z
+    .number()
+    .optional()
+    .describe(
+      'Start of a 1-based line window: the first line to return (inclusive). Combine with ' +
+        '`limit` to page through a large file (e.g. offset 2001 continues past the default ' +
+        `${MAX_READ_LINES}-line cap). Mutually exclusive with head/tail — pass a line window ` +
+        '(offset/limit) OR head/tail, not both.'
+    ),
+  limit: z
+    .number()
+    .optional()
+    .describe(
+      'Number of lines to return starting at `offset` (defaults to and is hard-capped at ' +
+        `${MAX_READ_LINES}). Use with \`offset\` to read an arbitrary window. Mutually ` +
+        'exclusive with head/tail.'
+    ),
   tail: z
     .number()
     .optional()
     .describe(
       'If provided, returns only the last N lines of the file. May be combined with head ' +
         '(no longer mutually exclusive): head+tail returns the first head lines, a ' +
-        '`... [N lines skipped] ...` marker, then the last tail lines.'
+        '`... [N lines skipped] ...` marker, then the last tail lines. Mutually exclusive ' +
+        'with the offset/limit line window.'
     ),
   head: z
     .number()
@@ -52,7 +82,8 @@ const ReadFileArgsSchema = z.object({
     .describe(
       'If provided, returns only the first N lines of the file. May be combined with tail ' +
         '(no longer mutually exclusive): head+tail returns the first head lines, a ' +
-        '`... [N lines skipped] ...` marker, then the last tail lines.'
+        '`... [N lines skipped] ...` marker, then the last tail lines. Mutually exclusive ' +
+        'with the offset/limit line window.'
     ),
 });
 
@@ -647,6 +678,111 @@ export default class GthFileSystemToolkit extends BaseToolkit {
     return headContent + '\n... [' + skipped + ' lines skipped] ...\n' + tailContent;
   }
 
+  /**
+   * Return the file's lines from the 1-based `offset` to EOF (GS2-39 paging). Deliberately does
+   * NOT apply `limit` here — the caller hands the result to capReadContent with maxLines = limit so
+   * that a limit-bounded read is *observable* to the envelope (it can then tell "more file remains
+   * past this window" from "reached EOF" and emit the correct resume notice). Pre-slicing to
+   * exactly `limit` lines here would hide that signal and silently drop the continuation.
+   *
+   * Mirrors headAndTailFile's trailing-newline handling so line numbering matches head/tail/full
+   * reads: a terminating newline yields a phantom trailing empty element that must not be counted
+   * as a real line. Clamps rather than throwing: an offset past EOF returns a short recoverable note
+   * (not an empty string, which is indistinguishable from an empty file).
+   */
+  private async windowFile(filePath: string, offset: number): Promise<string> {
+    const content = await fs.readFile(filePath, 'utf-8');
+    const normalized = this.normalizeLineEndings(content);
+    const lines = normalized.split('\n');
+    if (normalized.endsWith('\n')) {
+      lines.pop();
+    }
+    const total = lines.length;
+    if (total === 0) {
+      return '';
+    }
+    const start = offset - 1; // offset is >= 1 (clamped by the caller)
+    if (start >= total) {
+      return `[read_file: offset ${offset} is past end of file (${total} lines total)]`;
+    }
+    return lines.slice(start).join('\n');
+  }
+
+  /**
+   * Apply the read safety envelope (GS2-39) to already-selected file content:
+   *  - any single line longer than MAX_LINE_LENGTH is truncated with LINE_TRUNCATED_SUFFIX;
+   *  - emission stops once `maxLines` lines OR MAX_READ_BYTES bytes have been produced.
+   *
+   * When nothing exceeds the caps the content is returned verbatim (byte-identical), so normal
+   * files behave exactly as before — the change only bites on pathological / huge files.
+   *
+   * Three truncation signals are kept deliberately separate:
+   *  - a per-line cut is marked only by the inline LINE_TRUNCATED_SUFFIX (no global notice);
+   *  - the BYTE cap always appends the global "output truncated" notice, because it is the hard
+   *    safety envelope regardless of who asked for the read;
+   *  - the LINE cap appends the global notice only when `lineCapIsHard` is true — i.e. `maxLines`
+   *    is the hard MAX_READ_LINES envelope (a defaulted or clamped-down window, or the whole-file
+   *    read), NOT a deliberate small explicit `limit`. This distinguishes a *capped continuation*
+   *    (notify so the model can page) from a *satisfied explicit window* (stay quiet).
+   *
+   * `startLine` is the 1-based file line of the first line in `content`; it is used only to put a
+   * concrete resume `offset` in the global notice. Pass `undefined` (head/tail paths, where the
+   * first emitted line is not line `startLine` of the file) to emit a generic notice instead.
+   */
+  private capReadContent(
+    content: string,
+    maxLines: number,
+    startLine: number | undefined,
+    lineCapIsHard: boolean
+  ): string {
+    const lines = content.split('\n');
+    const withinBytes = Buffer.byteLength(content, 'utf-8') <= MAX_READ_BYTES;
+    const withinLines = lines.length <= maxLines;
+    const noLongLine = lines.every((line) => line.length <= MAX_LINE_LENGTH);
+    if (withinBytes && withinLines && noLongLine) {
+      return content;
+    }
+
+    const out: string[] = [];
+    let bytes = 0;
+    let stoppedByLine = false;
+    let stoppedByByte = false;
+    for (const rawLine of lines) {
+      if (out.length >= maxLines) {
+        stoppedByLine = true;
+        break;
+      }
+      const line =
+        rawLine.length > MAX_LINE_LENGTH
+          ? rawLine.slice(0, MAX_LINE_LENGTH) + LINE_TRUNCATED_SUFFIX
+          : rawLine;
+      // +1 accounts for the '\n' that re-joins this line to the previous one. Always emit at
+      // least one (already per-line-truncated) line so the result is never empty.
+      const size = Buffer.byteLength(line, 'utf-8') + (out.length > 0 ? 1 : 0);
+      if (out.length > 0 && bytes + size > MAX_READ_BYTES) {
+        stoppedByByte = true;
+        break;
+      }
+      out.push(line);
+      bytes += size;
+    }
+
+    let result = out.join('\n');
+    // The byte cap is a hard envelope and always warrants a notice; the line cap warrants one only
+    // when it represents the hard MAX_READ_LINES envelope, not a deliberate explicit `limit`.
+    if (stoppedByByte || (stoppedByLine && lineCapIsHard)) {
+      const nextOffset = startLine !== undefined ? startLine + out.length : undefined;
+      const resume =
+        nextOffset !== undefined
+          ? `resume with offset:${nextOffset} (and an optional limit)`
+          : 'use offset/limit to page through the rest';
+      result += `\n... [read_file: output truncated at the ${MAX_READ_LINES}-line / ${
+        MAX_READ_BYTES / 1024
+      } KB read cap — ${resume}] ...`;
+    }
+    return result;
+  }
+
   private createReadBinaryTool(): StructuredToolInterface {
     return createGthTool(
       async (args: z.infer<typeof ReadBinaryArgsSchema>): Promise<string> => {
@@ -729,21 +865,84 @@ export default class GthFileSystemToolkit extends BaseToolkit {
       createGthTool(
         async (args: z.infer<typeof ReadFileArgsSchema>): Promise<string> => {
           displayInfo(`\n📁 Reading file: ${args.path}\n`);
+
+          const hasWindow = args.offset !== undefined || args.limit !== undefined;
+          const hasHeadTail = Boolean(args.head) || Boolean(args.tail);
+
+          // Argument guard first (pure, no filesystem access): the line window (offset/limit) and
+          // head/tail are two different slice mechanisms, so combining them is ambiguous. Return a
+          // recoverable string the model can act on rather than throwing — a thrown tool result
+          // aborts the whole agent run (the GS2-36 anti-pattern).
+          if (hasWindow && hasHeadTail) {
+            return (
+              'read_file: pass a line window (offset/limit) OR head/tail, not both. ' +
+              'Use offset/limit to read an arbitrary range (offset = 1-based first line, ' +
+              'limit = number of lines); use head/tail for the first/last N lines.'
+            );
+          }
+
           const validPath = await this.validatePath(args.path);
 
+          // Line window (offset/limit). offset defaults to 1; limit defaults to and is hard-capped
+          // at MAX_READ_LINES. windowFile returns from offset to EOF and capReadContent (maxLines =
+          // limit) does the slicing, so a limit-bounded read that leaves more file behind is
+          // *observable* and gets a resume notice. That notice fires only when the limit is the
+          // hard envelope — defaulted, or an explicit limit clamped down to MAX_READ_LINES — so a
+          // deliberately small explicit window (fully satisfied) stays quiet.
+          if (hasWindow) {
+            const offset = args.offset !== undefined ? Math.max(1, Math.trunc(args.offset)) : 1;
+            const limitWasDefaulted = args.limit === undefined;
+            const limitWasClamped =
+              args.limit !== undefined && Math.trunc(args.limit) > MAX_READ_LINES;
+            const limit = limitWasDefaulted
+              ? MAX_READ_LINES
+              : Math.min(Math.max(1, Math.trunc(args.limit as number)), MAX_READ_LINES);
+            const lineCapIsHard = limitWasDefaulted || limitWasClamped;
+            const windowed = await this.windowFile(validPath, offset);
+            return this.capReadContent(windowed, limit, offset, lineCapIsHard);
+          }
+
+          // head/tail paths respect the explicit line count the model asked for (maxLines =
+          // Infinity, so the line cap never fires — lineCapIsHard is moot), but still get the
+          // per-line and byte safety envelope — e.g. a `tail 1` that returns one multi-MB minified
+          // line is still truncated. No resume offset is emitted for these paths because the first
+          // emitted line is not line 1 of the file.
           if (args.head && args.tail) {
-            return await this.headAndTailFile(validPath, args.head, args.tail);
+            return this.capReadContent(
+              await this.headAndTailFile(validPath, args.head, args.tail),
+              Number.POSITIVE_INFINITY,
+              undefined,
+              false
+            );
           }
 
           if (args.tail) {
-            return await this.tailFile(validPath, args.tail);
+            return this.capReadContent(
+              await this.tailFile(validPath, args.tail),
+              Number.POSITIVE_INFINITY,
+              undefined,
+              false
+            );
           }
 
           if (args.head) {
-            return await this.headFile(validPath, args.head);
+            return this.capReadContent(
+              await this.headFile(validPath, args.head),
+              Number.POSITIVE_INFINITY,
+              undefined,
+              false
+            );
           }
 
-          return await fs.readFile(validPath, 'utf-8');
+          // Default whole-file read: capped at MAX_READ_LINES / MAX_READ_BYTES with per-line
+          // truncation (the line cap here IS the hard envelope). Files under the caps come back
+          // byte-identical to the old uncapped read.
+          return this.capReadContent(
+            await fs.readFile(validPath, 'utf-8'),
+            MAX_READ_LINES,
+            1,
+            true
+          );
         },
         {
           name: 'read_file',
@@ -751,11 +950,18 @@ export default class GthFileSystemToolkit extends BaseToolkit {
             'Read the complete contents of a file from the file system. ' +
             'Handles various text encodings and provides detailed error messages ' +
             'if the file cannot be read. Use this tool when you need to examine ' +
-            "the contents of a single file. Use the 'head' parameter to read only " +
-            "the first N lines of a file, or the 'tail' parameter to read only " +
-            "the last N lines of a file. The 'head' and 'tail' parameters may be " +
-            'combined to get the first N lines, a `... [N lines skipped] ...` ' +
-            'marker, and the last M lines in a single call. Only works within allowed directories.',
+            'the contents of a single file. ' +
+            `Large reads are capped for safety: at most ${MAX_READ_LINES} lines or ` +
+            `${MAX_READ_BYTES / 1024} KB are returned, and any line longer than ${MAX_LINE_LENGTH} ` +
+            'characters is truncated with a `... (line truncated to N chars)` marker; when a read ' +
+            'is capped a `... [read_file: output truncated ...] ...` notice is appended. ' +
+            'To read past the cap or fetch an arbitrary range, use `offset` (1-based first line) ' +
+            'and `limit` (number of lines). ' +
+            "Alternatively use the 'head' parameter to read only the first N lines of a file, or " +
+            "the 'tail' parameter to read only the last N lines; 'head' and 'tail' may be combined " +
+            'to get the first N lines, a `... [N lines skipped] ...` marker, and the last M lines. ' +
+            'The offset/limit line window and head/tail are mutually exclusive — pass one or the ' +
+            'other, not both. Only works within allowed directories.',
           schema: ReadFileArgsSchema,
         },
         'read'
