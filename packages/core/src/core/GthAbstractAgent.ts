@@ -32,6 +32,124 @@ import {
   renderAssistantContent,
 } from '#src/utils/binaryOutputUtils.js';
 
+/** TUI-C22 — one classified slice of streamed assistant text: answer prose vs. inline thinking. */
+type ThinkSegment = { kind: 'answer' | 'reasoning'; text: string };
+
+const THINK_OPEN = '<think>';
+const THINK_CLOSE = '</think>';
+
+/**
+ * TUI-C22 — length of the longest suffix of `s` that is a *proper* (shorter-than-full) prefix of
+ * `tag`. Used by {@link createThinkTagSplitter} to hold back a trailing partial that might complete
+ * into `tag` on the next chunk (e.g. a chunk ending in `<thi` when the tag is `<think>`).
+ */
+function trailingPartialLen(s: string, tag: string): number {
+  const max = Math.min(s.length, tag.length - 1);
+  for (let k = max; k > 0; k--) {
+    if (s.slice(s.length - k) === tag.slice(0, k)) return k;
+  }
+  return 0;
+}
+
+/**
+ * TUI-C22 — stateful separator of inline `<think>...</think>` thinking from answer text, robust to
+ * tags split across streamed chunks. Many thinking models served over an OpenAI-compatible `/v1`
+ * shim (qwen3 / deepseek-r1 over Ollama) inline their reasoning as `<think>…</think>` in the
+ * message `content` rather than in `additional_kwargs.reasoning_content`; without this it would
+ * render as answer text and the `/reasoning` panel would stay empty.
+ *
+ * `push(text)` returns the segments it can classify unambiguously *now*, buffering any trailing
+ * partial tag (so a `<think>` arriving as `<thi` + `nk>` across two chunks is still detected) and
+ * the run of thinking between an open and a not-yet-seen close tag. `flush()` drains the buffer at
+ * a message/stream boundary: an unterminated `<think>` at EOF yields its remainder as reasoning; a
+ * dangling non-tag partial (e.g. a lone `<` or `<thi` that never completed) yields as answer, so no
+ * text is ever dropped. Purely additive — text with no `<think>` passes straight through as answer.
+ */
+function createThinkTagSplitter() {
+  let buffer = '';
+  let inThink = false;
+
+  function push(text: string): ThinkSegment[] {
+    const segments: ThinkSegment[] = [];
+    if (text.length === 0 && buffer.length === 0) return segments;
+    buffer += text;
+    for (;;) {
+      if (inThink) {
+        const idx = buffer.indexOf(THINK_CLOSE);
+        if (idx >= 0) {
+          if (idx > 0) segments.push({ kind: 'reasoning', text: buffer.slice(0, idx) });
+          buffer = buffer.slice(idx + THINK_CLOSE.length);
+          inThink = false;
+          continue;
+        }
+        // No full close tag yet — emit reasoning except a trailing partial of `</think>`.
+        const hold = trailingPartialLen(buffer, THINK_CLOSE);
+        const emit = buffer.slice(0, buffer.length - hold);
+        if (emit.length > 0) segments.push({ kind: 'reasoning', text: emit });
+        buffer = hold > 0 ? buffer.slice(buffer.length - hold) : '';
+        break;
+      } else {
+        const idx = buffer.indexOf(THINK_OPEN);
+        if (idx >= 0) {
+          if (idx > 0) segments.push({ kind: 'answer', text: buffer.slice(0, idx) });
+          buffer = buffer.slice(idx + THINK_OPEN.length);
+          inThink = true;
+          continue;
+        }
+        // No full open tag yet — emit answer except a trailing partial of `<think>`.
+        const hold = trailingPartialLen(buffer, THINK_OPEN);
+        const emit = buffer.slice(0, buffer.length - hold);
+        if (emit.length > 0) segments.push({ kind: 'answer', text: emit });
+        buffer = hold > 0 ? buffer.slice(buffer.length - hold) : '';
+        break;
+      }
+    }
+    return segments;
+  }
+
+  function flush(): ThinkSegment[] {
+    const segments: ThinkSegment[] = [];
+    if (buffer.length > 0) {
+      segments.push({ kind: inThink ? 'reasoning' : 'answer', text: buffer });
+    }
+    buffer = '';
+    inThink = false;
+    return segments;
+  }
+
+  return { push, flush };
+}
+
+/**
+ * TUI-C22 — pick this chunk's reasoning delta, broadening capture beyond the single historical
+ * source without disturbing it. Precedence, and why:
+ *  1. `additional_kwargs.reasoning_content` — the DeepSeek/vLLM/Anthropic convention the pipeline
+ *     already read; returned verbatim so that happy path is byte-for-byte unchanged.
+ *  2. A top-level `reasoning` lifted from the raw provider response (OpenRouter convention). The
+ *     `ChatOpenAI` completions converter drops `reasoning`, so it is only reachable when the model
+ *     was built with `__includeRawResponse` (see `providers/openrouter.ts`), which stashes the raw
+ *     response under `additional_kwargs.__raw_response` — streaming deltas expose it at
+ *     `choices[0].delta.reasoning`, a whole message at `choices[0].message.reasoning`.
+ *  3. A defensive direct `additional_kwargs.reasoning` (some integrations may surface it there).
+ * Only consulted when `reasoning_content` is absent, so the two never double-emit.
+ */
+function pickReasoningDelta(kwargs: Record<string, unknown> | undefined, isChunk: boolean): string {
+  if (!kwargs) return '';
+  const reasoningContent = kwargs.reasoning_content;
+  if (typeof reasoningContent === 'string' && reasoningContent.length > 0) {
+    return reasoningContent;
+  }
+  const raw = kwargs.__raw_response as
+    | { choices?: Array<{ delta?: { reasoning?: unknown }; message?: { reasoning?: unknown } }> }
+    | undefined;
+  const choice = raw?.choices?.[0];
+  const fromRaw = isChunk ? choice?.delta?.reasoning : choice?.message?.reasoning;
+  if (typeof fromRaw === 'string' && fromRaw.length > 0) return fromRaw;
+  const direct = kwargs.reasoning;
+  if (typeof direct === 'string' && direct.length > 0) return direct;
+  return '';
+}
+
 /**
  * Shared, graph-agnostic agent plumbing.
  *
@@ -512,6 +630,32 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
     let aggregatedAIChunk: AIMessageChunk | null = null;
     let reasoningOpen = false;
     const flushed = new Set<string>();
+    // TUI-C22 — one splitter for the whole stream so a <think> opened in one chunk and closed
+    // several chunks later is tracked across the boundary. Reset at message boundaries via flush().
+    const thinkSplitter = createThinkTagSplitter();
+
+    // TUI-C22 — emit ordered answer/reasoning segments, opening/closing the reasoning block as the
+    // kind switches. Shares `reasoningOpen` with the reasoning_content path so the two compose
+    // (a reasoning_content delta then think-derived reasoning stays one open block; answer text
+    // closes it), preserving the exact existing event sequence when no <think> tags are present.
+    function* emitSegments(segments: ThinkSegment[]): Generator<AgentStreamEvent> {
+      for (const seg of segments) {
+        if (seg.text.length === 0) continue;
+        if (seg.kind === 'reasoning') {
+          if (!reasoningOpen) {
+            reasoningOpen = true;
+            yield { type: 'reasoning_start' };
+          }
+          yield { type: 'reasoning_delta', delta: seg.text };
+        } else {
+          if (reasoningOpen) {
+            reasoningOpen = false;
+            yield { type: 'reasoning_end' };
+          }
+          yield { type: 'text', delta: seg.text };
+        }
+      }
+    }
 
     function* flushAggregated(): Generator<AgentStreamEvent> {
       if (!aggregatedAIChunk) return;
@@ -546,39 +690,31 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
       if (AIMessageChunk.isInstance(chunk)) {
         aggregatedAIChunk = aggregatedAIChunk ? aggregatedAIChunk.concat(chunk) : chunk;
 
-        // Reasoning deltas — Ollama (Qwen3, deepseek-r1) and Anthropic surface
-        // thinking text in additional_kwargs.reasoning_content. Stream it as a
-        // separate event series so clients can render it apart from the answer.
-        const reasoningDelta = chunk.additional_kwargs?.reasoning_content;
-        if (typeof reasoningDelta === 'string' && reasoningDelta.length > 0) {
-          if (!reasoningOpen) {
-            reasoningOpen = true;
-            yield { type: 'reasoning_start' };
-          }
-          yield { type: 'reasoning_delta', delta: reasoningDelta };
+        // Reasoning deltas — historically Ollama (Qwen3, deepseek-r1) and Anthropic surface
+        // thinking in additional_kwargs.reasoning_content; TUI-C22 additionally lifts a top-level
+        // `reasoning` from the raw response (OpenRouter) when reasoning_content is absent. Stream
+        // it as a separate event series so clients can render it apart from the answer.
+        const reasoningDelta = pickReasoningDelta(chunk.additional_kwargs, true);
+        if (reasoningDelta.length > 0) {
+          yield* emitSegments([{ kind: 'reasoning', text: reasoningDelta }]);
         }
 
-        // Yield text incrementally — use this chunk's text (delta), not the
-        // aggregated content which is cumulative.
+        // Yield text incrementally — use this chunk's text (delta), not the aggregated content
+        // which is cumulative. TUI-C22 routes it through the think splitter so inline
+        // <think>...</think> (buffered across chunks) is peeled into the reasoning channel and
+        // stripped from the answer; text with no think tags passes straight through unchanged.
         if (chunk.text) {
-          if (reasoningOpen) {
-            reasoningOpen = false;
-            yield { type: 'reasoning_end' };
-          }
-          yield { type: 'text', delta: chunk.text as string };
+          yield* emitSegments(thinkSplitter.push(chunk.text as string));
         }
       } else if (AIMessage.isInstance(chunk)) {
         // Reasoning on a non-chunk AIMessage — a non-streamed / resumed thinking message
         // (e.g. a checkpoint replay) still carries its thinking in
-        // additional_kwargs.reasoning_content. Mirror the AIMessageChunk branch and emit the
-        // same reasoning event series, otherwise the thought is silently dropped (TUI-C15).
-        const reasoningContent = chunk.additional_kwargs?.reasoning_content;
-        if (typeof reasoningContent === 'string' && reasoningContent.length > 0) {
-          if (!reasoningOpen) {
-            reasoningOpen = true;
-            yield { type: 'reasoning_start' };
-          }
-          yield { type: 'reasoning_delta', delta: reasoningContent };
+        // additional_kwargs.reasoning_content (or, TUI-C22, a top-level `reasoning` on the raw
+        // response message). Mirror the AIMessageChunk branch and emit the same reasoning event
+        // series, otherwise the thought is silently dropped (TUI-C15).
+        const reasoningContent = pickReasoningDelta(chunk.additional_kwargs, false);
+        if (reasoningContent.length > 0) {
+          yield* emitSegments([{ kind: 'reasoning', text: reasoningContent }]);
         }
 
         // Non-chunk AIMessage (e.g. on resumed runs) carries final tool_calls
@@ -591,15 +727,19 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
           aggregatedAIChunk = aggregatedAIChunk ? aggregatedAIChunk.concat(synthetic) : synthetic;
         }
         if (chunk.text) {
-          if (reasoningOpen) {
-            reasoningOpen = false;
-            yield { type: 'reasoning_end' };
-          }
-          yield { type: 'text', delta: chunk.text as string };
+          yield* emitSegments(thinkSplitter.push(chunk.text as string));
         }
+        // A non-chunk AIMessage is a COMPLETE message, not a delta — drain any residual now
+        // (an unterminated <think> becomes reasoning, a dangling partial becomes answer) so its
+        // buffered state never leaks into a subsequent message (TUI-C22).
+        yield* emitSegments(thinkSplitter.flush());
       }
 
       if (chunk instanceof ToolMessage) {
+        // TUI-C22 — drain buffered think text (emitting its segments, which may open/close
+        // reasoning) BEFORE closing the reasoning block, so a trailing reasoning slice can't land
+        // after reasoning_end or be dropped. A tool round ends the assistant message, so reset.
+        yield* emitSegments(thinkSplitter.flush());
         if (reasoningOpen) {
           reasoningOpen = false;
           yield { type: 'reasoning_end' };
@@ -624,6 +764,10 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
         };
       }
     }
+
+    // TUI-C22 — drain any buffered think text at stream end (an unterminated <think> surfaces as
+    // reasoning, a dangling partial as answer) before closing the reasoning block.
+    yield* emitSegments(thinkSplitter.flush());
 
     // Close any still-open reasoning block before flushing tool calls.
     if (reasoningOpen) {
