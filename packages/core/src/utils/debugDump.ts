@@ -111,6 +111,19 @@ function safeStringify(value: unknown): string {
 }
 
 /**
+ * The filesystem-safe directory-name segment for one dump: the ISO timestamp with `:` and `.`
+ * (illegal on Windows, noisy everywhere) replaced by `-`. This is the ONLY path component
+ * debugDump generates — and the only one it is responsible for sanitizing. The parent it is joined
+ * under (the global `~/.gsloth` dir) is supplied by the environment and may legitimately carry a
+ * drive-letter colon on Windows (`C:\…`), which is not ours to strip. Exported so the invariant
+ * "the generated segment is colon-free" is testable on any platform without asserting anything
+ * about the (platform-dependent) parent path (GS2-50).
+ */
+export function debugDumpDirName(date: Date = new Date()): string {
+  return date.toISOString().replace(/[:.]/g, '-');
+}
+
+/**
  * Write one timestamped `/debug-dump` archive under the GLOBAL `~/.gsloth/debug-dumps/<timestamp>/`
  * (via `ensureGlobalGslothDir()` — mirrors how `resolveHistoryDbPath()` builds its path under the
  * same dir — NOT the per-project cwd-relative helper of the same name elsewhere in this codebase).
@@ -120,7 +133,7 @@ function safeStringify(value: unknown): string {
  * for surfacing the "may contain secrets" warning to the user.
  */
 export function writeDebugDump(input: WriteDebugDumpInput): WriteDebugDumpResult {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const timestamp = debugDumpDirName();
   const archiveDir = resolve(ensureGlobalGslothDir(), 'debug-dumps', timestamp);
   mkdirSync(archiveDir, { recursive: true });
 
