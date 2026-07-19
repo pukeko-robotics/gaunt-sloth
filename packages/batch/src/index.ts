@@ -39,3 +39,12 @@ export type {
 } from '#src/evalTypes.js';
 export type { RunEvalSuiteOptions } from '#src/evalRunner.js';
 export { DEFAULT_EVAL_PASS_THRESHOLD } from '#src/evalTypes.js';
+
+// BATCH-3 — the `gth workflow` host: runs a local JS orchestration script that drives one or more
+// LLM calls through a small WorkflowContext.
+export { runWorkflow } from '#src/workflow/runWorkflow.js';
+export type {
+  WorkflowAgentOptions,
+  WorkflowContext,
+  RunWorkflowOptions,
+} from '#src/workflow/runWorkflow.js';

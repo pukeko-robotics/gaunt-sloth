@@ -31,6 +31,7 @@
     "#src/*.js": "./dist/*.js"
   },
   "dependencies": {
+    "@gaunt-sloth/agent": "workspace:*",
     "@gaunt-sloth/core": "workspace:*",
     "@langchain/core": "^1.2.3",
     "yaml": "^2.9.0",

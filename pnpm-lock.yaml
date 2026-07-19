@@ -190,6 +190,9 @@ importers:
 
   packages/batch:
     dependencies:
+      '@gaunt-sloth/agent':
+        specifier: workspace:*
+        version: link:../agent
       '@gaunt-sloth/core':
         specifier: workspace:*
         version: link:../core
