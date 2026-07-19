@@ -171,4 +171,62 @@ describe('deep/lean system-prompt parity (GS2-27)', () => {
       expect(leanPosix).not.toContain(piece);
     }
   });
+
+  // GS2-34 — the resolved provider:model identity reaches BOTH backends, in ALL modes, by default,
+  // and is fully removed under the `injectModelContext: false` opt-out.
+  type Mode = 'code' | 'chat' | 'exec';
+  async function leanPrompt(mode: Mode, over: Partial<GthConfig>): Promise<string | undefined> {
+    getCurrentWorkDirMock.mockReturnValue('/home/user/proj');
+    createAgentMock.mockReturnValue({ invoke: vi.fn(), stream: vi.fn() });
+    const { GthLangChainAgent } = await import('@gaunt-sloth/core/core/GthLangChainAgent.js');
+    const agent = new GthLangChainAgent(vi.fn(), { resolveTools: vi.fn().mockResolvedValue([]) });
+    await agent.init(mode, makeConfig(over));
+    return createAgentMock.mock.calls.at(-1)?.[0].systemPrompt as string | undefined;
+  }
+  async function deepPrompt(mode: Mode, over: Partial<GthConfig>): Promise<string | undefined> {
+    getCurrentWorkDirMock.mockReturnValue('/home/user/proj');
+    createDeepAgentMock.mockReturnValue({ invoke: vi.fn(), stream: vi.fn() });
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(vi.fn(), { resolveTools: vi.fn().mockResolvedValue([]) });
+    await agent.init(mode, makeConfig(over));
+    return createDeepAgentMock.mock.calls.at(-1)?.[0].systemPrompt as string | undefined;
+  }
+  // A config whose live model resolves an identity: provider from _llmType(), model from
+  // modelDisplayName → `anthropic:claude-sonnet-5`.
+  const IDENTITY_OVER = {
+    llm: { _llmType: () => 'anthropic', bindTools: () => ({}) },
+    modelDisplayName: 'claude-sonnet-5',
+  } as unknown as Partial<GthConfig>;
+
+  it('injects the resolved provider:model identity on BOTH backends by default (GS2-34)', async () => {
+    // injectModelContext is UNSET here → the read-site default (inject-on) applies. This is the
+    // behavioral proof that the default resolves to inject-on.
+    const lean = await leanPrompt('code', IDENTITY_OVER);
+    const deep = await deepPrompt('code', IDENTITY_OVER);
+    for (const prompt of [lean, deep]) {
+      expect(prompt).toContain('`anthropic:claude-sonnet-5`');
+      expect(prompt).toContain('which model you are');
+    }
+  });
+
+  it('injects the identity in NON-code modes too (all-modes, not code-gated) on BOTH backends (GS2-34)', async () => {
+    // The mode-gate decision: unlike the code-only cwd/os-shell/commit notes, the identity is present
+    // in chat/exec as well — "what model are you?" is answerable in any session.
+    for (const mode of ['chat', 'exec'] as const) {
+      expect(await leanPrompt(mode, IDENTITY_OVER)).toContain('`anthropic:claude-sonnet-5`');
+      expect(await deepPrompt(mode, IDENTITY_OVER)).toContain('`anthropic:claude-sonnet-5`');
+    }
+  });
+
+  it('removes the identity line entirely under injectModelContext:false on BOTH backends (GS2-34)', async () => {
+    const over = { ...IDENTITY_OVER, injectModelContext: false } as unknown as Partial<GthConfig>;
+    const lean = await leanPrompt('code', over);
+    const deep = await deepPrompt('code', over);
+    for (const prompt of [lean, deep]) {
+      expect(prompt).not.toContain('claude-sonnet-5');
+      expect(prompt).not.toContain('The model currently serving this session');
+      // Opt-out is additive-only: the rest of the composed code-mode prompt is intact.
+      expect(prompt).toContain('SYSTEM PROMPT');
+    }
+  });
 });

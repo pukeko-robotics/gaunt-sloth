@@ -309,6 +309,10 @@ export const rawGthConfigSchema = z.looseObject({
     })
     .optional(),
   modelDisplayName: z.string().optional(),
+  // GS2-34 — inject the resolved active `provider:model` identity into the system prompt (default ON;
+  // set `false` to opt out for reproducible / model-agnostic runs). Defaulted at the read site, so it
+  // is intentionally absent from DEFAULT_CONFIG (no effective-config snapshot churn).
+  injectModelContext: z.boolean().optional(),
   allowDirs: z.array(z.string()).optional(),
   askWriteMode: z.boolean().optional(),
 });

@@ -92,6 +92,19 @@ describe('config schema (GS2-1 B1)', () => {
       }
     });
 
+    // GS2-34 — the model-context injection opt-out toggle. Boolean-only; the default (omitted =
+    // inject-on) is a READ-SITE default (like GS2-35's commit.coAuthor), proven behaviorally in the
+    // injection parity spec, so it is intentionally NOT a schema/DEFAULT_CONFIG default here.
+    it('accepts injectModelContext as a boolean and rejects a non-boolean', () => {
+      expect(rawGthConfigSchema.safeParse({ injectModelContext: true }).success).toBe(true);
+      expect(rawGthConfigSchema.safeParse({ injectModelContext: false }).success).toBe(true);
+      const bad = rawGthConfigSchema.safeParse({ injectModelContext: 'yes' });
+      expect(bad.success).toBe(false);
+      if (!bad.success) {
+        expect(formatConfigValidationError(bad.error)).toContain('injectModelContext');
+      }
+    });
+
     it.each([
       'examples/jira-mcp/.gsloth.config.json',
       'examples/lmstudio/.gsloth.config.json',

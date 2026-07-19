@@ -14,7 +14,9 @@ import {
   appendOsShellNote,
   appendCwdNote,
   appendCommitCoAuthorNote,
+  appendModelContextNote,
   appendMcpServerInstructionsNote,
+  resolveModelIdentity,
 } from '#src/utils/systemPromptNotes.js';
 import { isShellCommandFailedError } from '#src/core/shell/ShellCommandFailedError.js';
 import { extractDebugRequestExtras } from '#src/core/debugCapture.js';
@@ -300,6 +302,19 @@ export class GthLangChainAgent extends GthAbstractAgent {
           )
         : baseSystemPrompt;
 
+    // GS2-34: inject the resolved provider:model identity so the agent knows which model is serving
+    // it (to answer "what model are you?" and reason about its own capabilities/limits). Composed
+    // OUTSIDE the code-mode gate above — unlike the cwd/os-shell/commit notes, that question can
+    // arise in ANY mode (chat/ask/code/exec), so the identity must be visible everywhere. Config
+    // opt-out via `injectModelContext: false` (default ON, defaulted here at the read site); when
+    // off — or when no model resolves — nothing is appended and the prompt is exactly as before.
+    // Backend-agnostic: the deep backend composes the same note (GS2-27 parity). The GS2-6
+    // capability note is a deferred follow-up (bare provider:model identity only for now).
+    const modelContextPrompt =
+      this.config.injectModelContext !== false
+        ? appendModelContextNote(codeNotesPrompt, resolveModelIdentity(this.config))
+        : codeNotesPrompt;
+
     // EXT-32: inject each connected MCP server's discovery `instructions` (captured during tool
     // resolution) into the prompt — fenced + per-server-labelled as untrusted server-provided
     // context. Mode-independent: MCP tools load in every mode, so their usage guidance applies in
@@ -311,7 +326,7 @@ export class GthLangChainAgent extends GthAbstractAgent {
     const mcpInstructions = toolsDisabled
       ? []
       : (this.resolvers?.getMcpServerInstructions?.() ?? []);
-    const systemPrompt = appendMcpServerInstructionsNote(codeNotesPrompt, mcpInstructions);
+    const systemPrompt = appendMcpServerInstructionsNote(modelContextPrompt, mcpInstructions);
 
     // Create agent with configured middleware. Only pass systemPrompt when non-empty so we never
     // hand createAgent an empty system message.

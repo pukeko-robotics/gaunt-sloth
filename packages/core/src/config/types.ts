@@ -308,6 +308,16 @@ export interface GthConfig {
   };
   modelDisplayName?: string;
   /**
+   * GS2-34 — inject the resolved active `provider:model` identity into the assembled system prompt
+   * so the agent knows which model is serving it (to answer "what model are you?" and reason about
+   * its own capabilities/limits). Default ON (omitted = inject). Opt out with
+   * `injectModelContext: false` to keep reproducible / model-agnostic runs (e.g. review) blind to
+   * the identity — when off, the assembled prompt is exactly as it is without this feature. Applies
+   * in ALL modes (unlike the code-mode-only cwd/os-shell/commit notes). Defaulted at the read site
+   * (not in {@link DEFAULT_CONFIG}) to avoid churning the effective-config snapshot.
+   */
+  injectModelContext?: boolean;
+  /**
    * Transient (runtime-only) extra filesystem roots the agent is allowed to read/write for
    * THIS run, in addition to the cwd sandbox. Populated by `gth exec --allow-dir <path>`
    * (repeatable); never persisted to a config file. When set, the deep agent's

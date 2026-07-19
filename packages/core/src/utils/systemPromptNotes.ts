@@ -133,6 +133,72 @@ export function appendCommitCoAuthorNote(
 }
 
 /**
+ * GS2-34: resolve the active `provider:model` identity from the effective config, for injection
+ * into the system prompt by {@link appendModelContextNote}.
+ *
+ * Both halves are read the SAME way the rest of gsloth already surfaces the active model:
+ *   - MODEL: `config.modelDisplayName` (the string the status line renders — set by the loader from
+ *     `llm.model`), falling back to the live model's own `model` field.
+ *   - PROVIDER: the live LangChain model's `_llmType()` — exactly the source the AG-UI `/info`
+ *     endpoint reports as the serving provider (e.g. `anthropic`, `ollama`, `openai`). This is the
+ *     live provider tag, so for OpenAI-compatible providers (openrouter/deepseek/xai extending
+ *     ChatOpenAI) it may read `openai` rather than the config `type`; the MODEL half is always exact.
+ *
+ * Returns `provider:model` when both resolve, the bare model when only the model resolves, and
+ * `undefined` when the model is unknown (a provider with no model is not a usable identity) — in
+ * which case {@link appendModelContextNote} injects nothing, leaving the prompt exactly as before.
+ * `_llmType()` is called defensively (guarded) so a provider whose accessor throws can never break
+ * prompt assembly.
+ */
+export function resolveModelIdentity(
+  config:
+    | { llm?: { _llmType?: () => string; model?: string }; modelDisplayName?: string }
+    | null
+    | undefined
+): string | undefined {
+  const llm = config?.llm;
+  let provider: string | undefined;
+  try {
+    provider = typeof llm?._llmType === 'function' ? llm._llmType() : undefined;
+  } catch {
+    provider = undefined;
+  }
+  const model = config?.modelDisplayName ?? llm?.model;
+  if (!model) return undefined;
+  return provider ? `${provider}:${model}` : model;
+}
+
+/**
+ * GS2-34: append the active model-identity note to the composed system prompt.
+ *
+ * The agent otherwise has no reliable knowledge of which `provider:model` is serving it, so it
+ * cannot answer "what model are you?" accurately or reason about its own capabilities/limits. This
+ * injects a single first-party line naming the resolved identity (see {@link resolveModelIdentity}).
+ *
+ * Injected in EVERY mode (chat/ask/code/exec), NOT gated to `code` like the cwd/os-shell/commit
+ * notes: "which model are you?" can be asked in any session, so the identity must be visible
+ * everywhere. Config-gated by `injectModelContext` (default ON): a caller passes an
+ * `undefined`/empty `modelIdentity` — because the config opted out (`injectModelContext: false`) or
+ * because no model could be resolved — and the base prompt is returned UNCHANGED (no line),
+ * preserving the current prompt byte-for-byte.
+ *
+ * A short capability note from the GS2-6 model catalog is a DEFERRED follow-up (GS2-6 has not
+ * landed): this injects the bare `provider:model` identity only.
+ */
+export function appendModelContextNote(
+  systemPrompt: string | undefined,
+  modelIdentity: string | undefined
+): string | undefined {
+  const identity = modelIdentity?.trim();
+  if (!identity) return systemPrompt;
+  const note =
+    `The model currently serving this session is \`${identity}\` (provider:model). This is your ` +
+    'actual underlying model — use it when asked which model you are, and when reasoning about ' +
+    'your own capabilities or limits.';
+  return systemPrompt ? `${systemPrompt}\n\n${note}` : note;
+}
+
+/**
  * EXT-32: hard per-server cap on injected MCP instruction length.
  *
  * A connected MCP server could advertise a very long `instructions` string that would then ride
