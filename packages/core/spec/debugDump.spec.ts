@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { basename, resolve, win32 } from 'node:path';
 
 // Real fs / real temp dir per the brief — only `os.homedir()` is mocked (pointed at a fresh
 // mkdtemp'd dir), so `ensureGlobalGslothDir()` (and therefore the archive path construction it
@@ -137,7 +137,43 @@ describe('utils/debugDump', () => {
     const second = writeDebugDump({ transcript: [], config: {}, cwd: notGitDir });
 
     expect(first.archiveDir).not.toBe(second.archiveDir);
-    // Filesystem-safe: no `:` characters (from the ISO timestamp) in the path.
-    expect(first.archiveDir.includes(':')).toBe(false);
+    // Filesystem-safe: the directory-name segment debugDump GENERATES (the timestamp) must contain
+    // no `:` or `.` (win32-illegal / noisy). Check the generated basename — NOT the whole absolute
+    // path. The parent (`~/.gsloth`) legitimately carries a drive-letter colon on win32 (`C:\…`),
+    // which is not debugDump's to sanitize; asserting the full path was a win32 false-positive
+    // failure (GS2-50). `basename` here is the platform impl, matching the platform that produced
+    // the path (POSIX on Linux, win32 on Windows CI).
+    expect(basename(first.archiveDir)).not.toMatch(/[:.]/);
+    expect(basename(second.archiveDir)).not.toMatch(/[:.]/);
+  });
+
+  it('sanitizes only the segment it generates, tolerating a drive-letter colon in the parent (GS2-50 win32 regression)', async () => {
+    // Linux-runnable proof of the actual invariant, since a Linux `archiveDir` never has a
+    // drive-letter colon and so cannot discriminate the fix. We drive debugDump's OWN segment
+    // generator and compose it under a synthetic WINDOWS parent whose drive letter carries a colon
+    // we do not own — mirroring how `writeDebugDump` joins `ensureGlobalGslothDir()` + segment.
+    const { debugDumpDirName } = await import('#src/utils/debugDump.js');
+
+    // A fixed instant whose ISO form is packed with `:` and `.` — the exact chars to strip.
+    const segment = debugDumpDirName(new Date('2026-07-18T12:34:56.789Z'));
+
+    // The generated segment is filesystem-safe: no `:` (win32-illegal) or `.`.
+    expect(segment).toBe('2026-07-18T12-34-56-789Z');
+    expect(segment).not.toMatch(/[:.]/);
+
+    // Compose it under a synthetic Windows parent. `win32.resolve`/`win32.basename` use win32
+    // semantics on ANY host (they split on `\`), so this runs identically on Linux CI. Plain
+    // POSIX `basename` here would return the whole string (no `/` to split on) and wrongly trip.
+    const winParent = 'C:\\Users\\foo\\.gsloth\\debug-dumps';
+    const winArchiveDir = win32.resolve(winParent, segment);
+
+    // Correct invariant: only the segment debugDump generated is checked, and it is colon-free…
+    expect(win32.basename(winArchiveDir)).not.toMatch(/[:.]/);
+    // …while the WHOLE win32 path DOES contain a colon (the drive letter). This is exactly why the
+    // old `archiveDir.includes(':') === false` assertion was a false-positive failure on win32.
+    // Asserting-true here means reintroducing a whole-path colon-free check would fail on Linux
+    // too — that discrimination is the whole point of this test (GS2-50).
+    expect(winArchiveDir).toContain(':');
+    expect(win32.basename(winArchiveDir)).toBe(segment);
   });
 });
