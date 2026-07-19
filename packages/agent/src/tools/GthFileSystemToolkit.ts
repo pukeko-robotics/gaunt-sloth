@@ -794,14 +794,31 @@ export default class GthFileSystemToolkit extends BaseToolkit {
       createGthTool(
         async (args: z.infer<typeof WriteFileArgsSchema>): Promise<string> => {
           displayInfo(`\n📁 Writing file: ${args.path}\n`);
-          const validPath = await this.validatePath(args.path);
-          await fs.writeFile(validPath, args.content, 'utf-8');
-          return `Successfully wrote to ${args.path}`;
+          try {
+            const validPath = await this.validatePath(args.path);
+            // Create any missing parent directories (mkdir -p) so a write into a
+            // not-yet-created subdirectory succeeds instead of throwing ENOENT. The
+            // model expects the near-universal agent-tool `mkdir -p` semantics and
+            // routinely writes a new file before creating its dir. validatePath has
+            // already confirmed the nearest existing ancestor is inside the sandbox,
+            // so the new directories are created within an allowed root.
+            await fs.mkdir(path.dirname(validPath), { recursive: true });
+            await fs.writeFile(validPath, args.content, 'utf-8');
+            return `Successfully wrote to ${args.path}`;
+          } catch (error) {
+            // Surface the failure to the model as a recoverable tool result rather
+            // than throwing, which would abort the entire agent run (GS2-36). The
+            // model can read the message and adjust (e.g. the path is a directory,
+            // or is denied by the sandbox) instead of the session dying.
+            const message = error instanceof Error ? error.message : String(error);
+            return `Error writing file ${args.path}: ${message}`;
+          }
         },
         {
           name: 'write_file',
           description:
             'Create a new file or completely overwrite an existing file with new content. ' +
+            'Missing parent directories are created automatically. ' +
             'Use with caution as it will overwrite existing files without warning. ' +
             'Handles text content with proper encoding. Only works within allowed directories.',
           schema: WriteFileArgsSchema,

@@ -450,6 +450,88 @@ describe('GthFileSystemToolkit - Basic Tests', () => {
     });
   });
 
+  describe('write_file (GS2-36: mkdir -p + fatal-throw -> recoverable result)', () => {
+    let writeTool: any;
+    const enoent = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+
+    beforeEach(() => {
+      toolkit = new GthFileSystemToolkit({ allowedDirectories: [process.cwd()] });
+      writeTool = toolkit.tools.find((t) => t.name === 'write_file')!;
+    });
+
+    it('creates missing parent directories (mkdir -p) before writing a new nested file', async () => {
+      // target + intermediate dirs do not exist; only the sandbox root does. The model
+      // writes the file without a preceding create_directory (the common case that used
+      // to crash the whole run with ENOENT).
+      const filePath = path.join(process.cwd(), 'newdir', 'sub', 'file.txt');
+      fsMock.realpath
+        .mockRejectedValueOnce(enoent()) // realpath(target file)
+        .mockRejectedValueOnce(enoent()) // realpath(newdir/sub)
+        .mockRejectedValueOnce(enoent()) // realpath(newdir)
+        .mockResolvedValueOnce(process.cwd()); // realpath(root) exists + is allowed
+
+      const result: string = await writeTool.invoke({ path: filePath, content: 'hello' });
+
+      expect(result).toBe(`Successfully wrote to ${filePath}`);
+      expect(fsMock.mkdir).toHaveBeenCalledWith(path.dirname(filePath), { recursive: true });
+      expect(fsMock.writeFile).toHaveBeenCalledWith(filePath, 'hello', 'utf-8');
+    });
+
+    it('returns a recoverable error string (does NOT throw) when the write itself fails (EISDIR)', async () => {
+      // A write whose fs op fails must be handed back to the model as a tool result it can
+      // act on, not thrown — a throw aborts the whole agent run (the GS2-36 anti-pattern).
+      const dirPath = path.join(process.cwd(), 'some-existing-dir');
+      fsMock.realpath.mockResolvedValue(dirPath); // path exists + is contained
+      fsMock.writeFile.mockRejectedValue(
+        Object.assign(
+          new Error("EISDIR: illegal operation on a directory, open '" + dirPath + "'"),
+          {
+            code: 'EISDIR',
+          }
+        )
+      );
+
+      const result: string = await writeTool.invoke({ path: dirPath, content: 'x' });
+
+      expect(result).toContain(`Error writing file ${dirPath}`);
+      expect(result).toContain('EISDIR');
+    });
+
+    it('deep new subdirectory under the sandbox stays allowed (containment holds for created dirs)', async () => {
+      // The mkdir -p only creates directories below an ancestor validatePath already proved
+      // is inside the sandbox, so a legitimate deep new path writes successfully.
+      const filePath = path.join(process.cwd(), 'a', 'b', 'c', 'd', 'deep.txt');
+      fsMock.realpath
+        .mockRejectedValueOnce(enoent()) // deep.txt
+        .mockRejectedValueOnce(enoent()) // a/b/c/d
+        .mockRejectedValueOnce(enoent()) // a/b/c
+        .mockRejectedValueOnce(enoent()) // a/b
+        .mockRejectedValueOnce(enoent()) // a
+        .mockResolvedValueOnce(process.cwd()); // root
+
+      const result: string = await writeTool.invoke({ path: filePath, content: 'deep' });
+
+      expect(result).toBe(`Successfully wrote to ${filePath}`);
+      expect(fsMock.mkdir).toHaveBeenCalledWith(path.dirname(filePath), { recursive: true });
+    });
+
+    it('a write whose parent directory symlinks OUTSIDE the sandbox is denied and writes nothing', async () => {
+      // Parent (linkdir) exists but realpaths outside the allowed root: validatePath must
+      // reject before any mkdir/write, and the denial is surfaced as a recoverable result.
+      const filePath = path.join(process.cwd(), 'linkdir', 'evil.txt');
+      fsMock.realpath
+        .mockRejectedValueOnce(enoent()) // realpath(evil.txt) -> not there yet
+        .mockResolvedValueOnce('/outside/link-target'); // realpath(linkdir) -> escapes sandbox
+
+      const result: string = await writeTool.invoke({ path: filePath, content: 'x' });
+
+      expect(result).toContain(`Error writing file ${filePath}`);
+      expect(result).toContain('Access denied');
+      expect(fsMock.mkdir).not.toHaveBeenCalled();
+      expect(fsMock.writeFile).not.toHaveBeenCalled();
+    });
+  });
+
   describe('utility methods', () => {
     beforeEach(() => {
       toolkit = new GthFileSystemToolkit({ allowedDirectories: [process.cwd()] });
