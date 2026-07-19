@@ -2013,6 +2013,9 @@
     "modelDisplayName": {
       "type": "string"
     },
+    "injectModelContext": {
+      "type": "boolean"
+    },
     "allowDirs": {
       "type": "array",
       "items": {

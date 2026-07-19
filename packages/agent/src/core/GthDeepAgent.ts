@@ -19,12 +19,16 @@ import {
   appendOsShellNote,
   appendCwdNote,
   appendCommitCoAuthorNote,
+  appendModelContextNote,
   appendMcpServerInstructionsNote,
+  resolveModelIdentity,
 } from '@gaunt-sloth/core/utils/systemPromptNotes.js';
 export {
   appendOsShellNote,
   appendCwdNote,
   appendCommitCoAuthorNote,
+  appendModelContextNote,
+  resolveModelIdentity,
   OS_SHELL_GUIDANCE,
 } from '@gaunt-sloth/core/utils/systemPromptNotes.js';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
@@ -285,6 +289,19 @@ export class GthDeepAgent extends GthAbstractAgent {
           )
         : params.systemPrompt;
 
+    // GS2-34: inject the resolved provider:model identity (mirrors the lean GthLangChainAgent seam so
+    // both backends compose the same shared note — GS2-27 parity). Composed OUTSIDE the code-mode
+    // gate above: "which model are you?" can be asked in ANY mode (chat/ask/code/exec), so the
+    // identity is visible everywhere, unlike the code-only cwd/os-shell/commit notes. Config opt-out
+    // via `injectModelContext: false` (default ON, defaulted here at the read site); when off — or
+    // when no model resolves — nothing is appended and the prompt is exactly as before. Lives in
+    // init() like the cwd note (not buildDeepAgentParams), so the deepagents-acp transport is
+    // unaffected, consistent with every other init()-composed note. GS2-6 capability note deferred.
+    const modelContextPrompt =
+      this.config?.injectModelContext !== false
+        ? appendModelContextNote(codeNotesPrompt, resolveModelIdentity(this.config))
+        : codeNotesPrompt;
+
     // EXT-32: inject the connected MCP servers' discovery `instructions` (captured by the resolver
     // during buildDeepAgentParams' resolveTools call, above) into the prompt — fenced + per-server-
     // labelled as untrusted server-provided context. Mode-independent (MCP tools load in every
@@ -299,7 +316,7 @@ export class GthDeepAgent extends GthAbstractAgent {
     const mcpInstructions = deepToolsDisabled
       ? []
       : (this.resolvers?.getMcpServerInstructions?.() ?? []);
-    const systemPrompt = appendMcpServerInstructionsNote(codeNotesPrompt, mcpInstructions);
+    const systemPrompt = appendMcpServerInstructionsNote(modelContextPrompt, mcpInstructions);
 
     this.agent = createDeepAgent({
       model: params.model,
