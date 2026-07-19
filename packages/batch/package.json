@@ -1,6 +1,6 @@
 {
   "name": "@gaunt-sloth/batch",
-  "version": "2.0.0-alpha.19",
+  "version": "2.0.0-alpha.20",
   "description": "Batch matrix runtime for Gaunt Sloth (BATCH-1): run a prompt-executable over a matrix of models and/or content-bound inputs",
   "license": "MIT",
   "author": "Andrew Kondratev",

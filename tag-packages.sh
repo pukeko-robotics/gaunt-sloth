@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Create git tags for the locked Gaunt Sloth packages — all FOUR:
-# @gaunt-sloth/{core,agent,review} and the fat CLI `gaunt-sloth` (dir app).
+# Create git tags for the locked Gaunt Sloth packages — all FIVE:
+# @gaunt-sloth/{core,agent,review,batch} and the fat CLI `gaunt-sloth` (dir app).
 #
 # Tags are annotated and named "<package-name>@<version>" (npm monorepo
 # convention): "@gaunt-sloth/core@<v>", …, and "gaunt-sloth@<v>" for the fat
@@ -17,8 +17,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # All locked packages, by DIRECTORY — same set as bump.mjs / publish-all.sh,
-# including the fat CLI (dir app, name gaunt-sloth).
-PACKAGES=(core agent review app)
+# including batch and the fat CLI (dir app, name gaunt-sloth).
+PACKAGES=(core agent review batch app)
 
 PUSH="${PUSH:-0}"
 [[ "${1:-}" == "--push" ]] && PUSH=1

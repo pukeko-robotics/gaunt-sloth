@@ -16,9 +16,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Topological order, by package DIRECTORY: core first (everything depends on it),
 # then agent (the merged tools+api runtime; depends on core) and review (depends
-# on core), then the fat CLI `gaunt-sloth` (dir: app) LAST — it depends on
-# all three. The former tools/api forwarding shims were removed in the 2.0 break.
-ORDER=(core agent review app)
+# on core), then batch (depends on core+agent), then the fat CLI `gaunt-sloth`
+# (dir: app) LAST — it depends on all four. The former tools/api forwarding shims
+# were removed in the 2.0 break.
+ORDER=(core agent review batch app)
 
 # Derive the dist-tag from the CURRENT version (source of truth: packages/core),
 # same rule as .github/workflows/release.yml: a prerelease (2.0.0-alpha.0) maps to

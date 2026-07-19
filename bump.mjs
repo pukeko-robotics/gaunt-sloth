@@ -7,8 +7,9 @@
 // `npm run release:bump -- 2.0.0-alpha.0`     — set an explicit version, then sync
 // `npm run release:bump-and-commit -- ...`    — same, then refresh pnpm-lock.yaml and git-commit
 //
-// LOCKED packages — all four carry the SAME version and pin each other exactly:
-//   @gaunt-sloth/core, @gaunt-sloth/agent, @gaunt-sloth/review  (dirs: core/agent/review)
+// LOCKED packages — all five carry the SAME version and pin each other exactly:
+//   @gaunt-sloth/core, @gaunt-sloth/agent, @gaunt-sloth/review, @gaunt-sloth/batch
+//     (dirs: core/agent/review/batch)
 //   gaunt-sloth                                                  (dir:  app)
 // packages/core/package.json is the source of truth for the version.
 //
@@ -16,7 +17,7 @@
 // is version-synced and has its @gaunt-sloth/* dep pins rewritten, but nothing
 // cross-pins a (nonexistent) `@gaunt-sloth/app`.
 //
-// publishConfig.tag (the `latest`-hijack guard) is written into all four
+// publishConfig.tag (the `latest`-hijack guard) is written into all five
 // package.jsons, derived from the new version: a prerelease (e.g. 2.0.0-alpha.0)
 // gets its preid (alpha/beta/rc) as the tag; a stable version gets `latest`. This
 // keeps publishConfig.tag consistent with the version's channel, so even a bare
@@ -31,7 +32,7 @@ import semver from 'semver';
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const SCOPE = '@gaunt-sloth';
 // Synced library packages (scoped). They cross-pin each other exactly.
-const SYNCED = ['core', 'agent', 'review'];
+const SYNCED = ['core', 'agent', 'review', 'batch'];
 // The fat CLI: dir `app`, but its package name is `gaunt-sloth`.
 const APP_DIR = 'app';
 // Every package that carries the locked version + publishConfig.tag.
@@ -105,7 +106,7 @@ function deriveTag(version) {
 const distTag = deriveTag(target);
 
 console.log(
-  `Syncing all four packages to ${target} (source of truth: packages/core), ` +
+  `Syncing all five packages to ${target} (source of truth: packages/core), ` +
     `publishConfig.tag = ${distTag}`
 );
 

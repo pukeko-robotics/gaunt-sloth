@@ -1,8 +1,8 @@
 name: Release
 
-# Consolidated, manually-dispatched release pipeline for ALL FOUR locked Gaunt
-# Sloth packages: @gaunt-sloth/{core,agent,review} and the fat CLI `gaunt-sloth`
-# (dir packages/app). Replaces both publish.yml and publish-packages.yml.
+# Consolidated, manually-dispatched release pipeline for ALL FIVE locked Gaunt
+# Sloth packages: @gaunt-sloth/{core,agent,review,batch} and the fat CLI
+# `gaunt-sloth` (dir packages/app). Replaces both publish.yml and publish-packages.yml.
 #
 # Triggered from the Actions "Run workflow" button (workflow_dispatch) — NOT
 # `release: published`, because that would create the GitHub Release object
@@ -184,7 +184,7 @@ jobs:
           OPEN_ROUTER_API_KEY: ${{ secrets.OPEN_ROUTER_API_KEY }}
 
   release:
-    name: Ship current version, then post-bump main to next (all four)
+    name: Ship current version, then post-bump main to next (all five)
     needs: [integration-tests, integration-tests-platforms]
     runs-on: ubuntu-latest
     # Must match the Environment name in npm's Trusted Publisher config (OIDC
@@ -244,7 +244,7 @@ jobs:
           echo "Shipping version=$VERSION dist_tag=$DIST_TAG"
       - name: Build
         run: pnpm run build
-      - name: Tag packages (all four) at current version and push
+      - name: Tag packages (all five) at current version and push
         # tag-packages.sh skips already-existing tags, so a re-dispatch of the
         # same version is safe here.
         run: ./tag-packages.sh --push
@@ -260,7 +260,7 @@ jobs:
             PRE_FLAG="--prerelease"
           fi
           gh release create "v${VERSION}" --title "v${VERSION}" --generate-notes $PRE_FLAG
-      - name: Publish all four to npmjs (current version)
+      - name: Publish all five to npmjs (current version)
         env:
           REGISTRY: https://registry.npmjs.org
           # Explicit --tag (belt-and-suspenders alongside each package's
