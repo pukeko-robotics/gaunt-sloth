@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Capture the config object ChatOpenAI is constructed with so we can assert on the built model.
-const chatOpenAIConstructorMock = vi.fn();
-vi.mock('@langchain/openai', () => {
-  class ChatOpenAI {
+// Capture the config object ChatOllama is constructed with so we can assert on the built model.
+const chatOllamaConstructorMock = vi.fn();
+vi.mock('@langchain/ollama', () => {
+  class ChatOllama {
     constructor(config: unknown) {
-      chatOpenAIConstructorMock(config);
+      chatOllamaConstructorMock(config);
     }
   }
-  return { ChatOpenAI };
+  return { ChatOllama };
 });
 
 const consoleUtilsMock = {
@@ -41,94 +41,120 @@ describe('ollama provider processJsonConfig', () => {
     systemUtilsMock.env = {};
   });
 
-  it('builds a ChatOpenAI pointed at the default local daemon /v1 base URL', async () => {
+  it('builds a ChatOllama pointed at the default local daemon NATIVE base URL (no /v1)', async () => {
     const { processJsonConfig } = await import('#src/providers/ollama.js');
 
-    await processJsonConfig(buildConfig({ model: 'gemma4:31b' }));
+    await processJsonConfig(buildConfig({ model: 'gemma4:31b' }) as any);
 
-    expect(chatOpenAIConstructorMock).toHaveBeenCalledTimes(1);
-    const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
-    expect(builtConfig.configuration.baseURL).toBe('http://127.0.0.1:11434/v1');
+    expect(chatOllamaConstructorMock).toHaveBeenCalledTimes(1);
+    const builtConfig = chatOllamaConstructorMock.mock.calls[0][0];
+    expect(builtConfig.baseUrl).toBe('http://127.0.0.1:11434');
     expect(builtConfig.model).toBe('gemma4:31b');
   });
 
   it('falls back to the default model when none is configured', async () => {
     const { processJsonConfig } = await import('#src/providers/ollama.js');
 
-    await processJsonConfig(buildConfig());
+    await processJsonConfig(buildConfig() as any);
 
-    const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
+    const builtConfig = chatOllamaConstructorMock.mock.calls[0][0];
     expect(builtConfig.model).toBe('qwen3-coder');
   });
 
-  it('is keyless: injects a placeholder apiKey when none is provided', async () => {
+  it('GS2-59: applies a large default numCtx so agentic prompts are not starved', async () => {
     const { processJsonConfig } = await import('#src/providers/ollama.js');
 
-    await processJsonConfig(buildConfig());
+    await processJsonConfig(buildConfig() as any);
 
-    const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
-    // ChatOpenAI requires a non-empty apiKey; a placeholder must be present.
-    expect(typeof builtConfig.apiKey).toBe('string');
-    expect(builtConfig.apiKey.length).toBeGreaterThan(0);
+    const builtConfig = chatOllamaConstructorMock.mock.calls[0][0];
+    // Well above the ~4000-token agentic prompt (and Ollama's own 4096 default) that blanked gemma,
+    // while still fitting constrained consumer VRAM (32768 OOM'd a 19GB model on ~18GB of GPU).
+    expect(builtConfig.numCtx).toBe(16384);
   });
 
-  it('honors an explicitly configured apiKey over the placeholder', async () => {
+  it('GS2-59: honors an explicitly configured numCtx over the default', async () => {
     const { processJsonConfig } = await import('#src/providers/ollama.js');
 
-    await processJsonConfig(buildConfig({ apiKey: 'custom-key' }));
+    await processJsonConfig(buildConfig({ numCtx: 8192 }) as any);
 
-    const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
-    expect(builtConfig.apiKey).toBe('custom-key');
+    const builtConfig = chatOllamaConstructorMock.mock.calls[0][0];
+    expect(builtConfig.numCtx).toBe(8192);
   });
 
-  it('derives the /v1 base URL from a full-URL OLLAMA_HOST override', async () => {
+  it('is keyless: does NOT inject an apiKey (native /api/chat is unauthenticated)', async () => {
+    const { processJsonConfig } = await import('#src/providers/ollama.js');
+
+    await processJsonConfig(buildConfig() as any);
+
+    const builtConfig = chatOllamaConstructorMock.mock.calls[0][0];
+    expect('apiKey' in builtConfig).toBe(false);
+  });
+
+  it('passes through headers as the reverse-proxy auth escape hatch', async () => {
+    const { processJsonConfig } = await import('#src/providers/ollama.js');
+
+    await processJsonConfig(
+      buildConfig({ headers: { Authorization: 'Bearer proxy-token' } }) as any
+    );
+
+    const builtConfig = chatOllamaConstructorMock.mock.calls[0][0];
+    expect(builtConfig.headers).toEqual({ Authorization: 'Bearer proxy-token' });
+  });
+
+  it('honors an explicit config baseUrl over OLLAMA_HOST and the default', async () => {
     systemUtilsMock.env = { OLLAMA_HOST: 'http://192.168.1.50:11434' };
     const { processJsonConfig } = await import('#src/providers/ollama.js');
 
-    await processJsonConfig(buildConfig());
+    await processJsonConfig(buildConfig({ baseUrl: 'http://remote-ollama:9999' }) as any);
 
-    const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
-    expect(builtConfig.configuration.baseURL).toBe('http://192.168.1.50:11434/v1');
+    const builtConfig = chatOllamaConstructorMock.mock.calls[0][0];
+    expect(builtConfig.baseUrl).toBe('http://remote-ollama:9999');
   });
 
-  it('derives the /v1 base URL from a bare host:port OLLAMA_HOST override', async () => {
+  it('derives the NATIVE base URL from a full-URL OLLAMA_HOST override (no /v1)', async () => {
+    systemUtilsMock.env = { OLLAMA_HOST: 'http://192.168.1.50:11434' };
+    const { processJsonConfig } = await import('#src/providers/ollama.js');
+
+    await processJsonConfig(buildConfig() as any);
+
+    const builtConfig = chatOllamaConstructorMock.mock.calls[0][0];
+    expect(builtConfig.baseUrl).toBe('http://192.168.1.50:11434');
+  });
+
+  it('derives the NATIVE base URL from a bare host:port OLLAMA_HOST override', async () => {
     systemUtilsMock.env = { OLLAMA_HOST: '127.0.0.1:1234' };
     const { processJsonConfig } = await import('#src/providers/ollama.js');
 
-    await processJsonConfig(buildConfig());
+    await processJsonConfig(buildConfig() as any);
 
-    const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
-    expect(builtConfig.configuration.baseURL).toBe('http://127.0.0.1:1234/v1');
+    const builtConfig = chatOllamaConstructorMock.mock.calls[0][0];
+    expect(builtConfig.baseUrl).toBe('http://127.0.0.1:1234');
   });
 
-  it('strips a trailing slash from OLLAMA_HOST before appending /v1', async () => {
+  it('strips a trailing slash from OLLAMA_HOST', async () => {
     systemUtilsMock.env = { OLLAMA_HOST: 'http://127.0.0.1:11434/' };
     const { processJsonConfig } = await import('#src/providers/ollama.js');
 
-    await processJsonConfig(buildConfig());
+    await processJsonConfig(buildConfig() as any);
 
-    const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
-    expect(builtConfig.configuration.baseURL).toBe('http://127.0.0.1:11434/v1');
+    const builtConfig = chatOllamaConstructorMock.mock.calls[0][0];
+    expect(builtConfig.baseUrl).toBe('http://127.0.0.1:11434');
   });
 
-  it('strips internal config keys (type, apiKeyEnvironmentVariable) from the built model', async () => {
+  it('strips internal / OpenAI-client keys (type, apiKeyEnvironmentVariable, configuration) from the built model', async () => {
     const { processJsonConfig } = await import('#src/providers/ollama.js');
 
-    await processJsonConfig(buildConfig({ apiKeyEnvironmentVariable: 'OLLAMA_HOST' }));
+    await processJsonConfig(
+      buildConfig({
+        apiKeyEnvironmentVariable: 'OLLAMA_HOST',
+        configuration: { timeout: 5000 },
+      }) as any
+    );
 
-    const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
+    const builtConfig = chatOllamaConstructorMock.mock.calls[0][0];
     expect('type' in builtConfig).toBe(false);
     expect('apiKeyEnvironmentVariable' in builtConfig).toBe(false);
-  });
-
-  it('preserves a user-supplied configuration alongside the default baseURL', async () => {
-    const { processJsonConfig } = await import('#src/providers/ollama.js');
-
-    await processJsonConfig(buildConfig({ configuration: { timeout: 5000 } }));
-
-    const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
-    expect(builtConfig.configuration.baseURL).toBe('http://127.0.0.1:11434/v1');
-    expect(builtConfig.configuration.timeout).toBe(5000);
+    expect('configuration' in builtConfig).toBe(false);
   });
 });
 
