@@ -89,6 +89,12 @@ export interface DebugDumpInput {
   transcript: unknown[];
   config: unknown;
   modelDisplayName: string;
+  /**
+   * GS2-47 — whether the writer should redact secrets from every artifact. Resolved by
+   * {@link resolveDebugDumpRedact} from the config (`debugDump.redact`, default ON) and the
+   * `--unsafe-no-redact` command flag, then threaded straight through to `writeDebugDump`.
+   */
+  redact: boolean;
 }
 
 /**
@@ -485,12 +491,49 @@ const DEBUG_DUMP_UNAVAILABLE_LINES = [
 ];
 
 /**
- * The `/debug-dump` success notice (GS2-46): the archive path plus a loud, impossible-to-miss
- * warning. This node ships deliberately UNSANITIZED — the user ran this command themselves,
- * mid-session, knowingly — so the warning stands in for the redaction GS2-47 adds later. `tone:
- * 'warn'` (yellow, bold title) so the block itself reads as caution, not just its body text.
+ * GS2-47 — resolve whether the `/debug-dump` archive should be redacted. ON by default; opt out via
+ * the config (`debugDump.redact: false`) OR the `--unsafe-no-redact` command flag. Any uncertainty
+ * (no/non-object config) defaults to redacting — fail safe. `resolvedConfig` is opaque here, so this
+ * reads the flag structurally without depending on the `GthConfig` type.
  */
-export function debugDumpNotice(archiveDir: string): SlashCommandNotice {
+export function resolveDebugDumpRedact(resolvedConfig: unknown, args: string[]): boolean {
+  if (args.some((a) => a === '--unsafe-no-redact' || a === '--no-redact')) return false;
+  const debugDump = (resolvedConfig as { debugDump?: unknown } | null | undefined)?.debugDump;
+  if (
+    debugDump &&
+    typeof debugDump === 'object' &&
+    (debugDump as { redact?: unknown }).redact === false
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * The `/debug-dump` success notice (a standard 3-line CommandNotice — DL-1: no command reads as
+ * "does nothing"). GS2-47 flips the default to REDACTED: when redaction ran (the default) the note
+ * is softened ("secrets redacted; review before sharing") and points at the opt-out. When the user
+ * opted OUT (raw archive) it is the loud, impossible-to-miss UNSANITIZED warning. Colour follows
+ * DL-8 / the tone rule in maintenance/ux-guidelines.md: the safe, redacted default is normal
+ * feedback (no `tone` ⇒ info), while the raw opt-out is caution and so `tone: 'warn'` (yellow) —
+ * mirroring how `autoApproveNotice` reserves yellow for the dangerous (gate-off) state. Redaction is
+ * best-effort pattern-based, so even the softened note still says review-before-sharing.
+ */
+export function debugDumpNotice(archiveDir: string, redacted: boolean): SlashCommandNotice {
+  if (redacted) {
+    return {
+      title: 'Debug dump written — secrets redacted',
+      lines: [
+        `Archive: ${archiveDir}`,
+        '',
+        'Secrets were redacted (API keys, tokens and auth headers replaced with <redacted>).',
+        'Redaction is best-effort and pattern-based — review before sharing.',
+        '',
+        'To write a raw, unredacted archive: set `debugDump.redact: false` in your gsloth config,',
+        'or run `/debug-dump --unsafe-no-redact`.',
+      ],
+    };
+  }
   return {
     title: '⚠️  Debug dump written — UNSANITIZED, review before sharing',
     lines: [
@@ -645,12 +688,12 @@ export function createCommandRegistry(): SlashCommand[] {
     {
       name: 'debug-dump',
       description:
-        'Dump transcript + config + env + debug log to ~/.gsloth/debug-dumps (UNSANITIZED — may contain secrets)',
+        'Dump transcript + config + env + debug log to ~/.gsloth/debug-dumps (secrets redacted; --unsafe-no-redact keeps raw)',
       // Read-only from the transcript/thread's perspective (it only writes a diagnostic archive,
       // never mutates session state), so it's useful precisely when something is going wrong
       // mid-turn — mirrors /history, /config, /debug being availableDuringRun.
       availableDuringRun: true,
-      run: (ctx) => {
+      run: (ctx, args) => {
         if (!ctx.dumpDebugSession) {
           return {
             notice: {
@@ -660,12 +703,17 @@ export function createCommandRegistry(): SlashCommand[] {
             },
           };
         }
+        // GS2-47 — redact by default; opt out via config `debugDump.redact: false` or the
+        // `--unsafe-no-redact` flag. The resolved flag is threaded into the writer AND picks the
+        // notice (softened when redacted, loud "unsanitized" warning when raw).
+        const redact = resolveDebugDumpRedact(ctx.resolvedConfig, args);
         const { archiveDir } = ctx.dumpDebugSession({
           transcript: ctx.transcript ?? [],
           config: ctx.resolvedConfig,
           modelDisplayName: ctx.modelDisplayName,
+          redact,
         });
-        return { notice: debugDumpNotice(archiveDir) };
+        return { notice: debugDumpNotice(archiveDir, redact) };
       },
     },
   ];

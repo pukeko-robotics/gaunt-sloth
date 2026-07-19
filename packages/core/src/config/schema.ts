@@ -317,6 +317,15 @@ export const rawGthConfigSchema = z.looseObject({
   // set `false` to opt out for reproducible / model-agnostic runs). Defaulted at the read site, so it
   // is intentionally absent from DEFAULT_CONFIG (no effective-config snapshot churn).
   injectModelContext: z.boolean().optional(),
+  // GS2-47 — secret-redaction for `/debug-dump` artifacts. `redact` DEFAULTS ON (omitted = redact);
+  // set `false` to write a raw, unredacted archive (the command then shows a loud secrets warning).
+  // Defaulted at the read site (`!== false`), not in DEFAULT_CONFIG, to avoid churning the
+  // effective-config snapshot (à la GS2-34 injectModelContext).
+  debugDump: z
+    .object({
+      redact: z.boolean().optional(),
+    })
+    .optional(),
   allowDirs: z.array(z.string()).optional(),
   askWriteMode: z.boolean().optional(),
 });

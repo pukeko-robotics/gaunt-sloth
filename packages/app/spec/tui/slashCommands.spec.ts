@@ -435,7 +435,7 @@ describe('tui/slashCommands /debug-dump (GS2-46)', () => {
     vi.resetAllMocks();
   });
 
-  it('calls the injected dumpDebugSession with the transcript/config/model and renders the path + sensitive-data warning', async () => {
+  it('calls the injected dumpDebugSession with redact ON by default and renders the path + softened redacted note (GS2-47)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('#src/tui/slashCommands.js');
     const dumpDebugSession = vi.fn().mockReturnValue({
@@ -455,21 +455,66 @@ describe('tui/slashCommands /debug-dump (GS2-46)', () => {
       }
     );
 
+    // GS2-47 — with no `debugDump.redact` and no `--unsafe-no-redact`, redaction defaults ON.
     expect(dumpDebugSession).toHaveBeenCalledWith({
       transcript: fakeTranscript,
       config: fakeConfig,
       modelDisplayName: ctx.modelDisplayName,
+      redact: true,
     });
 
-    // Acceptance criteria: the returned notice contains BOTH the archive path and the warning.
+    // The default is now REDACTED: the notice carries the path + a softened "secrets redacted"
+    // note (still review-before-sharing), NOT the loud UNSANITIZED warning, and no warn tone.
     const allText = [result.notice?.title, ...(result.notice?.lines ?? [])].join('\n');
     expect(allText).toContain('/home/user/.gsloth/debug-dumps/2026-07-18T12-00-00-000Z');
-    expect(allText.toLowerCase()).toContain('secrets');
+    expect(allText.toLowerCase()).toContain('redacted');
+    expect(allText.toLowerCase()).toContain('review before sharing');
+    expect(allText.toLowerCase()).not.toContain('unsanitized');
+    expect(result.notice?.tone).toBeUndefined();
+  });
+
+  it('opts OUT via config `debugDump.redact: false` — passes redact:false AND fires the loud UNSANITIZED warning', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const dumpDebugSession = vi.fn().mockReturnValue({ archiveDir: '/tmp/raw-dump' });
+
+    const result = dispatchSlashCommand(
+      parseSlashCommand('/debug-dump')!,
+      createCommandRegistry(),
+      {
+        ...ctx,
+        resolvedConfig: { debugDump: { redact: false } },
+        dumpDebugSession,
+      }
+    );
+
+    expect(dumpDebugSession).toHaveBeenCalledWith(
+      expect.objectContaining({ config: { debugDump: { redact: false } }, redact: false })
+    );
+    // The loud warning fires (both the path and the "unsanitized/secrets" caution, warn tone).
+    const allText = [result.notice?.title, ...(result.notice?.lines ?? [])].join('\n');
     expect(allText.toLowerCase()).toContain('unsanitized');
+    expect(allText.toLowerCase()).toContain('secrets');
     expect(result.notice?.tone).toBe('warn');
   });
 
-  it('defaults transcript to [] and passes through an undefined resolvedConfig when the context omits them', async () => {
+  it('opts OUT via the `--unsafe-no-redact` command flag — passes redact:false and the loud warning', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const dumpDebugSession = vi.fn().mockReturnValue({ archiveDir: '/tmp/raw-dump' });
+
+    const result = dispatchSlashCommand(
+      parseSlashCommand('/debug-dump --unsafe-no-redact')!,
+      createCommandRegistry(),
+      { ...ctx, resolvedConfig: { modelDisplayName: 'm' }, dumpDebugSession }
+    );
+
+    expect(dumpDebugSession).toHaveBeenCalledWith(expect.objectContaining({ redact: false }));
+    expect(result.notice?.title.toLowerCase()).toContain('unsanitized');
+    expect(result.notice?.tone).toBe('warn');
+  });
+
+  it('defaults transcript to [] and passes through an undefined resolvedConfig (redact still ON) when the context omits them', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('#src/tui/slashCommands.js');
     const dumpDebugSession = vi.fn().mockReturnValue({ archiveDir: '/tmp/whatever' });
@@ -479,10 +524,12 @@ describe('tui/slashCommands /debug-dump (GS2-46)', () => {
       dumpDebugSession,
     });
 
+    // Any uncertainty (no resolvedConfig) defaults to redacting — fail safe.
     expect(dumpDebugSession).toHaveBeenCalledWith({
       transcript: [],
       config: undefined,
       modelDisplayName: ctx.modelDisplayName,
+      redact: true,
     });
   });
 

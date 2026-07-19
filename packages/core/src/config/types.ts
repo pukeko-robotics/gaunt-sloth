@@ -318,6 +318,17 @@ export interface GthConfig {
    */
   injectModelContext?: boolean;
   /**
+   * GS2-47 — controls the shared secret-redaction pass applied to `/debug-dump` archives. Default
+   * ON (omitted = redact): secret-named env-var values, inline config secrets, provider-key/auth
+   * patterns and sensitive config fields are masked before any artifact hits disk. Set
+   * `debugDump.redact: false` (or run `/debug-dump --unsafe-no-redact`) to write a RAW archive, which
+   * the command flags with a loud "may contain secrets" warning. Defaulted at the read site (not in
+   * {@link DEFAULT_CONFIG}) to avoid churning the effective-config snapshot.
+   */
+  debugDump?: {
+    redact?: boolean;
+  };
+  /**
    * Transient (runtime-only) extra filesystem roots the agent is allowed to read/write for
    * THIS run, in addition to the cwd sandbox. Populated by `gth exec --allow-dir <path>`
    * (repeatable); never persisted to a config file. When set, the deep agent's

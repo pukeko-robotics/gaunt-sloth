@@ -2072,6 +2072,14 @@
     "injectModelContext": {
       "type": "boolean"
     },
+    "debugDump": {
+      "type": "object",
+      "properties": {
+        "redact": {
+          "type": "boolean"
+        }
+      }
+    },
     "allowDirs": {
       "type": "array",
       "items": {
