@@ -121,6 +121,34 @@ describe('deep/lean system-prompt parity (GS2-27)', () => {
       // EXT-26 OS/shell-dialect note
       expect(prompt).toContain('Host operating system:');
       expect(prompt).toContain(OS_SHELL_GUIDANCE);
+      // GS2-35 commit co-author note: default (unconfigured) identity + the model-name prohibition,
+      // composed on BOTH backends.
+      expect(prompt).toContain('Co-Authored-By: Gaunt Sloth <code@gauntsloth.app>');
+      expect(prompt).toContain('NEVER attribute the co-author to the underlying model');
+    }
+  });
+
+  it('injects a CONFIGURED commit co-author identity on BOTH backends (GS2-35)', async () => {
+    getCurrentWorkDirMock.mockReturnValue('/home/user/proj');
+    const over = { commit: { coAuthor: { name: 'Acme Bot', email: 'bot@acme.test' } } };
+
+    createAgentMock.mockReturnValue({ invoke: vi.fn(), stream: vi.fn() });
+    const { GthLangChainAgent } = await import('@gaunt-sloth/core/core/GthLangChainAgent.js');
+    const leanAgent = new GthLangChainAgent(vi.fn(), {
+      resolveTools: vi.fn().mockResolvedValue([]),
+    });
+    await leanAgent.init('code', makeConfig(over));
+    const lean = createAgentMock.mock.calls.at(-1)?.[0].systemPrompt as string;
+
+    createDeepAgentMock.mockReturnValue({ invoke: vi.fn(), stream: vi.fn() });
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const deepAgent = new GthDeepAgent(vi.fn(), { resolveTools: vi.fn().mockResolvedValue([]) });
+    await deepAgent.init('code', makeConfig(over));
+    const deep = createDeepAgentMock.mock.calls.at(-1)?.[0].systemPrompt as string;
+
+    for (const prompt of [lean, deep]) {
+      expect(prompt).toContain('Co-Authored-By: Acme Bot <bot@acme.test>');
+      expect(prompt).not.toContain('code@gauntsloth.app');
     }
   });
 

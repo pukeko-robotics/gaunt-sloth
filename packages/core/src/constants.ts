@@ -45,3 +45,14 @@ export const SHELL_ALLOWLIST_FILE = 'shell-allowlist.json';
  * that groups tools back by server (the [[TUI-C20]] MCP debug tab) can never silently drift apart.
  */
 export const MCP_TOOL_NAME_PREFIX = 'mcp';
+
+/**
+ * GS2-35 — the canonical Git co-author identity for agent-authored commits. When Gaunt Sloth writes
+ * a commit (via `run_shell_command` `git commit`) the co-author is *Gaunt Sloth itself*, NOT the
+ * underlying model — attributing the commit to the model name (e.g. `Claude`, `GPT`) is factually
+ * wrong. Config (`commit.coAuthor`) overrides this; single-sourced so the config default and the
+ * prompt-guidance fallback ({@link import('#src/utils/systemPromptNotes.js').appendCommitCoAuthorNote})
+ * can never drift.
+ */
+export const DEFAULT_COMMIT_CO_AUTHOR_NAME = 'Gaunt Sloth';
+export const DEFAULT_COMMIT_CO_AUTHOR_EMAIL = 'code@gauntsloth.app';

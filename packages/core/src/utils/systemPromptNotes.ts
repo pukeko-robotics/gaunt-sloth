@@ -16,6 +16,7 @@
  */
 
 import type { McpServerInstruction } from '#src/core/types.js';
+import { DEFAULT_COMMIT_CO_AUTHOR_EMAIL, DEFAULT_COMMIT_CO_AUTHOR_NAME } from '#src/constants.js';
 
 /**
  * EXT-26: the platform-agnostic tail shared by both {@link appendOsShellNote} branches.
@@ -87,6 +88,48 @@ export function appendCwdNote(systemPrompt: string | undefined, cwd: string): st
     'before filesystem operations and prefer absolute paths (or paths relative to the working ' +
     'directory); do not assume the current directory is "/".';
   return systemPrompt ? `${systemPrompt}\n\n${cwdNote}` : cwdNote;
+}
+
+/** GS2-35 — the configured Git co-author identity (both fields optional; each defaults on its own). */
+export interface CommitCoAuthor {
+  name?: string;
+  email?: string;
+}
+
+/**
+ * GS2-35: append the commit co-authoring rule to the composed code-mode system prompt.
+ *
+ * Gaunt Sloth has **no dedicated git-commit tool** — the agent commits by calling
+ * `run_shell_command` with `git commit`, composing the message (including any trailer) itself. Left
+ * unguided, models emit `Co-Authored-By: <their own model name>` (e.g. `Claude`, `GPT`, `Gemini`)
+ * from trained habit, which is **factually wrong**: the commit was produced by *Gaunt Sloth*, not by
+ * the model. This note is the fix at the correct layer — first-party prompt guidance that (a) states
+ * the exact trailer to emit and (b) forbids a model-name co-author.
+ *
+ * The identity is config-driven (`commit.coAuthor` in {@link import('#src/config/types.js').GthConfig}).
+ * Each field falls back INDEPENDENTLY to the Gaunt Sloth account
+ * ({@link DEFAULT_COMMIT_CO_AUTHOR_NAME} / {@link DEFAULT_COMMIT_CO_AUTHOR_EMAIL}) — so a partial
+ * override (name only, or a config that bypassed the loader) still yields a complete trailer, and a
+ * fully-absent config yields the default account. Blank/whitespace values are treated as unset.
+ *
+ * Backend-agnostic: composed through the shared code path so BOTH the lean `GthLangChainAgent` and
+ * the deep `GthDeepAgent` inject it (the git-commit capability rides on `run_shell_command`, which
+ * both backends expose in code mode). Returns the note alone when there is no base prompt.
+ */
+export function appendCommitCoAuthorNote(
+  systemPrompt: string | undefined,
+  coAuthor?: CommitCoAuthor
+): string {
+  const name = coAuthor?.name?.trim() || DEFAULT_COMMIT_CO_AUTHOR_NAME;
+  const email = coAuthor?.email?.trim() || DEFAULT_COMMIT_CO_AUTHOR_EMAIL;
+  const note =
+    'When you create a git commit, add EXACTLY this co-author trailer line (on its own line, at ' +
+    `the end of the commit message):\nCo-Authored-By: ${name} <${email}>\n` +
+    'NEVER attribute the co-author to the underlying model or provider name (do not write ' +
+    '`Co-Authored-By: Claude`, `GPT`, `Gemini`, `Opus`, `Sonnet`, or any model/vendor name): the ' +
+    'commit is authored by Gaunt Sloth, the assistant, not the model. Emit at most this one ' +
+    'Co-Authored-By trailer.';
+  return systemPrompt ? `${systemPrompt}\n\n${note}` : note;
 }
 
 /**

@@ -13,6 +13,7 @@ import { getCurrentWorkDir } from '#src/utils/systemUtils.js';
 import {
   appendOsShellNote,
   appendCwdNote,
+  appendCommitCoAuthorNote,
   appendMcpServerInstructionsNote,
 } from '#src/utils/systemPromptNotes.js';
 import { isShellCommandFailedError } from '#src/core/shell/ShellCommandFailedError.js';
@@ -287,9 +288,16 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // notes stay deep-only (lean never runs virtualMode). Same order the deep backend's real-path
     // branch uses: cwd note first, OS/shell note last. `getCurrentWorkDir()` is already read above
     // for the status line, so the value is free.
+    // GS2-35: also append the commit co-authoring rule so the agent credits Gaunt Sloth (config
+    // `commit.coAuthor`, defaulting to the Gaunt Sloth account) in the `Co-Authored-By` trailer and
+    // never the underlying model name. Same code-mode gate as the shell/cwd notes — the git-commit
+    // capability rides on `run_shell_command`, which is a code-mode tool.
     const codeNotesPrompt =
       this.command === 'code'
-        ? appendOsShellNote(appendCwdNote(baseSystemPrompt, getCurrentWorkDir()))
+        ? appendCommitCoAuthorNote(
+            appendOsShellNote(appendCwdNote(baseSystemPrompt, getCurrentWorkDir())),
+            this.config.commit?.coAuthor
+          )
         : baseSystemPrompt;
 
     // EXT-32: inject each connected MCP server's discovery `instructions` (captured during tool

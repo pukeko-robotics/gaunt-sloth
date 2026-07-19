@@ -294,6 +294,20 @@ export const rawGthConfigSchema = z.looseObject({
     })
     .optional(),
   commands: commandsSchema.optional(),
+  // GS2-35 — identity used in the `Co-Authored-By` trailer of agent-authored git commits. Optional;
+  // when omitted the agent is instructed to co-author as the Gaunt Sloth account
+  // (`Gaunt Sloth <code@gauntsloth.app>`), NEVER the underlying model. Either field may be set
+  // alone; the other falls back to its default (see `appendCommitCoAuthorNote`).
+  commit: z
+    .object({
+      coAuthor: z
+        .object({
+          name: z.string().optional(),
+          email: z.string().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
   modelDisplayName: z.string().optional(),
   allowDirs: z.array(z.string()).optional(),
   askWriteMode: z.boolean().optional(),

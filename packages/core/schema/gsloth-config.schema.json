@@ -1994,6 +1994,22 @@
         }
       }
     },
+    "commit": {
+      "type": "object",
+      "properties": {
+        "coAuthor": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
     "modelDisplayName": {
       "type": "string"
     },

@@ -293,6 +293,19 @@ export interface GthConfig {
       };
     };
   };
+  /**
+   * GS2-35 — identity for the `Co-Authored-By` trailer of agent-authored git commits. Gaunt Sloth
+   * has no dedicated commit tool (it commits via `run_shell_command`), so this identity is injected
+   * into the code-mode system prompt, which instructs the agent to co-author commits as this account
+   * and NEVER as the underlying model. Optional and defaulted: when unset (or a field is unset) the
+   * agent co-authors as {@link DEFAULT_COMMIT_CO_AUTHOR_NAME} `<`{@link DEFAULT_COMMIT_CO_AUTHOR_EMAIL}`>`.
+   */
+  commit?: {
+    coAuthor?: {
+      name?: string;
+      email?: string;
+    };
+  };
   modelDisplayName?: string;
   /**
    * Transient (runtime-only) extra filesystem roots the agent is allowed to read/write for
