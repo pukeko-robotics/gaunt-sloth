@@ -344,6 +344,232 @@ describe('GthFileSystemToolkit - Basic Tests', () => {
     });
   });
 
+  describe('read_file offset/limit line window (GS2-39)', () => {
+    const testPath = path.join(process.cwd(), 'file.txt');
+    let readFileTool: any;
+    // 20 lines: "line1".."line20", no trailing newline.
+    const content = Array.from({ length: 20 }, (_, i) => `line${i + 1}`).join('\n');
+
+    beforeEach(() => {
+      toolkit = new GthFileSystemToolkit({ allowedDirectories: [process.cwd()] });
+      readFileTool = toolkit.tools.find((t) => t.name === 'read_file')!;
+      fsMock.readFile.mockResolvedValue(content);
+    });
+
+    it('window in the middle: offset 5, limit 3 returns exactly lines 5-7', async () => {
+      const result: string = await readFileTool.invoke({ path: testPath, offset: 5, limit: 3 });
+      expect(result).toBe('line5\nline6\nline7');
+    });
+
+    it('edge: offset 1, limit 3 returns the first three lines', async () => {
+      const result: string = await readFileTool.invoke({ path: testPath, offset: 1, limit: 3 });
+      expect(result).toBe('line1\nline2\nline3');
+    });
+
+    it('limit past EOF clamps to the last available line (no phantom trailing line)', async () => {
+      const result: string = await readFileTool.invoke({ path: testPath, offset: 18, limit: 10 });
+      expect(result).toBe('line18\nline19\nline20');
+    });
+
+    it('offset without limit reads from offset to EOF (default limit)', async () => {
+      const result: string = await readFileTool.invoke({ path: testPath, offset: 19 });
+      expect(result).toBe('line19\nline20');
+    });
+
+    it('offset past EOF clamps to a recoverable note, not an empty string or the whole file', async () => {
+      const result: string = await readFileTool.invoke({ path: testPath, offset: 100 });
+      expect(result).toContain('past end of file');
+      expect(result).toContain('20 lines total');
+    });
+
+    it('newline-terminated file: window line numbering matches head/tail (no phantom last line)', async () => {
+      // "a\nb\nc\n" is 3 real lines; a window of the last one must be "c", not "".
+      fsMock.readFile.mockResolvedValue('a\nb\nc\n');
+      const result: string = await readFileTool.invoke({ path: testPath, offset: 3, limit: 1 });
+      expect(result).toBe('c');
+    });
+
+    it('the byte/per-line cap applies to the windowed slice too (safety envelope on the window)', async () => {
+      // A window whose single selected line is pathologically long must still be per-line
+      // truncated — the cap is a safety envelope on whatever slice offset/limit returns.
+      const longLine = 'z'.repeat(5000);
+      fsMock.readFile.mockResolvedValue(`first\n${longLine}\nthird`);
+
+      const result: string = await readFileTool.invoke({ path: testPath, offset: 2, limit: 1 });
+
+      expect(result).toBe('z'.repeat(2000) + '... (line truncated to 2000 chars)');
+    });
+
+    it('continuation with the DEFAULT limit past the cap emits a resume notice (no silent data loss)', async () => {
+      // The exact defect: after a default whole-file read says "resume with offset:2001", the
+      // model issues offset:2001. That window (default limit -> hard cap 2000) must itself report
+      // that more file remains, or lines 4001-5000 are silently lost.
+      const bigContent = Array.from({ length: 5000 }, (_, i) => `L${i + 1}`).join('\n');
+      fsMock.readFile.mockResolvedValue(bigContent);
+
+      const result: string = await readFileTool.invoke({ path: testPath, offset: 2001 });
+      const lines = result.split('\n');
+
+      expect(lines).toHaveLength(2001); // 2000 content lines + one notice line
+      expect(lines[0]).toBe('L2001');
+      expect(lines[1999]).toBe('L4000');
+      expect(result).toContain('read cap');
+      expect(result).toContain('offset:4001'); // resume at the first dropped line
+      expect(result).not.toContain('L4001');
+    });
+
+    it('explicit limit above MAX_READ_LINES is clamped to 2000 AND emits a notice (visible clamp)', async () => {
+      const bigContent = Array.from({ length: 5000 }, (_, i) => `L${i + 1}`).join('\n');
+      fsMock.readFile.mockResolvedValue(bigContent);
+
+      const result: string = await readFileTool.invoke({ path: testPath, offset: 1, limit: 10000 });
+      const lines = result.split('\n');
+
+      expect(lines).toHaveLength(2001);
+      expect(lines[1999]).toBe('L2000');
+      expect(result).toContain('read cap');
+      expect(result).toContain('offset:2001');
+      expect(result).not.toContain('L2001');
+    });
+
+    it('a small EXPLICIT limit fully satisfied stays quiet even when more file remains (no over-correction)', async () => {
+      // Deliberate paging: the model asked for exactly 5 lines and got them. This is not a cap
+      // hit, so no notice — otherwise every deliberate page would be spammed with a resume line.
+      const bigContent = Array.from({ length: 5000 }, (_, i) => `L${i + 1}`).join('\n');
+      fsMock.readFile.mockResolvedValue(bigContent);
+
+      const result: string = await readFileTool.invoke({ path: testPath, offset: 1, limit: 5 });
+
+      expect(result).toBe('L1\nL2\nL3\nL4\nL5');
+      expect(result).not.toContain('read cap');
+    });
+  });
+
+  describe('read_file safety envelope: byte/line cap + per-line truncation (GS2-39)', () => {
+    const testPath = path.join(process.cwd(), 'file.txt');
+    let readFileTool: any;
+
+    beforeEach(() => {
+      toolkit = new GthFileSystemToolkit({ allowedDirectories: [process.cwd()] });
+      readFileTool = toolkit.tools.find((t) => t.name === 'read_file')!;
+    });
+
+    it('small whole-file read is returned verbatim (backward compatible, no cap notice)', async () => {
+      fsMock.readFile.mockResolvedValue('alpha\nbeta\ngamma');
+      const result: string = await readFileTool.invoke({ path: testPath });
+      expect(result).toBe('alpha\nbeta\ngamma');
+      expect(result).not.toContain('read cap');
+    });
+
+    it('line cap: a 5000-line file is truncated to 2000 lines plus a resume notice', async () => {
+      // Short lines so the LINE cap (2000) bites before the byte cap.
+      const content = Array.from({ length: 5000 }, (_, i) => `L${i + 1}`).join('\n');
+      fsMock.readFile.mockResolvedValue(content);
+
+      const result: string = await readFileTool.invoke({ path: testPath });
+      const lines = result.split('\n');
+
+      // 2000 content lines + exactly one appended notice line.
+      expect(lines).toHaveLength(2001);
+      expect(lines[0]).toBe('L1');
+      expect(lines[1999]).toBe('L2000');
+      expect(result).toContain('read cap');
+      // Resume points at the first dropped line so the model can page the rest.
+      expect(result).toContain('offset:2001');
+      // Dropped lines are absent.
+      expect(result).not.toContain('L2001');
+      expect(result).not.toContain('L5000');
+    });
+
+    it('byte cap: a file under the line cap but over 50 KB stops on bytes with a notice', async () => {
+      // 1000 lines (< 2000-line cap) of ~200 chars each ≈ 200 KB, so ONLY the byte cap can fire.
+      const content = Array.from(
+        { length: 1000 },
+        (_, i) => `line${i + 1}:` + 'x'.repeat(200)
+      ).join('\n');
+      fsMock.readFile.mockResolvedValue(content);
+
+      const result: string = await readFileTool.invoke({ path: testPath });
+
+      expect(Buffer.byteLength(result, 'utf-8')).toBeLessThanOrEqual(50 * 1024 + 200);
+      expect(result.split('\n').length).toBeLessThan(1000);
+      expect(result).toContain('read cap');
+      expect(result).toContain('line1:'); // first line kept
+      expect(result).not.toContain('line999:'); // a late line dropped
+    });
+
+    it('per-line truncation: a pathological single 5000-char line is cut with the marker and NO global notice', async () => {
+      const content = 'a'.repeat(5000); // one line, no newline
+      fsMock.readFile.mockResolvedValue(content);
+
+      const result: string = await readFileTool.invoke({ path: testPath });
+
+      expect(result).toBe('a'.repeat(2000) + '... (line truncated to 2000 chars)');
+      // A per-line cut is signalled ONLY by the inline suffix, never the global cap notice.
+      expect(result).not.toContain('read cap');
+    });
+
+    it('per-line truncation applies on the tail path too (huge last line from tail 1)', async () => {
+      // Drive the real tailFile chunk reader with an in-memory buffer whose last line is huge.
+      const content = 'short\n' + 'b'.repeat(5000);
+      const buf = Buffer.from(content, 'utf-8');
+      fsMock.stat.mockResolvedValue({
+        isDirectory: () => false,
+        isFile: () => true,
+        size: buf.length,
+        birthtime: new Date('2023-01-01'),
+        mtime: new Date('2023-01-02'),
+        atime: new Date('2023-01-03'),
+        mode: 0o644,
+      });
+      fsMock.open.mockResolvedValue({
+        read: vi.fn(async (target: Buffer, offset: number, length: number, position: number) => {
+          const end = Math.min(position + length, buf.length);
+          const bytesRead = Math.max(0, end - position);
+          buf.copy(target, offset, position, end);
+          return { bytesRead, buffer: target };
+        }),
+        close: vi.fn(async () => undefined),
+      });
+
+      const result: string = await readFileTool.invoke({ path: testPath, tail: 1 });
+
+      expect(result).toBe('b'.repeat(2000) + '... (line truncated to 2000 chars)');
+      expect(result).not.toContain('read cap');
+    });
+  });
+
+  describe('read_file offset/limit vs head/tail combination (GS2-39)', () => {
+    const testPath = path.join(process.cwd(), 'file.txt');
+    let readFileTool: any;
+
+    beforeEach(() => {
+      toolkit = new GthFileSystemToolkit({ allowedDirectories: [process.cwd()] });
+      readFileTool = toolkit.tools.find((t) => t.name === 'read_file')!;
+      fsMock.readFile.mockResolvedValue('line1\nline2\nline3');
+    });
+
+    it('offset + head is rejected with a recoverable "not both" string (no throw, no FS access)', async () => {
+      const result: string = await readFileTool.invoke({ path: testPath, offset: 1, head: 2 });
+      expect(result).toContain('not both');
+      // Pure argument guard: it returns before touching the filesystem.
+      expect(fsMock.readFile).not.toHaveBeenCalled();
+      expect(fsMock.realpath).not.toHaveBeenCalled();
+    });
+
+    it('limit + tail is rejected with the same recoverable string', async () => {
+      const result: string = await readFileTool.invoke({ path: testPath, limit: 2, tail: 1 });
+      expect(result).toContain('not both');
+      expect(fsMock.readFile).not.toHaveBeenCalled();
+    });
+
+    it('offset + tail is rejected with the same recoverable string', async () => {
+      const result: string = await readFileTool.invoke({ path: testPath, offset: 2, tail: 1 });
+      expect(result).toContain('not both');
+      expect(fsMock.readFile).not.toHaveBeenCalled();
+    });
+  });
+
   describe('edit_file (applyFileEdits ambiguity guard + replaceAll)', () => {
     const testPath = path.join(process.cwd(), 'edit.txt');
     let editTool: any;
