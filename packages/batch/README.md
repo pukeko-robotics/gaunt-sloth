@@ -1,9 +1,10 @@
 # @gaunt-sloth/batch
 
-The batch / eval / workflow runtime for Gaunt Sloth. It ships **no binary of its own** — you reach
-it through three commands the `gaunt-sloth` app registers (`gth batch`, `gth eval`, `gth workflow`),
-or by importing the package to embed the runtime. Install `gaunt-sloth` to use the commands; depend
-on `@gaunt-sloth/batch` to embed them in your own code.
+The batch / eval / workflow runtime for Gaunt Sloth. You reach it three ways: through the commands
+the `gaunt-sloth` app registers (`gth batch`, `gth eval`, `gth workflow`), through this package's own
+`gth-batch` binary — a thin standalone matrix runner for shell pipelines (see [below](#pipeline-runner-gth-batch)) —
+or by importing the package to embed the runtime. Install `gaunt-sloth` for the full command set;
+install `@gaunt-sloth/batch` for the standalone binary, or depend on it to embed the runtime.
 
 ## Grade a suite of prompts (`gth eval`)
 
@@ -65,6 +66,35 @@ a failed cell (default `0`), `-o <dir>` sets the output dir.
 the return value is printed (a string as-is, anything else as pretty JSON), and `--args <json>` is
 handed to the script as `ctx.args`. The script is arbitrary local ESM run with full Node privileges
 (it can read files and spawn processes) — run only scripts you trust, as you would any local script.
+
+## Pipeline runner (`gth-batch`)
+
+`gth batch` above is the full command, wired into the `gaunt-sloth` app. When you want the matrix
+runtime on its own — inside a shell pipeline, without installing the whole CLI — this package ships a
+thin binary, `gth-batch`, that runs the same matrix and emits the **same per-cell records** `gth batch`
+produces, one JSON object per line (JSONL) on stdout:
+
+```bash
+# Fan a prompt-executable over rows piped in as JSON (or YAML), across two models.
+echo '[{"topic":"gears"},{"topic":"levers"}]' \
+  | gth-batch explain.md --models gemini-2.5-flash,gemini-2.5-pro -j 4 \
+  | jq -c 'select(.ok) | {id, model, answer}'
+```
+
+It takes the script path as its argument and the input axis as **inline `--over` data** (a JSON/YAML
+array of row objects) **or on stdin** — a pipeline already has the shell to produce the data, so
+unlike `gth batch` there is no CSV/JSONL file path. `--models a,b,c`, `-j <n>` (concurrency) and
+`--retry <n>` behave as in `gth batch`.
+
+Each stdout line is the full `CellResult` (`id`, `model`, `inputIndex`, `inputRow`, `ok`, `answer`,
+`tokensInput`/`tokensOutput`, `tools`, `durationMs`, `retries`) — stdout is kept a clean data channel
+(all progress/errors go to stderr), so it pipes straight into `jq`, `grep`, or a file. Following the
+`gth batch` exit-code contract, `gth-batch` exits `0` as long as the cells *ran* — a poor or failed
+cell is recorded as `"ok": false` in its line, not reflected in the exit code; only a harness error
+(bad arguments, an unreadable script, malformed `--over`, or a config failure) exits non-zero.
+
+It resolves your model from the same `.gsloth.config.*` as the rest of Gaunt Sloth (discovered from
+the working directory), so configure a provider there first.
 
 ## Programmatic use
 
