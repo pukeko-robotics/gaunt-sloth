@@ -9,7 +9,9 @@
  *  - shell out to ripgrep (`rg`) when it is on PATH;
  *  - fall back to an in-process JS scanner when `rg` is absent (CI machines may not have ripgrep).
  * Both sandbox to the current work-dir boundary ({@link getCurrentWorkDir}), bound each matching
- * line's preview, and cap the total match count.
+ * line's preview, cap the total match count, and enforce the `.aiignore` privacy boundary on BOTH
+ * engines ({@link makeAiignoreFilter}) — since the tool reads file contents through its own path, it
+ * must honour `.aiignore` itself rather than rely on the filesystem toolkit.
  *
  * Named `gth_grep`, NOT `grep`: the experimental deep backend (deepagents) registers its own `grep`
  * built-in and `createDeepAgent` throws on a name collision because both backends share the resolved
@@ -23,6 +25,7 @@ import type { Dirent } from 'node:fs';
 import path from 'node:path';
 import { GthConfig, normalizeBuiltInTools } from '@gaunt-sloth/core/config.js';
 import { getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { shouldIgnoreFile } from '@gaunt-sloth/core/utils/aiignoreUtils.js';
 
 export const GREP_TOOL_NAME = 'gth_grep';
 
@@ -44,6 +47,32 @@ export function resolveGrepFileSet(config: GthConfig): GrepFileSet {
   const entry = normalizeBuiltInTools(config?.builtInTools)[GREP_TOOL_NAME];
   if (entry && typeof entry === 'object' && entry.fileSet === 'all') return 'all';
   return 'gitignore';
+}
+
+/** Predicate over an ABSOLUTE file path: TRUE when the file may be searched (not `.aiignore`'d). */
+type IsAllowed = (absPath: string) => boolean;
+
+/**
+ * Build the `.aiignore` privacy filter for a grep run.
+ *
+ * SECURITY (GS2-51): `gth_grep` reads file CONTENTS through its OWN ripgrep / `fs.readFile` path,
+ * so — unlike the gsloth filesystem toolkit — it must enforce `.aiignore` ITSELF. Otherwise, being
+ * on by default, it would be a default-on bypass of that boundary on BOTH backends: the deep backend
+ * deliberately disables its fs toolkit precisely so a model cannot read an `.aiignore`-protected file
+ * (see {@link file://../core/GthDeepAgent.ts}), and `gth_grep` would re-open exactly that hole.
+ * `.gitignore` means "don't commit" (build junk); `.aiignore` means "don't let the AI read this,
+ * even though it is a real tracked file" — so an `.aiignore`'d-but-tracked-and-not-hidden file is the
+ * PRIMARY case, and is enforced on BOTH engines and under BOTH {@link GrepFileSet} corpora (the
+ * privacy boundary is orthogonal to the gitignore/all selection).
+ *
+ * Reuses the SAME {@link shouldIgnoreFile} matcher and the SAME rootDir (the work-dir) the fs toolkit
+ * uses, so a file is treated identically here as there — no hand-rolled `.aiignore` parsing.
+ *
+ * @returns predicate that is TRUE when `absPath` is ALLOWED (not aiignored).
+ */
+function makeAiignoreFilter(workDir: string, aiignore: GthConfig['aiignore']): IsAllowed {
+  return (absPath: string): boolean =>
+    !shouldIgnoreFile(absPath, workDir, aiignore?.patterns, aiignore?.enabled);
 }
 
 /** Default cap on the number of matches returned when the caller does not pass `limit`. */
@@ -316,7 +345,8 @@ function runRipgrep(
   pattern: string,
   target: ResolvedTarget,
   include: string | undefined,
-  fileSet: GrepFileSet
+  fileSet: GrepFileSet,
+  isAllowed: IsAllowed
 ): Promise<GrepMatch[]> {
   const args = buildRipgrepArgs(pattern, target, include, fileSet);
   return new Promise((resolve, reject) => {
@@ -341,7 +371,14 @@ function runRipgrep(
           reject(new GrepError(`Search failed: ${detail || error.message}`));
           return;
         }
-        resolve(parseRipgrepOutput(stdout.toString()));
+        // rg does not consult `.aiignore` — post-filter its matched paths through the SAME hook the
+        // JS fallback uses, so both engines enforce the privacy boundary identically. A match whose
+        // file is aiignored is dropped before it can reach the model.
+        resolve(
+          parseRipgrepOutput(stdout.toString()).filter((m) =>
+            isAllowed(path.join(target.searchRoot, m.path))
+          )
+        );
       }
     );
   });
@@ -395,7 +432,8 @@ async function runJsScanner(
   target: ResolvedTarget,
   include: string | undefined,
   limit: number,
-  fileSet: GrepFileSet
+  fileSet: GrepFileSet,
+  isAllowed: IsAllowed
 ): Promise<GrepMatch[]> {
   let regex: RegExp;
   try {
@@ -411,8 +449,10 @@ async function runJsScanner(
 
   const files: string[] = [];
   if (target.file) {
-    // An explicitly-named target file is always searched, even if it is a hidden dot-file — the
-    // corpus selection only governs directory discovery, matching rg's behaviour on an explicit arg.
+    // An explicitly-named target file is searched even if it is a hidden dot-file — the corpus
+    // selection only governs directory discovery, matching rg's behaviour on an explicit arg. The
+    // one exception is `.aiignore`: an aiignored file named by hand is still blocked below (hidden ≠
+    // aiignored), so naming the file cannot be used as a bypass.
     files.push(path.join(target.searchRoot, target.file));
   } else {
     await collectFiles(target.searchRoot, files, fileSet === 'gitignore');
@@ -422,6 +462,9 @@ async function runJsScanner(
   for (const file of files) {
     if (matches.length >= limit) break;
     if (includeRe && !includeRe.test(path.basename(file))) continue;
+    // `.aiignore` privacy boundary (GS2-51): skip BEFORE reading, so an aiignored file's contents
+    // are never even loaded — covers both the walk and an explicitly-named single-file target.
+    if (!isAllowed(file)) continue;
     let content: string;
     try {
       content = await fs.readFile(file, 'utf8');
@@ -446,7 +489,12 @@ async function runJsScanner(
   return matches;
 }
 
-async function grepImpl(args: GrepArgs, workDir: string, fileSet: GrepFileSet): Promise<string> {
+async function grepImpl(
+  args: GrepArgs,
+  workDir: string,
+  fileSet: GrepFileSet,
+  aiignore: GthConfig['aiignore']
+): Promise<string> {
   const limit = args.limit ?? DEFAULT_LIMIT;
   let target: ResolvedTarget;
   try {
@@ -456,13 +504,17 @@ async function grepImpl(args: GrepArgs, workDir: string, fileSet: GrepFileSet): 
     throw e;
   }
 
+  // The `.aiignore` privacy filter is resolved against the work-dir root (matching the fs toolkit)
+  // and enforced on whichever engine runs — see makeAiignoreFilter.
+  const isAllowed = makeAiignoreFilter(workDir, aiignore);
+
   let matches: GrepMatch[];
   try {
-    matches = await runRipgrep(args.pattern, target, args.include, fileSet);
+    matches = await runRipgrep(args.pattern, target, args.include, fileSet, isAllowed);
   } catch (e) {
     if (e instanceof RipgrepUnavailableError) {
       try {
-        matches = await runJsScanner(args.pattern, target, args.include, limit, fileSet);
+        matches = await runJsScanner(args.pattern, target, args.include, limit, fileSet, isAllowed);
       } catch (inner) {
         if (inner instanceof GrepError) return inner.message;
         throw inner;
@@ -483,7 +535,10 @@ export function get(config: GthConfig) {
   // Resolve the corpus selection once at tool-construction time from the same config that decided
   // this tool is enabled (GS2-51); the searched file-set is a config choice, not a per-call arg.
   const fileSet = resolveGrepFileSet(config);
+  // The `.aiignore` privacy boundary (GS2-51) is read from the SAME config the fs toolkit reads it
+  // from, so gth_grep enforces it identically — see makeAiignoreFilter.
+  const aiignore = config?.aiignore;
   const impl = async (args: GrepArgs): Promise<string> =>
-    grepImpl(args, getCurrentWorkDir(), fileSet);
+    grepImpl(args, getCurrentWorkDir(), fileSet, aiignore);
   return tool(impl, { name: GREP_TOOL_NAME, description, schema });
 }

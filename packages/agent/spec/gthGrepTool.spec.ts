@@ -392,6 +392,96 @@ describe('gthGrepTool', () => {
     });
   });
 
+  // --- .aiignore privacy boundary (GS2-51): a tracked, non-gitignored, non-hidden file listed in
+  // .aiignore must NEVER leak through gth_grep, on EITHER engine, incl. an explicitly-named target.
+  describe('.aiignore privacy boundary (GS2-51)', () => {
+    let tmpDir: string;
+    let originalInitCwd: string | undefined;
+
+    beforeAll(async () => {
+      tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'gth-grep-aiignore-'));
+      // A real .aiignore listing a tracked file — the primary .aiignore use case (NOT gitignored,
+      // NOT hidden, a genuine committed file the AI must not read).
+      await fsp.writeFile(path.join(tmpDir, '.aiignore'), 'secrets.yaml\n');
+      await fsp.writeFile(path.join(tmpDir, 'secrets.yaml'), 'find_me = SECRET');
+      await fsp.writeFile(path.join(tmpDir, 'allowed.yaml'), 'find_me = OK'); // control, not ignored
+    });
+    afterAll(async () => {
+      await fsp.rm(tmpDir, { recursive: true, force: true });
+    });
+    beforeEach(() => {
+      originalInitCwd = process.env.INIT_CWD;
+      process.env.INIT_CWD = tmpDir;
+    });
+    afterAll(() => {
+      if (originalInitCwd === undefined) delete process.env.INIT_CWD;
+      else process.env.INIT_CWD = originalInitCwd;
+    });
+
+    it('rg path: drops matches from an aiignored file, keeps the control file', async () => {
+      // rg itself does not know .aiignore; it would return the secret line. The tool post-filters it.
+      execFileMock.mockImplementation(
+        rgStdout('allowed.yaml:1:find_me = OK\nsecrets.yaml:1:find_me = SECRET\n')
+      );
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(cfg).invoke({ pattern: 'find_me' })) as string;
+      expect(out).toContain('allowed.yaml');
+      expect(out).not.toContain('secrets.yaml');
+      expect(out).not.toContain('SECRET');
+    });
+
+    it('JS fallback: never scans the aiignored file, keeps the control file', async () => {
+      execFileMock.mockImplementation(rgAbsent);
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(cfg).invoke({ pattern: 'find_me' })) as string;
+      expect(out).toContain('allowed.yaml');
+      expect(out).not.toContain('secrets.yaml');
+      expect(out).not.toContain('SECRET');
+    });
+
+    it('JS fallback: an explicitly-named aiignored file is blocked (no by-hand bypass)', async () => {
+      execFileMock.mockImplementation(rgAbsent);
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(cfg).invoke({ pattern: 'find_me', path: 'secrets.yaml' })) as string;
+      expect(out).toBe('No matches found');
+      expect(out).not.toContain('SECRET');
+    });
+
+    it('rg path: an explicitly-named aiignored file is blocked (no by-hand bypass)', async () => {
+      execFileMock.mockImplementation(rgStdout('secrets.yaml:1:find_me = SECRET\n'));
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(cfg).invoke({ pattern: 'find_me', path: 'secrets.yaml' })) as string;
+      expect(out).toBe('No matches found');
+      expect(out).not.toContain('SECRET');
+    });
+
+    it('control: an explicitly-named non-aiignored file still matches (no over-filtering)', async () => {
+      execFileMock.mockImplementation(rgAbsent);
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(cfg).invoke({ pattern: 'find_me', path: 'allowed.yaml' })) as string;
+      expect(out).toContain('allowed.yaml');
+    });
+
+    it('the privacy boundary holds under fileSet "all" too (orthogonal to the corpus)', async () => {
+      execFileMock.mockImplementation(rgAbsent);
+      const allCfg = { builtInTools: { gth_grep: { fileSet: 'all' } } } as unknown as GthConfig;
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(allCfg).invoke({ pattern: 'find_me' })) as string;
+      expect(out).toContain('allowed.yaml');
+      expect(out).not.toContain('secrets.yaml');
+      expect(out).not.toContain('SECRET');
+    });
+
+    it('respects an explicit disable: aiignore.enabled=false lets the file through', async () => {
+      execFileMock.mockImplementation(rgAbsent);
+      const offCfg = { aiignore: { enabled: false } } as unknown as GthConfig;
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(offCfg).invoke({ pattern: 'find_me' })) as string;
+      // With the boundary explicitly disabled, the tool no longer filters it (matches the fs toolkit).
+      expect(out).toContain('secrets.yaml');
+    });
+  });
+
   // --- sandbox boundary: independent of which execution path would run -------------------------
   describe('sandbox boundary', () => {
     let tmpDir: string;
