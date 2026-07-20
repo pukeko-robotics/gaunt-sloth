@@ -1,0 +1,4 @@
+# BATCH-13 eval-it: generated run artifacts (per-case JSON + results.json + default report dirs).
+workdir/out/
+workdir/.gsloth/gth_*_EVAL/
+node_modules/

@@ -1,0 +1,11 @@
+# BATCH-13 STEP 0 pre-flight — prove the eval SUT (target.type gth-agent) actually loads MCP tools
+# via the per-identity initConfig -> resolvers -> MultiServerMCPClient chain with the admin bearer,
+# and pin the exact captured MCP tool name (mcp__authz__whoami). If this does not PASS, STOP.
+target:
+  type: gth-agent
+identities: [admin]
+cases:
+  - id: whoami-loads-over-mcp
+    prompt: 'Who am I? Call the whoami tool and report exactly what it returns.'
+    must_call: ['mcp__authz__whoami']
+    must_contain: ['UID-ADMIN']

@@ -1,5 +1,8 @@
 packages:
   - 'packages/*'
+  # BATCH-13: standalone, private (unpublished) live MCP authz integration suite for `gth eval`.
+  # Not part of the root `build` script nor `pnpm run it`; run on demand via eval-it/run-authz-eval.sh.
+  - 'eval-it'
 
 # Force a single copy of @langchain/core across the workspace. A workspace
 # package can resolve a provider (e.g. @langchain/xai) via its optional

@@ -1,0 +1,16 @@
+{
+  "llm": {
+    "type": "anthropic",
+    "model": "claude-haiku-4-5"
+  },
+  "allowedTools": ["mcp__authz__*"],
+  "mcpServers": {
+    "authz": {
+      "transport": "http",
+      "url": "http://127.0.0.1:39405/mcp",
+      "headers": {
+        "Authorization": "Bearer bob-token"
+      }
+    }
+  }
+}
