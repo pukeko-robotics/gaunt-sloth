@@ -12,7 +12,7 @@ import {
   readFileFromProjectDir,
   readMultipleFilesFromProjectDir,
 } from '@gaunt-sloth/core/utils/fileUtils.js';
-import type { RunCellFn } from '@gaunt-sloth/batch';
+import type { RunCellFn, RunConversationFn } from '@gaunt-sloth/batch';
 
 interface BatchCommandOptions {
   /** `--over <path.csv|path.jsonl>` — the input axis: one matrix cell per row/record. */
@@ -157,6 +157,79 @@ export async function buildProductionRunCell(
         // above) — surface it as a warning only.
         displayWarning(
           `Failed to clean up tools for cell ${cell.id}: ` +
+            `${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`
+        );
+      }
+    }
+  };
+}
+
+/**
+ * BATCH-12 Task 2 — build the injectable {@link RunConversationFn} that adapts core's MULTI-TURN
+ * `runConversation` to `gth eval`'s conversation seam. The multi-turn analogue of
+ * {@link buildProductionRunCell}: same fresh-`createResolvers()` per conversation + cleanup-on-
+ * every-path discipline, but it runs a whole scripted conversation (agent/tools built ONCE, messages
+ * accumulated across turns) and returns one outcome per turn.
+ *
+ * No model axis (`gth eval` has no `--models`), so this takes the already-resolved SUT/identity
+ * `config` directly — mirroring how `evalCommand.ts` builds one config per identity and passes it in
+ * (it does NOT call `initConfig` here, so the command's `initConfig`-once-per-identity contract
+ * holds). `writeOutputToFile` is forced off (eval writes its own per-cell JSON via `writeEvalOutput`).
+ *
+ * A rare throw from `runConversation` (e.g. agent init failed) is deliberately NOT swallowed here:
+ * `runBatchMatrix` catches it as a failed cell and the runner surfaces the error on turn 1, which is
+ * more informative than an empty result. The `finally` still tears the resolvers down exactly once.
+ */
+export async function buildProductionRunConversation(
+  config: GthConfig,
+  preamble: string,
+  options: ProductionRunCellOptions
+): Promise<RunConversationFn> {
+  const { runConversation } = await import('@gaunt-sloth/core/runtime/conversation.js');
+  const { createResolvers } = await import('@gaunt-sloth/agent/resolvers.js');
+  const { resolveAgentFactory } = await import('@gaunt-sloth/agent/core/resolveAgentFactory.js');
+
+  const cellConfig: GthConfig = {
+    ...config,
+    canInterruptInferenceWithEsc: false,
+    writeOutputToFile: false,
+  };
+
+  return async (userMessages) => {
+    // Wrap each turn's user message the same way single-turn cells wrap their content, so a turn's
+    // framing matches an equivalent single-turn case exactly.
+    const wrapped = userMessages.map((message) =>
+      wrapContent(message, options.wrapBlockPrefix, options.wrapPrefix, true)
+    );
+
+    // Fresh resolvers (its own MCP client) per conversation, torn down once when the whole
+    // conversation ends — the agent/tools persist ACROSS the turns inside `runConversation`.
+    const resolvers = createResolvers();
+    try {
+      const turns = await runConversation(
+        `${options.sourcePrefix}-conversation`,
+        preamble,
+        wrapped,
+        cellConfig,
+        resolvers,
+        options.command,
+        resolveAgentFactory(cellConfig, 'lean')
+      );
+      return turns.map(({ ok, answer, tokensInput, tokensOutput, tools, error }) => ({
+        ok,
+        answer,
+        tokensInput,
+        tokensOutput,
+        tools,
+        error,
+      }));
+    } finally {
+      try {
+        await resolvers.cleanupTools?.();
+      } catch (cleanupError) {
+        // A cleanup failure must never mask the conversation's real result — warn only.
+        displayWarning(
+          `Failed to clean up tools for conversation: ` +
             `${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`
         );
       }

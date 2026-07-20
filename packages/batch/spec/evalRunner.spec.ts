@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { EvalCase, EvalExpectation, EvalSuite, JudgeFn } from '#src/evalTypes.js';
+import type {
+  EvalCase,
+  EvalExpectation,
+  EvalSuite,
+  JudgeFn,
+  RunConversationFn,
+} from '#src/evalTypes.js';
 import type { CellRunOutcome, MatrixCell, RunCellFn } from '#src/types.js';
 
 /** Build one {@link EvalExpectation} with all assertion arrays defaulted to `[]` — the BATCH-12
@@ -621,5 +627,242 @@ describe('runEvalSuite identity matrix', () => {
     // The two non-colliding cells, for completeness.
     expect(cellFor('x', 'z')[0].verdict).toBe('FAIL');
     expect(cellFor('x__y', 'y__z')[0].verdict).toBe('PASS');
+  });
+});
+
+// BATCH-12 Task 2: multi-turn cases — a case whose `turns.length > 1` is ONE conversation graded
+// turn-by-turn. No live MCP/conversation here, so these use a FAKE `RunConversationFn` returning
+// scripted per-turn answers + tool traces; the real memory/authorization behaviour is unverified
+// pending the reporter's live pass. Single-turn cases keep flowing through `runCell` (proven path).
+describe('runEvalSuite multi-turn', () => {
+  /** A 2-turn no-identities case: turn 1 checks a substring, turn 2 checks a digit. */
+  function twoTurnCase(): EvalCase {
+    return {
+      id: 'convo',
+      passThreshold: 6,
+      turns: [
+        {
+          user: 'what contract types exist?',
+          expectations: [makeExpectation({ mustContain: ['contract'] })],
+        },
+        {
+          user: 'how many did you just list?',
+          expectations: [makeExpectation({ mustMatch: [/\d+/] })],
+        },
+      ],
+    };
+  }
+
+  it('runs the whole conversation through ONE call (agent built once), grading each turn by its own blocks', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    let calls = 0;
+    let received: string[] | undefined;
+    const runConversation: RunConversationFn = async (userMessages) => {
+      calls++;
+      received = userMessages;
+      return [
+        { ok: true, answer: 'the contract types are A and B' },
+        { ok: true, answer: 'there are 2 of them' },
+      ];
+    };
+
+    const summary = await runEvalSuite(makeSuite([twoTurnCase()]), { runConversation });
+
+    // The conversation ran through exactly ONE RunConversationFn call (not one per turn), and it
+    // received ALL the user messages in order (the agent/tools are built once for the whole convo).
+    expect(calls).toBe(1);
+    expect(received).toEqual(['what contract types exist?', 'how many did you just list?']);
+    expect(summary).toMatchObject({ total: 1, passed: 1, failed: 0 });
+    expect(summary.cases[0]).toMatchObject({ id: 'convo', verdict: 'PASS', sutOk: true });
+    expect(summary.cases[0].turns).toHaveLength(2);
+    expect(summary.cases[0].turns![0]).toMatchObject({ ok: true, verdict: 'PASS' });
+    expect(summary.cases[0].turns![1]).toMatchObject({ ok: true, verdict: 'PASS' });
+  });
+
+  it('FAILs the cell (exit 1) when a LATER turn fails, naming the failing turn', async () => {
+    const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
+    const runConversation: RunConversationFn = async () => [
+      { ok: true, answer: 'the contract types are A and B' }, // turn 1 PASSes (has "contract")
+      { ok: true, answer: 'quite a lot actually' }, // turn 2 FAILs (no digit)
+    ];
+
+    const summary = await runEvalSuite(makeSuite([twoTurnCase()]), { runConversation });
+
+    expect(summary.cases[0]).toMatchObject({ verdict: 'FAIL', sutOk: true });
+    expect(summary.cases[0].turns![0].verdict).toBe('PASS');
+    expect(summary.cases[0].turns![1].verdict).toBe('FAIL');
+    // The cell's reasons pinpoint the failing turn.
+    expect(summary.cases[0].reasons.some((r) => r.startsWith('turn 2:'))).toBe(true);
+    expect(classifyEvalExit(summary)).toBe(1);
+  });
+
+  it('composes with the identity matrix: one conversation per identity, per-turn identity scoping', async () => {
+    const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
+    const suite: EvalSuite = {
+      target: { type: 'gth-agent' },
+      identities: ['admin', 'limited'],
+      cases: [
+        {
+          id: 'convo',
+          passThreshold: 6,
+          turns: [
+            {
+              user: 'list the contract types',
+              expectations: [
+                makeExpectation({ identities: ['admin'], mustCall: ['mcp__*'] }),
+                makeExpectation({ identities: ['limited'], mustNotCall: ['mcp__*'] }),
+              ],
+            },
+            { user: 'how many?', expectations: [makeExpectation({ mustContain: ['count'] })] },
+          ],
+        },
+      ],
+    };
+    const seenBy: Record<string, string[]> = {};
+    const runConversationByIdentity = new Map<string, RunConversationFn>([
+      [
+        'admin',
+        async (m) => {
+          seenBy.admin = m;
+          return [
+            { ok: true, answer: 'types: A, B', tools: ['mcp__x__list'] }, // called mcp → PASS admin block
+            { ok: true, answer: 'the count is 2' }, // has "count" → PASS
+          ];
+        },
+      ],
+      [
+        'limited',
+        async (m) => {
+          seenBy.limited = m;
+          return [
+            { ok: true, answer: 'here they are: A, B', tools: ['mcp__x__list'] }, // LEAK → FAIL must_not_call
+            { ok: true, answer: 'the count is 2' },
+          ];
+        },
+      ],
+    ]);
+
+    const summary = await runEvalSuite(suite, { runConversationByIdentity });
+
+    // Two conversations (one per identity), each handed ALL its user messages.
+    expect(seenBy.admin).toEqual(['list the contract types', 'how many?']);
+    expect(seenBy.limited).toEqual(['list the contract types', 'how many?']);
+    expect(summary).toMatchObject({ total: 2, passed: 1, failed: 1 });
+    const admin = summary.cases.find((c) => c.identity === 'admin')!;
+    const limited = summary.cases.find((c) => c.identity === 'limited')!;
+    expect(admin.verdict).toBe('PASS');
+    expect(limited.verdict).toBe('FAIL');
+    // The authorization leak is turn 1 of the limited conversation.
+    expect(limited.turns![0].verdict).toBe('FAIL');
+    expect(limited.turns![1].verdict).toBe('PASS');
+    expect(limited.reasons.some((r) => r.startsWith('turn 1:') && r.includes('mcp__x__list'))).toBe(
+      true
+    );
+    expect(classifyEvalExit(summary)).toBe(1);
+  });
+
+  it('a mid-conversation SUT failure → cell FAIL, sutOk TRUE (a turn ran) → exit 1', async () => {
+    const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
+    const runConversation: RunConversationFn = async () => [
+      { ok: true, answer: 'the contract types are A and B' }, // turn 1 ran + PASSes
+      { ok: false, error: 'connect ECONNREFUSED' }, // turn 2 SUT failed (no answer)
+    ];
+
+    const summary = await runEvalSuite(makeSuite([twoTurnCase()]), { runConversation });
+
+    expect(summary.cases[0]).toMatchObject({ verdict: 'FAIL', sutOk: true });
+    expect(summary.cases[0].turns![1].ok).toBe(false);
+    expect(summary.cases[0].reasons.some((r) => /^turn 2:.*ECONNREFUSED/.test(r))).toBe(true);
+    // A real (partial) result → product signal, exit 1, NOT harness exit 2.
+    expect(classifyEvalExit(summary)).toBe(1);
+  });
+
+  it('a totally-failed conversation (short outcomes) → sutOk FALSE, un-run turns padded → exit 2', async () => {
+    const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
+    // The runner aborts after turn 1 errors — it returns only ONE outcome for a 2-turn case.
+    const runConversation: RunConversationFn = async () => [
+      { ok: false, error: 'agent init failed' },
+    ];
+
+    const summary = await runEvalSuite(makeSuite([twoTurnCase()]), { runConversation });
+
+    expect(summary.cases[0].sutOk).toBe(false);
+    expect(summary.cases[0].turns).toHaveLength(2);
+    expect(summary.cases[0].turns![0].ok).toBe(false);
+    // Turn 2 was never attempted → padded as a failure with a clear reason.
+    expect(summary.cases[0].turns![1].ok).toBe(false);
+    expect(summary.cases[0].turns![1].reasons[0]).toMatch(/ended before this turn/);
+    // No gradeable result at all → harness/environment error, exit 2.
+    expect(classifyEvalExit(summary)).toBe(2);
+  });
+
+  it('surfaces a THROWN conversation error (no stash) on turn 1 → sutOk FALSE', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    // A runner that throws (e.g. agent init blew up) is caught by runBatchMatrix as a failed cell;
+    // no per-turn stash exists, so the thrown message is surfaced on turn 1.
+    const runConversation: RunConversationFn = async () => {
+      throw new Error('boom during init');
+    };
+
+    const summary = await runEvalSuite(makeSuite([twoTurnCase()]), { runConversation });
+
+    expect(summary.cases[0].sutOk).toBe(false);
+    expect(summary.cases[0].reasons[0]).toMatch(/^turn 1:.*boom during init/);
+  });
+
+  it('runs a PER-TURN judge through the shared grader (that turn answer reaches the judge and drives the verdict)', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    // Turn 2 declares a judge rubric (the brief's own example shape); turn 1 is a deterministic check.
+    const suite = makeSuite([
+      {
+        id: 'convo',
+        passThreshold: 6,
+        turns: [
+          { user: 'greet me', expectations: [makeExpectation({ mustContain: ['hi'] })] },
+          { user: 'now be formal', expectations: [makeExpectation({ judgeRubric: 'is formal' })] },
+        ],
+      },
+    ]);
+    const runConversation: RunConversationFn = async () => [
+      { ok: true, answer: 'hi there' }, // turn 1 PASSes its check
+      { ok: true, answer: 'yo dude' }, // turn 2 goes to the judge
+    ];
+    const judgedAnswers: string[] = [];
+    const judge: JudgeFn = async (answer) => {
+      judgedAnswers.push(answer);
+      return { attempted: true, ok: true, verdict: { rate: 2, reason: 'too casual' } };
+    };
+
+    const summary = await runEvalSuite(suite, { runConversation, judge });
+
+    // The judge saw TURN 2's answer specifically (per-turn answer routing, not turn 1's).
+    expect(judgedAnswers).toEqual(['yo dude']);
+    expect(summary.cases[0].verdict).toBe('FAIL');
+    expect(summary.cases[0].turns![0].verdict).toBe('PASS');
+    expect(summary.cases[0].turns![1].verdict).toBe('FAIL');
+    // The judge outcome is attached to THAT turn's result, and drives the cell reason.
+    expect(summary.cases[0].turns![1].judge).toMatchObject({ ok: true, verdict: { rate: 2 } });
+    expect(
+      summary.cases[0].reasons.some((r) => r.startsWith('turn 2:') && r.includes('below threshold'))
+    ).toBe(true);
+  });
+
+  it('routes single-turn cases through runCell and multi-turn cases through runConversation in ONE suite', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    const suite = makeSuite([makeCase({ id: 'single', mustContain: ['hi'] }), twoTurnCase()]);
+    const runCell = runCellReturning({ single: { ok: true, answer: 'hi there' } });
+    const runConversation: RunConversationFn = async () => [
+      { ok: true, answer: 'the contract types are A and B' },
+      { ok: true, answer: 'there are 2' },
+    ];
+
+    const summary = await runEvalSuite(suite, { runCell, runConversation });
+
+    expect(summary).toMatchObject({ total: 2, passed: 2, failed: 0 });
+    // The single-turn cell keeps its flat shape (no per-turn breakdown); the multi-turn cell has one.
+    const single = summary.cases.find((c) => c.id === 'single')!;
+    const convo = summary.cases.find((c) => c.id === 'convo')!;
+    expect(single.turns).toBeUndefined();
+    expect(convo.turns).toHaveLength(2);
   });
 });

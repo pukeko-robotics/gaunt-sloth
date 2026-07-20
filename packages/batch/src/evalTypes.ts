@@ -77,6 +77,35 @@ export interface EvalTurn {
 }
 
 /**
+ * One turn's raw run outcome inside a multi-turn conversation (BATCH-12 Task 2). Structurally the
+ * per-turn analogue of BATCH-1's {@link ../types.js CellRunOutcome}: the turn's answer plus the
+ * tools/tokens captured FOR THAT TURN — a per-invoke GS2-16 delta (each `processMessages` call
+ * resets the tally), NOT the cumulative conversation total. `ok:false` with `error` set means that
+ * turn's SUT invocation failed (no answer to grade). The conversational runner returns one of these
+ * per turn it attempted, in turn order (a short array = the conversation aborted mid-way).
+ */
+export interface TurnRunOutcome {
+  ok: boolean;
+  answer?: string;
+  tokensInput?: number;
+  tokensOutput?: number;
+  tools?: string[];
+  error?: string;
+}
+
+/**
+ * Injectable "run one whole scripted conversation" function (BATCH-12 Task 2) — the multi-turn
+ * analogue of BATCH-1's {@link ../types.js RunCellFn}, and the seam that lets
+ * {@link ../evalRunner.js}'s multi-turn path be unit tested without any real LLM/MCP. Given the
+ * ordered user messages of ONE (case × identity) conversation, it builds the agent + resolves tools
+ * ONCE, runs each turn against the accumulated message history, and returns one {@link TurnRunOutcome}
+ * per turn (per-turn answer + per-turn tool delta), cleaning up once. The production wiring
+ * (`batchCommand.ts`'s `buildProductionRunConversation`) adapts core's `runConversation`; tests
+ * inject a fake returning scripted per-turn answers + traces.
+ */
+export type RunConversationFn = (userMessages: string[]) => Promise<TurnRunOutcome[]>;
+
+/**
  * One case parsed and normalized from suite YAML. Every case — flat or matrix — reduces to this
  * ONE shape: a list of {@link EvalTurn}s (Task 1: length exactly 1, its `user` = the case's
  * `prompt`) whose expectations carry the assertions. `passThreshold` is per-case and pre-resolved
@@ -142,6 +171,28 @@ export interface JudgeOutcome {
  * this shape; tests inject a fake that resolves/fails as needed. */
 export type JudgeFn = (answer: string, rubric: string) => Promise<JudgeOutcome>;
 
+/**
+ * One graded turn inside a multi-turn cell's result (BATCH-12 Task 2). Present only on a multi-turn
+ * {@link EvalCaseResult} (via its `turns` array); a single-turn cell keeps its flat top-level shape
+ * unchanged. Carries the turn's user message, its answer/tools/tokens, and its own verdict + reasons
+ * so the output pinpoints exactly which turn failed and why.
+ */
+export interface EvalTurnResult {
+  user: string;
+  answer?: string;
+  tokensInput?: number;
+  tokensOutput?: number;
+  tools?: string[];
+  /** Whether this turn's SUT invocation ran (mirrors {@link TurnRunOutcome.ok}); `false` = the turn
+   * produced no answer (transport/agent error, or the conversation aborted before reaching it). */
+  ok: boolean;
+  verdict: 'PASS' | 'FAIL';
+  checks?: DeterministicCheckResult;
+  judge?: JudgeOutcome;
+  /** Every reason this turn FAILed; empty when `verdict` is `PASS`. */
+  reasons: string[];
+}
+
 /** One graded cell's full outcome, as written to `<id>.json` (matrix: `<id>__<identity>.json`) and
  * summarized in `results.json`. A cell is one (case × identity) pair: without a suite `identities`
  * list there is exactly one cell per case (`identity` omitted, byte-for-byte as before BATCH-12);
@@ -164,8 +215,17 @@ export interface EvalCaseResult {
   checks?: DeterministicCheckResult;
   judge?: JudgeOutcome;
   /** Every reason the case FAILed (deterministic check failures, judge-below-threshold, judge
-   * error, SUT failure). Empty when `verdict` is `PASS`. */
+   * error, SUT failure). Empty when `verdict` is `PASS`. For a multi-turn cell each reason is
+   * prefixed with the failing turn (`turn N: …`), and the full per-turn breakdown is in {@link turns}. */
   reasons: string[];
+  /**
+   * BATCH-12 Task 2 — the per-turn breakdown of a MULTI-TURN cell (one entry per conversational
+   * turn, in order). Present only for a multi-turn case; **omitted entirely for a single-turn
+   * cell**, so an existing single-`prompt` case's `<id>.json` stays byte-for-byte identical. The
+   * cell PASSES iff every turn here PASSes; the top-level `answer`/`checks`/`judge`/`tools` fields
+   * are left unset for a multi-turn cell (there is no single answer) — read {@link turns} instead.
+   */
+  turns?: EvalTurnResult[];
 }
 
 /** The suite-level aggregate written to `results.json` — `gth eval` exits 0 iff `failed === 0`. */
