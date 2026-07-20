@@ -1,0 +1,48 @@
+# BATCH-17 — LIVE passing suite for the `ag-ui` target.
+#
+# The SUT is gaunt-sloth's OWN AG-UI server (`gth api ag-ui`, started by run-agui-eval.sh), serving a
+# Haiku agent whose ONE tool, `get_ops_status`, echoes a VERBATIM, paraphrase-proof marker
+# (OPS-STATUS-7Q9Z) the model cannot invent. gth's ag-ui target drives the server over HTTP/SSE and —
+# unlike the adk-agent target — CAPTURES the streamed `TOOL_CALL_START`, so `must_call` grades the
+# real tool trace live. The proof the tool ACTUALLY ran is doubled: `must_call: [get_ops_status]`
+# (the streamed call) plus `must_contain: [OPS-STATUS-7Q9Z]` (the tool's marker in the answer).
+#
+# `url` MUST match the port run-agui-eval.sh serves on (AGUI_PORT, default 41757); `agent_id` is the
+# `{agentId}` path segment of POST {url}/agents/{agentId}/run (the server accepts any id).
+target:
+  type: ag-ui
+  url: http://127.0.0.1:41757
+  agent_id: default
+defaults:
+  pass_threshold: 6
+cases:
+  # 1. The must_call proof: the ag-ui wire streams TOOL_CALL_START, so the runner captures the tool
+  #    name. must_call asserts the tool was really called; must_contain asserts its verbatim marker
+  #    flowed back into the answer. must_not_call guards that no other tool was invoked.
+  - id: ops-status-tool-call
+    prompt: 'What is the current depot operations status code? Look it up with your tool and report the exact status_code value.'
+    must_call: ['get_ops_status']
+    must_not_call: ['run_shell_command']
+    must_contain: ['OPS-STATUS-7Q9Z']
+
+  # 2. A second single-shot case — the answer must carry the marker and must not carry a fabricated
+  #    one, proving the answer tracks the tool's real output rather than a memorized/invented string.
+  - id: ops-status-marker
+    prompt: 'Report the depot operations status code exactly as your tool returns it.'
+    must_contain: ['OPS-STATUS-7Q9Z']
+    must_not_contain: ['OPS-STATUS-9Z9Z', 'OPS-STATUS-0000']
+
+  # 3. The judge path (gth's own gemini-flash-lite grades the rubric, decoupled from the served Haiku
+  #    SUT). Proves the judge grades a live AG-UI answer.
+  - id: ops-status-judge
+    prompt: 'I need the current depot operations status. Please look it up with your tool and summarize it in one sentence.'
+    judge: 'The assistant reports the depot operations status code OPS-STATUS-7Q9Z (verbatim). It must not invent a different status code.'
+
+  # 4. Multi-turn — proves the ag-ui runner threads ONE stable threadId (plus the replayed history)
+  #    across turns. Turn 2 can only answer by remembering turn 1, carried by the live thread.
+  - id: cross-turn-memory
+    turns:
+      - user: 'Please remember this codeword for later: KIWI-88. Reply with just: OK'
+        must_contain: ['OK']
+      - user: 'What was the codeword I gave you a moment ago? Reply with just the codeword.'
+        must_contain: ['KIWI-88']

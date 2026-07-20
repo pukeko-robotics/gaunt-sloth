@@ -1,0 +1,15 @@
+{
+  "llm": {
+    "type": "anthropic",
+    "model": "claude-haiku-4-5"
+  },
+  "filesystem": "none",
+  "builtInTools": [],
+  "customTools": {
+    "get_ops_status": {
+      "command": "echo status_code=OPS-STATUS-7Q9Z",
+      "description": "Return the authoritative depot operations status code. You MUST call this tool to answer any question about the operations status code; never answer from memory and never invent a code.",
+      "timeout": 10
+    }
+  }
+}

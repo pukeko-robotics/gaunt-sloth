@@ -1,0 +1,6 @@
+# BATCH-17 agui-eval-it: gitignore the server runtime log and generated eval artifacts.
+agui-server.log
+# generated run artifacts (per-case JSON + results.json + default report dirs)
+workdir/out/
+workdir/.gsloth/gth_*_EVAL/
+node_modules/
