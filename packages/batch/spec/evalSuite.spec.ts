@@ -37,6 +37,11 @@ describe('parseEvalSuite', () => {
       mustContain: ['hello', 'goodbye'],
       mustNotContain: ['rude'],
       shouldContainAny: ['hi', 'hey'],
+      mustCall: [],
+      mustNotCall: [],
+      mustMatch: [],
+      mustNotMatch: [],
+      jsonPath: [],
       judgeRubric: undefined,
       passThreshold: 6, // from suite defaults
     });
@@ -48,6 +53,11 @@ describe('parseEvalSuite', () => {
       mustContain: [],
       mustNotContain: [],
       shouldContainAny: [],
+      mustCall: [],
+      mustNotCall: [],
+      mustMatch: [],
+      mustNotMatch: [],
+      jsonPath: [],
       judgeRubric: 'Answers with a ranked summary and correctly formatted values.',
       passThreshold: 6,
     });
@@ -117,7 +127,7 @@ cases:
   - id: empty-case
     prompt: "p"
 `)
-    ).toThrow(/case "empty-case".*no deterministic.*no judge/s);
+    ).toThrow(/case "empty-case".*no checks.*no judge/s);
   });
 
   it('rejects a case whose judge rubric is only whitespace, when it has no checks either', async () => {
@@ -217,5 +227,190 @@ cases: []
   it('includes the source path in error messages when supplied', async () => {
     const { parseEvalSuite } = await import('#src/evalSuite.js');
     expect(() => parseEvalSuite('not: [valid', 'suite.yaml')).toThrow(/\(suite\.yaml\)/);
+  });
+
+  // BATCH-10 — the new assertion types.
+  describe('BATCH-10 assertion types', () => {
+    it('parses must_call / must_not_call / must_match / must_not_match / json_path', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: rich
+    prompt: "p"
+    must_call: ["mcp__unimarket__*"]
+    must_not_call: ["read_file"]
+    must_match: ["\\\\bRPP-\\\\d+\\\\b"]
+    must_not_match: ["\\\\bERROR\\\\b"]
+    json_path:
+      - { path: "$.items[0].scope", equals: "caller" }
+      - { path: "data.status", contains: "ok" }
+`);
+      const c = suite.cases[0];
+      expect(c.mustCall).toEqual(['mcp__unimarket__*']);
+      expect(c.mustNotCall).toEqual(['read_file']);
+      // Regex strings are compiled to RegExp and stored.
+      expect(c.mustMatch).toHaveLength(1);
+      expect(c.mustMatch[0]).toBeInstanceOf(RegExp);
+      expect(c.mustMatch[0].source).toBe('\\bRPP-\\d+\\b');
+      expect(c.mustNotMatch[0]).toBeInstanceOf(RegExp);
+      expect(c.jsonPath).toEqual([
+        { path: '$.items[0].scope', equals: 'caller' },
+        { path: 'data.status', contains: 'ok' },
+      ]);
+    });
+
+    it('defaults every new assertion array to [] when absent', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+`);
+      const c = suite.cases[0];
+      expect(c.mustCall).toEqual([]);
+      expect(c.mustNotCall).toEqual([]);
+      expect(c.mustMatch).toEqual([]);
+      expect(c.mustNotMatch).toEqual([]);
+      expect(c.jsonPath).toEqual([]);
+    });
+
+    it('counts a case with ONLY must_call (no substring, no judge) as valid', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: mcp-only
+    prompt: "p"
+    must_call: ["mcp__*"]
+`);
+      expect(suite.cases[0].mustCall).toEqual(['mcp__*']);
+    });
+
+    it('throws at parse time on an invalid must_match regex, with a clear message', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: bad-regex
+    prompt: "p"
+    must_match: ["([unterminated"]
+`)
+      ).toThrow(/invalid must_match pattern "\(\[unterminated"/);
+    });
+
+    it('throws at parse time on an invalid must_not_match regex', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: bad-regex
+    prompt: "p"
+    must_not_match: ["(?<"]
+`)
+      ).toThrow(/invalid must_not_match pattern/);
+    });
+
+    it('rejects a json_path entry that sets both equals and contains', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    json_path:
+      - { path: "a.b", equals: 1, contains: "x" }
+`)
+      ).toThrow(/json_path entry for "a\.b" must set exactly one of "equals" or "contains"/);
+    });
+
+    it('rejects a json_path entry that sets neither equals nor contains', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    json_path:
+      - { path: "a.b" }
+`)
+      ).toThrow(/must set exactly one of "equals" or "contains"/);
+    });
+
+    it('accepts a json_path entry whose equals target is explicitly null', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    json_path:
+      - { path: "a.b", equals: null }
+`);
+      expect(suite.cases[0].jsonPath).toEqual([{ path: 'a.b', equals: null }]);
+    });
+  });
+
+  // BATCH-10 Task 2: the optional top-level `judge_profile` field.
+  describe('judge_profile', () => {
+    it('surfaces a suite-level judge_profile as EvalSuite.judgeProfile', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+judge_profile: strict-judge
+cases:
+  - id: c1
+    prompt: "p"
+    judge: "Graded by a separate model."
+`);
+      expect(suite.judgeProfile).toBe('strict-judge');
+    });
+
+    it('leaves judgeProfile undefined when the suite declares no judge_profile (regression)', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+`);
+      expect(suite.judgeProfile).toBeUndefined();
+    });
+
+    it('normalizes a blank/whitespace-only judge_profile to undefined (= no separate judge)', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+judge_profile: "   "
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+`);
+      expect(suite.judgeProfile).toBeUndefined();
+    });
+    it('rejects a judge_profile containing a path traversal sequence or separator', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      // Single-quoted YAML so a backslash stays literal (double quotes would treat `\b` as an escape).
+      for (const bad of ['../../etc', 'a/b', 'a\\b', '..']) {
+        expect(() =>
+          parseEvalSuite(`
+target: { type: gth-agent }
+judge_profile: '${bad}'
+cases:
+  - id: c1
+    prompt: "p"
+    judge: "graded elsewhere"
+`)
+        ).toThrow(/judge_profile .* must be a plain profile name/);
+      }
+    });
   });
 });

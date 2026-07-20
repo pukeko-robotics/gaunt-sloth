@@ -9,6 +9,11 @@ function makeCase(overrides: Partial<EvalCase> = {}): EvalCase {
     mustContain: [],
     mustNotContain: [],
     shouldContainAny: [],
+    mustCall: [],
+    mustNotCall: [],
+    mustMatch: [],
+    mustNotMatch: [],
+    jsonPath: [],
     judgeRubric: undefined,
     passThreshold: 6,
     ...overrides,
@@ -243,6 +248,68 @@ describe('runEvalSuite', () => {
 
     expect(summary.total).toBe(6);
     expect(maxInFlight).toBe(2);
+  });
+});
+
+// BATCH-10: tool-trace assertions (must_call / must_not_call) graded end-to-end, proving the
+// captured `cellResult.tools` are threaded into gradeCase and drive the verdict.
+describe('runEvalSuite tool-call assertions', () => {
+  it('PASSes a case that called an mcp tool and no forbidden tool (glob + exact)', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    const suite = makeSuite([
+      makeCase({ mustCall: ['mcp__*'], mustNotCall: ['read_file', 'gth_grep'] }),
+    ]);
+    const runCell = runCellReturning({
+      'case-1': { ok: true, answer: 'done', tools: ['mcp__unimarket__search'] },
+    });
+
+    const summary = await runEvalSuite(suite, { runCell });
+
+    expect(summary.cases[0]).toMatchObject({ verdict: 'PASS', reasons: [] });
+  });
+
+  it('FAILs a case that skipped mcp and called a forbidden tool (both reasons reported)', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    const suite = makeSuite([
+      makeCase({ mustCall: ['mcp__*'], mustNotCall: ['read_file', 'gth_grep'] }),
+    ]);
+    const runCell = runCellReturning({
+      'case-1': { ok: true, answer: 'done', tools: ['read_file'] },
+    });
+
+    const summary = await runEvalSuite(suite, { runCell });
+
+    expect(summary.cases[0].verdict).toBe('FAIL');
+    expect(summary.cases[0].reasons).toEqual([
+      'did not call "mcp__*"',
+      'called forbidden tool "read_file" (matched "read_file")',
+    ]);
+  });
+
+  it('treats a missing tool trace as "no tools called" (must_call still fails)', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    const suite = makeSuite([makeCase({ mustCall: ['mcp__*'] })]);
+    const runCell = runCellReturning({ 'case-1': { ok: true, answer: 'done' } }); // no tools field
+
+    const summary = await runEvalSuite(suite, { runCell });
+
+    expect(summary.cases[0].verdict).toBe('FAIL');
+    expect(summary.cases[0].reasons).toEqual(['did not call "mcp__*"']);
+  });
+
+  it('merges tool-call failures after substring failures in reasons', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    const suite = makeSuite([makeCase({ mustContain: ['hello'], mustNotCall: ['read_file'] })]);
+    const runCell = runCellReturning({
+      'case-1': { ok: true, answer: 'goodbye', tools: ['read_file'] },
+    });
+
+    const summary = await runEvalSuite(suite, { runCell });
+
+    expect(summary.cases[0].reasons).toEqual([
+      'missing "hello"',
+      'called forbidden tool "read_file" (matched "read_file")',
+    ]);
   });
 });
 

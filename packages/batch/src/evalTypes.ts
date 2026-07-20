@@ -23,6 +23,16 @@ export interface EvalTarget {
   profile?: string;
 }
 
+/** One `json_path` assertion (BATCH-10): resolve `path` against the answer-parsed-as-JSON and check
+ * it. Exactly one of `equals`/`contains` is set (enforced in {@link ../evalSuite.js}'s parse):
+ * - `equals` — the resolved value must deep-equal this (any JSON value, incl. `null`).
+ * - `contains` — the resolved value must be a string containing this substring. */
+export interface JsonPathCheck {
+  path: string;
+  equals?: unknown;
+  contains?: string;
+}
+
 /** One case parsed and normalized from suite YAML — snake_case YAML keys become camelCase here,
  * arrays default to `[]` (not `undefined`) so callers never need an existence check, and
  * `passThreshold` is pre-resolved (case override ?? suite `defaults.pass_threshold` ??
@@ -33,6 +43,17 @@ export interface EvalCase {
   mustContain: string[];
   mustNotContain: string[];
   shouldContainAny: string[];
+  /** BATCH-10 tool-trace assertions, matched against the case's captured tool names with
+   * glob support (see `@gaunt-sloth/core/utils/toolMatching.js`, shared with `allowedTools`). */
+  mustCall: string[];
+  mustNotCall: string[];
+  /** BATCH-10 regex assertions over the raw answer — compiled at parse time (bad patterns are a
+   * suite error, never a run-time crash) and stored so the compiled `RegExp` is reused, not
+   * rebuilt. No implicit case-folding: authors control flags in the pattern themselves. */
+  mustMatch: RegExp[];
+  mustNotMatch: RegExp[];
+  /** BATCH-10 minimal JSON-path assertions over the answer parsed as JSON — see {@link JsonPathCheck}. */
+  jsonPath: JsonPathCheck[];
   /** The judge rubric, when present and non-blank. `undefined` = no judge for this case. */
   judgeRubric?: string;
   passThreshold: number;
@@ -41,6 +62,12 @@ export interface EvalCase {
 /** A fully parsed and validated suite — see {@link ../evalSuite.js}'s `parseEvalSuite`. */
 export interface EvalSuite {
   target: EvalTarget;
+  /** Optional suite-level judge identity profile (BATCH-10 Task 2): the profile whose model grades
+   * the cases, when the suite wants a judge distinct from the SUT. A top-level sibling of
+   * `target`/`cases` — distinct from `target.profile` (which selects the SUT and is still rejected
+   * unless `default`). Resolved by the CLI as `--judge <profile>` > this > none (none = judge uses
+   * the SUT's `config.llm`, the pre-Task-2 behavior). Absent/blank = no separate judge. */
+  judgeProfile?: string;
   cases: EvalCase[];
 }
 

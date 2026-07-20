@@ -23,6 +23,9 @@ interface EvalCommandOptions {
   concurrency?: number;
   /** `-o/--output <dir>` — where structured per-case + summary output is written. */
   output?: string;
+  /** `--judge <profile>` — identity profile whose model judges the cases (BATCH-10 Task 2).
+   * Overrides the suite's `judge_profile`; omit to judge with the SUT model. */
+  judge?: string;
 }
 
 /** Default output dir when `-o/--output` is omitted: a timestamped dir next to other gth reports —
@@ -33,9 +36,12 @@ export function defaultEvalOutputDir(): string {
 
 /**
  * Build the production {@link JudgeFn}: grades one case's answer with `judgeEvalCase` against
- * `config.llm` — the SAME model config as the SUT. Per the BATCH-2 Task 2 brief, a separate
- * `--judge <profile>` model is out of scope for this task (identity-matrix/pluggable-target work);
- * this is a known, real simplification for this first slice.
+ * `config.llm`. The caller chooses *which* config this is (BATCH-10 Task 2): by default it's the
+ * SUT's own config (judge shares the SUT model, the original behavior), but when a judge identity
+ * profile is resolved (`--judge <profile>` or the suite's `judge_profile`) the action passes a
+ * *separate* `initConfig({ …, identityProfile })` here, so the judge runs under its own model — a
+ * different model can catch blind spots the SUT model shares. This function stays agnostic to that
+ * choice; it just grades against whatever `config.llm` it's handed.
  */
 function buildProductionJudge(config: GthConfig): JudgeFn {
   return async (answer, rubric) => {
@@ -44,10 +50,50 @@ function buildProductionJudge(config: GthConfig): JudgeFn {
   };
 }
 
+/**
+ * Pure resolver for the judge identity profile — kept small and side-effect-free so it's unit
+ * testable in isolation. Precedence (highest first): CLI `--judge <profile>` > suite-level
+ * `judge_profile` > none. A blank/whitespace-only value at either level counts as absent (falls
+ * through to the next level). `undefined` means "no separate judge — grade with the SUT's config".
+ */
+export function resolveJudgeProfile(
+  cliJudge: string | undefined,
+  suiteJudgeProfile: string | undefined
+): string | undefined {
+  const cli = cliJudge?.trim();
+  if (cli) return cli;
+  const suite = suiteJudgeProfile?.trim();
+  if (suite) return suite;
+  return undefined;
+}
+
+/** Best-effort model name for the self-describing judge line. `BaseChatModel` doesn't standardize a
+ * public model-name field, so read `model` then `modelName`; return `undefined` if neither is a
+ * usable string (the profile name alone still describes the run). */
+function judgeModelName(config: GthConfig): string | undefined {
+  const llm = config.llm as { model?: unknown; modelName?: unknown };
+  const name = typeof llm.model === 'string' ? llm.model : llm.modelName;
+  return typeof name === 'string' && name.length > 0 ? name : undefined;
+}
+
 /** Print the human-readable, `review`-flavored summary: one PASS/FAIL line per case (failures
  * carry their reasons), then a suite-total line — doesn't replicate `review`'s exact `REVIEW
  * RATING` block format, just its spirit (a scannable verdict, not a wall of JSON). */
-function printSummary(summary: EvalSuiteSummary, outputDir: string): void {
+function printSummary(
+  summary: EvalSuiteSummary,
+  outputDir: string,
+  judgeNotice?: { profile: string; model?: string }
+): void {
+  // BATCH-10 Task 2: when a separate judge profile is in effect, lead with a single self-describing
+  // line so a captured run records which model graded it (reproducibility). Emitted only for a
+  // separate judge — the default SUT-as-judge run prints exactly as before.
+  if (judgeNotice) {
+    display(
+      `Judge: profile "${judgeNotice.profile}"` +
+        (judgeNotice.model ? ` (model: ${judgeNotice.model})` : '')
+    );
+  }
+
   for (const caseResult of summary.cases) {
     if (caseResult.verdict === 'PASS') {
       display(`PASS  ${caseResult.id}`);
@@ -109,6 +155,11 @@ export function evalCommand(
       'Directory to write structured per-case JSON + results.json summary to ' +
         '(default: a timestamped dir alongside other gth reports)'
     )
+    .option(
+      '--judge <profile>',
+      'Identity profile whose model judges the cases (defaults to the SUT model). ' +
+        'Overrides the suite-level judge_profile.'
+    )
     .action(async (suitePath: string, options: EvalCommandOptions) => {
       try {
         const config = await initConfig(commandLineConfigOverrides);
@@ -130,7 +181,19 @@ export function evalCommand(
           wrapBlockPrefix: 'message',
           wrapPrefix: 'user message',
         });
-        const judge = buildProductionJudge(config);
+
+        // BATCH-10 Task 2: resolve the judge identity profile (CLI `--judge` > suite `judge_profile`
+        // > none). When set, build a SEPARATE config for it — the same supported
+        // `initConfig({ …overrides, identityProfile })` path `gth batch --models` uses to
+        // reconstruct a fresh `.llm` (never a structural clone of an already-built model) — so the
+        // judge runs under its own model. When unset, the judge shares the SUT's config, unchanged.
+        // A judge profile that fails to load throws here and surfaces through the outer catch as a
+        // harness error (exit 2).
+        const judgeProfile = resolveJudgeProfile(options.judge, suite.judgeProfile);
+        const judgeConfig = judgeProfile
+          ? await initConfig({ ...commandLineConfigOverrides, identityProfile: judgeProfile })
+          : config;
+        const judge = buildProductionJudge(judgeConfig);
 
         const summary = await runEvalSuite(suite, {
           runCell,
@@ -141,7 +204,11 @@ export function evalCommand(
         const outputDir = options.output ?? defaultEvalOutputDir();
         writeEvalOutput(outputDir, summary);
 
-        printSummary(summary, outputDir);
+        printSummary(
+          summary,
+          outputDir,
+          judgeProfile ? { profile: judgeProfile, model: judgeModelName(judgeConfig) } : undefined
+        );
 
         // BATCH-11: distinct exit codes — 0 pass / 1 suite ran but a case FAILED / 2 no gradeable
         // results (every SUT run failed). `setExitCode` is only called for a non-zero code; `0` is
