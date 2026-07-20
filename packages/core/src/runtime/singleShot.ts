@@ -11,7 +11,7 @@ import {
 import { getCommandOutputFilePath } from '#src/utils/fileUtils.js';
 import { GthAgentRunner } from '#src/core/GthAgentRunner.js';
 import { MemorySaver } from '@langchain/langgraph';
-import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { HumanMessage } from '@langchain/core/messages';
 import { ProgressIndicator } from '#src/utils/ProgressIndicator.js';
 import type { AgentResolvers, GthAgentFactory, GthCommand } from '#src/core/types.js';
 import { recordSessionSafe } from '#src/history/recordSession.js';
@@ -39,7 +39,8 @@ export interface SingleShotResult extends GthRunStats {
  * is forwarded to the agent so it can pick the right mode prompt (e.g. exec-mode for `exec`).
  *
  * @param source - The source of the question (used for file naming)
- * @param preamble - The preamble to send to the LLM
+ * @param _preamble - Deprecated/ignored (BATCH-13): the agent composes the system prompt itself;
+ *   see the body comment. Retained positionally so existing callers need no change.
  * @param content - The content of the question
  * @param config - The resolved config
  * @param resolvers - Optional agent resolvers (tools/middleware)
@@ -54,7 +55,16 @@ export interface SingleShotResult extends GthRunStats {
  */
 export async function runSingleShot(
   source: string,
-  preamble: string,
+  // BATCH-13: `_preamble` is retained for signature stability but is NO LONGER injected as a
+  // SystemMessage. The agent backends (lean `GthLangChainAgent` since GS2-21, and `GthDeepAgent`)
+  // each COMPOSE the full system prompt themselves from the same config — backstory + guidelines +
+  // per-command mode prompt + system prompt, PLUS the model-identity (GS2-34) and MCP-instructions
+  // (EXT-32) notes — and hand it to `createAgent` as `systemPrompt`. Also passing this preamble as a
+  // leading SystemMessage produced TWO system messages, which `@langchain/anthropic` rejects
+  // ("System messages are only permitted as the first passed message"), breaking EVERY single-shot
+  // run (ask/exec/batch/eval) on Anthropic on BOTH backends (Google/OpenAI silently merged them).
+  // The agent's composed prompt is a superset of this preamble, so dropping it is content-preserving.
+  _preamble: string,
   content: string,
   config: GthConfig,
   resolvers?: AgentResolvers,
@@ -62,7 +72,8 @@ export async function runSingleShot(
   agentFactory?: GthAgentFactory
 ): Promise<SingleShotResult> {
   const progressIndicator = config.streamOutput ? undefined : new ProgressIndicator('Thinking.');
-  const messages = [new SystemMessage(preamble), new HumanMessage(content)];
+  // Only the human turn: the agent supplies the system prompt via `createAgent({ systemPrompt })`.
+  const messages = [new HumanMessage(content)];
 
   // Resolve output path and initialize session logging if enabled
   const filePath = getCommandOutputFilePath(config, source);

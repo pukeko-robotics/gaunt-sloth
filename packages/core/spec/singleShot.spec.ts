@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeStreamingChatModel } from '@langchain/core/utils/testing';
 import type { GthConfig } from '#src/config.js';
-import { BaseMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { BaseMessage, HumanMessage } from '@langchain/core/messages';
 
 const gthAgentRunnerInstanceMock = vi.hoisted(() => ({
   init: vi.fn(),
@@ -161,9 +161,11 @@ describe('singleShot', () => {
     // Call runSingleShot with config (prop drilling)
     await runSingleShot('test-source', 'test-preamble', 'test-content', testConfig);
 
-    // Verify that runner was called with correct parameters
+    // Verify that runner was called with correct parameters. BATCH-13: the preamble is no longer
+    // injected as a SystemMessage — the agent backends compose the system prompt themselves (a
+    // superset), and a second leading system message broke Anthropic single-shot. Only the human
+    // turn is passed now.
     expect(gthAgentRunnerInstanceMock.processMessages).toHaveBeenCalledWith([
-      new SystemMessage('test-preamble'),
       new HumanMessage('test-content'),
     ]);
 
@@ -205,9 +207,8 @@ describe('singleShot', () => {
     // Call runSingleShot with the different config to prove prop drilling works
     await runSingleShot('test-source', 'test-preamble', 'test-content', differentConfig);
 
-    // Verify the different config was used
+    // Verify the different config was used. BATCH-13: only the human turn is passed (see above).
     expect(gthAgentRunnerInstanceMock.processMessages).toHaveBeenCalledWith([
-      new SystemMessage('test-preamble'),
       new HumanMessage('test-content'),
     ]);
 
