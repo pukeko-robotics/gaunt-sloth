@@ -10,6 +10,7 @@ import {
   readExecPrompt,
 } from '#src/utils/llmUtils.js';
 import { getCurrentWorkDir } from '#src/utils/systemUtils.js';
+import { isToolAllowed } from '#src/utils/toolMatching.js';
 import {
   appendOsShellNote,
   appendCwdNote,
@@ -85,12 +86,13 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // Combine all tools, then apply the allowedTools name allow-list when configured.
     let tools = [...resolvedTools, ...flattenedConfigTools];
     if (Array.isArray(allowedTools)) {
-      const allowed = new Set(allowedTools);
-      // Filter named tools by the allow-list. ServerTools (provider-native "magic objects" such
-      // as Anthropic web search) may have no `name`, so they can never be referenced in the
-      // allow-list - drop-by-default would silently remove them with no recourse. Retain such
-      // nameless tools instead; the allow-list is a name-based filter and cannot target them.
-      tools = tools.filter((tool) => !tool.name || allowed.has(tool.name));
+      // Filter named tools by the allow-list. Entries match by exact name, or glob-style when
+      // they contain `*` (e.g. `mcp__unimarket__*`) — see isToolAllowed. ServerTools
+      // (provider-native "magic objects" such as Anthropic web search) may have no `name`, so
+      // they can never be referenced in the allow-list - drop-by-default would silently remove
+      // them with no recourse. Retain such nameless tools instead; the allow-list is a name-based
+      // filter and cannot target them.
+      tools = tools.filter((tool) => !tool.name || isToolAllowed(tool.name, allowedTools));
     }
 
     if (tools.length > 0) {

@@ -303,6 +303,35 @@ describe('GthLangChainAgent', () => {
       expect(toolsArg.map((t) => t.name)).toEqual(['mcp__jira__getJiraIssue']);
     });
 
+    it('GS2-61: filters resolved tools by an allowedTools glob (mcp__unimarket__*)', async () => {
+      const resolveTools = vi
+        .fn()
+        .mockResolvedValue([
+          { name: 'mcp__unimarket__buy' },
+          { name: 'mcp__unimarket__search' },
+          { name: 'read_file' },
+          { name: 'mcp__jira__getJiraIssue' },
+        ] as StructuredToolInterface[]);
+      const agent = new GthLangChainAgent(statusUpdateCallback, {
+        resolveTools,
+        resolveMiddleware: async (m) => m ?? [],
+      });
+
+      const config = {
+        ...mockConfig,
+        allowedTools: ['mcp__unimarket__*'],
+      } as GthConfig;
+
+      await agent.init(undefined, config);
+
+      const toolsArg = createAgentMock.mock.calls.at(-1)?.[0].tools as StructuredToolInterface[];
+      // Every mcp__unimarket__… tool is kept; the filesystem tool and the other MCP server drop.
+      expect(toolsArg.map((t) => t.name)).toEqual([
+        'mcp__unimarket__buy',
+        'mcp__unimarket__search',
+      ]);
+    });
+
     it('retains nameless server tools when an allowedTools allow-list is set', async () => {
       const resolveTools = vi.fn().mockResolvedValue([]);
       const agent = new GthLangChainAgent(statusUpdateCallback, {

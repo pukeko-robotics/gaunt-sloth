@@ -11,6 +11,7 @@ import {
   readExecPrompt,
 } from '@gaunt-sloth/core/utils/llmUtils.js';
 import { getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { isToolAllowed } from '@gaunt-sloth/core/utils/toolMatching.js';
 // GS2-27: the OS/shell-dialect and real-cwd notes are backend-agnostic (both backends expose
 // run_shell_command and run on the real-fs cwd), so their canonical source moved to core so the
 // lean backend composes them too. Imported here for GthDeepAgent.init()'s code-mode composition and
@@ -396,11 +397,12 @@ export class GthDeepAgent extends GthAbstractAgent {
       : this.extractAndFlattenTools(this.config.tools || []);
     debugLog(`User config tools loaded: ${flattenedConfigTools.length}`);
 
-    // Combine all tools, then apply the allowedTools name allow-list when configured.
+    // Combine all tools, then apply the allowedTools name allow-list when configured. Entries
+    // match by exact name, or glob-style when they contain `*` (e.g. `mcp__unimarket__*`) — see
+    // isToolAllowed. Nameless ServerTools are retained (they can't be named in the allow-list).
     let tools = [...resolvedTools, ...flattenedConfigTools];
     if (Array.isArray(allowedTools)) {
-      const allowed = new Set(allowedTools);
-      tools = tools.filter((tool) => !tool.name || allowed.has(tool.name));
+      tools = tools.filter((tool) => !tool.name || isToolAllowed(tool.name, allowedTools));
     }
 
     // Safety net: a custom/dev/MCP tool may still reuse a deepagents filesystem-tool
