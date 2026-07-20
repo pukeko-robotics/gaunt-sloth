@@ -223,6 +223,19 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   }
 
   /**
+   * GS2-63 — emit one line of the technical run-header preamble (the Workdir/Model/Tools/Middleware
+   * block) UNLESS it is opted out via `output.header: false`. The opt-out only ever reaches here in
+   * non-TUI text modes: the interactive TUI forces `output.header` on before init (see
+   * `createTuiSession`), and the TUI event path never goes through the interrupt-hint site, so the
+   * whole preamble stays visible there. Only INFO header lines route through this — real model/tool
+   * output, warnings and errors keep using {@link statusUpdate} directly.
+   */
+  protected headerStatus(message: string): void {
+    if (this.config?.output?.header === false) return;
+    this.statusUpdate(StatusLevel.INFO, message);
+  }
+
+  /**
    * GS2-16 — clear the per-run analytics tally so the next turn starts from zero. The runner
    * calls this at each turn boundary because it (and this agent) are reused across turns in an
    * interactive session.
@@ -402,13 +415,20 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
         statusUpdate(StatusLevel.WARNING, '\n\nInterrupted by user, exiting\n\n');
       }
     };
-    waitForEscape(() => {
-      interruptState.escape = true;
-      showInterruptMessage();
-      if (!abortController.signal.aborted) {
-        abortController.abort();
-      }
-    }, this.config.canInterruptInferenceWithEsc);
+    waitForEscape(
+      () => {
+        interruptState.escape = true;
+        showInterruptMessage();
+        if (!abortController.signal.aborted) {
+          abortController.abort();
+        }
+      },
+      this.config.canInterruptInferenceWithEsc,
+      // GS2-63: the interrupt hint is part of the run-header preamble. Suppress the hint box (while
+      // still arming the Esc/Q handler) when the header is opted out. This site only runs in the
+      // non-TUI text path (`streamFromInput`); the TUI event path never reaches it.
+      this.config.output?.header !== false
+    );
 
     let stream;
     try {

@@ -328,6 +328,19 @@ export const rawGthConfigSchema = z.looseObject({
     .optional(),
   allowDirs: z.array(z.string()).optional(),
   askWriteMode: z.boolean().optional(),
+  // GS2-63 — output surface controls. `header` DEFAULTS ON (omitted = show); set `false` to
+  // suppress the technical run-header preamble (the Workdir/Model/Tools/Middleware block, the
+  // `Press Escape or Q to interrupt` hint, and their surrounding blank lines) in NON-TUI text
+  // modes (`--no-tui`, `ask`, `exec`, `eval`, `pr`, `review`, piped/CI), keeping captured stdout /
+  // log diffs clean. The interactive TUI ignores it and always shows the header. Suppresses ONLY
+  // that preamble — never model/tool output, errors, or config-validation warnings. Defaulted at
+  // the read site (`!== false`), not in DEFAULT_CONFIG, to avoid churning the effective-config
+  // snapshot (à la GS2-34 injectModelContext).
+  output: z
+    .object({
+      header: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 /**

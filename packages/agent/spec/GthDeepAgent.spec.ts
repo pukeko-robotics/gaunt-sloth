@@ -120,6 +120,34 @@ describe('GthDeepAgent', () => {
     );
   });
 
+  it('GS2-63: emits the run-header by default and suppresses it when output.header is false', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+
+    // Default (output.header unset): the Workdir + Middleware header lines are emitted.
+    const shownAgent = new GthDeepAgent(statusUpdate, {
+      resolveTools: vi.fn().mockResolvedValue([]),
+    });
+    await shownAgent.init('chat', makeConfig());
+    expect(statusUpdate).toHaveBeenCalledWith(expect.anything(), 'Workdir: /home/user/proj');
+    expect(statusUpdate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('Loaded middleware:')
+    );
+
+    statusUpdate.mockClear();
+
+    // Opt out (output.header: false): the whole header block is suppressed (text mode).
+    const hiddenAgent = new GthDeepAgent(statusUpdate, {
+      resolveTools: vi.fn().mockResolvedValue([]),
+    });
+    await hiddenAgent.init('chat', makeConfig({ output: { header: false } }));
+    expect(statusUpdate).not.toHaveBeenCalledWith(expect.anything(), 'Workdir: /home/user/proj');
+    expect(statusUpdate).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('Loaded middleware:')
+    );
+  });
+
   it('with allowDirs (--allow-dir) drops virtualMode and uses the widened permission allow-list', async () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });

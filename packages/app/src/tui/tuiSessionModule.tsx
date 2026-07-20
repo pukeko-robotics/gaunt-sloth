@@ -302,8 +302,15 @@ export async function createTuiSession(
   // createResolvers() is unchanged, so a lean session keeps the full toolset.
   const runner = new GthAgentRunner(bridge.emit, resolvers, resolveAgentFactory(config, 'lean'));
 
+  // GS2-63: the interactive TUI ALWAYS shows the technical run-header preamble (Workdir/Model/
+  // Tools/Middleware). The `output.header: false` opt-out applies to non-TUI text modes only, so
+  // the config handed to the agent forces it on regardless of the user's setting — the header
+  // lines route through the status bridge into the notice surface here, not raw stdout. A fresh
+  // object (not an in-place mutation) so nothing else that already captured `config` is affected.
+  const agentConfig: GthConfig = { ...config, output: { ...config.output, header: true } };
+
   try {
-    await runner.init(sessionConfig.mode, config, checkpointSaver);
+    await runner.init(sessionConfig.mode, agentConfig, checkpointSaver);
 
     // Any MCP server that failed to connect during init (resolveTools ran inside runner.init).
     // Captured here so the persistent NoticeBar can name it — otherwise the only signal is a

@@ -52,10 +52,10 @@ export class GthLangChainAgent extends GthAbstractAgent {
       debugLog: this.config.debugLog,
     });
 
-    this.statusUpdate(StatusLevel.INFO, `Workdir: ${getCurrentWorkDir()}`);
+    this.headerStatus(`Workdir: ${getCurrentWorkDir()}`);
 
     if (this.config.modelDisplayName) {
-      this.statusUpdate(StatusLevel.INFO, `Model: ${this.config.modelDisplayName}`);
+      this.headerStatus(`Model: ${this.config.modelDisplayName}`);
     }
 
     // An empty allowedTools allow-list disables every tool. Skip resolution entirely so we
@@ -63,8 +63,7 @@ export class GthLangChainAgent extends GthAbstractAgent {
     const allowedTools = this.config.allowedTools;
     const toolsDisabled = Array.isArray(allowedTools) && allowedTools.length === 0;
     if (toolsDisabled) {
-      this.statusUpdate(
-        StatusLevel.INFO,
+      this.headerStatus(
         'Tool loading disabled by allowedTools: []; MCP/A2A servers will not be contacted. Omit allowedTools for no filtering.'
       );
     }
@@ -100,7 +99,7 @@ export class GthLangChainAgent extends GthAbstractAgent {
         .map((tool) => tool.name)
         .filter((name) => name)
         .join(', ');
-      this.statusUpdate(StatusLevel.INFO, `Loaded tools: ${toolNames}`);
+      this.headerStatus(`Loaded tools: ${toolNames}`);
       debugLog(`Total tools available: ${tools.length}`);
       debugLogObject('All Tools', toolNames.split(', '));
     }
@@ -260,10 +259,7 @@ export class GthLangChainAgent extends GthAbstractAgent {
       debugCaptureMiddleware,
     ];
 
-    this.statusUpdate(
-      StatusLevel.INFO,
-      `Loaded middleware: ${middleware.map((m) => m.name).join(', ')}`
-    );
+    this.headerStatus(`Loaded middleware: ${middleware.map((m) => m.name).join(', ')}`);
 
     // GS2-21: compose gsloth's system prompt (backstory + guidelines + per-command mode prompt +
     // system prompt) EXACTLY as GthDeepAgent does, so identity profiles and `.gsloth.*.md` are
