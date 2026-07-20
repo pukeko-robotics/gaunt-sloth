@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GthConfig } from '#src/config.js';
-import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { AIMessage, BaseMessage, HumanMessage } from '@langchain/core/messages';
 
 // GS2-16 per-turn stats + resetThread (stateless replay) are what the conversational runner drives
 // on the runner, on top of singleShot's init/processMessages/cleanup — mock all five.
@@ -111,11 +111,11 @@ describe('runConversation', () => {
     const { runConversation } = await import('#src/runtime/conversation.js');
     await runConversation('EVAL-c', 'sys', ['first', 'second'], mockConfig);
 
-    // Turn 1 sends [system, human(first)].
-    expect(sent[0]).toEqual([new SystemMessage('sys'), new HumanMessage('first')]);
-    // Turn 2 sends the GROWN array: [system, human(first), ai(answer-1), human(second)].
+    // BATCH-13: no leading SystemMessage — the agent composes the system prompt itself (a second
+    // system message broke Anthropic). Turn 1 sends [human(first)].
+    expect(sent[0]).toEqual([new HumanMessage('first')]);
+    // Turn 2 sends the GROWN array: [human(first), ai(answer-1), human(second)].
     expect(sent[1]).toEqual([
-      new SystemMessage('sys'),
       new HumanMessage('first'),
       new AIMessage('answer-1'),
       new HumanMessage('second'),
