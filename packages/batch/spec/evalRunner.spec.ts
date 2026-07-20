@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { EvalCase, EvalSuite, JudgeFn } from '#src/evalTypes.js';
+import type { EvalCase, EvalExpectation, EvalSuite, JudgeFn } from '#src/evalTypes.js';
 import type { CellRunOutcome, MatrixCell, RunCellFn } from '#src/types.js';
 
-function makeCase(overrides: Partial<EvalCase> = {}): EvalCase {
+/** Build one {@link EvalExpectation} with all assertion arrays defaulted to `[]` — the BATCH-12
+ * atom a flat case's single block, or a matrix case's identity-scoped block, both reduce to. */
+function makeExpectation(overrides: Partial<EvalExpectation> = {}): EvalExpectation {
   return {
-    id: 'case-1',
-    prompt: 'say hello',
     mustContain: [],
     mustNotContain: [],
     shouldContainAny: [],
@@ -15,8 +15,25 @@ function makeCase(overrides: Partial<EvalCase> = {}): EvalCase {
     mustNotMatch: [],
     jsonPath: [],
     judgeRubric: undefined,
-    passThreshold: 6,
     ...overrides,
+  };
+}
+
+type CaseOverrides = Partial<EvalExpectation> & {
+  id?: string;
+  prompt?: string;
+  passThreshold?: number;
+};
+
+/** Build a single-turn, single-unscoped-expectation {@link EvalCase} (the flat-case normalization),
+ * accepting the same assertion-field overrides the pre-BATCH-12 helper did so the existing tests
+ * carry over unchanged. */
+function makeCase(overrides: CaseOverrides = {}): EvalCase {
+  const { id = 'case-1', prompt = 'say hello', passThreshold = 6, ...expectation } = overrides;
+  return {
+    id,
+    passThreshold,
+    turns: [{ user: prompt, expectations: [makeExpectation(expectation)] }],
   };
 }
 
@@ -45,6 +62,9 @@ describe('runEvalSuite', () => {
       sutOk: true,
       reasons: [],
     });
+    // BATCH-12 back-compat: a no-identities cell carries NO `identity` key at all (not
+    // `undefined`-valued), so its `<id>.json` output stays byte-for-byte identical to before.
+    expect('identity' in summary.cases[0]).toBe(false);
   });
 
   it('FAILs a checks-only case whose answer misses a required substring', async () => {
@@ -403,5 +423,157 @@ describe('classifyEvalExit', () => {
 
     expect(summary).toMatchObject({ total: 0, passed: 0, failed: 0 });
     expect(classifyEvalExit(summary)).toBe(2);
+  });
+});
+
+// BATCH-12: the identity matrix — one cell per (case × identity), each identity's block graded for
+// that identity, each running under its OWN runCell (per-identity `initConfig` in production). No
+// live multi-identity MCP here, so these use FAKE per-identity runCells returning distinct
+// answers/tool-traces — the real authorization scenario is unverified pending the reporter's pass.
+describe('runEvalSuite identity matrix', () => {
+  /** A two-identity matrix suite: one case whose admin block requires an mcp call, whose limited
+   * block forbids one (the reporter's #405 Appendix-B authorization shape). */
+  function makeMatrixSuite(): EvalSuite {
+    return {
+      target: { type: 'gth-agent' },
+      identities: ['admin', 'limited'],
+      cases: [
+        {
+          id: 'list-contracts',
+          passThreshold: 6,
+          turns: [
+            {
+              user: 'list the contract types',
+              expectations: [
+                makeExpectation({ identities: ['admin'], mustCall: ['mcp__*'] }),
+                makeExpectation({ identities: ['limited'], mustNotCall: ['mcp__*'] }),
+              ],
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  it('runs one cell per (case × identity), grading each identity by its own block', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    const contentSeenBy: Record<string, string> = {};
+    const runCellByIdentity = new Map<string, RunCellFn>([
+      [
+        'admin',
+        async (cell: MatrixCell) => {
+          contentSeenBy.admin = cell.content;
+          return { ok: true, answer: 'contracts: A, B, C', tools: ['mcp__unimarket__list'] };
+        },
+      ],
+      [
+        'limited',
+        async (cell: MatrixCell) => {
+          contentSeenBy.limited = cell.content;
+          return { ok: true, answer: 'access denied', tools: [] };
+        },
+      ],
+    ]);
+
+    const summary = await runEvalSuite(makeMatrixSuite(), { runCellByIdentity });
+
+    // Two cells: list-contracts × {admin, limited}.
+    expect(summary).toMatchObject({ total: 2, passed: 2, failed: 0 });
+    const admin = summary.cases.find((c) => c.identity === 'admin')!;
+    const limited = summary.cases.find((c) => c.identity === 'limited')!;
+    // Both keep the case id; the identity distinguishes the two cells.
+    expect(admin).toMatchObject({ id: 'list-contracts', identity: 'admin', verdict: 'PASS' });
+    expect(limited).toMatchObject({ id: 'list-contracts', identity: 'limited', verdict: 'PASS' });
+    // admin graded by the admin block (mcp called), limited by the limited block (no mcp called).
+    expect(admin.tools).toEqual(['mcp__unimarket__list']);
+    expect(limited.tools).toEqual([]);
+    // Each identity ran under ITS OWN runCell with the case prompt.
+    expect(contentSeenBy.admin).toContain('list the contract types');
+    expect(contentSeenBy.limited).toContain('list the contract types');
+  });
+
+  it('FAILs only the offending identity when it violates its own block (authorization regression)', async () => {
+    const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
+    const runCellByIdentity = new Map<string, RunCellFn>([
+      // admin correctly calls mcp → PASS its must_call block.
+      ['admin', async () => ({ ok: true, answer: 'contracts: A, B, C', tools: ['mcp__x__list'] })],
+      // limited leaks: it DID call an mcp tool it must not → FAIL its must_not_call block.
+      [
+        'limited',
+        async () => ({ ok: true, answer: 'contracts: A, B, C', tools: ['mcp__x__list'] }),
+      ],
+    ]);
+
+    const summary = await runEvalSuite(makeMatrixSuite(), { runCellByIdentity });
+
+    expect(summary).toMatchObject({ total: 2, passed: 1, failed: 1 });
+    const admin = summary.cases.find((c) => c.identity === 'admin')!;
+    const limited = summary.cases.find((c) => c.identity === 'limited')!;
+    expect(admin.verdict).toBe('PASS');
+    expect(limited.verdict).toBe('FAIL');
+    expect(limited.reasons).toEqual(['called forbidden tool "mcp__x__list" (matched "mcp__*")']);
+    // Some cell failed but every cell produced a gradeable answer → product regression, exit 1.
+    expect(classifyEvalExit(summary)).toBe(1);
+  });
+
+  it('applies a flat (unscoped) case block to every identity in the suite', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    const suite: EvalSuite = {
+      target: { type: 'gth-agent' },
+      identities: ['admin', 'limited'],
+      cases: [
+        {
+          id: 'sane',
+          passThreshold: 6,
+          // One unscoped block (identities absent) — the flat-case sugar — applies to BOTH.
+          turns: [{ user: 'say ok', expectations: [makeExpectation({ mustContain: ['ok'] })] }],
+        },
+      ],
+    };
+    const runCellByIdentity = new Map<string, RunCellFn>([
+      ['admin', async () => ({ ok: true, answer: 'ok admin' })],
+      ['limited', async () => ({ ok: true, answer: 'nope' })], // misses "ok" → FAIL
+    ]);
+
+    const summary = await runEvalSuite(suite, { runCellByIdentity });
+
+    expect(summary).toMatchObject({ total: 2, passed: 1, failed: 1 });
+    expect(summary.cases.find((c) => c.identity === 'admin')!.verdict).toBe('PASS');
+    const limited = summary.cases.find((c) => c.identity === 'limited')!;
+    expect(limited.verdict).toBe('FAIL');
+    expect(limited.reasons).toEqual(['missing "ok"']);
+  });
+
+  it('NO-SILENT-PASS backstop: a (case × identity) with no applicable block FAILs, never passes', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    // Constructed directly (bypassing the parser, which rejects this statically) to exercise the
+    // runner's runtime guard: `limited` has no applicable block.
+    const suite: EvalSuite = {
+      target: { type: 'gth-agent' },
+      identities: ['admin', 'limited'],
+      cases: [
+        {
+          id: 'c1',
+          passThreshold: 6,
+          turns: [
+            {
+              user: 'p',
+              expectations: [makeExpectation({ identities: ['admin'], mustCall: ['mcp__*'] })],
+            },
+          ],
+        },
+      ],
+    };
+    const runCellByIdentity = new Map<string, RunCellFn>([
+      ['admin', async () => ({ ok: true, answer: 'done', tools: ['mcp__x'] })],
+      ['limited', async () => ({ ok: true, answer: 'done', tools: ['mcp__x'] })],
+    ]);
+
+    const summary = await runEvalSuite(suite, { runCellByIdentity });
+
+    const limited = summary.cases.find((c) => c.identity === 'limited')!;
+    expect(limited.verdict).toBe('FAIL');
+    expect(limited.sutOk).toBe(true); // it ran, it just has nothing that would grade it
+    expect(limited.reasons[0]).toContain('no applicable expectation block for identity "limited"');
   });
 });

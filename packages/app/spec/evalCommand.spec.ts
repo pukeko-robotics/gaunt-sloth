@@ -578,6 +578,112 @@ cases:
       expect(consoleUtilsMock.display).not.toHaveBeenCalledWith(expect.stringContaining('Judge:'));
     });
   });
+
+  // BATCH-12 (#405 his #1): the identity matrix — run each case once per suite `identities` entry,
+  // each under its own `initConfig({ …, identityProfile })`, with a resolve-precondition before any
+  // run. Unit-tested with FAKES (mocked runSingleShot / initConfig / resolveIdentityProfileConfigPath)
+  // — there is no live multi-identity MCP here, so the real authorization scenario is unverified.
+  describe('identity matrix (--identities via suite `identities`)', () => {
+    const MATRIX_SUITE = `
+target: { type: gth-agent }
+identities: [admin, limited]
+cases:
+  - id: greets
+    prompt: "greet the user"
+    expect:
+      - identities: [admin]
+        must_contain: ["hello"]
+      - identities: [limited]
+        must_contain: ["hello"]
+`;
+
+    it('runs one cell per (case × identity), each under its own identityProfile config, writing per-identity output', async () => {
+      fileUtilsMock.readFileFromProjectDir.mockImplementation(() => MATRIX_SUITE);
+      runSingleShot.mockResolvedValue({ ok: true, answer: 'hello there', tools: [] });
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'matrix.yaml', '-o', outputDir]);
+
+      // Precondition ran for each declared identity...
+      expect(configMock.resolveIdentityProfileConfigPath).toHaveBeenCalledWith('admin');
+      expect(configMock.resolveIdentityProfileConfigPath).toHaveBeenCalledWith('limited');
+      // ...and a SEPARATE config was built per identity (mirrors `gth batch --models`).
+      expect(configMock.initConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ identityProfile: 'admin' })
+      );
+      expect(configMock.initConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ identityProfile: 'limited' })
+      );
+      // Two cells → two SUT runs, named with the composite cell id.
+      expect(runSingleShot).toHaveBeenCalledTimes(2);
+      const sources = runSingleShot.mock.calls.map((c) => c[0]);
+      expect(sources).toEqual(
+        expect.arrayContaining(['EVAL-greets__admin', 'EVAL-greets__limited'])
+      );
+
+      // Per-identity output files, each carrying its identity.
+      const adminJson = JSON.parse(readFileSync(join(outputDir, 'greets__admin.json'), 'utf8'));
+      const limitedJson = JSON.parse(readFileSync(join(outputDir, 'greets__limited.json'), 'utf8'));
+      expect(adminJson).toMatchObject({ id: 'greets', identity: 'admin', verdict: 'PASS' });
+      expect(limitedJson).toMatchObject({ id: 'greets', identity: 'limited', verdict: 'PASS' });
+
+      const resultsJson = JSON.parse(readFileSync(join(outputDir, 'results.json'), 'utf8'));
+      expect(resultsJson).toMatchObject({ total: 2, passed: 2, failed: 0 });
+
+      // Summary lines tag each cell with its identity; exit 0 on all-pass.
+      expect(consoleUtilsMock.display).toHaveBeenCalledWith('PASS  greets [admin]');
+      expect(consoleUtilsMock.display).toHaveBeenCalledWith('PASS  greets [limited]');
+      expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+    });
+
+    it('PRECONDITION: an unresolved identity → exit 2, names it, and runs NOTHING', async () => {
+      fileUtilsMock.readFileFromProjectDir.mockImplementation(() => MATRIX_SUITE);
+      // `limited` has no config of its own; `admin` resolves.
+      configMock.resolveIdentityProfileConfigPath.mockImplementation((name: string) =>
+        name === 'limited' ? undefined : '/mock/.gsloth/.gsloth-settings/admin/.gsloth.config.json'
+      );
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'matrix.yaml', '-o', outputDir]);
+
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+        expect.stringContaining('limited')
+      );
+      // Guard is BEFORE any per-identity initConfig (a bad profile reaching initConfig hits its
+      // uncatchable exit(1)) — so no per-identity config is built and no case runs.
+      expect(configMock.initConfig).not.toHaveBeenCalledWith(
+        expect.objectContaining({ identityProfile: 'limited' })
+      );
+      expect(configMock.initConfig).not.toHaveBeenCalledWith(
+        expect.objectContaining({ identityProfile: 'admin' })
+      );
+      expect(runSingleShot).not.toHaveBeenCalled();
+    });
+
+    it('reports a product regression (exit 1) when one identity cell fails its block', async () => {
+      fileUtilsMock.readFileFromProjectDir.mockImplementation(() => MATRIX_SUITE);
+      // Both identities get the same answer; neither contains "hello" → both cells FAIL.
+      runSingleShot.mockResolvedValue({ ok: true, answer: 'goodbye', tools: [] });
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'matrix.yaml', '-o', outputDir]);
+
+      const resultsJson = JSON.parse(readFileSync(join(outputDir, 'results.json'), 'utf8'));
+      expect(resultsJson).toMatchObject({ total: 2, passed: 0, failed: 2 });
+      // sutOk:true (ran, produced answers) but failed checks → product regression, exit 1.
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(1);
+      expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
+        expect.stringContaining('FAIL  greets [admin]')
+      );
+    });
+  });
 });
 
 // BATCH-10 Task 2: the pure judge-profile resolver, unit tested in isolation.

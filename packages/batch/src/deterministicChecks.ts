@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import type { DeterministicCheckResult, EvalCase, JsonPathCheck } from '#src/evalTypes.js';
+import type { DeterministicCheckResult, EvalExpectation, JsonPathCheck } from '#src/evalTypes.js';
 
 /** Render a compiled pattern back as `/source/flags` for failure messages. */
 function formatRegex(re: RegExp): string {
@@ -105,52 +105,57 @@ function runJsonPathChecks(answer: string, checks: JsonPathCheck[]): string[] {
  *   checked; a non-JSON answer fails the whole group once.
  *
  * Failures are ordered substring → regex → json_path, so a substring-only case produces exactly the
- * same output it did before BATCH-10. A case with every array empty trivially passes (no checks to
- * fail) — the suite parser (`#src/evalSuite.js`) is what enforces that a case has *some* check or a
- * judge rubric; this function itself has no opinion on that.
+ * same output it did before BATCH-10. An expectation with every array empty trivially passes (no
+ * checks to fail) — the suite parser (`#src/evalSuite.js`) is what enforces that a block has *some*
+ * check or a judge rubric; this function itself has no opinion on that.
+ *
+ * BATCH-12: grades one {@link EvalExpectation} block (the assertion bundle) — a flat case's single
+ * unscoped block or one of a matrix case's identity-scoped `expect:` blocks. The signature is the
+ * same `Pick`/`Partial` shape as before, just re-based on `EvalExpectation` (identical field names),
+ * so the answer-check behavior is unchanged.
  */
 export function runDeterministicChecks(
   answer: string,
-  evalCase: Pick<EvalCase, 'mustContain' | 'mustNotContain' | 'shouldContainAny'> &
-    Partial<Pick<EvalCase, 'mustMatch' | 'mustNotMatch' | 'jsonPath'>>
+  expectation: Pick<EvalExpectation, 'mustContain' | 'mustNotContain' | 'shouldContainAny'> &
+    Partial<Pick<EvalExpectation, 'mustMatch' | 'mustNotMatch' | 'jsonPath'>>
 ): DeterministicCheckResult {
   const text = answer.toLowerCase();
   const failures: string[] = [];
 
-  for (const needle of evalCase.mustContain) {
+  for (const needle of expectation.mustContain) {
     if (!text.includes(needle.toLowerCase())) {
       failures.push(`missing "${needle}"`);
     }
   }
 
-  for (const needle of evalCase.mustNotContain) {
+  for (const needle of expectation.mustNotContain) {
     if (text.includes(needle.toLowerCase())) {
       failures.push(`forbidden "${needle}"`);
     }
   }
 
   if (
-    evalCase.shouldContainAny.length > 0 &&
-    !evalCase.shouldContainAny.some((needle) => text.includes(needle.toLowerCase()))
+    expectation.shouldContainAny.length > 0 &&
+    !expectation.shouldContainAny.some((needle) => text.includes(needle.toLowerCase()))
   ) {
-    failures.push(`none of [${evalCase.shouldContainAny.join(' | ')}]`);
+    failures.push(`none of [${expectation.shouldContainAny.join(' | ')}]`);
   }
 
   // Use `answer.search(re)` rather than `re.test(answer)`: a stored `RegExp` carrying the `g` flag
   // is stateful via `lastIndex` under `.test()`, whereas `String.prototype.search` ignores it.
-  for (const re of evalCase.mustMatch ?? []) {
+  for (const re of expectation.mustMatch ?? []) {
     if (answer.search(re) === -1) {
       failures.push(`answer did not match ${formatRegex(re)}`);
     }
   }
 
-  for (const re of evalCase.mustNotMatch ?? []) {
+  for (const re of expectation.mustNotMatch ?? []) {
     if (answer.search(re) !== -1) {
       failures.push(`answer matched forbidden ${formatRegex(re)}`);
     }
   }
 
-  failures.push(...runJsonPathChecks(answer, evalCase.jsonPath ?? []));
+  failures.push(...runJsonPathChecks(answer, expectation.jsonPath ?? []));
 
   return { passed: failures.length === 0, failures };
 }

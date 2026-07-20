@@ -23,48 +23,52 @@ cases:
 `;
 
 describe('parseEvalSuite', () => {
-  it('parses target, defaults, and every case field', async () => {
+  // BATCH-12: a flat case normalizes to ONE turn (user = prompt) with ONE unscoped expectation
+  // block (identities absent → applies to all). This test is also the required normalization proof.
+  it('normalizes a flat case to turns[0] × one unscoped expectation, and parses every field', async () => {
     const { parseEvalSuite } = await import('#src/evalSuite.js');
     const suite = parseEvalSuite(FULL_SUITE);
 
     expect(suite.target).toEqual({ type: 'gth-agent', profile: 'default' });
+    expect(suite.identities).toBeUndefined();
     expect(suite.cases).toHaveLength(3);
 
     const checksOnly = suite.cases[0];
     expect(checksOnly).toEqual({
       id: 'checks-only',
-      prompt: 'say hello and goodbye',
-      mustContain: ['hello', 'goodbye'],
-      mustNotContain: ['rude'],
-      shouldContainAny: ['hi', 'hey'],
-      mustCall: [],
-      mustNotCall: [],
-      mustMatch: [],
-      mustNotMatch: [],
-      jsonPath: [],
-      judgeRubric: undefined,
       passThreshold: 6, // from suite defaults
+      turns: [
+        {
+          user: 'say hello and goodbye',
+          expectations: [
+            {
+              identities: undefined, // flat sugar → applies to every identity
+              mustContain: ['hello', 'goodbye'],
+              mustNotContain: ['rude'],
+              shouldContainAny: ['hi', 'hey'],
+              mustCall: [],
+              mustNotCall: [],
+              mustMatch: [],
+              mustNotMatch: [],
+              jsonPath: [],
+              judgeRubric: undefined,
+            },
+          ],
+        },
+      ],
     });
 
     const judgeOnly = suite.cases[1];
-    expect(judgeOnly).toEqual({
-      id: 'judge-only',
-      prompt: 'explain the thing',
-      mustContain: [],
-      mustNotContain: [],
-      shouldContainAny: [],
-      mustCall: [],
-      mustNotCall: [],
-      mustMatch: [],
-      mustNotMatch: [],
-      jsonPath: [],
-      judgeRubric: 'Answers with a ranked summary and correctly formatted values.',
-      passThreshold: 6,
-    });
+    expect(judgeOnly.turns[0].user).toBe('explain the thing');
+    expect(judgeOnly.turns[0].expectations).toHaveLength(1);
+    expect(judgeOnly.turns[0].expectations[0].judgeRubric).toBe(
+      'Answers with a ranked summary and correctly formatted values.'
+    );
+    expect(judgeOnly.passThreshold).toBe(6);
 
     const both = suite.cases[2];
-    expect(both.mustContain).toEqual(['ok']);
-    expect(both.judgeRubric).toEqual('Is polite.');
+    expect(both.turns[0].expectations[0].mustContain).toEqual(['ok']);
+    expect(both.turns[0].expectations[0].judgeRubric).toEqual('Is polite.');
     expect(both.passThreshold).toBe(8); // per-case override wins over suite default
   });
 
@@ -246,7 +250,7 @@ cases:
       - { path: "$.items[0].scope", equals: "caller" }
       - { path: "data.status", contains: "ok" }
 `);
-      const c = suite.cases[0];
+      const c = suite.cases[0].turns[0].expectations[0];
       expect(c.mustCall).toEqual(['mcp__unimarket__*']);
       expect(c.mustNotCall).toEqual(['read_file']);
       // Regex strings are compiled to RegExp and stored.
@@ -269,7 +273,7 @@ cases:
     prompt: "p"
     must_contain: ["x"]
 `);
-      const c = suite.cases[0];
+      const c = suite.cases[0].turns[0].expectations[0];
       expect(c.mustCall).toEqual([]);
       expect(c.mustNotCall).toEqual([]);
       expect(c.mustMatch).toEqual([]);
@@ -286,7 +290,7 @@ cases:
     prompt: "p"
     must_call: ["mcp__*"]
 `);
-      expect(suite.cases[0].mustCall).toEqual(['mcp__*']);
+      expect(suite.cases[0].turns[0].expectations[0].mustCall).toEqual(['mcp__*']);
     });
 
     it('throws at parse time on an invalid must_match regex, with a clear message', async () => {
@@ -353,7 +357,9 @@ cases:
     json_path:
       - { path: "a.b", equals: null }
 `);
-      expect(suite.cases[0].jsonPath).toEqual([{ path: 'a.b', equals: null }]);
+      expect(suite.cases[0].turns[0].expectations[0].jsonPath).toEqual([
+        { path: 'a.b', equals: null },
+      ]);
     });
   });
 
@@ -411,6 +417,214 @@ cases:
 `)
         ).toThrow(/judge_profile .* must be a plain profile name/);
       }
+    });
+  });
+
+  // BATCH-12: the suite-level `identities` list + per-case `expect:` blocks (the identity matrix).
+  describe('BATCH-12 identity matrix', () => {
+    const MATRIX_SUITE = `
+target: { type: gth-agent }
+identities: [admin, limited]
+cases:
+  - id: list-contracts
+    prompt: "list the contract types"
+    expect:
+      - identities: [admin]
+        must_call: ["mcp__*"]
+        judge: "returns the full list of contract types"
+      - identities: [limited]
+        must_not_call: ["mcp__*"]
+        judge: "explains access is denied and does not fabricate data"
+`;
+
+    it('surfaces the suite-level identities list', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(MATRIX_SUITE);
+      expect(suite.identities).toEqual(['admin', 'limited']);
+    });
+
+    it('normalizes an expect: array to per-identity expectation blocks on the single turn', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(MATRIX_SUITE);
+      const c = suite.cases[0];
+      expect(c.turns).toHaveLength(1);
+      expect(c.turns[0].user).toBe('list the contract types');
+      const [adminBlock, limitedBlock] = c.turns[0].expectations;
+      expect(adminBlock.identities).toEqual(['admin']);
+      expect(adminBlock.mustCall).toEqual(['mcp__*']);
+      expect(adminBlock.judgeRubric).toBe('returns the full list of contract types');
+      expect(limitedBlock.identities).toEqual(['limited']);
+      expect(limitedBlock.mustNotCall).toEqual(['mcp__*']);
+    });
+
+    it('accepts a flat case in an identity suite (its one block applies to every identity)', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+identities: [admin, limited]
+cases:
+  - id: sane
+    prompt: "say ok"
+    must_contain: ["ok"]
+`);
+      const block = suite.cases[0].turns[0].expectations[0];
+      expect(block.identities).toBeUndefined(); // unscoped → applies to admin AND limited
+      expect(block.mustContain).toEqual(['ok']);
+    });
+
+    it('allows an expect: array with unscoped blocks even when the suite declares no identities', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: multi
+    prompt: "p"
+    expect:
+      - must_contain: ["a"]
+      - must_call: ["mcp__*"]
+`);
+      expect(suite.identities).toBeUndefined();
+      const blocks = suite.cases[0].turns[0].expectations;
+      expect(blocks).toHaveLength(2);
+      expect(blocks[0].identities).toBeUndefined();
+      expect(blocks[1].mustCall).toEqual(['mcp__*']);
+    });
+
+    it('rejects a case declaring BOTH flat assertions and an expect: array', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+identities: [admin]
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+    expect:
+      - identities: [admin]
+        must_call: ["mcp__*"]
+`)
+      ).toThrow(/declares BOTH case-level assertions and an `expect:` array/);
+    });
+
+    it('rejects an expect: block referencing an identity the suite does not declare', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+identities: [admin]
+cases:
+  - id: c1
+    prompt: "p"
+    expect:
+      - identities: [ghost]
+        must_call: ["mcp__*"]
+`)
+      ).toThrow(/references identity "ghost" which the suite does not declare/);
+    });
+
+    it('rejects a (case × identity) with no applicable expect block (no-silent-pass, static)', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      // `limited` is declared but no block covers it → nothing would grade limited.
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+identities: [admin, limited]
+cases:
+  - id: c1
+    prompt: "p"
+    expect:
+      - identities: [admin]
+        must_call: ["mcp__*"]
+`)
+      ).toThrow(/has no expectation block covering identity "limited"/);
+    });
+
+    it('rejects an expect: block with no checks and no judge', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+identities: [admin]
+cases:
+  - id: c1
+    prompt: "p"
+    expect:
+      - identities: [admin]
+`)
+      ).toThrow(/expect block 0 has no checks and no judge rubric/);
+    });
+
+    it('rejects a duplicate identity name', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+identities: [admin, admin]
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+`)
+      ).toThrow(/duplicate identity "admin"/);
+    });
+
+    it('rejects an identity name with a path separator or traversal sequence', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      for (const bad of ['a/b', '..', '../../etc']) {
+        expect(() =>
+          parseEvalSuite(`
+target: { type: gth-agent }
+identities: ['${bad}']
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+`)
+        ).toThrow(/must be a plain profile name/);
+      }
+    });
+
+    it('rejects an empty identities list (omit the key instead)', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+identities: []
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+`)
+      ).toThrow(/`identities` must list at least one profile name/);
+    });
+
+    it('rejects a case declaring turns: (multi-turn is not supported yet)', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    turns:
+      - user: "first message"
+        must_contain: ["a"]
+      - user: "second message"
+        must_contain: ["b"]
+`)
+      ).toThrow(/multi-turn suites are not supported yet/);
+    });
+
+    it('rejects a case with a missing prompt (and no turns)', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    must_contain: ["x"]
+`)
+      ).toThrow(/must declare a non-empty `prompt`/);
     });
   });
 });

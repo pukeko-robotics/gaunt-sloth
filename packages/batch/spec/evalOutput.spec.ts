@@ -58,6 +58,50 @@ describe('writeEvalOutput', () => {
     expect(resultsJson).toEqual(summary);
   });
 
+  it('names a matrix cell `<id>__<identity>.json` and a non-matrix cell `<id>.json`', async () => {
+    const { writeEvalOutput } = await import('#src/evalOutput.js');
+    const outputDir = join(dir, 'matrix');
+    const summary: EvalSuiteSummary = {
+      total: 3,
+      passed: 3,
+      failed: 0,
+      cases: [
+        // No identity → filename stays `<id>.json` (byte-for-byte as before BATCH-12).
+        { id: 'plain', verdict: 'PASS', passThreshold: 6, sutOk: true, durationMs: 1, reasons: [] },
+        {
+          id: 'list',
+          identity: 'admin',
+          verdict: 'PASS',
+          passThreshold: 6,
+          sutOk: true,
+          durationMs: 1,
+          reasons: [],
+        },
+        {
+          id: 'list',
+          identity: 'limited',
+          verdict: 'PASS',
+          passThreshold: 6,
+          sutOk: true,
+          durationMs: 1,
+          reasons: [],
+        },
+      ],
+    };
+
+    writeEvalOutput(outputDir, summary);
+
+    expect(JSON.parse(readFileSync(join(outputDir, 'plain.json'), 'utf8'))).toEqual(
+      summary.cases[0]
+    );
+    expect(JSON.parse(readFileSync(join(outputDir, 'list__admin.json'), 'utf8'))).toEqual(
+      summary.cases[1]
+    );
+    expect(JSON.parse(readFileSync(join(outputDir, 'list__limited.json'), 'utf8'))).toEqual(
+      summary.cases[2]
+    );
+  });
+
   it('creates the output directory (and parents) when it does not exist', async () => {
     const { writeEvalOutput } = await import('#src/evalOutput.js');
     const outputDir = join(dir, 'nested', 'deeper', 'run');
