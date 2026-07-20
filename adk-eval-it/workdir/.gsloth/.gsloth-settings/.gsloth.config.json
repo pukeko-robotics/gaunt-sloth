@@ -1,0 +1,7 @@
+{
+  "llm": {
+    "type": "google-genai",
+    "model": "gemini-flash-lite-latest"
+  },
+  "allowedTools": []
+}

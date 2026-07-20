@@ -1,0 +1,42 @@
+# BATCH-16 — LIVE passing suite for the `adk-agent` target.
+#
+# The SUT is a real Python google-adk agent (adk-eval-it/src/adk_agent.py) served over A2A; gth's
+# adk-agent target drives it via `@a2a-js/sdk`. The agent's ONE tool, `lookup_shipment`, returns
+# VERBATIM, paraphrase-proof marker codes (SHIP-DELIVERED-7Q / SHIP-INTRANSIT-3B) the model cannot
+# invent — so a `must_contain` of that marker is the proof the tool actually ran. (A2A exposes no
+# tool trace, so `must_call`/`must_not_call` are a PARSE-TIME ERROR for this target — assert on the
+# ANSWER text + a judge instead.)
+#
+# `url` MUST match the port run-adk-eval.sh serves the agent on (ADK_A2A_PORT, default 41539).
+target:
+  type: adk-agent
+  url: http://127.0.0.1:41539
+defaults:
+  pass_threshold: 6
+cases:
+  # 1. Deterministic marker: the answer must carry the exact status code only the tool emits.
+  - id: shipment-status-tkh9
+    prompt: 'Look up shipment TKH-9 and report the exact status code the tool returns, plus the carrier.'
+    must_contain: ['SHIP-DELIVERED-7Q', 'Takahe Freight']
+    must_not_contain: ['SHIP-INTRANSIT-3B', 'SHIP-UNKNOWN-0']
+
+  # 2. A different record — proves the answer tracks the tool's per-id result, not a memorized string.
+  - id: shipment-status-tkh42
+    prompt: 'What is the delivery status of shipment TKH-42? Report the exact status code and the destination city.'
+    must_contain: ['SHIP-INTRANSIT-3B', 'Auckland']
+    must_not_contain: ['SHIP-DELIVERED-7Q']
+
+  # 3. The judge path (gth's own gemini-flash-lite grades the rubric). Used sparingly — the two
+  #    deterministic cases are the backbone; this proves the judge grades a live A2A answer.
+  - id: shipment-judge-tkh9
+    prompt: 'I need the current status of shipment TKH-9. Please look it up and summarize.'
+    judge: 'The assistant reports the shipment status code SHIP-DELIVERED-7Q (verbatim) and identifies the carrier as Takahe Freight. It must not invent a different status code.'
+
+  # 4. Multi-turn — proves the adk-agent runner threads the A2A `contextId` across turns (BATCH-14
+  #    review point 2). Turn 2 can only answer by remembering turn 1, carried by the live contextId.
+  - id: cross-turn-memory
+    turns:
+      - user: 'Please remember this codeword for later: KIWI-88. Reply with just: OK'
+        must_contain: ['OK']
+      - user: 'What was the codeword I gave you a moment ago? Reply with just the codeword.'
+        must_contain: ['KIWI-88']

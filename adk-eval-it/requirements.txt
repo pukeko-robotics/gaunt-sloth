@@ -1,0 +1,19 @@
+# BATCH-16 — Python deps for the live ADK agent (the SUT for gth eval's adk-agent target).
+#
+# THE LOAD-BEARING PIN is `a2a-sdk==0.3.26`.
+#
+# google-adk 2.5.0 by default pulls a2a-sdk 1.1.x, whose served agent card uses the NEW A2A schema
+# (`supportedInterfaces: [{url, protocolBinding, protocolVersion:"1.0"}]`, NO top-level `url`). The
+# gth `adk-agent` target drives `@a2a-js/sdk` 0.3.14, whose deprecated `new A2AClient(url)` reads the
+# OLD-schema top-level `url` field and hard-fails on the new card with:
+#   "Fetched Agent Card does not contain a valid 'url' for the service endpoint."
+# Pinning a2a-sdk to the 0.3 generation (google-adk 2.5.0 allows `a2a-sdk>=0.3.4,<2`) makes the
+# Python server emit the classic 0.3.0 card (`url`, `preferredTransport: JSONRPC`,
+# `protocolVersion: "0.3.0"`) that the 0.3.14 JS client speaks — same protocol generation on both
+# ends, so the whole exchange (card + `message/send` + Task shape) is honestly compatible.
+# `[http-server]` is REQUIRED: a2a-sdk 0.3.26 keeps starlette + sse-starlette + fastapi behind that
+# extra (not core deps), and google-adk's `to_a2a` imports Starlette at module load — a plain
+# `a2a-sdk==0.3.26` provisions a venv that fails at agent startup on a fresh box.
+google-adk==2.5.0
+a2a-sdk[http-server]==0.3.26
+uvicorn==0.51.0

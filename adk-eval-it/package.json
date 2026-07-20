@@ -1,0 +1,10 @@
+{
+  "name": "adk-eval-it",
+  "version": "0.0.0",
+  "private": true,
+  "description": "BATCH-16 — standalone LIVE eval bed: a real Python google-adk agent over A2A, graded by `gth eval`'s adk-agent target. Not published, not part of `pnpm run it`; run on demand via run-adk-eval.sh.",
+  "scripts": {
+    "eval": "./run-adk-eval.sh adk.suite.yaml",
+    "eval:broken": "./run-adk-eval.sh adk-broken.suite.yaml"
+  }
+}
