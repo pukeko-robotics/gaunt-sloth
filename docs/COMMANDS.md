@@ -203,6 +203,43 @@ gsloth ask "How do these modules interact?" -f module1.js module2.js
 cat error.log | gsloth ask "What might be causing these errors?"
 ```
 
+## exec
+
+Run a markdown prompt-executable reliably and near-deterministically — the non-interactive, prompt-as-script sibling of `ask`.
+
+```bash
+gsloth exec [script]
+```
+
+`exec` streams its result to stdout (so it pipes cleanly) and is **non-interactive** — there is no ESC-to-interrupt and nothing is written to a report file unless you pass `-w`. A non-zero exit code signals failure.
+
+### Arguments
+- `[script]` - Path to the `.md` prompt-executable to run. Optional: the script can instead be supplied inline with `-m` or piped on stdin.
+
+### Options
+- `-m, --message <text>` - Inline prompt text to execute instead of a script file path. Cannot be combined with `[script]`.
+- `-f, --file [files...]` - Additional context files. Their content is added BEFORE the script.
+- `-t, --temperature <number>` - LLM sampling temperature for this run (`0` = most deterministic).
+- `--allow-dir <path>` - Allow filesystem access to an extra directory beyond the cwd for this run (repeatable). Removes the default cwd sandbox guardrail — use with care.
+
+### Description
+The script is resolved in precedence order: `-m/--message` inline text, then the `[script]` path argument, then stdin. Extra `-f` files are prepended as context. `exec` runs the same single-shot agent runtime as `ask`, tuned for reproducible "do-the-job" runs.
+
+### Examples
+```bash
+# Run a prompt-executable script
+gsloth exec scripts/release-notes.md
+
+# Inline prompt, most deterministic
+gsloth exec -m "Summarize CHANGELOG.md in three bullets" -t 0
+
+# Pipe a script on stdin
+cat scripts/lint-summary.md | gsloth exec
+
+# Add context files before the script
+gsloth exec scripts/build-fix.md -f error.log package.json
+```
+
 ## chat
 
 Start an interactive chat session with Gaunt Sloth.
@@ -432,6 +469,70 @@ gsloth eval eval/authz-matrix.yaml -j 8 -o eval/out/authz
 gsloth eval eval/js-basics.yaml || echo "eval failed (exit $?)"
 ```
 
+## batch
+
+Run one prompt-executable across a matrix of models and/or content-bound inputs — "xargs for prompts", the way `exec` runs a single one.
+
+```bash
+gsloth batch <script> --over <csv|jsonl> [--models a,b,c] [-j 8] [--retry 2] [-o out/]
+```
+
+`batch` exits `0` as long as the cells *ran* — a poor-quality answer is **not** a harness failure (grading answers is [`eval`](#eval)'s job). Only a harness-level error (a malformed `--over` file, a missing script) sets a non-zero exit code; each cell's outcome is recorded in that cell's structured JSON output.
+
+### Arguments
+- `<script>` - Path to the `.md` prompt-executable script to run over the matrix (required).
+
+### Options
+- `--over <path>` - CSV or JSONL file whose rows/records bind into the script via `{{field}}` placeholders — one matrix cell per row (content binding only; a glob-of-files path binding is not supported by this command).
+- `--models <list>` - Comma-separated list of models to fan out over. Omit to use the configured model (no fan-out).
+- `-j, --concurrency <n>` - Maximum in-flight cells.
+- `--retry <n>` - Retry a failed cell up to `n` times (default: `0`, no retry).
+- `-o, --output <dir>` - Directory to write structured per-cell JSON plus a `results.json` summary to (default: a timestamped dir alongside other gth reports).
+
+### Description
+The matrix is the cross-product of the model axis (`--models`) and the input axis (`--over` rows). Each cell is an isolated single-shot run; results and a pass/fail tally are written to the output directory. Use `batch` to *produce* answers at scale and `eval` to *grade* them.
+
+### Examples
+```bash
+# Run one script across three models
+gsloth batch prompts/classify.md --models claude-sonnet-4-5,gpt-4o,gemini-2.5-pro
+
+# Bind CSV rows into the script via {{field}} placeholders, 8 cells in parallel
+gsloth batch prompts/triage.md --over data/tickets.csv -j 8
+
+# Fan out over models AND rows, retry failed cells, write to a named dir
+gsloth batch prompts/triage.md --over data/tickets.jsonl \
+  --models claude-sonnet-4-5,gpt-4o --retry 2 -o out/triage
+```
+
+## workflow
+
+Run a local JS orchestration script that drives one or more agent calls.
+
+```bash
+gsloth workflow <script> [--args <json>]
+```
+
+> **Runs with full Node privileges.** The script is arbitrary local ESM — it can read files and spawn processes. Run only scripts you trust, as you would any local script.
+
+### Arguments
+- `<script>` - Path to the `.mjs`/`.js` workflow script. Its default export is `async (ctx) => result`.
+
+### Options
+- `--args <json>` - A JSON value passed to the script as `ctx.args`.
+
+### Description
+The workflow's return value is its output: a string is printed as-is, anything else is printed as pretty-printed JSON. A malformed `--args` value or an error thrown by the script fails the command with a clean message and a non-zero exit code.
+
+### Examples
+```bash
+# Run a workflow script
+gsloth workflow workflows/summarize-prs.mjs
+
+# Pass a JSON argument the script reads as ctx.args
+gsloth workflow workflows/triage.mjs --args '{"label":"bug","limit":20}'
+```
+
 ## api ag-ui
 
 Start an [AG-UI](https://github.com/ag-ui-protocol/ag-ui) compatible HTTP server that exposes the Gaunt Sloth agent over the standard AG-UI protocol.
@@ -543,6 +644,95 @@ gth models --refresh
 
 # Only show one provider
 gth models --provider anthropic
+```
+
+## config
+
+Inspect and validate the resolved Gaunt Sloth configuration, without building the LLM.
+
+```bash
+gsloth config print [--json]
+gsloth config validate
+```
+
+Both subcommands resolve the config exactly as a real run would — up-tree discovery, the global base, and the defaults merge — and honour the global `--config` / `-i, --identity-profile` overrides.
+
+### Subcommands
+- `config print` - Print the fully-resolved configuration with secrets redacted. By default it prints a source header followed by the JSON; `--json` emits only the JSON object (machine-readable, no header) so it pipes cleanly.
+- `config validate` - Validate the effective configuration against the schema. Unknown keys warn; a schema violation prints a path-scoped message and exits non-zero. Every layer (project + global) is reported, so you fix all offending files at once.
+
+### Options
+- `--json` - (`config print` only) Emit only the JSON object, no header.
+
+### Examples
+```bash
+# Print the resolved config (secrets redacted)
+gsloth config print
+
+# Emit just the JSON object and pull one field out with jq
+gsloth config print --json | jq '.llm'
+
+# Validate the config; exits non-zero when invalid
+gsloth config validate
+```
+
+## history
+
+Search and list locally-recorded session history.
+
+```bash
+gsloth history list [--limit <n>] [--db <path>]
+gsloth history search <query...> [--limit <n>] [--db <path>]
+gsloth history show <id> [--db <path>]
+```
+
+Recording is **opt-in and local only** — nothing here touches the network. Sessions are stored only when `history.enabled: true` is set in your config; with no store present these commands report that there is no history yet rather than creating one. The store defaults to `~/.gsloth/history.db` (overridable via the `history.dbPath` config key or the `--db` flag).
+
+### Subcommands
+- `history list` - List the most recent conversations, grouped with a turn count and timespan.
+- `history search` - Full-text search across past turns (SQLite FTS5); each hit shows the conversation it belongs to.
+- `history show` - Print a whole conversation thread, all turns in order.
+
+### Arguments
+- `<query...>` - (`history search`) One or more search terms.
+- `<id>` - (`history show`) Conversation id, as printed by `history list` / `history search`.
+
+### Options
+- `--db <path>` - Path to the history DB (defaults to `~/.gsloth/history.db`).
+- `--limit <n>` - (`history list` / `history search`) Maximum results (default: `20`).
+
+### Examples
+```bash
+# List recent conversations
+gsloth history list
+
+# Full-text search past sessions
+gsloth history search vertexai timeout
+
+# Print one conversation thread by id (from `history list`)
+gsloth history show 42
+```
+
+## insights
+
+Show local analytics over recorded session history.
+
+```bash
+gsloth insights [--db <path>]
+```
+
+Read-only analytics over the same opt-in [`history`](#history) store — token and cost totals, a top-tool tally, and a per-command breakdown. Local only: nothing leaves the machine, and with no store present it reports that there is no history yet rather than creating one. Enable recording with `history.enabled: true` in your config.
+
+### Options
+- `--db <path>` - Path to the history DB (defaults to `~/.gsloth/history.db`).
+
+### Examples
+```bash
+# Show local usage analytics
+gsloth insights
+
+# Point at a specific history DB
+gsloth insights --db ./project-history.db
 ```
 
 ## Command-Specific Configuration
