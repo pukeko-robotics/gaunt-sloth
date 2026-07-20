@@ -58,6 +58,7 @@ to call a visible tool. A tool is therefore either:
 # from the repo root or eval-it/ — builds the CLI, starts the MCP server, runs the suite, tears down
 eval-it/run-authz-eval.sh                       # the passing matrix (authz.suite.yaml)  -> exit 0
 eval-it/run-authz-eval.sh authz-broken.suite.yaml   # the discrimination proof            -> exit 1
+eval-it/run-authz-eval.sh multiturn-smoke.suite.yaml # live multi-turn Anthropic smoke     -> exit 0
 
 # faster iteration (skip the build if you just built):
 SKIP_BUILD=1 eval-it/run-authz-eval.sh
@@ -94,6 +95,15 @@ delete) while the one legitimately-shared cell (catalog — alice really has pro
 PASSES. Result: `1/5 passed, 4 failed`, **exit 1**. A suite that cannot fail proves nothing; this one
 can, for the right reasons.
 
+## Multi-turn smoke (`multiturn-smoke.suite.yaml`)
+
+A live proof that the multi-turn runner (`runConversation`) works on Anthropic. Fake/unit tests cannot
+catch its double-system bug — the rejection happens inside `@langchain/anthropic`, which a fake runner
+never reaches — so a real multi-turn Anthropic run is the only proof. No identities, no MCP; the base
+config sets `allowedTools: []` so the SUT has **zero** tools, and turn 2 (`"what was the codeword?"`)
+can only pass by remembering turn 1's `BANANA-7` from the replayed conversation, not by grepping a file.
+Exits 0; the output `turns[]` breakdown confirms it routed through the multi-turn path.
+
 ## Layout
 
 ```
@@ -104,7 +114,8 @@ eval-it/
 │   ├── authz.suite.yaml           # the passing identity matrix (5 cases × 3 identities = 15 cells)
 │   ├── authz-broken.suite.yaml    # the discrimination-proof (exit 1)
 │   ├── step0-whoami.suite.yaml    # the STEP-0 pre-flight smoke
-│   └── .gsloth/.gsloth-settings/  # base config + admin/alice/bob/alice-broken identity profiles
+│   ├── multiturn-smoke.suite.yaml # live multi-turn Anthropic smoke (proves the conversation.ts fix)
+│   └── .gsloth/.gsloth-settings/  # base config (allowedTools:[]) + admin/alice/bob/alice-broken profiles
 └── package.json / tsconfig.json
 ```
 
