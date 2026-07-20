@@ -354,6 +354,21 @@ export interface GthConfig {
    * (read/write files, run commands) rather than only chat. Never persisted to a config file.
    */
   askWriteMode?: boolean;
+  /**
+   * GS2-63 — output surface controls.
+   *
+   * `output.header` DEFAULTS ON (omitted = show). Set `false` to suppress the technical run-header
+   * preamble — the Workdir/Model/Tools/Middleware status block, the `Press Escape or Q to interrupt`
+   * hint, and their surrounding blank lines — in NON-TUI text modes (`--no-tui`, `ask`, `exec`,
+   * `eval`, `pr`, `review`, piped/CI), so captured stdout and log diffs stay clean. The interactive
+   * TUI ignores the setting and always shows the header. Only the preamble is suppressed — never
+   * model/tool output, errors, or config-validation warnings, and never the live `Thinking…`
+   * indicator. Defaulted at the read site (`!== false`), not in {@link DEFAULT_CONFIG}, to avoid
+   * churning the effective-config snapshot.
+   */
+  output?: {
+    header?: boolean;
+  };
 }
 
 /**

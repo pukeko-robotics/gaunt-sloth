@@ -67,7 +67,7 @@ const keypressHandler = (callback: () => void) => (chunk: any, key: any) => {
   }
 };
 
-export const waitForEscape = (callback: () => void, enabled: boolean) => {
+export const waitForEscape = (callback: () => void, enabled: boolean, showHint = true) => {
   if (!enabled) {
     return;
   }
@@ -82,11 +82,16 @@ export const waitForEscape = (callback: () => void, enabled: boolean) => {
   process.stdin.ref?.();
   innerState.waitForEscapeCallback = keypressHandler(callback);
   process.stdin.on('keypress', innerState.waitForEscapeCallback);
-  displayInfo(`
+  // GS2-63: the hint box is part of the run-header preamble. When it is opted out (`showHint`
+  // false) the Esc/Q handler is still armed above — only the printed box (and its blank-line
+  // padding) is suppressed.
+  if (showHint) {
+    displayInfo(`
   ┌--------------------------------------┐
   │ Press Escape or Q to interrupt Agent │
   └--------------------------------------┘
   `);
+  }
 };
 
 export const stopWaitingForEscape = () => {

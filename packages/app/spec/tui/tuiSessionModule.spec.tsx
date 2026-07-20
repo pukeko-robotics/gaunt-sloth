@@ -144,6 +144,19 @@ describe('createTuiSession — launch bump (TUI-C13)', () => {
     expect(runnerCall[2]).toBe(resolvedFactory);
   });
 
+  it('GS2-63: forces output.header ON for the TUI even when config opts it out', async () => {
+    // The `output.header: false` opt-out only applies to non-TUI text modes; the interactive
+    // TUI must ALWAYS show the run-header preamble, so createTuiSession overrides the setting.
+    initConfigMock.mockResolvedValue({ output: { header: false } });
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await createTuiSession(sessionConfig, overrides);
+
+    expect(runnerInitMock).toHaveBeenCalledTimes(1);
+    const initConfigArg = runnerInitMock.mock.calls[0][1] as { output?: { header?: boolean } };
+    expect(initConfigArg.output?.header).toBe(true);
+  });
+
   it('does NOT write the bump sequence when stdout is not a TTY (piped/redirected/tests)', async () => {
     systemUtilsMock.stdout.isTTY = false;
     const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');

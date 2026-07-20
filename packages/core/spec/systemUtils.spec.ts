@@ -101,6 +101,21 @@ describe('systemUtils', () => {
       );
     });
 
+    it('GS2-63: arms the handler but suppresses the hint box when showHint is false', async () => {
+      const { waitForEscape } = await import('#src/utils/systemUtils.js');
+
+      const callback = vi.fn();
+
+      // Act — enabled, but the run-header preamble is opted out (output.header: false).
+      waitForEscape(callback, true, false);
+
+      // The Esc/Q handler is still armed so interrupts keep working …
+      expect(processMock.stdin.setRawMode).toHaveBeenCalledWith(true);
+      expect(processMock.stdin.on).toHaveBeenCalledWith('keypress', expect.any(Function));
+      // … only the printed hint box (and its padding) is suppressed.
+      expect(consoleUtilsMock.displayInfo).not.toHaveBeenCalled();
+    });
+
     it('should call callback when escape key is pressed', async () => {
       // Import the function after mocks are set up
       const { waitForEscape } = await import('#src/utils/systemUtils.js');

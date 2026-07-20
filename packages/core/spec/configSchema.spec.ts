@@ -28,6 +28,21 @@ describe('config schema (GS2-1 B1)', () => {
       expect(result.success).toBe(true);
     });
 
+    it('GS2-63: accepts output.header and rejects a non-boolean header', () => {
+      expect(
+        rawGthConfigSchema.safeParse({ llm: { type: 'anthropic' }, output: { header: false } })
+          .success
+      ).toBe(true);
+      const bad = rawGthConfigSchema.safeParse({
+        llm: { type: 'anthropic' },
+        output: { header: 'nope' },
+      });
+      expect(bad.success).toBe(false);
+      if (!bad.success) {
+        expect(formatConfigValidationError(bad.error)).toContain('output.header');
+      }
+    });
+
     it('produces a path-scoped error message on a type mismatch', () => {
       const result = rawGthConfigSchema.safeParse({
         llm: { type: 'openai' },

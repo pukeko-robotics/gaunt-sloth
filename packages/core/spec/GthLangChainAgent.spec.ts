@@ -232,6 +232,59 @@ describe('GthLangChainAgent', () => {
       );
     });
 
+    describe('GS2-63: output.header run-header preamble opt-out', () => {
+      it('emits the Workdir/Model/Middleware header by default (output.header unset)', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+        await agent.init(undefined, { ...mockConfig, modelDisplayName: 'test-model' } as GthConfig);
+
+        expect(statusUpdateCallback).toHaveBeenCalledWith(StatusLevel.INFO, 'Workdir: /test/dir');
+        expect(statusUpdateCallback).toHaveBeenCalledWith(StatusLevel.INFO, 'Model: test-model');
+        expect(statusUpdateCallback).toHaveBeenCalledWith(
+          StatusLevel.INFO,
+          expect.stringContaining('Loaded middleware:')
+        );
+      });
+
+      it('still emits the header when output is present but header is unset', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+        await agent.init(undefined, { ...mockConfig, output: {} } as GthConfig);
+
+        expect(statusUpdateCallback).toHaveBeenCalledWith(StatusLevel.INFO, 'Workdir: /test/dir');
+      });
+
+      it('suppresses the whole header block when output.header is false (text mode)', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+        await agent.init(undefined, {
+          ...mockConfig,
+          modelDisplayName: 'test-model',
+          output: { header: false },
+        } as GthConfig);
+
+        expect(statusUpdateCallback).not.toHaveBeenCalledWith(
+          StatusLevel.INFO,
+          'Workdir: /test/dir'
+        );
+        expect(statusUpdateCallback).not.toHaveBeenCalledWith(
+          StatusLevel.INFO,
+          'Model: test-model'
+        );
+        expect(statusUpdateCallback).not.toHaveBeenCalledWith(
+          StatusLevel.INFO,
+          expect.stringContaining('Loaded middleware:')
+        );
+        expect(statusUpdateCallback).not.toHaveBeenCalledWith(
+          StatusLevel.INFO,
+          expect.stringContaining('Loaded tools:')
+        );
+      });
+    });
+
     it('should initialize with checkpoint saver', async () => {
       const agent = new GthLangChainAgent(statusUpdateCallback);
       const checkpointSaver = new MemorySaver();

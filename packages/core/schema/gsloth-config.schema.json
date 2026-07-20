@@ -2088,6 +2088,14 @@
     },
     "askWriteMode": {
       "type": "boolean"
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "header": {
+          "type": "boolean"
+        }
+      }
     }
   },
   "additionalProperties": {}
