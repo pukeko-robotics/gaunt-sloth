@@ -109,6 +109,17 @@ cases:
     judge: "Explains clearly."
 `;
 
+// BATCH-10 Task 2: a judged suite that also declares a suite-level judge_profile.
+const JUDGE_PROFILE_SUITE = `
+target: { type: gth-agent }
+judge_profile: suite-judge
+defaults: { pass_threshold: 6 }
+cases:
+  - id: judged-case
+    prompt: "explain the thing"
+    judge: "Explains clearly."
+`;
+
 describe('evalCommand', () => {
   let outputDir: string;
 
@@ -141,6 +152,7 @@ describe('evalCommand', () => {
     fileUtilsMock.readFileFromProjectDir.mockImplementation((file: string) => {
       if (file === 'suite.yaml') return SIMPLE_SUITE;
       if (file === 'judge-suite.yaml') return JUDGE_SUITE;
+      if (file === 'judge-profile-suite.yaml') return JUDGE_PROFILE_SUITE;
       throw new Error(`unexpected file read: ${file}`);
     });
   });
@@ -354,5 +366,205 @@ cases:
     expect(consoleUtilsMock.displaySuccess).toHaveBeenCalledWith(
       expect.stringContaining(defaultEvalOutputDir())
     );
+  });
+
+  // BATCH-10 Task 2: the judge can run under a separate identity profile than the SUT.
+  describe('separate judge profile (--judge / suite judge_profile)', () => {
+    // Build a config-per-profile resolver: initConfig returns a judge-specific config (its own
+    // `withStructuredOutput` spy) when asked for a given identityProfile, else the default SUT
+    // config. Returns the judge's structured-output spy so a test can assert the judge graded via
+    // the judge profile's llm and NOT the SUT's.
+    function stubJudgeProfile(profileName: string, judgeRate = 9) {
+      const judgeStructuredInvoke = vi.fn(async () => ({
+        rate: judgeRate,
+        reason: 'Judged by the separate profile model.',
+      }));
+      const judgeWithStructuredOutput = vi.fn(() => ({ invoke: judgeStructuredInvoke }));
+      configMock.initConfig.mockImplementation(async (overrides?: { identityProfile?: string }) => {
+        if (overrides?.identityProfile === profileName) {
+          return {
+            ...mockConfig,
+            llm: {
+              ...mockConfig.llm,
+              model: 'judge-model',
+              withStructuredOutput: judgeWithStructuredOutput,
+            },
+          };
+        }
+        return { ...mockConfig, llm: { ...mockConfig.llm } };
+      });
+      return { judgeWithStructuredOutput, judgeStructuredInvoke };
+    }
+
+    it('builds the judge from the --judge profile config, not the SUT config', async () => {
+      runSingleShot.mockResolvedValue({ ok: true, answer: 'a clear explanation', tools: [] });
+      const { judgeWithStructuredOutput } = stubJudgeProfile('strict-judge');
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'eval',
+        'judge-suite.yaml',
+        '--judge',
+        'strict-judge',
+        '-o',
+        outputDir,
+      ]);
+
+      // A separate config was built for the judge profile...
+      expect(configMock.initConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ identityProfile: 'strict-judge' })
+      );
+      // ...and the judge graded via THAT config's llm, never the SUT's.
+      expect(judgeWithStructuredOutput).toHaveBeenCalledOnce();
+      expect(withStructuredOutput).not.toHaveBeenCalled();
+
+      // The run is self-describing: a single line naming the judge profile + model.
+      expect(consoleUtilsMock.display).toHaveBeenCalledWith(
+        expect.stringContaining('strict-judge')
+      );
+      expect(consoleUtilsMock.display).toHaveBeenCalledWith(expect.stringContaining('judge-model'));
+
+      const caseJson = JSON.parse(readFileSync(join(outputDir, 'judged-case.json'), 'utf8'));
+      expect(caseJson).toMatchObject({
+        verdict: 'PASS',
+        judge: { attempted: true, ok: true, verdict: { rate: 9 } },
+      });
+    });
+
+    it('lets CLI --judge override the suite-level judge_profile', async () => {
+      runSingleShot.mockResolvedValue({ ok: true, answer: 'a clear explanation', tools: [] });
+      const { judgeWithStructuredOutput } = stubJudgeProfile('cli-judge');
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'eval',
+        'judge-profile-suite.yaml', // declares judge_profile: suite-judge
+        '--judge',
+        'cli-judge',
+        '-o',
+        outputDir,
+      ]);
+
+      // CLI wins: config built for cli-judge, never for the suite's suite-judge.
+      expect(configMock.initConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ identityProfile: 'cli-judge' })
+      );
+      expect(configMock.initConfig).not.toHaveBeenCalledWith(
+        expect.objectContaining({ identityProfile: 'suite-judge' })
+      );
+      expect(judgeWithStructuredOutput).toHaveBeenCalledOnce();
+      expect(withStructuredOutput).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the suite judge_profile when --judge is omitted', async () => {
+      runSingleShot.mockResolvedValue({ ok: true, answer: 'a clear explanation', tools: [] });
+      const { judgeWithStructuredOutput } = stubJudgeProfile('suite-judge');
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'eval',
+        'judge-profile-suite.yaml', // declares judge_profile: suite-judge
+        '-o',
+        outputDir,
+      ]);
+
+      expect(configMock.initConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ identityProfile: 'suite-judge' })
+      );
+      expect(judgeWithStructuredOutput).toHaveBeenCalledOnce();
+      expect(withStructuredOutput).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a judge profile that fails to load as a harness error (exit 2)', async () => {
+      // A bad --judge profile makes the judge initConfig reject; the outer catch turns it into the
+      // exit-2 harness signal (not a product-regression exit 1).
+      configMock.initConfig.mockImplementation(async (overrides?: { identityProfile?: string }) => {
+        if (overrides?.identityProfile === 'no-such-profile') {
+          throw new Error('profile "no-such-profile" not found');
+        }
+        return { ...mockConfig, llm: { ...mockConfig.llm } };
+      });
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'eval',
+        'judge-suite.yaml',
+        '--judge',
+        'no-such-profile',
+        '-o',
+        outputDir,
+      ]);
+
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+        expect.stringContaining('no-such-profile')
+      );
+    });
+
+    it('does NOT build a separate judge config or print a judge line when no profile is set', async () => {
+      // Regression guard: the default (no --judge, no suite judge_profile) path is unchanged —
+      // initConfig is called exactly once (the SUT), and no self-describing judge line is printed.
+      runSingleShot.mockResolvedValue({ ok: true, answer: 'a clear explanation', tools: [] });
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'judge-suite.yaml', '-o', outputDir]);
+
+      expect(configMock.initConfig).toHaveBeenCalledTimes(1);
+      expect(configMock.initConfig).not.toHaveBeenCalledWith(
+        expect.objectContaining({ identityProfile: expect.anything() })
+      );
+      expect(consoleUtilsMock.display).not.toHaveBeenCalledWith(expect.stringContaining('Judge:'));
+    });
+  });
+});
+
+// BATCH-10 Task 2: the pure judge-profile resolver, unit tested in isolation.
+describe('resolveJudgeProfile', () => {
+  it('prefers the CLI --judge value over the suite judge_profile', async () => {
+    const { resolveJudgeProfile } = await import('#src/commands/evalCommand.js');
+    expect(resolveJudgeProfile('cli-judge', 'suite-judge')).toBe('cli-judge');
+  });
+
+  it('falls back to the suite judge_profile when no CLI value is given', async () => {
+    const { resolveJudgeProfile } = await import('#src/commands/evalCommand.js');
+    expect(resolveJudgeProfile(undefined, 'suite-judge')).toBe('suite-judge');
+  });
+
+  it('returns undefined (= judge with the SUT model) when neither is set', async () => {
+    const { resolveJudgeProfile } = await import('#src/commands/evalCommand.js');
+    expect(resolveJudgeProfile(undefined, undefined)).toBeUndefined();
+  });
+
+  it('treats a blank/whitespace CLI value as absent and falls through to the suite value', async () => {
+    const { resolveJudgeProfile } = await import('#src/commands/evalCommand.js');
+    expect(resolveJudgeProfile('   ', 'suite-judge')).toBe('suite-judge');
+  });
+
+  it('returns undefined when both values are blank', async () => {
+    const { resolveJudgeProfile } = await import('#src/commands/evalCommand.js');
+    expect(resolveJudgeProfile('   ', '  ')).toBeUndefined();
+  });
+
+  it('trims the resolved profile name', async () => {
+    const { resolveJudgeProfile } = await import('#src/commands/evalCommand.js');
+    expect(resolveJudgeProfile('  spaced-judge  ', undefined)).toBe('spaced-judge');
   });
 });

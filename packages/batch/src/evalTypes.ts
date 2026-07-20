@@ -62,6 +62,12 @@ export interface EvalCase {
 /** A fully parsed and validated suite — see {@link ../evalSuite.js}'s `parseEvalSuite`. */
 export interface EvalSuite {
   target: EvalTarget;
+  /** Optional suite-level judge identity profile (BATCH-10 Task 2): the profile whose model grades
+   * the cases, when the suite wants a judge distinct from the SUT. A top-level sibling of
+   * `target`/`cases` — distinct from `target.profile` (which selects the SUT and is still rejected
+   * unless `default`). Resolved by the CLI as `--judge <profile>` > this > none (none = judge uses
+   * the SUT's `config.llm`, the pre-Task-2 behavior). Absent/blank = no separate judge. */
+  judgeProfile?: string;
   cases: EvalCase[];
 }
 

@@ -356,4 +356,45 @@ cases:
       expect(suite.cases[0].jsonPath).toEqual([{ path: 'a.b', equals: null }]);
     });
   });
+
+  // BATCH-10 Task 2: the optional top-level `judge_profile` field.
+  describe('judge_profile', () => {
+    it('surfaces a suite-level judge_profile as EvalSuite.judgeProfile', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+judge_profile: strict-judge
+cases:
+  - id: c1
+    prompt: "p"
+    judge: "Graded by a separate model."
+`);
+      expect(suite.judgeProfile).toBe('strict-judge');
+    });
+
+    it('leaves judgeProfile undefined when the suite declares no judge_profile (regression)', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+`);
+      expect(suite.judgeProfile).toBeUndefined();
+    });
+
+    it('normalizes a blank/whitespace-only judge_profile to undefined (= no separate judge)', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+judge_profile: "   "
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+`);
+      expect(suite.judgeProfile).toBeUndefined();
+    });
+  });
 });

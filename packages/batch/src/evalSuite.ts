@@ -11,6 +11,8 @@ import type { EvalCase, EvalSuite } from '#src/evalTypes.js';
  *
  * ```yaml
  * target: { type: gth-agent, profile: default }
+ * judge_profile: strict-judge          # BATCH-10 Task 2: optional identity profile that judges the
+ *                                       # cases (its own model), distinct from the SUT's `target`.
  * defaults: { pass_threshold: 6 }
  * cases:
  *   - id: some-case-id
@@ -62,6 +64,12 @@ const RawSuiteSchema = z.object({
     type: z.string(),
     profile: z.string().optional(),
   }),
+  // BATCH-10 Task 2: optional identity profile whose model judges the cases. A top-level sibling of
+  // `target`/`defaults`/`cases`, and distinct from `target.profile` (which selects the SUT and is
+  // still rejected unless "default"). The CLI's `--judge <profile>` overrides this; both override
+  // "none" (judge = SUT model). Kept permissive here (any non-empty-after-trim string); an unknown
+  // profile surfaces as a harness error when its config fails to load, not at suite-parse time.
+  judge_profile: z.string().optional(),
   defaults: z
     .object({
       pass_threshold: z.number().min(0).max(10).optional(),
@@ -217,8 +225,13 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
     };
   });
 
+  // Normalize a blank/whitespace-only judge_profile to undefined (= no separate judge) so the CLI's
+  // resolution treats it the same as absent.
+  const judgeProfile = data.judge_profile?.trim() || undefined;
+
   return {
     target: { type: 'gth-agent', profile: data.target.profile },
+    judgeProfile,
     cases,
   };
 }
