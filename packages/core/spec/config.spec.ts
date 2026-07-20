@@ -200,6 +200,7 @@ describe('config', async () => {
         },
         includeCurrentDateAfterGuidelines: false,
         modelDisplayName: undefined,
+        modelProviderType: 'vertexai',
       });
     });
 
@@ -1388,6 +1389,7 @@ describe('config', async () => {
         builtInTools: ['gth_checklist', 'gth_grep'],
         llm: mockLlm,
         modelDisplayName: 'test-model',
+        modelProviderType: 'vertexai',
         contentSource: 'file',
         requirementSource: 'file',
         projectGuidelines: '.gsloth.guidelines.md',
@@ -1845,6 +1847,7 @@ describe('config', async () => {
         builtInTools: ['gth_checklist', 'gth_grep'],
         llm: { type: 'vertexai' },
         modelDisplayName: undefined,
+        modelProviderType: 'vertexai',
         contentSource: 'file',
         requirementSource: 'file',
         projectGuidelines: '.gsloth.guidelines.md',

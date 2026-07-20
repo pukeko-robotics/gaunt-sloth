@@ -308,6 +308,17 @@ export interface GthConfig {
   };
   modelDisplayName?: string;
   /**
+   * GS2-53 — the configured provider `type` string (`openrouter`/`deepseek`/`xai`/`anthropic`/…),
+   * stashed by the loader from the raw `llm.type` before the built `BaseChatModel` replaces the raw
+   * spec. INTERNAL (loader-set, never user-supplied), so it is deliberately absent from the config
+   * schema. {@link import('#src/utils/systemPromptNotes.js').resolveModelIdentity} PREFERS this over
+   * the live model's `_llmType()` for the injected identity, because OpenAI-compatible shims
+   * (openrouter/deepseek/xai all extend `ChatOpenAI`) report `_llmType() === 'openai'` and would
+   * otherwise mislabel the provider half. Absent for module configs (which hand us an already-built
+   * LLM with no raw `type`), where resolution falls back to the guarded `_llmType()`.
+   */
+  modelProviderType?: string;
+  /**
    * GS2-34 — inject the resolved active `provider:model` identity into the assembled system prompt
    * so the agent knows which model is serving it (to answer "what model are you?" and reason about
    * its own capabilities/limits). Default ON (omitted = inject). Opt out with

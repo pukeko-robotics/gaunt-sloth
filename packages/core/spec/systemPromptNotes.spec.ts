@@ -120,6 +120,87 @@ describe('resolveModelIdentity (GS2-34)', () => {
     });
     expect(id).toBe('gpt-5.4');
   });
+
+  // GS2-53 — OpenAI-compatible shims (openrouter/deepseek/xai) extend ChatOpenAI, so their live
+  // `_llmType()` reports `openai`. The configured provider `type` (stashed by the loader as
+  // `modelProviderType`) is the true provider and MUST win, or a `type: openrouter` config injects
+  // the wrong `openai:<model>` identity into the prompt.
+  it('prefers the configured provider type over _llmType() for OpenAI-compatible shims', () => {
+    expect(
+      resolveModelIdentity({
+        llm: { _llmType: () => 'openai', model: 'anthropic/claude-3.5-sonnet' },
+        modelDisplayName: 'anthropic/claude-3.5-sonnet',
+        modelProviderType: 'openrouter',
+      })
+    ).toBe('openrouter:anthropic/claude-3.5-sonnet');
+    expect(
+      resolveModelIdentity({
+        llm: { _llmType: () => 'openai', model: 'deepseek-chat' },
+        modelDisplayName: 'deepseek-chat',
+        modelProviderType: 'deepseek',
+      })
+    ).toBe('deepseek:deepseek-chat');
+    expect(
+      resolveModelIdentity({
+        llm: { _llmType: () => 'openai', model: 'grok-4' },
+        modelDisplayName: 'grok-4',
+        modelProviderType: 'xai',
+      })
+    ).toBe('xai:grok-4');
+  });
+
+  it('a configured type that matches _llmType() (anthropic/ollama) is unchanged', () => {
+    // The type maps 1:1 to _llmType() here, so preferring it yields the same identity as before.
+    expect(
+      resolveModelIdentity({
+        llm: { _llmType: () => 'anthropic', model: 'claude-sonnet-5' },
+        modelDisplayName: 'claude-sonnet-5',
+        modelProviderType: 'anthropic',
+      })
+    ).toBe('anthropic:claude-sonnet-5');
+    expect(
+      resolveModelIdentity({
+        llm: { _llmType: () => 'ollama', model: 'gemma3:27b' },
+        modelProviderType: 'ollama',
+      })
+    ).toBe('ollama:gemma3:27b');
+  });
+
+  it('falls back to _llmType() when no configured type is threaded (e.g. module configs)', () => {
+    // A module config hands us an already-built LLM with no raw `type`, so modelProviderType is
+    // absent — the guarded `_llmType()` remains the provider source, exactly as before GS2-53.
+    expect(
+      resolveModelIdentity({
+        llm: { _llmType: () => 'anthropic', model: 'claude-sonnet-5' },
+        modelDisplayName: 'claude-sonnet-5',
+      })
+    ).toBe('anthropic:claude-sonnet-5');
+    // A blank/whitespace-only type is treated as unset and falls back to _llmType() too.
+    expect(
+      resolveModelIdentity({
+        llm: { _llmType: () => 'anthropic', model: 'claude-sonnet-5' },
+        modelDisplayName: 'claude-sonnet-5',
+        modelProviderType: '   ',
+      })
+    ).toBe('anthropic:claude-sonnet-5');
+  });
+
+  it('a configured type never triggers the _llmType() throw path (short-circuited)', () => {
+    // With a configured type present, `_llmType()` is not called at all, so even a throwing
+    // accessor cannot break resolution.
+    expect(
+      resolveModelIdentity({
+        llm: {
+          _llmType: () => {
+            throw new Error('should never be called');
+          },
+          model: 'grok-4',
+        },
+        modelDisplayName: 'grok-4',
+        modelProviderType: 'xai',
+      })
+    ).toBe('xai:grok-4');
+  });
 });
 
 describe('appendModelContextNote (GS2-34)', () => {
@@ -128,6 +209,26 @@ describe('appendModelContextNote (GS2-34)', () => {
     expect(out?.startsWith('BASE PROMPT')).toBe(true);
     expect(out).toContain('`anthropic:claude-sonnet-5`');
     expect(out).toContain('which model you are');
+    // GS2-53 — the `(provider:model)` format label rides along when a provider half is present.
+    expect(out).toContain('`anthropic:claude-sonnet-5` (provider:model). This is your');
+  });
+
+  // GS2-53 — the `(provider:model)` label documents the identity FORMAT. On the bare-model branch
+  // (resolveModelIdentity returned just `<model>`, no colon), it dangled and misled; it must be
+  // omitted so the sentence still reads naturally.
+  it('omits the dangling (provider:model) label for a bare-model identity', () => {
+    const out = appendModelContextNote('BASE PROMPT', 'gpt-5.4');
+    expect(out).toContain('`gpt-5.4`. This is your');
+    expect(out).not.toContain('(provider:model)');
+    // Still a well-formed, single first-party line naming the model.
+    expect(out).toContain('which model you are');
+  });
+
+  it('keeps the (provider:model) label for a provider-present multi-colon identity', () => {
+    // `ollama:gemma3:27b` HAS a provider half (leading `ollama:`), so the label is correct even
+    // though the model name itself contains a colon.
+    const out = appendModelContextNote('BASE PROMPT', 'ollama:gemma3:27b');
+    expect(out).toContain('`ollama:gemma3:27b` (provider:model). This is your');
   });
 
   it('returns the note alone when there is no base prompt', () => {

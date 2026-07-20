@@ -139,29 +139,43 @@ export function appendCommitCoAuthorNote(
  * Both halves are read the SAME way the rest of gsloth already surfaces the active model:
  *   - MODEL: `config.modelDisplayName` (the string the status line renders — set by the loader from
  *     `llm.model`), falling back to the live model's own `model` field.
- *   - PROVIDER: the live LangChain model's `_llmType()` — exactly the source the AG-UI `/info`
- *     endpoint reports as the serving provider (e.g. `anthropic`, `ollama`, `openai`). This is the
- *     live provider tag, so for OpenAI-compatible providers (openrouter/deepseek/xai extending
- *     ChatOpenAI) it may read `openai` rather than the config `type`; the MODEL half is always exact.
+ *   - PROVIDER: the configured `config.modelProviderType` (the raw `llm.type` the loader stashed —
+ *     `openrouter`/`deepseek`/`xai`/`anthropic`/…) when present, otherwise the live LangChain
+ *     model's `_llmType()` (the source the AG-UI `/info` endpoint reports). GS2-53 — preferring the
+ *     configured `type` fixes the OpenAI-compatible shims (openrouter/deepseek/xai all extend
+ *     ChatOpenAI, so their `_llmType()` reports `openai`): a `type: openrouter` config now injects
+ *     `openrouter:<model>`, not `openai:<model>`. The `type` is absent for module configs (which
+ *     hand us an already-built LLM), where we fall back to `_llmType()` unchanged. The MODEL half is
+ *     always exact.
  *
  * Returns `provider:model` when both resolve, the bare model when only the model resolves, and
  * `undefined` when the model is unknown (a provider with no model is not a usable identity) — in
  * which case {@link appendModelContextNote} injects nothing, leaving the prompt exactly as before.
  * `_llmType()` is called defensively (guarded) so a provider whose accessor throws can never break
- * prompt assembly.
+ * prompt assembly (and is skipped entirely when a configured `type` is present).
  */
 export function resolveModelIdentity(
   config:
-    | { llm?: { _llmType?: () => string; model?: string }; modelDisplayName?: string }
+    | {
+        llm?: { _llmType?: () => string; model?: string };
+        modelDisplayName?: string;
+        modelProviderType?: string;
+      }
     | null
     | undefined
 ): string | undefined {
   const llm = config?.llm;
-  let provider: string | undefined;
-  try {
-    provider = typeof llm?._llmType === 'function' ? llm._llmType() : undefined;
-  } catch {
-    provider = undefined;
+  // Prefer the configured provider `type` over the live model's `_llmType()`: OpenAI-compatible
+  // shims (openrouter/deepseek/xai) extend ChatOpenAI and report `_llmType() === 'openai'`, which
+  // would mislabel the provider half. Only fall through to the guarded `_llmType()` when no
+  // (non-blank) `type` was threaded (e.g. module configs that build the LLM themselves).
+  let provider: string | undefined = config?.modelProviderType?.trim() || undefined;
+  if (!provider) {
+    try {
+      provider = typeof llm?._llmType === 'function' ? llm._llmType() : undefined;
+    } catch {
+      provider = undefined;
+    }
   }
   const model = config?.modelDisplayName ?? llm?.model;
   if (!model) return undefined;
@@ -191,8 +205,14 @@ export function appendModelContextNote(
 ): string | undefined {
   const identity = modelIdentity?.trim();
   if (!identity) return systemPrompt;
+  // GS2-53 — the `(provider:model)` label documents the identity FORMAT, so only emit it when a
+  // provider half is actually present (identity is `provider:model`). On the bare-model branch
+  // (resolveModelIdentity returned just `<model>`, no colon) the label would dangle and mislead, so
+  // it is omitted; the provider-present line is unchanged. A provider-present identity can carry a
+  // multi-colon model (e.g. `ollama:gemma3:27b`) and still correctly keeps the label.
+  const formatLabel = identity.includes(':') ? ' (provider:model)' : '';
   const note =
-    `The model currently serving this session is \`${identity}\` (provider:model). This is your ` +
+    `The model currently serving this session is \`${identity}\`${formatLabel}. This is your ` +
     'actual underlying model — use it when asked which model you are, and when reasoning about ' +
     'your own capabilities or limits.';
   return systemPrompt ? `${systemPrompt}\n\n${note}` : note;
