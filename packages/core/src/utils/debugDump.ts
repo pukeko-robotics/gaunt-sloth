@@ -138,15 +138,96 @@ export function debugDumpDirName(date: Date = new Date()): string {
 }
 
 /**
+ * GS2-54 (gap 3) — a live LangChain chat model is detected structurally, NOT by field name: a real
+ * `BaseChatModel` exposes `_llmType()` and `invoke()` as functions. This duck-type is the LOAD-BEARING
+ * invariant that lets us strip a *live* model to a descriptor (below) WITHOUT also flattening a plain
+ * `{ type, model, apiKey }` config object — the latter must keep flowing through {@link redactValue}'s
+ * field-masking (key kept, value masked). Do NOT "simplify" this into an unconditional strip.
+ */
+function isLiveChatModel(llm: unknown): boolean {
+  if (llm == null || typeof llm !== 'object') return false;
+  const m = llm as { _llmType?: unknown; invoke?: unknown };
+  return typeof m._llmType === 'function' || typeof m.invoke === 'function';
+}
+
+/**
+ * GS2-54 (gap 3) — a short, secret-free descriptor for a live chat model, mirroring the spirit of
+ * `configCommand.ts`'s `redactConfigForPrint`. Never returns the live object or any of its internals
+ * (client instances, cached kwargs, inline keys) — only a `type` + `model` label. Each field probe
+ * is guarded so a hostile/exotic getter can't throw out of here.
+ */
+function describeLiveModel(
+  config: Record<string, unknown>,
+  llm: object
+): { type: string; model: string } {
+  const m = llm as {
+    _llmType?: () => string;
+    lc_namespace?: unknown;
+    model?: unknown;
+    modelName?: unknown;
+    constructor?: { name?: string };
+  };
+  let type = 'unknown';
+  try {
+    const t =
+      (typeof m._llmType === 'function' ? m._llmType() : undefined) ??
+      (Array.isArray(m.lc_namespace) ? m.lc_namespace.join('/') : undefined) ??
+      (typeof (config as { type?: unknown }).type === 'string'
+        ? (config as { type?: string }).type
+        : undefined) ??
+      m.constructor?.name;
+    if (typeof t === 'string' && t.length > 0) type = t;
+  } catch {
+    // keep 'unknown' — a throwing getter must not defeat the strip
+  }
+  let model = 'unknown';
+  try {
+    const md = config.modelDisplayName;
+    const mdl =
+      (typeof md === 'string' && md.length > 0 ? md : undefined) ??
+      (typeof m.model === 'string' ? m.model : undefined) ??
+      (typeof m.modelName === 'string' ? m.modelName : undefined);
+    if (typeof mdl === 'string' && mdl.length > 0) model = mdl;
+  } catch {
+    // keep 'unknown'
+  }
+  return { type, model };
+}
+
+/**
+ * GS2-54 (gap 3) — defense-in-depth for the CONFIG artifact: return a shallow clone of `config` with
+ * a *live* `llm` (a `BaseChatModel`) replaced by a `{ type, model }` descriptor, so the model's large
+ * internal surface (client objects, cached kwargs, inline keys) never reaches disk — rather than
+ * relying on {@link redactValue}'s field-masking alone. PURE: never mutates the caller's config.
+ * FAIL-SAFE: on any error, or when `llm` is absent / not a live model, return the ORIGINAL config
+ * unchanged so {@link redactValue}'s existing GS2-47 masking still applies (never less-redacted).
+ */
+function stripLiveModelForConfig(config: unknown): unknown {
+  try {
+    if (config == null || typeof config !== 'object' || Array.isArray(config)) return config;
+    const record = config as Record<string, unknown>;
+    if (!('llm' in record) || !isLiveChatModel(record.llm)) return config;
+    return { ...record, llm: describeLiveModel(record, record.llm as object) };
+  } catch {
+    return config; // fail safe: fall back to redactValue over the untouched config
+  }
+}
+
+/**
  * GS2-47 — render the CONFIG artifact: {@link redactValue} applies sensitive-field masking (keys
  * kept, values masked) plus literal/pattern string redaction, then {@link safeStringify}. Fail-safe:
  * any throw yields the fully-withheld marker rather than raw content ("redact more on error, never
  * write a raw artifact because redaction hiccuped").
+ *
+ * GS2-54 (gap 3) — before redaction, {@link stripLiveModelForConfig} swaps a live `llm` for a
+ * `{ type, model }` descriptor so the live model's internals never serialize. This runs on a fresh
+ * clone only; the caller's config (and the {@link collectSecretValues} harvest already taken from it)
+ * is untouched, so inline secrets inside the model are still scrubbed from the OTHER artifacts.
  */
 function renderConfig(config: unknown, redact: boolean, secrets: readonly string[]): string {
   if (!redact) return safeStringify(config);
   try {
-    return safeStringify(redactValue(config, secrets));
+    return safeStringify(redactValue(stripLiveModelForConfig(config), secrets));
   } catch {
     return REDACTED;
   }
