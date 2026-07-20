@@ -635,6 +635,10 @@ cases:
       // Summary lines tag each cell with its identity; exit 0 on all-pass.
       expect(consoleUtilsMock.display).toHaveBeenCalledWith('PASS  greets [admin]');
       expect(consoleUtilsMock.display).toHaveBeenCalledWith('PASS  greets [limited]');
+      // M1: a matrix run counts CELLS, so the verdict noun is "cell(s)", not "case(s)".
+      expect(consoleUtilsMock.displaySuccess).toHaveBeenCalledWith(
+        expect.stringContaining('EVAL RESULT: 2/2 cell(s) passed')
+      );
       expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
     });
 

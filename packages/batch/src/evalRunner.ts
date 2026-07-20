@@ -43,8 +43,11 @@ export interface RunEvalSuiteOptions {
  * One (case × identity) unit of work — the normalized execution atom BOTH flat and matrix suites
  * reduce to. `identity` is `undefined` for a no-identities suite (a single run under the invoked
  * profile), so both modes share ONE downstream execution + grading loop. `cellId` is the
- * filename-safe id (`<caseId>` flat, `<caseId>__<identity>` matrix); `applicable` is the subset of
- * the (single, Task-1) turn's expectation blocks that grade THIS identity.
+ * filename-safe DISPLAY/OUTPUT id (`<caseId>` flat, `<caseId>__<identity>` matrix) — it is NOT the
+ * dispatch/grading key (that is the unique `inputIndex`; see {@link runEvalSuite}), because both
+ * case ids and identity names permit `__`, so two distinct units can collapse to the same `cellId`.
+ * `applicable` is the subset of the (single, Task-1) turn's expectation blocks that grade THIS
+ * identity.
  */
 interface EvalUnit {
   cellId: string;
@@ -102,7 +105,14 @@ export async function runEvalSuite(
   options: RunEvalSuiteOptions
 ): Promise<EvalSuiteSummary> {
   const units = buildUnits(suite);
-  const unitByCellId = new Map(units.map((unit) => [unit.cellId, unit]));
+  // I1 — dispatch AND grading are keyed by the guaranteed-unique `inputIndex` (a unit's position in
+  // this array, threaded onto its `MatrixCell`/`CellResult`), NEVER by the composite `cellId`
+  // (`<caseId>__<identity>`). Both case ids and identity names permit `__`, so distinct cells can
+  // collapse to the same `cellId` (e.g. case `x` + identity `y__z` and case `x__y` + identity `z`
+  // both → `x__y__z`). A `cellId`-keyed Map would silently run/grade one cell under the WRONG
+  // identity and drop the other — the worst failure for an authorization matrix. `cellId` is kept
+  // for display and per-cell output filenames only (`evalOutput.ts` guards the filename collision).
+  const unitByInputIndex = new Map(units.map((unit, index) => [index, unit]));
 
   // Resolve the RunCellFn for a unit's identity: the single `runCell` for the no-identities path,
   // else the per-identity runCell the command built. A missing runCell is a wiring bug — surface it
@@ -131,7 +141,7 @@ export async function runEvalSuite(
   }));
 
   const dispatchRunCell: RunCellFn = (cell) => {
-    const unit = unitByCellId.get(cell.id)!;
+    const unit = unitByInputIndex.get(cell.inputIndex)!;
     return runCellFor(unit.identity)(cell);
   };
 
@@ -142,8 +152,9 @@ export async function runEvalSuite(
 
   const results: EvalCaseResult[] = [];
   for (const cellResult of cellResults) {
-    const unit = unitByCellId.get(cellResult.id);
-    /* istanbul ignore next -- cell ids are derived 1:1 from units by buildUnits above */
+    const unit = unitByInputIndex.get(cellResult.inputIndex);
+    /* istanbul ignore next -- inputIndex is derived 1:1 from units (each cell's inputIndex is its
+       unit's array position, preserved through runBatchMatrix), so every result maps to one unit */
     if (!unit) continue;
     results.push(await gradeUnit(unit, cellResult, options.judge));
   }
@@ -219,19 +230,18 @@ async function gradeUnit(
     };
   }
 
-  // NO-SILENT-PASS backstop: a cell with zero applicable blocks must FAIL loudly, never trivially
-  // pass. The parser already rejects this statically when the suite declares identities, so this is
-  // belt-and-suspenders (the brief's "else a clear per-cell failure").
+  // NO-SILENT-PASS backstop (M2): a cell with zero applicable blocks is a suite-AUTHORING error, not
+  // a product regression — nothing would grade this (case × identity). The parser rejects this
+  // statically when the suite declares identities, so this branch is only reachable if that guard is
+  // bypassed; when it is, THROW so the eval command's catch classifies it as a harness error
+  // (exit 2), never a product FAIL (exit 1) or, worse, a silent trivial pass. Throwing aborts the
+  // whole suite, which is acceptable precisely because this is unreachable under the parse-time guard.
   if (applicable.length === 0) {
-    return {
-      ...base,
-      verdict: 'FAIL',
-      sutOk: true,
-      reasons: [
-        `no applicable expectation block for identity "${identity ?? '(default)'}" — nothing ` +
-          'would grade this (case × identity), which is a suite-authoring error.',
-      ],
-    };
+    throw new Error(
+      `no applicable expectation block for cell "${unit.cellId}" (identity ` +
+        `"${identity ?? '(default)'}") — nothing would grade this (case × identity), which is a ` +
+        'suite-authoring error.'
+    );
   }
 
   const answer = cellResult.answer ?? '';

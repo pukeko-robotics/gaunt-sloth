@@ -110,7 +110,12 @@ function printSummary(
     }
   }
 
-  const verdictLine = `EVAL RESULT: ${summary.passed}/${summary.total} case(s) passed`;
+  // M1: X/Y counts CELLS in a matrix run (one per case × identity) — e.g. `2/2` for 1 case × 2
+  // identities — so a bare "case(s)" would misreport the denominator. Use an identity-aware noun:
+  // "case(s)" for a no-identities run (unchanged), "cell(s)" once any cell carries an identity.
+  const isMatrix = summary.cases.some((caseResult) => caseResult.identity !== undefined);
+  const noun = isMatrix ? 'cell(s)' : 'case(s)';
+  const verdictLine = `EVAL RESULT: ${summary.passed}/${summary.total} ${noun} passed`;
   if (summary.failed === 0) {
     displaySuccess(`${verdictLine}. Results written to ${outputDir}`);
   } else {

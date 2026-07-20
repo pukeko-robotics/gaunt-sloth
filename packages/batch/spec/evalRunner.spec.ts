@@ -544,10 +544,12 @@ describe('runEvalSuite identity matrix', () => {
     expect(limited.reasons).toEqual(['missing "ok"']);
   });
 
-  it('NO-SILENT-PASS backstop: a (case × identity) with no applicable block FAILs, never passes', async () => {
+  it('NO-SILENT-PASS backstop (M2): a (case × identity) with no applicable block THROWS (harness error), never silently passes', async () => {
     const { runEvalSuite } = await import('#src/evalRunner.js');
     // Constructed directly (bypassing the parser, which rejects this statically) to exercise the
-    // runner's runtime guard: `limited` has no applicable block.
+    // runner's runtime guard: `limited` has no applicable block. M2 — this is a suite-AUTHORING
+    // error, not a product regression, so the runner THROWS (→ the eval command's catch → exit 2)
+    // rather than emitting a `sutOk:true` FAIL that `classifyEvalExit` would read as a product exit 1.
     const suite: EvalSuite = {
       target: { type: 'gth-agent' },
       identities: ['admin', 'limited'],
@@ -569,11 +571,55 @@ describe('runEvalSuite identity matrix', () => {
       ['limited', async () => ({ ok: true, answer: 'done', tools: ['mcp__x'] })],
     ]);
 
+    await expect(runEvalSuite(suite, { runCellByIdentity })).rejects.toThrow(
+      /no applicable expectation block for cell "c1__limited" \(identity "limited"\)/
+    );
+  });
+
+  it('I1: keys dispatch+grading by inputIndex, not the composite cellId, so colliding cell ids never cross-grade', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    // The exact review case. identities [z, y__z] × cases [x, x__y] make TWO distinct cells collapse
+    // to the SAME composite cellId `x__y__z`: (case x × identity y__z) and (case x__y × identity z).
+    // If dispatch/grading were keyed by cellId, one of those two cells would run+grade under the
+    // WRONG identity and the other would be silently dropped. Keyed by the unique inputIndex, every
+    // authored (case × identity) cell runs and grades under its OWN identity.
+    const suite: EvalSuite = {
+      target: { type: 'gth-agent' },
+      identities: ['z', 'y__z'],
+      cases: [
+        {
+          id: 'x',
+          passThreshold: 6,
+          turns: [{ user: 'p', expectations: [makeExpectation({ mustContain: ['a'] })] }],
+        },
+        {
+          id: 'x__y',
+          passThreshold: 6,
+          turns: [{ user: 'p', expectations: [makeExpectation({ mustContain: ['a'] })] }],
+        },
+      ],
+    };
+    // Route answers by IDENTITY: identity `z` → "no" (missing "a" → FAIL), identity `y__z` → "a"
+    // (→ PASS). So if any cell were graded under the wrong identity its verdict would FLIP — the
+    // discriminator that a `total`/count-only assertion would miss (the buggy code also yields 4).
+    const runCellByIdentity = new Map<string, RunCellFn>([
+      ['z', async () => ({ ok: true, answer: 'no' })],
+      ['y__z', async () => ({ ok: true, answer: 'a' })],
+    ]);
+
     const summary = await runEvalSuite(suite, { runCellByIdentity });
 
-    const limited = summary.cases.find((c) => c.identity === 'limited')!;
-    expect(limited.verdict).toBe('FAIL');
-    expect(limited.sutOk).toBe(true); // it ran, it just has nothing that would grade it
-    expect(limited.reasons[0]).toContain('no applicable expectation block for identity "limited"');
+    // All FOUR authored cells present — none dropped, none duplicated.
+    expect(summary).toMatchObject({ total: 4, passed: 2, failed: 2 });
+    const cellFor = (id: string, identity: string) =>
+      summary.cases.filter((c) => c.id === id && c.identity === identity);
+    // The colliding pair: each present EXACTLY once, each under its OWN identity, verdicts flipped.
+    expect(cellFor('x', 'y__z')).toHaveLength(1);
+    expect(cellFor('x', 'y__z')[0].verdict).toBe('PASS'); // ran under y__z → "a"
+    expect(cellFor('x__y', 'z')).toHaveLength(1);
+    expect(cellFor('x__y', 'z')[0].verdict).toBe('FAIL'); // ran under z → "no"
+    // The two non-colliding cells, for completeness.
+    expect(cellFor('x', 'z')[0].verdict).toBe('FAIL');
+    expect(cellFor('x__y', 'y__z')[0].verdict).toBe('PASS');
   });
 });
