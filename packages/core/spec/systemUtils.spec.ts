@@ -39,6 +39,14 @@ const processEventMocks = {
   exit: vi.fn(),
 };
 
+// readStdin's blocking-wait path constructs a ProgressIndicator (which writes to stdout); stub it so
+// these tests never touch the real terminal.
+vi.mock('#src/utils/ProgressIndicator.js', () => ({
+  ProgressIndicator: class {
+    indicate() {}
+  },
+}));
+
 vi.mock('node:fs', () => fsMock);
 vi.mock('node:readline', () => readlineMock);
 vi.mock('#src/utils/consoleUtils.js', () => consoleUtilsMock);
@@ -454,6 +462,86 @@ describe('systemUtils', () => {
         // Assert
         expect(mockWriteStream.end).not.toHaveBeenCalled();
       });
+    });
+  });
+
+  // BATCH-11 (#405 gotcha #5): the fast path (parse immediately, no stdin wait) vs the piped-diff
+  // wait path (register readable/end, defer parse until EOF). `eval`/`batch` reach the fast path by
+  // having cli.ts imply `nopipe`; `ask`/`review`/`pr` still block-and-read when stdin is piped.
+  describe('readStdin', () => {
+    const makeProgram = (opts: Record<string, unknown>) => ({
+      getOptionValue: (key: string) => opts[key],
+      parseAsync: vi.fn().mockResolvedValue(undefined),
+    });
+
+    it('takes the fast path (no wait) when nopipe is set, even on a non-TTY — the eval/batch case', async () => {
+      processMock.stdin.isTTY = false;
+      try {
+        const { readStdin } = await import('#src/utils/systemUtils.js');
+        const program = makeProgram({ nopipe: true });
+
+        await readStdin(program);
+
+        expect(program.parseAsync).toHaveBeenCalledTimes(1);
+        // The blocking wait registers stdin data/EOF listeners — the fast path must not.
+        expect(processMock.stdin.on).not.toHaveBeenCalledWith('readable', expect.any(Function));
+        expect(processMock.stdin.on).not.toHaveBeenCalledWith('end', expect.any(Function));
+      } finally {
+        processMock.stdin.isTTY = true;
+      }
+    });
+
+    it('also takes the fast path when --no-pipe maps pipe to false', async () => {
+      processMock.stdin.isTTY = false;
+      try {
+        const { readStdin } = await import('#src/utils/systemUtils.js');
+        const program = makeProgram({ pipe: false });
+
+        await readStdin(program);
+
+        expect(program.parseAsync).toHaveBeenCalledTimes(1);
+        expect(processMock.stdin.on).not.toHaveBeenCalledWith('readable', expect.any(Function));
+      } finally {
+        processMock.stdin.isTTY = true;
+      }
+    });
+
+    it('takes the fast path on a TTY regardless of pipe options', async () => {
+      processMock.stdin.isTTY = true;
+      const { readStdin } = await import('#src/utils/systemUtils.js');
+      const program = makeProgram({});
+
+      await readStdin(program);
+
+      expect(program.parseAsync).toHaveBeenCalledTimes(1);
+      expect(processMock.stdin.on).not.toHaveBeenCalledWith('readable', expect.any(Function));
+    });
+
+    it('waits for piped stdin (registers readable/end, defers parse to EOF) — the ask/review case', async () => {
+      processMock.stdin.isTTY = false;
+      try {
+        let endHandler: () => void = () => {};
+        processMock.stdin.on.mockImplementation((event: string, handler: () => void) => {
+          if (event === 'end') endHandler = handler;
+        });
+
+        const { readStdin } = await import('#src/utils/systemUtils.js');
+        const program = makeProgram({}); // pipe allowed (no nopipe / pipe !== false)
+
+        const pending = readStdin(program);
+
+        // The blocking wait is set up: it parses only once stdin reaches EOF.
+        expect(processMock.stdin.on).toHaveBeenCalledWith('readable', expect.any(Function));
+        expect(processMock.stdin.on).toHaveBeenCalledWith('end', expect.any(Function));
+        expect(program.parseAsync).not.toHaveBeenCalled();
+
+        // Simulate EOF → now it parses and resolves.
+        endHandler();
+        await pending;
+        expect(program.parseAsync).toHaveBeenCalledTimes(1);
+      } finally {
+        processMock.stdin.isTTY = true;
+      }
     });
   });
 });
