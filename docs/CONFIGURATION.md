@@ -1771,7 +1771,9 @@ the only knob that can gate individual MCP and A2A tools (e.g. `mcp__jira__getJi
 have no per-source override of their own.
 
 - **omitted or `undefined`**: no filtering, all resolved tools remain available
-- **non-empty array**: only tools whose name is in the list remain available
+- **non-empty array**: only tools whose name matches an entry remain available. Entries are exact
+  tool names, or **glob patterns** using `*` as a wildcard — e.g. `mcp__jira__*` allows every tool
+  from the `jira` MCP server without listing each one by name
 - **empty array `[]`**: every tool is disabled; MCP servers are not even contacted (no OAuth),
   which suits agents that only need to reason over the provided prompt, such as review agents
 
