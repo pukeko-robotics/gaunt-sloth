@@ -27,6 +27,10 @@ vi.mock('@gaunt-sloth/agent/core/resolveAgentFactory.js', () => resolveAgentFact
 const runSingleShot = vi.fn();
 vi.mock('@gaunt-sloth/core/runtime/singleShot.js', () => ({ runSingleShot }));
 
+// BATCH-12 Task 2: the MULTI-TURN conversational runner the eval command wires for `turns:` cases.
+const runConversation = vi.fn();
+vi.mock('@gaunt-sloth/core/runtime/conversation.js', () => ({ runConversation }));
+
 const prompt = {
   readExecPrompt: vi.fn(),
   readBackstory: vi.fn(),
@@ -685,6 +689,96 @@ cases:
       expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(1);
       expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
         expect.stringContaining('FAIL  greets [admin]')
+      );
+    });
+  });
+
+  // BATCH-12 Task 2 (#405 multi-turn): a `turns:` case is ONE conversation, routed through
+  // `runConversation` (not `runSingleShot`), graded turn-by-turn. Unit-tested with a FAKE
+  // `runConversation` (mocked module) — no live MCP/conversation here, so cross-turn memory /
+  // authorization is unverified pending the reporter's live pass.
+  describe('multi-turn cases (turns:)', () => {
+    const MULTI_TURN_SUITE = `
+target: { type: gth-agent }
+cases:
+  - id: remembers
+    turns:
+      - user: "what contract types exist?"
+        must_contain: ["contract"]
+      - user: "how many did you just list?"
+        must_match: ["\\\\b\\\\d+\\\\b"]
+`;
+
+    beforeEach(() => {
+      fileUtilsMock.readFileFromProjectDir.mockImplementation((file: string) => {
+        if (file === 'multi.yaml') return MULTI_TURN_SUITE;
+        throw new Error(`unexpected file read: ${file}`);
+      });
+    });
+
+    it('routes a turns: case through runConversation (once), grades each turn, exits 0 on all-pass', async () => {
+      const cleanupTools = vi.fn();
+      resolversMock.createResolvers.mockReturnValue({ resolveTools: vi.fn(), cleanupTools });
+      runConversation.mockResolvedValue([
+        { ok: true, answer: 'the contract types are A and B', tools: ['mcp__x'] },
+        { ok: true, answer: 'there are 2 of them', tools: [] },
+      ]);
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'multi.yaml', '-o', outputDir]);
+
+      // The multi-turn case did NOT touch the single-turn path; the whole conversation ran ONCE.
+      expect(runSingleShot).not.toHaveBeenCalled();
+      expect(runConversation).toHaveBeenCalledTimes(1);
+      const [, , userMessages, config, , command, agentFactory] = runConversation.mock.calls[0];
+      expect(command).toBe('ask');
+      expect(config.writeOutputToFile).toBe(false);
+      expect(agentFactory).toBe(resolvedFactory);
+      // Both user messages handed to the one conversation, in order (wrapped).
+      expect(userMessages).toHaveLength(2);
+      expect(userMessages[0]).toContain('what contract types exist?');
+      expect(userMessages[1]).toContain('how many did you just list?');
+
+      // Fresh resolvers created once for the conversation and cleaned up ONCE (no per-turn leak).
+      expect(resolversMock.createResolvers).toHaveBeenCalledTimes(1);
+      expect(cleanupTools).toHaveBeenCalledTimes(1);
+
+      const resultsJson = JSON.parse(readFileSync(join(outputDir, 'results.json'), 'utf8'));
+      expect(resultsJson).toMatchObject({ total: 1, passed: 1, failed: 0 });
+      const caseJson = JSON.parse(readFileSync(join(outputDir, 'remembers.json'), 'utf8'));
+      expect(caseJson).toMatchObject({ id: 'remembers', verdict: 'PASS' });
+      expect(caseJson.turns).toHaveLength(2);
+      expect(caseJson.turns[0].verdict).toBe('PASS');
+      expect(caseJson.turns[1].verdict).toBe('PASS');
+      expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+    });
+
+    it('exits 1 and names the failing turn when a later turn in the conversation FAILs', async () => {
+      resolversMock.createResolvers.mockReturnValue({
+        resolveTools: vi.fn(),
+        cleanupTools: vi.fn(),
+      });
+      runConversation.mockResolvedValue([
+        { ok: true, answer: 'the contract types are A and B' }, // turn 1 PASS (has "contract")
+        { ok: true, answer: 'quite a few' }, // turn 2 FAIL (no digit)
+      ]);
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'multi.yaml', '-o', outputDir]);
+
+      const caseJson = JSON.parse(readFileSync(join(outputDir, 'remembers.json'), 'utf8'));
+      expect(caseJson.verdict).toBe('FAIL');
+      expect(caseJson.turns[0].verdict).toBe('PASS');
+      expect(caseJson.turns[1].verdict).toBe('FAIL');
+      expect(caseJson.reasons.some((r: string) => r.startsWith('turn 2:'))).toBe(true);
+      // sutOk:true (both turns ran) with a failing turn → product regression, exit 1.
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(1);
+      expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
+        expect.stringContaining('FAIL  remembers')
       );
     });
   });

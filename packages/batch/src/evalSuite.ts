@@ -2,13 +2,15 @@ import { parse as parseYaml } from 'yaml';
 import * as z from 'zod';
 
 import { DEFAULT_EVAL_PASS_THRESHOLD } from '#src/evalTypes.js';
-import type { EvalCase, EvalExpectation, EvalSuite } from '#src/evalTypes.js';
+import type { EvalCase, EvalExpectation, EvalSuite, EvalTurn } from '#src/evalTypes.js';
 
 /**
  * Raw suite-file shape (snake_case, as authored). BATCH-12 adds the identity matrix on top of the
  * BATCH-10 assertion set: a suite-level `identities` list, and a per-case `expect:` array of
  * identity-scoped expectation blocks (the flat case-level assertions remain as sugar for one
- * unscoped block). Multi-turn (`turns:`) is Task 2 — its key is rejected here for now.
+ * unscoped block). BATCH-12 Task 2 adds the multi-turn surface: a case is EITHER single-turn
+ * (`prompt` + case-level assertions/`expect`) OR multi-turn (a `turns:` array, each turn carrying
+ * its own `user` message + assertions/`expect`) — never both.
  *
  * ```yaml
  * target: { type: gth-agent, profile: default }
@@ -17,6 +19,16 @@ import type { EvalCase, EvalExpectation, EvalSuite } from '#src/evalTypes.js';
  * identities: [admin, limited]         # BATCH-12: run every case once per identity profile.
  * defaults: { pass_threshold: 6 }
  * cases:
+ *   # Multi-turn case (Task 2) — a scripted conversation; each turn graded against its own blocks:
+ *   - id: remembers-context
+ *     turns:
+ *       - user: "what contract types exist?"
+ *         expect:
+ *           - identities: [admin]
+ *             must_call: ["mcp__*"]
+ *             judge: "lists the contract types"
+ *       - user: "how many did you just list?"   # relies on turn-1 memory
+ *         must_match: ["\\b\\d+\\b"]             # flat per-turn sugar (one all-identities block)
  *   # Flat case (sugar) — assertions apply to ALL identities:
  *   - id: some-case-id
  *     prompt: "the user message to send"
@@ -68,6 +80,15 @@ const RawExpectationSchema = RawAssertionsSchema.extend({
   identities: z.array(z.string()).optional(),
 });
 
+/** One `turns:` entry (BATCH-12 Task 2): a `user` message plus the SAME assertion surface a case
+ * has — flat case-level sugar (one unscoped block) OR an `expect:` array of identity-scoped blocks.
+ * `user` is validated in code (not `.min(1)`) so a missing/blank one gets the clear "must declare a
+ * non-empty `user`" message rather than a generic schema error. */
+const RawTurnSchema = RawAssertionsSchema.extend({
+  user: z.string().optional(),
+  expect: z.array(RawExpectationSchema).optional(),
+});
+
 const RawCaseSchema = RawAssertionsSchema.extend({
   id: z
     .string()
@@ -83,9 +104,10 @@ const RawCaseSchema = RawAssertionsSchema.extend({
   // BATCH-12: a matrix case's identity-scoped expectation blocks. Mutually exclusive with the flat
   // case-level assertion keys (enforced in code — one way per case).
   expect: z.array(RawExpectationSchema).optional(),
-  // Task 2's multi-turn surface. Present here only so its key can be REJECTED with a clear message
-  // this task (single-turn only); the general `turns[]` internal type already exists in evalTypes.
-  turns: z.array(z.unknown()).optional(),
+  // BATCH-12 Task 2: the multi-turn surface — a scripted sequence of turns sharing one conversation.
+  // Mutually exclusive with `prompt` and with case-level assertions/`expect` (assertions live on
+  // each turn for a multi-turn case). Enforced in code.
+  turns: z.array(RawTurnSchema).optional(),
   pass_threshold: z.number().min(0).max(10).optional(),
 });
 
@@ -150,11 +172,14 @@ type RawAssertions = z.infer<typeof RawAssertionsSchema>;
  * - A case `id`, or a suite `identities` name, containing anything other than alphanumerics,
  *   dashes, underscores, or dots (both double as output filenames — path traversal is rejected).
  * - A duplicate case `id`, or a duplicate `identities` entry.
- * - A case declaring `turns:` — multi-turn is Task 2 (not supported yet).
- * - A case with a missing/blank `prompt`.
- * - A case declaring BOTH flat case-level assertions AND an `expect:` array (one way per case).
+ * - A case declaring BOTH `prompt` and `turns:`, or NEITHER (a case is single- or multi-turn).
+ * - A single-turn case with a missing/blank `prompt`; a multi-turn turn with a missing/blank `user`;
+ *   an empty `turns:` array.
+ * - A multi-turn case that ALSO declares case-level assertions or an `expect:` array (those live on
+ *   each turn for a multi-turn case).
+ * - A case (or turn) declaring BOTH flat assertions AND an `expect:` array (one way per case/turn).
  * - An `expect:` block referencing an identity the suite does not declare.
- * - A (case × identity) with no applicable expectation block (statically determinable → rejected
+ * - A (turn × identity) with no applicable expectation block (statically determinable → rejected
  *   here; the runner also guards it as a per-cell FAIL as a backstop).
  * - A flat case or `expect:` block with no checks of any kind AND no `judge` rubric.
  * - An invalid `must_match`/`must_not_match` regex, or a `json_path` entry not setting exactly one
@@ -241,87 +266,84 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
     }
     seenIds.add(rawCase.id);
 
-    // Task 2's multi-turn surface is not executed yet — reject the key outright (Task 1 is single
-    // `prompt`). The internal `turns[]` type already exists so Task 2 adds execution, not migration.
+    // BATCH-12 Task 2 — a case is EITHER single-turn (`prompt`) OR multi-turn (`turns:`): never
+    // both, never neither. Both share the SAME per-turn assertion surface (flat sugar OR `expect:`),
+    // normalized by `buildTurnExpectations` so single- and multi-turn enforce the rules identically.
+    if (rawCase.turns !== undefined && rawCase.prompt !== undefined) {
+      throw new Error(
+        `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) declares BOTH \`prompt\` ` +
+          'and `turns:` — a case is single-turn (`prompt`) or multi-turn (`turns:`), not both.'
+      );
+    }
+
+    let turns: EvalTurn[];
     if (rawCase.turns !== undefined) {
-      throw new Error(
-        `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) declares \`turns:\` — ` +
-          'multi-turn suites are not supported yet; use a single `prompt` for a single-turn case.'
+      // Multi-turn: assertions live on each turn, so case-level assertions/`expect:` are rejected
+      // (they'd have no turn to attach to). The user message + assertions belong inside each turn.
+      const hasCaseLevelExpect = rawCase.expect !== undefined;
+      const hasCaseLevelFlat = FLAT_ASSERTION_KEYS.some(
+        (key) => (rawCase as Record<string, unknown>)[key] !== undefined
       );
-    }
-
-    if (rawCase.prompt === undefined || rawCase.prompt.trim().length === 0) {
-      throw new Error(
-        `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) must declare a ` +
-          'non-empty `prompt`.'
-      );
-    }
-
-    const hasExpect = rawCase.expect !== undefined;
-    const hasFlatAssertions = FLAT_ASSERTION_KEYS.some(
-      (key) => (rawCase as Record<string, unknown>)[key] !== undefined
-    );
-    if (hasExpect && hasFlatAssertions) {
-      throw new Error(
-        `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) declares BOTH ` +
-          'case-level assertions and an `expect:` array — use one or the other (case-level ' +
-          'assertions apply to every identity; an `expect:` array scopes blocks per identity).'
-      );
-    }
-
-    let expectations: EvalExpectation[];
-    if (hasExpect) {
-      const rawBlocks = rawCase.expect!;
-      if (rawBlocks.length === 0) {
+      if (hasCaseLevelExpect || hasCaseLevelFlat) {
+        throw new Error(
+          `Invalid eval suite${suffix}: multi-turn case "${rawCase.id}" (index ${index}) declares ` +
+            'case-level assertions or an `expect:` array — a multi-turn case puts assertions on ' +
+            'each turn (beside its `user`), not at case level.'
+        );
+      }
+      const rawTurns = rawCase.turns;
+      if (rawTurns.length === 0) {
         throw new Error(
           `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) has an empty ` +
-            '`expect:` array — declare at least one expectation block.'
+            '`turns:` array — declare at least one turn (or use a single `prompt`).'
         );
       }
-      expectations = rawBlocks.map((block, blockIndex) =>
-        buildExpectation(block, block.identities, {
-          suffix,
-          caseId: rawCase.id,
-          caseIndex: index,
-          blockIndex,
-          declaredIdentities,
-        })
-      );
-    } else {
-      // Flat case (sugar): one unscoped expectation block from the case-level assertions.
-      expectations = [
-        buildExpectation(rawCase, undefined, {
-          suffix,
-          caseId: rawCase.id,
-          caseIndex: index,
-          blockIndex: undefined,
-          declaredIdentities,
-        }),
-      ];
-    }
-
-    // NO-SILENT-PASS guard (statically determinable): when the suite declares identities, every
-    // (case × identity) must have at least one applicable block, else nothing would grade it — a
-    // suite-authoring bug, not a trivial pass. A block with no `identities` applies to all.
-    if (identities) {
-      for (const identity of identities) {
-        const covered = expectations.some(
-          (e) => !e.identities || e.identities.length === 0 || e.identities.includes(identity)
-        );
-        if (!covered) {
+      turns = rawTurns.map((rawTurn, turnIndex) => {
+        if (rawTurn.user === undefined || rawTurn.user.trim().length === 0) {
           throw new Error(
-            `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) has no expectation ` +
-              `block covering identity "${identity}" — every (case × identity) must have at least ` +
-              `one applicable block (add an \`identities: [${identity}]\` block, or an unscoped ` +
-              'block that applies to all identities).'
+            `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) turn ${turnIndex} ` +
+              'must declare a non-empty `user` message.'
           );
         }
+        return {
+          user: rawTurn.user,
+          expectations: buildTurnExpectations(rawTurn, {
+            suffix,
+            caseId: rawCase.id,
+            caseIndex: index,
+            turnIndex,
+            declaredIdentities,
+            identities,
+          }),
+        };
+      });
+    } else {
+      // Single-turn (unchanged behaviour): a `prompt` + case-level assertions/`expect:`, normalized
+      // to exactly one turn whose `user` is the prompt.
+      if (rawCase.prompt === undefined || rawCase.prompt.trim().length === 0) {
+        throw new Error(
+          `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) must declare a ` +
+            'non-empty `prompt` (single-turn) or a `turns:` array (multi-turn).'
+        );
       }
+      turns = [
+        {
+          user: rawCase.prompt,
+          expectations: buildTurnExpectations(rawCase, {
+            suffix,
+            caseId: rawCase.id,
+            caseIndex: index,
+            turnIndex: undefined,
+            declaredIdentities,
+            identities,
+          }),
+        },
+      ];
     }
 
     return {
       id: rawCase.id,
-      turns: [{ user: rawCase.prompt, expectations }],
+      turns,
       passThreshold: rawCase.pass_threshold ?? suiteDefaultThreshold,
     };
   });
@@ -347,11 +369,113 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
   };
 }
 
+/** The suite's per-turn assertion surface as authored — a raw `RawAssertions` bundle plus an
+ * optional `expect:` array of identity-scoped blocks. This is exactly what a single-`prompt` case
+ * (its case-level fields) and one `turns:` entry both look like, so {@link buildTurnExpectations}
+ * accepts either. */
+type RawTurnAssertions = RawAssertions & { expect?: z.infer<typeof RawExpectationSchema>[] };
+
+/** Context for {@link buildTurnExpectations}: locates the turn for error messages (a single-`prompt`
+ * case, or a `turns:` entry) and carries the suite's identity list for the no-silent-pass guard. */
+interface TurnContext {
+  suffix: string;
+  caseId: string;
+  caseIndex: number;
+  /** 0-based turn index for a multi-turn `turns:` entry; `undefined` for a single-`prompt` case. */
+  turnIndex: number | undefined;
+  /** The suite's declared identity names as a set (for `expect:` block membership), or `undefined`. */
+  declaredIdentities: Set<string> | undefined;
+  /** The suite's declared identity list (for the per-(turn × identity) no-silent-pass guard). */
+  identities: string[] | undefined;
+}
+
+/**
+ * Normalize ONE turn's raw assertion surface — a single-`prompt` case's case-level fields, or one
+ * `turns:` entry — into its {@link EvalExpectation} blocks. Shared by the single-turn and multi-turn
+ * paths so both enforce the SAME rules identically: flat-vs-`expect:` exclusivity, a non-empty
+ * `expect:` array, each block's own validation (identities membership, ≥1 check/judge), and the
+ * per-(turn × identity) NO-SILENT-PASS guard — every declared identity must have ≥1 applicable block
+ * for THIS turn, else nothing would grade that (turn × identity).
+ */
+function buildTurnExpectations(raw: RawTurnAssertions, ctx: TurnContext): EvalExpectation[] {
+  const turnPart = ctx.turnIndex === undefined ? '' : ` turn ${ctx.turnIndex}`;
+  const where = `case "${ctx.caseId}" (index ${ctx.caseIndex})${turnPart}`;
+  const scopeNoun = ctx.turnIndex === undefined ? 'case-level' : 'turn-level';
+
+  const hasExpect = raw.expect !== undefined;
+  const hasFlatAssertions = FLAT_ASSERTION_KEYS.some(
+    (key) => (raw as Record<string, unknown>)[key] !== undefined
+  );
+  if (hasExpect && hasFlatAssertions) {
+    throw new Error(
+      `Invalid eval suite${ctx.suffix}: ${where} declares BOTH ${scopeNoun} assertions and an ` +
+        '`expect:` array — use one or the other (flat assertions apply to every identity; an ' +
+        '`expect:` array scopes blocks per identity).'
+    );
+  }
+
+  let expectations: EvalExpectation[];
+  if (hasExpect) {
+    const rawBlocks = raw.expect!;
+    if (rawBlocks.length === 0) {
+      throw new Error(
+        `Invalid eval suite${ctx.suffix}: ${where} has an empty \`expect:\` array — declare at ` +
+          'least one expectation block.'
+      );
+    }
+    expectations = rawBlocks.map((block, blockIndex) =>
+      buildExpectation(block, block.identities, {
+        suffix: ctx.suffix,
+        caseId: ctx.caseId,
+        caseIndex: ctx.caseIndex,
+        turnIndex: ctx.turnIndex,
+        blockIndex,
+        declaredIdentities: ctx.declaredIdentities,
+      })
+    );
+  } else {
+    // Flat sugar: one unscoped expectation block from the case-level / turn-level assertion fields.
+    expectations = [
+      buildExpectation(raw, undefined, {
+        suffix: ctx.suffix,
+        caseId: ctx.caseId,
+        caseIndex: ctx.caseIndex,
+        turnIndex: ctx.turnIndex,
+        blockIndex: undefined,
+        declaredIdentities: ctx.declaredIdentities,
+      }),
+    ];
+  }
+
+  // NO-SILENT-PASS (per turn × identity): when the suite declares identities, THIS turn must have at
+  // least one applicable block for every identity, else nothing would grade that (turn × identity) —
+  // a suite-authoring bug, not a trivial pass. A block with no `identities` applies to all.
+  if (ctx.identities) {
+    for (const identity of ctx.identities) {
+      const covered = expectations.some(
+        (e) => !e.identities || e.identities.length === 0 || e.identities.includes(identity)
+      );
+      if (!covered) {
+        throw new Error(
+          `Invalid eval suite${ctx.suffix}: ${where} has no expectation block covering identity ` +
+            `"${identity}" — every (turn × identity) must have at least one applicable block (add ` +
+            `an \`identities: [${identity}]\` block, or an unscoped block that applies to all ` +
+            'identities).'
+        );
+      }
+    }
+  }
+
+  return expectations;
+}
+
 /** Context threaded into {@link buildExpectation} for actionable, location-tagged error messages. */
 interface ExpectationContext {
   suffix: string;
   caseId: string;
   caseIndex: number;
+  /** 0-based turn index for a multi-turn turn's block; `undefined` for a single-`prompt` case. */
+  turnIndex: number | undefined;
   /** `undefined` for a flat case-level block; the 0-based index for an `expect:` block. */
   blockIndex: number | undefined;
   /** The suite's declared identity names, or `undefined` when the suite declares none. */
@@ -369,10 +493,11 @@ function buildExpectation(
   blockIdentities: string[] | undefined,
   ctx: ExpectationContext
 ): EvalExpectation {
+  const turnPart = ctx.turnIndex === undefined ? '' : ` turn ${ctx.turnIndex}`;
   const where =
     ctx.blockIndex === undefined
-      ? `case "${ctx.caseId}" (index ${ctx.caseIndex})`
-      : `case "${ctx.caseId}" (index ${ctx.caseIndex}) expect block ${ctx.blockIndex}`;
+      ? `case "${ctx.caseId}" (index ${ctx.caseIndex})${turnPart}`
+      : `case "${ctx.caseId}" (index ${ctx.caseIndex})${turnPart} expect block ${ctx.blockIndex}`;
 
   // Validate the block's identity scope (only present on `expect:` blocks). Every named identity
   // must be one the suite declares, else the block would silently never apply (a dead / typo'd

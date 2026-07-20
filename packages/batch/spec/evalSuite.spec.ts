@@ -599,20 +599,163 @@ cases:
       ).toThrow(/`identities` must list at least one profile name/);
     });
 
-    it('rejects a case declaring turns: (multi-turn is not supported yet)', async () => {
-      const { parseEvalSuite } = await import('#src/evalSuite.js');
-      expect(() =>
-        parseEvalSuite(`
+    describe('multi-turn cases (turns:) [Task 2]', () => {
+      it('normalizes a turns: array into per-turn expectation blocks (flat sugar + expect array)', async () => {
+        const { parseEvalSuite } = await import('#src/evalSuite.js');
+        const suite = parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: remembers-context
+    turns:
+      - user: "what contract types exist?"
+        must_contain: ["contract"]
+        judge: "lists the contract types"
+      - user: "how many did you just list?"
+        must_match: ["\\\\b\\\\d+\\\\b"]
+`);
+        const c = suite.cases[0];
+        expect(c.turns).toHaveLength(2);
+        expect(c.turns[0].user).toBe('what contract types exist?');
+        expect(c.turns[1].user).toBe('how many did you just list?');
+        // Each turn's flat sugar → ONE unscoped block (identities absent).
+        expect(c.turns[0].expectations).toHaveLength(1);
+        expect(c.turns[0].expectations[0].identities).toBeUndefined();
+        expect(c.turns[0].expectations[0].mustContain).toEqual(['contract']);
+        expect(c.turns[0].expectations[0].judgeRubric).toBe('lists the contract types');
+        expect(c.turns[1].expectations[0].mustMatch).toHaveLength(1);
+      });
+
+      it('scopes per-turn expect: blocks by identity (multi-turn × identities)', async () => {
+        const { parseEvalSuite } = await import('#src/evalSuite.js');
+        const suite = parseEvalSuite(`
+target: { type: gth-agent }
+identities: [admin, limited]
+cases:
+  - id: convo
+    turns:
+      - user: "list the contract types"
+        expect:
+          - identities: [admin]
+            must_call: ["mcp__*"]
+          - identities: [limited]
+            must_not_call: ["mcp__*"]
+      - user: "how many?"
+        must_match: ["\\\\b\\\\d+\\\\b"]
+`);
+        const c = suite.cases[0];
+        expect(c.turns).toHaveLength(2);
+        expect(c.turns[0].expectations).toHaveLength(2);
+        expect(c.turns[0].expectations[0].identities).toEqual(['admin']);
+        expect(c.turns[0].expectations[1].identities).toEqual(['limited']);
+        // Turn 2 is an unscoped flat block → applies to both identities.
+        expect(c.turns[1].expectations).toHaveLength(1);
+        expect(c.turns[1].expectations[0].identities).toBeUndefined();
+      });
+
+      it('rejects a case declaring BOTH prompt and turns', async () => {
+        const { parseEvalSuite } = await import('#src/evalSuite.js');
+        expect(() =>
+          parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "hi"
+    turns:
+      - user: "first"
+        must_contain: ["a"]
+`)
+        ).toThrow(/declares BOTH `prompt` and `turns:`/);
+      });
+
+      it('rejects a multi-turn case that also declares case-level assertions', async () => {
+        const { parseEvalSuite } = await import('#src/evalSuite.js');
+        expect(() =>
+          parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    must_contain: ["x"]
+    turns:
+      - user: "first"
+        must_contain: ["a"]
+`)
+        ).toThrow(/multi-turn case "c1".*declares case-level assertions/s);
+      });
+
+      it('rejects an empty turns: array', async () => {
+        const { parseEvalSuite } = await import('#src/evalSuite.js');
+        expect(() =>
+          parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    turns: []
+`)
+        ).toThrow(/has an empty `turns:` array/);
+      });
+
+      it('rejects a turn with a missing/blank user message', async () => {
+        const { parseEvalSuite } = await import('#src/evalSuite.js');
+        expect(() =>
+          parseEvalSuite(`
 target: { type: gth-agent }
 cases:
   - id: c1
     turns:
-      - user: "first message"
-        must_contain: ["a"]
-      - user: "second message"
-        must_contain: ["b"]
+      - must_contain: ["a"]
 `)
-      ).toThrow(/multi-turn suites are not supported yet/);
+        ).toThrow(/turn 0 must declare a non-empty `user` message/);
+      });
+
+      it('rejects a turn with no checks and no judge rubric', async () => {
+        const { parseEvalSuite } = await import('#src/evalSuite.js');
+        expect(() =>
+          parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    turns:
+      - user: "hi"
+`)
+        ).toThrow(/turn 0 has no checks and no judge rubric/);
+      });
+
+      it('NO-SILENT-PASS: rejects a (turn × identity) uncovered by any block', async () => {
+        const { parseEvalSuite } = await import('#src/evalSuite.js');
+        // Turn 1 covers both identities; turn 2 only names admin → limited is uncovered on turn 2.
+        expect(() =>
+          parseEvalSuite(`
+target: { type: gth-agent }
+identities: [admin, limited]
+cases:
+  - id: c1
+    turns:
+      - user: "one"
+        must_contain: ["a"]
+      - user: "two"
+        expect:
+          - identities: [admin]
+            must_contain: ["b"]
+`)
+        ).toThrow(/turn 1 has no expectation block covering identity "limited"/);
+      });
+
+      it('rejects a per-turn expect: block referencing an undeclared identity', async () => {
+        const { parseEvalSuite } = await import('#src/evalSuite.js');
+        expect(() =>
+          parseEvalSuite(`
+target: { type: gth-agent }
+identities: [admin]
+cases:
+  - id: c1
+    turns:
+      - user: "one"
+        expect:
+          - identities: [ghost]
+            must_contain: ["a"]
+`)
+        ).toThrow(/turn 0 expect block 0 references identity "ghost"/);
+      });
     });
 
     it('rejects a case with a missing prompt (and no turns)', async () => {

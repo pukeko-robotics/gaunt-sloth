@@ -6,7 +6,10 @@ import {
 } from '@gaunt-sloth/core/config.js';
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import { getAskSystemPrompt } from '#src/commands/commandIntrospection.js';
-import { buildProductionRunCell } from '#src/commands/batchCommand.js';
+import {
+  buildProductionRunCell,
+  buildProductionRunConversation,
+} from '#src/commands/batchCommand.js';
 import { parseIntOption } from '#src/commands/cliOptionParsers.js';
 import {
   display,
@@ -20,7 +23,7 @@ import {
   getGslothFilePath,
   readFileFromProjectDir,
 } from '@gaunt-sloth/core/utils/fileUtils.js';
-import type { EvalSuiteSummary, JudgeFn, RunCellFn } from '@gaunt-sloth/batch';
+import type { EvalSuiteSummary, JudgeFn, RunCellFn, RunConversationFn } from '@gaunt-sloth/batch';
 
 interface EvalCommandOptions {
   /** `-j/--concurrency <n>` — max in-flight cases. */
@@ -211,38 +214,52 @@ export function evalCommand(
         // across cases by the runner. An identity profile's manual
         // `mcpServers.<n>.headers.Authorization` (CFG-4) flows through this config path as-is — never
         // stripped, rewritten, or warned on.
+        // BATCH-12 Task 2: build BOTH seams — the single-turn `runCell` (proven `runSingleShot`
+        // path) and the multi-turn `runConversation` — from the ONE already-resolved config per
+        // identity/SUT (no extra `initConfig`; the runner picks per case by `turns.length`). The
+        // shared `ProductionRunCellOptions` frames each the same way.
+        const runCellOptions = {
+          command: 'ask',
+          sourcePrefix: 'EVAL',
+          wrapBlockPrefix: 'message',
+          wrapPrefix: 'user message',
+        } as const;
         let runCell: RunCellFn | undefined;
+        let runConversation: RunConversationFn | undefined;
         let runCellByIdentity: Map<string, RunCellFn> | undefined;
+        let runConversationByIdentity: Map<string, RunConversationFn> | undefined;
         if (suiteIdentities.length > 0) {
           runCellByIdentity = new Map();
+          runConversationByIdentity = new Map();
           for (const identity of suiteIdentities) {
             const identityConfig = await initConfig({
               ...commandLineConfigOverrides,
               identityProfile: identity,
             });
+            const identityPreamble = getAskSystemPrompt(identityConfig);
             runCellByIdentity.set(
               identity,
               await buildProductionRunCell(
                 identityConfig,
-                getAskSystemPrompt(identityConfig),
+                identityPreamble,
                 commandLineConfigOverrides,
-                {
-                  command: 'ask',
-                  sourcePrefix: 'EVAL',
-                  wrapBlockPrefix: 'message',
-                  wrapPrefix: 'user message',
-                }
+                runCellOptions
               )
+            );
+            runConversationByIdentity.set(
+              identity,
+              await buildProductionRunConversation(identityConfig, identityPreamble, runCellOptions)
             );
           }
         } else {
           const preamble = getAskSystemPrompt(config);
-          runCell = await buildProductionRunCell(config, preamble, commandLineConfigOverrides, {
-            command: 'ask',
-            sourcePrefix: 'EVAL',
-            wrapBlockPrefix: 'message',
-            wrapPrefix: 'user message',
-          });
+          runCell = await buildProductionRunCell(
+            config,
+            preamble,
+            commandLineConfigOverrides,
+            runCellOptions
+          );
+          runConversation = await buildProductionRunConversation(config, preamble, runCellOptions);
         }
 
         // BATCH-10 Task 2: resolve the judge identity profile (CLI `--judge` > suite `judge_profile`
@@ -273,6 +290,8 @@ export function evalCommand(
         const summary = await runEvalSuite(suite, {
           runCell,
           runCellByIdentity,
+          runConversation,
+          runConversationByIdentity,
           judge,
           concurrency: options.concurrency,
         });

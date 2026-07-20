@@ -35,9 +35,12 @@ export type {
   EvalSuiteSummary,
   EvalTarget,
   EvalTurn,
+  EvalTurnResult,
   JudgeFn,
   JudgeOutcome,
   JudgeVerdict,
+  RunConversationFn,
+  TurnRunOutcome,
 } from '#src/evalTypes.js';
 export type { RunEvalSuiteOptions } from '#src/evalRunner.js';
 export { DEFAULT_EVAL_PASS_THRESHOLD } from '#src/evalTypes.js';
