@@ -13,15 +13,43 @@
  * middleware/tool-call/artifact-store plumbing that doesn't fit a plain structured-output call. */
 export const DEFAULT_EVAL_PASS_THRESHOLD = 6;
 
-/** One case's target — this task only supports `gth-agent` against the run's own resolved config
- * (no `--identities`, no pluggable CLI/HTTP targets — see the BATCH-2 Task 2 brief). */
-export interface EvalTarget {
+/** The in-process SUT target: an agent built from the run's own resolved config (the original and
+ * default target). */
+export interface GthAgentTarget {
   type: 'gth-agent';
-  /** Suite-level profile hint. Only `undefined`/`'default'` is accepted this task (see
+  /** Suite-level profile hint. Only `undefined`/`'default'` is accepted (see
    * {@link ../evalSuite.js}'s `parseEvalSuite`) — per-case/per-identity profile switching is
-   * `--identities` scope, not this task's. */
+   * `identities` scope, not this. */
   profile?: string;
 }
+
+/**
+ * BATCH-14 — an EXTERNAL Google ADK agent, graded over the A2A (Agent-to-Agent) protocol. The eval
+ * drives a *running* ADK agent by A2A text send and grades its answers with the same content
+ * assertions as {@link GthAgentTarget}. The agent runs out-of-process (its own model/tools/auth), so
+ * this target only needs the A2A connection, not a gth config.
+ *
+ * Honest-boundary note (BATCH-14 design point 4): A2A's wire content is only text/file/data parts
+ * plus task status/artifact events — it does NOT expose the agent's intermediate tool/function calls
+ * in any standardized form. So `must_call`/`must_not_call` cannot be graded against this target and
+ * are rejected at parse time (never a silent pass); the `identities` matrix (per-identity gth
+ * configs) is likewise meaningless for an external agent and rejected.
+ */
+export interface AdkAgentTarget {
+  type: 'adk-agent';
+  /** The ADK agent's A2A endpoint / agent-card base URL (mirrors `A2AClientConfig.agentUrl`; the
+   * SDK fetches `/.well-known/agent-card.json` from it). Required — a suite without it is a parse
+   * error. */
+  url: string;
+  /** Optional label for the agent (mirrors `A2AClientConfig.agentId`; used only for debug logging).
+   * Defaults to `'adk-agent'` when the suite omits it. */
+  agentId?: string;
+}
+
+/** One suite's target — either the in-process gth agent (default) or an external ADK agent over A2A
+ * (BATCH-14). Discriminated by `type`; the runner is target-agnostic (it consumes an injected
+ * `RunCellFn`/`RunConversationFn`), so the target only changes which runner the command builds. */
+export type EvalTarget = GthAgentTarget | AdkAgentTarget;
 
 /** One `json_path` assertion (BATCH-10): resolve `path` against the answer-parsed-as-JSON and check
  * it. Exactly one of `equals`/`contains` is set (enforced in {@link ../evalSuite.js}'s parse):

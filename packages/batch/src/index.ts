@@ -27,6 +27,7 @@ export type { EvalJudgeVerdict } from '#src/judge.js';
 export { runEvalSuite } from '#src/evalRunner.js';
 export { writeEvalOutput } from '#src/evalOutput.js';
 export type {
+  AdkAgentTarget,
   DeterministicCheckResult,
   EvalCase,
   EvalCaseResult,
@@ -34,6 +35,7 @@ export type {
   EvalSuite,
   EvalSuiteSummary,
   EvalTarget,
+  GthAgentTarget,
   EvalTurn,
   EvalTurnResult,
   JudgeFn,

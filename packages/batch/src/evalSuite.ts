@@ -2,7 +2,7 @@ import { parse as parseYaml } from 'yaml';
 import * as z from 'zod';
 
 import { DEFAULT_EVAL_PASS_THRESHOLD } from '#src/evalTypes.js';
-import type { EvalCase, EvalExpectation, EvalSuite, EvalTurn } from '#src/evalTypes.js';
+import type { EvalCase, EvalExpectation, EvalSuite, EvalTarget, EvalTurn } from '#src/evalTypes.js';
 
 /**
  * Raw suite-file shape (snake_case, as authored). BATCH-12 adds the identity matrix on top of the
@@ -115,6 +115,11 @@ const RawSuiteSchema = z.object({
   target: z.object({
     type: z.string(),
     profile: z.string().optional(),
+    // BATCH-14: the ADK (A2A) target's connection config. `url` is the agent's A2A endpoint /
+    // agent-card base URL (required when `type: adk-agent`, validated below); `agent_id` is an
+    // optional debug label. Both are ignored for a `gth-agent` target.
+    url: z.string().optional(),
+    agent_id: z.string().optional(),
   }),
   // BATCH-10 Task 2: optional identity profile whose model judges the cases. A top-level sibling of
   // `target`/`defaults`/`cases`, and distinct from `target.profile` (which selects the SUT and is
@@ -166,9 +171,14 @@ type RawAssertions = z.infer<typeof RawAssertionsSchema>;
  * Rejects, with a clear message, at parse time (never silently no-ops or defers to run time):
  * - Malformed YAML.
  * - A suite shape that doesn't match {@link RawSuiteSchema} (missing/wrong-typed fields).
- * - `target.type` other than `"gth-agent"` — pluggable CLI/HTTP targets are out of scope.
+ * - `target.type` other than `"gth-agent"` or `"adk-agent"` — other pluggable CLI/HTTP targets are
+ *   out of scope.
  * - `target.profile` set to anything other than `"default"`/absent — a single suite-wide profile
  *   switch is the `--identities` direction, replaced by the suite-level `identities` list.
+ * - A `"adk-agent"` (BATCH-14) target missing its `url`; an `adk-agent` suite that ALSO uses the
+ *   `identities` matrix (per-identity gth configs are meaningless for an external agent); or an
+ *   `adk-agent` suite that uses `must_call`/`must_not_call` (A2A does not expose the agent's tool
+ *   trace, so grading a tool-call assertion is impossible — rejected rather than silently passed).
  * - A case `id`, or a suite `identities` name, containing anything other than alphanumerics,
  *   dashes, underscores, or dots (both double as output filenames — path traversal is rejected).
  * - A duplicate case `id`, or a duplicate `identities` entry.
@@ -211,17 +221,40 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
   }
   const data = parsed.data;
 
-  if (data.target.type !== 'gth-agent') {
+  // BATCH-14: build the normalized target by type. `gth-agent` is unchanged (the default); `adk-agent`
+  // adds the A2A connection config; anything else is an unsupported target (keeps the `http` reject).
+  let target: EvalTarget;
+  if (data.target.type === 'gth-agent') {
+    if (data.target.profile !== undefined && data.target.profile !== 'default') {
+      throw new Error(
+        `Invalid eval suite${suffix}: unsupported target.profile "${data.target.profile}" — ` +
+          'per-case/identity targets use the suite-level `identities` list (BATCH-12); omit ' +
+          'target.profile or set it to "default".'
+      );
+    }
+    target = { type: 'gth-agent', profile: data.target.profile };
+  } else if (data.target.type === 'adk-agent') {
+    // The ADK (A2A) target needs at minimum the agent's A2A endpoint / agent-card URL.
+    const url = data.target.url?.trim();
+    if (!url) {
+      throw new Error(
+        `Invalid eval suite${suffix}: an "adk-agent" target requires a \`url\` — the ADK agent's ` +
+          'A2A endpoint / agent-card base URL (e.g. `target: { type: adk-agent, url: ' +
+          'http://localhost:8080 }`).'
+      );
+    }
+    if (data.target.profile !== undefined) {
+      throw new Error(
+        `Invalid eval suite${suffix}: an "adk-agent" target does not take a \`profile\` — the ADK ` +
+          'agent runs out-of-process with its own config; omit `target.profile`.'
+      );
+    }
+    target = { type: 'adk-agent', url, agentId: data.target.agent_id?.trim() || 'adk-agent' };
+  } else {
     throw new Error(
       `Invalid eval suite${suffix}: unsupported target.type "${data.target.type}" — this version ` +
-        'of `gth eval` only supports "gth-agent" (pluggable CLI/HTTP targets are future scope).'
-    );
-  }
-  if (data.target.profile !== undefined && data.target.profile !== 'default') {
-    throw new Error(
-      `Invalid eval suite${suffix}: unsupported target.profile "${data.target.profile}" — ` +
-        'per-case/identity targets use the suite-level `identities` list (BATCH-12); omit ' +
-        'target.profile or set it to "default".'
+        'of `gth eval` supports "gth-agent" (in-process) and "adk-agent" (an external Google ADK ' +
+        'agent over A2A); other pluggable CLI/HTTP targets are future scope.'
     );
   }
 
@@ -256,6 +289,18 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
     identities = data.identities;
   }
   const declaredIdentities = identities ? new Set(identities) : undefined;
+
+  // BATCH-14: the identity matrix runs each case once per suite-declared identity profile, each under
+  // its own gth `initConfig({ …, identityProfile })`. That is meaningless for an external ADK agent
+  // (there is no gth config to switch), so reject the combination rather than silently ignoring the
+  // matrix — a false-scope suite is a bug, not something to run half of.
+  if (target.type === 'adk-agent' && identities !== undefined) {
+    throw new Error(
+      `Invalid eval suite${suffix}: the \`identities\` matrix is not supported for an "adk-agent" ` +
+        'target — identity profiles select per-identity gth configs, which do not apply to an ' +
+        'external ADK agent. Remove `identities`, or use a `gth-agent` target.'
+    );
+  }
 
   const suiteDefaultThreshold = data.defaults?.pass_threshold ?? DEFAULT_EVAL_PASS_THRESHOLD;
 
@@ -348,6 +393,30 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
     };
   });
 
+  // BATCH-14 (design point 4) — the HONEST tool-call boundary for the ADK target. A2A's wire content
+  // is text/file/data parts + task status/artifact events; it does NOT surface the agent's
+  // intermediate tool/function calls in any standardized form. So a `must_call`/`must_not_call`
+  // assertion cannot be graded against an `adk-agent` target — and a tool-trace assertion that
+  // silently PASSES is the worst outcome for an eval tool. Reject it here (scanning EVERY normalized
+  // block — flat, `expect:`, and per-turn), naming the offending case, rather than passing it.
+  if (target.type === 'adk-agent') {
+    for (const evalCase of cases) {
+      for (const turn of evalCase.turns) {
+        for (const expectation of turn.expectations) {
+          if (expectation.mustCall.length > 0 || expectation.mustNotCall.length > 0) {
+            throw new Error(
+              `Invalid eval suite${suffix}: case "${evalCase.id}" uses \`must_call\`/\`must_not_call\`, ` +
+                'which is not supported for an "adk-agent" target — A2A does not expose the agent\'s ' +
+                'intermediate tool calls, so a tool-trace assertion cannot be graded (and must never ' +
+                'silently pass). Use content assertions (must_contain / must_match / json_path / ' +
+                'judge / …), or a `gth-agent` target for tool-trace grading.'
+            );
+          }
+        }
+      }
+    }
+  }
+
   // Normalize a blank/whitespace-only judge_profile to undefined (= no separate judge) so the CLI's
   // resolution treats it the same as absent.
   const judgeProfile = data.judge_profile?.trim() || undefined;
@@ -362,7 +431,7 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
   }
 
   return {
-    target: { type: 'gth-agent', profile: data.target.profile },
+    target,
     judgeProfile,
     identities,
     cases,

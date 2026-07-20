@@ -31,6 +31,14 @@ vi.mock('@gaunt-sloth/core/runtime/singleShot.js', () => ({ runSingleShot }));
 const runConversation = vi.fn();
 vi.mock('@gaunt-sloth/core/runtime/conversation.js', () => ({ runConversation }));
 
+// BATCH-14: the ADK (A2A) target's runner builders — mocked so the command's target-type dispatch is
+// tested without touching the real A2A client (the runner logic itself is covered in adkEvalRunner.spec).
+const adkRunnerMock = {
+  buildAdkRunCell: vi.fn(),
+  buildAdkRunConversation: vi.fn(),
+};
+vi.mock('#src/commands/adkEvalRunner.js', () => adkRunnerMock);
+
 const prompt = {
   readExecPrompt: vi.fn(),
   readBackstory: vi.fn(),
@@ -154,6 +162,13 @@ describe('evalCommand', () => {
       resolveTools: vi.fn(),
       cleanupTools: vi.fn(),
     }));
+    // BATCH-14: default ADK runner builders — a passing single-shot cell + an empty conversation.
+    // Only exercised by the adk-agent suite (the command imports this module only for that target).
+    adkRunnerMock.buildAdkRunCell.mockReturnValue(async () => ({
+      ok: true,
+      answer: 'hello there',
+    }));
+    adkRunnerMock.buildAdkRunConversation.mockReturnValue(async () => []);
     structuredInvoke.mockResolvedValue({ rate: 9, reason: 'Good answer.' });
 
     prompt.readSystemPrompt.mockReturnValue('');
@@ -780,6 +795,76 @@ cases:
       expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
         expect.stringContaining('FAIL  remembers')
       );
+    });
+  });
+
+  // BATCH-14: an `adk-agent` suite drives the ADK (A2A) runner, NOT the in-process gth `runSingleShot`
+  // path. Here the ADK runner builders are mocked (their logic is covered end-to-end in
+  // adkEvalRunner.spec); this test proves the command's target-type DISPATCH + grading of the answer.
+  describe('adk-agent target (BATCH-14)', () => {
+    const ADK_SUITE = `
+target: { type: adk-agent, url: "http://localhost:8080", agent_id: my-adk }
+cases:
+  - id: greets
+    prompt: "greet the user"
+    must_contain: ["hello"]
+`;
+
+    beforeEach(() => {
+      fileUtilsMock.readFileFromProjectDir.mockImplementation((file: string) => {
+        if (file === 'adk.yaml') return ADK_SUITE;
+        throw new Error(`unexpected file read: ${file}`);
+      });
+    });
+
+    it('dispatches to the ADK runner (not runSingleShot) and grades the A2A answer, exit 0 on PASS', async () => {
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'adk.yaml', '-o', outputDir]);
+
+      // Wired to the ADK builders with the parsed adk-agent target...
+      expect(adkRunnerMock.buildAdkRunCell).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'adk-agent',
+          url: 'http://localhost:8080',
+          agentId: 'my-adk',
+        })
+      );
+      expect(adkRunnerMock.buildAdkRunConversation).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'adk-agent', url: 'http://localhost:8080' })
+      );
+      // ...and NOT the in-process gth-agent path.
+      expect(runSingleShot).not.toHaveBeenCalled();
+      expect(resolversMock.createResolvers).not.toHaveBeenCalled();
+
+      const resultsJson = JSON.parse(readFileSync(join(outputDir, 'results.json'), 'utf8'));
+      expect(resultsJson).toMatchObject({ total: 1, passed: 1, failed: 0 });
+      const caseJson = JSON.parse(readFileSync(join(outputDir, 'greets.json'), 'utf8'));
+      expect(caseJson).toMatchObject({ id: 'greets', verdict: 'PASS', answer: 'hello there' });
+      expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+    });
+
+    it('exits 2 (harness error) for an adk-agent suite missing its url — nothing runs', async () => {
+      fileUtilsMock.readFileFromProjectDir.mockImplementation(
+        () => `
+target: { type: adk-agent }
+cases:
+  - id: greets
+    prompt: "greet the user"
+    must_contain: ["hello"]
+`
+      );
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'adk.yaml', '-o', outputDir]);
+
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+        expect.stringContaining('requires a `url`')
+      );
+      expect(adkRunnerMock.buildAdkRunCell).not.toHaveBeenCalled();
     });
   });
 });
