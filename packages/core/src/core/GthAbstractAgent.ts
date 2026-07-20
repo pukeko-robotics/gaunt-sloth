@@ -151,6 +151,34 @@ function pickReasoningDelta(kwargs: Record<string, unknown> | undefined, isChunk
 }
 
 /**
+ * TUI-C29 — return a chunk fit for `concat`-aggregation with OpenRouter's raw response stripped.
+ *
+ * The openrouter provider enables `__includeRawResponse` (TUI-C22), which stashes the *full* raw
+ * provider response under `additional_kwargs.__raw_response` so {@link pickReasoningDelta} can lift
+ * a top-level `reasoning` delta the ChatOpenAI converter otherwise drops. Reasoning is only ever
+ * read off the **per-chunk** `additional_kwargs`, never off the aggregate — yet `AIMessageChunk.concat`
+ * deep-merges `additional_kwargs` (`_mergeDicts`), so leaving `__raw_response` on the chunk makes the
+ * aggregate accumulate a linearly-growing, unused copy of it for the whole stream.
+ *
+ * Strip it on a **shallow clone** so the ORIGINAL chunk the reasoning path reads (line ~697) stays
+ * untouched (approach A — no mutation of the stream-owned object). The clone preserves the chunk's
+ * prototype (so it keeps a working `.concat` when it becomes the first aggregate) and every field
+ * `concat` reads (content, tool_call_chunks, tool_calls, response_metadata, usage_metadata, id),
+ * overriding only `additional_kwargs`. When the key is absent (every non-OpenRouter provider) the
+ * chunk is returned as-is, so those paths are byte-for-byte unchanged.
+ */
+export function stripRawResponseForAggregation(chunk: AIMessageChunk): AIMessageChunk {
+  const kwargs = chunk.additional_kwargs;
+  if (!kwargs || !('__raw_response' in kwargs)) return chunk;
+  const rest = { ...kwargs };
+  delete rest.__raw_response;
+  const clone = Object.create(Object.getPrototypeOf(chunk)) as AIMessageChunk;
+  Object.assign(clone, chunk);
+  clone.additional_kwargs = rest;
+  return clone;
+}
+
+/**
  * Shared, graph-agnostic agent plumbing.
  *
  * Both the lean {@link GthLangChainAgent} (`createAgent`, in core) and the deep
@@ -688,7 +716,14 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
       this.recordRunStats(chunk);
 
       if (AIMessageChunk.isInstance(chunk)) {
-        aggregatedAIChunk = aggregatedAIChunk ? aggregatedAIChunk.concat(chunk) : chunk;
+        // TUI-C29 — aggregate a raw-response-stripped clone. OpenRouter's `__raw_response`
+        // (read per-chunk below at pickReasoningDelta, never off the aggregate) would otherwise
+        // deep-merge into the aggregate on every concat and grow linearly for the whole stream.
+        // The original `chunk` stays untouched so the reasoning + <think> paths read it verbatim.
+        const chunkForAggregation = stripRawResponseForAggregation(chunk);
+        aggregatedAIChunk = aggregatedAIChunk
+          ? aggregatedAIChunk.concat(chunkForAggregation)
+          : chunkForAggregation;
 
         // Reasoning deltas — historically Ollama (Qwen3, deepseek-r1) and Anthropic surface
         // thinking in additional_kwargs.reasoning_content; TUI-C22 additionally lifts a top-level
