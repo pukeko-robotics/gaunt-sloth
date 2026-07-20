@@ -98,8 +98,8 @@ const RawCaseSchema = RawAssertionsSchema.extend({
       'case id must be a valid filename (alphanumeric, dashes, underscores, dots) — case ids ' +
         'double as output filenames, so path separators and other special characters are rejected'
     ),
-  // `prompt` is validated in code (not `.min(1)` here) so a Task-2 `turns:` case gets the clear
-  // "multi-turn not supported yet" message instead of a generic "prompt required" schema error.
+  // `prompt` is validated in code (not `.min(1)` here) so a `turns:` case gets the clear
+  // prompt-XOR-turns error instead of a generic "prompt required" schema error.
   prompt: z.string().optional(),
   // BATCH-12: a matrix case's identity-scoped expectation blocks. Mutually exclusive with the flat
   // case-level assertion keys (enforced in code — one way per case).
