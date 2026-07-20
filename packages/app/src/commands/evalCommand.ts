@@ -174,6 +174,14 @@ export function evalCommand(
       'Identity profile whose model judges the cases (defaults to the SUT model). ' +
         'Overrides the suite-level judge_profile.'
     )
+    .addHelpText(
+      'after',
+      '\n' +
+        'Examples:\n' +
+        '  $ gsloth eval eval/js-basics.yaml\n' +
+        '  $ gsloth eval eval/js-basics.yaml --judge strict-judge\n' +
+        '  $ gsloth eval eval/authz-matrix.yaml -j 8 -o eval/out/authz\n'
+    )
     .action(async (suitePath: string, options: EvalCommandOptions) => {
       try {
         const config = await initConfig(commandLineConfigOverrides);
