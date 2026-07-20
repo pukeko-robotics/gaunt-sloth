@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 // Real fs + temp dirs (no mocks): exercises the actual up-tree walk. cwd is driven via
 // INIT_CWD, which getCurrentWorkDir() honours before process.cwd().
-import { findProjectConfigPath, hasProjectConfig } from '#src/config/loader.js';
+import {
+  findProjectConfigPath,
+  hasProjectConfig,
+  resolveIdentityProfileConfigPath,
+} from '#src/config/loader.js';
 
 const JSON_CONFIG = '{"llm":{"type":"vertexai"}}';
 
@@ -109,5 +113,106 @@ describe('up-tree project config discovery (B2b Part 1)', () => {
     setCwd(nested);
 
     expect(findProjectConfigPath({})).toBeUndefined();
+  });
+});
+
+// GS2-62 — the STRICT profile-existence predicate eval/batch pre-check with. Same up-tree walk as
+// findProjectConfigPath, but matches ONLY `.gsloth/.gsloth-settings/<profile>/<config>` — never a
+// plain `<dir>/<config>` fall-through, never the global config.
+describe('resolveIdentityProfileConfigPath (GS2-62 strict profile existence)', () => {
+  let root: string;
+  const origInitCwd = process.env.INIT_CWD;
+
+  beforeEach(() => {
+    root = mkdtempSync(resolve(tmpdir(), 'gsloth-profile-'));
+  });
+
+  afterEach(() => {
+    if (origInitCwd === undefined) {
+      delete process.env.INIT_CWD;
+    } else {
+      process.env.INIT_CWD = origInitCwd;
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const mk = (dir: string): string => {
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  };
+  const setCwd = (dir: string): void => {
+    process.env.INIT_CWD = dir;
+  };
+  const writeProfileConfig = (projDir: string, profile: string, name = '.gsloth.config.json') => {
+    const dir = mk(resolve(projDir, '.gsloth', '.gsloth-settings', profile));
+    const p = resolve(dir, name);
+    writeFileSync(p, JSON_CONFIG);
+    return p;
+  };
+
+  it('returns the config path when the named profile has its own config', () => {
+    const proj = mk(resolve(root, 'proj'));
+    mk(resolve(proj, '.git'));
+    const profileConfig = writeProfileConfig(proj, 'myprofile');
+    setCwd(proj);
+
+    expect(resolveIdentityProfileConfigPath('myprofile')).toBe(profileConfig);
+  });
+
+  it('finds an ancestor profile config from a nested subdir (up-tree walk)', () => {
+    const proj = mk(resolve(root, 'proj'));
+    mk(resolve(proj, '.git'));
+    const profileConfig = writeProfileConfig(proj, 'myprofile');
+    const nested = mk(resolve(proj, 'a', 'b'));
+    setCwd(nested);
+
+    expect(resolveIdentityProfileConfigPath('myprofile')).toBe(profileConfig);
+  });
+
+  it('returns undefined when the named profile has no config', () => {
+    const proj = mk(resolve(root, 'proj'));
+    mk(resolve(proj, '.git'));
+    // A DIFFERENT profile exists, but not the one we ask for.
+    writeProfileConfig(proj, 'realprofile');
+    setCwd(proj);
+
+    expect(resolveIdentityProfileConfigPath('typo')).toBeUndefined();
+  });
+
+  it('is STRICT: does NOT fall through to a plain (non-profile) project config (Case C)', () => {
+    // A plain `<proj>/.gsloth.config.json` exists (which findProjectConfigPath WOULD match for a
+    // profile via its fall-through), but the profile itself has no config → strict helper says no.
+    const proj = mk(resolve(root, 'proj'));
+    mk(resolve(proj, '.git'));
+    writeFileSync(resolve(proj, '.gsloth.config.json'), JSON_CONFIG);
+    setCwd(proj);
+
+    // findProjectConfigPath falls through to the plain root for the profile...
+    expect(findProjectConfigPath({ identityProfile: 'typo' })?.path).toBe(
+      resolve(proj, '.gsloth.config.json')
+    );
+    // ...but the strict helper does not — the named profile has no config of its own.
+    expect(resolveIdentityProfileConfigPath('typo')).toBeUndefined();
+  });
+
+  it('treats a blank / whitespace-only profile name as no profile (undefined)', () => {
+    const proj = mk(resolve(root, 'proj'));
+    mk(resolve(proj, '.git'));
+    writeProfileConfig(proj, 'myprofile');
+    setCwd(proj);
+
+    expect(resolveIdentityProfileConfigPath('')).toBeUndefined();
+    expect(resolveIdentityProfileConfigPath('   ')).toBeUndefined();
+  });
+
+  it('does not look above the git-root stop boundary', () => {
+    // Profile config sits ABOVE the git root; nothing at/below proj.
+    writeProfileConfig(root, 'myprofile');
+    const proj = mk(resolve(root, 'proj'));
+    mk(resolve(proj, '.git'));
+    const nested = mk(resolve(proj, 'sub'));
+    setCwd(nested);
+
+    expect(resolveIdentityProfileConfigPath('myprofile')).toBeUndefined();
   });
 });

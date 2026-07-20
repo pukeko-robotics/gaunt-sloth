@@ -166,6 +166,26 @@ function resolveConfigPath(
 }
 
 /**
+ * Yield each directory to search during config discovery, from cwd up to (and INCLUDING) the stop
+ * boundary — a dir containing `.git` (the git root), the user's home dir, or the filesystem root,
+ * whichever comes first (the dir at the boundary is itself searched, then ascent stops). Single-
+ * sources the up-tree boundary so {@link findProjectConfigPath} and
+ * {@link resolveIdentityProfileConfigPath} can never drift on where the walk starts or stops.
+ */
+function* walkConfigSearchDirs(): Generator<string> {
+  const home = homedir();
+  let dir = getCurrentWorkDir();
+  for (;;) {
+    yield dir;
+    const parent = dirname(dir);
+    if (existsSync(resolve(dir, '.git')) || dir === home || parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+}
+
+/**
  * Find THE project config by walking up from cwd toward a stop boundary, returning the FIRST
  * match (first-match-win: nearest dir, then format precedence within that dir — NOT a merged
  * stack). Detection ({@link hasProjectConfig}/{@link hasAnyConfig}) and loading ({@link initConfig})
@@ -176,6 +196,12 @@ function resolveConfigPath(
  * git root (or home) is found; a config ABOVE it is not.
  *
  * A `customConfigPath` override wins outright (no walking).
+ *
+ * NOTE (identity profile): with an `identityProfile` set, each dir's per-format resolver
+ * ({@link resolveConfigPath}) tries the profile path `.gsloth/.gsloth-settings/<profile>/<file>`
+ * but FALLS BACK to the plain `<dir>/<file>` when the profile file is absent. So a match here does
+ * NOT prove the named profile itself has a config — it may be a plain (non-profile) config. Use
+ * {@link resolveIdentityProfileConfigPath} when you need to know a profile specifically resolved.
  *
  * @returns the matched `{ dir, path }`, or `undefined` when no project config exists within the
  * boundary.
@@ -192,10 +218,8 @@ export function findProjectConfigPath(
       : undefined;
   }
 
-  const home = homedir();
-  let dir = getCurrentWorkDir();
   // Walk up: search each dir, then stop at the boundary (git root / home / fs root).
-  for (;;) {
+  for (const dir of walkConfigSearchDirs()) {
     for (const filename of PROJECT_CONFIG_FORMATS) {
       const candidate = resolveConfigPath(
         dir,
@@ -206,11 +230,45 @@ export function findProjectConfigPath(
         return { dir, path: candidate };
       }
     }
-    const parent = dirname(dir);
-    if (existsSync(resolve(dir, '.git')) || dir === home || parent === dir) {
-      break;
+  }
+  return undefined;
+}
+
+/**
+ * STRICT existence check for an EXPLICITLY-named identity profile: does
+ * `.gsloth/.gsloth-settings/<identityProfile>/<config>` resolve to a real config file anywhere in
+ * the same up-tree search {@link findProjectConfigPath} walks? Returns the resolved profile config
+ * path (nearest dir, then format precedence) when the profile has its OWN config, `undefined`
+ * otherwise.
+ *
+ * Unlike {@link findProjectConfigPath}, it matches ONLY the profile-specific path — it NEVER falls
+ * through to a plain `<dir>/<config>` and NEVER falls back to the global config. That strictness is
+ * the whole point: it lets a caller distinguish "this named profile really exists" from "a bare
+ * config happens to be present / a global config exists," a distinction the loader's fall-through
+ * deliberately blurs.
+ *
+ * PURE PREDICATE — never throws, never calls `exit` (contrast the loader's interactive-CLI
+ * `exit(1)` safety net in {@link initConfig}). So batch/eval code (e.g. `gth eval --judge <profile>`
+ * and BATCH-12's identity matrix) can pre-check an explicitly-requested profile and raise its OWN
+ * catchable error / graceful exit code instead of dying on an uncatchable `process.exit`. A
+ * blank/whitespace-only name counts as "no profile" → `undefined`.
+ *
+ * @param identityProfile The explicitly-requested identity profile name.
+ * @returns The resolved profile config path, or `undefined` when the profile has no config.
+ */
+export function resolveIdentityProfileConfigPath(identityProfile: string): string | undefined {
+  const profile = identityProfile?.trim();
+  if (!profile) {
+    return undefined;
+  }
+  for (const dir of walkConfigSearchDirs()) {
+    const profileDir = resolve(dir, GSLOTH_DIR, GSLOTH_SETTINGS_DIR, profile);
+    for (const filename of PROJECT_CONFIG_FORMATS) {
+      const candidate = resolve(profileDir, filename);
+      if (existsSync(candidate)) {
+        return candidate;
+      }
     }
-    dir = parent;
   }
   return undefined;
 }
@@ -376,6 +434,27 @@ export async function initConfig(
   // standalone global config (loaded alone) before erroring. Project config still takes
   // precedence: this branch only runs when there is no project file to apply the global under.
   if (!discovered) {
+    // GS2-62 — an EXPLICITLY named identity profile (`-i <name>` / eval `--judge <name>`) that
+    // discovered no project config must NOT silently fall back to the global config. Doing so is a
+    // false-green trap: `gth -i typo …` would run under the GLOBAL model while appearing to use the
+    // named profile (in an authorization/eval context that hides a real misconfiguration). Fail
+    // loudly instead. Gated on a non-empty identityProfile, so the CFG-8 no-profile global fallback
+    // just below is UNTOUCHED — a run with no profile still loads the global exactly as before.
+    const explicitProfile = commandLineConfigOverrides.identityProfile?.trim();
+    if (explicitProfile) {
+      displayError(
+        `identity profile "${explicitProfile}" not found: no config file in ` +
+          `${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${explicitProfile}/ ` +
+          `(checked ${PROJECT_CONFIG_FORMATS.join(', ')})`
+      );
+      exit(1);
+      // Unreachable past exit(1) in production. In specs exit() is mocked to a no-op, so this throw
+      // is LOAD-BEARING: without it execution would fall through into loadGlobalRawConfig() below
+      // and the test would observe the global silently loaded — masking the very regression this
+      // guard fixes. Matches the loader's existing post-exit sentinel-throw pattern.
+      throw new Error('Unexpected error occurred.');
+    }
+
     const globalRawConfig = await loadGlobalRawConfig();
     if (globalRawConfig) {
       if (

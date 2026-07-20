@@ -1,5 +1,9 @@
 import { Command } from 'commander';
-import { CommandLineConfigOverrides, initConfig } from '@gaunt-sloth/core/config.js';
+import {
+  CommandLineConfigOverrides,
+  initConfig,
+  resolveIdentityProfileConfigPath,
+} from '@gaunt-sloth/core/config.js';
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import { getAskSystemPrompt } from '#src/commands/commandIntrospection.js';
 import { buildProductionRunCell } from '#src/commands/batchCommand.js';
@@ -187,9 +191,21 @@ export function evalCommand(
         // `initConfig({ …overrides, identityProfile })` path `gth batch --models` uses to
         // reconstruct a fresh `.llm` (never a structural clone of an already-built model) — so the
         // judge runs under its own model. When unset, the judge shares the SUT's config, unchanged.
-        // A judge profile that fails to load throws here and surfaces through the outer catch as a
-        // harness error (exit 2).
         const judgeProfile = resolveJudgeProfile(options.judge, suite.judgeProfile);
+        if (judgeProfile && !resolveIdentityProfileConfigPath(judgeProfile)) {
+          // GS2-62 (BATCH-10 review Minor 1): pre-check the requested judge profile with the PURE
+          // helper and throw our OWN catchable error. Without this, `initConfig({ …, identityProfile
+          // })` would silently fall back to the global (or plain) config on a bad profile and the
+          // self-describing notice below would print `Judge: profile "<typo>" (model: <global>)` —
+          // asserting a profile that never loaded. The throw is caught by the outer try/catch →
+          // exit 2 (harness error). We can't lean on initConfig's own hard-error here: that path
+          // calls the uncatchable `exit(1)`, which would end the process with code 1 and collapse
+          // the harness-vs-product (2-vs-1) exit-code distinction.
+          throw new Error(
+            `judge profile "${judgeProfile}" not found: no config file in ` +
+              `.gsloth/.gsloth-settings/${judgeProfile}/`
+          );
+        }
         const judgeConfig = judgeProfile
           ? await initConfig({ ...commandLineConfigOverrides, identityProfile: judgeProfile })
           : config;
