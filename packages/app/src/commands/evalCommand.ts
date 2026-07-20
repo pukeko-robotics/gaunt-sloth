@@ -215,59 +215,82 @@ export function evalCommand(
           );
         }
 
-        // Build the SUT run function(s). With no identities: one runCell under the invoked profile
-        // (unchanged). With identities: one runCell per identity, each from a fresh
-        // `initConfig({ …, identityProfile })` (mirrors `gth batch --models`' per-model construction
-        // — a genuinely fresh `.llm`, never a structural clone), built ONCE per identity and reused
-        // across cases by the runner. An identity profile's manual
-        // `mcpServers.<n>.headers.Authorization` (CFG-4) flows through this config path as-is — never
-        // stripped, rewritten, or warned on.
-        // BATCH-12 Task 2: build BOTH seams — the single-turn `runCell` (proven `runSingleShot`
-        // path) and the multi-turn `runConversation` — from the ONE already-resolved config per
-        // identity/SUT (no extra `initConfig`; the runner picks per case by `turns.length`). The
-        // shared `ProductionRunCellOptions` frames each the same way.
-        const runCellOptions = {
-          command: 'ask',
-          sourcePrefix: 'EVAL',
-          wrapBlockPrefix: 'message',
-          wrapPrefix: 'user message',
-        } as const;
+        // Build the SUT run function(s), selected by `target.type`. The eval runner is
+        // target-agnostic — it just consumes an injected single-turn `runCell` and multi-turn
+        // `runConversation` — so the target only changes which builders produce them. The judge is
+        // orthogonal: it always grades via the local gth `config.llm` (built above), regardless of
+        // which target produced the answer, so the whole content-assertion + judge surface works
+        // for both targets.
         let runCell: RunCellFn | undefined;
         let runConversation: RunConversationFn | undefined;
         let runCellByIdentity: Map<string, RunCellFn> | undefined;
         let runConversationByIdentity: Map<string, RunConversationFn> | undefined;
-        if (suiteIdentities.length > 0) {
-          runCellByIdentity = new Map();
-          runConversationByIdentity = new Map();
-          for (const identity of suiteIdentities) {
-            const identityConfig = await initConfig({
-              ...commandLineConfigOverrides,
-              identityProfile: identity,
-            });
-            const identityPreamble = getAskSystemPrompt(identityConfig);
-            runCellByIdentity.set(
-              identity,
-              await buildProductionRunCell(
-                identityConfig,
-                identityPreamble,
-                commandLineConfigOverrides,
-                runCellOptions
-              )
+        if (suite.target.type === 'adk-agent') {
+          // BATCH-14: drive an EXTERNAL Google ADK agent over A2A. The agent runs out-of-process
+          // (its own model/tools/auth), so there is no per-identity gth config — the `identities`
+          // matrix is rejected for this target at parse time, leaving only the single-run path.
+          const { buildAdkRunCell, buildAdkRunConversation } =
+            await import('#src/commands/adkEvalRunner.js');
+          runCell = buildAdkRunCell(suite.target);
+          runConversation = buildAdkRunConversation(suite.target);
+        } else {
+          // gth-agent (unchanged). With no identities: one runCell under the invoked profile. With
+          // identities: one runCell per identity, each from a fresh `initConfig({ …, identityProfile
+          // })` (mirrors `gth batch --models`' per-model construction — a genuinely fresh `.llm`,
+          // never a structural clone), built ONCE per identity and reused across cases by the runner.
+          // An identity profile's manual `mcpServers.<n>.headers.Authorization` (CFG-4) flows through
+          // this config path as-is — never stripped, rewritten, or warned on.
+          // BATCH-12 Task 2: build BOTH seams — the single-turn `runCell` (proven `runSingleShot`
+          // path) and the multi-turn `runConversation` — from the ONE already-resolved config per
+          // identity/SUT (no extra `initConfig`; the runner picks per case by `turns.length`). The
+          // shared `ProductionRunCellOptions` frames each the same way.
+          const runCellOptions = {
+            command: 'ask',
+            sourcePrefix: 'EVAL',
+            wrapBlockPrefix: 'message',
+            wrapPrefix: 'user message',
+          } as const;
+          if (suiteIdentities.length > 0) {
+            runCellByIdentity = new Map();
+            runConversationByIdentity = new Map();
+            for (const identity of suiteIdentities) {
+              const identityConfig = await initConfig({
+                ...commandLineConfigOverrides,
+                identityProfile: identity,
+              });
+              const identityPreamble = getAskSystemPrompt(identityConfig);
+              runCellByIdentity.set(
+                identity,
+                await buildProductionRunCell(
+                  identityConfig,
+                  identityPreamble,
+                  commandLineConfigOverrides,
+                  runCellOptions
+                )
+              );
+              runConversationByIdentity.set(
+                identity,
+                await buildProductionRunConversation(
+                  identityConfig,
+                  identityPreamble,
+                  runCellOptions
+                )
+              );
+            }
+          } else {
+            const preamble = getAskSystemPrompt(config);
+            runCell = await buildProductionRunCell(
+              config,
+              preamble,
+              commandLineConfigOverrides,
+              runCellOptions
             );
-            runConversationByIdentity.set(
-              identity,
-              await buildProductionRunConversation(identityConfig, identityPreamble, runCellOptions)
+            runConversation = await buildProductionRunConversation(
+              config,
+              preamble,
+              runCellOptions
             );
           }
-        } else {
-          const preamble = getAskSystemPrompt(config);
-          runCell = await buildProductionRunCell(
-            config,
-            preamble,
-            commandLineConfigOverrides,
-            runCellOptions
-          );
-          runConversation = await buildProductionRunConversation(config, preamble, runCellOptions);
         }
 
         // BATCH-10 Task 2: resolve the judge identity profile (CLI `--judge` > suite `judge_profile`

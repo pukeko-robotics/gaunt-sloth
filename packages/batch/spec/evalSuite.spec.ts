@@ -122,6 +122,138 @@ cases:
     ).toThrow(/unsupported target\.profile "admin"/);
   });
 
+  // BATCH-14: the ADK (A2A) target — parses with a `url`, keeps the `gth-agent` default unchanged,
+  // and enforces the honest boundaries (missing url / profile / identities / must_call).
+  describe('BATCH-14 adk-agent target', () => {
+    it('parses an adk-agent target with a url and grades content assertions as usual', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: adk-agent, url: "http://localhost:8080" }
+cases:
+  - id: greets
+    prompt: "greet the user"
+    must_contain: ["hello"]
+    judge: "Greets politely."
+`);
+      expect(suite.target).toEqual({
+        type: 'adk-agent',
+        url: 'http://localhost:8080',
+        agentId: 'adk-agent',
+      });
+      // The whole content-assertion surface still normalizes exactly as for gth-agent.
+      expect(suite.cases[0].turns[0].expectations[0].mustContain).toEqual(['hello']);
+      expect(suite.cases[0].turns[0].expectations[0].judgeRubric).toBe('Greets politely.');
+    });
+
+    it('honors an explicit agent_id label', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: adk-agent, url: "http://localhost:8080", agent_id: my-adk }
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+`);
+      expect(suite.target).toEqual({
+        type: 'adk-agent',
+        url: 'http://localhost:8080',
+        agentId: 'my-adk',
+      });
+    });
+
+    it('rejects an adk-agent target with no url', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: adk-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+`)
+      ).toThrow(/"adk-agent" target requires a `url`/);
+    });
+
+    it('rejects a profile on an adk-agent target', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: adk-agent, url: "http://localhost:8080", profile: admin }
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+`)
+      ).toThrow(/"adk-agent" target does not take a `profile`/);
+    });
+
+    it('rejects the identities matrix on an adk-agent target', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: adk-agent, url: "http://localhost:8080" }
+identities: [admin, limited]
+cases:
+  - id: c1
+    prompt: "p"
+    expect:
+      - identities: [admin]
+        must_contain: ["x"]
+      - identities: [limited]
+        must_contain: ["y"]
+`)
+      ).toThrow(/`identities` matrix is not supported for an "adk-agent" target/);
+    });
+
+    it('rejects must_call on an adk-agent target — the honest tool-trace boundary (no silent pass)', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: adk-agent, url: "http://localhost:8080" }
+cases:
+  - id: uses-tool
+    prompt: "look it up"
+    must_call: ["mcp__*"]
+`)
+      ).toThrow(/case "uses-tool" uses `must_call`.*not supported for an "adk-agent" target/s);
+    });
+
+    it('rejects must_not_call on an adk-agent target too, even when buried in a turn block', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: adk-agent, url: "http://localhost:8080" }
+cases:
+  - id: multi
+    turns:
+      - user: "hi"
+        must_contain: ["hello"]
+      - user: "now do it"
+        must_not_call: ["delete_file"]
+`)
+      ).toThrow(
+        /case "multi" uses `must_call`\/`must_not_call`.*not supported for an "adk-agent"/s
+      );
+    });
+
+    it('allows content assertions (must_contain / must_match / json_path / judge) on adk-agent', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: adk-agent, url: "http://localhost:8080" }
+cases:
+  - id: rich
+    prompt: "p"
+    must_contain: ["ok"]
+    must_match: ["\\\\bRPP-\\\\d+\\\\b"]
+    json_path:
+      - { path: "$.status", contains: "done" }
+    judge: "Answers correctly."
+`);
+      expect(suite.target.type).toBe('adk-agent');
+      expect(suite.cases[0].turns[0].expectations[0].mustMatch).toHaveLength(1);
+    });
+  });
+
   it('rejects a case with neither deterministic checks nor a judge rubric', async () => {
     const { parseEvalSuite } = await import('#src/evalSuite.js');
     expect(() =>
