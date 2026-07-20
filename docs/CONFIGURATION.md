@@ -159,6 +159,25 @@ When `agent.backend` is omitted, the lean backend is used everywhere. Set `"back
 to opt into the experimental deepagents runtime. The ACP server is structurally deepagents-based and
 always runs the deep backend regardless of this setting.
 
+## Model Identity in the Prompt (injectModelContext)
+
+So the agent can answer "which model are you?" and reason about its own limits, Gaunt Sloth injects
+one line naming the active `provider:model` into the system prompt. It is **on by default** and
+applies in **every mode** (`chat`, `ask`, `code`, `exec`).
+
+Turn it off with the top-level `injectModelContext: false`. This suits reproducible or
+model-agnostic runs — e.g. a `review` you want kept blind to which model served it — where the
+assembled prompt is then exactly what it would be without the feature.
+
+```json
+{
+  "injectModelContext": false
+}
+```
+
+For the OpenAI-compatible providers (`openrouter`, `deepseek`, `xai`) the identity is tagged with
+the configured `type` — e.g. `openrouter:<model>` — not the underlying `openai` transport they share.
+
 ## Built-in Tools (`builtInTools`)
 
 `builtInTools` selects **and configures** which built-in tools the agent loads. It can be set at the
@@ -168,6 +187,7 @@ top-level one. Available tools:
 | Tool | Description |
 |------|-------------|
 | `gth_checklist` | Planning / todo checklist for multi-step work (the lean agent's `write_todos` equivalent). Renders as a live checkbox panel in the TUI. **Enabled by default.** |
+| `gth_grep` | Regex search over file **contents** (ripgrep-backed, with an in-process fallback) — finds where a symbol or string appears, complementing `search_files`, which matches file **names**. Available in every mode; needs no shell approval. **Enabled by default.** Honors `.aiignore` and takes a `fileSet` option — see [Content search (`gth_grep`)](#content-search-gth_grep) below. |
 | `gth_web_fetch` | Fetch content from an HTTP/HTTPS URL. |
 | `gth_status_update` | Print a short status line to the console. |
 | `show_a2ui_surface` | (AG-UI) render an A2UI surface in the web client. |
@@ -180,9 +200,9 @@ top-level one. Available tools:
 - an **object registry** keyed by tool name, whose values **enable** (`true`), **force-disable**
   (`false`), or **configure** (an object) each tool.
 
-The default is `["gth_checklist"]`. Setting your own `builtInTools` **replaces** this set entirely, so
-include `gth_checklist` in your list (or `"gth_checklist": true`) if you want to keep it. Example — add
-web fetch while keeping the checklist:
+The default is `["gth_checklist", "gth_grep"]`. Setting your own `builtInTools` **replaces** this set
+entirely, so re-list any default you want to keep (e.g. `"gth_checklist": true`, `"gth_grep": true`).
+Example — add web fetch while keeping the checklist:
 
 ```json
 {
@@ -209,8 +229,37 @@ checklist, add web fetch, configure the test/build commands, and tune the shell:
 Turn the (code-mode default-on) shell OFF with `{ "run_shell_command": false }`.
 
 > **Note:** because the object form (like the array form) **replaces** the default set, disabling one
-> tool (e.g. `{ "run_shell_command": false }`) also drops `gth_checklist` unless you list it too. To
-> keep it, add `"gth_checklist": true` to the registry.
+> tool (e.g. `{ "run_shell_command": false }`) also drops the defaults (`gth_checklist`, `gth_grep`)
+> unless you list them too. To keep them, add `"gth_checklist": true` / `"gth_grep": true` to the
+> registry.
+
+### Content search (gth_grep)
+
+`gth_grep` is enabled by default. Its `fileSet` option, set through the `builtInTools` registry,
+chooses which files it searches:
+
+| `fileSet` | Corpus searched |
+|-----------|-----------------|
+| `gitignore` (**default**) | Respects `.gitignore` / `.ignore` and skips hidden dot-files (ripgrep's native behavior). |
+| `all` | Everything except the noise directories `.git`, `node_modules`, `dist`, `.idea`. |
+
+```json
+{
+  "builtInTools": {
+    "gth_checklist": true,
+    "gth_grep": { "fileSet": "all" }
+  }
+}
+```
+
+Disable it with `{ "gth_grep": { "enabled": false } }` (or `{ "gth_grep": false }`).
+
+**Whatever the `fileSet`, `gth_grep` honors [`.aiignore`](#ai-ignore-aiignore).** It reads file
+contents through its own search path, so it enforces the same `.aiignore` privacy boundary as the
+filesystem tools: a file hidden by `.aiignore` is never searched or returned, even under
+`fileSet: "all"`. (`.gitignore` decides what stays out of version control; `.aiignore` decides what
+the AI may read at all — so a tracked, non-ignored file can still be kept out of `gth_grep` by
+`.aiignore`.)
 
 ## AI Ignore (.aiignore)
 
@@ -323,6 +372,24 @@ By default, Gaunt Sloth falls back to its bundled `.gsloth.*.md` prompt files wh
   "noDefaultPrompts": true
 }
 ```
+
+## Debug Dump Redaction (debugDump.redact)
+
+The [`/debug-dump`](debug-dump.md) slash command scrubs secrets from its archive before writing it.
+This is **on by default**. Set `debugDump.redact: false` to write a raw, unredacted archive instead
+(the command then prints a loud "may contain secrets" warning).
+
+```json
+{
+  "debugDump": {
+    "redact": false
+  }
+}
+```
+
+Redaction is a best-effort, pattern-based safety net — review a dump before sharing it regardless of
+this setting. See [Debug Dump → Redaction](debug-dump.md#redaction) for exactly what it does and does
+not cover.
 
 ## Configuration Object
 
@@ -1357,6 +1424,36 @@ A hardcoded blocklist of catastrophic commands is always refused, even under `yo
   }
 }
 ```
+
+## Commit Co-Author (commit.coAuthor)
+
+When the agent makes a Git commit in `code` mode — it does this by running `git commit` through
+`run_shell_command`, as there is no dedicated commit tool — it is instructed to add exactly one
+`Co-Authored-By` trailer crediting Gaunt Sloth, and never to attribute the co-author to the
+underlying model or vendor (`Claude`, `GPT`, `Gemini`, …): the commit is Gaunt Sloth's work, not the
+model's.
+
+Set `commit.coAuthor` to use your own identity instead. Each field defaults **independently**, so
+you can override just one:
+
+| Field | Default |
+|-------|---------|
+| `commit.coAuthor.name` | `Gaunt Sloth` |
+| `commit.coAuthor.email` | `code@gauntsloth.app` |
+
+```json
+{
+  "commit": {
+    "coAuthor": {
+      "name": "Acme Bot",
+      "email": "bot@acme.example"
+    }
+  }
+}
+```
+
+The agent then emits `Co-Authored-By: Acme Bot <bot@acme.example>`. This is first-party prompt
+guidance the model follows when it composes the commit message, not an enforced post-processing step.
 
 ## Custom Tools Configuration
 

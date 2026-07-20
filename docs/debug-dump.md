@@ -12,21 +12,23 @@ issue I'm about to file. Here's how:
    /debug-dump
    ```
 
-3. Gaunt Sloth writes the archive and prints its path:
+3. Gaunt Sloth redacts secrets, writes the archive, and prints its path:
 
    ```
-   ⚠️  Debug dump written — UNSANITIZED, review before sharing
+   Debug dump written — secrets redacted
 
    Archive: /Users/you/.gsloth/debug-dumps/2026-07-18T22-24-37-118Z
 
-   This archive contains the full transcript, resolved config, env info, debug log and git
-   state AS-IS — it may include secrets: API keys, tokens, file contents, env vars.
-   Review it carefully before sending it anywhere.
+   Secrets were redacted (API keys, tokens and auth headers replaced with <redacted>).
+   Redaction is best-effort and pattern-based — review before sharing.
+
+   To write a raw, unredacted archive: set `debugDump.redact: false` in your gsloth config,
+   or run `/debug-dump --unsafe-no-redact`.
    ```
 
-   That warning is not boilerplate: the archive is written **as-is**, with no redaction of API
-   keys, tokens, file contents, or environment variables. Open the files and strip anything
-   sensitive **before** you attach them to a public issue.
+   Redaction is **on by default** (see [Redaction](#redaction)). It masks known secret shapes and
+   values — it does **not** sanitize general file contents or transcript text the session captured —
+   so still review the archive before you attach it to a public issue.
 4. Attach the reviewed file(s) — or the whole reviewed directory — to your [GitHub
    issue](https://github.com/pukeko-robotics/gaunt-sloth/issues) (see
    [CONTRIBUTING.md](../CONTRIBUTING.md) for the issue/PR process).
@@ -52,6 +54,52 @@ Values that aren't directly JSON-safe (functions, `bigint`s, circular references
 LLM client object embedded in the resolved config) are stringified or broken rather than causing
 the dump to fail partway through; source: `packages/core/src/utils/debugDump.ts`, verified by
 `packages/core/spec/debugDump.spec.ts`.
+
+## Redaction
+
+`/debug-dump` runs a secret-redaction pass over every file above before it is written. It is **on by
+default** — the config toggle is `debugDump.redact` (see
+[Configuration → Debug Dump Redaction](CONFIGURATION.md#debug-dump-redaction-debugdumpredact)).
+
+**What it removes.** Each match is replaced with the literal marker `<redacted>`:
+
+- The values of secret-named environment variables (`*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*_KEY`,
+  anything containing `PASSWORD`) and inline config secrets — substituted wherever they appear,
+  across every file in the archive.
+- Well-known provider key shapes: OpenAI / Anthropic (`sk-…`, `sk-ant-…`), Google (`AIza…`), xAI
+  (`xai-…`), Groq (`gsk_…`), and GitHub tokens (classic `ghp_`/`gho_`/… and fine-grained
+  `github_pat_…`).
+- `Authorization` and `Bearer` header values (any scheme, including non-standard ones and AWS SigV4
+  `Credential=` / `Signature=`), and credentials embedded in a URL (`scheme://user:pass@host` — the
+  `user:pass` is masked, the host kept).
+- In `config.json`: the value of any secret-named field (`apiKey`, `token`, `secret`, …) is masked
+  while the key is kept, and the live model object is reduced to a `{ type, model }` descriptor so
+  its internals never reach disk.
+
+**What it does not do.** Redaction is **best-effort and pattern-based** — it targets known secret
+shapes and values, not arbitrary sensitive data. It does **not** scrub general file contents, source
+code, or prose the transcript captured, and it deliberately does not redact high-entropy strings (to
+avoid gutting the dump with false positives). It is a safety net, not a guarantee: **review a dump
+before you share it.**
+
+**Opting out.** To write a raw, unredacted archive, either set it persistently in config:
+
+```json
+{
+  "debugDump": {
+    "redact": false
+  }
+}
+```
+
+or opt out for a single dump by passing the flag when you type the command in a session:
+
+```
+/debug-dump --unsafe-no-redact
+```
+
+With redaction off, the archive is written as-is and the command prints a loud "UNSANITIZED — may
+contain secrets" warning in place of the redacted-by-default notice.
 
 ## Where it works
 
@@ -99,8 +147,8 @@ Writing the archive never aborts your session:
 
 ## Notes
 
-- There is no option to change the output location or to sanitize the archive before it's
-  written — the command always writes the full, raw session state. Because the archive lives
-  under your home directory, it is never covered by a project's `.gitignore`.
+- Secrets are redacted by default; opt out per [Redaction](#redaction) above. There is no option to
+  change the output location. Because the archive lives under your home directory, it is never
+  covered by a project's `.gitignore`.
 - Old archives are not cleaned up automatically; clear out `~/.gsloth/debug-dumps/` yourself once
   you no longer need old dumps.
