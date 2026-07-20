@@ -259,17 +259,53 @@ describe('evalCommand', () => {
     });
   });
 
-  it('propagates a malformed suite file as a harness-level throw (uncaught by the action)', async () => {
+  it('exits 2 (harness error, no throw) when the suite file is malformed', async () => {
+    // BATCH-11: a malformed suite is a harness error, not a product regression — the action catches
+    // it, reports it, and sets exit 2 (distinct from a suite-fail exit 1) rather than letting it
+    // surface as a generic exit 1 via the entry point. parseAsync therefore resolves normally.
     fileUtilsMock.readFileFromProjectDir.mockImplementation(() => 'not: [valid yaml');
     const { evalCommand } = await import('#src/commands/evalCommand.js');
     const program = new Command();
     evalCommand(program, {});
 
-    await expect(
-      program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-o', outputDir])
-    ).rejects.toThrow(/Failed to parse eval suite YAML/);
+    await program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-o', outputDir]);
 
+    expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+    expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to parse eval suite YAML')
+    );
     expect(runSingleShot).not.toHaveBeenCalled();
+  });
+
+  it('exits 2 (harness error) when config fails to build', async () => {
+    // BATCH-11: a config/provider failure means the SUT can't run at all — an environment signal.
+    configMock.initConfig.mockRejectedValue(new Error('provider not configured'));
+    const { evalCommand } = await import('#src/commands/evalCommand.js');
+    const program = new Command();
+    evalCommand(program, {});
+
+    await program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-o', outputDir]);
+
+    expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+    expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+      expect.stringContaining('provider not configured')
+    );
+    expect(runSingleShot).not.toHaveBeenCalled();
+  });
+
+  it('exits 2 (harness error) when EVERY case fails its SUT run — no gradeable results', async () => {
+    // BATCH-11: all cases sutOk:false (e.g. a transport/auth failure) = "couldn't produce gradeable
+    // results" = exit 2, distinct from a product regression (exit 1).
+    runSingleShot.mockResolvedValue({ ok: false, error: 'connect ECONNREFUSED' });
+    const { evalCommand } = await import('#src/commands/evalCommand.js');
+    const program = new Command();
+    evalCommand(program, {});
+
+    await program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-o', outputDir]);
+
+    expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+    const resultsJson = JSON.parse(readFileSync(join(outputDir, 'results.json'), 'utf8'));
+    expect(resultsJson.cases.every((c: { sutOk: boolean }) => c.sutOk === false)).toBe(true);
   });
 
   it('respects -j/--concurrency pass-through to the eval runner', async () => {

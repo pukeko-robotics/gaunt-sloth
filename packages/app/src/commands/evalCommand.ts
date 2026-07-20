@@ -4,7 +4,12 @@ import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import { getAskSystemPrompt } from '#src/commands/commandIntrospection.js';
 import { buildProductionRunCell } from '#src/commands/batchCommand.js';
 import { parseIntOption } from '#src/commands/cliOptionParsers.js';
-import { display, displaySuccess, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import {
+  display,
+  displayError,
+  displaySuccess,
+  displayWarning,
+} from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { setExitCode } from '@gaunt-sloth/core/utils/systemUtils.js';
 import {
   fileSafeLocalDate,
@@ -70,10 +75,18 @@ function printSummary(summary: EvalSuiteSummary, outputDir: string): void {
  * command implements the single-`prompt`, `gth-agent`-target, `config.llm`-as-judge subset — see
  * the BATCH-2 Task 2 brief's "Not in scope" list for what's deliberately deferred.
  *
- * Exit-code contract (decisive design point, mirrors `review`): `gth eval` exits **0 iff every
- * case passed** — unlike `batch`, which exits 0 regardless of per-cell quality. A suite failure
- * and a harness-level error (a malformed suite file, etc.) are not distinguished in the exit code;
- * the whole contract is "did it pass".
+ * Exit-code contract (BATCH-11 / #405 his #6 — a distinct three-way code so CI can tell a product
+ * regression from a broken harness):
+ * - `0` — every case passed (mirrors `review`; unchanged contract).
+ * - `1` — the suite **ran** but ≥1 case FAILED (a deterministic check or the judge fell below
+ *   threshold). A *product* signal: real, gradeable results, some below the bar.
+ * - `2` — **harness error**: the suite couldn't be meaningfully evaluated — the suite file failed
+ *   to load/parse, config failed to build, or **every** case's SUT run failed (`sutOk:false`, e.g.
+ *   a transport/auth/config failure produced no answer to grade). An *environment* signal.
+ *
+ * The suite-vs-harness split is anchored on `sutOk` (see `classifyEvalExit`), not the verdict: a
+ * case that ran (`sutOk:true`) but whose judge errored, or whose answer failed a check, is still a
+ * real result → exit `1`, never `2`. Unlike `batch`, which exits 0 regardless of per-cell quality.
  *
  * @param program - The commander program
  * @param commandLineConfigOverrides - command line config overrides
@@ -96,40 +109,56 @@ export function evalCommand(
         '(default: a timestamped dir alongside other gth reports)'
     )
     .action(async (suitePath: string, options: EvalCommandOptions) => {
-      const config = await initConfig(commandLineConfigOverrides);
+      try {
+        const config = await initConfig(commandLineConfigOverrides);
 
-      // Specific `.js` subpaths (not the bare package root), matching batchCommand.ts's
-      // convention — vitest's workspace-import resolver recognizes these and resolves straight to
-      // source, so specs exercise live `packages/batch/src` rather than a `dist/` build.
-      const { parseEvalSuite } = await import('@gaunt-sloth/batch/evalSuite.js');
-      const { runEvalSuite } = await import('@gaunt-sloth/batch/evalRunner.js');
-      const { writeEvalOutput } = await import('@gaunt-sloth/batch/evalOutput.js');
+        // Specific `.js` subpaths (not the bare package root), matching batchCommand.ts's
+        // convention — vitest's workspace-import resolver recognizes these and resolves straight to
+        // source, so specs exercise live `packages/batch/src` rather than a `dist/` build.
+        const { parseEvalSuite } = await import('@gaunt-sloth/batch/evalSuite.js');
+        const { runEvalSuite, classifyEvalExit } = await import('@gaunt-sloth/batch/evalRunner.js');
+        const { writeEvalOutput } = await import('@gaunt-sloth/batch/evalOutput.js');
 
-      const suiteText = readFileFromProjectDir(suitePath);
-      const suite = parseEvalSuite(suiteText, suitePath);
+        const suiteText = readFileFromProjectDir(suitePath);
+        const suite = parseEvalSuite(suiteText, suitePath);
 
-      const preamble = getAskSystemPrompt(config);
-      const runCell = await buildProductionRunCell(config, preamble, commandLineConfigOverrides, {
-        command: 'ask',
-        sourcePrefix: 'EVAL',
-        wrapBlockPrefix: 'message',
-        wrapPrefix: 'user message',
-      });
-      const judge = buildProductionJudge(config);
+        const preamble = getAskSystemPrompt(config);
+        const runCell = await buildProductionRunCell(config, preamble, commandLineConfigOverrides, {
+          command: 'ask',
+          sourcePrefix: 'EVAL',
+          wrapBlockPrefix: 'message',
+          wrapPrefix: 'user message',
+        });
+        const judge = buildProductionJudge(config);
 
-      const summary = await runEvalSuite(suite, {
-        runCell,
-        judge,
-        concurrency: options.concurrency,
-      });
+        const summary = await runEvalSuite(suite, {
+          runCell,
+          judge,
+          concurrency: options.concurrency,
+        });
 
-      const outputDir = options.output ?? defaultEvalOutputDir();
-      writeEvalOutput(outputDir, summary);
+        const outputDir = options.output ?? defaultEvalOutputDir();
+        writeEvalOutput(outputDir, summary);
 
-      printSummary(summary, outputDir);
+        printSummary(summary, outputDir);
 
-      if (summary.failed > 0) {
-        setExitCode(1);
+        // BATCH-11: distinct exit codes — 0 pass / 1 suite ran but a case FAILED / 2 no gradeable
+        // results (every SUT run failed). `setExitCode` is only called for a non-zero code; `0` is
+        // the default process exit code, preserving the "not set on a clean pass" behavior.
+        const exitCode = classifyEvalExit(summary);
+        if (exitCode !== 0) {
+          setExitCode(exitCode);
+        }
+      } catch (error) {
+        // BATCH-11: a harness-level error the run never recovered from — suite-file load/parse
+        // error, config error, or any unexpected setup/run failure. The suite couldn't be
+        // meaningfully evaluated, so this is an *environment* signal (exit 2), distinct from a
+        // product regression (exit 1). Surface the reason; do NOT rethrow — an uncaught throw would
+        // surface as a generic exit 1 via the entry point, collapsing the 1-vs-2 distinction.
+        displayError(
+          `eval harness error: ${error instanceof Error ? error.message : String(error)}`
+        );
+        setExitCode(2);
       }
     });
 }

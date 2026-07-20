@@ -78,6 +78,41 @@ export async function runEvalSuite(
   return { total: results.length, passed, failed: results.length - passed, cases: results };
 }
 
+/** The three-way process exit code for a completed `gth eval` run. See {@link classifyEvalExit}. */
+export type EvalExitCode = 0 | 1 | 2;
+
+/**
+ * BATCH-11 (#405 his #6) — classify a completed suite's {@link EvalSuiteSummary} into a distinct
+ * exit code so CI can tell a product regression from a broken harness:
+ *
+ * - `0` — every case passed (unchanged contract).
+ * - `1` — the suite **ran** but ≥1 case FAILED (assertion/judge below threshold). A *product*
+ *   signal: real, gradeable results, some below the bar.
+ * - `2` — **harness error**: the suite couldn't be meaningfully evaluated. This function returns
+ *   `2` only for the "no gradeable results at all" shape — an empty suite, or **every** case's SUT
+ *   run failed (`sutOk === false`, i.e. a transport/auth/config failure produced no answer to
+ *   grade). The other harness errors that never even reach a summary (suite-file load/parse error,
+ *   config error) are mapped to `2` by the caller (`evalCommand.ts`) in a try/catch.
+ *
+ * Classification is anchored on `sutOk`, not the verdict: `sutOk === true` means the SUT produced a
+ * gradeable answer, so a case that ran but whose *judge* errored (or whose answer failed a check)
+ * is a real result → exit `1`, never `2`. Exit `2` is reserved for the case where no case produced
+ * a gradeable answer. A *mix* of `sutOk:false` and `sutOk:true` cases therefore yields `1` (some
+ * real results exist).
+ */
+export function classifyEvalExit(summary: EvalSuiteSummary): EvalExitCode {
+  // No gradeable results at all → harness/environment error, not a product signal.
+  if (summary.total === 0 || summary.cases.every((result) => !result.sutOk)) {
+    return 2;
+  }
+  // Ran and produced gradeable results, but at least one case failed → product regression.
+  if (summary.failed > 0) {
+    return 1;
+  }
+  // Every case passed.
+  return 0;
+}
+
 async function gradeCase(
   evalCase: EvalCase,
   cellResult: CellResult,
