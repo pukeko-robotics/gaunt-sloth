@@ -1,5 +1,6 @@
 import { runBatchMatrix } from '#src/BatchRunner.js';
 import { runDeterministicChecks } from '#src/deterministicChecks.js';
+import { runToolCallChecks } from '#src/toolChecks.js';
 import type { CellResult, MatrixCell, RunCellFn } from '#src/types.js';
 import type {
   EvalCase,
@@ -139,7 +140,10 @@ async function gradeCase(
 
   const answer = cellResult.answer ?? '';
   const checks = runDeterministicChecks(answer, evalCase);
-  const reasons = [...checks.failures];
+  // Tool-trace assertions read the captured tool names, not the answer, so they are graded by a
+  // separate function (see #src/toolChecks.js) and merged into `reasons` alongside the answer checks.
+  const toolFailures = runToolCallChecks(cellResult.tools ?? [], evalCase);
+  const reasons = [...checks.failures, ...toolFailures];
 
   let judgeOutcome: JudgeOutcome | undefined;
   let judgePassed = true;
@@ -163,7 +167,8 @@ async function gradeCase(
     }
   }
 
-  const verdict: 'PASS' | 'FAIL' = checks.passed && judgePassed ? 'PASS' : 'FAIL';
+  const verdict: 'PASS' | 'FAIL' =
+    checks.passed && toolFailures.length === 0 && judgePassed ? 'PASS' : 'FAIL';
 
   return {
     ...base,

@@ -23,6 +23,16 @@ export interface EvalTarget {
   profile?: string;
 }
 
+/** One `json_path` assertion (BATCH-10): resolve `path` against the answer-parsed-as-JSON and check
+ * it. Exactly one of `equals`/`contains` is set (enforced in {@link ../evalSuite.js}'s parse):
+ * - `equals` — the resolved value must deep-equal this (any JSON value, incl. `null`).
+ * - `contains` — the resolved value must be a string containing this substring. */
+export interface JsonPathCheck {
+  path: string;
+  equals?: unknown;
+  contains?: string;
+}
+
 /** One case parsed and normalized from suite YAML — snake_case YAML keys become camelCase here,
  * arrays default to `[]` (not `undefined`) so callers never need an existence check, and
  * `passThreshold` is pre-resolved (case override ?? suite `defaults.pass_threshold` ??
@@ -33,6 +43,17 @@ export interface EvalCase {
   mustContain: string[];
   mustNotContain: string[];
   shouldContainAny: string[];
+  /** BATCH-10 tool-trace assertions, matched against the case's captured tool names with
+   * glob support (see `@gaunt-sloth/core/utils/toolMatching.js`, shared with `allowedTools`). */
+  mustCall: string[];
+  mustNotCall: string[];
+  /** BATCH-10 regex assertions over the raw answer — compiled at parse time (bad patterns are a
+   * suite error, never a run-time crash) and stored so the compiled `RegExp` is reused, not
+   * rebuilt. No implicit case-folding: authors control flags in the pattern themselves. */
+  mustMatch: RegExp[];
+  mustNotMatch: RegExp[];
+  /** BATCH-10 minimal JSON-path assertions over the answer parsed as JSON — see {@link JsonPathCheck}. */
+  jsonPath: JsonPathCheck[];
   /** The judge rubric, when present and non-blank. `undefined` = no judge for this case. */
   judgeRubric?: string;
   passThreshold: number;
