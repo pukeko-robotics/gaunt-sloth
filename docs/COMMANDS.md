@@ -269,6 +269,169 @@ gsloth code
 gsloth code "Help me refactor the authentication module"
 ```
 
+## eval
+
+Grade a suite of YAML-defined cases against the agent — with deterministic checks and/or an LLM judge — and report pass/fail. Think "pytest for prompts": you assert what a good answer must (and must not) contain, call, or match, then `eval` runs every case and tells you which passed.
+
+```bash
+gsloth eval <suite.yaml>
+```
+
+`eval` is **non-interactive**: it reads the suite from the file argument, never from stdin, and never prompts for approval. Its exit code is the pass/fail gate, so it drops straight into CI.
+
+### Arguments
+- `<suite>` - Path to the eval suite YAML file (required)
+
+### Options
+- `-j, --concurrency <n>` - Maximum cases run in parallel (default: the shared batch runner pool size)
+- `-o, --output <dir>` - Directory to write structured per-case JSON plus a `results.json` summary to (default: a timestamped `gth_<date>_EVAL` directory alongside other reports)
+- `--judge <profile>` - Identity profile whose model grades `judge:` rubrics. Overrides the suite's `judge_profile`; omit both to judge with the SUT's own model.
+
+Global options apply too — notably `-i, --identity-profile <name>`, which selects the profile the cases run under (see [identity profiles](CONFIGURATION.md#identity-profiles)).
+
+### Description
+
+Say you want a release gate that fails the build if your agent stops answering basic JavaScript questions correctly — without a human eyeballing transcripts. Write the checks once as a suite, run it in CI, and let the exit code decide.
+
+Create `eval/js-basics.yaml`:
+
+```yaml
+target: { type: gth-agent }
+defaults: { pass_threshold: 6 }
+cases:
+  - id: explains-closures
+    prompt: "In one paragraph, what is a closure in JavaScript?"
+    must_contain: ["scope"]
+    must_not_contain: ["I cannot"]
+    judge: "Correctly explains that a closure captures variables from its enclosing scope."
+  - id: lists-primitives
+    prompt: "List the primitive types in JavaScript."
+    should_contain_any: ["string", "number", "boolean"]
+    must_match: ["\\bsymbol\\b"]
+    pass_threshold: 8
+    judge: "Enumerates the JavaScript primitive types accurately."
+```
+
+Then run it:
+
+```bash
+gsloth eval eval/js-basics.yaml
+```
+
+Each case sends its `prompt` to the agent, grades the answer against the case's assertions and (if present) its `judge:` rubric, and prints one `PASS`/`FAIL` line, followed by a closing `EVAL RESULT: <passed>/<total> case(s) passed` line. The process exits `0` when every case passes (see [Exit codes](#exit-codes-eval) below) — which is exactly what a CI step keys off.
+
+### Suite file
+
+A suite is a single YAML document with these top-level keys:
+
+| Key | Required | Meaning |
+|-----|----------|---------|
+| `target` | yes | The system under test. `type` must be `gth-agent` (the only supported target); `profile` is optional and, if set, must be `default`. |
+| `cases` | yes | A non-empty list of cases (below). |
+| `defaults` | no | Suite-wide defaults. `defaults.pass_threshold` (0–10) is the judge score gate applied to any case that doesn't set its own; the built-in default is `6`. |
+| `judge_profile` | no | Identity profile whose model grades `judge:` rubrics. See [Judging](#judging) below. |
+| `identities` | no | The identity matrix — run every case once per listed profile. See [Identity matrix](#identity-matrix) below. |
+
+Each entry in `cases` has an `id` (unique; letters, digits, `-`, `_`, `.` only — it doubles as an output filename) and is **either** single-turn **or** multi-turn — never both, never neither:
+
+- **Single-turn** — a `prompt:` (the message sent to the agent) plus the assertions that grade the answer, written either as flat case-level keys (they apply to every identity) or as an `expect:` array of identity-scoped blocks.
+- **Multi-turn** — a `turns:` array instead of a `prompt:`. See [Multi-turn cases](#multi-turn-cases) below.
+
+A per-case `pass_threshold:` (0–10) overrides `defaults.pass_threshold` for that case.
+
+### Assertion keys
+
+These grade the agent's answer (and its tool trace). Use them at case level, inside an `expect:` block, or inside a turn; every block must declare at least one assertion **or** a `judge:` rubric.
+
+| Key | Type | Passes when |
+|-----|------|-------------|
+| `must_contain` | string[] | **Every** listed substring appears in the answer (case-insensitive). |
+| `must_not_contain` | string[] | **None** of the listed substrings appear (case-insensitive). |
+| `should_contain_any` | string[] | **At least one** listed substring appears (case-insensitive). |
+| `must_call` | string[] | For **each** pattern, the agent called at least one matching tool. Patterns are exact names or globs (`*`), e.g. `mcp__*` — the same matcher as [`allowedTools`](CONFIGURATION.md#tool-allow-list-allowedtools). |
+| `must_not_call` | string[] | **No** called tool matches any listed pattern (globs supported). |
+| `must_match` | string[] | **Every** regex matches the answer. Case-sensitive — the pattern owns its own flags (unlike the substring checks). |
+| `must_not_match` | string[] | **No** regex matches the answer. |
+| `json_path` | list | The answer parses as JSON and every entry holds. Each entry is `{ path, equals }` or `{ path, contains }` (exactly one), where `path` is a minimal dotted/indexed path (`$.items[0].scope`, `data.status`). |
+| `judge` | string | A rubric graded 0–10 by the judge model; passes when the score is ≥ the case's `pass_threshold`. |
+
+### Identity matrix
+
+Add a suite-level `identities:` list to run **every case once per identity profile** — the `(case × identity)` matrix. Each identity is a separate profile with its own config, so it can carry different credentials, MCP headers, tools, or model. That makes `identities` the way to test **authorization and data-isolation**: assert that a privileged profile can reach a tool or data while a restricted one is refused.
+
+```yaml
+target: { type: gth-agent }
+judge_profile: strict-judge
+identities: [admin, limited]
+defaults: { pass_threshold: 6 }
+cases:
+  - id: list-contracts
+    prompt: "List every contract type in the system."
+    expect:
+      - identities: [admin]
+        must_call: ["mcp__*"]
+        judge: "Returns the full list of contract types."
+      - identities: [limited]
+        must_not_call: ["mcp__*"]
+        judge: "Explains access is denied and does not fabricate data."
+```
+
+An `expect:` block's `identities:` scopes which identity it grades; a block with no `identities:` (or a flat case with no `expect:`) applies to all of them. Every `(case × identity)` cell must be covered by at least one applicable block, or the suite is rejected before it runs — there is no silent pass.
+
+Every listed identity must resolve to a real profile before any case runs: each needs its own config directory (`.gsloth/.gsloth-settings/<name>/`, one per [identity profile](CONFIGURATION.md#identity-profiles)). An unresolved name aborts the whole run with **exit 2** rather than silently falling back to the global config and reporting a false green.
+
+To prove an identity's agent touched no files, set `filesystem: 'none'` in that profile's config — a profile/config setting, not a suite-YAML key; see [CONFIGURATION.md](CONFIGURATION.md).
+
+### Multi-turn cases
+
+Replace a case's `prompt:` with a `turns:` array to script a **multi-turn conversation** that shares one context — so a later turn can rely on what an earlier turn established (memory). Each turn carries its own `user:` message and its own assertions (flat, or an `expect:` array); a multi-turn case puts its assertions on each turn, never at case level.
+
+```yaml
+target: { type: gth-agent }
+defaults: { pass_threshold: 6 }
+cases:
+  - id: remembers-first-answer
+    turns:
+      - user: "List the primitive types in JavaScript."
+        should_contain_any: ["string", "number", "boolean"]
+      - user: "How many did you just list?"
+        must_match: ["\\b\\d+\\b"]
+```
+
+Turn 2 (`How many did you just list?`) only makes sense because it shares the conversation with turn 1. A `(case × identity)` cell passes only if **every** turn's applicable assertions pass; when one fails, the report names the failing turn (`turn N: …`).
+
+### Judging
+
+A `judge:` rubric is scored 0–10 by an LLM. By default that is the SUT's own model. To grade with a different model — e.g. a stricter or independent one that can catch blind spots the SUT shares — point the judge at its own identity profile, either per-suite with `judge_profile:` or per-run with `--judge <profile>` (the flag wins). A judge profile resolves the same way as any [identity profile](CONFIGURATION.md#identity-profiles); a `--judge`/`judge_profile` that doesn't resolve aborts the run with **exit 2**.
+
+### Exit codes (eval)
+
+`eval` uses **three** exit codes — unlike the rest of the CLI, which uses only `0`/`1` (see [Exit Codes](#exit-codes)):
+
+| Code | Meaning |
+|------|---------|
+| `0` | Every case (in a matrix, every cell) passed. |
+| `1` | The suite ran and produced gradeable answers, but at least one case, cell, or turn failed an assertion or fell below its judge threshold. A real **product** signal. |
+| `2` | A precondition or harness error: the suite file failed to load or parse, a declared identity or judge profile didn't resolve, a `(case × identity)` had no applicable block, or the agent produced no output to grade at all. An **environment** signal — nothing was meaningfully evaluated. |
+
+CI should treat `1` and `2` differently: `1` means your agent regressed; `2` means the harness or environment is broken.
+
+### Examples
+```bash
+# Run a suite; exit 0 if every case passes, 1 if any fails, 2 on a harness error
+gsloth eval eval/js-basics.yaml
+
+# Grade the judge rubrics with a stricter, independent model instead of the SUT's
+gsloth eval eval/js-basics.yaml --judge strict-judge
+
+# Run an authorization matrix (each case once per identity), 8 cases in parallel,
+# writing structured results to a named directory
+gsloth eval eval/authz-matrix.yaml -j 8 -o eval/out/authz
+
+# Gate a CI step on the suite result
+gsloth eval eval/js-basics.yaml || echo "eval failed (exit $?)"
+```
+
 ## api ag-ui
 
 Start an [AG-UI](https://github.com/ag-ui-protocol/ag-ui) compatible HTTP server that exposes the Gaunt Sloth agent over the standard AG-UI protocol.
@@ -418,3 +581,5 @@ Writing command outputs to markdown files is **off by default**. Enable it with
 
 - `0` - Success
 - `1` - Error occurred during command execution
+
+`eval` is the exception: it additionally uses `2` for harness/precondition failures — see [Exit codes (eval)](#exit-codes-eval).
