@@ -100,6 +100,8 @@ const RawSuiteSchema = z.object({
  * - A `must_match`/`must_not_match` pattern that is not a valid regex (compiled here, at parse
  *   time, so a bad pattern is a suite error rather than a run-time crash mid-suite).
  * - A `json_path` entry that does not set exactly one of `equals`/`contains`.
+ * - A `judge_profile` containing a path separator or `..` (it must be a plain identity-profile name
+ *   that resolves under `.gsloth-settings/<name>/` — rejected here, not sanitized, like a case `id`).
  *
  * @param yamlText Raw suite file content.
  * @param sourcePath Optional path, only used to make error messages more actionable.
@@ -228,6 +230,15 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
   // Normalize a blank/whitespace-only judge_profile to undefined (= no separate judge) so the CLI's
   // resolution treats it the same as absent.
   const judgeProfile = data.judge_profile?.trim() || undefined;
+  // A judge_profile is a plain identity-profile name that resolves under `.gsloth-settings/<name>/`.
+  // Reject path separators / `..` so a suite file can't feed a traversal sequence into profile
+  // resolution — the same defence the case `id` gets above, since a suite is only semi-trusted input.
+  if (judgeProfile !== undefined && (/[\\/]/.test(judgeProfile) || judgeProfile.includes('..'))) {
+    throw new Error(
+      `Invalid eval suite${suffix}: judge_profile "${judgeProfile}" must be a plain profile name ` +
+        '(no path separators or "..").'
+    );
+  }
 
   return {
     target: { type: 'gth-agent', profile: data.target.profile },

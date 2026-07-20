@@ -396,5 +396,21 @@ cases:
 `);
       expect(suite.judgeProfile).toBeUndefined();
     });
+    it('rejects a judge_profile containing a path traversal sequence or separator', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      // Single-quoted YAML so a backslash stays literal (double quotes would treat `\b` as an escape).
+      for (const bad of ['../../etc', 'a/b', 'a\\b', '..']) {
+        expect(() =>
+          parseEvalSuite(`
+target: { type: gth-agent }
+judge_profile: '${bad}'
+cases:
+  - id: c1
+    prompt: "p"
+    judge: "graded elsewhere"
+`)
+        ).toThrow(/judge_profile .* must be a plain profile name/);
+      }
+    });
   });
 });
