@@ -245,3 +245,96 @@ describe('runEvalSuite', () => {
     expect(maxInFlight).toBe(2);
   });
 });
+
+// BATCH-11 (#405 his #6): the three-way exit-code classification, driven end-to-end through
+// runEvalSuite with synthetic cell outcomes so the exact pass/fail/harness boundary is pinned.
+describe('classifyEvalExit', () => {
+  it('returns 0 when every case passed (real, gradeable results, all above the bar)', async () => {
+    const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
+    const suite = makeSuite([
+      makeCase({ id: 'a', mustContain: ['x'] }),
+      makeCase({ id: 'b', mustContain: ['y'] }),
+    ]);
+    const runCell = runCellReturning({
+      a: { ok: true, answer: 'has x' },
+      b: { ok: true, answer: 'has y' },
+    });
+
+    const summary = await runEvalSuite(suite, { runCell });
+
+    expect(summary).toMatchObject({ total: 2, passed: 2, failed: 0 });
+    expect(classifyEvalExit(summary)).toBe(0);
+  });
+
+  it('returns 1 when the suite ran but ≥1 case FAILED (product regression)', async () => {
+    const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
+    const suite = makeSuite([
+      makeCase({ id: 'a', mustContain: ['x'] }),
+      makeCase({ id: 'b', mustContain: ['y'] }),
+    ]);
+    const runCell = runCellReturning({
+      a: { ok: true, answer: 'has x' },
+      b: { ok: true, answer: 'missing it' }, // sutOk:true, but fails its check
+    });
+
+    const summary = await runEvalSuite(suite, { runCell });
+
+    expect(summary).toMatchObject({ total: 2, passed: 1, failed: 1 });
+    expect(classifyEvalExit(summary)).toBe(1);
+  });
+
+  it('returns 2 when EVERY case failed its SUT run (no gradeable results — harness error)', async () => {
+    const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
+    const suite = makeSuite([
+      makeCase({ id: 'a', mustContain: ['x'] }),
+      makeCase({ id: 'b', mustContain: ['y'] }),
+    ]);
+    const runCell = runCellReturning({
+      a: { ok: false, error: 'connect ECONNREFUSED' },
+      b: { ok: false, error: 'connect ECONNREFUSED' },
+    });
+
+    const summary = await runEvalSuite(suite, { runCell });
+
+    expect(summary.cases.every((c) => !c.sutOk)).toBe(true);
+    expect(classifyEvalExit(summary)).toBe(2);
+  });
+
+  it('returns 1 (not 2) for a MIX of sutOk:false and a passing case — some real results exist', async () => {
+    const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
+    const suite = makeSuite([
+      makeCase({ id: 'ran', mustContain: ['x'] }),
+      makeCase({ id: 'broke', mustContain: ['y'] }),
+    ]);
+    const runCell = runCellReturning({
+      ran: { ok: true, answer: 'has x' }, // gradeable, passes
+      broke: { ok: false, error: 'transport failure' }, // sutOk:false
+    });
+
+    const summary = await runEvalSuite(suite, { runCell });
+
+    expect(summary.failed).toBe(1);
+    expect(summary.cases.some((c) => c.sutOk)).toBe(true);
+    expect(classifyEvalExit(summary)).toBe(1);
+  });
+
+  it('returns 1 (not 2) when the SUT ran but the judge errored — sutOk:true is a real result', async () => {
+    const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
+    const suite = makeSuite([makeCase({ id: 'a', judgeRubric: 'be nice' })]);
+    const runCell = runCellReturning({ a: { ok: true, answer: 'an answer' } });
+    const judge: JudgeFn = async () => ({ attempted: true, ok: false, error: 'judge timed out' });
+
+    const summary = await runEvalSuite(suite, { runCell, judge });
+
+    expect(summary.cases[0]).toMatchObject({ verdict: 'FAIL', sutOk: true });
+    expect(classifyEvalExit(summary)).toBe(1);
+  });
+
+  it('returns 2 for an empty suite (no cases to grade at all)', async () => {
+    const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
+    const summary = await runEvalSuite(makeSuite([]), { runCell: runCellReturning({}) });
+
+    expect(summary).toMatchObject({ total: 0, passed: 0, failed: 0 });
+    expect(classifyEvalExit(summary)).toBe(2);
+  });
+});

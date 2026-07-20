@@ -16,6 +16,7 @@ import { historyCommand } from '#src/commands/historyCommand.js';
 import { insightsCommand } from '#src/commands/insightsCommand.js';
 import { modelsCommand } from '#src/commands/modelsCommand.js';
 import { argv, getSlothVersion, readStdin } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { commandSkipsStdin, resolveInvokedCommandName } from '#src/utils/stdinPolicy.js';
 import type { CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
 
 import { coerceBooleanOrString } from '@gaunt-sloth/core/utils/consoleUtils.js';
@@ -101,5 +102,20 @@ insightsCommand(program);
 // GS2-6 (B16) — model catalog: lists providers/models enriched with models.dev cost/limit metadata.
 // Read-only; enrichment never gates what `/v1/models` reports as callable.
 modelsCommand(program);
+
+// BATCH-11 (#405 gotcha #5): `eval`/`batch` never consume piped stdin, so they must not block
+// waiting for stdin EOF before dispatch — a scripted/CI `gth eval suite.yaml` inherits a non-TTY,
+// non-closing stdin and would otherwise hang until EOF (or need `</dev/null`). Resolve the invoked
+// subcommand from argv via commander's own operand parsing (so a `-c <path>` value or a file
+// argument is never mistaken for the command name) and, for those commands, imply the existing
+// `--no-pipe` fast path in readStdin. ask/review/pr etc. are untouched and still block-and-read a
+// piped diff.
+const invokedCommand = resolveInvokedCommandName(
+  program.commands.map((command) => command.name()),
+  program.parseOptions(argv).operands
+);
+if (commandSkipsStdin(invokedCommand)) {
+  program.setOptionValue('nopipe', true);
+}
 
 await readStdin(program);
