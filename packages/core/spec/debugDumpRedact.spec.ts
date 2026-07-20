@@ -153,6 +153,49 @@ describe('utils/debugDump — GS2-47 secret redaction', () => {
     // Even through the circular structure, the secret did not leak.
     expect(readFileSync(resolve(archiveDir, 'config.json'), 'utf8')).not.toContain(FAKE_API_KEY);
   });
+
+  it('GS2-54 (gap 3): strips a LIVE chat model to a { type, model } descriptor — internals + a non-secret-named opaque field never reach config.json', async () => {
+    const { writeDebugDump } = await import('#src/utils/debugDump.js');
+
+    const INLINE_KEY = 'sk-ant-INLINEMODELKEY0123456789abcdef';
+    // An opaque, sensitive value under a field name that does NOT match the secret-key regex, so
+    // redactValue's field-masking would MISS it. Its absence therefore proves the DESCRIPTOR strip
+    // (not redactValue) hid the live model — the discriminating assertion the brief calls for.
+    const OPAQUE_SECRET = 'PRIVATE-CACERT-BLOB-not-secret-named-xyz';
+
+    // A realistic minimal BaseChatModel shape: `_llmType()` and `invoke()` are the live-model
+    // signals `isLiveChatModel` keys off; it also carries model internals + an inline key.
+    const liveModel = {
+      _llmType: () => 'anthropic',
+      invoke: async () => ({}),
+      model: 'claude-3-5-sonnet',
+      lc_namespace: ['langchain', 'chat_models', 'anthropic'],
+      anthropicApiKey: INLINE_KEY,
+      clientConfig: { apiKey: INLINE_KEY, caCert: OPAQUE_SECRET },
+    };
+
+    const { archiveDir } = writeDebugDump({
+      transcript: [],
+      config: { modelDisplayName: 'claude-3-5-sonnet', llm: liveModel },
+      modelDisplayName: 'claude-3-5-sonnet',
+      cwd: notGitDir,
+    });
+
+    const configText = readFileSync(resolve(archiveDir, 'config.json'), 'utf8');
+    const config = JSON.parse(configText);
+
+    // The live model is replaced by a compact descriptor — and ONLY `type`/`model` (no leftovers).
+    expect(config.llm).toEqual({ type: 'anthropic', model: 'claude-3-5-sonnet' });
+    // None of the model internals serialized.
+    expect(configText).not.toContain('clientConfig');
+    expect(configText).not.toContain('lc_namespace');
+    expect(configText).not.toContain('_llmType');
+    // The opaque, non-secret-NAMED value is gone ONLY because the whole live model was stripped
+    // (redactValue would not mask a `caCert` field) — this is the descriptor doing the work.
+    expect(configText).not.toContain(OPAQUE_SECRET);
+    // …and the inline key is absent too.
+    expect(configText).not.toContain(INLINE_KEY);
+  });
 });
 
 // The one-time false-positive spot-check the brief asks for: run the redactor over an ORDINARY,
@@ -181,5 +224,78 @@ describe('utils/redactSecrets — false-positive spot-check (GS2-47)', () => {
 
     expect(out).toBe(ordinaryTranscript); // byte-for-byte identical — zero false positives
     expect(out).not.toContain('<redacted>');
+  });
+});
+
+// GS2-54 — the three specced hardening gaps, exercised at the pure `redactText` level (secrets=[]
+// so ONLY the provider/auth patterns are in play — deterministic, machine-independent). Gap 3 (live
+// model → descriptor) is a debugDump-config concern, tested through `writeDebugDump` above.
+describe('utils/redactSecrets — GS2-54 hardening (gaps 1 & 2)', () => {
+  it('gap 1: redacts an Authorization header value REGARDLESS OF SCHEME (ApiKey / unknown scheme)', async () => {
+    const { redactText } = await import('#src/utils/redactSecrets.js');
+    // Non-standard `ApiKey` scheme — the token must NOT survive beside the marker (the old bug).
+    expect(redactText('Authorization: ApiKey s3cr3t-token-abc123', [])).toBe(
+      'Authorization: <redacted>'
+    );
+    // An arbitrary unknown scheme.
+    expect(redactText('Authorization: Zonk abc123def456ghi789', [])).toBe(
+      'Authorization: <redacted>'
+    );
+    // JSON-quoted form, scheme included, closing quote preserved.
+    expect(redactText('"Authorization":"ApiKey s3cr3t-token-xyz"', [])).toBe(
+      '"Authorization":"<redacted>"'
+    );
+  });
+
+  it('gap 1: an Authorization header does NOT swallow following prose (GS2-47 no-prose-swallow invariant preserved)', async () => {
+    const { redactText } = await import('#src/utils/redactSecrets.js');
+    const input =
+      'Sent header Authorization: ApiKey abc123def456. Then the request succeeded and returned 200.';
+    const out = redactText(input, []);
+    expect(out).toContain('Authorization: <redacted>');
+    expect(out).toContain('Then the request succeeded and returned 200.');
+    expect(out).not.toContain('abc123def456');
+  });
+
+  it('gap 1: redacts SigV4 Credential and Signature while keeping the header name + SignedHeaders', async () => {
+    const { redactText } = await import('#src/utils/redactSecrets.js');
+    const CRED = 'AKIAIOSFODNN7EXAMPLE/20260720/us-east-1/s3/aws4_request';
+    const SIG = 'fe5f80f77d5fa3beca038a248ff027d0445342fe2855ddc963176630326f1024';
+    const input =
+      `Authorization: AWS4-HMAC-SHA256 Credential=${CRED}, ` +
+      `SignedHeaders=host;x-amz-date, Signature=${SIG}`;
+    const out = redactText(input, []);
+    expect(out).not.toContain('AKIAIOSFODNN7EXAMPLE');
+    expect(out).not.toContain(SIG);
+    // The non-sensitive SignedHeaders list is preserved for debuggability.
+    expect(out).toContain('SignedHeaders=host;x-amz-date');
+    expect(out).toContain('Signature=<redacted>');
+  });
+
+  it('gap 2: redacts GitHub classic/scoped PATs (ghp_/gho_) and fine-grained github_pat_ tokens', async () => {
+    const { redactText } = await import('#src/utils/redactSecrets.js');
+    const ghp = 'ghp_ABCDEFghijkl0123456789MNOPqrstuvwx';
+    const gho = 'gho_0123456789abcdefABCDEF0123456789ab';
+    const fineGrained =
+      'github_pat_11ABCDEFG0abcdefghijklmn_0123456789ABCDEFGHIJKLMNOPqrstuvwxyz0123456789ABCD';
+    expect(redactText(`token=${ghp}`, [])).toBe('token=<redacted>');
+    expect(redactText(`token=${gho}`, [])).toBe('token=<redacted>');
+    expect(redactText(`token=${fineGrained}`, [])).toBe('token=<redacted>');
+  });
+
+  it('gap 2: redacts a credential-in-URL userinfo, keeping scheme + host', async () => {
+    const { redactText } = await import('#src/utils/redactSecrets.js');
+    // `user:tok@host` — userinfo redacted, scheme + host + path kept (artifact stays debuggable).
+    expect(redactText('clone url https://user:tok@github.com/owner/repo.git', [])).toBe(
+      'clone url https://<redacted>@github.com/owner/repo.git'
+    );
+    // A URL WITHOUT userinfo is left untouched (no `user:pass@` to redact).
+    expect(redactText('remote https://github.com/owner/repo.git', [])).toBe(
+      'remote https://github.com/owner/repo.git'
+    );
+    // A host:port (no `@`) is not mistaken for userinfo.
+    expect(redactText('server http://localhost:3000/health', [])).toBe(
+      'server http://localhost:3000/health'
+    );
   });
 });

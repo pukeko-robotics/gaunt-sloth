@@ -77,15 +77,41 @@ const PROVIDER_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bxai-[A-Za-z0-9_-]{16,}/g, REDACTED],
   // Groq (`gsk_…`).
   [/\bgsk_[A-Za-z0-9_-]{16,}/g, REDACTED],
-  // An `Authorization` header value (`Authorization: <scheme?> <token>` / `"Authorization":"…"`):
-  // keep the header name + separator, redact the (optional-scheme +) SINGLE-token value. The value
-  // is bounded to one token run so it can never swallow following prose (the old `[^"]+` did), and
-  // an optional value-quote is consumed so JSON `"Authorization":"…"` works too. Runs before the
-  // standalone-`Bearer` rule so a `Bearer`-schemed header collapses to one marker.
+  // GS2-54 (gap 2) — GitHub tokens. Classic/scoped PATs share the `gh[oprsu]_` prefix (personal
+  // `ghp_`, OAuth `gho_`, user-to-server `ghu_`, server-to-server `ghs_`, refresh `ghr_`); the value
+  // is base62 (no `_`). Prefix-anchored + a length floor, same tight style as the provider keys —
+  // NOT a blanket long-alphanumeric redaction (that IS the entropy trap avoided).
+  [/\bgh[oprsu]_[A-Za-z0-9]{16,}/g, REDACTED],
+  // GS2-54 (gap 2) — GitHub fine-grained PATs (`github_pat_…`); the value carries an inner `_`, so
+  // its charset includes `_`. Distinct prefix from the classic rule above (`github_` ≠ `gh[oprsu]_`).
+  [/\bgithub_pat_[A-Za-z0-9_]{16,}/g, REDACTED],
+  // GS2-54 (gap 2) — credentials embedded in a URL (`scheme://user:password@host`). Redact the
+  // `user:password` userinfo, KEEP the scheme + host so the artifact stays debuggable. Bounded: the
+  // userinfo stops at `@` (and the password never spans `/` or whitespace), so it cannot swallow the
+  // rest of the URL/line. A URL without userinfo (`https://host:port/path`) has no `user:pass@` and
+  // is left untouched.
+  [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi, `$1${REDACTED}@`],
+  // GS2-54 (gap 1) — an `Authorization` header value (`Authorization: <scheme?> <credential>` /
+  // `"Authorization":"…"`): keep the header name + separator, redact the value REGARDLESS OF SCHEME.
+  // Generalized beyond the old fixed `Bearer|Basic|Token|Digest|Negotiate` list so a non-standard
+  // scheme (`ApiKey <secret>`, an unknown scheme, `AWS4-HMAC-SHA256 Credential=…`) no longer leaks
+  // its token beside the marker. Bounded to <scheme> + ONE credential token (two token runs max,
+  // separated by horizontal whitespace only — never a newline), so it can never swallow following
+  // prose the way the original `[^"]+` did. An optional value-quote is consumed so JSON
+  // `"Authorization":"…"` works too. Runs before the SigV4 and standalone-`Bearer` rules so a normal
+  // header collapses to a single marker; a SigV4 header's `Credential=…` is eaten here and its
+  // trailing `Signature=…` is mopped up by the next rule.
   [
-    /(\bAuthorization["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic|Token|Digest|Negotiate)\s+)?[A-Za-z0-9._~+/=-]+/gi,
+    /(\bAuthorization["']?\s*[:=]\s*["']?)[A-Za-z0-9._~+/=-]+(?:[ \t]+[A-Za-z0-9._~+/=-]+)?/gi,
     `$1${REDACTED}`,
   ],
+  // GS2-54 (gap 1) — AWS SigV4 authorization components. The header is comma-separated `key=value`
+  // pairs; redact the SENSITIVE `Credential=…` (access-key id) and `Signature=…` values wherever they
+  // appear (header value OR a presigned-URL `X-Amz-Credential=…&X-Amz-Signature=…` query), keeping the
+  // key name for debuggability. `SignedHeaders=…` is just header names and is intentionally NOT
+  // touched. The value charset excludes whitespace/comma/quote/`&`, so it stops at the component
+  // boundary and never swallows the next pair or trailing prose.
+  [/\b(Credential|Signature)=[A-Za-z0-9._~+/=-]+/gi, `$1=${REDACTED}`],
   // A standalone `Bearer <token>` — keep the scheme word, redact only the credential. A long opaque
   // token is redacted ONLY in this auth context, never on its own (that is the entropy trap avoided).
   [/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, `$1${REDACTED}`],
