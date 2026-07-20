@@ -19,6 +19,10 @@ exports[`effective-merged acceptance (B2b) > resolves examples/a2a/.gsloth.confi
   "canInterruptInferenceWithEsc": false,
   "commands": {
     "api": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "cors": {
         "allowHeaders": "Content-Type, Accept",
         "allowMethods": "POST, GET, OPTIONS",
@@ -28,19 +32,40 @@ exports[`effective-merged acceptance (B2b) > resolves examples/a2a/.gsloth.confi
       "port": 3000,
     },
     "ask": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "filesystem": "read",
     },
     "chat": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "filesystem": "read",
     },
     "code": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "filesystem": "all",
     },
     "exec": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "filesystem": "all",
     },
     "pr": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "contentSource": "github",
+      "filesystem": "none",
       "rating": {
         "enabled": true,
         "errorOnReviewFail": true,
@@ -51,6 +76,11 @@ exports[`effective-merged acceptance (B2b) > resolves examples/a2a/.gsloth.confi
       "requirementSource": "github",
     },
     "review": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
+      "filesystem": "none",
       "rating": {
         "enabled": true,
         "errorOnReviewFail": true,
@@ -94,6 +124,10 @@ exports[`effective-merged acceptance (B2b) > resolves examples/jira-mcp/.gsloth.
   "canInterruptInferenceWithEsc": false,
   "commands": {
     "api": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "cors": {
         "allowHeaders": "Content-Type, Accept",
         "allowMethods": "POST, GET, OPTIONS",
@@ -103,19 +137,40 @@ exports[`effective-merged acceptance (B2b) > resolves examples/jira-mcp/.gsloth.
       "port": 3000,
     },
     "ask": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "filesystem": "read",
     },
     "chat": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "filesystem": "read",
     },
     "code": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "filesystem": "all",
     },
     "exec": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "filesystem": "all",
     },
     "pr": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "contentSource": "github",
+      "filesystem": "none",
       "rating": {
         "enabled": true,
         "errorOnReviewFail": true,
@@ -126,6 +181,11 @@ exports[`effective-merged acceptance (B2b) > resolves examples/jira-mcp/.gsloth.
       "requirementSource": "jira",
     },
     "review": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
+      "filesystem": "none",
       "rating": {
         "enabled": true,
         "errorOnReviewFail": true,
@@ -181,6 +241,10 @@ exports[`effective-merged acceptance (B2b) > resolves examples/lmstudio/.gsloth.
   "canInterruptInferenceWithEsc": false,
   "commands": {
     "api": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "cors": {
         "allowHeaders": "Content-Type, Accept",
         "allowMethods": "POST, GET, OPTIONS",
@@ -190,19 +254,40 @@ exports[`effective-merged acceptance (B2b) > resolves examples/lmstudio/.gsloth.
       "port": 3000,
     },
     "ask": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "filesystem": "read",
     },
     "chat": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "filesystem": "read",
     },
     "code": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "filesystem": "all",
     },
     "exec": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "filesystem": "all",
     },
     "pr": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "contentSource": "github",
+      "filesystem": "none",
       "rating": {
         "enabled": true,
         "errorOnReviewFail": true,
@@ -213,6 +298,11 @@ exports[`effective-merged acceptance (B2b) > resolves examples/lmstudio/.gsloth.
       "requirementSource": "github",
     },
     "review": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
+      "filesystem": "none",
       "rating": {
         "enabled": true,
         "errorOnReviewFail": true,
@@ -259,6 +349,10 @@ exports[`effective-merged acceptance (B2b) > resolves examples/simple-DIY-helper
   "canInterruptInferenceWithEsc": false,
   "commands": {
     "api": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "cors": {
         "allowHeaders": "Content-Type, Accept",
         "allowMethods": "POST, GET, OPTIONS",
@@ -268,19 +362,40 @@ exports[`effective-merged acceptance (B2b) > resolves examples/simple-DIY-helper
       "port": 3000,
     },
     "ask": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "filesystem": "read",
     },
     "chat": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "filesystem": "read",
     },
     "code": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "filesystem": "all",
     },
     "exec": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "filesystem": "all",
     },
     "pr": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
       "contentSource": "github",
+      "filesystem": "none",
       "rating": {
         "enabled": true,
         "errorOnReviewFail": true,
@@ -291,6 +406,11 @@ exports[`effective-merged acceptance (B2b) > resolves examples/simple-DIY-helper
       "requirementSource": "github",
     },
     "review": {
+      "builtInTools": [
+        "gth_checklist",
+        "gth_grep",
+      ],
+      "filesystem": "none",
       "rating": {
         "enabled": true,
         "errorOnReviewFail": true,
@@ -332,6 +452,9 @@ exports[`effective-merged acceptance (B2b) > resolves the consumer-shaped fixtur
   "canInterruptInferenceWithEsc": false,
   "commands": {
     "api": {
+      "builtInTools": [
+        "show_a2ui_surface",
+      ],
       "cors": {
         "allowHeaders": "Content-Type, Accept",
         "allowMethods": "POST, GET, OPTIONS",
@@ -341,19 +464,35 @@ exports[`effective-merged acceptance (B2b) > resolves the consumer-shaped fixtur
       "port": 3000,
     },
     "ask": {
+      "builtInTools": [
+        "show_a2ui_surface",
+      ],
       "filesystem": "read",
     },
     "chat": {
+      "builtInTools": [
+        "show_a2ui_surface",
+      ],
       "filesystem": "read",
     },
     "code": {
+      "builtInTools": [
+        "show_a2ui_surface",
+      ],
       "filesystem": "all",
     },
     "exec": {
+      "builtInTools": [
+        "show_a2ui_surface",
+      ],
       "filesystem": "all",
     },
     "pr": {
+      "builtInTools": [
+        "show_a2ui_surface",
+      ],
       "contentSource": "github",
+      "filesystem": "none",
       "rating": {
         "enabled": true,
         "errorOnReviewFail": true,
@@ -364,6 +503,10 @@ exports[`effective-merged acceptance (B2b) > resolves the consumer-shaped fixtur
       "requirementSource": "github",
     },
     "review": {
+      "builtInTools": [
+        "show_a2ui_surface",
+      ],
+      "filesystem": "none",
       "rating": {
         "enabled": true,
         "errorOnReviewFail": true,
