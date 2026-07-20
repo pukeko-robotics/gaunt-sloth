@@ -89,6 +89,9 @@ const mockConfig = {
 
 const configMock = {
   initConfig: vi.fn(),
+  // GS2-62: the pure judge-profile pre-check. Defaulted truthy in beforeEach so existing judge
+  // tests clear the pre-check; the missing-profile test overrides it to undefined.
+  resolveIdentityProfileConfigPath: vi.fn(),
 };
 vi.mock('@gaunt-sloth/core/config.js', () => configMock);
 
@@ -131,6 +134,11 @@ describe('evalCommand', () => {
     outputDir = mkdtempSync(join(tmpdir(), 'gth-eval-command-'));
 
     configMock.initConfig.mockResolvedValue({ ...mockConfig, llm: { ...mockConfig.llm } });
+    // GS2-62: default the judge-profile pre-check to "resolves" so a --judge/judge_profile test
+    // reaches the judge build; the missing-profile test overrides this to undefined.
+    configMock.resolveIdentityProfileConfigPath.mockReturnValue(
+      '/mock/.gsloth/.gsloth-settings/judge/.gsloth.config.json'
+    );
     runSingleShot.mockResolvedValue({
       ok: true,
       answer: 'hello there',
@@ -515,6 +523,42 @@ cases:
       expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
         expect.stringContaining('no-such-profile')
       );
+    });
+
+    it('GS2-62: a --judge profile with no config is pre-checked → exit 2, WITHOUT calling initConfig for it', async () => {
+      // The PURE pre-check (resolveIdentityProfileConfigPath) reports the profile has no config, so
+      // eval throws its OWN catchable error → exit 2, instead of handing the bad profile to
+      // initConfig, whose uncatchable exit(1) would end the process with the wrong code and collapse
+      // the harness-vs-product (2-vs-1) distinction. The misleading `Judge: profile "…"` line never
+      // prints, and the run never reaches the SUT.
+      runSingleShot.mockResolvedValue({ ok: true, answer: 'a clear explanation', tools: [] });
+      configMock.resolveIdentityProfileConfigPath.mockReturnValue(undefined);
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'eval',
+        'judge-suite.yaml',
+        '--judge',
+        'typo',
+        '-o',
+        outputDir,
+      ]);
+
+      expect(configMock.resolveIdentityProfileConfigPath).toHaveBeenCalledWith('typo');
+      // Never handed the bad judge profile to initConfig (whose failure path can hard exit(1)).
+      expect(configMock.initConfig).not.toHaveBeenCalledWith(
+        expect.objectContaining({ identityProfile: 'typo' })
+      );
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+        expect.stringContaining('judge profile "typo" not found')
+      );
+      // The self-describing judge notice must NOT print for a profile that never resolved.
+      expect(consoleUtilsMock.display).not.toHaveBeenCalledWith(expect.stringContaining('Judge:'));
     });
 
     it('does NOT build a separate judge config or print a judge line when no profile is set', async () => {

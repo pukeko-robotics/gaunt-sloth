@@ -847,6 +847,86 @@ describe('config', async () => {
       const { hasAnyConfig } = await import('#src/config.js');
       expect(await hasAnyConfig({})).toBe(true);
     });
+
+    // GS2-62 — the fix + its regression guard, tested against ONE global-present fixture. An
+    // EXPLICITLY named identity profile that discovered no project config must ERROR (not silently
+    // load the global), while a run with NO profile must still fall back to the global exactly as
+    // before (CFG-8). The pair is the whole behaviour change.
+    it('GS2-62: an explicit-but-missing identity profile ERRORS instead of silently loading the global', async () => {
+      setupGlobalOnly({
+        llm: { type: 'vertexai', model: 'global-model' },
+        projectGuidelines: 'GLOBAL.md',
+      });
+
+      const { initConfig } = await import('#src/config.js');
+      let returned: unknown;
+      try {
+        // A valid global IS present; the buggy behaviour would silently build a config from it.
+        returned = await initConfig({ identityProfile: 'missing' });
+      } catch {
+        // Mocked exit() is a no-op, so the load-bearing sentinel throw lands here.
+      }
+
+      const errorOutput = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
+      expect(errorOutput).toContain('identity profile "missing" not found');
+      expect(errorOutput).toContain('.gsloth-settings/missing');
+      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      // The global was NOT silently loaded: no config was built, and global parsing never ran
+      // (its "not in valid format" branch — which a valid global wouldn't hit anyway — stays clear).
+      expect(returned).toBeUndefined();
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalledWith(
+        expect.stringContaining('not in valid format')
+      );
+    });
+
+    it('GS2-62: a run with NO identity profile still falls back to the global config (CFG-8 preserved)', async () => {
+      setupGlobalOnly({
+        llm: { type: 'vertexai', model: 'global-model' },
+        projectGuidelines: 'GLOBAL.md',
+      });
+
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({});
+
+      expect((config.llm as unknown as Record<string, unknown>).type).toBe('vertexai');
+      expect(config.projectGuidelines).toBe('GLOBAL.md');
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+    });
+
+    it('GS2-62: an explicit identity profile that resolves to a config loads without erroring', async () => {
+      // A project config IS discovered (existsSync true for the project path). The mocked resolver
+      // ignores the profile name, so this stands in for "a config was found for the profile" — the
+      // point is the GS2-62 guard must NOT fire once initConfig discovered a config. Real profile-
+      // path resolution is covered against the live fs in config.uptree.spec.ts.
+      globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
+        () => '/mock/global-absent/no-such-config'
+      );
+      fileUtilsMock.getGslothConfigReadPath.mockImplementation(
+        (filename: string) => `/mock/read/${filename}`
+      );
+      fsMock.existsSync.mockImplementation(
+        (path: string) => path === `/mock/read/${PROJECT_JSON_MARKER}`
+      );
+      fsMock.readFileSync.mockImplementation((path: string) =>
+        path === `/mock/read/${PROJECT_JSON_MARKER}`
+          ? JSON.stringify({ llm: { type: 'vertexai' } })
+          : ''
+      );
+      vi.doMock('#src/providers/vertexai.js', () => ({
+        processJsonConfig: vi.fn().mockResolvedValue({ type: 'vertexai' }),
+        postProcessJsonConfig: undefined,
+      }));
+
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({ identityProfile: 'existing' });
+
+      expect((config.llm as unknown as Record<string, unknown>).type).toBe('vertexai');
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalledWith(
+        expect.stringContaining('not found')
+      );
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+    });
   });
 
   describe('writeOutputToFile configuration', () => {
