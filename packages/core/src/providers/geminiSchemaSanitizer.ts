@@ -2,24 +2,27 @@
  * @packageDocumentation
  * GS2-58 — systemic Gemini tool-schema sanitizer at the `@langchain/google` provider boundary.
  *
- * Google Gemini's function-declaration schema is an OpenAPI-3.0 subset. `@langchain/google`'s
- * own `removeAdditionalProperties` strips only `additionalProperties`, so every other
- * JSON-Schema-draft keyword the subset rejects (`exclusiveMinimum`/`exclusiveMaximum`/
- * `multipleOf`, and combinators like `const`/`$ref`/`allOf`/`oneOf`/`not`) is passed straight to
- * the wire, and Gemini 400s at tool-declaration send time — before any tool runs.
+ * Google Gemini's function-declaration schema is a SELECT SUBSET of OpenAPI 3.0. `@langchain/google`'s
+ * own `removeAdditionalProperties` strips only `additionalProperties`, so every other JSON-Schema-draft
+ * keyword the subset does not declare (`exclusiveMinimum`/`exclusiveMaximum`/`multipleOf`, `$defs`,
+ * `patternProperties`, `const`, `$ref`, `allOf`/`oneOf`/`not`, …) is passed straight to the wire, and
+ * Gemini 400s at tool-declaration send time — before any tool runs.
  *
- * GS2-56/57 fixed the one offending built-in tool (`gth_grep`'s `.positive()` → `exclusiveMinimum`)
- * and added a build-time denylist regression guard over the built-in toolset. That guard is a test,
- * not a runtime transform, and covers only tools gaunt-sloth authors. This module is the general,
- * durable fix: {@link sanitizeGeminiToolSchema} normalises the JSON-Schema of EVERY tool reaching a
- * ChatGoogle model — built-in, custom (`GthCustomToolkit`), and MCP (whose schemas gaunt-sloth does
- * not author) — so a future `.positive()`/`.gt()`/`.multipleOf()` in ANY tool cannot re-break Gemini.
+ * This is the DURABLE fix (GS2-58, fix-cycle 1): rather than a denylist that is always one unknown
+ * keyword behind, {@link sanitizeGeminiToolSchema} is an ALLOWLIST — it keeps ONLY the fields the
+ * installed Gemini `Schema` type declares and drops everything else, so a future keyword in ANY tool
+ * (built-in, custom, or MCP — including schemas gaunt-sloth does not author) cannot re-break Gemini.
+ *
+ * The allowlist ({@link GEMINI_SUPPORTED_SCHEMA_KEYWORDS}) is derived DIRECTLY from the authoritative
+ * in-repo type — the `Gemini.Tools.Schema` interface in
+ * `node_modules/@langchain/google/dist/chat_models/api-types.d.{ts,cts}` (a `FunctionDeclaration`'s
+ * `parameters?: Schema`), "a select subset of an OpenAPI 3.0 schema object". Keeping it aligned with
+ * that type (not a remembered list) is what prevents a stale allowlist silently over-stripping.
  *
  * Scope is the google/gemini provider path ONLY: {@link applyGeminiToolSchemaSanitizer} is wired into
- * the `google-genai` and `vertexai` presets' `processJsonConfig`, where the `@langchain/google` model
- * is constructed. It leaves the OpenAI/Anthropic/Ollama provider wiring untouched, and it does not
- * weaken the GS2-56/57 denylist guard (that test still runs; this transform runs ahead of the wire
- * send, so a sanitized tool is what Gemini sees).
+ * the `google-genai` and `vertexai` presets' `processJsonConfig`. It leaves OpenAI/Anthropic/Ollama
+ * wiring untouched, and does not weaken the GS2-56/57 build-time denylist guard (that test still runs;
+ * this transform runs ahead of the wire send, so a sanitized tool is what Gemini sees).
  */
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { toJsonSchema } from '@langchain/core/utils/json_schema';
@@ -29,46 +32,38 @@ import { isSerializableSchema } from '@langchain/core/utils/standard_schema';
 type JsonSchemaObject = Record<string, unknown>;
 
 /**
- * Draft keywords Gemini's OpenAPI-3.0 subset rejects outright — dropped from every schema node.
- * `additionalProperties`/`$schema` are (also) handled by `@langchain/google` upstream; dropping them
- * again is harmless. `const`/`$ref`/`allOf`/`oneOf`/`not` are unsupported combinators; stripping them
- * loosens the schema to a Gemini-accepted shape (these are argument hints, not validation).
+ * The EXACT set of schema keywords Gemini's function-declaration schema accepts, transcribed field-
+ * for-field from the `Gemini.Tools.Schema` interface in
+ * `@langchain/google/dist/chat_models/api-types.d.ts`. Anything not in this set is dropped (allowlist).
+ *
+ * Note `anyOf` IS supported (unions / nullable) and MUST survive — only `allOf`/`oneOf`/`not` are
+ * absent from the type and therefore dropped. `exclusiveMinimum`/`exclusiveMaximum` are NOT in the type
+ * either; they are handled specially by rewriting them to `minimum`/`maximum` (see {@link sanitizeNode})
+ * before the allowlist filter runs.
  */
-const STRIP_KEYWORDS: ReadonlySet<string> = new Set([
-  'multipleOf',
-  'const',
-  '$ref',
-  'allOf',
-  'oneOf',
-  'not',
-  '$schema',
-  'additionalProperties',
-]);
-
-/** Keys whose value is a MAP of `{ name -> subschema }` — recurse into each value. */
-const SCHEMA_MAP_KEYWORDS: ReadonlySet<string> = new Set([
-  'properties',
-  'patternProperties',
-  '$defs',
-  'definitions',
-]);
-
-/**
- * Keys whose value is a subschema, or an array of subschemas (tuple `items`, `anyOf`, …) — recurse
- * into the value / each element. Deliberately EXCLUDES literal-data positions (`enum`, `default`,
- * `examples`, `required`, `type`, `description`, …) so a keyword that merely appears as data inside
- * one of those is preserved verbatim rather than rewritten.
- */
-const SCHEMA_OR_SCHEMA_ARRAY_KEYWORDS: ReadonlySet<string> = new Set([
-  'items',
-  'additionalItems',
-  'prefixItems',
-  'contains',
-  'propertyNames',
-  'if',
-  'then',
-  'else',
+export const GEMINI_SUPPORTED_SCHEMA_KEYWORDS: ReadonlySet<string> = new Set([
   'anyOf',
+  'default',
+  'description',
+  'enum',
+  'example',
+  'format',
+  'items',
+  'maxItems',
+  'maxLength',
+  'maxProperties',
+  'maximum',
+  'minItems',
+  'minLength',
+  'minProperties',
+  'minimum',
+  'nullable',
+  'pattern',
+  'properties',
+  'propertyOrdering',
+  'required',
+  'title',
+  'type',
 ]);
 
 function isPlainObject(value: unknown): value is JsonSchemaObject {
@@ -86,6 +81,15 @@ function cloneLiteral(value: unknown): unknown {
   }
 }
 
+/**
+ * Recursively normalise one schema node to Gemini's supported subset:
+ *  - rewrite `exclusiveMinimum`→`minimum` / `exclusiveMaximum`→`maximum` (Gemini has no exclusive
+ *    bound), keeping the TIGHTER bound when an inclusive one is also present;
+ *  - keep ONLY {@link GEMINI_SUPPORTED_SCHEMA_KEYWORDS}; drop everything else;
+ *  - recurse ONLY through real subschema positions — `properties` (map), `items` (schema or tuple),
+ *    and `anyOf` (array of schemas). Literal-data positions (`enum`, `default`, `example`, `required`,
+ *    `propertyOrdering`) are copied verbatim, so a keyword that merely appears as DATA is untouched.
+ */
 function sanitizeNode(node: unknown): unknown {
   if (Array.isArray(node)) {
     return node.map(sanitizeNode);
@@ -95,73 +99,71 @@ function sanitizeNode(node: unknown): unknown {
   }
 
   const out: JsonSchemaObject = {};
-  let exclusiveMinimum: unknown;
-  let exclusiveMaximum: unknown;
-  let hasExclusiveMinimum = false;
-  let hasExclusiveMaximum = false;
-
   for (const [key, value] of Object.entries(node)) {
-    if (STRIP_KEYWORDS.has(key)) {
+    // Allowlist: silently drop any keyword Gemini's Schema type does not declare (this is where
+    // $defs / definitions / patternProperties / const / multipleOf / $ref / allOf / oneOf / not /
+    // additionalProperties / $schema / exclusive* are removed).
+    if (!GEMINI_SUPPORTED_SCHEMA_KEYWORDS.has(key)) {
       continue;
     }
-    if (key === 'exclusiveMinimum') {
-      exclusiveMinimum = value;
-      hasExclusiveMinimum = true;
-      continue;
-    }
-    if (key === 'exclusiveMaximum') {
-      exclusiveMaximum = value;
-      hasExclusiveMaximum = true;
-      continue;
-    }
-    if (SCHEMA_MAP_KEYWORDS.has(key) && isPlainObject(value)) {
+    if (key === 'properties' && isPlainObject(value)) {
       const mapped: JsonSchemaObject = {};
       for (const [name, sub] of Object.entries(value)) {
         mapped[name] = sanitizeNode(sub);
       }
       out[key] = mapped;
-      continue;
-    }
-    if (SCHEMA_OR_SCHEMA_ARRAY_KEYWORDS.has(key)) {
+    } else if (key === 'items') {
       out[key] = Array.isArray(value) ? value.map(sanitizeNode) : sanitizeNode(value);
-      continue;
+    } else if (key === 'anyOf' && Array.isArray(value)) {
+      out[key] = value.map(sanitizeNode);
+    } else {
+      // Supported scalar / literal-data keyword (type, enum, required, description, default, …).
+      out[key] = cloneLiteral(value);
     }
-    // Literal / scalar keyword (type, enum, required, description, default, format, …): keep verbatim.
-    out[key] = cloneLiteral(value);
   }
 
-  // Exclusive bounds → inclusive bounds of the SAME value. Gemini has no exclusive bound; this is the
-  // node's explicit accepted loosening. Exclusive wins over any inclusive bound already present, since
-  // `x > e` combined with `x >= m` is `x > e` for `e >= m`, i.e. tighter — rewriting to `minimum: e`.
-  if (hasExclusiveMinimum) {
-    out.minimum = cloneLiteral(exclusiveMinimum);
+  // exclusive* → inclusive of the SAME value. Gemini has no exclusive bound; args are hints, so the
+  // loosening is accepted. When both an exclusive and an inclusive bound are present, keep the TIGHTER
+  // one (higher lower-bound / lower upper-bound) rather than letting the exclusive value clobber it.
+  const exclusiveMinimum = node.exclusiveMinimum;
+  if (typeof exclusiveMinimum === 'number') {
+    out.minimum =
+      typeof out.minimum === 'number' ? Math.max(out.minimum, exclusiveMinimum) : exclusiveMinimum;
   }
-  if (hasExclusiveMaximum) {
-    out.maximum = cloneLiteral(exclusiveMaximum);
+  const exclusiveMaximum = node.exclusiveMaximum;
+  if (typeof exclusiveMaximum === 'number') {
+    out.maximum =
+      typeof out.maximum === 'number' ? Math.min(out.maximum, exclusiveMaximum) : exclusiveMaximum;
   }
 
   return out;
 }
 
 /**
- * Pure, recursive normaliser: returns a cleaned DEEP COPY of a JSON-Schema so Gemini's OpenAPI-3.0
- * subset accepts it. Does not mutate the input. Applied through every nested schema position
- * (object `properties`/`patternProperties`, `items`/`prefixItems`/`contains`, `$defs`/`definitions`,
- * and `anyOf`), while literal-data positions (`enum`, `default`, `required`, …) are copied verbatim.
- *
- * Transform:
- *  - `exclusiveMinimum` → `minimum` (same value); `exclusiveMaximum` → `maximum` (same value).
- *  - `multipleOf` → dropped.
- *  - `const`, `$ref`, `allOf`, `oneOf`, `not`, `$schema`, `additionalProperties` → dropped.
- *  - Everything else — the supported core (`type`, `properties`, `items`, `required`, `enum`,
- *    `description`, `format`, `minimum`, `maximum`, `minItems`/`maxItems`, `nullable`, …) — is kept.
+ * Pure, recursive allowlist normaliser: returns a cleaned DEEP COPY of a JSON-Schema containing only
+ * keywords Gemini's function-declaration `Schema` accepts, so its OpenAPI-3.0 subset accepts the tool.
+ * Does not mutate the input. See {@link sanitizeNode} for the transform; `anyOf` unions survive.
  */
 export function sanitizeGeminiToolSchema<T = unknown>(schema: T): T {
   return sanitizeNode(schema) as T;
 }
 
+/**
+ * The SINGLE normalization pass. Converts a schema to JSON (zod → JSON via the same `@langchain/core`
+ * converter `@langchain/google` uses internally) and runs the allowlist. Every tool-shape branch in
+ * {@link sanitizeToolForGemini} routes its schema(s) through here — so no branch can filter
+ * inconsistently, and a future tool format is covered the moment it calls this.
+ */
+function normalizeSchema(rawSchema: unknown): unknown {
+  const jsonSchema =
+    isInteropZodSchema(rawSchema) || isSerializableSchema(rawSchema)
+      ? toJsonSchema(rawSchema as Parameters<typeof toJsonSchema>[0])
+      : rawSchema;
+  return sanitizeGeminiToolSchema(jsonSchema);
+}
+
 /** Build a shallow copy of a tool that preserves its prototype (so it stays a recognisable
- * LangChain tool) while overriding one own property (its schema) with the sanitized value. */
+ * LangChain tool) while overriding one own property (its schema) with the normalized value. */
 function cloneWithOverride(source: object, key: string, value: unknown): unknown {
   const clone = Object.assign(Object.create(Object.getPrototypeOf(source)) as object, source);
   Object.defineProperty(clone, key, {
@@ -176,9 +178,8 @@ function cloneWithOverride(source: object, key: string, value: unknown): unknown
 /**
  * Normalise one tool's argument schema for Gemini. Handles the three shapes that reach a ChatGoogle
  * model's `bindTools`: a LangChain structured tool (`.schema`, zod or JSON), an OpenAI-format tool
- * (`.function.parameters`), and a Gemini-native `functionDeclarations` tool. Anything else is passed
- * through untouched. Zod schemas are converted to JSON with the SAME converter `@langchain/google`
- * uses internally, so downstream conversion sees an already-clean schema.
+ * (`.function.parameters`), and a Gemini-native `functionDeclarations` tool. Every schema position in
+ * every branch is passed through the SINGLE {@link normalizeSchema} pass; anything else is untouched.
  */
 function sanitizeToolForGemini(tool: unknown): unknown {
   if (!tool || typeof tool !== 'object') {
@@ -188,13 +189,7 @@ function sanitizeToolForGemini(tool: unknown): unknown {
 
   // LangChain structured tool / StructuredToolParams — its arg schema is `.schema` (zod or JSON).
   if ('schema' in record && record.schema != null) {
-    const rawSchema = record.schema;
-    const jsonSchema =
-      isInteropZodSchema(rawSchema) || isSerializableSchema(rawSchema)
-        ? toJsonSchema(rawSchema as Parameters<typeof toJsonSchema>[0])
-        : rawSchema;
-    const cleaned = sanitizeGeminiToolSchema(jsonSchema);
-    return cloneWithOverride(tool, 'schema', cleaned);
+    return cloneWithOverride(tool, 'schema', normalizeSchema(record.schema));
   }
 
   // OpenAI-format tool: { type: 'function', function: { parameters } }.
@@ -203,7 +198,7 @@ function sanitizeToolForGemini(tool: unknown): unknown {
     const fnRecord = fn as Record<string, unknown>;
     return {
       ...record,
-      function: { ...fnRecord, parameters: sanitizeGeminiToolSchema(fnRecord.parameters) },
+      function: { ...fnRecord, parameters: normalizeSchema(fnRecord.parameters) },
     };
   }
 
@@ -214,7 +209,7 @@ function sanitizeToolForGemini(tool: unknown): unknown {
       functionDeclarations: (record.functionDeclarations as unknown[]).map((decl) => {
         if (decl && typeof decl === 'object' && 'parameters' in (decl as Record<string, unknown>)) {
           const declRecord = decl as Record<string, unknown>;
-          return { ...declRecord, parameters: sanitizeGeminiToolSchema(declRecord.parameters) };
+          return { ...declRecord, parameters: normalizeSchema(declRecord.parameters) };
         }
         return decl;
       }),
