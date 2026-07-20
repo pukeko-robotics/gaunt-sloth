@@ -1117,5 +1117,13 @@ async function mergeRawConfig(
   commandLineConfigOverrides: CommandLineConfigOverrides
 ): Promise<GthConfig> {
   const modelDisplayName: string | undefined = config.llm?.model;
-  return await mergeConfig({ ...config, llm, modelDisplayName }, commandLineConfigOverrides);
+  // GS2-53 — stash the raw provider `type` (openrouter/deepseek/xai/…) BEFORE the built `llm`
+  // replaces the raw `llm` spec below: it is the true configured provider and the only place the
+  // OpenAI-compatible shims' real identity survives (their `_llmType()` reports `openai`).
+  // `resolveModelIdentity` prefers it over `_llmType()`. INTERNAL field (not in the config schema).
+  const modelProviderType: string | undefined = config.llm?.type;
+  return await mergeConfig(
+    { ...config, llm, modelDisplayName, modelProviderType },
+    commandLineConfigOverrides
+  );
 }

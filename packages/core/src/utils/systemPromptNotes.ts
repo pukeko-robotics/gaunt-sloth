@@ -133,39 +133,77 @@ export function appendCommitCoAuthorNote(
 }
 
 /**
- * GS2-34: resolve the active `provider:model` identity from the effective config, for injection
- * into the system prompt by {@link appendModelContextNote}.
+ * GS2-34/GS2-53 — the resolved active-model identity, as a STRUCTURED value.
+ *
+ * `hasProvider` is the authoritative "a real provider half was resolved" signal — carried
+ * explicitly rather than inferred from `identity.includes(':')`, because a bare model name can
+ * itself contain a colon (e.g. an Ollama/HF tag `gemma3:27b`) and would otherwise be mistaken for a
+ * `provider:model` string. It is true iff a non-empty provider (configured `type` OR a non-empty
+ * `_llmType()`) formed the leading `provider:` segment; false when `identity` is the bare model.
+ */
+export interface ResolvedModelIdentity {
+  /** `provider:model` when a provider resolved, otherwise the bare `model`. */
+  identity: string;
+  /** True iff a real provider formed the `provider:` segment (never merely a colon in the model). */
+  hasProvider: boolean;
+}
+
+/**
+ * GS2-34: resolve the active model identity from the effective config, for injection into the
+ * system prompt by {@link appendModelContextNote}.
  *
  * Both halves are read the SAME way the rest of gsloth already surfaces the active model:
  *   - MODEL: `config.modelDisplayName` (the string the status line renders — set by the loader from
  *     `llm.model`), falling back to the live model's own `model` field.
- *   - PROVIDER: the live LangChain model's `_llmType()` — exactly the source the AG-UI `/info`
- *     endpoint reports as the serving provider (e.g. `anthropic`, `ollama`, `openai`). This is the
- *     live provider tag, so for OpenAI-compatible providers (openrouter/deepseek/xai extending
- *     ChatOpenAI) it may read `openai` rather than the config `type`; the MODEL half is always exact.
+ *   - PROVIDER: the configured `config.modelProviderType` (the raw `llm.type` the loader stashed —
+ *     `openrouter`/`deepseek`/`xai`/`anthropic`/…) when present, otherwise the live LangChain
+ *     model's `_llmType()` (the source the AG-UI `/info` endpoint reports). GS2-53 — preferring the
+ *     configured `type` fixes the OpenAI-compatible shims (openrouter/deepseek/xai all extend
+ *     ChatOpenAI, so their `_llmType()` reports `openai`): a `type: openrouter` config now injects
+ *     `openrouter:<model>`, not `openai:<model>`. The `type` is absent for module configs (which
+ *     hand us an already-built LLM), where we fall back to `_llmType()` unchanged. The MODEL half is
+ *     always exact.
  *
- * Returns `provider:model` when both resolve, the bare model when only the model resolves, and
- * `undefined` when the model is unknown (a provider with no model is not a usable identity) — in
- * which case {@link appendModelContextNote} injects nothing, leaving the prompt exactly as before.
- * `_llmType()` is called defensively (guarded) so a provider whose accessor throws can never break
- * prompt assembly.
+ * Returns `{ identity: 'provider:model', hasProvider: true }` when both resolve, `{ identity:
+ * 'model', hasProvider: false }` when only the model resolves, and `undefined` when the model is
+ * unknown (a provider with no model is not a usable identity) — in which case {@link
+ * appendModelContextNote} injects nothing, leaving the prompt exactly as before. `hasProvider` is
+ * the authoritative provider-present flag (GS2-53), so a bare model whose NAME contains a colon
+ * (e.g. `gemma3:27b`) is correctly reported as `hasProvider: false`. `_llmType()` is called
+ * defensively (guarded) so a provider whose accessor throws can never break prompt assembly (and is
+ * skipped entirely when a configured `type` is present).
  */
 export function resolveModelIdentity(
   config:
-    | { llm?: { _llmType?: () => string; model?: string }; modelDisplayName?: string }
+    | {
+        llm?: { _llmType?: () => string; model?: string };
+        modelDisplayName?: string;
+        modelProviderType?: string;
+      }
     | null
     | undefined
-): string | undefined {
+): ResolvedModelIdentity | undefined {
   const llm = config?.llm;
-  let provider: string | undefined;
-  try {
-    provider = typeof llm?._llmType === 'function' ? llm._llmType() : undefined;
-  } catch {
-    provider = undefined;
+  // Prefer the configured provider `type` over the live model's `_llmType()`: OpenAI-compatible
+  // shims (openrouter/deepseek/xai) extend ChatOpenAI and report `_llmType() === 'openai'`, which
+  // would mislabel the provider half. Only fall through to the guarded `_llmType()` when no
+  // (non-blank) `type` was threaded (e.g. module configs that build the LLM themselves).
+  let provider: string | undefined = config?.modelProviderType?.trim() || undefined;
+  if (!provider) {
+    try {
+      provider = typeof llm?._llmType === 'function' ? llm._llmType() : undefined;
+    } catch {
+      provider = undefined;
+    }
   }
   const model = config?.modelDisplayName ?? llm?.model;
   if (!model) return undefined;
-  return provider ? `${provider}:${model}` : model;
+  // `provider` may be undefined OR an empty string (an empty `_llmType()`); both mean "no provider
+  // half", so `hasProvider` is false and the identity is the bare model — even if that model name
+  // happens to contain a colon.
+  return provider
+    ? { identity: `${provider}:${model}`, hasProvider: true }
+    : { identity: model, hasProvider: false };
 }
 
 /**
@@ -177,22 +215,28 @@ export function resolveModelIdentity(
  *
  * Injected in EVERY mode (chat/ask/code/exec), NOT gated to `code` like the cwd/os-shell/commit
  * notes: "which model are you?" can be asked in any session, so the identity must be visible
- * everywhere. Config-gated by `injectModelContext` (default ON): a caller passes an
- * `undefined`/empty `modelIdentity` — because the config opted out (`injectModelContext: false`) or
- * because no model could be resolved — and the base prompt is returned UNCHANGED (no line),
- * preserving the current prompt byte-for-byte.
+ * everywhere. Config-gated by `injectModelContext` (default ON): a caller passes an `undefined`
+ * `modelIdentity` — because the config opted out (`injectModelContext: false`) or because no model
+ * could be resolved — and the base prompt is returned UNCHANGED (no line), preserving the current
+ * prompt byte-for-byte.
  *
  * A short capability note from the GS2-6 model catalog is a DEFERRED follow-up (GS2-6 has not
  * landed): this injects the bare `provider:model` identity only.
  */
 export function appendModelContextNote(
   systemPrompt: string | undefined,
-  modelIdentity: string | undefined
+  modelIdentity: ResolvedModelIdentity | undefined
 ): string | undefined {
-  const identity = modelIdentity?.trim();
+  const identity = modelIdentity?.identity?.trim();
   if (!identity) return systemPrompt;
+  // GS2-53 — the `(provider:model)` label documents the identity FORMAT, so only emit it when a
+  // provider half is ACTUALLY present. Read that from the structured `hasProvider` flag, NOT from
+  // `identity.includes(':')`: a bare model name can itself contain a colon (e.g. `gemma3:27b`), and
+  // inferring from the colon would re-append the dangling/misleading label the bare-model branch is
+  // meant to avoid. The provider-present line is unchanged.
+  const formatLabel = modelIdentity?.hasProvider ? ' (provider:model)' : '';
   const note =
-    `The model currently serving this session is \`${identity}\` (provider:model). This is your ` +
+    `The model currently serving this session is \`${identity}\`${formatLabel}. This is your ` +
     'actual underlying model — use it when asked which model you are, and when reasoning about ' +
     'your own capabilities or limits.';
   return systemPrompt ? `${systemPrompt}\n\n${note}` : note;
