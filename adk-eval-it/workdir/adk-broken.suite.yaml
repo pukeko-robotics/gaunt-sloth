@@ -1,0 +1,18 @@
+# BATCH-16 — DISCRIMINATION proof for the adk-agent target (the green that can actually fail).
+#
+# Same live agent, same real A2A round-trip as adk.suite.yaml — the SUT RUNS fine (sutOk:true), so
+# this is NOT a harness error. It just asserts a status code the agent NEVER emits: the tool returns
+# SHIP-DELIVERED-7Q for TKH-9, but we require the (fictional) SHIP-DELIVERED-9Z. The content check
+# fails on a real, gradeable answer → the case FAILS → the suite exits 1 (a product signal), not 2.
+#
+# If this suite ever passed, adk.suite.yaml's green would prove nothing.
+target:
+  type: adk-agent
+  url: http://127.0.0.1:41539
+defaults:
+  pass_threshold: 6
+cases:
+  - id: wrong-status-marker-must-fail
+    prompt: 'Look up shipment TKH-9 and report the exact status code the tool returns.'
+    # The tool emits SHIP-DELIVERED-7Q; this asserts a code that does not exist anywhere → FAIL.
+    must_contain: ['SHIP-DELIVERED-9Z']
