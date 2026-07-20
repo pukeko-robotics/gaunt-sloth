@@ -20,7 +20,7 @@ import {
   getGslothFilePath,
   readFileFromProjectDir,
 } from '@gaunt-sloth/core/utils/fileUtils.js';
-import type { EvalSuiteSummary, JudgeFn } from '@gaunt-sloth/batch';
+import type { EvalSuiteSummary, JudgeFn, RunCellFn } from '@gaunt-sloth/batch';
 
 interface EvalCommandOptions {
   /** `-j/--concurrency <n>` — max in-flight cases. */
@@ -99,16 +99,23 @@ function printSummary(
   }
 
   for (const caseResult of summary.cases) {
+    // BATCH-12: an identity-matrix cell tags its line with the identity it ran under, so the two
+    // rows a case produces per (case × identity) are distinguishable. A no-identities cell prints
+    // exactly as before (just the case id).
+    const label = caseResult.identity ? `${caseResult.id} [${caseResult.identity}]` : caseResult.id;
     if (caseResult.verdict === 'PASS') {
-      display(`PASS  ${caseResult.id}`);
+      display(`PASS  ${label}`);
     } else {
-      displayWarning(
-        `FAIL  ${caseResult.id} — ${caseResult.reasons.join('; ') || 'no reason recorded'}`
-      );
+      displayWarning(`FAIL  ${label} — ${caseResult.reasons.join('; ') || 'no reason recorded'}`);
     }
   }
 
-  const verdictLine = `EVAL RESULT: ${summary.passed}/${summary.total} case(s) passed`;
+  // M1: X/Y counts CELLS in a matrix run (one per case × identity) — e.g. `2/2` for 1 case × 2
+  // identities — so a bare "case(s)" would misreport the denominator. Use an identity-aware noun:
+  // "case(s)" for a no-identities run (unchanged), "cell(s)" once any cell carries an identity.
+  const isMatrix = summary.cases.some((caseResult) => caseResult.identity !== undefined);
+  const noun = isMatrix ? 'cell(s)' : 'case(s)';
+  const verdictLine = `EVAL RESULT: ${summary.passed}/${summary.total} ${noun} passed`;
   if (summary.failed === 0) {
     displaySuccess(`${verdictLine}. Results written to ${outputDir}`);
   } else {
@@ -178,13 +185,65 @@ export function evalCommand(
         const suiteText = readFileFromProjectDir(suitePath);
         const suite = parseEvalSuite(suiteText, suitePath);
 
-        const preamble = getAskSystemPrompt(config);
-        const runCell = await buildProductionRunCell(config, preamble, commandLineConfigOverrides, {
-          command: 'ask',
-          sourcePrefix: 'EVAL',
-          wrapBlockPrefix: 'message',
-          wrapPrefix: 'user message',
-        });
+        // BATCH-12 PRECONDITION — trustworthy loads (no false-green): every suite-declared identity
+        // must resolve to its OWN config (`.gsloth-settings/<name>/`), not the global/plain
+        // fallback. Verify ALL of them with GS2-62's PURE, catchable helper BEFORE building any
+        // per-identity config, because handing a bad profile to `initConfig({ …, identityProfile })`
+        // would hit its uncatchable `exit(1)` and collapse the harness-vs-product (2-vs-1) exit-code
+        // distinction. A silent wrong-identity run is the worst failure for an auth matrix — so an
+        // unresolved identity throws here → outer catch → exit 2, and NOTHING runs.
+        const suiteIdentities = suite.identities ?? [];
+        const unresolvedIdentities = suiteIdentities.filter(
+          (identity) => !resolveIdentityProfileConfigPath(identity)
+        );
+        if (unresolvedIdentities.length > 0) {
+          throw new Error(
+            `identity profile(s) not found: ${unresolvedIdentities.join(', ')} — each suite ` +
+              '`identities` entry must have its own config file in ' +
+              '.gsloth/.gsloth-settings/<name>/. No cases were run.'
+          );
+        }
+
+        // Build the SUT run function(s). With no identities: one runCell under the invoked profile
+        // (unchanged). With identities: one runCell per identity, each from a fresh
+        // `initConfig({ …, identityProfile })` (mirrors `gth batch --models`' per-model construction
+        // — a genuinely fresh `.llm`, never a structural clone), built ONCE per identity and reused
+        // across cases by the runner. An identity profile's manual
+        // `mcpServers.<n>.headers.Authorization` (CFG-4) flows through this config path as-is — never
+        // stripped, rewritten, or warned on.
+        let runCell: RunCellFn | undefined;
+        let runCellByIdentity: Map<string, RunCellFn> | undefined;
+        if (suiteIdentities.length > 0) {
+          runCellByIdentity = new Map();
+          for (const identity of suiteIdentities) {
+            const identityConfig = await initConfig({
+              ...commandLineConfigOverrides,
+              identityProfile: identity,
+            });
+            runCellByIdentity.set(
+              identity,
+              await buildProductionRunCell(
+                identityConfig,
+                getAskSystemPrompt(identityConfig),
+                commandLineConfigOverrides,
+                {
+                  command: 'ask',
+                  sourcePrefix: 'EVAL',
+                  wrapBlockPrefix: 'message',
+                  wrapPrefix: 'user message',
+                }
+              )
+            );
+          }
+        } else {
+          const preamble = getAskSystemPrompt(config);
+          runCell = await buildProductionRunCell(config, preamble, commandLineConfigOverrides, {
+            command: 'ask',
+            sourcePrefix: 'EVAL',
+            wrapBlockPrefix: 'message',
+            wrapPrefix: 'user message',
+          });
+        }
 
         // BATCH-10 Task 2: resolve the judge identity profile (CLI `--judge` > suite `judge_profile`
         // > none). When set, build a SEPARATE config for it — the same supported
@@ -213,6 +272,7 @@ export function evalCommand(
 
         const summary = await runEvalSuite(suite, {
           runCell,
+          runCellByIdentity,
           judge,
           concurrency: options.concurrency,
         });

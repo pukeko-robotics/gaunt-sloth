@@ -33,13 +33,21 @@ export interface JsonPathCheck {
   contains?: string;
 }
 
-/** One case parsed and normalized from suite YAML — snake_case YAML keys become camelCase here,
- * arrays default to `[]` (not `undefined`) so callers never need an existence check, and
- * `passThreshold` is pre-resolved (case override ?? suite `defaults.pass_threshold` ??
- * {@link DEFAULT_EVAL_PASS_THRESHOLD}). */
-export interface EvalCase {
-  id: string;
-  prompt: string;
+/**
+ * One expectation block (BATCH-12) — the BATCH-10 assertion bundle PLUS an optional `identities`
+ * scope. This is the atom the whole eval layer normalizes to: a flat case is sugar for ONE
+ * unscoped expectation (applies to every identity), and a matrix case's `expect:` array is a list
+ * of these. snake_case YAML keys become camelCase here; arrays default to `[]` (not `undefined`)
+ * so callers never need an existence check.
+ */
+export interface EvalExpectation {
+  /**
+   * The identity profiles this block grades (BATCH-12). Absent/empty = applies to EVERY applicable
+   * identity — this is what a flat case's single block carries (the sugar), and what an unscoped
+   * `expect:` block carries. A block naming `[admin]` grades only the `admin` run. Every name here
+   * is validated at parse time to be one the suite declares in its top-level `identities` list.
+   */
+  identities?: string[];
   mustContain: string[];
   mustNotContain: string[];
   shouldContainAny: string[];
@@ -54,14 +62,42 @@ export interface EvalCase {
   mustNotMatch: RegExp[];
   /** BATCH-10 minimal JSON-path assertions over the answer parsed as JSON — see {@link JsonPathCheck}. */
   jsonPath: JsonPathCheck[];
-  /** The judge rubric, when present and non-blank. `undefined` = no judge for this case. */
+  /** The judge rubric, when present and non-blank. `undefined` = no judge for this block. */
   judgeRubric?: string;
+}
+
+/**
+ * One conversational turn (BATCH-12): the `user` message to send, and the {@link EvalExpectation}
+ * blocks that grade its answer. **Task 1 keeps every case at exactly one turn** (single-turn); the
+ * general `turns[]` type exists NOW so Task 2 adds multi-turn *execution*, not a schema migration.
+ */
+export interface EvalTurn {
+  user: string;
+  expectations: EvalExpectation[];
+}
+
+/**
+ * One case parsed and normalized from suite YAML. Every case — flat or matrix — reduces to this
+ * ONE shape: a list of {@link EvalTurn}s (Task 1: length exactly 1, its `user` = the case's
+ * `prompt`) whose expectations carry the assertions. `passThreshold` is per-case and pre-resolved
+ * (case override ?? suite `defaults.pass_threshold` ?? {@link DEFAULT_EVAL_PASS_THRESHOLD}).
+ */
+export interface EvalCase {
+  id: string;
+  turns: EvalTurn[];
   passThreshold: number;
 }
 
 /** A fully parsed and validated suite — see {@link ../evalSuite.js}'s `parseEvalSuite`. */
 export interface EvalSuite {
   target: EvalTarget;
+  /**
+   * Suite-level identity profiles (BATCH-12 / #405 his #1): run every case once per identity, each
+   * under `initConfig({ …, identityProfile })`, to test per-identity authorization / data-isolation.
+   * Absent = no matrix — a single run under the invoked profile (today's behavior, unchanged). Each
+   * name is a plain profile that must resolve to its own `.gsloth-settings/<name>/` config.
+   */
+  identities?: string[];
   /** Optional suite-level judge identity profile (BATCH-10 Task 2): the profile whose model grades
    * the cases, when the suite wants a judge distinct from the SUT. A top-level sibling of
    * `target`/`cases` — distinct from `target.profile` (which selects the SUT and is still rejected
@@ -106,9 +142,15 @@ export interface JudgeOutcome {
  * this shape; tests inject a fake that resolves/fails as needed. */
 export type JudgeFn = (answer: string, rubric: string) => Promise<JudgeOutcome>;
 
-/** One case's full graded outcome, as written to `<id>.json` and summarized in `results.json`. */
+/** One graded cell's full outcome, as written to `<id>.json` (matrix: `<id>__<identity>.json`) and
+ * summarized in `results.json`. A cell is one (case × identity) pair: without a suite `identities`
+ * list there is exactly one cell per case (`identity` omitted, byte-for-byte as before BATCH-12);
+ * with identities there is one cell per (case, identity). */
 export interface EvalCaseResult {
   id: string;
+  /** The identity profile this cell ran under (BATCH-12). Omitted entirely (not `undefined`-valued)
+   * for a no-identities suite, so its `<id>.json` output stays byte-for-byte identical to before. */
+  identity?: string;
   verdict: 'PASS' | 'FAIL';
   passThreshold: number;
   /** Whether the SUT run itself completed without error (mirrors `CellRunOutcome.ok`). `false`

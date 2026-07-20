@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -56,6 +56,88 @@ describe('writeEvalOutput', () => {
 
     const resultsJson = JSON.parse(readFileSync(join(outputDir, 'results.json'), 'utf8'));
     expect(resultsJson).toEqual(summary);
+  });
+
+  it('names a matrix cell `<id>__<identity>.json` and a non-matrix cell `<id>.json`', async () => {
+    const { writeEvalOutput } = await import('#src/evalOutput.js');
+    const outputDir = join(dir, 'matrix');
+    const summary: EvalSuiteSummary = {
+      total: 3,
+      passed: 3,
+      failed: 0,
+      cases: [
+        // No identity → filename stays `<id>.json` (byte-for-byte as before BATCH-12).
+        { id: 'plain', verdict: 'PASS', passThreshold: 6, sutOk: true, durationMs: 1, reasons: [] },
+        {
+          id: 'list',
+          identity: 'admin',
+          verdict: 'PASS',
+          passThreshold: 6,
+          sutOk: true,
+          durationMs: 1,
+          reasons: [],
+        },
+        {
+          id: 'list',
+          identity: 'limited',
+          verdict: 'PASS',
+          passThreshold: 6,
+          sutOk: true,
+          durationMs: 1,
+          reasons: [],
+        },
+      ],
+    };
+
+    writeEvalOutput(outputDir, summary);
+
+    expect(JSON.parse(readFileSync(join(outputDir, 'plain.json'), 'utf8'))).toEqual(
+      summary.cases[0]
+    );
+    expect(JSON.parse(readFileSync(join(outputDir, 'list__admin.json'), 'utf8'))).toEqual(
+      summary.cases[1]
+    );
+    expect(JSON.parse(readFileSync(join(outputDir, 'list__limited.json'), 'utf8'))).toEqual(
+      summary.cases[2]
+    );
+  });
+
+  it('I1: throws (writing nothing) when two cells collapse to the same output filename', async () => {
+    const { writeEvalOutput } = await import('#src/evalOutput.js');
+    const outputDir = join(dir, 'collision');
+    // Case `x` + identity `y__z` and case `x__y` + identity `z` both map to `x__y__z.json`. Because
+    // ids and identity names both allow `__`, these DISTINCT cells share a filename; dispatch/grading
+    // are inputIndex-keyed so the run is correct and `results.json` holds both, but writing per-cell
+    // files by name would silently overwrite one with the other. The writer detects it and throws.
+    const summary: EvalSuiteSummary = {
+      total: 2,
+      passed: 2,
+      failed: 0,
+      cases: [
+        {
+          id: 'x',
+          identity: 'y__z',
+          verdict: 'PASS',
+          passThreshold: 6,
+          sutOk: true,
+          durationMs: 1,
+          reasons: [],
+        },
+        {
+          id: 'x__y',
+          identity: 'z',
+          verdict: 'PASS',
+          passThreshold: 6,
+          sutOk: true,
+          durationMs: 1,
+          reasons: [],
+        },
+      ],
+    };
+
+    expect(() => writeEvalOutput(outputDir, summary)).toThrow(/x__y__z\.json/);
+    // The guard runs BEFORE mkdir/write — nothing is left on disk, not even a half-written dir.
+    expect(existsSync(outputDir)).toBe(false);
   });
 
   it('creates the output directory (and parents) when it does not exist', async () => {

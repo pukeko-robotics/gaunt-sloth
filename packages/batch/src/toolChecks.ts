@@ -1,6 +1,6 @@
 import { toolNameMatchesPattern } from '@gaunt-sloth/core/utils/toolMatching.js';
 
-import type { EvalCase } from '#src/evalTypes.js';
+import type { EvalExpectation } from '#src/evalTypes.js';
 
 /**
  * BATCH-10 tool-trace assertions — grade a case against the tool *names* it actually invoked
@@ -17,14 +17,17 @@ import type { EvalCase } from '#src/evalTypes.js';
  *   `did not call "<pattern>"`.
  * - `mustNotCall` — **no** called tool may match any forbidden pattern; each offending tool is
  *   reported once as `called forbidden tool "<tool>" (matched "<pattern>")`.
+ *
+ * BATCH-12: grades one {@link EvalExpectation} block's tool-trace assertions (a flat case's single
+ * block or a matrix case's identity-scoped block) — same field names, same behavior as before.
  */
 export function runToolCallChecks(
   tools: string[],
-  evalCase: Pick<EvalCase, 'mustCall' | 'mustNotCall'>
+  expectation: Pick<EvalExpectation, 'mustCall' | 'mustNotCall'>
 ): string[] {
   const failures: string[] = [];
 
-  for (const pattern of evalCase.mustCall) {
+  for (const pattern of expectation.mustCall) {
     if (!tools.some((tool) => toolNameMatchesPattern(tool, pattern))) {
       failures.push(`did not call "${pattern}"`);
     }
@@ -33,7 +36,9 @@ export function runToolCallChecks(
   // De-duplicate: a tool called N times (traces realistically repeat names) is one violation, not
   // N identical failure lines. `Set` preserves first-seen order.
   for (const tool of new Set(tools)) {
-    const matched = evalCase.mustNotCall.find((pattern) => toolNameMatchesPattern(tool, pattern));
+    const matched = expectation.mustNotCall.find((pattern) =>
+      toolNameMatchesPattern(tool, pattern)
+    );
     if (matched !== undefined) {
       failures.push(`called forbidden tool "${tool}" (matched "${matched}")`);
     }
