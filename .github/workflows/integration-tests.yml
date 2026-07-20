@@ -34,3 +34,8 @@ jobs:
         BIG_TEST_PROVIDER: ${{ vars.BIG_TEST_PROVIDER }}
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        # GS2-65: powers providerContract.it.ts's single-leading-system smoke (runSingleShot +
+        # runConversation against real Anthropic). Without it that describe block skips cleanly; with
+        # it, the class of bug GS2-64 was (a double-SystemMessage rejection the vertexai run hides)
+        # fails HERE instead of in the field. The GitHub secret itself must be added in repo settings.
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
