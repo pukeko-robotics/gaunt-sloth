@@ -1,0 +1,21 @@
+# BATCH-13 Part B — LIVE multi-turn Anthropic smoke for the conversation.ts fix.
+#
+# Unit/fake tests cannot catch the double-system bug: the two-system rejection happens inside
+# @langchain/anthropic, which a fake runner never reaches. This suite is the real proof — a `turns:`
+# case routes through `runConversation` (multi-turn), which pre-fix crashed on Anthropic with
+# "System messages are only permitted as the first passed message".
+#
+# NO identities, NO MCP. The base (no-identity) config sets `allowedTools: []`, so the SUT has NO
+# tools — turn 2 can only pass by REMEMBERING turn 1's codeword (cross-turn answer replay), not by
+# grepping the suite file. Model = Anthropic Claude Haiku 4.5.
+target:
+  type: gth-agent
+defaults:
+  pass_threshold: 6
+cases:
+  - id: cross-turn-memory
+    turns:
+      - user: 'Remember this codeword: BANANA-7. Reply with just: OK'
+        must_contain: ['OK']
+      - user: 'What was the codeword I gave you a moment ago? Reply with just the codeword.'
+        must_contain: ['BANANA-7']

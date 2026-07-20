@@ -11,7 +11,7 @@ import {
 import { getCommandOutputFilePath } from '#src/utils/fileUtils.js';
 import { GthAgentRunner } from '#src/core/GthAgentRunner.js';
 import { MemorySaver } from '@langchain/langgraph';
-import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage } from '@langchain/core/messages';
 import type { Message } from '#src/core/types.js';
 import { ProgressIndicator } from '#src/utils/ProgressIndicator.js';
 import type { AgentResolvers, GthAgentFactory, GthCommand } from '#src/core/types.js';
@@ -45,8 +45,10 @@ export interface ConversationTurnResult extends GthRunStats {
  * are the caller's to tear down, exactly as with runSingleShot).
  *
  * **History mechanism = stateless replay of the growing message array.** Messages accumulate as
- * `[SystemMessage(preamble)]` then, per turn, a `HumanMessage(user)` is appended, the agent runs on
- * the WHOLE array, and its answer is appended as an `AIMessage` so the next turn sees it. Before each
+ * `[user1, ai1, user2, ai2, …]`: per turn a `HumanMessage(user)` is appended, the agent runs on the
+ * WHOLE array, and its answer is appended as an `AIMessage` so the next turn sees it. The system
+ * prompt is NOT seeded here — the agent composes it via `createAgent({ systemPrompt })` (BATCH-13;
+ * see `runSingleShot`), so the replayed array carries only human/assistant turns. Before each
  * turn the runner's thread is rotated ({@link GthAgentRunner.resetThread}) so the checkpointer starts
  * empty and the replayed array is the sole history (no `add_messages` double-append). This mirrors
  * the AG-UI server's "client is the source of truth for history — it sends the full message list
@@ -63,7 +65,9 @@ export interface ConversationTurnResult extends GthRunStats {
  * (`gth eval`'s runner) fails the un-run turns.
  *
  * @param source - The source label (used for output/session-file naming), e.g. `EVAL-<cellId>`.
- * @param preamble - The system preamble sent once as the conversation's `SystemMessage`.
+ * @param _preamble - Deprecated/ignored (BATCH-13): the agent composes the system prompt itself (via
+ *   `createAgent({ systemPrompt })`); seeding it here too produced a second system message that
+ *   `@langchain/anthropic` rejects. Retained positionally so existing callers need no change.
  * @param userMessages - The ordered user turns to send (one conversation).
  * @param config - The resolved config.
  * @param resolvers - Optional agent resolvers (tools/middleware); the caller owns their cleanup.
@@ -73,7 +77,7 @@ export interface ConversationTurnResult extends GthRunStats {
  */
 export async function runConversation(
   source: string,
-  preamble: string,
+  _preamble: string,
   userMessages: string[],
   config: GthConfig,
   resolvers?: AgentResolvers,
@@ -93,9 +97,11 @@ export async function runConversation(
   // the toolset must persist across turns so cross-turn memory is real). Cleaned up once, in finally.
   const runner = new GthAgentRunner(defaultStatusCallback, resolvers, agentFactory);
   const results: ConversationTurnResult[] = [];
-  // The accumulated conversation: [system, user1, ai1, user2, ai2, …]. Each turn replays the whole
-  // array against a freshly-rotated thread (see the doc block).
-  const messages: Message[] = [new SystemMessage(preamble)];
+  // The accumulated conversation: [user1, ai1, user2, ai2, …]. Each turn replays the whole array
+  // against a freshly-rotated thread (see the doc block). BATCH-13: NO leading SystemMessage — the
+  // agent composes the system prompt via `createAgent({ systemPrompt })` (same as runSingleShot);
+  // seeding a preamble SystemMessage here too made two system messages, which Anthropic rejects.
+  const messages: Message[] = [];
 
   try {
     await runner.init(command, config, new MemorySaver());

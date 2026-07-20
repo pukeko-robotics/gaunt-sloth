@@ -1,0 +1,16 @@
+{
+  "name": "eval-it",
+  "version": "0.0.0",
+  "private": true,
+  "description": "BATCH-13 — standalone live multi-identity MCP authorization integration suite for `gth eval`. Not published, not part of `pnpm run it`; run on demand via run-authz-eval.sh.",
+  "type": "module",
+  "scripts": {
+    "start:server": "node src/authz-mcp-server.ts",
+    "eval": "./run-authz-eval.sh authz.suite.yaml",
+    "eval:broken": "./run-authz-eval.sh authz-broken.suite.yaml"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.0.0"
+  }
+}

@@ -63,6 +63,9 @@ const globalIgnores = [
   '.git/**',
   'vitest-it.config.js',
   'vitest-it.config.d.ts',
+  // BATCH-13: eval-it is a standalone on-demand harness; its generated run output is not linted.
+  'eval-it/workdir/out/**',
+  'eval-it/workdir/.gsloth/gth_*/**',
 ];
 
 export default defineConfig([
@@ -98,6 +101,27 @@ export default defineConfig([
   pkgSourceConfig('review'),
   pkgSourceConfig('batch'),
   pkgSourceConfig('app'),
+  // BATCH-13: eval-it standalone harness TypeScript. It lives outside packages/, so it matches none
+  // of the pkgSourceConfig globs; give it a type-agnostic block (tsParser, no `project`) mirroring
+  // the test block so `pnpm run lint` genuinely lints it rather than skipping it.
+  {
+    files: ['eval-it/**/*.ts'],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: {
+        ecmaVersion: 2022,
+        sourceType: 'module',
+      },
+      globals: {
+        ...globals.node,
+      },
+    },
+    plugins: {
+      '@typescript-eslint': tseslint,
+      prettier: prettierPlugin,
+    },
+    rules: tsRules,
+  },
   // Test TypeScript files with separate project reference
   {
     files: [
