@@ -592,6 +592,62 @@ describe('GthDeepAgent', () => {
     expect(createDeepAgentMock.mock.calls[0][0].tools).toEqual([]);
   });
 
+  it('GS2-61: filters resolved tools by an exact-name allowedTools list (regression guard)', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    // Non-filesystem names, so the FILESYSTEM_TOOL_NAMES supersession net is a no-op and the
+    // assertion isolates the allowedTools filter itself.
+    const resolveTools = vi
+      .fn()
+      .mockResolvedValue([
+        fakeTool('gh_pr'),
+        fakeTool('mcp__jira__getIssue'),
+        fakeTool('web_fetch'),
+      ]);
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools });
+
+    await agent.init(undefined, makeConfig({ allowedTools: ['gh_pr'] }));
+
+    const tools = createDeepAgentMock.mock.calls[0][0].tools as Array<{ name: string }>;
+    expect(tools.map((t) => t.name)).toEqual(['gh_pr']);
+  });
+
+  it('GS2-61: filters resolved tools by an allowedTools glob (mcp__unimarket__*)', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const resolveTools = vi
+      .fn()
+      .mockResolvedValue([
+        fakeTool('mcp__unimarket__buy'),
+        fakeTool('mcp__unimarket__search'),
+        fakeTool('gh_pr'),
+        fakeTool('mcp__jira__getIssue'),
+      ]);
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools });
+
+    await agent.init(undefined, makeConfig({ allowedTools: ['mcp__unimarket__*'] }));
+
+    const tools = createDeepAgentMock.mock.calls[0][0].tools as Array<{ name: string }>;
+    // Every mcp__unimarket__… tool is kept; the other (non-filesystem) tools drop.
+    expect(tools.map((t) => t.name)).toEqual(['mcp__unimarket__buy', 'mcp__unimarket__search']);
+  });
+
+  it('GS2-61: retains nameless server tools under an allowedTools allow-list', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    // A nameless ServerTool (provider-native "magic object") alongside a named tool. The nameless
+    // one can never be referenced in the allow-list, so it is retained rather than silently dropped.
+    const nameless = { description: 'web_search', invoke: vi.fn(), schema: {} } as any;
+    const resolveTools = vi
+      .fn()
+      .mockResolvedValue([nameless, fakeTool('gh_pr'), fakeTool('web_fetch')]);
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools });
+
+    await agent.init(undefined, makeConfig({ allowedTools: ['gh_pr'] }));
+
+    const tools = createDeepAgentMock.mock.calls[0][0].tools as Array<{ name?: string }>;
+    expect(tools).toHaveLength(2);
+    expect(tools.map((t) => t.name)).toContain('gh_pr');
+    expect(tools.some((t) => !t.name)).toBe(true);
+  });
+
   it('does not set interruptOn for a non-code command with no shell config (e.g. chat)', async () => {
     // EXT-12: the absent-config shell default is `code`-only, so `chat` (which carries no devTools
     // at all) still gets no shell tool and therefore no interrupt wiring.
