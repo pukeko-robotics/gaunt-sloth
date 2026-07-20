@@ -46,10 +46,34 @@ export interface AdkAgentTarget {
   agentId?: string;
 }
 
-/** One suite's target — either the in-process gth agent (default) or an external ADK agent over A2A
- * (BATCH-14). Discriminated by `type`; the runner is target-agnostic (it consumes an injected
- * `RunCellFn`/`RunConversationFn`), so the target only changes which runner the command builds. */
-export type EvalTarget = GthAgentTarget | AdkAgentTarget;
+/**
+ * BATCH-15 — an EXTERNAL agent exposed over the AG-UI protocol, graded by driving its HTTP/SSE run
+ * endpoint (`POST {url}/agents/{agentId}/run`). The eval sends the conversation as a `RunAgentInput`
+ * and decodes the streamed AG-UI events, grading the assembled answer with the SAME content
+ * assertions as {@link GthAgentTarget}. Like {@link AdkAgentTarget}, the agent runs out-of-process
+ * (its own model/tools/auth), so this target only needs the AG-UI connection, not a gth config.
+ *
+ * KEY DIFFERENCE from {@link AdkAgentTarget}: the AG-UI wire DOES stream the agent's tool calls
+ * (`TOOL_CALL_START` events). So — unlike A2A, where the tool trace is invisible and
+ * `must_call`/`must_not_call` are rejected at parse time — the ag-ui runner captures each
+ * `TOOL_CALL_START`'s tool name into the outcome's `tools`, and `must_call`/`must_not_call` grade
+ * normally against this target.
+ */
+export interface AgUiAgentTarget {
+  type: 'ag-ui';
+  /** The AG-UI server's base URL — the origin of `POST {url}/agents/{agentId}/run`. Required; a
+   * suite without it is a parse error. */
+  url: string;
+  /** The `{agentId}` path segment of `/agents/{agentId}/run` (per the AG-UI protocol). Required; a
+   * suite without it is a parse error. */
+  agentId: string;
+}
+
+/** One suite's target — the in-process gth agent (default), an external ADK agent over A2A
+ * (BATCH-14), or an external AG-UI agent over HTTP/SSE (BATCH-15). Discriminated by `type`; the
+ * runner is target-agnostic (it consumes an injected `RunCellFn`/`RunConversationFn`), so the target
+ * only changes which runner the command builds. */
+export type EvalTarget = GthAgentTarget | AdkAgentTarget | AgUiAgentTarget;
 
 /** One `json_path` assertion (BATCH-10): resolve `path` against the answer-parsed-as-JSON and check
  * it. Exactly one of `equals`/`contains` is set (enforced in {@link ../evalSuite.js}'s parse):

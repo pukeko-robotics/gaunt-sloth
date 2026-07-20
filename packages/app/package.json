@@ -37,6 +37,7 @@
     "gth": "cli.js"
   },
   "dependencies": {
+    "@ag-ui/core": "^0.0.57",
     "@gaunt-sloth/agent": "workspace:*",
     "@gaunt-sloth/batch": "workspace:*",
     "@gaunt-sloth/core": "workspace:*",

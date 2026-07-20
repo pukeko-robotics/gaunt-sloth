@@ -128,6 +128,9 @@ importers:
 
   packages/app:
     dependencies:
+      '@ag-ui/core':
+        specifier: ^0.0.57
+        version: 0.0.57
       '@gaunt-sloth/agent':
         specifier: workspace:*
         version: link:../agent

@@ -39,6 +39,14 @@ const adkRunnerMock = {
 };
 vi.mock('#src/commands/adkEvalRunner.js', () => adkRunnerMock);
 
+// BATCH-15: the AG-UI target's runner builders — mocked so the command's target-type dispatch is
+// tested without touching the real HTTP/SSE client (the runner logic is covered in agUiEvalRunner.spec).
+const agUiRunnerMock = {
+  buildAgUiRunCell: vi.fn(),
+  buildAgUiRunConversation: vi.fn(),
+};
+vi.mock('#src/commands/agUiEvalRunner.js', () => agUiRunnerMock);
+
 const prompt = {
   readExecPrompt: vi.fn(),
   readBackstory: vi.fn(),
@@ -169,6 +177,14 @@ describe('evalCommand', () => {
       answer: 'hello there',
     }));
     adkRunnerMock.buildAdkRunConversation.mockReturnValue(async () => []);
+    // BATCH-15: default AG-UI runner builders — a passing single-shot cell that also carries a tool
+    // trace (only exercised by the ag-ui suite). Tools present proves the command surfaces them.
+    agUiRunnerMock.buildAgUiRunCell.mockReturnValue(async () => ({
+      ok: true,
+      answer: 'hello there',
+      tools: ['get_weather'],
+    }));
+    agUiRunnerMock.buildAgUiRunConversation.mockReturnValue(async () => []);
     structuredInvoke.mockResolvedValue({ rate: 9, reason: 'Good answer.' });
 
     prompt.readSystemPrompt.mockReturnValue('');
@@ -865,6 +881,86 @@ cases:
         expect.stringContaining('requires a `url`')
       );
       expect(adkRunnerMock.buildAdkRunCell).not.toHaveBeenCalled();
+    });
+  });
+
+  // BATCH-15: an `ag-ui` suite drives the AG-UI (HTTP/SSE) runner, NOT the in-process gth
+  // `runSingleShot` path. The AG-UI runner builders are mocked (their logic is covered end-to-end in
+  // agUiEvalRunner.spec); this test proves the command's target-type DISPATCH + grading of the answer
+  // AND the captured tool trace (must_call), the key difference from adk-agent.
+  describe('ag-ui target (BATCH-15)', () => {
+    const AGUI_SUITE = `
+target: { type: ag-ui, url: "http://localhost:3000", agent_id: gth }
+cases:
+  - id: greets
+    prompt: "greet the user"
+    must_contain: ["hello"]
+    must_call: ["get_weather"]
+`;
+
+    beforeEach(() => {
+      fileUtilsMock.readFileFromProjectDir.mockImplementation((file: string) => {
+        if (file === 'agui.yaml') return AGUI_SUITE;
+        throw new Error(`unexpected file read: ${file}`);
+      });
+    });
+
+    it('dispatches to the AG-UI runner (not runSingleShot), grades the answer + tool trace, exit 0 on PASS', async () => {
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'agui.yaml', '-o', outputDir]);
+
+      // Wired to the AG-UI builders with the parsed ag-ui target...
+      expect(agUiRunnerMock.buildAgUiRunCell).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'ag-ui',
+          url: 'http://localhost:3000',
+          agentId: 'gth',
+        })
+      );
+      expect(agUiRunnerMock.buildAgUiRunConversation).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'ag-ui', url: 'http://localhost:3000', agentId: 'gth' })
+      );
+      // ...and NOT the in-process gth-agent path or the ADK path.
+      expect(runSingleShot).not.toHaveBeenCalled();
+      expect(resolversMock.createResolvers).not.toHaveBeenCalled();
+      expect(adkRunnerMock.buildAdkRunCell).not.toHaveBeenCalled();
+
+      const resultsJson = JSON.parse(readFileSync(join(outputDir, 'results.json'), 'utf8'));
+      expect(resultsJson).toMatchObject({ total: 1, passed: 1, failed: 0 });
+      const caseJson = JSON.parse(readFileSync(join(outputDir, 'greets.json'), 'utf8'));
+      // The captured tool trace made `must_call: [get_weather]` PASS (not a silent pass — the tool
+      // name is present in the output).
+      expect(caseJson).toMatchObject({
+        id: 'greets',
+        verdict: 'PASS',
+        answer: 'hello there',
+        tools: ['get_weather'],
+      });
+      expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+    });
+
+    it('exits 2 (harness error) for an ag-ui suite missing its agent_id — nothing runs', async () => {
+      fileUtilsMock.readFileFromProjectDir.mockImplementation(
+        () => `
+target: { type: ag-ui, url: "http://localhost:3000" }
+cases:
+  - id: greets
+    prompt: "greet the user"
+    must_contain: ["hello"]
+`
+      );
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'agui.yaml', '-o', outputDir]);
+
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+        expect.stringContaining('requires an `agent_id`')
+      );
+      expect(agUiRunnerMock.buildAgUiRunCell).not.toHaveBeenCalled();
     });
   });
 });
