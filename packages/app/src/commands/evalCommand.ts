@@ -99,7 +99,8 @@ export function evalCommand(
     .command('eval')
     .description(
       'Grade a suite of cases against the SUT agent with deterministic checks and/or an LLM ' +
-        'judge ("pytest for prompts"). Exits 0 iff every case passed.'
+        'judge ("pytest for prompts"). Exit code: 0 = all cases passed, 1 = a case failed, ' +
+        '2 = harness error (bad suite/config, or the SUT could not run).'
     )
     .argument('<suite>', 'Path to the eval suite YAML file')
     .option('-j, --concurrency <n>', 'Max in-flight cases', parseIntOption)
