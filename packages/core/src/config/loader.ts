@@ -667,6 +667,63 @@ function deepMerge<T extends Record<string, unknown>>(
 }
 
 /**
+ * Command-scoped fields whose effective value is picked by PRECEDENCE — one layer wins wholesale
+ * (a per-command value REPLACES rather than extends the top-level one; none is in
+ * {@link ADDITIVE_ARRAY_FIELDS}). {@link resolvePrecedencePickedField} bakes the correct value into
+ * every command inside {@link resolveConfig}, so `getEffectiveConfig`'s later per-command-vs-root
+ * ternary reads an already-resolved value.
+ *
+ * GS2-60 — historically these were resolved ONLY at agent-build time (`getEffectiveConfig`), across
+ * two layers (per-command value vs top-level value) AFTER `DEFAULT_CONFIG` had been merged in. That
+ * made an explicit top-level value lose to a per-command DEFAULT: once merged, a command's
+ * `filesystem` is always defined (from its `'read'`/`'all'` default), so the ternary always took it
+ * and never fell through to the user's explicit top-level `filesystem`. Resolving here against the
+ * RAW (pre-default) config — where "user set it" is still distinguishable from "it's a default" —
+ * is the single correct site. Only `filesystem` is actually affected today (the sole field with
+ * per-command defaults); the other three are baked in identically for principled future-proofing.
+ */
+const PRECEDENCE_PICKED_COMMAND_FIELDS = [
+  'filesystem',
+  'builtInTools',
+  'allowedTools',
+  'binaryFormats',
+] as const;
+
+/**
+ * Resolve one {@link PRECEDENCE_PICKED_COMMAND_FIELDS} field for one command against the RAW
+ * (pre-{@link DEFAULT_CONFIG}) config, highest precedence first:
+ *
+ *   1. per-command explicit : `rawConfig.commands[command][field]`
+ *   2. top-level explicit    : `rawConfig[field]`
+ *   3. per-command default   : `DEFAULT_CONFIG.commands[command][field]`
+ *   4. top-level default     : `DEFAULT_CONFIG[field]`
+ *
+ * `!== undefined` at every layer so a falsy-but-EXPLICIT value (`'none'`, `[]`, `false`, `0`) is
+ * honoured and never mistaken for a "missing" layer. Returns `undefined` only when no layer sets
+ * the field (e.g. `allowedTools`/`binaryFormats` with neither a user value nor any default), in
+ * which case the caller leaves the command key absent — matching prior behaviour.
+ */
+function resolvePrecedencePickedField(
+  rawConfig: Partial<GthConfig>,
+  command: keyof typeof DEFAULT_CONFIG.commands,
+  field: (typeof PRECEDENCE_PICKED_COMMAND_FIELDS)[number]
+): unknown {
+  const rawCommands = rawConfig.commands as Record<string, Record<string, unknown>> | undefined;
+  const perCommandExplicit = rawCommands?.[command]?.[field];
+  if (perCommandExplicit !== undefined) return perCommandExplicit;
+
+  const topLevelExplicit = (rawConfig as Record<string, unknown>)[field];
+  if (topLevelExplicit !== undefined) return topLevelExplicit;
+
+  const perCommandDefault = (DEFAULT_CONFIG.commands as Record<string, Record<string, unknown>>)[
+    command
+  ]?.[field];
+  if (perCommandDefault !== undefined) return perCommandDefault;
+
+  return (DEFAULT_CONFIG as Record<string, unknown>)[field];
+}
+
+/**
  * Resolve a fully-merged {@link GthConfig} from a partial config + CLI overrides WITHOUT
  * any global side effects (a pure transform). It deep-merges defaults, applies CLI overrides,
  * resolves the numeric `consoleLevel` (warning + defaulting to INFO on an invalid value), and
@@ -712,6 +769,33 @@ export function resolveConfig(
       config?.commands?.api as Record<string, unknown> | undefined
     ) as any, // eslint-disable-line @typescript-eslint/no-explicit-any
   };
+
+  // GS2-60 — bake the correct 4-layer precedence for the precedence-picked fields
+  // (filesystem/builtInTools/allowedTools/binaryFormats) into each command, resolved against the
+  // RAW `config` (still pre-DEFAULT_CONFIG here). The per-command `deepMerge` above only ranks
+  // per-command explicit vs per-command DEFAULT and cannot see the user's explicit top-level value
+  // — so without this an explicit top-level `filesystem` was silently lost to a command's default.
+  // A fresh `{ ...base, ...overrides }` per command is REQUIRED: `deepMerge` returns the live
+  // `DEFAULT_CONFIG.commands[cmd]` reference verbatim when the user configured nothing for that
+  // command, so in-place mutation would corrupt the shared default across every subsequent call.
+  const commandsRecord = mergedCommands as unknown as Record<string, Record<string, unknown>>;
+  for (const command of Object.keys(commandsRecord)) {
+    const base = commandsRecord[command];
+    const overrides: Record<string, unknown> = {};
+    for (const field of PRECEDENCE_PICKED_COMMAND_FIELDS) {
+      const resolved = resolvePrecedencePickedField(
+        config,
+        command as keyof typeof DEFAULT_CONFIG.commands,
+        field
+      );
+      // Leave the key absent when no layer set it (preserves prior behaviour for e.g. a command
+      // with no allowedTools anywhere), rather than writing an explicit `undefined`.
+      if (resolved !== undefined) {
+        overrides[field] = resolved;
+      }
+    }
+    commandsRecord[command] = { ...base, ...overrides };
+  }
 
   const mergedConfig = {
     ...DEFAULT_CONFIG,

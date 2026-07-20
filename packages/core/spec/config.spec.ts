@@ -162,6 +162,8 @@ describe('config', async () => {
           pr: {
             contentSource: 'github',
             requirementSource: 'github',
+            filesystem: 'none',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -171,6 +173,8 @@ describe('config', async () => {
             },
           },
           review: {
+            filesystem: 'none',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -179,12 +183,13 @@ describe('config', async () => {
               minRating: 0,
             },
           },
-          code: { filesystem: 'all' },
-          exec: { filesystem: 'all' },
-          ask: { filesystem: 'read' },
-          chat: { filesystem: 'read' },
+          code: { filesystem: 'all', builtInTools: ['gth_checklist', 'gth_grep'] },
+          exec: { filesystem: 'all', builtInTools: ['gth_checklist', 'gth_grep'] },
+          ask: { filesystem: 'read', builtInTools: ['gth_checklist', 'gth_grep'] },
+          chat: { filesystem: 'read', builtInTools: ['gth_checklist', 'gth_grep'] },
           api: {
             filesystem: 'read',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             port: 3000,
             cors: {
               allowOrigin: 'http://localhost:3000',
@@ -260,6 +265,8 @@ describe('config', async () => {
           pr: {
             contentSource: 'github',
             requirementSource: 'github',
+            filesystem: 'none',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -269,6 +276,8 @@ describe('config', async () => {
             },
           },
           review: {
+            filesystem: 'none',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -277,12 +286,13 @@ describe('config', async () => {
               minRating: 0,
             },
           },
-          code: { filesystem: 'all' },
-          exec: { filesystem: 'all' },
-          ask: { filesystem: 'read' },
-          chat: { filesystem: 'read' },
+          code: { filesystem: 'all', builtInTools: ['gth_checklist', 'gth_grep'] },
+          exec: { filesystem: 'all', builtInTools: ['gth_checklist', 'gth_grep'] },
+          ask: { filesystem: 'read', builtInTools: ['gth_checklist', 'gth_grep'] },
+          chat: { filesystem: 'read', builtInTools: ['gth_checklist', 'gth_grep'] },
           api: {
             filesystem: 'read',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             port: 3000,
             cors: {
               allowOrigin: 'http://localhost:3000',
@@ -391,6 +401,8 @@ describe('config', async () => {
           pr: {
             contentSource: 'github',
             requirementSource: 'github',
+            filesystem: 'none',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -400,6 +412,8 @@ describe('config', async () => {
             },
           },
           review: {
+            filesystem: 'none',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -408,12 +422,13 @@ describe('config', async () => {
               minRating: 0,
             },
           },
-          code: { filesystem: 'all' },
-          exec: { filesystem: 'all' },
-          ask: { filesystem: 'read' },
-          chat: { filesystem: 'read' },
+          code: { filesystem: 'all', builtInTools: ['gth_checklist', 'gth_grep'] },
+          exec: { filesystem: 'all', builtInTools: ['gth_checklist', 'gth_grep'] },
+          ask: { filesystem: 'read', builtInTools: ['gth_checklist', 'gth_grep'] },
+          chat: { filesystem: 'read', builtInTools: ['gth_checklist', 'gth_grep'] },
           api: {
             filesystem: 'read',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             port: 3000,
             cors: {
               allowOrigin: 'http://localhost:3000',
@@ -1313,6 +1328,8 @@ describe('config', async () => {
           pr: {
             contentSource: 'github',
             requirementSource: 'github',
+            filesystem: 'none',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -1322,6 +1339,8 @@ describe('config', async () => {
             },
           },
           review: {
+            filesystem: 'none',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -1330,12 +1349,13 @@ describe('config', async () => {
               minRating: 0,
             },
           },
-          code: { filesystem: 'all' },
-          exec: { filesystem: 'all' },
-          ask: { filesystem: 'read' },
-          chat: { filesystem: 'read' },
+          code: { filesystem: 'all', builtInTools: ['gth_checklist', 'gth_grep'] },
+          exec: { filesystem: 'all', builtInTools: ['gth_checklist', 'gth_grep'] },
+          ask: { filesystem: 'read', builtInTools: ['gth_checklist', 'gth_grep'] },
+          chat: { filesystem: 'read', builtInTools: ['gth_checklist', 'gth_grep'] },
           api: {
             filesystem: 'read',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             port: 3000,
             cors: {
               allowOrigin: 'http://localhost:3000',
@@ -1765,6 +1785,8 @@ describe('config', async () => {
           pr: {
             contentSource: 'github',
             requirementSource: 'github',
+            filesystem: 'none',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -1774,6 +1796,8 @@ describe('config', async () => {
             },
           },
           review: {
+            filesystem: 'none',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -1782,12 +1806,13 @@ describe('config', async () => {
               minRating: 0,
             },
           },
-          code: { filesystem: 'all' },
-          exec: { filesystem: 'all' },
-          ask: { filesystem: 'read' },
-          chat: { filesystem: 'read' },
+          code: { filesystem: 'all', builtInTools: ['gth_checklist', 'gth_grep'] },
+          exec: { filesystem: 'all', builtInTools: ['gth_checklist', 'gth_grep'] },
+          ask: { filesystem: 'read', builtInTools: ['gth_checklist', 'gth_grep'] },
+          chat: { filesystem: 'read', builtInTools: ['gth_checklist', 'gth_grep'] },
           api: {
             filesystem: 'read',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             port: 3000,
             cors: {
               allowOrigin: 'http://localhost:3000',
@@ -1847,6 +1872,8 @@ describe('config', async () => {
           pr: {
             contentSource: 'github',
             requirementSource: 'github',
+            filesystem: 'none',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -1856,6 +1883,8 @@ describe('config', async () => {
             },
           },
           review: {
+            filesystem: 'none',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -1864,12 +1893,13 @@ describe('config', async () => {
               minRating: 0,
             },
           },
-          code: { filesystem: 'all' },
-          exec: { filesystem: 'all' },
-          ask: { filesystem: 'read' },
-          chat: { filesystem: 'read' },
+          code: { filesystem: 'all', builtInTools: ['gth_checklist', 'gth_grep'] },
+          exec: { filesystem: 'all', builtInTools: ['gth_checklist', 'gth_grep'] },
+          ask: { filesystem: 'read', builtInTools: ['gth_checklist', 'gth_grep'] },
+          chat: { filesystem: 'read', builtInTools: ['gth_checklist', 'gth_grep'] },
           api: {
             filesystem: 'read',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             port: 3000,
             cors: {
               allowOrigin: 'http://localhost:3000',
@@ -1929,6 +1959,8 @@ describe('config', async () => {
           pr: {
             contentSource: 'github',
             requirementSource: 'github',
+            filesystem: 'none',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -1938,6 +1970,8 @@ describe('config', async () => {
             },
           },
           review: {
+            filesystem: 'none',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             rating: {
               enabled: true,
               passThreshold: 6,
@@ -1946,12 +1980,13 @@ describe('config', async () => {
               minRating: 0,
             },
           },
-          code: { filesystem: 'all' },
-          exec: { filesystem: 'all' },
-          ask: { filesystem: 'read' },
-          chat: { filesystem: 'read' },
+          code: { filesystem: 'all', builtInTools: ['gth_checklist', 'gth_grep'] },
+          exec: { filesystem: 'all', builtInTools: ['gth_checklist', 'gth_grep'] },
+          ask: { filesystem: 'read', builtInTools: ['gth_checklist', 'gth_grep'] },
+          chat: { filesystem: 'read', builtInTools: ['gth_checklist', 'gth_grep'] },
           api: {
             filesystem: 'read',
+            builtInTools: ['gth_checklist', 'gth_grep'],
             port: 3000,
             cors: {
               allowOrigin: 'http://localhost:3000',
