@@ -233,6 +233,16 @@ export function evalCommand(
             await import('#src/commands/adkEvalRunner.js');
           runCell = buildAdkRunCell(suite.target);
           runConversation = buildAdkRunConversation(suite.target);
+        } else if (suite.target.type === 'ag-ui') {
+          // BATCH-15: drive an EXTERNAL AG-UI agent over HTTP/SSE. Like the ADK target, the agent
+          // runs out-of-process (its own model/tools/auth), so there is no per-identity gth config —
+          // the `identities` matrix is rejected for this target at parse time, leaving only the
+          // single-run path. Unlike ADK, the AG-UI wire streams tool calls, so the runner captures
+          // them and `must_call`/`must_not_call` grade normally.
+          const { buildAgUiRunCell, buildAgUiRunConversation } =
+            await import('#src/commands/agUiEvalRunner.js');
+          runCell = buildAgUiRunCell(suite.target);
+          runConversation = buildAgUiRunConversation(suite.target);
         } else {
           // gth-agent (unchanged). With no identities: one runCell under the invoked profile. With
           // identities: one runCell per identity, each from a fresh `initConfig({ …, identityProfile

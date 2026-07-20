@@ -254,6 +254,119 @@ cases:
     });
   });
 
+  // BATCH-15: the AG-UI target — parses with a `url` + `agent_id`, keeps the `gth-agent` default
+  // unchanged, and enforces its boundaries (missing url/agent_id / profile / identities). The KEY
+  // difference from adk-agent: `must_call`/`must_not_call` ARE allowed (the AG-UI wire streams the
+  // tool trace), so they must NOT be rejected at parse time.
+  describe('BATCH-15 ag-ui target', () => {
+    it('parses an ag-ui target with a url + agent_id and grades content assertions as usual', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: ag-ui, url: "http://localhost:3000", agent_id: gth }
+cases:
+  - id: greets
+    prompt: "greet the user"
+    must_contain: ["hello"]
+    judge: "Greets politely."
+`);
+      expect(suite.target).toEqual({
+        type: 'ag-ui',
+        url: 'http://localhost:3000',
+        agentId: 'gth',
+      });
+      expect(suite.cases[0].turns[0].expectations[0].mustContain).toEqual(['hello']);
+      expect(suite.cases[0].turns[0].expectations[0].judgeRubric).toBe('Greets politely.');
+    });
+
+    it('rejects an ag-ui target with no url', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: ag-ui, agent_id: gth }
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+`)
+      ).toThrow(/"ag-ui" target requires a `url`/);
+    });
+
+    it('rejects an ag-ui target with no agent_id', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: ag-ui, url: "http://localhost:3000" }
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+`)
+      ).toThrow(/"ag-ui" target requires an `agent_id`/);
+    });
+
+    it('rejects a profile on an ag-ui target', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: ag-ui, url: "http://localhost:3000", agent_id: gth, profile: admin }
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+`)
+      ).toThrow(/"ag-ui" target does not take a `profile`/);
+    });
+
+    it('rejects the identities matrix on an ag-ui target (external agent has no per-identity gth config)', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: ag-ui, url: "http://localhost:3000", agent_id: gth }
+identities: [admin, limited]
+cases:
+  - id: c1
+    prompt: "p"
+    expect:
+      - identities: [admin]
+        must_contain: ["x"]
+      - identities: [limited]
+        must_contain: ["y"]
+`)
+      ).toThrow(/`identities` matrix is not supported for an "ag-ui" target/);
+    });
+
+    it('ALLOWS must_call / must_not_call on an ag-ui target (the key difference from adk-agent)', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: ag-ui, url: "http://localhost:3000", agent_id: gth }
+cases:
+  - id: uses-tool
+    prompt: "look it up"
+    must_call: ["mcp__*"]
+    must_not_call: ["delete_file"]
+`);
+      expect(suite.target.type).toBe('ag-ui');
+      expect(suite.cases[0].turns[0].expectations[0].mustCall).toEqual(['mcp__*']);
+      expect(suite.cases[0].turns[0].expectations[0].mustNotCall).toEqual(['delete_file']);
+    });
+
+    it('allows must_not_call buried in a multi-turn block on an ag-ui target too', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: ag-ui, url: "http://localhost:3000", agent_id: gth }
+cases:
+  - id: multi
+    turns:
+      - user: "hi"
+        must_contain: ["hello"]
+      - user: "now do it"
+        must_not_call: ["delete_file"]
+`);
+      expect(suite.target.type).toBe('ag-ui');
+      expect(suite.cases[0].turns[1].expectations[0].mustNotCall).toEqual(['delete_file']);
+    });
+  });
+
   it('rejects a case with neither deterministic checks nor a judge rubric', async () => {
     const { parseEvalSuite } = await import('#src/evalSuite.js');
     expect(() =>

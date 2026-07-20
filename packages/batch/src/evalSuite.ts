@@ -171,14 +171,19 @@ type RawAssertions = z.infer<typeof RawAssertionsSchema>;
  * Rejects, with a clear message, at parse time (never silently no-ops or defers to run time):
  * - Malformed YAML.
  * - A suite shape that doesn't match {@link RawSuiteSchema} (missing/wrong-typed fields).
- * - `target.type` other than `"gth-agent"` or `"adk-agent"` — other pluggable CLI/HTTP targets are
- *   out of scope.
+ * - `target.type` other than `"gth-agent"`, `"adk-agent"`, or `"ag-ui"` — other pluggable CLI/HTTP
+ *   targets are out of scope.
  * - `target.profile` set to anything other than `"default"`/absent — a single suite-wide profile
  *   switch is the `--identities` direction, replaced by the suite-level `identities` list.
  * - A `"adk-agent"` (BATCH-14) target missing its `url`; an `adk-agent` suite that ALSO uses the
  *   `identities` matrix (per-identity gth configs are meaningless for an external agent); or an
  *   `adk-agent` suite that uses `must_call`/`must_not_call` (A2A does not expose the agent's tool
  *   trace, so grading a tool-call assertion is impossible — rejected rather than silently passed).
+ * - An `"ag-ui"` (BATCH-15) target missing its `url` or its `agent_id`; an `ag-ui` target carrying a
+ *   `profile`; or an `ag-ui` suite that ALSO uses the `identities` matrix (per-identity gth configs
+ *   are meaningless for an external agent). NOTE `must_call`/`must_not_call` ARE supported for an
+ *   `ag-ui` target — the AG-UI wire streams `TOOL_CALL_START`, so the tool trace is captured and
+ *   graded (this is the key difference from `adk-agent`).
  * - A case `id`, or a suite `identities` name, containing anything other than alphanumerics,
  *   dashes, underscores, or dots (both double as output filenames — path traversal is rejected).
  * - A duplicate case `id`, or a duplicate `identities` entry.
@@ -250,11 +255,40 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
       );
     }
     target = { type: 'adk-agent', url, agentId: data.target.agent_id?.trim() || 'adk-agent' };
+  } else if (data.target.type === 'ag-ui') {
+    // BATCH-15: the AG-UI target drives `POST {url}/agents/{agentId}/run` (HTTP + SSE). Both the base
+    // `url` and the `{agentId}` path segment are required — the acceptance contract is "missing
+    // url/agentId is a clear error" — so a suite missing either is a parse error (not a silent
+    // default). `agent_id` is the raw YAML key; it maps to the target's `agentId`.
+    const url = data.target.url?.trim();
+    if (!url) {
+      throw new Error(
+        `Invalid eval suite${suffix}: an "ag-ui" target requires a \`url\` — the AG-UI server's ` +
+          'base URL (the origin of `POST {url}/agents/{agentId}/run`, e.g. `target: { type: ag-ui, ' +
+          'url: http://localhost:3000, agent_id: gth }`).'
+      );
+    }
+    const agentId = data.target.agent_id?.trim();
+    if (!agentId) {
+      throw new Error(
+        `Invalid eval suite${suffix}: an "ag-ui" target requires an \`agent_id\` — the \`{agentId}\` ` +
+          'path segment of `/agents/{agentId}/run` (e.g. `target: { type: ag-ui, url: ' +
+          'http://localhost:3000, agent_id: gth }`).'
+      );
+    }
+    if (data.target.profile !== undefined) {
+      throw new Error(
+        `Invalid eval suite${suffix}: an "ag-ui" target does not take a \`profile\` — the AG-UI ` +
+          'agent runs out-of-process with its own config; omit `target.profile`.'
+      );
+    }
+    target = { type: 'ag-ui', url, agentId };
   } else {
     throw new Error(
       `Invalid eval suite${suffix}: unsupported target.type "${data.target.type}" — this version ` +
-        'of `gth eval` supports "gth-agent" (in-process) and "adk-agent" (an external Google ADK ' +
-        'agent over A2A); other pluggable CLI/HTTP targets are future scope.'
+        'of `gth eval` supports "gth-agent" (in-process), "adk-agent" (an external Google ADK ' +
+        'agent over A2A), and "ag-ui" (an external agent over the AG-UI protocol); other pluggable ' +
+        'CLI/HTTP targets are future scope.'
     );
   }
 
@@ -299,6 +333,19 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
       `Invalid eval suite${suffix}: the \`identities\` matrix is not supported for an "adk-agent" ` +
         'target — identity profiles select per-identity gth configs, which do not apply to an ' +
         'external ADK agent. Remove `identities`, or use a `gth-agent` target.'
+    );
+  }
+
+  // BATCH-15: the same honest boundary for the AG-UI target. The `identities` matrix runs each case
+  // under a per-identity gth `initConfig({ …, identityProfile })`; an external AG-UI agent has no gth
+  // config to switch (the `RunAgentInput` wire contract carries no identity/auth field to thread
+  // per-identity), so the matrix cannot select its identity. Reject the combination rather than
+  // silently ignoring it — a false-scope suite is a bug, not something to run half of.
+  if (target.type === 'ag-ui' && identities !== undefined) {
+    throw new Error(
+      `Invalid eval suite${suffix}: the \`identities\` matrix is not supported for an "ag-ui" ` +
+        'target — identity profiles select per-identity gth configs, which do not apply to an ' +
+        'external AG-UI agent. Remove `identities`, or use a `gth-agent` target.'
     );
   }
 

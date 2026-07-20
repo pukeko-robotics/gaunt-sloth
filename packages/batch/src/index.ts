@@ -28,6 +28,7 @@ export { runEvalSuite } from '#src/evalRunner.js';
 export { writeEvalOutput } from '#src/evalOutput.js';
 export type {
   AdkAgentTarget,
+  AgUiAgentTarget,
   DeterministicCheckResult,
   EvalCase,
   EvalCaseResult,
