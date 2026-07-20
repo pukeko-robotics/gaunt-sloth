@@ -1,0 +1,17 @@
+# QA-7 — ollama smoke suite for `gth eval` (Phase 2 of run-ollama-smoke.sh).
+#
+# One tool-forcing case: read a planted file and report the UNIQUE marker inside it. The marker
+# exists nowhere but marker-eval.txt, so passing proves the eval verb ran the real ollama agent,
+# called read_file, and synthesized the tool result — the same GS2-59 whole-agent property the
+# direct-drive cases assert, plus coverage of the `eval` verb itself.
+#
+# Kept deliberately small (one case). The direct-drive verbs in the script are the real gate; this
+# phase adds the `eval` verb + a structured pass/fail table. If `must_call` ever proves flaky with a
+# local model, loosen to `must_contain` only rather than deleting the phase.
+target:
+  type: gth-agent
+cases:
+  - id: read-marker-eval
+    prompt: 'Read the file marker-eval.txt using your tools and report the exact secret marker string it contains.'
+    must_call: ['read_file']
+    must_contain: ['MARKER-EVAL-3D8T']
