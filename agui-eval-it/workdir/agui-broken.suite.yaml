@@ -1,0 +1,19 @@
+# BATCH-17 — DISCRIMINATION proof for the ag-ui target (the green that can actually fail).
+#
+# Same live server, same real HTTP/SSE round-trip as agui.suite.yaml — the SUT RUNS fine
+# (sutOk:true), so this is NOT a harness error. It just asserts a status code the tool NEVER emits:
+# the tool returns OPS-STATUS-7Q9Z, but we require the (fictional) OPS-STATUS-9Z9Z. The content check
+# fails on a real, gradeable answer → the case FAILS → the suite exits 1 (a product signal), not 2.
+#
+# If this suite ever passed, agui.suite.yaml's green would prove nothing.
+target:
+  type: ag-ui
+  url: http://127.0.0.1:41757
+  agent_id: default
+defaults:
+  pass_threshold: 6
+cases:
+  - id: wrong-status-marker-must-fail
+    prompt: 'What is the current depot operations status code? Look it up with your tool and report the exact status_code value.'
+    # The tool emits OPS-STATUS-7Q9Z; this asserts a code that exists nowhere → the case FAILS.
+    must_contain: ['OPS-STATUS-9Z9Z']
