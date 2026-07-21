@@ -1,5 +1,12 @@
 import React from 'react';
 import { Box, Text } from 'ink';
+import {
+  buildToolBodyLines,
+  buildToolPreviewLines,
+  getToolGlyph,
+  summariseToolCall,
+  type ToolDisplayLine,
+} from '@gaunt-sloth/core/core/toolDisplay.js';
 import type {
   TurnViewModel,
   ToolCallViewModel,
@@ -22,10 +29,33 @@ function toolStatus(tc: ToolCallViewModel): { glyph: string; label: string; colo
 }
 
 /**
- * One tool call rendered as a collapsible panel: a compact summary line (glyph + name +
- * status) that, when `expanded`, also shows the streamed args and the result. Collapsed by
- * default so the transcript stays readable; the whole turn's tool calls expand together via
- * the App-level toggle (Ctrl+T), mirroring the docked debug panel's single-key detail flip.
+ * TUI-C30 — map one registry-styled body/preview line onto Ink `<Text>` props: `dim` = greyed
+ * preview text, `added`/`removed` = diff green/red (DL-8 colour semantics). The 4-space indent
+ * keeps the body visually nested under the call line.
+ */
+function ToolBodyLine({ line }: { line: ToolDisplayLine }): React.ReactElement {
+  if (line.style === 'added') return <Text color="green">{`    ${line.text}`}</Text>;
+  if (line.style === 'removed') return <Text color="red">{`    ${line.text}`}</Text>;
+  return <Text dimColor>{`    ${line.text}`}</Text>;
+}
+
+/**
+ * One tool call rendered as a collapsible panel (TUI-C30 rendering, via the surface-agnostic
+ * registry in `@gaunt-sloth/core/core/toolDisplay.js` — shared with the plain surface):
+ *
+ * - The call line shows the params INLINE, shortened + secret-redacted:
+ *   `▸ ✓ 📁 read_file(path=README.md)  [done]` (DL-4 transparency without a raw JSON dump).
+ * - Collapsed (default) it still previews up to the canonical 10 lines of the tool's output as
+ *   greyed text with a `… (+N more lines)` overflow marker — inspectable without expanding
+ *   (DL-2 progressive disclosure with the head of the story visible).
+ * - `write_file`/`edit_file` render their change as a diff (added green / removed red) derived
+ *   from the args instead of an args/output dump.
+ * - Expanded (`/tools` / Ctrl+T, unchanged) shows the FULL body: raw args, the routed
+ *   "Executing" notice, and the uncapped formatter output (deduped for shell calls whose
+ *   result repeats the live output).
+ *
+ * The whole turn's tool calls expand together via the App-level toggle; committed turns are
+ * frozen in Ink's `<Static>` and cannot re-fold.
  */
 function ToolCallPanel({
   tc,
@@ -38,16 +68,23 @@ function ToolCallPanel({
   live: boolean;
 }): React.ReactElement {
   const { glyph, label, color } = toolStatus(tc);
-  const name = tc.name || '(tool)';
-  // Collapsed-state affordance: a ▸/▾ caret so it reads as foldable, plus a hint there is
-  // detail to expand. Expanded shows ▾ and the args/result body. The Ctrl+T hint only shows
-  // on the live turn — committed turns are frozen in Ink's <Static> and cannot re-fold.
+  // Inline shortened params (summariseToolCall handles the empty/unparsable-args fallbacks).
+  const summary = summariseToolCall(tc.name, tc.argsText);
   const caret = expanded ? '▾' : '▸';
-  const hasDetail = !!tc.argsText || !!tc.result || !!tc.output;
+  const hasDetail = !!tc.argsText || !!tc.result || !!tc.output || !!tc.notice;
+  const displayInput = {
+    name: tc.name,
+    argsText: tc.argsText,
+    result: tc.result,
+    output: tc.output,
+    isError: tc.isError,
+  };
+  // Collapsed: the canonical 10-line capped preview. Expanded: the full uncapped body.
+  const body = expanded ? buildToolBodyLines(displayInput) : buildToolPreviewLines(displayInput);
   return (
     <Box flexDirection="column">
       <Text color={color}>
-        {`${caret} ${glyph} ${name}`}
+        {`${caret} ${glyph} ${getToolGlyph(tc.name)} ${summary}`}
         <Text dimColor>{`  [${label}]`}</Text>
         {live && !expanded && hasDetail ? <Text dimColor>{'  (Ctrl+T to expand)'}</Text> : null}
       </Text>
@@ -57,28 +94,19 @@ function ToolCallPanel({
           <Text dimColor>{tc.argsText}</Text>
         </Box>
       ) : null}
-      {/* TUI-C17 — live streamed output (notice + child stdout/stderr), shown above the final
-          result like the rest of the detail body. Plain dim lines only — the richer per-tool
-          rendering (previews, caps, formatters) is TUI-C30. A single trailing newline is
-          trimmed so the block doesn't end on a phantom empty line. */}
-      {expanded && tc.output ? (
-        <Box flexDirection="column">
-          {tc.output.replace(/\n$/, '').split('\n').map((line, i) => (
-            <Text key={i} dimColor>
+      {/* The routed "🔧 Executing …" notice (TUI-C17), kept out of the output preview
+          (TUI-C30 folds it on the separate `notice` field) and shown only with the full
+          detail body. */}
+      {expanded && tc.notice
+        ? tc.notice.split('\n').map((line, i) => (
+            <Text key={`n${i}`} dimColor>
               {`    ${line}`}
             </Text>
-          ))}
-        </Box>
-      ) : null}
-      {expanded && tc.result ? (
-        <Box flexDirection="column">
-          {tc.result.split('\n').map((line, i) => (
-            <Text key={i} dimColor>
-              {`    ${line}`}
-            </Text>
-          ))}
-        </Box>
-      ) : null}
+          ))
+        : null}
+      {body.map((line, i) => (
+        <ToolBodyLine key={i} line={line} />
+      ))}
     </Box>
   );
 }

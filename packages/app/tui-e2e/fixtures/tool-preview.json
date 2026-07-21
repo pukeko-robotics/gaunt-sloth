@@ -1,0 +1,31 @@
+{
+  "defaultDelayMs": 15,
+  "turns": [
+    {
+      "events": [
+        { "type": "tool_start", "id": "t1", "name": "read_file" },
+        { "type": "tool_args", "id": "t1", "delta": "{\"path\":\"notes/example.txt\"}" },
+        { "type": "tool_end", "id": "t1" },
+        {
+          "type": "tool_result",
+          "id": "t1",
+          "content": "preview-line-01\npreview-line-02\npreview-line-03\npreview-line-04\npreview-line-05\npreview-line-06\npreview-line-07\npreview-line-08\npreview-line-09\npreview-line-10\npreview-line-11\npreview-line-12"
+        },
+        { "type": "text", "delta": "Read the file." }
+      ]
+    },
+    {
+      "events": [
+        { "type": "tool_start", "id": "t2", "name": "edit_file" },
+        {
+          "type": "tool_args",
+          "id": "t2",
+          "delta": "{\"path\":\"src/answer.ts\",\"edits\":[{\"oldText\":\"const answer = 41;\",\"newText\":\"const answer = 42;\"}]}"
+        },
+        { "type": "tool_end", "id": "t2" },
+        { "type": "tool_result", "id": "t2", "content": "edit 1: replaced 1 occurrence(s)" },
+        { "type": "text", "delta": "Applied the edit." }
+      ]
+    }
+  ]
+}

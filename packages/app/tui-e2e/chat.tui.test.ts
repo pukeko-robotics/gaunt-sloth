@@ -103,23 +103,28 @@ test.describe('gth chat TUI — markdown + collapsible tool calls (markdown fixt
 
   // Assistant markdown is rendered as terminal formatting once the turn completes: the
   // heading text and list bullets appear (the bullet glyph proves markdown was applied),
-  // and the tool call shows as a collapsed summary line with its result body hidden.
-  test('renders markdown and a collapsed tool-call summary', async ({ terminal }) => {
+  // and the tool call shows a collapsed summary line with inline params plus the TUI-C30
+  // greyed result preview (the head of the result is now visible WITHOUT expanding).
+  test('renders markdown and a collapsed tool-call summary with inline preview', async ({
+    terminal,
+  }) => {
     await expect(terminal.getByText('ready to chat')).toBeVisible();
     terminal.write('go');
     await expect(terminal.getByText('> go')).toBeVisible();
     terminal.submit();
 
-    // Tool-call summary line (collapsed): name + status, but NOT the result body.
-    await expect(terminal.getByText('read_file', { full: true })).toBeVisible();
+    // Tool-call summary line (collapsed): name + inline shortened params (TUI-C30).
+    await expect(terminal.getByText('read_file(path=NOTES.md)', { full: true })).toBeVisible();
     // Markdown list bullet renders (proves the markdown path ran, not raw "- ").
     await expect(terminal.getByText('first item', { full: true })).toBeVisible();
     await expect(terminal.getByText('second item', { full: true })).toBeVisible();
     await expect(terminal.getByText('Summary', { full: true })).toBeVisible();
     // The turn completed and returned to ready.
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
-    // The collapsed tool call hides its result body in the readable transcript.
-    await expect(terminal.getByText('secret-tool-result-body')).not.toBeVisible();
+    // TUI-C30 (deliberate change from the original collapsed-hides-body assertion): the first
+    // lines of the result now PREVIEW inline while collapsed. Beyond-cap hiding is asserted by
+    // the tool-preview fixture below.
+    await expect(terminal.getByText('secret-tool-result-body', { full: true })).toBeVisible();
   });
 });
 
@@ -133,21 +138,30 @@ test.describe('gth chat TUI — live tool output in the managed frame (tool-outp
 
   // A custom/dev tool's streamed stdout arrives as `tool_output` events and renders INSIDE the
   // tool-call panel (folded into the view-model), not as raw out-of-order stdout above the
-  // message. Collapsed by default it stays hidden (DL-2); after /tools the next turn shows the
-  // routed notice + the child's output lines in the managed frame.
+  // message. TUI-C30 (deliberate change): collapsed panels now PREVIEW the first output lines
+  // inline as greyed text, while the "Executing" notice stays expanded-only chrome; after
+  // /tools the next turn additionally shows the routed notice in the managed frame.
   test('folds streamed tool output into the tool panel instead of leaking raw stdout', async ({
     terminal,
   }) => {
     await expect(terminal.getByText('ready to chat')).toBeVisible();
 
-    // Turn 1 (collapsed default): the turn completes; the output body is folded but hidden.
+    // Turn 1 (collapsed default): summary with inline params + the live-output preview
+    // (TUI-C30 — previously the body was hidden until expanded); the notice stays hidden.
     terminal.write('go');
     await expect(terminal.getByText('> go')).toBeVisible();
     terminal.submit();
-    await expect(terminal.getByText('run_shell_command', { full: true })).toBeVisible();
+    await expect(
+      terminal.getByText('run_shell_command(command=ls -la)', { full: true })
+    ).toBeVisible();
     await expect(terminal.getByText('Listed the files.', { full: true })).toBeVisible();
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
-    await expect(terminal.getByText('live-output-marker-line')).not.toBeVisible();
+    // strict:false — the marker can legitimately sit in the buffer twice (the committed panel
+    // plus a stale pre-commit live frame scrolled into the buffer history).
+    await expect(
+      terminal.getByText('live-output-marker-line', { full: true, strict: false })
+    ).toBeVisible();
+    await expect(terminal.getByText('Executing run_shell_command')).not.toBeVisible();
 
     // Expand tool detail, then run turn 2: the routed notice + child stdout render in-panel.
     terminal.write('/tools');
@@ -158,8 +172,68 @@ test.describe('gth chat TUI — live tool output in the managed frame (tool-outp
     terminal.write('again');
     await expect(terminal.getByText('> again')).toBeVisible();
     terminal.submit();
-    await expect(terminal.getByText('Executing run_shell_command: ls -la')).toBeVisible();
-    await expect(terminal.getByText('live-output-marker-line', { full: true })).toBeVisible();
+    await expect(
+      terminal.getByText('Executing run_shell_command: ls -la', { strict: false })
+    ).toBeVisible();
+    await expect(
+      terminal.getByText('live-output-marker-line', { full: true, strict: false })
+    ).toBeVisible();
+    await expect(terminal.getByText('chat  ·  turns: 2  ·  ready')).toBeVisible();
+  });
+});
+
+test.describe('gth chat TUI — TUI-C30 tool preview + diff (tool-preview fixture)', () => {
+  test.use({
+    program: { file: 'node', args: [cli, 'chat', '--tui'] },
+    env: envFor('tool-preview.json'),
+    columns: 100,
+    rows: 40,
+  });
+
+  // The TUI-C30 acceptance surface, end-to-end in a real PTY: a collapsed call shows
+  // `name(shortened-params)` + up to the canonical 10 greyed output lines with an overflow
+  // marker (beyond-cap lines stay hidden), and an edit_file call renders as an add/remove diff
+  // derived from its args instead of a raw args/output dump.
+  test('shows inline params, the capped 10-line preview and an edit_file diff', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    // Turn 1: read_file with a 12-line result — preview head + overflow marker, cap enforced.
+    terminal.write('go');
+    await expect(terminal.getByText('> go')).toBeVisible();
+    terminal.submit();
+    // strict:false on content lines — a stale pre-commit live frame can leave a second copy in
+    // the buffer history; at least one visible occurrence is what matters.
+    await expect(
+      terminal.getByText('read_file(path=notes/example.txt)', { full: true, strict: false })
+    ).toBeVisible();
+    await expect(
+      terminal.getByText('preview-line-01', { full: true, strict: false })
+    ).toBeVisible();
+    await expect(
+      terminal.getByText('preview-line-10', { full: true, strict: false })
+    ).toBeVisible();
+    await expect(
+      terminal.getByText('(+2 more lines)', { full: true, strict: false })
+    ).toBeVisible();
+    await expect(terminal.getByText('preview-line-12', { full: true })).not.toBeVisible();
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+
+    // Turn 2: edit_file renders the change as a diff (removed then added), params inline
+    // (the summary elides the edits payload with a trailing `, …`).
+    terminal.write('next');
+    await expect(terminal.getByText('> next')).toBeVisible();
+    terminal.submit();
+    await expect(
+      terminal.getByText('edit_file(path=src/answer.ts,', { full: true, strict: false })
+    ).toBeVisible();
+    await expect(
+      terminal.getByText('- const answer = 41;', { full: true, strict: false })
+    ).toBeVisible();
+    await expect(
+      terminal.getByText('+ const answer = 42;', { full: true, strict: false })
+    ).toBeVisible();
     await expect(terminal.getByText('chat  ·  turns: 2  ·  ready')).toBeVisible();
   });
 });

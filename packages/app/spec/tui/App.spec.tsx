@@ -368,9 +368,18 @@ describe('tui <App>', () => {
     stdin.write('\r');
     await vi.waitFor(() => expect(lastFrame()).toContain('worker'));
 
+    // TUI-C30: the transcript's tool panel now previews the first result lines too, so scope
+    // the scroll assertions to the debug-panel region of the frame (below its banner) — the
+    // transcript preview above must not satisfy or break them.
+    const panelOf = (frame: string | undefined): string => {
+      const f = frame ?? '';
+      const at = f.indexOf('Debug panel: shown');
+      return at === -1 ? f : f.slice(at);
+    };
+
     // Early lines visible, later lines clipped by the bounded viewport.
-    expect(lastFrame()).toContain('line-0');
-    expect(lastFrame()).not.toContain('line-30');
+    expect(panelOf(lastFrame())).toContain('line-0');
+    expect(panelOf(lastFrame())).not.toContain('line-30');
 
     // Focus the panel (Tab), then scroll down two pages (viewport=8, step=7 → offset 14).
     stdin.write(TAB);
@@ -379,14 +388,14 @@ describe('tui <App>', () => {
     stdin.write(PAGE_DOWN);
 
     await vi.waitFor(() => {
-      const f = lastFrame() ?? '';
+      const f = panelOf(lastFrame());
       expect(f).toContain('line-12'); // a later line is now in view
       expect(f).not.toContain('line-0'); // the top scrolled out (offset moved past it)
     });
 
     // Scroll back up to the top.
     for (let i = 0; i < 5; i++) stdin.write(PAGE_UP);
-    await vi.waitFor(() => expect(lastFrame()).toContain('line-0'));
+    await vi.waitFor(() => expect(panelOf(lastFrame())).toContain('line-0'));
 
     unmount();
   });
@@ -412,22 +421,30 @@ describe('tui <App>', () => {
     stdin.write('\r');
     await vi.waitFor(() => expect(lastFrame()).toContain('worker'));
 
+    // TUI-C30: scope assertions to the debug-panel region — the transcript's tool panel now
+    // previews the same leading result lines, which must not satisfy or break them.
+    const panelOf = (frame: string | undefined): string => {
+      const f = frame ?? '';
+      const at = f.indexOf('Debug panel: shown');
+      return at === -1 ? f : f.slice(at);
+    };
+
     // The hint advertises the arrows as the scroll keys.
     stdin.write(TAB);
     await vi.waitFor(() => expect(lastFrame()).toContain('↑/↓: scroll'));
 
     // Top of the list visible. Arrow-down a few lines: the top line scrolls out one at a time.
-    expect(lastFrame()).toContain('line-0');
+    expect(panelOf(lastFrame())).toContain('line-0');
     for (let i = 0; i < 3; i++) stdin.write(ARROW_DOWN);
     await vi.waitFor(() => {
-      const f = lastFrame() ?? '';
+      const f = panelOf(lastFrame());
       expect(f).not.toContain('line-0'); // top scrolled out by three single-line steps
       expect(f).toContain('line-3'); // new top line
     });
 
     // Arrow-up returns toward the top one line at a time.
     for (let i = 0; i < 3; i++) stdin.write(ARROW_UP);
-    await vi.waitFor(() => expect(lastFrame()).toContain('line-0'));
+    await vi.waitFor(() => expect(panelOf(lastFrame())).toContain('line-0'));
 
     unmount();
   });
@@ -965,13 +982,19 @@ describe('tui <App>', () => {
 
   it('Ctrl+T toggles tool-call detail while a turn is streaming', async () => {
     const CTRL_T = '\x14'; // Ctrl+T control byte
+    // TUI-C30: collapsed panels now PREVIEW the first 10 output lines inline, so the toggle is
+    // proven on body content beyond the canonical cap (line 12 hidden collapsed, shown expanded).
+    const longBody = Array.from(
+      { length: 12 },
+      (_, i) => `body-${String(i + 1).padStart(2, '0')}`
+    ).join('\n');
     // Agent that streams a tool result then blocks, so the turn stays running for the toggle.
     const agent: TuiAgent = {
       async *runTurn(_input, signal) {
         yield { type: 'tool_start', id: 't1', name: 'read_file' };
         yield { type: 'tool_args', id: 't1', delta: '{"path":"live.ts"}' };
         yield { type: 'tool_end', id: 't1' };
-        yield { type: 'tool_result', id: 't1', content: 'live-body' };
+        yield { type: 'tool_result', id: 't1', content: longBody };
         yield { type: 'text', delta: 'working' };
         await new Promise<void>((resolve) => {
           if (signal.aborted) return resolve();
@@ -983,16 +1006,18 @@ describe('tui <App>', () => {
       <App {...baseProps} agent={agent} initialMessage="go" />
     );
 
-    // Live (running) tool call: collapsed summary, body hidden.
+    // Live (running) tool call: collapsed summary with inline params + capped preview.
     await vi.waitFor(() => {
       const f = lastFrame() ?? '';
-      expect(f).toContain('read_file');
-      expect(f).not.toContain('live-body');
+      expect(f).toContain('read_file(path=live.ts)');
+      expect(f).toContain('body-01'); // preview head visible without expanding
+      expect(f).toContain('(+2 more lines)'); // overflow marker at the canonical cap
+      expect(f).not.toContain('body-12'); // beyond-cap content hidden while collapsed
     });
 
-    // Ctrl+T while running expands the live tool's body.
+    // Ctrl+T while running expands the live tool's full body.
     stdin.write(CTRL_T);
-    await vi.waitFor(() => expect(lastFrame()).toContain('live-body'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('body-12'));
 
     stdin.write(String.fromCharCode(27)); // Esc to end the run cleanly
     unmount();

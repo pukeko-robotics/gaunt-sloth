@@ -104,16 +104,33 @@ On interactive launch (**TTY only**), bump the screen with the same `viewportBum
 session opens at a clean top while preserving anything already in the user's scrollback. Do not bump
 in non-TTY / piped contexts.
 
-## Tool-call panels (DL-2 progressive disclosure)
+## Tool-call panels (DL-2 progressive disclosure, DL-4 transparency)
 
-Tool calls render as **collapsible panels** (`tui/components/LiveTurn.tsx`):
+Tool calls render as **collapsible panels** (`tui/components/LiveTurn.tsx`), with the per-tool
+rendering supplied by the **surface-agnostic tool-display registry** (TUI-C30,
+`@gaunt-sloth/core/core/toolDisplay.js`) that the plain surface shares (DL-6 consistency):
 
-- **Collapsed by default:** one summary line — caret (`▸`/`▾`) + status glyph + tool name + status
-  label. Status semantics: `⋯ running` (yellow), `✓ done` (magenta), `✗ error` (red) when the
-  result text looks like an error. The transcript stays readable.
+- **The call line carries the params inline, shortened** — `▸ ✓ 📁 read_file(path=README.md)
+  [done]`: caret (`▸`/`▾`) + status glyph + registry glyph + `name(arg=val, …)`. Values are
+  whitespace-collapsed, per-value truncated with `…`, the whole summary capped, and
+  **secret-redacted** via the GS2-47 `redactSecrets` lineage — never a raw JSON dump (DL-4
+  without noise). Status semantics: `⋯ running` (yellow), `✓ done` (magenta), `✗ error` (red),
+  driven by the real `isError` signal (TUI-C7), never sniffed from text.
+- **Collapsed panels preview the output inline (TUI-C30).** Up to the **canonical 10 lines** of
+  the tool's output render as greyed/dim text directly below the call line, with a
+  `… (+N more lines)` overflow marker — the head of the story is inspectable without expanding
+  (DL-2 with a transparent default; DL-10: a hard cap keeps long outputs cheap). The 10-line cap
+  is the ONLY preview length anywhere (both surfaces); it is a render-time cap, separate from the
+  model-facing EXT-9/OutputBuffer caps.
+- **`write_file`/`edit_file` render as a diff, not a dump.** The change is derived from the tool's
+  args — added lines green with a `+` prefix, removed lines red with `-` (DL-8 colour semantics);
+  the prefixes keep the diff readable on monochrome terminals (DL-7).
 - **Expand on demand:** `/tools` toggles detail (it is `availableDuringRun`, so it works idle **and**
   mid-turn); **`Ctrl+T`** is the mid-turn keyboard shortcut for the same toggle. Expanded panels show
-  the streamed `args` and the result body.
+  the FULL body: the raw streamed `args`, the routed `🔧 Executing …` notice (expanded-only chrome,
+  kept off the collapsed preview), and the uncapped output/result — **deduped** for shell-shaped
+  calls whose result's `<COMMAND_OUTPUT>` body repeats the live output (the live output renders
+  once, plus the closing status line).
 - **Honest limitation — committed turns are frozen.** Toggling tool detail only affects the **live
   and future turns**. Committed turns live in Ink's `<Static>` and never re-fold, so an already-
   rendered turn won't retro-expand. The notice copy says exactly this ("Applies to new turns").
@@ -126,11 +143,20 @@ Tool calls render as **collapsible panels** (`tui/components/LiveTurn.tsx`):
   tool's streamed child stdout/stderr (and its `🔧 Executing …` notice) is routed through the
   tool-output channel as typed `tool_output` events and folded into the call's panel — never
   written to raw `process.stdout`, which would print out of order above the agent message, corrupt
-  Ink's frame, and vanish on re-render. In the panel it is part of the expandable detail body
-  (DL-2: collapsed by default, above the final result when expanded) and, living in the
-  view-model, it survives re-renders. Non-TUI surfaces keep the historical raw-stdout streaming
-  (DL-5 respect the host). Richer per-tool output rendering (previews, caps, formatters) is
-  TUI-C30's scope.
+  Ink's frame, and vanish on re-render. Living in the view-model (`output`, with the notice on the
+  separate `notice` field), it survives re-renders and feeds the collapsed preview live.
+
+**The plain (no-TUI) surface gets the equivalent compact indication (TUI-C30, DL-6).** On
+`--no-tui`/piped/single-shot runs, when a tool call completes,
+`core/plainToolIndication.ts` prints `✓ 📁 read_file(path=README.md)` + the SAME 10-line greyed
+preview (and the same args-derived diff colouring for `write_file`/`edit_file`) built from the
+same registry. Stream discipline: it is emitted at **INFO level** on stdout — the same
+`consoleLevel` gate and session-log treatment as the historical `📁`/`🔧` tool notices, so
+scripted consumers that silence INFO chatter silence it too. Colour only on a colour-enabled
+TTY; **non-TTY/piped output degrades to clean monochrome** with `+`/`-` diff prefixes intact
+(DL-7). Shell-shaped results (whose live output already streamed raw via the tool-output
+channel's default sink) show only the closing status line — never a repeat of output the user
+just watched.
 
 ## Status lines in the TUI (DL-2, DL-10)
 
