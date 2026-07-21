@@ -19,6 +19,14 @@ export interface ToolCallViewModel {
   /** Accumulated `tool_args` deltas (raw JSON text as streamed). */
   argsText: string;
   status: 'running' | 'done';
+  /**
+   * TUI-C17 — accumulated LIVE output streamed while the tool executed (`tool_output` events:
+   * the "🔧 Executing …" notice, then verbatim child stdout/stderr chunks, in arrival order).
+   * Distinct from `result` (the final model-facing tool result): this is what the child printed
+   * as it ran. Living here (React state, not ephemeral stdout) is what makes it survive
+   * re-renders; TUI-C30 consumes it for richer per-tool output previews.
+   */
+  output?: string;
   /** Present once a `tool_result` arrives. */
   result?: string;
   /**
@@ -117,6 +125,31 @@ export function foldEvents(state: TurnViewModel, event: AgentStreamEvent): TurnV
           isError: event.isError,
         })),
       };
+    case 'tool_output': {
+      // TUI-C17 — live output streamed while the tool executes. Chunks normally arrive BEFORE the
+      // call's `tool_start` (the agent stream only flushes tool_start when the round's ToolMessage
+      // lands), so upsertTool's placeholder path is the common case: seed the name from the event
+      // so the panel is labelled while running. The notice has no trailing newline of its own
+      // (raw-console framing is the headless sink's concern), so terminate its line here.
+      // Without an id (defensive: the invoking framework supplied no tool call), fall back to the
+      // most recent running call with the same name, else a synthetic per-name bucket — output is
+      // never silently dropped (mirrors the defensive posture above).
+      const fallbackId =
+        [...state.toolCalls]
+          .reverse()
+          .find((tc) => tc.name === event.name && tc.status === 'running')?.id ??
+        `${event.name}#live`;
+      const id = event.id ?? fallbackId;
+      const addition = event.isNotice ? `${event.chunk}\n` : event.chunk;
+      return {
+        ...state,
+        toolCalls: upsertTool(state.toolCalls, id, (tc) => ({
+          ...tc,
+          name: tc.name || event.name,
+          output: (tc.output ?? '') + addition,
+        })),
+      };
+    }
     default: {
       // Exhaustiveness guard: a new AgentStreamEvent variant fails the build here.
       const _never: never = event;

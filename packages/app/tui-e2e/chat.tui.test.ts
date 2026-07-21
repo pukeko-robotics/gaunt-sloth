@@ -123,6 +123,47 @@ test.describe('gth chat TUI — markdown + collapsible tool calls (markdown fixt
   });
 });
 
+test.describe('gth chat TUI — live tool output in the managed frame (tool-output fixture, TUI-C17)', () => {
+  test.use({
+    program: { file: 'node', args: [cli, 'chat', '--tui'] },
+    env: envFor('tool-output.json'),
+    columns: 100,
+    rows: 30,
+  });
+
+  // A custom/dev tool's streamed stdout arrives as `tool_output` events and renders INSIDE the
+  // tool-call panel (folded into the view-model), not as raw out-of-order stdout above the
+  // message. Collapsed by default it stays hidden (DL-2); after /tools the next turn shows the
+  // routed notice + the child's output lines in the managed frame.
+  test('folds streamed tool output into the tool panel instead of leaking raw stdout', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    // Turn 1 (collapsed default): the turn completes; the output body is folded but hidden.
+    terminal.write('go');
+    await expect(terminal.getByText('> go')).toBeVisible();
+    terminal.submit();
+    await expect(terminal.getByText('run_shell_command', { full: true })).toBeVisible();
+    await expect(terminal.getByText('Listed the files.', { full: true })).toBeVisible();
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+    await expect(terminal.getByText('live-output-marker-line')).not.toBeVisible();
+
+    // Expand tool detail, then run turn 2: the routed notice + child stdout render in-panel.
+    terminal.write('/tools');
+    await expect(terminal.getByText('> /tools')).toBeVisible();
+    terminal.submit();
+    await expect(terminal.getByText('Tool details: on')).toBeVisible();
+
+    terminal.write('again');
+    await expect(terminal.getByText('> again')).toBeVisible();
+    terminal.submit();
+    await expect(terminal.getByText('Executing run_shell_command: ls -la')).toBeVisible();
+    await expect(terminal.getByText('live-output-marker-line', { full: true })).toBeVisible();
+    await expect(terminal.getByText('chat  ·  turns: 2  ·  ready')).toBeVisible();
+  });
+});
+
 test.describe('gth chat TUI — slow fixture (interrupt)', () => {
   test.use({
     program: { file: 'node', args: [cli, 'chat', '--tui'] },

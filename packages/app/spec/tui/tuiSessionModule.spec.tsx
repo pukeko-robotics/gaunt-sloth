@@ -167,4 +167,50 @@ describe('createTuiSession — launch bump (TUI-C13)', () => {
     // The session still mounts the app — only the cosmetic bump is suppressed.
     expect(renderMock).toHaveBeenCalledTimes(1);
   });
+
+  it('TUI-C17: runTurn merges live tool output emitted mid-run into the event stream', async () => {
+    // The real toolOutputChannel is deliberately NOT mocked here: this proves the session wires
+    // runTurn through mergeToolOutputIntoEvents, so a toolkit's emitToolOutput during a run
+    // surfaces as a typed `tool_output` event in the stream the <App> folds — instead of hitting
+    // the raw stdout default sink and corrupting Ink's frame.
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+    const { GthAgentRunner } = await import('@gaunt-sloth/core/core/GthAgentRunner.js');
+    const { emitToolOutput } = await import('@gaunt-sloth/core/core/toolOutputChannel.js');
+
+    (
+      GthAgentRunner.prototype.processMessagesWithEvents as ReturnType<typeof vi.fn>
+    ).mockImplementation(async function* () {
+      yield { type: 'text', delta: 'running the tool' };
+      // A toolkit streaming child output while the graph run is in flight.
+      emitToolOutput({
+        toolCallId: 'c1',
+        toolName: 'run_tests',
+        kind: 'output',
+        text: 'suite green\n',
+      });
+      yield { type: 'tool_result', id: 'c1', content: 'done' };
+    });
+
+    await createTuiSession(sessionConfig, overrides);
+
+    const appElement = renderMock.mock.calls[0][0] as {
+      props: {
+        agent: {
+          runTurn: (input: string, signal: AbortSignal) => AsyncGenerator<unknown>;
+        };
+      };
+    };
+    const events: unknown[] = [];
+    for await (const event of appElement.props.agent.runTurn('go', new AbortController().signal)) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: 'text', delta: 'running the tool' },
+      { type: 'tool_output', id: 'c1', name: 'run_tests', chunk: 'suite green\n' },
+      { type: 'tool_result', id: 'c1', content: 'done' },
+    ]);
+    // Nothing leaked to raw stdout while the turn's subscription was live.
+    expect(systemUtilsMock.stdout.write).not.toHaveBeenCalledWith('suite green\n');
+  });
 });

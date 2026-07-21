@@ -43,7 +43,7 @@ function ToolCallPanel({
   // detail to expand. Expanded shows ▾ and the args/result body. The Ctrl+T hint only shows
   // on the live turn — committed turns are frozen in Ink's <Static> and cannot re-fold.
   const caret = expanded ? '▾' : '▸';
-  const hasDetail = !!tc.argsText || !!tc.result;
+  const hasDetail = !!tc.argsText || !!tc.result || !!tc.output;
   return (
     <Box flexDirection="column">
       <Text color={color}>
@@ -55,6 +55,19 @@ function ToolCallPanel({
         <Box>
           <Text dimColor>{'    args: '}</Text>
           <Text dimColor>{tc.argsText}</Text>
+        </Box>
+      ) : null}
+      {/* TUI-C17 — live streamed output (notice + child stdout/stderr), shown above the final
+          result like the rest of the detail body. Plain dim lines only — the richer per-tool
+          rendering (previews, caps, formatters) is TUI-C30. A single trailing newline is
+          trimmed so the block doesn't end on a phantom empty line. */}
+      {expanded && tc.output ? (
+        <Box flexDirection="column">
+          {tc.output.replace(/\n$/, '').split('\n').map((line, i) => (
+            <Text key={i} dimColor>
+              {`    ${line}`}
+            </Text>
+          ))}
         </Box>
       ) : null}
       {expanded && tc.result ? (

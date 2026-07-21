@@ -918,6 +918,51 @@ describe('tui <App>', () => {
     unmount();
   });
 
+  it('folds live tool_output events into the turn and renders them in the managed frame (TUI-C17)', async () => {
+    // The plumbing acceptance: a custom/dev tool's streamed stdout arrives as `tool_output`
+    // events (not raw process.stdout), lands in the TurnViewModel via foldEvents, and renders
+    // inside the tool panel — surviving the turn's commit into the transcript (React state,
+    // not ephemeral stdout). Chunks arrive BEFORE tool_start, as they do live.
+    const agent = scriptedAgent([
+      {
+        type: 'tool_output',
+        id: 't1',
+        name: 'run_shell_command',
+        chunk: '🔧 Executing run_shell_command: ls -la',
+        isNotice: true,
+      },
+      { type: 'tool_output', id: 't1', name: 'run_shell_command', chunk: 'total-12-marker\n' },
+      { type: 'tool_start', id: 't1', name: 'run_shell_command' },
+      { type: 'tool_args', id: 't1', delta: '{"command":"ls -la"}' },
+      { type: 'tool_end', id: 't1' },
+      { type: 'tool_result', id: 't1', content: 'shell-result-body' },
+      { type: 'text', delta: 'Listed the files.' },
+    ]);
+    const { stdin, frames, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+
+    // Expand tool detail first so the committed panel renders its output body.
+    stdin.write('/tools');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/tools'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Tool details: on'));
+
+    stdin.write('go');
+    await vi.waitFor(() => expect(lastFrame()).toContain('go'));
+    stdin.write('\r');
+
+    await vi.waitFor(() => {
+      const all = frames.join('\n');
+      expect(all).toContain('run_shell_command'); // the call panel
+      expect(all).toContain('🔧 Executing run_shell_command: ls -la'); // routed notice, in-frame
+      expect(all).toContain('total-12-marker'); // streamed child stdout, in-frame
+      expect(all).toContain('Listed the files.'); // assistant text after (in-order)
+    });
+
+    unmount();
+  });
+
   it('Ctrl+T toggles tool-call detail while a turn is streaming', async () => {
     const CTRL_T = '\x14'; // Ctrl+T control byte
     // Agent that streams a tool result then blocks, so the turn stays running for the toggle.
