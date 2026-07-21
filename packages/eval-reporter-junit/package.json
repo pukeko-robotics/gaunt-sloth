@@ -1,0 +1,52 @@
+{
+  "name": "@gaunt-sloth/eval-reporter-junit",
+  "version": "0.1.0",
+  "description": "JUnit XML (Ant-JUnit flavor) reporter for `gth eval` — the first member of the @gaunt-sloth/eval-reporter-* plugin family",
+  "license": "MIT",
+  "author": "Andrew Kondratev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pukeko-robotics/gaunt-sloth.git",
+    "directory": "packages/eval-reporter-junit"
+  },
+  "bugs": {
+    "url": "https://github.com/pukeko-robotics/gaunt-sloth/issues"
+  },
+  "homepage": "https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/eval-reporter-junit#readme",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "eval",
+    "junit",
+    "reporter",
+    "cli"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./*.js": "./dist/*.js"
+  },
+  "imports": {
+    "#src/*.js": "./dist/*.js"
+  },
+  "files": [
+    "./dist/*"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "peerDependencies": {
+    "@gaunt-sloth/batch": "*"
+  },
+  "devDependencies": {
+    "@gaunt-sloth/batch": "workspace:*",
+    "fast-xml-parser": "^5.0.0"
+  },
+  "publishConfig": {
+    "tag": "alpha"
+  }
+}
