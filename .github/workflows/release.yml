@@ -183,9 +183,19 @@ jobs:
           INCEPTION_API_KEY: ${{ secrets.INCEPTION_API_KEY }}
           OPEN_ROUTER_API_KEY: ${{ secrets.OPEN_ROUTER_API_KEY }}
 
+  tui-e2e:
+    name: TUI PTY e2e
+    # TUI-C28: hermetic, key-free Ink-TUI PTY suite on the full Linux + macOS + Windows
+    # matrix, run via the reusable tui-e2e.yml. Parallel with the integration-tests jobs
+    # (no data shared); all three fan out off lint-and-unit and all three gate `release`.
+    needs: lint-and-unit
+    permissions:
+      contents: read
+    uses: ./.github/workflows/tui-e2e.yml
+
   release:
     name: Ship current version, then post-bump main to next (all five)
-    needs: [integration-tests, integration-tests-platforms]
+    needs: [integration-tests, integration-tests-platforms, tui-e2e]
     runs-on: ubuntu-latest
     # Must match the Environment name in npm's Trusted Publisher config (OIDC
     # only mints a token for a job running in this exact environment).

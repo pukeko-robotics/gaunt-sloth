@@ -1,16 +1,19 @@
 name: TUI PTY e2e (it-tui)
 
-# Standalone, manually-dispatched runner for the Ink TUI's PTY-level e2e suite
-# (`@microsoft/tui-test`, packages/app/tui-e2e/, run via `pnpm run it-tui`).
+# Runner for the Ink TUI's PTY-level e2e suite (`@microsoft/tui-test`,
+# packages/app/tui-e2e/, run via `pnpm run it-tui`). The suite is hermetic and key-free
+# (drives a fixture agent, no live model / API key) and runs the full Linux + macOS +
+# Windows matrix.
 #
-# Deliberately NOT wired into unit-tests.yml or release.yml yet (OPS-14 item 4): this
-# suite is hermetic and key-free (drives a fixture agent, no live model / API key), but
-# PTY/terminal-rendering assertions are more timing-sensitive than plain unit tests, so
-# it needs to soak green across several runs before it becomes a hard release gate.
-# Until then, dispatch it by hand (or point a scheduled/other workflow at it later).
+# TUI-C28: now a RELEASE GATE. It is exposed as a reusable workflow (`workflow_call`) and
+# `release.yml` calls it before the publish job, so a TUI regression on any OS — including
+# Windows — blocks a release. `workflow_dispatch` is retained so it can still be run by
+# hand against any branch for verification. Locally it is the coordinator/subagent
+# pre-merge gate for TUI changes (`pnpm run it-tui`), documented in AGENTS.md.
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   it-tui:

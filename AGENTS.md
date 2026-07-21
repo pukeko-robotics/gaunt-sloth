@@ -165,6 +165,35 @@ turn while every unit test stayed green). It is **local-GPU-only** and **SKIPs (
 is absent, so it is safe to run anywhere; it is deliberately **not** in CI. See
 [`ollama-smoke-it/README.md`](ollama-smoke-it/README.md).
 
+### TUI PTY e2e gate (it-tui)
+
+Before merging a change that touches the **Ink TUI** (`packages/app/src/tui/**`, its slash
+commands, or the PTY e2e fixtures/tests), run the terminal-level end-to-end suite:
+
+```bash
+pnpm run it-tui
+```
+
+It drives the **real `gth chat --tui` binary in a pseudo-terminal** (`@microsoft/tui-test`,
+`packages/app/tui-e2e/`), fed by the deterministic fixture agent, so it is **hermetic and key-free**
+(no live model / API key) and catches TUI rendering / input / slash-command regressions the unit
+suite can't — e.g. a slash-command notice whose exact wording no unit test asserts (the [TUI-C28]
+class: the GS2-47 redact-by-default rewrite silently broke the `/debug-dump` e2e). It runs the same
+on Linux, macOS **and Windows**, and **Windows is a first-class cell**: `os.homedir()` reads
+`%USERPROFILE%` there and path separators / CRLF differ, so a change that is green locally can still
+fail on Windows — the Windows cell can only be proven by the CI run, not a local run.
+
+Unlike the ollama smoke, this one **is** in CI: it is a **release gate** (`release.yml` calls the
+reusable `tui-e2e.yml` over the full Linux + macOS + Windows matrix, and `release` cannot publish
+until it is green), and it is hand-dispatchable against any branch for verification:
+
+```bash
+gh workflow run tui-e2e.yml --ref <branch>   # then read the Windows cell in the run
+```
+
+Run it locally before merge; do not trust a "green" claim you did not run — re-run it yourself
+(the QA-7 lesson), and treat the Windows cell as a CI result you observe, not one you assert.
+
 ### Building and Testing
 
 ```bash

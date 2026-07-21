@@ -190,17 +190,26 @@ test.describe('gth chat TUI — debug pane `/` search (search fixture, TUI-C21)'
   });
 });
 
-test.describe('gth chat TUI — /debug-dump (GS2-46, greeting fixture)', () => {
-  // Hermetic $HOME for this describe block (QA-6): writeDebugDump()'s ensureGlobalGslothDir()
-  // resolves its archive path via `resolve(homedir(), '.gsloth')`, and Node's os.homedir()
-  // respects $HOME on POSIX — so overriding it here keeps the archive write off the real
-  // developer's home directory. One fresh tmp dir for the whole block (single test uses it),
-  // removed in afterAll.
+// Hermetic home dir for the /debug-dump blocks (QA-6): writeDebugDump()'s ensureGlobalGslothDir()
+// resolves its archive path via `resolve(homedir(), '.gsloth')`. Node's os.homedir() is
+// PLATFORM-SPLIT about which env var it honours — `$HOME` on POSIX, `%USERPROFILE%` on Windows
+// (libuv uv_os_homedir) — so redirecting the archive off the real developer/CI home requires
+// overriding BOTH. Setting the one that doesn't apply is harmless on each platform. Overriding
+// only HOME (the original QA-6 code) left os.homedir() pointing at the real profile on Windows,
+// which was TUI-C28's Windows-only failure (printed-path + fs assertions read the wrong dir);
+// it stayed masked until the GS2-47 title assertion below was corrected. Each describe gets its
+// OWN tmp home so the two blocks can run in parallel and each assert exactly one archive.
+const homeEnv = (tmpHome: string): Record<string, string | undefined> => ({
+  HOME: tmpHome,
+  USERPROFILE: tmpHome,
+});
+
+test.describe('gth chat TUI — /debug-dump default: redacted (GS2-46/GS2-47, greeting fixture)', () => {
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gth-e2e-home-'));
 
   test.use({
     program: { file: 'node', args: [cli, 'chat', '--tui'] },
-    env: { ...envFor('greeting.json'), HOME: tmpHome },
+    env: { ...envFor('greeting.json'), ...homeEnv(tmpHome) },
     // Wide enough that "Archive: <tmpHome>/.gsloth/debug-dumps/<timestamp>" never line-wraps.
     // The archive path is one unbroken token (no spaces) and tui-test's getByText joins buffer
     // rows with no separator, so a mid-token wrap would otherwise split the match across rows.
@@ -212,10 +221,12 @@ test.describe('gth chat TUI — /debug-dump (GS2-46, greeting fixture)', () => {
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
-  // GS2-46 — exercises the real archive-write path (not the fixture's "unavailable" fallback):
-  // run one turn so there's a non-empty transcript, then /debug-dump, and assert both the
-  // notice (archive path + sensitive-data warning) and the actual files written to disk.
-  test('writes an UNSANITIZED archive and prints its path + warning', async ({ terminal }) => {
+  // GS2-47 flipped `/debug-dump` to REDACT by default. Exercises the real archive-write path (not
+  // the fixture's "unavailable" fallback): run one turn so there's a non-empty transcript, then
+  // /debug-dump, and assert both the softened redacted notice and the actual files written to disk.
+  test('writes a redacted archive by default and prints its path + notice', async ({
+    terminal,
+  }) => {
     await expect(terminal.getByText('ready to chat')).toBeVisible();
 
     terminal.write('hello');
@@ -227,18 +238,19 @@ test.describe('gth chat TUI — /debug-dump (GS2-46, greeting fixture)', () => {
     await expect(terminal.getByText('> /debug-dump')).toBeVisible();
     terminal.submit();
 
-    // Notice title — stable substring, skipping the leading emoji (debugDumpNotice, slashCommands.ts).
+    // Notice title for the default (redacted) path (debugDumpNotice, slashCommands.ts).
     await expect(
-      terminal.getByText('Debug dump written — UNSANITIZED, review before sharing', { full: true })
+      terminal.getByText('Debug dump written — secrets redacted', { full: true })
     ).toBeVisible();
-    // The loud sensitive-data warning body.
+    // The softened redacted-body line.
     await expect(
-      terminal.getByText('it may include secrets: API keys, tokens, file contents, env vars.', {
-        full: true,
-      })
+      terminal.getByText(
+        'Secrets were redacted (API keys, tokens and auth headers replaced with <redacted>).',
+        { full: true }
+      )
     ).toBeVisible();
-    // The printed archive path sits under the tmp $HOME we set, not the real home directory —
-    // proof the HOME override actually took effect.
+    // The printed archive path sits under the tmp home we set, not the real home directory —
+    // proof the HOME/USERPROFILE override actually took effect (cross-platform).
     await expect(terminal.getByText(tmpHome, { full: true })).toBeVisible();
 
     // Filesystem assertion: prove the write actually happened, not just the UI text.
@@ -258,7 +270,61 @@ test.describe('gth chat TUI — /debug-dump (GS2-46, greeting fixture)', () => {
     // instead of exercising the real agent). So it legitimately exists but is empty here; just
     // assert it was written and is readable text, not that it's non-empty.
     expect(typeof fs.readFileSync(path.join(archiveDir, 'debug-log.txt'), 'utf8')).toBe('string');
-    // transcript.json actually reflects this session's turn — not just non-empty boilerplate.
+    // transcript.json actually reflects this session's turn (`hello` is user text, not a redacted
+    // secret value) — not just non-empty boilerplate.
+    const transcriptJson = fs.readFileSync(path.join(archiveDir, 'transcript.json'), 'utf8');
+    expect(transcriptJson).toContain('hello');
+  });
+});
+
+test.describe('gth chat TUI — /debug-dump --unsafe-no-redact: loud UNSANITIZED warning (GS2-47)', () => {
+  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gth-e2e-home-'));
+
+  test.use({
+    program: { file: 'node', args: [cli, 'chat', '--tui'] },
+    env: { ...envFor('greeting.json'), ...homeEnv(tmpHome) },
+    columns: 240,
+    rows: 30,
+  });
+
+  test.afterAll(() => {
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  // The opt-out path a human relies on: `--unsafe-no-redact` writes a RAW archive and MUST surface
+  // the loud, impossible-to-miss "may include secrets" warning (debugDumpNotice's warn branch).
+  test('writes a raw archive and prints the loud UNSANITIZED warning on --unsafe-no-redact', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    terminal.write('hello');
+    await expect(terminal.getByText('> hello')).toBeVisible();
+    terminal.submit();
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+
+    terminal.write('/debug-dump --unsafe-no-redact');
+    await expect(terminal.getByText('> /debug-dump --unsafe-no-redact')).toBeVisible();
+    terminal.submit();
+
+    // Notice title — stable substring, skipping the leading emoji (debugDumpNotice, slashCommands.ts).
+    await expect(
+      terminal.getByText('Debug dump written — UNSANITIZED, review before sharing', { full: true })
+    ).toBeVisible();
+    // The loud sensitive-data warning body.
+    await expect(
+      terminal.getByText('it may include secrets: API keys, tokens, file contents, env vars.', {
+        full: true,
+      })
+    ).toBeVisible();
+    // Archive path under the tmp home — cross-platform override proof.
+    await expect(terminal.getByText(tmpHome, { full: true })).toBeVisible();
+
+    // Filesystem assertion: the raw archive was actually written.
+    const dumpsDir = path.join(tmpHome, '.gsloth', 'debug-dumps');
+    const entries = fs.readdirSync(dumpsDir);
+    expect(entries.length).toBe(1);
+    const archiveDir = path.join(dumpsDir, entries[0]);
     const transcriptJson = fs.readFileSync(path.join(archiveDir, 'transcript.json'), 'utf8');
     expect(transcriptJson).toContain('hello');
   });
