@@ -26,3 +26,12 @@ export interface EvalReporter {
 /** Reporters are created per run (they may accumulate state, e.g. a JUnit doc), so the registry
  * stores factories, not instances. */
 export type EvalReporterFactory = () => EvalReporter;
+
+/** A resolved reporter paired with the name it was selected under. {@link resolveReporters} returns
+ * these (not bare {@link EvalReporter}s) so {@link driveReporters} can name WHICH reporter's hook
+ * failed in the contained-error warning — with multiple reporters real (A2: text + junit + custom),
+ * a bare "onCellResult hook failed" is ambiguous. */
+export interface NamedReporter {
+  name: string;
+  reporter: EvalReporter;
+}

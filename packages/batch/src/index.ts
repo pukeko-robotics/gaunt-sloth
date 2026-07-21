@@ -48,6 +48,19 @@ export type {
 export type { RunEvalSuiteOptions } from '#src/evalRunner.js';
 export { DEFAULT_EVAL_PASS_THRESHOLD } from '#src/evalTypes.js';
 
+// BATCH-19 — the `gth eval` reporter facility (A1 seam). These are the public plugin contract an
+// out-of-core `@gaunt-sloth/eval-reporter-*` package implements, exported from the package root so a
+// reporter package can type its factory against ONE import.
+export { resolveReporters, availableReporterNames } from '#src/reporters/registry.js';
+export { driveReporters } from '#src/reporters/drive.js';
+export { createTextReporter } from '#src/reporters/textReporter.js';
+export type {
+  EvalReporter,
+  EvalReporterFactory,
+  EvalRunContext,
+  NamedReporter,
+} from '#src/reporters/reporterTypes.js';
+
 // BATCH-3 — the `gth workflow` host: runs a local JS orchestration script that drives one or more
 // LLM calls through a small WorkflowContext.
 export { runWorkflow } from '#src/workflow/runWorkflow.js';

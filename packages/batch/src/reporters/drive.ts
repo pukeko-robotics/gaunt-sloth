@@ -1,16 +1,23 @@
 import { displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import type { EvalSuiteSummary } from '#src/evalTypes.js';
-import type { EvalReporter, EvalRunContext } from '#src/reporters/reporterTypes.js';
+import type { EvalRunContext, NamedReporter } from '#src/reporters/reporterTypes.js';
 
-/** Run one reporter hook, swallowing any error into a warning. A reporter must NEVER change the
- * eval exit code or abort the run (the exit code is `classifyEvalExit`'s job alone), so a throwing
- * hook is contained here and the run continues. */
-async function runHookQuietly(label: string, run: () => void | Promise<void>): Promise<void> {
+/** Run one reporter hook, swallowing any error (thrown OR a rejected Promise, the JUnit reporter's
+ * real failure mode) into a warning. A reporter must NEVER change the eval exit code or abort the
+ * run (the exit code is `classifyEvalExit`'s job alone), so a failing hook is contained here and the
+ * run continues. The warning names WHICH reporter's WHICH hook failed — ambiguous once multiple
+ * reporters (text + junit + custom) are real. */
+async function runHookQuietly(
+  reporterName: string,
+  hook: string,
+  run: () => void | Promise<void>
+): Promise<void> {
   try {
     await run();
   } catch (error) {
     displayWarning(
-      `eval reporter ${label} hook failed: ${error instanceof Error ? error.message : String(error)}`
+      `eval reporter "${reporterName}" ${hook} hook failed: ` +
+        (error instanceof Error ? error.message : String(error))
     );
   }
 }
@@ -27,30 +34,30 @@ async function runHookQuietly(label: string, run: () => void | Promise<void>): P
  * reproduces the former `printSummary` output byte-for-byte.
  */
 export async function driveReporters(
-  reporters: EvalReporter[],
+  reporters: NamedReporter[],
   summary: EvalSuiteSummary,
   ctx: EvalRunContext
 ): Promise<void> {
-  for (const reporter of reporters) {
+  for (const { name, reporter } of reporters) {
     const onSuiteStart = reporter.onSuiteStart;
     if (onSuiteStart) {
-      await runHookQuietly('onSuiteStart', () => onSuiteStart.call(reporter, ctx));
+      await runHookQuietly(name, 'onSuiteStart', () => onSuiteStart.call(reporter, ctx));
     }
   }
 
   for (const result of summary.cases) {
-    for (const reporter of reporters) {
+    for (const { name, reporter } of reporters) {
       const onCellResult = reporter.onCellResult;
       if (onCellResult) {
-        await runHookQuietly('onCellResult', () => onCellResult.call(reporter, result, ctx));
+        await runHookQuietly(name, 'onCellResult', () => onCellResult.call(reporter, result, ctx));
       }
     }
   }
 
-  for (const reporter of reporters) {
+  for (const { name, reporter } of reporters) {
     const onSuiteEnd = reporter.onSuiteEnd;
     if (onSuiteEnd) {
-      await runHookQuietly('onSuiteEnd', () => onSuiteEnd.call(reporter, summary, ctx));
+      await runHookQuietly(name, 'onSuiteEnd', () => onSuiteEnd.call(reporter, summary, ctx));
     }
   }
 }
