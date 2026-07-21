@@ -33,8 +33,9 @@ function resolveWorkspaceImports() {
       if (id.startsWith('#src/')) {
         const relative = id.replace('#src/', '').replace(/\.js$/, '');
 
-        // Try each package in dependency order
-        for (const pkg of ['core', 'agent', 'review', 'batch', 'app']) {
+        // Try each package in dependency order (eval-reporter-junit last — its files have unique
+        // names, so listing it after the core packages never shadows a shared name like `index`).
+        for (const pkg of ['core', 'agent', 'review', 'batch', 'app', 'eval-reporter-junit']) {
           const found = resolveSource(resolve(__dirname, `packages/${pkg}/src/${relative}`));
           if (found) {
             // Skip re-export stubs (files that just re-export from @gaunt-sloth/)
@@ -51,7 +52,9 @@ function resolveWorkspaceImports() {
       }
 
       // Handle @gaunt-sloth/X/path.js -> packages/X/src/path.{ts,tsx}
-      const scopedMatch = id.match(/^@gaunt-sloth\/(core|agent|review|batch)\/(.+)\.js$/);
+      const scopedMatch = id.match(
+        /^@gaunt-sloth\/(core|agent|review|batch|eval-reporter-junit)\/(.+)\.js$/
+      );
       if (scopedMatch) {
         const [, pkg, path] = scopedMatch;
         return resolveSource(resolve(__dirname, `packages/${pkg}/src/${path}`));

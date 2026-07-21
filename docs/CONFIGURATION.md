@@ -391,6 +391,33 @@ Redaction is a best-effort, pattern-based safety net — review a dump before sh
 this setting. See [Debug Dump → Redaction](debug-dump.md#redaction) for exactly what it does and does
 not cover.
 
+## Custom Eval Reporters (reporters)
+
+`gth eval` renders a run through one or more reporters, selected with `--reporter <names>` (built-in:
+`text`, the default console summary, and `junit`, which writes a JUnit `results.xml`). The always-on
+`results.json` + per-cell JSON are written regardless of which reporters are selected.
+
+`reporters` registers your OWN reporters. Each entry maps a name (the one you then pass to
+`--reporter`) to a module path, resolved relative to the project directory, whose **default export**
+is a reporter factory (`() => EvalReporter`):
+
+```json
+{
+  "reporters": {
+    "my-report": "./eval/my-report-reporter.mjs"
+  }
+}
+```
+
+```bash
+gth eval eval/js-basics.yaml --reporter my-report
+```
+
+A config reporter is loaded through the same seam the built-ins use, so a name here can also override
+a built-in of the same name. A missing file, a failed import, or a default export that isn't a
+function is a harness error (`gth eval` exits 2). It runs as trusted code — it is your own config,
+which already executes arbitrary JS.
+
 ## Configuration Object
 
 Refer to documentation site for [Configuration Interface](https://gauntsloth.app/docs/interfaces/config.GthConfig.html)

@@ -369,6 +369,16 @@ export interface GthConfig {
   output?: {
     header?: boolean;
   };
+  /**
+   * BATCH-19 — custom `gth eval` reporters, keyed by the NAME they are selected under
+   * (`gth eval … --reporter <name>`). Each value is a MODULE PATH, resolved relative to the project
+   * dir, whose **default export** is an `EvalReporterFactory` (`() => EvalReporter`). Loaded and
+   * registered through the SAME seam the bundled reporters (`text`, `junit`) use, so a config
+   * reporter can also override a built-in of the same name (config wins). A missing file, a failed
+   * import, or a non-function default export is a hard error (the eval harness exits 2). Trusted:
+   * it is the user's own config, which already executes arbitrary JS.
+   */
+  reporters?: Record<string, string>;
 }
 
 /**

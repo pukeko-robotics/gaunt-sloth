@@ -1,7 +1,8 @@
 import { Command } from 'commander';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 // Make randomUUID deterministic across this spec (used by wrapContent block ids)
@@ -76,6 +77,9 @@ const fileUtilsMock = {
   readFileFromProjectDir: vi.fn(),
   getGslothFilePath: vi.fn((name: string) => join(defaultOutputRoot, name)),
   fileSafeLocalDate: vi.fn(() => '2026-07-18_00-00-00'),
+  // BATCH-19: loads a config-declared custom reporter module. Real implementation supplied by the
+  // config-reporter test; never called by tests that don't set `config.reporters`.
+  importExternalFile: vi.fn(),
 };
 vi.mock('@gaunt-sloth/core/utils/fileUtils.js', () => fileUtilsMock);
 
@@ -89,6 +93,8 @@ vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => consoleUtilsMock);
 
 const systemUtilsMock = {
   setExitCode: vi.fn(),
+  // BATCH-19: the project-dir base a config-relative reporter module path resolves against.
+  getProjectDir: vi.fn(() => process.cwd()),
 };
 vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => systemUtilsMock);
 
@@ -961,6 +967,449 @@ cases:
         expect.stringContaining('requires an `agent_id`')
       );
       expect(agUiRunnerMock.buildAgUiRunCell).not.toHaveBeenCalled();
+    });
+  });
+
+  // BATCH-19 A2/A3: `--reporter` selection, the bundled JUnit reporter, and config-declared custom
+  // reporters. The always-on results.json + per-cell JSON are unchanged; reporters render IN ADDITION.
+  describe('reporter selection (--reporter / config.reporters)', () => {
+    it('default (no --reporter) prints the text summary + writes results.json, but NO results.xml', async () => {
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-o', outputDir]);
+
+      expect(existsSync(join(outputDir, 'results.json'))).toBe(true);
+      expect(existsSync(join(outputDir, 'results.xml'))).toBe(false);
+      expect(consoleUtilsMock.display).toHaveBeenCalledWith('PASS  greets-politely');
+    });
+
+    it('--reporter junit writes results.xml IN ADDITION to the always-on results.json (JUnit only, no text)', async () => {
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'eval',
+        'suite.yaml',
+        '-o',
+        outputDir,
+        '--reporter',
+        'junit',
+      ]);
+
+      expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+
+      // Always-on JSON is still written.
+      const resultsJson = JSON.parse(readFileSync(join(outputDir, 'results.json'), 'utf8'));
+      expect(resultsJson).toMatchObject({ total: 1, passed: 1, failed: 0 });
+
+      // The JUnit reporter added results.xml (suite stem = basename('suite.yaml') sans ext).
+      const xml = readFileSync(join(outputDir, 'results.xml'), 'utf8');
+      expect(xml).toContain('<?xml');
+      expect(xml).toContain('<testsuites name="suite"');
+      expect(xml).toContain('classname="suite" name="greets-politely"');
+
+      // --reporter REPLACES the default set, so `junit` alone silences the text reporter.
+      expect(consoleUtilsMock.display).not.toHaveBeenCalledWith('PASS  greets-politely');
+      expect(consoleUtilsMock.displaySuccess).not.toHaveBeenCalledWith(
+        expect.stringContaining('EVAL RESULT')
+      );
+    });
+
+    it('--reporter text,junit runs BOTH (text summary + results.xml)', async () => {
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'eval',
+        'suite.yaml',
+        '-o',
+        outputDir,
+        '--reporter',
+        'text,junit',
+      ]);
+
+      expect(existsSync(join(outputDir, 'results.xml'))).toBe(true);
+      expect(consoleUtilsMock.display).toHaveBeenCalledWith('PASS  greets-politely');
+    });
+
+    it('an unknown --reporter name exits 2 (harness error) naming the available reporters, running NOTHING', async () => {
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'eval',
+        'suite.yaml',
+        '-o',
+        outputDir,
+        '--reporter',
+        'bogus',
+      ]);
+
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+      // Fail-fast: nothing ran and no partial output was written.
+      expect(runSingleShot).not.toHaveBeenCalled();
+      expect(existsSync(join(outputDir, 'results.json'))).toBe(false);
+      expect(existsSync(join(outputDir, 'results.xml'))).toBe(false);
+      // The message quotes the bad name and lists the available reporters (text + bundled junit).
+      const errorArgs = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
+      expect(errorArgs).toContain('unknown reporter "bogus"');
+      expect(errorArgs).toContain('text');
+      expect(errorArgs).toContain('junit');
+    });
+
+    it('drives a config-declared custom reporter over the same seam (config.reporters + --reporter mine)', async () => {
+      const fixturesDir = fileURLToPath(new URL('./fixtures', import.meta.url));
+      // The module path is RESOLVED RELATIVE TO THE PROJECT DIR — set the project dir to the
+      // fixtures dir and reference the module by a project-relative path.
+      systemUtilsMock.getProjectDir.mockReturnValue(fixturesDir);
+      fileUtilsMock.importExternalFile.mockImplementation(
+        (p: string) => import(pathToFileURL(p).href)
+      );
+      configMock.initConfig.mockResolvedValue({
+        ...mockConfig,
+        llm: { ...mockConfig.llm },
+        reporters: { mine: './customEvalReporter.mjs' },
+      });
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'eval',
+        'suite.yaml',
+        '-o',
+        outputDir,
+        '--reporter',
+        'mine',
+      ]);
+
+      expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+      // Always-on JSON still written.
+      expect(existsSync(join(outputDir, 'results.json'))).toBe(true);
+      // The config reporter registered and was driven over the run's cells (proof it saw them).
+      const marker = JSON.parse(readFileSync(join(outputDir, 'mine-reporter.json'), 'utf8'));
+      expect(marker).toEqual({ observed: ['greets-politely'], total: 1 });
+      // `mine` alone: no text summary, no JUnit results.xml.
+      expect(consoleUtilsMock.display).not.toHaveBeenCalledWith('PASS  greets-politely');
+      expect(existsSync(join(outputDir, 'results.xml'))).toBe(false);
+    });
+
+    it('a config reporter whose module fails to load is a harness error (exit 2)', async () => {
+      systemUtilsMock.getProjectDir.mockReturnValue(process.cwd());
+      fileUtilsMock.importExternalFile.mockRejectedValue(new Error('ENOENT: no such file'));
+      configMock.initConfig.mockResolvedValue({
+        ...mockConfig,
+        llm: { ...mockConfig.llm },
+        reporters: { broken: './does-not-exist.mjs' },
+      });
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-o', outputDir]);
+
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+      expect(runSingleShot).not.toHaveBeenCalled();
+      const errorArgs = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
+      expect(errorArgs).toContain('broken');
+    });
+  });
+
+  // BATCH-19 Task B, Deliverable 1: the `eval` command takes MANY suites (files and/or directories)
+  // with ONE aggregate three-way exit. A single resolved suite writes DIRECTLY into the output dir
+  // (byte-for-byte with the single-suite contract, covered by the tests above); multiple suites each
+  // write into their own `<output>/<suiteStem>/` subdir, a harness error in ANY suite dominates → 2.
+  describe('multi-suite / directory input (BATCH-19 Task B)', () => {
+    const PASS_SUITE = `
+target: { type: gth-agent }
+cases:
+  - id: pass-case
+    prompt: "greet"
+    must_contain: ["hello"]
+`;
+    const FAIL_SUITE = `
+target: { type: gth-agent }
+cases:
+  - id: fail-case
+    prompt: "greet"
+    must_contain: ["goodbye"]
+`;
+
+    let suitesRoot: string;
+    beforeEach(() => {
+      // A real on-disk directory the RESOLVER (statSync/readdirSync — not mocked) can enumerate.
+      suitesRoot = mkdtempSync(join(tmpdir(), 'gth-eval-suites-'));
+    });
+    afterEach(() => {
+      rmSync(suitesRoot, { recursive: true, force: true });
+    });
+
+    it('runs TWO file args with per-suite subdirs and ONE aggregate exit (1 when a cell fails)', async () => {
+      // The SUT answer contains "hello" → the pass suite PASSes, the fail suite (wants "goodbye") FAILs.
+      runSingleShot.mockResolvedValue({ ok: true, answer: 'hello there', tools: [] });
+      fileUtilsMock.readFileFromProjectDir.mockImplementation((file: string) => {
+        if (file === 'pass.yaml') return PASS_SUITE;
+        if (file === 'fail.yaml') return FAIL_SUITE;
+        throw new Error(`unexpected file read: ${file}`);
+      });
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'pass.yaml', 'fail.yaml', '-o', outputDir]);
+
+      // Each suite wrote its OWN results.json into its OWN `<output>/<stem>/` subdir (never clobbering).
+      const passJson = JSON.parse(readFileSync(join(outputDir, 'pass', 'results.json'), 'utf8'));
+      const failJson = JSON.parse(readFileSync(join(outputDir, 'fail', 'results.json'), 'utf8'));
+      expect(passJson).toMatchObject({ total: 1, passed: 1, failed: 0 });
+      expect(failJson).toMatchObject({ total: 1, passed: 0, failed: 1 });
+      // Multi-suite writes into subdirs, NOT directly into the output root.
+      expect(existsSync(join(outputDir, 'results.json'))).toBe(false);
+
+      // ONE aggregate exit: a real gradeable failure across the combined cases → 1 (not 2).
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(1);
+      // One aggregate TOTAL line (2 cells across 2 suites, 1 failed) via displayWarning.
+      expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
+        expect.stringContaining('EVAL TOTAL: 1/2 across 2 suites, 1 failed')
+      );
+    });
+
+    it('expands a DIRECTORY into its sorted direct-child *.yaml/*.yml suites (non-recursive)', async () => {
+      // Files created out of order + a non-YAML file + a nested dir with a YAML (must be ignored).
+      writeFileSync(join(suitesRoot, 'b.yaml'), PASS_SUITE);
+      writeFileSync(join(suitesRoot, 'a.yml'), PASS_SUITE);
+      writeFileSync(join(suitesRoot, 'notes.md'), 'ignore me');
+      mkdirSync(join(suitesRoot, 'nested'));
+      writeFileSync(join(suitesRoot, 'nested', 'deep.yaml'), PASS_SUITE);
+
+      runSingleShot.mockResolvedValue({ ok: true, answer: 'hello there', tools: [] });
+      fileUtilsMock.readFileFromProjectDir.mockImplementation((file: string) => {
+        if (file.endsWith('.yaml') || file.endsWith('.yml')) return PASS_SUITE;
+        throw new Error(`unexpected file read: ${file}`);
+      });
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', suitesRoot, '-o', outputDir]);
+
+      // Only the two DIRECT-child suites ran, each in its own subdir (stem from the basename).
+      expect(existsSync(join(outputDir, 'a', 'results.json'))).toBe(true);
+      expect(existsSync(join(outputDir, 'b', 'results.json'))).toBe(true);
+      // Non-recursive: the nested `deep.yaml` was NOT run.
+      expect(existsSync(join(outputDir, 'deep', 'results.json'))).toBe(false);
+      // The non-YAML file was ignored (exactly two suites read).
+      const readSuiteCalls = fileUtilsMock.readFileFromProjectDir.mock.calls.map((c) => c[0]);
+      expect(readSuiteCalls).toHaveLength(2);
+      // Lexicographic order: `a.yml` is read before `b.yaml`.
+      const aIdx = readSuiteCalls.findIndex((p: string) => p.endsWith('a.yml'));
+      const bIdx = readSuiteCalls.findIndex((p: string) => p.endsWith('b.yaml'));
+      expect(aIdx).toBeGreaterThanOrEqual(0);
+      expect(bIdx).toBeGreaterThan(aIdx);
+      // Two passing cells across two suites → exit 0.
+      expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+      expect(consoleUtilsMock.displaySuccess).toHaveBeenCalledWith(
+        expect.stringContaining('EVAL TOTAL: 2/2 across 2 suites, 0 failed')
+      );
+    });
+
+    it('an empty / no-match directory is a harness error → exit 2, running NOTHING', async () => {
+      writeFileSync(join(suitesRoot, 'readme.txt'), 'no suites here');
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', suitesRoot, '-o', outputDir]);
+
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+      expect(runSingleShot).not.toHaveBeenCalled();
+      const errorArgs = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
+      expect(errorArgs).toContain('no .yaml/.yml files');
+    });
+
+    it('one suite with a parse error among good ones → exit 2, but the GOOD suite output is still written', async () => {
+      runSingleShot.mockResolvedValue({ ok: true, answer: 'hello there', tools: [] });
+      fileUtilsMock.readFileFromProjectDir.mockImplementation((file: string) => {
+        if (file === 'good.yaml') return PASS_SUITE;
+        if (file === 'bad.yaml') return 'not: [valid yaml';
+        throw new Error(`unexpected file read: ${file}`);
+      });
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'good.yaml', 'bad.yaml', '-o', outputDir]);
+
+      // A harness error in ANY suite dominates the aggregate exit → 2 (a partial run can't be trusted).
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+      // ...but the good suite still ran and wrote its output.
+      const goodJson = JSON.parse(readFileSync(join(outputDir, 'good', 'results.json'), 'utf8'));
+      expect(goodJson).toMatchObject({ total: 1, passed: 1, failed: 0 });
+      // The bad suite wrote nothing.
+      expect(existsSync(join(outputDir, 'bad', 'results.json'))).toBe(false);
+      // The per-suite harness error names the offending suite.
+      const errorArgs = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
+      expect(errorArgs).toContain('bad.yaml');
+      expect(errorArgs).toContain('Failed to parse eval suite YAML');
+    });
+
+    it('de-duplicates the same file named twice (runs once)', async () => {
+      runSingleShot.mockResolvedValue({ ok: true, answer: 'hello there', tools: [] });
+      fileUtilsMock.readFileFromProjectDir.mockImplementation((file: string) => {
+        if (file.endsWith('dup.yaml')) return PASS_SUITE;
+        throw new Error(`unexpected file read: ${file}`);
+      });
+      // A real file so both the bare path and the same file inside the directory resolve to one abs path.
+      writeFileSync(join(suitesRoot, 'dup.yaml'), PASS_SUITE);
+      const dupPath = join(suitesRoot, 'dup.yaml');
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      // Same file named directly AND via its directory → one resolved suite.
+      await program.parseAsync(['na', 'na', 'eval', dupPath, suitesRoot, '-o', outputDir]);
+
+      // Exactly one suite ran → single-suite behavior: output written DIRECTLY into the output dir.
+      expect(runSingleShot).toHaveBeenCalledTimes(1);
+      expect(existsSync(join(outputDir, 'results.json'))).toBe(true);
+      // No aggregate TOTAL line for a single resolved suite.
+      expect(consoleUtilsMock.displaySuccess).not.toHaveBeenCalledWith(
+        expect.stringContaining('EVAL TOTAL')
+      );
+    });
+
+    it('disambiguates two suites that share an output stem (-2 suffix + warning, never clobbers)', async () => {
+      // Two DISTINCT files whose basenames collide → both would map to `<output>/dup/`. The second
+      // must get `dup-2/` and a warning, never silently overwrite the first.
+      runSingleShot.mockResolvedValue({ ok: true, answer: 'hello there', tools: [] });
+      fileUtilsMock.readFileFromProjectDir.mockImplementation((file: string) => {
+        if (file.endsWith('dup.yaml')) return PASS_SUITE;
+        throw new Error(`unexpected file read: ${file}`);
+      });
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      // Bare (non-existent) paths → treated as files, distinct abs paths, same stem "dup".
+      await program.parseAsync(['na', 'na', 'eval', 'x/dup.yaml', 'y/dup.yaml', '-o', outputDir]);
+
+      // Both suites ran and wrote into their OWN subdir — the second disambiguated to `dup-2`.
+      expect(existsSync(join(outputDir, 'dup', 'results.json'))).toBe(true);
+      expect(existsSync(join(outputDir, 'dup-2', 'results.json'))).toBe(true);
+      // The clash was surfaced, naming the suite that got the disambiguated dir.
+      expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
+        expect.stringContaining('dup-2')
+      );
+      expect(runSingleShot).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // BATCH-19 Task B, Deliverable 2: the identity-matrix `-i` papercut — a suite that declares
+  // `identities:` must run with NO base `-i`. The discriminating invariant: the matrix path makes
+  // ZERO `initConfig` calls without an `identityProfile` (the old base `initConfig(overrides)` demand,
+  // whose terminal exit(1) is uncatchable, is gone).
+  describe('identity-matrix papercut: runs with no base -i (BATCH-19 Task B)', () => {
+    const MATRIX_SUITE = `
+target: { type: gth-agent }
+identities: [admin, limited]
+cases:
+  - id: greets
+    prompt: "greet the user"
+    expect:
+      - identities: [admin]
+        must_contain: ["hello"]
+      - identities: [limited]
+        must_contain: ["hello"]
+`;
+
+    // A matrix-only project: initConfig REJECTS when asked for the base config (no identityProfile)
+    // and only resolves a per-identity config. This is exactly the layout that made the old command
+    // demand a base `-i` before it would run.
+    function matrixOnlyInitConfig() {
+      configMock.initConfig.mockImplementation(async (overrides?: { identityProfile?: string }) => {
+        if (!overrides?.identityProfile) {
+          throw new Error('No configuration file found (matrix-only project, no base config).');
+        }
+        return { ...mockConfig, llm: { ...mockConfig.llm } };
+      });
+    }
+
+    it('a matrix suite runs GREEN with no -i (never builds a base config without an identityProfile)', async () => {
+      fileUtilsMock.readFileFromProjectDir.mockImplementation(() => MATRIX_SUITE);
+      runSingleShot.mockResolvedValue({ ok: true, answer: 'hello there', tools: [] });
+      matrixOnlyInitConfig();
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'matrix.yaml', '-o', outputDir]);
+
+      // The whole matrix ran and passed — WITHOUT any base `-i`.
+      const resultsJson = JSON.parse(readFileSync(join(outputDir, 'results.json'), 'utf8'));
+      expect(resultsJson).toMatchObject({ total: 2, passed: 2, failed: 0 });
+      expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+      // The discriminating invariant: EVERY initConfig call carried an identityProfile (a stray base
+      // `initConfig(overrides)` would have rejected here → harness error → exit 2).
+      expect(configMock.initConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ identityProfile: 'admin' })
+      );
+      expect(configMock.initConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ identityProfile: 'limited' })
+      );
+      const everyCallHasIdentity = configMock.initConfig.mock.calls.every(
+        (call) => (call[0] as { identityProfile?: string } | undefined)?.identityProfile
+      );
+      expect(everyCallHasIdentity).toBe(true);
+    });
+
+    it('still exits 2 when a declared identity does not resolve (precondition NOT weakened)', async () => {
+      fileUtilsMock.readFileFromProjectDir.mockImplementation(() => MATRIX_SUITE);
+      matrixOnlyInitConfig();
+      // `limited` has no config of its own; `admin` resolves.
+      configMock.resolveIdentityProfileConfigPath.mockImplementation((name: string) =>
+        name === 'limited' ? undefined : '/mock/.gsloth/.gsloth-settings/admin/.gsloth.config.json'
+      );
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'matrix.yaml', '-o', outputDir]);
+
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+        expect.stringContaining('limited')
+      );
+      expect(runSingleShot).not.toHaveBeenCalled();
+    });
+
+    it('a NON-matrix suite still builds the base config from initConfig(overrides) (unaffected)', async () => {
+      // In the same matrix-only-project world, a no-identities suite MUST still call
+      // initConfig(overrides) — proving the fix is scoped to the matrix path. Here that call rejects,
+      // so the non-matrix suite is a harness error (exit 2): the non-matrix path is unchanged.
+      fileUtilsMock.readFileFromProjectDir.mockImplementation((file: string) => {
+        if (file === 'suite.yaml') return SIMPLE_SUITE;
+        throw new Error(`unexpected file read: ${file}`);
+      });
+      matrixOnlyInitConfig();
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-o', outputDir]);
+
+      expect(configMock.initConfig).toHaveBeenCalledWith(
+        expect.not.objectContaining({ identityProfile: expect.anything() })
+      );
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
     });
   });
 });

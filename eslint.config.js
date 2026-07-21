@@ -101,6 +101,8 @@ export default defineConfig([
   pkgSourceConfig('review'),
   pkgSourceConfig('batch'),
   pkgSourceConfig('app'),
+  // BATCH-19: the standalone JUnit eval reporter package.
+  pkgSourceConfig('eval-reporter-junit'),
   // BATCH-13: eval-it standalone harness TypeScript. It lives outside packages/, so it matches none
   // of the pkgSourceConfig globs; give it a type-agnostic block (tsParser, no `project`) mirroring
   // the test block so `pnpm run lint` genuinely lints it rather than skipping it.
