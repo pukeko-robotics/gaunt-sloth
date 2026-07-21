@@ -122,6 +122,15 @@ Tool calls render as **collapsible panels** (`tui/components/LiveTurn.tsx`):
   generic collapsible panel: it renders a dedicated, always-expanded `📋 Checklist (done/total)` list
   with per-item checkboxes (`[x]` green completed, `[~]` yellow in-progress, `[ ]` dim pending). The
   plan is the point of the tool, so it stays visible (DL-2 discloses the *plan* directly; DL-8 colour).
+- **Live tool output stays inside the managed frame (TUI-C17, DL-4 transparency).** A custom/dev
+  tool's streamed child stdout/stderr (and its `🔧 Executing …` notice) is routed through the
+  tool-output channel as typed `tool_output` events and folded into the call's panel — never
+  written to raw `process.stdout`, which would print out of order above the agent message, corrupt
+  Ink's frame, and vanish on re-render. In the panel it is part of the expandable detail body
+  (DL-2: collapsed by default, above the final result when expanded) and, living in the
+  view-model, it survives re-renders. Non-TUI surfaces keep the historical raw-stdout streaming
+  (DL-5 respect the host). Richer per-tool output rendering (previews, caps, formatters) is
+  TUI-C30's scope.
 
 ## Status lines in the TUI (DL-2, DL-10)
 

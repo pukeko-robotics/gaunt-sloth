@@ -59,6 +59,35 @@ export type AgentStreamEvent =
   | { type: 'tool_args'; id: string; delta: string }
   | { type: 'tool_end'; id: string }
   | {
+      /**
+       * TUI-C17 — one live output chunk from an EXECUTING tool (a custom/dev toolkit child
+       * process's stdout/stderr, or its "Executing …" announcement), surfaced through the managed
+       * event stream instead of raw `process.stdout` so a renderer (the Ink TUI) can fold it into
+       * its view-model. Emitted by the tool-output channel merge
+       * (see `core/toolOutputChannel.js#mergeToolOutputIntoEvents`), NOT by `processEventStream`
+       * itself — consumers that don't opt into the merge (e.g. the AG-UI SSE encoder) never see it
+       * and the toolkits keep writing to stdout for them (today's headless behaviour).
+       */
+      type: 'tool_output';
+      /**
+       * The tool call this chunk belongs to (LangChain's `ToolRunnableConfig.toolCall.id`,
+       * threaded through the toolkits), so a renderer can nest output under the exact call —
+       * TUI-C30 consumes this for per-call output previews. Optional only defensively: absent
+       * when the executing framework did not supply a tool call, in which case consumers should
+       * fall back to `name` attribution.
+       */
+      id?: string;
+      /** The gth tool name (e.g. `run_shell_command`, a custom tool's name). Always known. */
+      name: string;
+      /** One verbatim streamed chunk of the child's stdout/stderr (or the notice text). */
+      chunk: string;
+      /**
+       * True when this chunk is the "🔧 Executing …" announcement rather than child output, so
+       * a richer renderer (TUI-C30) can style or strip it when previewing raw output lines.
+       */
+      isNotice?: boolean;
+    }
+  | {
       type: 'tool_result';
       id: string;
       content: string;

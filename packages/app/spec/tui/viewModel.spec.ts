@@ -112,6 +112,96 @@ describe('tui/viewModel foldEvents', () => {
     expect(withTool.toolCalls).not.toBe(start.toolCalls);
     expect(start.toolCalls).toHaveLength(0);
   });
+
+  describe('tool_output live output (TUI-C17)', () => {
+    it('accumulates notice + chunks in arrival order on the call, terminating the notice line', async () => {
+      const { foldEventSequence } = await import('#src/tui/viewModel.js');
+      const vm = foldEventSequence([
+        {
+          type: 'tool_output',
+          id: 't1',
+          name: 'run_shell_command',
+          chunk: '🔧 Executing run_shell_command: ls -la',
+          isNotice: true,
+        },
+        { type: 'tool_output', id: 't1', name: 'run_shell_command', chunk: 'total 12\n' },
+        { type: 'tool_output', id: 't1', name: 'run_shell_command', chunk: 'drwxr file\n' },
+      ]);
+      expect(vm.toolCalls).toHaveLength(1);
+      expect(vm.toolCalls[0].output).toBe(
+        '🔧 Executing run_shell_command: ls -la\ntotal 12\ndrwxr file\n'
+      );
+    });
+
+    it('creates a named placeholder when output arrives BEFORE tool_start (the common live case)', async () => {
+      // The agent stream only flushes tool_start when the round's ToolMessage lands, so live
+      // output normally precedes it. The placeholder must carry the tool name so the running
+      // panel is labelled, and the later tool_start/result must land on the SAME call.
+      const { foldEventSequence } = await import('#src/tui/viewModel.js');
+      const vm = foldEventSequence([
+        { type: 'tool_output', id: 't1', name: 'run_tests', chunk: 'suite starting\n' },
+        { type: 'tool_start', id: 't1', name: 'run_tests' },
+        { type: 'tool_args', id: 't1', delta: '{}' },
+        { type: 'tool_end', id: 't1' },
+        { type: 'tool_result', id: 't1', content: 'all green' },
+      ]);
+      expect(vm.toolCalls).toHaveLength(1);
+      expect(vm.toolCalls[0]).toMatchObject({
+        id: 't1',
+        name: 'run_tests',
+        status: 'done',
+        output: 'suite starting\n',
+        result: 'all green',
+      });
+    });
+
+    it('keeps output attributed per call id when two tools stream interleaved', async () => {
+      const { foldEventSequence } = await import('#src/tui/viewModel.js');
+      const vm = foldEventSequence([
+        { type: 'tool_output', id: 'a', name: 'run_lint', chunk: 'lint-1\n' },
+        { type: 'tool_output', id: 'b', name: 'run_build', chunk: 'build-1\n' },
+        { type: 'tool_output', id: 'a', name: 'run_lint', chunk: 'lint-2\n' },
+      ]);
+      expect(vm.toolCalls.map((t) => t.id)).toEqual(['a', 'b']);
+      expect(vm.toolCalls[0].output).toBe('lint-1\nlint-2\n');
+      expect(vm.toolCalls[1].output).toBe('build-1\n');
+    });
+
+    it('falls back to the latest RUNNING call with the same name when the event has no id', async () => {
+      const { foldEventSequence } = await import('#src/tui/viewModel.js');
+      const vm = foldEventSequence([
+        { type: 'tool_start', id: 'real', name: 'my_tool' },
+        { type: 'tool_output', name: 'my_tool', chunk: 'no-id chunk\n' },
+      ]);
+      expect(vm.toolCalls).toHaveLength(1);
+      expect(vm.toolCalls[0]).toMatchObject({ id: 'real', output: 'no-id chunk\n' });
+    });
+
+    it('never drops id-less output with no matching running call (synthetic per-name bucket)', async () => {
+      const { foldEventSequence } = await import('#src/tui/viewModel.js');
+      const vm = foldEventSequence([{ type: 'tool_output', name: 'orphan_tool', chunk: 'x\n' }]);
+      expect(vm.toolCalls).toHaveLength(1);
+      expect(vm.toolCalls[0]).toMatchObject({
+        id: 'orphan_tool#live',
+        name: 'orphan_tool',
+        output: 'x\n',
+      });
+    });
+
+    it('does not mutate prior state when folding tool_output (immutability)', async () => {
+      const { initialTurnViewModel, foldEvents } = await import('#src/tui/viewModel.js');
+      const start = initialTurnViewModel();
+      const next = foldEvents(start, {
+        type: 'tool_output',
+        id: 't1',
+        name: 'run_tests',
+        chunk: 'line\n',
+      });
+      expect(start.toolCalls).toHaveLength(0);
+      expect(next.toolCalls).toHaveLength(1);
+      expect(next.toolCalls).not.toBe(start.toolCalls);
+    });
+  });
 });
 
 describe('tui/viewModel foldSubagentTree', () => {

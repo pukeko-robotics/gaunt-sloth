@@ -2,6 +2,7 @@ import React from 'react';
 import { render } from 'ink';
 import { type CommandLineConfigOverrides, initConfig } from '@gaunt-sloth/core/config.js';
 import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
+import { mergeToolOutputIntoEvents } from '@gaunt-sloth/core/core/toolOutputChannel.js';
 import { StatusLevel } from '@gaunt-sloth/core/core/types.js';
 import type { PendingToolInterrupt, ToolApprovalDecision } from '@gaunt-sloth/core/core/types.js';
 import {
@@ -373,7 +374,14 @@ export async function createTuiSession(
     const tuiAgent: TuiAgent = {
       async *runTurn(userInput, signal) {
         turnStartedAt = Date.now(); // GS2-16: mark turn start for durationMs in logTurn
-        yield* runner.processMessagesWithEvents([new HumanMessage(userInput)], signal);
+        // TUI-C17: subscribe to the tool-output channel for the turn and merge each live
+        // custom/dev-tool stdout/stderr chunk (and its "Executing" notice) into the event
+        // stream as `tool_output` events — so tool output lands in `foldEvents`/the managed
+        // frame instead of leaking to raw stdout above Ink's render tree. Unsubscribes when
+        // the turn ends, restoring the default (headless) stdout sink between turns.
+        yield* mergeToolOutputIntoEvents(
+          runner.processMessagesWithEvents([new HumanMessage(userInput)], signal)
+        );
       },
       // `/clear` rotates the runner's thread_id so the model context truly matches the
       // cleared transcript (the checkpointer otherwise replays the whole prior conversation).

@@ -2,10 +2,11 @@
  * @module GthDevToolkit
  */
 import { BaseToolkit, StructuredToolInterface, tool } from '@langchain/core/tools';
+import type { ToolRunnableConfig } from '@langchain/core/tools';
 import { z } from 'zod';
 import { spawn, spawnSync } from 'child_process';
 import path from 'node:path';
-import { displayInfo, displayError, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import { displayError, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import {
   GthDevToolsConfig,
   getShellMaxOutputBytes,
@@ -13,7 +14,7 @@ import {
   isShellToolEnabled,
 } from '@gaunt-sloth/core/config.js';
 import type { GthCommand } from '@gaunt-sloth/core/core/types.js';
-import { stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { emitToolOutput } from '@gaunt-sloth/core/core/toolOutputChannel.js';
 import { ShellCommandFailedError } from '@gaunt-sloth/core/core/shell/ShellCommandFailedError.js';
 import { checkHardline } from '#src/tools/shell/hardline.js';
 import { buildScrubbedEnv } from '#src/tools/shell/env.js';
@@ -91,9 +92,11 @@ export function killProcessGroup(
   }
 }
 
-// Helper function to create a tool with dev type
+// Helper function to create a tool with dev type. The fn's second parameter is LangChain's
+// ToolRunnableConfig — when the framework invokes the tool with a ToolCall, `config.toolCall.id`
+// identifies the call, which TUI-C17 threads into the live-output channel for attribution.
 function createGthTool<T extends z.ZodSchema>(
-  fn: (args: z.infer<T>) => Promise<string>,
+  fn: (args: z.infer<T>, config?: ToolRunnableConfig) => Promise<string>,
   config: {
     name: string;
     description: string;
@@ -225,8 +228,21 @@ export default class GthDevToolkit extends BaseToolkit {
    * model still sees the killed-after-N / exit-code message and can continue. Spawn-level failures
    * (`child.on('error')`) still reject with a plain `Error`.
    */
-  private async executeCommand(command: string, toolName: string): Promise<string> {
-    displayInfo(`\n🔧 Executing ${toolName}: ${command}`);
+  private async executeCommand(
+    command: string,
+    toolName: string,
+    toolCallId?: string
+  ): Promise<string> {
+    // TUI-C17: the "Executing" notice + live child output go through the tool-output channel.
+    // With no subscriber (every non-TUI surface) the channel's default sink reproduces the
+    // historical behaviour exactly (displayInfo notice, raw stdout chunks); under the Ink TUI
+    // the session subscribes and folds them into the managed frame instead.
+    emitToolOutput({
+      toolCallId,
+      toolName,
+      kind: 'notice',
+      text: `🔧 Executing ${toolName}: ${command}`,
+    });
 
     // (4) Hardline blocklist — checked here so it fires regardless of yolo,
     // allow-lists, or any confirmation path. Refuse WITHOUT executing.
@@ -287,7 +303,7 @@ export default class GthDevToolkit extends BaseToolkit {
       if (child.stdout) {
         child.stdout.on('data', (data) => {
           const chunk = data.toString();
-          stdout.write(chunk);
+          emitToolOutput({ toolCallId, toolName, kind: 'output', text: chunk });
           buffer.append(chunk);
         });
       }
@@ -295,7 +311,7 @@ export default class GthDevToolkit extends BaseToolkit {
       if (child.stderr) {
         child.stderr.on('data', (data) => {
           const chunk = data.toString();
-          stdout.write(chunk);
+          emitToolOutput({ toolCallId, toolName, kind: 'output', text: chunk });
           buffer.append(chunk);
         });
       }
@@ -365,8 +381,15 @@ export default class GthDevToolkit extends BaseToolkit {
     if (this.commands.run_tests) {
       tools.push(
         createGthTool(
-          async (_args: z.infer<typeof RunTestsArgsSchema>): Promise<string> => {
-            return await this.executeCommand(this.commands.run_tests!, 'run_tests');
+          async (
+            _args: z.infer<typeof RunTestsArgsSchema>,
+            config?: ToolRunnableConfig
+          ): Promise<string> => {
+            return await this.executeCommand(
+              this.commands.run_tests!,
+              'run_tests',
+              config?.toolCall?.id
+            );
           },
           {
             name: 'run_tests',
@@ -383,10 +406,13 @@ export default class GthDevToolkit extends BaseToolkit {
     if (this.commands.run_single_test) {
       tools.push(
         createGthTool(
-          async (args: z.infer<typeof RunSingleTestArgsSchema>): Promise<string> => {
+          async (
+            args: z.infer<typeof RunSingleTestArgsSchema>,
+            config?: ToolRunnableConfig
+          ): Promise<string> => {
             const validatedPath = this.validateParameterValue(args.testPath, 'testPath');
             const command = this.buildSingleTestCommand(validatedPath);
-            return await this.executeCommand(command, 'run_single_test');
+            return await this.executeCommand(command, 'run_single_test', config?.toolCall?.id);
           },
           {
             name: 'run_single_test',
@@ -404,8 +430,15 @@ export default class GthDevToolkit extends BaseToolkit {
     if (this.commands.run_lint) {
       tools.push(
         createGthTool(
-          async (_args: z.infer<typeof RunLintArgsSchema>): Promise<string> => {
-            return await this.executeCommand(this.commands.run_lint!, 'run_lint');
+          async (
+            _args: z.infer<typeof RunLintArgsSchema>,
+            config?: ToolRunnableConfig
+          ): Promise<string> => {
+            return await this.executeCommand(
+              this.commands.run_lint!,
+              'run_lint',
+              config?.toolCall?.id
+            );
           },
           {
             name: 'run_lint',
@@ -422,8 +455,15 @@ export default class GthDevToolkit extends BaseToolkit {
     if (this.commands.run_build) {
       tools.push(
         createGthTool(
-          async (_args: z.infer<typeof RunBuildArgsSchema>): Promise<string> => {
-            return await this.executeCommand(this.commands.run_build!, 'run_build');
+          async (
+            _args: z.infer<typeof RunBuildArgsSchema>,
+            config?: ToolRunnableConfig
+          ): Promise<string> => {
+            return await this.executeCommand(
+              this.commands.run_build!,
+              'run_build',
+              config?.toolCall?.id
+            );
           },
           {
             name: 'run_build',
@@ -444,8 +484,15 @@ export default class GthDevToolkit extends BaseToolkit {
     if (isShellToolEnabled(this.commands, this.command)) {
       tools.push(
         createGthTool(
-          async (args: z.infer<typeof RunShellCommandArgsSchema>): Promise<string> => {
-            return await this.executeCommand(args.command, 'run_shell_command');
+          async (
+            args: z.infer<typeof RunShellCommandArgsSchema>,
+            config?: ToolRunnableConfig
+          ): Promise<string> => {
+            return await this.executeCommand(
+              args.command,
+              'run_shell_command',
+              config?.toolCall?.id
+            );
           },
           {
             name: 'run_shell_command',

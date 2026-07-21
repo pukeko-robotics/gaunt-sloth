@@ -99,6 +99,44 @@ describe('tui <LiveTurn>', () => {
       unmount();
     });
 
+    it('shows the live streamed output (TUI-C17) when expanded, hides it collapsed', () => {
+      const withOutput = turn({
+        toolCalls: [
+          {
+            id: 't1',
+            name: 'run_shell_command',
+            argsText: '{"command":"ls -la"}',
+            status: 'running',
+            output: '🔧 Executing run_shell_command: ls -la\ntotal 12\ndrwxr-xr-x  2 me\n',
+          },
+        ],
+      });
+      const collapsed = render(<LiveTurn turn={withOutput} />);
+      const fc = stripAnsi(collapsed.lastFrame() ?? '');
+      expect(fc).toContain('run_shell_command'); // summary line
+      expect(fc).not.toContain('total 12'); // output body hidden while collapsed
+      collapsed.unmount();
+
+      const expanded = render(<LiveTurn turn={withOutput} toolsExpanded />);
+      const fe = stripAnsi(expanded.lastFrame() ?? '');
+      expect(fe).toContain('🔧 Executing run_shell_command: ls -la'); // the routed notice
+      expect(fe).toContain('total 12'); // child stdout, inside the managed frame
+      expect(fe).toContain('drwxr-xr-x  2 me');
+      expanded.unmount();
+    });
+
+    it('the output body alone makes the panel expandable (Ctrl+T hint on the live turn)', () => {
+      // A tool that has streamed output but no args/result yet must still advertise detail.
+      const onlyOutput = turn({
+        toolCalls: [
+          { id: 't1', name: 'run_tests', argsText: '', status: 'running', output: 'suite up\n' },
+        ],
+      });
+      const { lastFrame, unmount } = render(<LiveTurn turn={onlyOutput} streaming />);
+      expect(stripAnsi(lastFrame() ?? '')).toContain('Ctrl+T to expand');
+      unmount();
+    });
+
     it('renders ✓ for a successful result even when its text literally starts with "Error"', () => {
       // Regression guard: the old heuristic sniffed the result text and mislabeled this.
       const successButErrorText = turn({
