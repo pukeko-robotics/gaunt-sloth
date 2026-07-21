@@ -17,6 +17,15 @@
 // is version-synced and has its @gaunt-sloth/* dep pins rewritten, but nothing
 // cross-pins a (nonexistent) `@gaunt-sloth/app`.
 //
+// INDEPENDENTLY VERSIONED plugins — NOT synced here: the
+// @gaunt-sloth/eval-reporter-* plugin family (e.g. @gaunt-sloth/eval-reporter-junit,
+// dir eval-reporter-junit) is versioned on its own track and bumped by hand when
+// the plugin itself changes. It is PUBLISHED and git-TAGGED alongside the locked
+// set (see publish-all.sh / tag-packages.sh) but is deliberately absent from SYNCED
+// / ALL_DIRS below, so this script never rewrites its version. The app hard-deps it
+// via `workspace:*`; rewriteSyncedDeps leaves that specifier untouched (the
+// `workspace:` skip), so the sync does not disturb the plugin dep either.
+//
 // publishConfig.tag (the `latest`-hijack guard) is written into all five
 // package.jsons, derived from the new version: a prerelease (e.g. 2.0.0-alpha.0)
 // gets its preid (alpha/beta/rc) as the tag; a stable version gets `latest`. This

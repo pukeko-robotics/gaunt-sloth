@@ -16,10 +16,20 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Topological order, by package DIRECTORY: core first (everything depends on it),
 # then agent (the merged tools+api runtime; depends on core) and review (depends
-# on core), then batch (depends on core+agent), then the fat CLI `gaunt-sloth`
-# (dir: app) LAST — it depends on all four. The former tools/api forwarding shims
-# were removed in the 2.0 break.
-ORDER=(core agent review batch app)
+# on core), then batch (depends on core+agent), then eval-reporter-junit (the
+# JUnit `gth eval` reporter; depends on batch's types), then the fat CLI
+# `gaunt-sloth` (dir: app) LAST — it depends on all of the above. The former
+# tools/api forwarding shims were removed in the 2.0 break.
+#
+# NOTE eval-reporter-junit is INDEPENDENTLY VERSIONED: it is published (and
+# git-tagged) here at its own version (0.1.0), but it is NOT part of bump.mjs's
+# version-sync (SYNCED). It is the first member of the @gaunt-sloth/eval-reporter-*
+# plugin family, which is versioned on its own track and bumped by hand. The loop
+# below reads each package's own name+version from its package.json, so it ships
+# @gaunt-sloth/eval-reporter-junit@0.1.0 regardless. app's `workspace:*` dep on it
+# is rewritten to the concrete 0.1.0 by pnpm at pack time, so the install resolves
+# even though it rides the same alpha dist-tag as the synced set.
+ORDER=(core agent review batch eval-reporter-junit app)
 
 # Derive the dist-tag from the CURRENT version (source of truth: packages/core),
 # same rule as .github/workflows/release.yml: a prerelease (2.0.0-alpha.0) maps to
