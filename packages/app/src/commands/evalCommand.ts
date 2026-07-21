@@ -11,19 +11,14 @@ import {
   buildProductionRunConversation,
 } from '#src/commands/batchCommand.js';
 import { parseIntOption } from '#src/commands/cliOptionParsers.js';
-import {
-  display,
-  displayError,
-  displaySuccess,
-  displayWarning,
-} from '@gaunt-sloth/core/utils/consoleUtils.js';
+import { displayError } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { setExitCode } from '@gaunt-sloth/core/utils/systemUtils.js';
 import {
   fileSafeLocalDate,
   getGslothFilePath,
   readFileFromProjectDir,
 } from '@gaunt-sloth/core/utils/fileUtils.js';
-import type { EvalSuiteSummary, JudgeFn, RunCellFn, RunConversationFn } from '@gaunt-sloth/batch';
+import type { JudgeFn, RunCellFn, RunConversationFn } from '@gaunt-sloth/batch';
 
 interface EvalCommandOptions {
   /** `-j/--concurrency <n>` — max in-flight cases. */
@@ -81,49 +76,6 @@ function judgeModelName(config: GthConfig): string | undefined {
   const llm = config.llm as { model?: unknown; modelName?: unknown };
   const name = typeof llm.model === 'string' ? llm.model : llm.modelName;
   return typeof name === 'string' && name.length > 0 ? name : undefined;
-}
-
-/** Print the human-readable, `review`-flavored summary: one PASS/FAIL line per case (failures
- * carry their reasons), then a suite-total line — doesn't replicate `review`'s exact `REVIEW
- * RATING` block format, just its spirit (a scannable verdict, not a wall of JSON). */
-function printSummary(
-  summary: EvalSuiteSummary,
-  outputDir: string,
-  judgeNotice?: { profile: string; model?: string }
-): void {
-  // BATCH-10 Task 2: when a separate judge profile is in effect, lead with a single self-describing
-  // line so a captured run records which model graded it (reproducibility). Emitted only for a
-  // separate judge — the default SUT-as-judge run prints exactly as before.
-  if (judgeNotice) {
-    display(
-      `Judge: profile "${judgeNotice.profile}"` +
-        (judgeNotice.model ? ` (model: ${judgeNotice.model})` : '')
-    );
-  }
-
-  for (const caseResult of summary.cases) {
-    // BATCH-12: an identity-matrix cell tags its line with the identity it ran under, so the two
-    // rows a case produces per (case × identity) are distinguishable. A no-identities cell prints
-    // exactly as before (just the case id).
-    const label = caseResult.identity ? `${caseResult.id} [${caseResult.identity}]` : caseResult.id;
-    if (caseResult.verdict === 'PASS') {
-      display(`PASS  ${label}`);
-    } else {
-      displayWarning(`FAIL  ${label} — ${caseResult.reasons.join('; ') || 'no reason recorded'}`);
-    }
-  }
-
-  // M1: X/Y counts CELLS in a matrix run (one per case × identity) — e.g. `2/2` for 1 case × 2
-  // identities — so a bare "case(s)" would misreport the denominator. Use an identity-aware noun:
-  // "case(s)" for a no-identities run (unchanged), "cell(s)" once any cell carries an identity.
-  const isMatrix = summary.cases.some((caseResult) => caseResult.identity !== undefined);
-  const noun = isMatrix ? 'cell(s)' : 'case(s)';
-  const verdictLine = `EVAL RESULT: ${summary.passed}/${summary.total} ${noun} passed`;
-  if (summary.failed === 0) {
-    displaySuccess(`${verdictLine}. Results written to ${outputDir}`);
-  } else {
-    displayWarning(`${verdictLine}, ${summary.failed} failed. Results written to ${outputDir}`);
-  }
 }
 
 /**
@@ -192,6 +144,8 @@ export function evalCommand(
         const { parseEvalSuite } = await import('@gaunt-sloth/batch/evalSuite.js');
         const { runEvalSuite, classifyEvalExit } = await import('@gaunt-sloth/batch/evalRunner.js');
         const { writeEvalOutput } = await import('@gaunt-sloth/batch/evalOutput.js');
+        const { resolveReporters } = await import('@gaunt-sloth/batch/reporters/registry.js');
+        const { driveReporters } = await import('@gaunt-sloth/batch/reporters/drive.js');
 
         const suiteText = readFileFromProjectDir(suitePath);
         const suite = parseEvalSuite(suiteText, suitePath);
@@ -340,11 +294,19 @@ export function evalCommand(
         const outputDir = options.output ?? defaultEvalOutputDir();
         writeEvalOutput(outputDir, summary);
 
-        printSummary(
-          summary,
+        // BATCH-19 A1: render the run through the reporter facility instead of a hard-coded summary.
+        // `writeEvalOutput` (results.json + per-cell JSON) is always-on core output, independent of
+        // any reporter; reporters are an additional rendering layer. A1 ships only the built-in
+        // `text` reporter — a byte-for-byte port of the former `printSummary` — driven here in
+        // lifecycle order; the `--reporter` flag + custom/JUnit reporters are A2.
+        const reporters = resolveReporters(['text']);
+        await driveReporters(reporters, summary, {
+          suitePath,
           outputDir,
-          judgeProfile ? { profile: judgeProfile, model: judgeModelName(judgeConfig) } : undefined
-        );
+          judgeNotice: judgeProfile
+            ? { profile: judgeProfile, model: judgeModelName(judgeConfig) }
+            : undefined,
+        });
 
         // BATCH-11: distinct exit codes — 0 pass / 1 suite ran but a case FAILED / 2 no gradeable
         // results (every SUT run failed). `setExitCode` is only called for a non-zero code; `0` is
