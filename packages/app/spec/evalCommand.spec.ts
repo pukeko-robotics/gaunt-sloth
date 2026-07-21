@@ -1286,6 +1286,31 @@ cases:
         expect.stringContaining('EVAL TOTAL')
       );
     });
+
+    it('disambiguates two suites that share an output stem (-2 suffix + warning, never clobbers)', async () => {
+      // Two DISTINCT files whose basenames collide → both would map to `<output>/dup/`. The second
+      // must get `dup-2/` and a warning, never silently overwrite the first.
+      runSingleShot.mockResolvedValue({ ok: true, answer: 'hello there', tools: [] });
+      fileUtilsMock.readFileFromProjectDir.mockImplementation((file: string) => {
+        if (file.endsWith('dup.yaml')) return PASS_SUITE;
+        throw new Error(`unexpected file read: ${file}`);
+      });
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      // Bare (non-existent) paths → treated as files, distinct abs paths, same stem "dup".
+      await program.parseAsync(['na', 'na', 'eval', 'x/dup.yaml', 'y/dup.yaml', '-o', outputDir]);
+
+      // Both suites ran and wrote into their OWN subdir — the second disambiguated to `dup-2`.
+      expect(existsSync(join(outputDir, 'dup', 'results.json'))).toBe(true);
+      expect(existsSync(join(outputDir, 'dup-2', 'results.json'))).toBe(true);
+      // The clash was surfaced, naming the suite that got the disambiguated dir.
+      expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
+        expect.stringContaining('dup-2')
+      );
+      expect(runSingleShot).toHaveBeenCalledTimes(2);
+    });
   });
 
   // BATCH-19 Task B, Deliverable 2: the identity-matrix `-i` papercut — a suite that declares
