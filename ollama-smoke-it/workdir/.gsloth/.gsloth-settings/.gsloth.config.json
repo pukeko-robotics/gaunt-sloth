@@ -2,6 +2,7 @@
   "llm": {
     "type": "ollama",
     "model": "gemma4:12b",
-    "numCtx": 16384
+    "numCtx": 16384,
+    "temperature": 0
   }
 }

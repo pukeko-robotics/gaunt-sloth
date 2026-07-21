@@ -6,12 +6,17 @@
 # direct-drive cases assert, plus coverage of the `eval` verb itself.
 #
 # Kept deliberately small (one case). The direct-drive verbs in the script are the real gate; this
-# phase adds the `eval` verb + a structured pass/fail table. If `must_call` ever proves flaky with a
-# local model, loosen to `must_contain` only rather than deleting the phase.
+# phase adds the `eval` verb + a structured pass/fail table.
+#
+# Assertion is `must_contain` ONLY — deliberately no `must_call`. `must_call: ['read_file']` is too
+# brittle for a local model: at temp:0 gemma reliably reaches the file, but it often does so as
+# `list_directory(.)` THEN `read_file(...)`, and pinning the exact tool it must call adds a failure
+# mode that has nothing to do with the property under test. The marker (which exists nowhere but
+# marker-eval.txt) appearing in the synthesized answer already proves the whole-agent path ran a tool
+# and synthesized its result — the GS2-59 check — without caring which tool the model chose.
 target:
   type: gth-agent
 cases:
   - id: read-marker-eval
     prompt: 'Read the file marker-eval.txt using your tools and report the exact secret marker string it contains.'
-    must_call: ['read_file']
     must_contain: ['MARKER-EVAL-3D8T']

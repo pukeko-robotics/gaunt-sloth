@@ -76,9 +76,25 @@ The script:
 | `OLLAMA_HOST`      | `http://127.0.0.1:11434` | ollama daemon URL (same var the ollama CLI + the provider use). |
 | `SKIP_BUILD`       | *(unset)*                | `1` = skip `pnpm build` and run the already-built app. |
 | `CASE_TIMEOUT`     | `180`                    | per-case wall-clock cap in seconds (a hung turn fails the case, not the gate). |
+| `CASE_ATTEMPTS`    | `2`                      | attempts per case, pass-if-any (the retry backstop below). Set `1` to disable. |
 | `SMOKE_FORCE_FAIL` | *(unset)*                | `1` = discrimination proof (below). |
 
 Repoint the model: `SMOKE_MODEL=gemma4:31b ollama-smoke-it/run-ollama-smoke.sh`.
+
+### Why it's reproducible (and not a coin flip)
+
+A per-change gate is only useful if a green run means "the agent works", not "the model got lucky".
+Two things keep it deterministic:
+
+- **`temperature: 0`** in every generated config — greedy decoding. At the model's default temperature
+  gemma wanders (picking `list_directory` over `read_file`, or hallucinating a glob path), which made
+  the composite gate flap (~1-in-3 green in testing). At temp 0 each verb runs the **same tool
+  sequence every time**. This does not soften the check: a genuinely broken post-tool synthesis
+  (the GS2-59 failure) stays broken at temp 0.
+- **A 2-attempt retry (`CASE_ATTEMPTS`), pass-if-any** — a pure backstop for residual nondeterminism
+  (e.g. GPU float-ordering flipping one token). It **cannot mask a real regression**: a genuine break
+  is deterministic and fails *every* attempt (the discrimination proof below fails all attempts and
+  reports FAIL). The happy path passes on attempt 1, so the retry adds no latency unless a case fails.
 
 ## Discrimination proof (why a green run is meaningful)
 

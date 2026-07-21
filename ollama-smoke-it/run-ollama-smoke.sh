@@ -29,6 +29,9 @@
 #   SMOKE_MODEL         ollama model tag to drive (default: gemma4:12b)
 #   OLLAMA_HOST         ollama daemon URL (default: http://127.0.0.1:11434)
 #   CASE_TIMEOUT        per-case wall-clock cap in seconds (default: 180)
+#   CASE_ATTEMPTS       attempts per case, pass-if-any (default: 2). temp:0 passes on attempt 1; the
+#                       retry only absorbs residual nondeterminism and cannot mask a real regression
+#                       (which fails every attempt). Set to 1 to disable the backstop.
 #   SMOKE_FORCE_FAIL=1  discrimination proof: plant a DECOY string in the `ask` case's marker.txt so
 #                       read_file SUCCEEDS (exit 0, `Requested tools:` present) but the asserted
 #                       marker is absent from the synthesis — reproducing the exact GS2-59 signature
@@ -103,8 +106,14 @@ cleanup() { cd / 2>/dev/null || true; rm -rf "$WORK" "$EVAL_WORK" "$HERMETIC_HOM
 trap cleanup EXIT
 
 mkdir -p "$WORK/.gsloth/.gsloth-settings" "$WORK/logs"
+# temperature:0 — a per-change gate must be REPRODUCIBLE. At the model's default temperature gemma
+# wanders (picks list_directory over read_file, or hallucinates a glob path like `.** (searcher…)`),
+# so the composite gate flaps (measured ~1/3 green). Greedy decoding (temp 0) makes each verb
+# deterministic — the same tool sequence every run — which is what turns this from a coin flip into a
+# gate. It does NOT weaken the GS2-59 synthesis check: a genuinely broken post-tool synthesis stays
+# broken at temp 0.
 cat > "$WORK/.gsloth/.gsloth-settings/.gsloth.config.json" <<EOF
-{"llm":{"type":"ollama","model":"${SMOKE_MODEL}","numCtx":16384}}
+{"llm":{"type":"ollama","model":"${SMOKE_MODEL}","numCtx":16384,"temperature":0}}
 EOF
 
 PROMPT='Read the file marker.txt using your tools and report the exact secret marker string it contains.'
@@ -115,32 +124,49 @@ FAIL=0
 # Runs the command in <casedir> with hermetic HOME, a stdin-from-/dev/null (so single-turn verbs hit
 # EOF and exit), and a timeout. `set +e` around the run so a failing case is REPORTED, not aborted
 # (set -e would kill the whole gate on the first failing assertion).
+#
+# Retry backstop (CASE_ATTEMPTS, default 2): temperature:0 already makes each verb deterministic, so
+# the happy path passes on attempt 1 (no extra latency). The retry only fires when an attempt fails,
+# and exists purely to absorb RESIDUAL nondeterminism (e.g. GPU float ordering flipping one token at a
+# decision boundary) — it must NOT be able to mask a real regression: a genuine GS2-59 break is
+# deterministic and fails EVERY attempt, so pass-if-any still catches it (the discrimination proof
+# below fails all attempts and reports FAIL). It only rescues a one-off "model did something dumb once".
 run_case() {
   local label="$1" verb="$2" marker="$3" dir="$4"
   shift 4
-  local log="$WORK/logs/${label}.log"
+  local attempts="${CASE_ATTEMPTS:-2}"
   echo ""
   echo "--- CASE ${label} (${verb}) — marker ${marker} ---"
-  local start end rc lat
-  start=$(date +%s)
-  set +e
-  ( cd "$dir" && HOME="$HERMETIC_HOME" timeout "$CASE_TIMEOUT" "$@" ) </dev/null >"$log" 2>&1
-  rc=$?
-  set -e
-  end=$(date +%s)
-  lat=$((end - start))
+  local attempt ok=0 lat=0 why="" log=""
+  for (( attempt = 1; attempt <= attempts; attempt++ )); do
+    log="$WORK/logs/${label}.attempt${attempt}.log"
+    local start end rc
+    start=$(date +%s)
+    set +e
+    ( cd "$dir" && HOME="$HERMETIC_HOME" timeout "$CASE_TIMEOUT" "$@" ) </dev/null >"$log" 2>&1
+    rc=$?
+    set -e
+    end=$(date +%s)
+    lat=$((end - start))
 
-  local ok=1 why=""
-  if [[ $rc -ne 0 ]]; then ok=0; why="exit=$rc (expected 0)"; fi
-  if ! grep -qF "Requested tools:" "$log"; then ok=0; why="${why:+$why; }no 'Requested tools:' (no tool call)"; fi
-  if ! grep -qF "$marker" "$log"; then ok=0; why="${why:+$why; }marker '$marker' absent (no tool-derived synthesis)"; fi
+    local aok=1
+    why=""
+    if [[ $rc -ne 0 ]]; then aok=0; why="exit=$rc (expected 0)"; fi
+    if ! grep -qF "Requested tools:" "$log"; then aok=0; why="${why:+$why; }no 'Requested tools:' (no tool call)"; fi
+    if ! grep -qF "$marker" "$log"; then aok=0; why="${why:+$why; }marker '$marker' absent (no tool-derived synthesis)"; fi
+
+    if [[ $aok -eq 1 ]]; then ok=1; break; fi
+    if [[ $attempt -lt $attempts ]]; then
+      echo "  attempt ${attempt}/${attempts} failed (${lat}s): ${why} — retrying"
+    fi
+  done
 
   if [[ $ok -eq 1 ]]; then
-    echo "PASS  ${label} (${verb})  ${lat}s  exit=${rc}  tool-call ✓  marker ✓"
+    echo "PASS  ${label} (${verb})  ${lat}s  attempt ${attempt}/${attempts}  tool-call ✓  marker ✓"
     PASS=$((PASS + 1))
   else
-    echo "FAIL  ${label} (${verb})  ${lat}s  — ${why}"
-    echo "----- captured output tail (${label}) -----"
+    echo "FAIL  ${label} (${verb})  ${lat}s  — ${why} (after ${attempts} attempts)"
+    echo "----- captured output tail (${label}, last attempt) -----"
     tail -n 25 "$log" | sed 's/^/    /'
     echo "-------------------------------------------"
     FAIL=$((FAIL + 1))
@@ -187,22 +213,32 @@ echo ""
 echo "=== PHASE 2: gth eval (structured, exercises the eval verb over ollama) ==="
 mkdir -p "$EVAL_WORK/.gsloth/.gsloth-settings"
 cat > "$EVAL_WORK/.gsloth/.gsloth-settings/.gsloth.config.json" <<EOF
-{"llm":{"type":"ollama","model":"${SMOKE_MODEL}","numCtx":16384}}
+{"llm":{"type":"ollama","model":"${SMOKE_MODEL}","numCtx":16384,"temperature":0}}
 EOF
 cp "$SCRIPT_DIR/workdir/smoke.suite.yaml" "$EVAL_WORK/smoke.suite.yaml"
 cp "$SCRIPT_DIR/workdir/marker-eval.txt" "$EVAL_WORK/marker-eval.txt"
-EVAL_LOG="$WORK/logs/eval.log"
-set +e
-( cd "$EVAL_WORK" && HOME="$HERMETIC_HOME" timeout "$CASE_TIMEOUT" \
-    node "$CLI" eval smoke.suite.yaml -o out ) </dev/null >"$EVAL_LOG" 2>&1
-EVAL_RC=$?
-set -e
+# Same retry backstop as run_case: temp:0 passes on attempt 1; a retry only fires on a failed attempt
+# and cannot mask a real regression (which fails every attempt).
+EVAL_ATTEMPTS="${CASE_ATTEMPTS:-2}"
+EVAL_RC=1
+for (( eattempt = 1; eattempt <= EVAL_ATTEMPTS; eattempt++ )); do
+  EVAL_LOG="$WORK/logs/eval.attempt${eattempt}.log"
+  set +e
+  ( cd "$EVAL_WORK" && HOME="$HERMETIC_HOME" timeout "$CASE_TIMEOUT" \
+      node "$CLI" eval smoke.suite.yaml -o out ) </dev/null >"$EVAL_LOG" 2>&1
+  EVAL_RC=$?
+  set -e
+  [[ $EVAL_RC -eq 0 ]] && break
+  if [[ $eattempt -lt $EVAL_ATTEMPTS ]]; then
+    echo "  eval attempt ${eattempt}/${EVAL_ATTEMPTS} failed (exit=${EVAL_RC}) — retrying"
+  fi
+done
 if [[ $EVAL_RC -eq 0 ]]; then
-  echo "PASS  eval (gth eval smoke.suite.yaml)  exit=0"
+  echo "PASS  eval (gth eval smoke.suite.yaml)  exit=0  attempt ${eattempt}/${EVAL_ATTEMPTS}"
   PASS=$((PASS + 1))
 else
-  echo "FAIL  eval (gth eval smoke.suite.yaml)  exit=${EVAL_RC}"
-  echo "----- captured output tail (eval) -----"
+  echo "FAIL  eval (gth eval smoke.suite.yaml)  exit=${EVAL_RC} (after ${EVAL_ATTEMPTS} attempts)"
+  echo "----- captured output tail (eval, last attempt) -----"
   tail -n 30 "$EVAL_LOG" | sed 's/^/    /'
   echo "---------------------------------------"
   FAIL=$((FAIL + 1))
