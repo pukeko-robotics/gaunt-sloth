@@ -311,13 +311,13 @@ gsloth code "Help me refactor the authentication module"
 Grade a suite of YAML-defined cases against the agent — with deterministic checks and/or an LLM judge — and report pass/fail. Think "pytest for prompts": you assert what a good answer must (and must not) contain, call, or match, then `eval` runs every case and tells you which passed.
 
 ```bash
-gsloth eval <suite.yaml>
+gsloth eval <suites...>
 ```
 
-`eval` is **non-interactive**: it reads the suite from the file argument, never from stdin, and never prompts for approval. Its exit code is the pass/fail gate, so it drops straight into CI.
+`eval` is **non-interactive**: it reads the suite(s) from the file/directory arguments, never from stdin, and never prompts for approval. Its exit code is the pass/fail gate, so it drops straight into CI.
 
 ### Arguments
-- `<suite>` - Path to the eval suite YAML file (required)
+- `<suites...>` - One or more eval suite YAML **files** and/or **directories** (required). A directory runs its direct-child `*.yaml`/`*.yml` suites (non-recursive, sorted). See [Running many suites](#running-many-suites).
 
 ### Options
 - `-j, --concurrency <n>` - Maximum cases run in parallel (default: the shared batch runner pool size)
@@ -417,6 +417,8 @@ An `expect:` block's `identities:` scopes which identity it grades; a block with
 
 Every listed identity must resolve to a real profile before any case runs: each needs its own config directory (`.gsloth/.gsloth-settings/<name>/`, one per [identity profile](CONFIGURATION.md#identity-profiles)). An unresolved name aborts the whole run with **exit 2** rather than silently falling back to the global config and reporting a false green.
 
+A matrix suite runs from its `identities:` list alone — you do **not** need to pass a base `-i` on the CLI (the cases run under the listed profiles, and rubric `judge:` grading falls back to the first identity's model unless a `judge_profile`/`--judge` is set). A project with only per-identity configs (and no base config) still works.
+
 To prove an identity's agent touched no files, set `filesystem: 'none'` in that profile's config — a profile/config setting, not a suite-YAML key; see [CONFIGURATION.md](CONFIGURATION.md).
 
 ### Multi-turn cases
@@ -440,6 +442,19 @@ Turn 2 (`How many did you just list?`) only makes sense because it shares the co
 ### Judging
 
 A `judge:` rubric is scored 0–10 by an LLM. By default that is the SUT's own model. To grade with a different model — e.g. a stricter or independent one that can catch blind spots the SUT shares — point the judge at its own identity profile, either per-suite with `judge_profile:` or per-run with `--judge <profile>` (the flag wins). A judge profile resolves the same way as any [identity profile](CONFIGURATION.md#identity-profiles); a `--judge`/`judge_profile` that doesn't resolve aborts the run with **exit 2**.
+
+### Running many suites
+
+Pass several files, a directory, or a mix — `eval` runs them all under **one** aggregate exit code, so a CI step can gate on a whole tree of suites at once. A directory expands to its **direct-child** `*.yaml`/`*.yml` files (non-recursive, sorted); the same file named twice runs once.
+
+```bash
+gsloth eval eval/js-basics.yaml eval/authz-matrix.yaml   # two files
+gsloth eval eval/ -o eval/out --reporter junit           # every suite in a directory
+```
+
+- **One suite** → output is written directly into the `-o` dir, exactly as before.
+- **Many suites** → each writes into its own `<output>/<suite-name>/` subdir (`results.json`, per-cell JSON, and `results.xml` if `--reporter junit`), so a CI glob like `eval/out/**/*.xml` collects them and suites never clobber each other. On a name clash the later suite gets a `-2`/`-3` suffix and a warning.
+- The **aggregate exit** is `0` only if every cell of every suite passed, `1` if any gradeable cell failed, and `2` if **any** suite hit a harness error (a bad suite doesn't stop the good ones — they still run and write output, but the run as a whole reports `2`). A final `EVAL TOTAL:` line summarizes the combined pass/fail count.
 
 ### Exit codes (eval)
 
