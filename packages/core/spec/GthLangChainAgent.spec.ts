@@ -11,6 +11,10 @@ const systemUtilsMock = {
   getCurrentWorkDir: vi.fn(),
   stopWaitingForEscape: vi.fn(),
   waitForEscape: vi.fn(),
+  // TUI-C30: the plain tool indication (created inside streamFromInput) reads these.
+  getUseColour: vi.fn(() => false),
+  stdout: { isTTY: false, write: vi.fn() },
+  env: {},
 };
 vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
 
@@ -50,6 +54,8 @@ vi.mock('#src/mcp/OAuthClientProviderImpl.js', () => ({
 
 const consoleUtilsMock = {
   displayInfo: vi.fn(),
+  // TUI-C30: the plain-surface tool indication emits through this at ToolMessage time.
+  displayToolIndication: vi.fn(),
 };
 vi.mock('#src/utils/consoleUtils.js', () => consoleUtilsMock);
 

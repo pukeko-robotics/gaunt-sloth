@@ -18,6 +18,7 @@ import {
   type RunStatsAccumulator,
 } from '#src/core/runStats.js';
 import type { DebugCapture } from '#src/core/debugCapture.js';
+import { createPlainToolIndication } from '#src/core/plainToolIndication.js';
 import { debugLog, debugLogError, debugLogObject } from '#src/utils/debugUtils.js';
 import { ProgressIndicator } from '#src/utils/ProgressIndicator.js';
 import { stopWaitingForEscape, waitForEscape } from '#src/utils/systemUtils.js';
@@ -407,6 +408,11 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
     // GS2-16: bound so the stream `start()` closure (whose `this` is the stream source, not the
     // agent) can fold each chunk into the run tally. Fail-soft inside recordRunStats.
     const recordRunStats = (m: unknown) => this.recordRunStats(m);
+    // TUI-C30 — compact per-tool-call indication for the plain surface (`name(args…)` + the
+    // canonical 10-line greyed preview when each ToolMessage lands). Per-stream state; emits at
+    // INFO level so the existing consoleLevel gate governs it like the historical tool notices.
+    // The TUI never runs this string path (it renders the typed event stream itself).
+    const toolIndication = createPlainToolIndication();
     const interruptState = { escape: false, messageShown: false };
     const abortController = new AbortController();
     const showInterruptMessage = () => {
@@ -460,6 +466,9 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
             // GS2-16: fold every chunk (AIMessageChunk usage/tool_calls, ToolMessage name) into
             // the run tally before the text-only handling below.
             recordRunStats(chunk);
+            // TUI-C30: fold the chunk into the plain-surface tool indication (renders each
+            // completed call when its ToolMessage arrives; a no-op for plain text chunks).
+            toolIndication.observe(chunk);
             if (AIMessage.isInstance(chunk)) {
               const text = (chunk.text as string) ?? '';
               totalChunks++;

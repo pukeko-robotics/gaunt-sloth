@@ -21,12 +21,18 @@ export interface ToolCallViewModel {
   status: 'running' | 'done';
   /**
    * TUI-C17 — accumulated LIVE output streamed while the tool executed (`tool_output` events:
-   * the "🔧 Executing …" notice, then verbatim child stdout/stderr chunks, in arrival order).
-   * Distinct from `result` (the final model-facing tool result): this is what the child printed
-   * as it ran. Living here (React state, not ephemeral stdout) is what makes it survive
-   * re-renders; TUI-C30 consumes it for richer per-tool output previews.
+   * verbatim child stdout/stderr chunks, in arrival order). Distinct from `result` (the final
+   * model-facing tool result): this is what the child printed as it ran. Living here (React
+   * state, not ephemeral stdout) is what makes it survive re-renders; TUI-C30 consumes it for
+   * the per-tool output preview.
    */
   output?: string;
+  /**
+   * TUI-C30 — the "🔧 Executing …" announcement (`tool_output` events with `isNotice`), kept
+   * SEPARATE from `output` so the raw-output preview never counts the notice as an output line
+   * and the expanded panel can style it as chrome rather than child output.
+   */
+  notice?: string;
   /** Present once a `tool_result` arrives. */
   result?: string;
   /**
@@ -129,24 +135,26 @@ export function foldEvents(state: TurnViewModel, event: AgentStreamEvent): TurnV
       // TUI-C17 — live output streamed while the tool executes. Chunks normally arrive BEFORE the
       // call's `tool_start` (the agent stream only flushes tool_start when the round's ToolMessage
       // lands), so upsertTool's placeholder path is the common case: seed the name from the event
-      // so the panel is labelled while running. The notice has no trailing newline of its own
-      // (raw-console framing is the headless sink's concern), so terminate its line here.
+      // so the panel is labelled while running.
       // Without an id (defensive: the invoking framework supplied no tool call), fall back to the
       // most recent running call with the same name, else a synthetic per-name bucket — output is
       // never silently dropped (mirrors the defensive posture above).
+      // TUI-C30 — notices accumulate on the SEPARATE `notice` field (newline-joined; they carry
+      // no trailing newline of their own) so the output preview counts only real child output.
       const fallbackId =
         [...state.toolCalls]
           .reverse()
           .find((tc) => tc.name === event.name && tc.status === 'running')?.id ??
         `${event.name}#live`;
       const id = event.id ?? fallbackId;
-      const addition = event.isNotice ? `${event.chunk}\n` : event.chunk;
       return {
         ...state,
         toolCalls: upsertTool(state.toolCalls, id, (tc) => ({
           ...tc,
           name: tc.name || event.name,
-          output: (tc.output ?? '') + addition,
+          ...(event.isNotice
+            ? { notice: tc.notice ? `${tc.notice}\n${event.chunk}` : event.chunk }
+            : { output: (tc.output ?? '') + event.chunk }),
         })),
       };
     }

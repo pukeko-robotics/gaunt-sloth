@@ -32,14 +32,14 @@ describe('tui <LiveTurn>', () => {
       ],
     });
 
-    it('collapsed by default: shows a compact summary line, hides args/result', () => {
+    it('collapsed by default: summary with inline params + a dim result preview (TUI-C30)', () => {
       const { lastFrame, unmount } = render(<LiveTurn turn={withTool} />);
       const f = stripAnsi(lastFrame() ?? '');
-      expect(f).toContain('read_file'); // summary
+      expect(f).toContain('read_file(path=README.md)'); // params inline, not a raw JSON dump
+      expect(f).not.toContain('{"path"'); // the raw args JSON stays hidden collapsed
       expect(f).toContain('done'); // status word
       expect(f).toContain('▸'); // collapsed caret
-      expect(f).not.toContain('README.md'); // args hidden
-      expect(f).not.toContain('file contents here'); // result hidden
+      expect(f).toContain('file contents here'); // the head of the result previews inline
       unmount();
     });
 
@@ -99,7 +99,7 @@ describe('tui <LiveTurn>', () => {
       unmount();
     });
 
-    it('shows the live streamed output (TUI-C17) when expanded, hides it collapsed', () => {
+    it('previews live streamed output collapsed (TUI-C30) and shows the notice only expanded', () => {
       const withOutput = turn({
         toolCalls: [
           {
@@ -107,14 +107,16 @@ describe('tui <LiveTurn>', () => {
             name: 'run_shell_command',
             argsText: '{"command":"ls -la"}',
             status: 'running',
-            output: '🔧 Executing run_shell_command: ls -la\ntotal 12\ndrwxr-xr-x  2 me\n',
+            notice: '🔧 Executing run_shell_command: ls -la',
+            output: 'total 12\ndrwxr-xr-x  2 me\n',
           },
         ],
       });
       const collapsed = render(<LiveTurn turn={withOutput} />);
       const fc = stripAnsi(collapsed.lastFrame() ?? '');
-      expect(fc).toContain('run_shell_command'); // summary line
-      expect(fc).not.toContain('total 12'); // output body hidden while collapsed
+      expect(fc).toContain('run_shell_command(command=ls -la)'); // summary with inline params
+      expect(fc).toContain('total 12'); // live output previews inline while collapsed
+      expect(fc).not.toContain('Executing run_shell_command'); // notice is expanded-only chrome
       collapsed.unmount();
 
       const expanded = render(<LiveTurn turn={withOutput} toolsExpanded />);
@@ -156,6 +158,164 @@ describe('tui <LiveTurn>', () => {
       expect(f).toContain('✓');
       expect(f).toContain('done');
       expect(f).not.toContain('✗');
+      unmount();
+    });
+  });
+
+  describe('TUI-C30 rich tool rendering (preview cap, diff colours, dedupe)', () => {
+    it('caps the collapsed preview at the canonical 10 lines with an overflow marker', () => {
+      const longResult = Array.from(
+        { length: 14 },
+        (_, i) => `row-${String(i + 1).padStart(2, '0')}`
+      ).join('\n');
+      const t = turn({
+        toolCalls: [
+          { id: 't1', name: 'read_file', argsText: '{"path":"big.txt"}', status: 'done', result: longResult },
+        ],
+      });
+      const collapsed = render(<LiveTurn turn={t} />);
+      const fc = stripAnsi(collapsed.lastFrame() ?? '');
+      expect(fc).toContain('row-01'); // preview head
+      expect(fc).toContain('row-10'); // the canonical 10th line
+      expect(fc).not.toContain('row-11'); // beyond-cap hidden collapsed
+      expect(fc).toContain('… (+4 more lines)'); // overflow marker
+      collapsed.unmount();
+
+      // Expand still shows the full body (existing /tools / Ctrl+T behaviour preserved).
+      const expanded = render(<LiveTurn turn={t} toolsExpanded />);
+      const fe = stripAnsi(expanded.lastFrame() ?? '');
+      expect(fe).toContain('row-14');
+      expect(fe).not.toContain('more lines');
+      expanded.unmount();
+    });
+
+    it('renders write_file as an added-lines diff (green), not a raw args dump', () => {
+      const t = turn({
+        toolCalls: [
+          {
+            id: 'w1',
+            name: 'write_file',
+            argsText: JSON.stringify({ path: 'src/new.ts', content: 'line one\nline two' }),
+            status: 'done',
+            result: 'Successfully wrote to src/new.ts',
+          },
+        ],
+      });
+      const { lastFrame, unmount } = render(<LiveTurn turn={t} />);
+      const raw = lastFrame() ?? '';
+      const f = stripAnsi(raw);
+      expect(f).toContain('write_file(path=src/new.ts, …)'); // content elided from the summary
+      expect(f).toContain('+ line one');
+      expect(f).toContain('+ line two');
+      expect(f).not.toContain('"content"'); // no raw JSON dump
+      expect(raw).toContain('[32m'); // chalk.level=3 → green SGR on the added lines
+      unmount();
+    });
+
+    it('renders edit_file as a remove/add diff with red and green SGRs', () => {
+      const t = turn({
+        toolCalls: [
+          {
+            id: 'e1',
+            name: 'edit_file',
+            argsText: JSON.stringify({
+              path: 'src/x.ts',
+              edits: [{ oldText: 'const answer = 41;', newText: 'const answer = 42;' }],
+            }),
+            status: 'done',
+          },
+        ],
+      });
+      const { lastFrame, unmount } = render(<LiveTurn turn={t} />);
+      const raw = lastFrame() ?? '';
+      const f = stripAnsi(raw);
+      expect(f).toContain('edit_file(path=src/x.ts, …)');
+      expect(f).toContain('- const answer = 41;');
+      expect(f).toContain('+ const answer = 42;');
+      expect(raw).toContain('[31m'); // red SGR (removed)
+      expect(raw).toContain('[32m'); // green SGR (added)
+      unmount();
+    });
+
+    it('dedupes a shell result that repeats the live output (<COMMAND_OUTPUT>)', () => {
+      const t = turn({
+        toolCalls: [
+          {
+            id: 's1',
+            name: 'run_shell_command',
+            argsText: '{"command":"echo hi"}',
+            status: 'done',
+            output: 'hi\n',
+            result:
+              "Executing 'echo hi'...\n\n<COMMAND_OUTPUT>\nhi\n</COMMAND_OUTPUT>\n" +
+              "\n\nCommand 'echo hi' completed successfully",
+          },
+        ],
+      });
+      const { lastFrame, unmount } = render(<LiveTurn turn={t} toolsExpanded />);
+      const f = stripAnsi(lastFrame() ?? '');
+      // The output body renders ONCE (live output preferred), plus the closing status line.
+      expect(f.match(/^\s*hi$/gm) ?? []).toHaveLength(1);
+      expect(f).toContain("Command 'echo hi' completed successfully");
+      expect(f).not.toContain('<COMMAND_OUTPUT>'); // the wrapper tags are chrome, not content
+      unmount();
+    });
+
+    // fix-cycle-1 regression — redact-before-truncate on the TUI path end-to-end: a >48-char
+    // patternless literal secret from a secret-named env var must be FULLY redacted in the
+    // rendered panel summary (truncation must never bisect it out of literal-matching).
+    it('fully redacts an over-cap patternless env secret in the panel summary', async () => {
+      const secret = 'deadbeef'.repeat(8); // 64 chars, matches no provider pattern
+      const { resetToolDisplaySecretsCacheForTests } =
+        await import('@gaunt-sloth/core/core/toolDisplay.js');
+      process.env.GTH_TEST_ONLY_API_KEY = secret;
+      resetToolDisplaySecretsCacheForTests(); // re-collect env-derived literals with the var set
+      try {
+        const t = turn({
+          toolCalls: [
+            {
+              id: 's1',
+              name: 'gth_web_fetch',
+              argsText: JSON.stringify({ url: 'https://x.test', token: secret }),
+              status: 'done',
+            },
+          ],
+        });
+        const { lastFrame, unmount } = render(<LiveTurn turn={t} />);
+        const f = stripAnsi(lastFrame() ?? '');
+        expect(f).toContain('token=<redacted>');
+        expect(f).not.toContain('deadbeef'); // no leaked head of the secret
+        unmount();
+      } finally {
+        delete process.env.GTH_TEST_ONLY_API_KEY;
+        resetToolDisplaySecretsCacheForTests(); // don't leak the literal into other tests
+      }
+    });
+
+    it('truncates an over-long param value with … and redacts secret-shaped values', () => {
+      const longPath = 'very/long/path/'.repeat(10) + 'file.ts';
+      const t = turn({
+        toolCalls: [
+          {
+            id: 'p1',
+            name: 'read_file',
+            argsText: JSON.stringify({ path: longPath }),
+            status: 'done',
+          },
+          {
+            id: 'p2',
+            name: 'gth_web_fetch',
+            argsText: JSON.stringify({ token: 'sk-abcdefghijklmnopqrstuvwxyz123456' }),
+            status: 'done',
+          },
+        ],
+      });
+      const { lastFrame, unmount } = render(<LiveTurn turn={t} />);
+      const f = stripAnsi(lastFrame() ?? '');
+      expect(f).toContain('…'); // over-long value truncated
+      expect(f).not.toContain(longPath); // never the full value
+      expect(f).toContain('<redacted>'); // provider-key pattern redacted (GS2-47 lineage)
+      expect(f).not.toContain('sk-abcdefghijklmnopqrstuvwxyz123456');
       unmount();
     });
   });

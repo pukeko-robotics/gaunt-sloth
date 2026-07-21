@@ -114,7 +114,7 @@ describe('tui/viewModel foldEvents', () => {
   });
 
   describe('tool_output live output (TUI-C17)', () => {
-    it('accumulates notice + chunks in arrival order on the call, terminating the notice line', async () => {
+    it('accumulates chunks on `output` and the notice on the SEPARATE `notice` field (TUI-C30)', async () => {
       const { foldEventSequence } = await import('#src/tui/viewModel.js');
       const vm = foldEventSequence([
         {
@@ -128,9 +128,26 @@ describe('tui/viewModel foldEvents', () => {
         { type: 'tool_output', id: 't1', name: 'run_shell_command', chunk: 'drwxr file\n' },
       ]);
       expect(vm.toolCalls).toHaveLength(1);
-      expect(vm.toolCalls[0].output).toBe(
-        '🔧 Executing run_shell_command: ls -la\ntotal 12\ndrwxr file\n'
-      );
+      // The notice lives apart from the raw child output so the TUI-C30 preview counts only
+      // real output lines and can style/strip the announcement independently.
+      expect(vm.toolCalls[0].notice).toBe('🔧 Executing run_shell_command: ls -la');
+      expect(vm.toolCalls[0].output).toBe('total 12\ndrwxr file\n');
+    });
+
+    it('joins multiple notices with newlines on the notice field', async () => {
+      const { foldEventSequence } = await import('#src/tui/viewModel.js');
+      const vm = foldEventSequence([
+        { type: 'tool_output', id: 't1', name: 'run_tests', chunk: 'first notice', isNotice: true },
+        {
+          type: 'tool_output',
+          id: 't1',
+          name: 'run_tests',
+          chunk: 'second notice',
+          isNotice: true,
+        },
+      ]);
+      expect(vm.toolCalls[0].notice).toBe('first notice\nsecond notice');
+      expect(vm.toolCalls[0].output).toBeUndefined();
     });
 
     it('creates a named placeholder when output arrives BEFORE tool_start (the common live case)', async () => {

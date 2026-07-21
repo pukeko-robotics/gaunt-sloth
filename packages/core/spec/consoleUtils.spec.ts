@@ -281,6 +281,35 @@ describe('consoleUtils', () => {
       });
     });
 
+    describe('displayToolIndication (TUI-C30)', () => {
+      it('prints the pre-styled block verbatim (no extra colour wrap) and logs it stripped', async () => {
+        systemUtilsMock.getUseColour.mockReturnValue(true); // must NOT trigger a dim wrap
+        const { displayToolIndication } = await import('#src/utils/consoleUtils.js');
+
+        const block = '\n✓ read_file(path=a.txt)\n    \x1b[2mline-1\x1b[0m';
+        displayToolIndication(block);
+
+        // Verbatim to the console — the block styles its own lines; an outer dim wrap would be
+        // broken by the inner resets.
+        expect(systemUtilsMock.info).toHaveBeenCalledWith(block);
+        // The session log gets the ANSI-stripped text.
+        expect(systemUtilsMock.writeToLogStream).toHaveBeenCalledWith(
+          '\n✓ read_file(path=a.txt)\n    line-1\n'
+        );
+      });
+
+      it('is gated at INFO level like the historical tool notices', async () => {
+        const { displayToolIndication, setConsoleLevel } =
+          await import('#src/utils/consoleUtils.js');
+        setConsoleLevel(StatusLevel.WARNING);
+
+        displayToolIndication('✓ read_file(path=a.txt)');
+
+        expect(systemUtilsMock.info).not.toHaveBeenCalled();
+        expect(systemUtilsMock.writeToLogStream).not.toHaveBeenCalled();
+      });
+    });
+
     describe('display', () => {
       it('should display plain message and log to session', async () => {
         // Import the function after mocks are set up

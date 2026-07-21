@@ -172,6 +172,20 @@ export function display(message: string): void {
   su.log(message);
 }
 
+/**
+ * TUI-C30 — print one pre-styled tool-call indication block (the plain surface's compact
+ * `✓ name(args…)` + greyed preview, built by `core/plainToolIndication.ts`). Same INFO-level
+ * gate, stdout channel and session-log treatment as {@link displayInfo} — matching the stream
+ * discipline of the existing tool notices — but WITHOUT the blanket dim wrap: the block styles
+ * each line itself (diff colours, per-line dim), and an outer wrapper would be broken by the
+ * inner resets. The session log gets the ANSI-stripped text via {@link writeToSessionLog}.
+ */
+export function displayToolIndication(message: string): void {
+  if (!shouldDisplayLevel(StatusLevel.INFO)) return;
+  writeToSessionLog(message + '\n');
+  su.info(message);
+}
+
 export function formatInputPrompt(message: string): string {
   return colorText(message, 'magenta');
 }
