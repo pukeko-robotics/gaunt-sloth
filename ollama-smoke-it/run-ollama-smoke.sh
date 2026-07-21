@@ -143,7 +143,12 @@ run_case() {
     local start end rc
     start=$(date +%s)
     set +e
-    ( cd "$dir" && HOME="$HERMETIC_HOME" timeout "$CASE_TIMEOUT" "$@" ) </dev/null >"$log" 2>&1
+    # `env -u INIT_CWD`: `pnpm run` exports INIT_CWD=<repo root> to every descendant, and gth's
+    # getCurrentWorkDir() PREFERS INIT_CWD over process.cwd() (systemUtils.ts). Without this, the
+    # `cd "$dir"` is ignored for discovery: the up-tree config walk starts at the repo root, finds the
+    # repo's OWN .gsloth (gemini, not ollama), and resolves fixtures there → wrong model + ENOENT.
+    # Unsetting it falls back to the cd'd cwd — exactly what a direct shell `gth` invocation sees.
+    ( cd "$dir" && env -u INIT_CWD HOME="$HERMETIC_HOME" timeout "$CASE_TIMEOUT" "$@" ) </dev/null >"$log" 2>&1
     rc=$?
     set -e
     end=$(date +%s)
@@ -224,7 +229,9 @@ EVAL_RC=1
 for (( eattempt = 1; eattempt <= EVAL_ATTEMPTS; eattempt++ )); do
   EVAL_LOG="$WORK/logs/eval.attempt${eattempt}.log"
   set +e
-  ( cd "$EVAL_WORK" && HOME="$HERMETIC_HOME" timeout "$CASE_TIMEOUT" \
+  # env -u INIT_CWD: see run_case — neutralize the INIT_CWD `pnpm run` leaks so gth resolves the
+  # project dir to this hermetic $EVAL_WORK (its own .gsloth + suite), not the repo root.
+  ( cd "$EVAL_WORK" && env -u INIT_CWD HOME="$HERMETIC_HOME" timeout "$CASE_TIMEOUT" \
       node "$CLI" eval smoke.suite.yaml -o out ) </dev/null >"$EVAL_LOG" 2>&1
   EVAL_RC=$?
   set -e
