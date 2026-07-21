@@ -148,6 +148,23 @@ Run multiple integration test patterns:
 pnpm run it vertexai prCommand reviewCommand
 ```
 
+### Local real-LLM smoke gate (ollama)
+
+Before merging a change to the **agent runtime, the provider layer, or the CLI verbs**, run the
+whole-agent functional gate:
+
+```bash
+pnpm run smoke:ollama          # or: ollama-smoke-it/run-ollama-smoke.sh
+```
+
+It drives the **real `gth` CLI** (`ask` / `exec` / `code --no-tui` / `eval`) against a **local ollama
+model** (`gemma4:12b` by default) and asserts each verb runs, calls a tool, and **synthesizes** a
+non-empty answer from the tool result — catching whole-agent regressions the unit suite can't (the
+[GS2-59](ollama-smoke-it/README.md) class: gemma-over-ollama returned empty content on the post-tool
+turn while every unit test stayed green). It is **local-GPU-only** and **SKIPs (exit 0)** when ollama
+is absent, so it is safe to run anywhere; it is deliberately **not** in CI. See
+[`ollama-smoke-it/README.md`](ollama-smoke-it/README.md).
+
 ### Building and Testing
 
 ```bash
