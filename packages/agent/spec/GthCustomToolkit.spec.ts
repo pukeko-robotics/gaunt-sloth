@@ -693,6 +693,53 @@ describe('GthCustomToolkit', () => {
       expect(result).toContain("Command 'echo test' completed successfully");
       expect(result).not.toContain('timed out');
     });
+
+    it('streams child stdout/stderr to raw stdout by default (the headless path, TUI-C17)', async () => {
+      // No tool-output subscriber: the channel's default sink must reproduce the historical
+      // behaviour — the notice via displayInfo, each child chunk via stdout.write, verbatim.
+      await toolkit['executeCommand']('echo test', 'test_tool');
+      expect(consoleUtilsMock.displayInfo).toHaveBeenCalledWith(
+        '\n🔧 Executing test_tool: echo test'
+      );
+      expect(systemUtilsMock.stdout.write).toHaveBeenCalledWith('Test output\n');
+      expect(systemUtilsMock.stdout.write).toHaveBeenCalledWith('Test error\n');
+    });
+  });
+
+  describe('tool-output channel routing (TUI-C17)', () => {
+    it('routes the notice + streamed chunks to a subscriber, attributed to the tool call id, with NO raw stdout', async () => {
+      const { subscribeToolOutput } = await import('@gaunt-sloth/core/core/toolOutputChannel.js');
+      const received: unknown[] = [];
+      const unsubscribe = subscribeToolOutput((chunk) => received.push(chunk));
+      try {
+        toolkit = new GthCustomToolkit({
+          list_files: {
+            command: 'ls -la',
+            description: 'List files',
+          },
+        });
+        const tool = toolkit.tools.find((t) => t.name === 'list_files')!;
+        // Invoke as a real ToolCall so LangChain threads `config.toolCall.id` into the fn —
+        // the same shape the agent's ToolNode uses, which is where attribution comes from.
+        await tool.invoke({ id: 'call-7', name: 'list_files', args: {}, type: 'tool_call' });
+
+        expect(received).toEqual([
+          {
+            toolCallId: 'call-7',
+            toolName: 'list_files',
+            kind: 'notice',
+            text: '🔧 Executing list_files: ls -la',
+          },
+          { toolCallId: 'call-7', toolName: 'list_files', kind: 'output', text: 'Test output\n' },
+          { toolCallId: 'call-7', toolName: 'list_files', kind: 'output', text: 'Test error\n' },
+        ]);
+        // While managed, nothing leaks to the raw console/stdout (the Ink-frame corruption bug).
+        expect(systemUtilsMock.stdout.write).not.toHaveBeenCalled();
+        expect(consoleUtilsMock.displayInfo).not.toHaveBeenCalled();
+      } finally {
+        unsubscribe();
+      }
+    });
   });
 
   describe('custom command tool invocation with timeout', () => {

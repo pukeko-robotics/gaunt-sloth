@@ -4,21 +4,25 @@
  * Provides secure execution of shell commands with parameter validation.
  */
 import { BaseToolkit, StructuredToolInterface, tool } from '@langchain/core/tools';
+import type { ToolRunnableConfig } from '@langchain/core/tools';
 import { z } from 'zod';
 import { spawn } from 'child_process';
 import path from 'node:path';
-import { displayInfo, displayError, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import { displayError, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import {
   CustomToolsConfig,
   CustomCommandConfig,
   CustomCommandParameter,
   ValidationCheck,
 } from '@gaunt-sloth/core/config.js';
+import { emitToolOutput } from '@gaunt-sloth/core/core/toolOutputChannel.js';
 import { createInterface, stdin, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
 
-// Helper function to create a tool with execute type
+// Helper function to create a tool with execute type. The fn's second parameter is LangChain's
+// ToolRunnableConfig — when the framework invokes the tool with a ToolCall, `config.toolCall.id`
+// identifies the call, which TUI-C17 threads into the live-output channel for attribution.
 function createCustomTool<T extends z.ZodSchema>(
-  fn: (args: z.infer<T>) => Promise<string>,
+  fn: (args: z.infer<T>, config?: ToolRunnableConfig) => Promise<string>,
   config: {
     name: string;
     description: string;
@@ -200,9 +204,19 @@ export default class GthCustomToolkit extends BaseToolkit {
   private async executeCommand(
     command: string,
     toolName: string,
-    timeoutSeconds?: number
+    timeoutSeconds?: number,
+    toolCallId?: string
   ): Promise<string> {
-    displayInfo(`\n🔧 Executing ${toolName}: ${command}`);
+    // TUI-C17: the "Executing" notice + live child output go through the tool-output channel.
+    // With no subscriber (every non-TUI surface) the channel's default sink reproduces the
+    // historical behaviour exactly (displayInfo notice, raw stdout chunks); under the Ink TUI
+    // the session subscribes and folds them into the managed frame instead.
+    emitToolOutput({
+      toolCallId,
+      toolName,
+      kind: 'notice',
+      text: `🔧 Executing ${toolName}: ${command}`,
+    });
 
     return new Promise((resolve, reject) => {
       const child = spawn(command, {
@@ -224,7 +238,7 @@ export default class GthCustomToolkit extends BaseToolkit {
       if (child.stdout) {
         child.stdout.on('data', (data) => {
           const chunk = data.toString();
-          stdout.write(chunk);
+          emitToolOutput({ toolCallId, toolName, kind: 'output', text: chunk });
           output += chunk;
         });
       }
@@ -232,7 +246,7 @@ export default class GthCustomToolkit extends BaseToolkit {
       if (child.stderr) {
         child.stderr.on('data', (data) => {
           const chunk = data.toString();
-          stdout.write(chunk);
+          emitToolOutput({ toolCallId, toolName, kind: 'output', text: chunk });
           output += chunk;
         });
       }
@@ -341,13 +355,16 @@ export default class GthCustomToolkit extends BaseToolkit {
     const schema = this.createCustomCommandSchema(config);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const toolFn = async (args: any): Promise<string> => {
+    const toolFn = async (args: any, runnableConfig?: ToolRunnableConfig): Promise<string> => {
       // All parameters are strings, safe to cast
       const stringArgs = args as Record<string, string>;
+      // TUI-C17: the invoking framework's tool call id, threaded into the live-output channel
+      // so streamed chunks are attributed to this exact call.
+      const toolCallId = runnableConfig?.toolCall?.id;
 
       try {
         const command = this.buildCustomCommand(config.command, stringArgs, config.parameters);
-        return await this.executeCommand(command, name, config.timeout);
+        return await this.executeCommand(command, name, config.timeout, toolCallId);
       } catch (validationError) {
         // If validation fails, prompt the user for confirmation
         const errorMessage =
@@ -365,7 +382,7 @@ export default class GthCustomToolkit extends BaseToolkit {
         );
 
         if (userConfirmed) {
-          return await this.executeCommand(displayCommand, name);
+          return await this.executeCommand(displayCommand, name, undefined, toolCallId);
         }
 
         throw new Error(
