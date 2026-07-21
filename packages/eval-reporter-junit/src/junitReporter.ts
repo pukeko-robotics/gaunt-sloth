@@ -11,13 +11,25 @@ import type {
 } from '@gaunt-sloth/batch';
 
 /**
- * XML-escape a dynamic string for use in an attribute value OR a text node. `&` MUST be replaced
- * first (it is the escape char of every other entity). Judge rationale and assertion reasons carry
- * `< > & " '` freely, so without this a single raw `<` or `&` makes `results.xml` unparseable —
- * exactly the failure a "parsed green by a real JUnit reader" acceptance guards against.
+ * XML-escape a dynamic string for use in an attribute value OR a text node. Two hazards, both real
+ * for this feature's data (judge rationale, assertion reasons, and captured tool output carry
+ * arbitrary bytes):
+ *
+ * 1. The five metacharacters `& < > " '` — `&` MUST be replaced first (it is the escape char of
+ *    every other entity), else a raw `<`/`&` makes `results.xml` unparseable.
+ * 2. XML-1.0-invalid control characters. In XML 1.0 the ONLY legal C0 controls are #x9 (tab),
+ *    #xA (LF), #xD (CR); every other char below #x20 (NUL `\x00`, and notably ESC `\x1b` from ANSI
+ *    colour codes in captured tool output) is FORBIDDEN — it can't even be written as a numeric
+ *    character reference, so a raw one makes a conforming reader (TeamCity's libxml2-based XML
+ *    Report Processing) REJECT the file. We strip those bytes (there is no valid escape for them);
+ *    tab/LF/CR are preserved so multi-line reason bodies survive.
+ *
+ * This is exactly the "parsed green by a real JUnit reader" acceptance — and `fast-xml-parser`'s
+ * validator is lenient about control chars, so the reporter must guarantee it, not lean on the parser.
  */
 function escapeXml(value: string): string {
   return value
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

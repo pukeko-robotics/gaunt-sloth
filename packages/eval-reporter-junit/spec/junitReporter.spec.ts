@@ -177,4 +177,35 @@ describe('createJUnitReporter — results.xml parsed by a real JUnit reader', ()
     const { xml } = await emitAndParse(craftSummary());
     expect(xml).not.toContain('timestamp=');
   });
+
+  it('strips XML-1.0-invalid control characters so a conforming reader accepts the file', async () => {
+    // Realistic input for this feature: ANSI colour codes (ESC = \x1b) in captured tool output and a
+    // stray NUL in a transport-error string. These are FORBIDDEN in XML 1.0 (no valid escape), so a
+    // raw one makes a strict reader reject the file — and fast-xml-parser's validator is too lenient
+    // to catch it, so assert their ABSENCE from the emitted document directly.
+    const summary: EvalSuiteSummary = {
+      total: 1,
+      passed: 0,
+      failed: 1,
+      cases: [
+        {
+          id: 'ansi-reason',
+          verdict: 'FAIL',
+          passThreshold: 6,
+          sutOk: true,
+          durationMs: 5,
+          reasons: ['expected \x1b[31mred\x1b[0m but got \x00 raw'],
+        },
+      ],
+    };
+    const { xml, parsed } = await emitAndParse(summary);
+    // No XML-1.0-forbidden control char (tab/LF/CR excepted) may remain anywhere in the document.
+    expect(xml).not.toMatch(/[\x00-\x08\x0B\x0C\x0E-\x1F]/);
+    // The readable text around the stripped controls survives.
+    const tc = testcaseByName(parsed, 'ansi-reason');
+    const body = String(tc.failure['#text']);
+    for (const chunk of ['expected', 'red', 'but got', 'raw']) {
+      expect(body).toContain(chunk);
+    }
+  });
 });
