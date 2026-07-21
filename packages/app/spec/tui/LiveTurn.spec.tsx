@@ -261,6 +261,37 @@ describe('tui <LiveTurn>', () => {
       unmount();
     });
 
+    // fix-cycle-1 regression — redact-before-truncate on the TUI path end-to-end: a >48-char
+    // patternless literal secret from a secret-named env var must be FULLY redacted in the
+    // rendered panel summary (truncation must never bisect it out of literal-matching).
+    it('fully redacts an over-cap patternless env secret in the panel summary', async () => {
+      const secret = 'deadbeef'.repeat(8); // 64 chars, matches no provider pattern
+      const { resetToolDisplaySecretsCacheForTests } =
+        await import('@gaunt-sloth/core/core/toolDisplay.js');
+      process.env.GTH_TEST_ONLY_API_KEY = secret;
+      resetToolDisplaySecretsCacheForTests(); // re-collect env-derived literals with the var set
+      try {
+        const t = turn({
+          toolCalls: [
+            {
+              id: 's1',
+              name: 'gth_web_fetch',
+              argsText: JSON.stringify({ url: 'https://x.test', token: secret }),
+              status: 'done',
+            },
+          ],
+        });
+        const { lastFrame, unmount } = render(<LiveTurn turn={t} />);
+        const f = stripAnsi(lastFrame() ?? '');
+        expect(f).toContain('token=<redacted>');
+        expect(f).not.toContain('deadbeef'); // no leaked head of the secret
+        unmount();
+      } finally {
+        delete process.env.GTH_TEST_ONLY_API_KEY;
+        resetToolDisplaySecretsCacheForTests(); // don't leak the literal into other tests
+      }
+    });
+
     it('truncates an over-long param value with … and redacts secret-shaped values', () => {
       const longPath = 'very/long/path/'.repeat(10) + 'file.ts';
       const t = turn({

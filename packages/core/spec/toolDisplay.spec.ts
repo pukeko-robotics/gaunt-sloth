@@ -95,6 +95,43 @@ describe('toolDisplay (TUI-C30)', () => {
       );
       expect(summary).toBe('echo_tool(text=<redacted>)');
     });
+
+    // fix-cycle-1 regression — redaction must run BEFORE truncation. A literal secret longer
+    // than the per-value cap that matches no provider pattern (a bare 64-char hex token) would
+    // otherwise be bisected by the cut, stop literal-matching, and leak its head.
+    it('fully redacts a patternless literal secret LONGER than the value cap', async () => {
+      const { summariseToolCall, TOOL_PARAM_VALUE_MAX_CHARS } =
+        await import('#src/core/toolDisplay.js');
+      const secret = 'deadbeef'.repeat(8); // 64 chars, no provider-pattern prefix
+      expect(secret.length).toBeGreaterThan(TOOL_PARAM_VALUE_MAX_CHARS);
+      const summary = summariseToolCall('echo_tool', JSON.stringify({ token: secret }), [secret]);
+      expect(summary).toBe('echo_tool(token=<redacted>)');
+      expect(summary).not.toContain(secret.slice(0, 12)); // no leaked head
+    });
+
+    it('fully redacts an over-cap secret sourced from a secret-named env var (default path)', async () => {
+      const secret = 'cafebabe'.repeat(8); // 64 chars, patternless
+      systemUtilsMock.env = { LONG_SERVICE_TOKEN: secret };
+      const { summariseToolCall } = await import('#src/core/toolDisplay.js');
+      const summary = summariseToolCall('echo_tool', JSON.stringify({ auth: secret }));
+      expect(summary).toBe('echo_tool(auth=<redacted>)');
+      expect(summary).not.toContain('cafebabe');
+    });
+
+    it('the whole-summary cap cannot bisect a secret out of matching either', async () => {
+      const { summariseToolCall, TOOL_SUMMARY_MAX_CHARS } =
+        await import('#src/core/toolDisplay.js');
+      const secret = 'feedface'.repeat(5); // 40 chars — under the per-value cap, so it survives
+      // Two padded args push the joined summary past the 120 cap with the secret STRADDLING the
+      // boundary (2+48+2 + 2+48+2 + 6 = 110 chars before the token value starts).
+      const summary = summariseToolCall(
+        'echo_tool',
+        JSON.stringify({ a: 'x'.repeat(60), b: 'y'.repeat(60), token: secret }),
+        [secret]
+      );
+      expect(summary).not.toContain('feedface'); // neither whole nor bisected head survives
+      expect(summary.length).toBeLessThanOrEqual('echo_tool()'.length + TOOL_SUMMARY_MAX_CHARS);
+    });
   });
 
   describe('capToolDisplayLines (the canonical 10-line cap)', () => {

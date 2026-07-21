@@ -271,6 +271,35 @@ describe('plainToolIndication (TUI-C30 — the --no-tui / piped surface)', () =>
     expect(sink.mock.calls[0][0]).toContain('orphan body');
   });
 
+  // fix-cycle-1 regression — redact-before-truncate on the PLAIN surface end-to-end: a >48-char
+  // patternless literal secret (held in a secret-named env var, passed as a tool arg) must be
+  // FULLY redacted in the rendered summary, never a truncated head of it.
+  it('fully redacts an over-cap patternless env secret in the params summary', async () => {
+    const secret = 'deadbeef'.repeat(8); // 64 chars, matches no provider pattern
+    systemUtilsMock.env = { MY_SERVICE_TOKEN: secret };
+    const { createPlainToolIndication } = await import('#src/core/plainToolIndication.js');
+    const sink = vi.fn();
+    const observer = createPlainToolIndication(sink);
+    observer.observe(
+      new AIMessageChunk({
+        content: '',
+        tool_call_chunks: [
+          {
+            name: 'gth_web_fetch',
+            args: JSON.stringify({ url: 'https://x.test', token: secret }),
+            id: 'c1',
+            index: 0,
+            type: 'tool_call_chunk',
+          },
+        ],
+      })
+    );
+    observer.observe(new ToolMessage({ content: 'fetched', tool_call_id: 'c1' }));
+    const text = sink.mock.calls[0][0] as string;
+    expect(text).toContain('token=<redacted>');
+    expect(text).not.toContain('deadbeef'); // no leaked head anywhere in the block
+  });
+
   it('ignores plain text chunks and human messages entirely', async () => {
     const { createPlainToolIndication } = await import('#src/core/plainToolIndication.js');
     const sink = vi.fn();

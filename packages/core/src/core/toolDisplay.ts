@@ -160,21 +160,30 @@ function truncate(value: string, max: number): string {
   return chars.slice(0, Math.max(0, max - 1)).join('') + ELLIPSIS;
 }
 
-/** Render one arg value for the summary: strings inline+truncated, the rest JSON-ish. */
-function formatParamValue(value: unknown): string {
+/**
+ * Render one arg value for the summary: strings inline+truncated, the rest JSON-ish.
+ *
+ * ORDER MATTERS (fix-cycle-1 finding): redaction runs BEFORE any transformation. Truncating
+ * first would bisect a literal secret longer than the value cap so it no longer
+ * literal-matches — its head would render in the call summary on both surfaces (a partial
+ * leak); whitespace-collapsing first could likewise alter a literal out of matching. So:
+ * redact the RAW text, then inline, then truncate (`<redacted>` contains no whitespace and is
+ * shorter than the cap, so the later steps can never damage the marker).
+ */
+function formatParamValue(value: unknown, secrets: readonly string[]): string {
   let text: string;
   if (typeof value === 'string') {
-    text = inline(value);
+    text = value;
   } else if (value === undefined) {
     text = 'undefined';
   } else {
     try {
-      text = inline(JSON.stringify(value) ?? String(value));
+      text = JSON.stringify(value) ?? String(value);
     } catch {
       text = String(value);
     }
   }
-  return truncate(text, TOOL_PARAM_VALUE_MAX_CHARS);
+  return truncate(inline(redactText(text, secrets)), TOOL_PARAM_VALUE_MAX_CHARS);
 }
 
 /** Split into lines, dropping a single trailing newline's phantom empty last element. */
@@ -342,9 +351,15 @@ export function getToolGlyph(name: string): string {
 /**
  * One-line call summary: `name(arg=val, other=…)`. Key args only (per the registry entry, or
  * all args for unknown tools), each value inlined + truncated, the whole parenthesised part
- * capped at {@link TOOL_SUMMARY_MAX_CHARS}, and the result secret-redacted (literals +
+ * capped at {@link TOOL_SUMMARY_MAX_CHARS}, and everything secret-redacted (literals +
  * provider patterns). Unparsable (mid-stream/malformed) args render as `name(…)` — never a
  * raw JSON dump. `secrets` defaults to the env-derived literals; pass explicitly for tests.
+ *
+ * Redaction runs BEFORE every truncation step (per value in {@link formatParamValue}, and again
+ * before the whole-summary cap): truncating first would bisect a literal secret longer than a
+ * cap so it no longer literal-matches, leaking its head into the rendered summary
+ * (fix-cycle-1 finding). The final pass over the assembled string is defense in depth only —
+ * `redactText` is idempotent, so re-redacting already-marked text is safe.
  */
 export function summariseToolCall(
   name: string,
@@ -362,13 +377,15 @@ export function summariseToolCall(
     entry?.summariseArgs !== undefined
       ? entry.summariseArgs.filter((k) => args[k] !== undefined)
       : Object.keys(args);
-  const parts = keys.map((k) => `${k}=${formatParamValue(args[k])}`);
+  const parts = keys.map((k) => `${k}=${formatParamValue(args[k], secrets)}`);
   // Anything parsed but not summarised (write_file's content, unlisted keys) is signalled with
   // a trailing ellipsis so the summary never silently pretends to be the whole call.
   const hasHiddenArgs =
     entry?.summariseArgs !== undefined && Object.keys(args).some((k) => !keys.includes(k));
   if (hasHiddenArgs) parts.push(ELLIPSIS);
-  const inner = truncate(parts.join(', '), TOOL_SUMMARY_MAX_CHARS);
+  // Redact before the whole-summary cap too, so this truncation can no more bisect a secret
+  // out of literal-matching than the per-value one can.
+  const inner = truncate(redactText(parts.join(', '), secrets), TOOL_SUMMARY_MAX_CHARS);
   return redactText(`${label}(${inner})`, secrets);
 }
 
