@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { resolve } from 'node:path';
 import {
   CommandLineConfigOverrides,
   initConfig,
@@ -12,13 +13,19 @@ import {
 } from '#src/commands/batchCommand.js';
 import { parseIntOption } from '#src/commands/cliOptionParsers.js';
 import { displayError } from '@gaunt-sloth/core/utils/consoleUtils.js';
-import { setExitCode } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { getProjectDir, setExitCode } from '@gaunt-sloth/core/utils/systemUtils.js';
 import {
   fileSafeLocalDate,
   getGslothFilePath,
+  importExternalFile,
   readFileFromProjectDir,
 } from '@gaunt-sloth/core/utils/fileUtils.js';
-import type { JudgeFn, RunCellFn, RunConversationFn } from '@gaunt-sloth/batch';
+import type {
+  EvalReporterFactory,
+  JudgeFn,
+  RunCellFn,
+  RunConversationFn,
+} from '@gaunt-sloth/batch';
 
 interface EvalCommandOptions {
   /** `-j/--concurrency <n>` — max in-flight cases. */
@@ -28,6 +35,73 @@ interface EvalCommandOptions {
   /** `--judge <profile>` — identity profile whose model judges the cases (BATCH-10 Task 2).
    * Overrides the suite's `judge_profile`; omit to judge with the SUT model. */
   judge?: string;
+  /** `-r/--reporter <names>` — the reporters to render the run through (BATCH-19 A2). Repeatable and
+   * comma-splittable; the collector accumulates raw values, {@link normalizeReporterNames} splits +
+   * de-duplicates them. Absent = the default `['text']`. */
+  reporter?: string[];
+}
+
+/** Split each collected `--reporter` value on `,`, flatten, trim, drop blanks, and de-duplicate
+ * (order-preserving), so `-r junit,text` and `-r junit -r text` both yield `['junit','text']`. */
+export function normalizeReporterNames(collected: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of collected) {
+    for (const name of raw.split(',').map((n) => n.trim())) {
+      if (name && !seen.has(name)) {
+        seen.add(name);
+        out.push(name);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Build the `custom` reporter-factory map handed to `resolveReporters`. It always registers the
+ * BUNDLED JUnit reporter through the SAME public `custom` seam a user reporter uses (the point: it
+ * proves the plug-in contract from an out-of-core package), then overlays any config-declared
+ * reporters. A config reporter may reuse a built-in/bundled name — config wins on a collision, so it
+ * is added last.
+ *
+ * A config reporter's module path is resolved relative to the PROJECT dir (the same base
+ * `readFileFromProjectDir` uses) and imported via {@link importExternalFile} (which turns it into a
+ * `file://` URL and supports `.ts` through jiti). Its DEFAULT export must be an `EvalReporterFactory`
+ * (`() => EvalReporter`); a missing file, a failed import, or a non-function default export THROWS —
+ * caught by the command's outer try/catch → exit 2 (harness error). It is the user's own trusted
+ * config (already arbitrary JS), so nothing is sandboxed.
+ */
+async function buildCustomReporterFactories(
+  config: GthConfig
+): Promise<Record<string, EvalReporterFactory>> {
+  const custom: Record<string, EvalReporterFactory> = {};
+
+  const { createJUnitReporter, JUNIT_REPORTER_NAME } =
+    await import('@gaunt-sloth/eval-reporter-junit/index.js');
+  custom[JUNIT_REPORTER_NAME] = createJUnitReporter;
+
+  for (const [name, modulePath] of Object.entries(config.reporters ?? {})) {
+    const absPath = resolve(getProjectDir(), modulePath);
+    let mod: Record<string, unknown>;
+    try {
+      mod = await importExternalFile(absPath);
+    } catch (error) {
+      throw new Error(
+        `failed to load config reporter "${name}" from "${modulePath}" (${absPath}): ` +
+          (error instanceof Error ? error.message : String(error))
+      );
+    }
+    const factory = mod.default;
+    if (typeof factory !== 'function') {
+      throw new Error(
+        `config reporter "${name}" (${modulePath}) must export a default function ` +
+          `(an EvalReporterFactory: () => EvalReporter); got ${typeof factory}.`
+      );
+    }
+    custom[name] = factory as EvalReporterFactory;
+  }
+
+  return custom;
 }
 
 /** Default output dir when `-o/--output` is omitted: a timestamped dir next to other gth reports —
@@ -126,13 +200,29 @@ export function evalCommand(
       'Identity profile whose model judges the cases (defaults to the SUT model). ' +
         'Overrides the suite-level judge_profile.'
     )
+    .option(
+      '-r, --reporter <names>',
+      'Reporter(s) to render the run through (repeatable; comma-separated). Built-in: "text" ' +
+        '(default), "junit" (writes results.xml). REPLACES the default, so "--reporter junit" is ' +
+        'JUnit only. The always-on results.json + per-cell JSON are written regardless.',
+      (value: string, previous: string[] = []) => [...previous, value]
+    )
     .addHelpText(
       'after',
       '\n' +
+        'Reporters:\n' +
+        '  text (default)  a human-readable PASS/FAIL summary on the console\n' +
+        '  junit           an Ant-JUnit results.xml (for TeamCity / CI JUnit readers)\n' +
+        '  Custom reporters are declared in config under `reporters: { <name>: <module path> }`.\n' +
+        '  --reporter REPLACES the default set (it does not add to it); pass every reporter you\n' +
+        '  want, e.g. `--reporter text,junit`. results.json is always written, regardless.\n' +
+        '\n' +
         'Examples:\n' +
         '  $ gsloth eval eval/js-basics.yaml\n' +
         '  $ gsloth eval eval/js-basics.yaml --judge strict-judge\n' +
-        '  $ gsloth eval eval/authz-matrix.yaml -j 8 -o eval/out/authz\n'
+        '  $ gsloth eval eval/authz-matrix.yaml -j 8 -o eval/out/authz\n' +
+        '  $ gsloth eval eval/js-basics.yaml --reporter junit\n' +
+        '  $ gsloth eval eval/js-basics.yaml --reporter text,junit\n'
     )
     .action(async (suitePath: string, options: EvalCommandOptions) => {
       try {
@@ -168,6 +258,19 @@ export function evalCommand(
               '.gsloth/.gsloth-settings/<name>/. No cases were run.'
           );
         }
+
+        // BATCH-19 A2: resolve the reporter selection UP FRONT — before the suite runs and before
+        // any output is written — so an unknown `--reporter` name (or a broken config-reporter
+        // module) fails fast → exit 2 with NOTHING run and no misleading partial output. The
+        // selection REPLACES the default: the `--reporter` value when given, else `['text']`. The
+        // bundled JUnit reporter and any config-declared reporters are registered through the ONE
+        // public `custom` seam `resolveReporters` exposes (config wins on a name collision). An
+        // unknown name throws here (message lists the available reporters) → outer catch → exit 2.
+        const reporterNames = options.reporter
+          ? normalizeReporterNames(options.reporter)
+          : ['text'];
+        const customReporterFactories = await buildCustomReporterFactories(config);
+        const reporters = resolveReporters(reporterNames, customReporterFactories);
 
         // Build the SUT run function(s), selected by `target.type`. The eval runner is
         // target-agnostic — it just consumes an injected single-turn `runCell` and multi-turn
@@ -294,12 +397,10 @@ export function evalCommand(
         const outputDir = options.output ?? defaultEvalOutputDir();
         writeEvalOutput(outputDir, summary);
 
-        // BATCH-19 A1: render the run through the reporter facility instead of a hard-coded summary.
+        // BATCH-19: render the run through the reporters resolved up front (A1 seam + A2 selection).
         // `writeEvalOutput` (results.json + per-cell JSON) is always-on core output, independent of
-        // any reporter; reporters are an additional rendering layer. A1 ships only the built-in
-        // `text` reporter — a byte-for-byte port of the former `printSummary` — driven here in
-        // lifecycle order; the `--reporter` flag + custom/JUnit reporters are A2.
-        const reporters = resolveReporters(['text']);
+        // any reporter — a JUnit run writes results.xml IN ADDITION, never instead. Reporters are an
+        // additional rendering layer, driven here in lifecycle order.
         await driveReporters(reporters, summary, {
           suitePath,
           outputDir,

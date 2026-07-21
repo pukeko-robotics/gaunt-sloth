@@ -2096,6 +2096,15 @@
           "type": "boolean"
         }
       }
+    },
+    "reporters": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
     }
   },
   "additionalProperties": {}

@@ -1,7 +1,8 @@
 import { Command } from 'commander';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 // Make randomUUID deterministic across this spec (used by wrapContent block ids)
@@ -76,6 +77,9 @@ const fileUtilsMock = {
   readFileFromProjectDir: vi.fn(),
   getGslothFilePath: vi.fn((name: string) => join(defaultOutputRoot, name)),
   fileSafeLocalDate: vi.fn(() => '2026-07-18_00-00-00'),
+  // BATCH-19: loads a config-declared custom reporter module. Real implementation supplied by the
+  // config-reporter test; never called by tests that don't set `config.reporters`.
+  importExternalFile: vi.fn(),
 };
 vi.mock('@gaunt-sloth/core/utils/fileUtils.js', () => fileUtilsMock);
 
@@ -89,6 +93,8 @@ vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => consoleUtilsMock);
 
 const systemUtilsMock = {
   setExitCode: vi.fn(),
+  // BATCH-19: the project-dir base a config-relative reporter module path resolves against.
+  getProjectDir: vi.fn(() => process.cwd()),
 };
 vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => systemUtilsMock);
 
@@ -961,6 +967,160 @@ cases:
         expect.stringContaining('requires an `agent_id`')
       );
       expect(agUiRunnerMock.buildAgUiRunCell).not.toHaveBeenCalled();
+    });
+  });
+
+  // BATCH-19 A2/A3: `--reporter` selection, the bundled JUnit reporter, and config-declared custom
+  // reporters. The always-on results.json + per-cell JSON are unchanged; reporters render IN ADDITION.
+  describe('reporter selection (--reporter / config.reporters)', () => {
+    it('default (no --reporter) prints the text summary + writes results.json, but NO results.xml', async () => {
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-o', outputDir]);
+
+      expect(existsSync(join(outputDir, 'results.json'))).toBe(true);
+      expect(existsSync(join(outputDir, 'results.xml'))).toBe(false);
+      expect(consoleUtilsMock.display).toHaveBeenCalledWith('PASS  greets-politely');
+    });
+
+    it('--reporter junit writes results.xml IN ADDITION to the always-on results.json (JUnit only, no text)', async () => {
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'eval',
+        'suite.yaml',
+        '-o',
+        outputDir,
+        '--reporter',
+        'junit',
+      ]);
+
+      expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+
+      // Always-on JSON is still written.
+      const resultsJson = JSON.parse(readFileSync(join(outputDir, 'results.json'), 'utf8'));
+      expect(resultsJson).toMatchObject({ total: 1, passed: 1, failed: 0 });
+
+      // The JUnit reporter added results.xml (suite stem = basename('suite.yaml') sans ext).
+      const xml = readFileSync(join(outputDir, 'results.xml'), 'utf8');
+      expect(xml).toContain('<?xml');
+      expect(xml).toContain('<testsuites name="suite"');
+      expect(xml).toContain('classname="suite" name="greets-politely"');
+
+      // --reporter REPLACES the default set, so `junit` alone silences the text reporter.
+      expect(consoleUtilsMock.display).not.toHaveBeenCalledWith('PASS  greets-politely');
+      expect(consoleUtilsMock.displaySuccess).not.toHaveBeenCalledWith(
+        expect.stringContaining('EVAL RESULT')
+      );
+    });
+
+    it('--reporter text,junit runs BOTH (text summary + results.xml)', async () => {
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'eval',
+        'suite.yaml',
+        '-o',
+        outputDir,
+        '--reporter',
+        'text,junit',
+      ]);
+
+      expect(existsSync(join(outputDir, 'results.xml'))).toBe(true);
+      expect(consoleUtilsMock.display).toHaveBeenCalledWith('PASS  greets-politely');
+    });
+
+    it('an unknown --reporter name exits 2 (harness error) naming the available reporters, running NOTHING', async () => {
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'eval',
+        'suite.yaml',
+        '-o',
+        outputDir,
+        '--reporter',
+        'bogus',
+      ]);
+
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+      // Fail-fast: nothing ran and no partial output was written.
+      expect(runSingleShot).not.toHaveBeenCalled();
+      expect(existsSync(join(outputDir, 'results.json'))).toBe(false);
+      expect(existsSync(join(outputDir, 'results.xml'))).toBe(false);
+      // The message quotes the bad name and lists the available reporters (text + bundled junit).
+      const errorArgs = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
+      expect(errorArgs).toContain('unknown reporter "bogus"');
+      expect(errorArgs).toContain('text');
+      expect(errorArgs).toContain('junit');
+    });
+
+    it('drives a config-declared custom reporter over the same seam (config.reporters + --reporter mine)', async () => {
+      const fixturesDir = fileURLToPath(new URL('./fixtures', import.meta.url));
+      // The module path is RESOLVED RELATIVE TO THE PROJECT DIR — set the project dir to the
+      // fixtures dir and reference the module by a project-relative path.
+      systemUtilsMock.getProjectDir.mockReturnValue(fixturesDir);
+      fileUtilsMock.importExternalFile.mockImplementation(
+        (p: string) => import(pathToFileURL(p).href)
+      );
+      configMock.initConfig.mockResolvedValue({
+        ...mockConfig,
+        llm: { ...mockConfig.llm },
+        reporters: { mine: './customEvalReporter.mjs' },
+      });
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'eval',
+        'suite.yaml',
+        '-o',
+        outputDir,
+        '--reporter',
+        'mine',
+      ]);
+
+      expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+      // Always-on JSON still written.
+      expect(existsSync(join(outputDir, 'results.json'))).toBe(true);
+      // The config reporter registered and was driven over the run's cells (proof it saw them).
+      const marker = JSON.parse(readFileSync(join(outputDir, 'mine-reporter.json'), 'utf8'));
+      expect(marker).toEqual({ observed: ['greets-politely'], total: 1 });
+      // `mine` alone: no text summary, no JUnit results.xml.
+      expect(consoleUtilsMock.display).not.toHaveBeenCalledWith('PASS  greets-politely');
+      expect(existsSync(join(outputDir, 'results.xml'))).toBe(false);
+    });
+
+    it('a config reporter whose module fails to load is a harness error (exit 2)', async () => {
+      systemUtilsMock.getProjectDir.mockReturnValue(process.cwd());
+      fileUtilsMock.importExternalFile.mockRejectedValue(new Error('ENOENT: no such file'));
+      configMock.initConfig.mockResolvedValue({
+        ...mockConfig,
+        llm: { ...mockConfig.llm },
+        reporters: { broken: './does-not-exist.mjs' },
+      });
+
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-o', outputDir]);
+
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+      expect(runSingleShot).not.toHaveBeenCalled();
+      const errorArgs = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
+      expect(errorArgs).toContain('broken');
     });
   });
 });

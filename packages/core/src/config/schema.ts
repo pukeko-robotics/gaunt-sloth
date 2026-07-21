@@ -341,6 +341,11 @@ export const rawGthConfigSchema = z.looseObject({
       header: z.boolean().optional(),
     })
     .optional(),
+  // BATCH-19 — custom `gth eval` reporters. Maps a reporter NAME (as selected with
+  // `--reporter <name>`) to a MODULE PATH (relative to the project dir) whose default export is an
+  // `EvalReporterFactory` (`() => EvalReporter`). Registered through the same seam the bundled
+  // reporters use; a name here overrides a built-in of the same name.
+  reporters: z.record(z.string(), z.string()).optional(),
 });
 
 /**

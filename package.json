@@ -18,7 +18,7 @@
   "packageManager": "pnpm@11.3.0",
   "scripts": {
     "clean": "pnpm -r --if-present run clean",
-    "build": "pnpm --filter @gaunt-sloth/core run build && pnpm --filter @gaunt-sloth/agent run build && pnpm --filter @gaunt-sloth/review run build && pnpm --filter @gaunt-sloth/batch run build && pnpm --filter gaunt-sloth run build",
+    "build": "pnpm --filter @gaunt-sloth/core run build && pnpm --filter @gaunt-sloth/agent run build && pnpm --filter @gaunt-sloth/review run build && pnpm --filter @gaunt-sloth/batch run build && pnpm --filter @gaunt-sloth/eval-reporter-junit run build && pnpm --filter gaunt-sloth run build",
     "unit": "vitest run",
     "test": "pnpm run build && vitest run",
     "it": "pnpm run build && node it.js",
