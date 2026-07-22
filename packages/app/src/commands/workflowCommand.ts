@@ -52,6 +52,13 @@ export function workflowCommand(
       'Path to the .mjs/.js workflow script (default export: async (ctx) => result)'
     )
     .option('--args <json>', 'A JSON value passed to the script as ctx.args')
+    .addHelpText(
+      'after',
+      '\n' +
+        'Examples:\n' +
+        '  $ gsloth workflow workflows/summarize-prs.mjs\n' +
+        '  $ gsloth workflow workflows/triage.mjs --args \'{"label":"bug","limit":20}\'\n'
+    )
     .action(async (script: string, options: WorkflowCommandOptions) => {
       let args: unknown;
       try {
