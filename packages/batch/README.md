@@ -130,8 +130,8 @@ The corresponding TypeScript types (`MatrixCell`, `BatchSummary`, `CellResult`, 
 - [`@gaunt-sloth/agent`](https://www.npmjs.com/package/@gaunt-sloth/agent) — Agent runtime: built-in
   tools, filesystem toolkit, middleware registry, API server, AG-UI, MCP, and A2A integration
   ([source](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/agent))
-- [`@gaunt-sloth/review`](https://www.npmjs.com/package/@gaunt-sloth/review) — Review and Q&A modules
-  with standalone CLI
+- [`@gaunt-sloth/review`](https://www.npmjs.com/package/@gaunt-sloth/review) — Review engine with
+  content/requirement sources (GitHub, Jira, file, text) and standalone CLI
   ([source](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/review))
 - [`@gaunt-sloth/batch`](https://www.npmjs.com/package/@gaunt-sloth/batch) — Batch / eval / workflow
   runtime (this package)

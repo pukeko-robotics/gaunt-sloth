@@ -131,9 +131,11 @@ export default defineConfig([
     files: [
       'packages/*/spec/**/*.ts',
       'packages/*/integration-tests/**/*.ts',
+      'packages/*/embed-e2e/**/*.ts',
       'packages/*/tui-e2e/**/*.ts',
       'vitest.config.ts',
       'vitest-it.config.ts',
+      'vitest-embed.config.ts',
     ],
     languageOptions: {
       parser: tsParser,
@@ -149,6 +151,8 @@ export default defineConfig([
         expect: 'readonly',
         beforeEach: 'readonly',
         afterEach: 'readonly',
+        beforeAll: 'readonly',
+        afterAll: 'readonly',
         vi: 'readonly',
       },
     },

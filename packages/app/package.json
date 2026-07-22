@@ -5,7 +5,6 @@
   "license": "MIT",
   "author": "Andrew Kondratev",
   "type": "module",
-  "main": "dist/cli.js",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pukeko-robotics/gaunt-sloth.git",
@@ -69,10 +68,10 @@
   "imports": {
     "#src/*.js": "./dist/*.js"
   },
+  "//exports": "This package is the fat CLI, not a library: no `.` entry (a bare import has never resolved) and no deep-path exports (the B4 shim tree is gone; nothing imports `gaunt-sloth/*` — embed via @gaunt-sloth/{core,agent,review} instead). `./package.json` stays readable for tooling.",
   "exports": {
-    "./*": "./dist/*.js"
+    "./package.json": "./package.json"
   },
-  "types": "./dist/*",
   "files": [
     "./dist/*",
     "cli.js",
