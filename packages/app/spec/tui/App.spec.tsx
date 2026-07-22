@@ -806,17 +806,17 @@ describe('tui <App>', () => {
     unmount();
   });
 
-  it('/tools commits a state-aware notice confirming the new fold state while idle (TUI-C9/C14)', async () => {
-    // Committed turns are frozen in <Static> and cannot re-fold, so /tools while idle would be
+  it('/verbose commits a state-aware notice confirming the new fold state while idle (TUI-C9/C14)', async () => {
+    // Committed turns are frozen in <Static> and cannot re-fold, so /verbose while idle would be
     // a silent no-op; instead it must confirm the new state via a visible notice.
     const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
     const { stdin, lastFrame, frames, unmount } = render(<App {...baseProps} agent={agent} />);
 
     await vi.waitFor(() => expect(lastFrame()).toContain('>'));
 
-    // First /tools turns detail on.
-    stdin.write('/tools');
-    await vi.waitFor(() => expect(lastFrame()).toContain('/tools'));
+    // First /verbose turns detail on.
+    stdin.write('/verbose');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/verbose'));
     stdin.write('\r');
     await vi.waitFor(() => {
       const all = frames.join('\n');
@@ -824,10 +824,10 @@ describe('tui <App>', () => {
       expect(all).toContain('full inputs and results'); // explanatory body
     });
 
-    // Second /tools toggles back to off, again with a confirming notice.
-    stdin.write('/tools');
+    // Second /verbose toggles back to off, again with a confirming notice.
+    stdin.write('/verbose');
     await vi.waitFor(() =>
-      expect((lastFrame() ?? '').match(/\/tools/g)?.length).toBeGreaterThan(0)
+      expect((lastFrame() ?? '').match(/\/verbose/g)?.length).toBeGreaterThan(0)
     );
     stdin.write('\r');
     await vi.waitFor(() => expect(frames.join('\n')).toContain('Tool details: off'));
@@ -835,7 +835,26 @@ describe('tui <App>', () => {
     unmount();
   });
 
-  it('/mode and /model commit explanatory notices, not silent one-liners (TUI-C14)', async () => {
+  it('/tools (deprecated alias, GS2-8) still toggles AND prints the one-line /verbose pointer', async () => {
+    const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
+    const { stdin, lastFrame, frames, unmount } = render(<App {...baseProps} agent={agent} />);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+
+    stdin.write('/tools');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/tools'));
+    stdin.write('\r');
+    await vi.waitFor(() => {
+      const all = frames.join('\n');
+      expect(all).toContain('Tool details: on'); // the alias still applies the toggle
+      expect(all).toContain('deprecated'); // …and points at the new name
+      expect(all).toContain('/verbose');
+    });
+
+    unmount();
+  });
+
+  it('/status and /model commit explanatory notices, not silent one-liners (TUI-C14)', async () => {
     const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
     const { stdin, lastFrame, frames, unmount } = render(
       <App {...baseProps} agent={agent} modelDisplayName="claude-opus-4" />
@@ -843,12 +862,13 @@ describe('tui <App>', () => {
 
     await vi.waitFor(() => expect(lastFrame()).toContain('>'));
 
-    stdin.write('/mode');
-    await vi.waitFor(() => expect(lastFrame()).toContain('/mode'));
+    stdin.write('/status');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/status'));
     stdin.write('\r');
     await vi.waitFor(() => {
       const all = frames.join('\n');
-      expect(all).toContain('Session mode: chat'); // notice title
+      expect(all).toContain('Session status'); // notice title
+      expect(all).toContain('Mode: chat'); // the folded-in old /mode info (GS2-8)
       expect(all).toContain('how the agent handles your messages'); // explanation
     });
 
@@ -887,10 +907,10 @@ describe('tui <App>', () => {
     unmount();
   });
 
-  it('/tools sets the tool-call detail mode applied to the (live) turn that follows', async () => {
+  it('/verbose sets the tool-call detail mode applied to the (live) turn that follows', async () => {
     // A blocking agent so the turn stays live for the assertion. Committed turns live in
     // Ink's <Static> and are frozen once written, so the collapsible affordance is a
-    // live-turn concern; /tools sets the mode that the next live turn picks up.
+    // live-turn concern; /verbose sets the mode that the next live turn picks up.
     const agent: TuiAgent = {
       async *runTurn(_input, signal) {
         yield { type: 'tool_start', id: 't1', name: 'read_file' };
@@ -909,18 +929,18 @@ describe('tui <App>', () => {
     await vi.waitFor(() => expect(lastFrame()).toContain('>'));
 
     // Turn on expanded detail while idle, before sending a prompt.
-    stdin.write('/tools');
-    await vi.waitFor(() => expect(lastFrame()).toContain('/tools'));
+    stdin.write('/verbose');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/verbose'));
     stdin.write('\r');
     // Wait for the command to be consumed: the notice commits (so detail is now on) and the
-    // prompt is back to empty (the echoed "/tools" cleared from the input line).
+    // prompt is back to empty (the echoed "/verbose" cleared from the input line).
     await vi.waitFor(() => {
       const f = lastFrame() ?? '';
       expect(f).toContain('Tool details: on'); // notice committed
-      expect(f).not.toContain('> /tools'); // prompt line cleared
+      expect(f).not.toContain('> /verbose'); // prompt line cleared
     });
 
-    // Now run a turn: the live tool call shows its args/result body because /tools is on.
+    // Now run a turn: the live tool call shows its args/result body because /verbose is on.
     stdin.write('hello');
     await vi.waitFor(() => expect(lastFrame()).toContain('hello'));
     stdin.write('\r');
@@ -960,8 +980,8 @@ describe('tui <App>', () => {
     await vi.waitFor(() => expect(lastFrame()).toContain('>'));
 
     // Expand tool detail first so the committed panel renders its output body.
-    stdin.write('/tools');
-    await vi.waitFor(() => expect(lastFrame()).toContain('/tools'));
+    stdin.write('/verbose');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/verbose'));
     stdin.write('\r');
     await vi.waitFor(() => expect(lastFrame()).toContain('Tool details: on'));
 
