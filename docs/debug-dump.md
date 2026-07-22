@@ -103,9 +103,10 @@ contain secrets" warning in place of the redacted-by-default notice.
 
 ## Where it works
 
-`/debug-dump` is one entry in the Ink TUI's slash-command registry
-(`packages/app/src/tui/slashCommands.ts`), dispatched only inside the `<App>` component that the
-Ink TUI renders. Tracing where that renders:
+`/debug-dump` is one entry in the shared slash-command registry
+(`packages/agent/src/modules/slashCommands.ts`, re-exported for the TUI as
+`packages/app/src/tui/slashCommands.ts`), but its archive writer is only wired inside the `<App>`
+component that the Ink TUI renders. Tracing where that renders:
 
 - `gth chat` and `gth code` (`packages/app/src/commands/chatCommand.ts` /
   `codeCommand.ts`) both call `startSession()`
@@ -114,8 +115,9 @@ Ink TUI renders. Tracing where that renders:
   be a real TTY, `TERM` must not be `dumb`, `--no-tui`/`GTH_NO_TUI` must not be set, and — unless
   `--tui` is passed explicitly — `CI` must not be set.
 - Outside those conditions, `chat`/`code` fall back to the plain readline session
-  (`packages/agent/src/modules/interactiveSessionModule.ts`), which only recognizes `exit`/`/exit`
-  and `/auto-approve` — not the full slash-command registry. `/debug-dump` is not reachable there.
+  (`packages/agent/src/modules/interactiveSessionModule.ts`). It shares the same slash-command
+  registry (so `/debug-dump` parses and is listed by `/help`), but no session archive writer is
+  wired there, so the command reports itself unavailable instead of writing anything.
 - `ask`, `exec`, `review`, and `pr` run one-shot through `runSingleShot()` / `review()`
   (`packages/app/src/commands/askCommand.ts`, `execCommand.ts`, `reviewCommand.ts`,
   `prCommand.ts`) — there is no rendered session and no slash-command dispatch at all, so there is

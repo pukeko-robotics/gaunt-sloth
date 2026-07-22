@@ -20,7 +20,7 @@ const tick = () => new Promise((r) => setTimeout(r, 20));
 describe('tui <SlashCommandMenu> (TUI-C10 render)', () => {
   const commands: SlashCommand[] = [
     { name: 'help', description: 'List available slash commands', run: () => ({}) },
-    { name: 'mode', description: 'Show the current session mode', run: () => ({}) },
+    { name: 'status', description: 'Show session status (mode, model, turns)', run: () => ({}) },
   ];
 
   it('renders each command name with its description and marks the selected row', () => {
@@ -28,10 +28,10 @@ describe('tui <SlashCommandMenu> (TUI-C10 render)', () => {
     const frame = lastFrame() ?? '';
     expect(frame).toContain('/help');
     expect(frame).toContain('List available slash commands');
-    expect(frame).toContain('/mode');
-    expect(frame).toContain('Show the current session mode');
-    // The highlighted row carries the ❯ marker (mode is index 1).
-    expect(frame).toMatch(/❯ \/mode/);
+    expect(frame).toContain('/status');
+    expect(frame).toContain('Show session status (mode, model, turns)');
+    // The highlighted row carries the ❯ marker (status is index 1).
+    expect(frame).toMatch(/❯ \/status/);
   });
 
   it('renders nothing when there are no matching commands', () => {
@@ -49,20 +49,22 @@ describe('tui <PromptInput> slash-command menu (TUI-C10 interaction)', () => {
     await tick();
     const frame = lastFrame() ?? '';
     expect(frame).toContain('/help');
-    expect(frame).toContain('/mode');
+    expect(frame).toContain('/status');
     expect(frame).toContain('/model');
+    expect(frame).toContain('/verbose');
     expect(frame).toContain('/exit');
+    expect(frame).toContain('/quit');
   });
 
   it('filters to matching commands as more of the name is typed', async () => {
     const { stdin, lastFrame } = render(
       <PromptInput onSubmit={vi.fn()} commands={createCommandRegistry()} />
     );
-    stdin.write('/mo');
+    stdin.write('/de'); // matches: debug, debug-dump
     await tick();
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('/mode');
-    expect(frame).toContain('/model');
+    expect(frame).toContain('/debug');
+    expect(frame).toContain('/debug-dump');
     expect(frame).not.toContain('/help');
     expect(frame).not.toContain('/clear');
   });
@@ -82,14 +84,14 @@ describe('tui <PromptInput> slash-command menu (TUI-C10 interaction)', () => {
     const { stdin } = render(
       <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
     );
-    stdin.write('/mo'); // matches: mode, model
+    stdin.write('/de'); // matches: debug, debug-dump
     await tick();
-    stdin.write(DOWN); // highlight -> model
+    stdin.write(DOWN); // highlight -> debug-dump
     await tick();
     stdin.write(ENTER);
     await tick();
     expect(onSubmit).toHaveBeenCalledTimes(1);
-    expect(onSubmit).toHaveBeenCalledWith('/model');
+    expect(onSubmit).toHaveBeenCalledWith('/debug-dump');
   });
 
   it('Enter on the first match dispatches it (partial input resolves to the full command)', async () => {
@@ -97,11 +99,11 @@ describe('tui <PromptInput> slash-command menu (TUI-C10 interaction)', () => {
     const { stdin } = render(
       <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
     );
-    stdin.write('/mo');
+    stdin.write('/de');
     await tick();
     stdin.write(ENTER);
     await tick();
-    expect(onSubmit).toHaveBeenCalledWith('/mode');
+    expect(onSubmit).toHaveBeenCalledWith('/debug');
   });
 
   it('arrow keys wrap around the match list', async () => {
@@ -109,7 +111,8 @@ describe('tui <PromptInput> slash-command menu (TUI-C10 interaction)', () => {
     const { stdin } = render(
       <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
     );
-    stdin.write('/mo'); // [mode, model]
+    // Prefix matches first (debug, debug-dump), then the looser substring match (moDEl).
+    stdin.write('/de'); // [debug, debug-dump, model]
     await tick();
     stdin.write(UP); // wrap from 0 -> last (model)
     await tick();
@@ -123,21 +126,21 @@ describe('tui <PromptInput> slash-command menu (TUI-C10 interaction)', () => {
     const { stdin, lastFrame } = render(
       <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
     );
-    stdin.write('/mo');
+    stdin.write('/de');
     await tick();
-    stdin.write(DOWN); // -> model
+    stdin.write(DOWN); // -> debug-dump
     await tick();
     stdin.write(TAB);
     await tick();
     const frame = lastFrame() ?? '';
     // The menu is gone (the completion added a trailing space, which closes it).
-    expect(frame).toContain('/model');
+    expect(frame).toContain('/debug-dump');
     expect(frame).not.toMatch(/❯/);
     expect(onSubmit).not.toHaveBeenCalled(); // Tab completes, it does not dispatch
-    // Prove the trailing space really landed: Enter now submits "/model " verbatim (menu closed).
+    // Prove the trailing space really landed: Enter submits "/debug-dump " verbatim (menu closed).
     stdin.write(ENTER);
     await tick();
-    expect(onSubmit).toHaveBeenCalledWith('/model ');
+    expect(onSubmit).toHaveBeenCalledWith('/debug-dump ');
   });
 
   it('Esc dismisses the menu without clearing the input; typing reopens it', async () => {
@@ -154,7 +157,6 @@ describe('tui <PromptInput> slash-command menu (TUI-C10 interaction)', () => {
     stdin.write('d');
     await tick();
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('/mode');
     expect(frame).toContain('/model');
   });
 
@@ -163,11 +165,11 @@ describe('tui <PromptInput> slash-command menu (TUI-C10 interaction)', () => {
     const { stdin } = render(
       <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
     );
-    stdin.write('/mode now'); // has a space -> menu closed
+    stdin.write('/status now'); // has a space -> menu closed
     await tick();
     stdin.write(ENTER);
     await tick();
-    expect(onSubmit).toHaveBeenCalledWith('/mode now');
+    expect(onSubmit).toHaveBeenCalledWith('/status now');
   });
 
   it('plain (non-slash) input never shows the menu and submits as typed', async () => {
@@ -247,7 +249,7 @@ describe('tui <PromptInput> multiline paste (TUI-C24)', () => {
     const { stdin, lastFrame } = render(
       <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
     );
-    stdin.write(paste('/mode\nsomething'));
+    stdin.write(paste('/status\nsomething'));
     await tick();
     // The newline is whitespace, so this is not a bare-slash menu query.
     expect(lastFrame() ?? '').not.toMatch(/❯/);

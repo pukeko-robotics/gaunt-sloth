@@ -140,7 +140,8 @@ test.describe('gth chat TUI — live tool output in the managed frame (tool-outp
   // tool-call panel (folded into the view-model), not as raw out-of-order stdout above the
   // message. TUI-C30 (deliberate change): collapsed panels now PREVIEW the first output lines
   // inline as greyed text, while the "Executing" notice stays expanded-only chrome; after
-  // /tools the next turn additionally shows the routed notice in the managed frame.
+  // /verbose (GS2-8 rename of /tools) the next turn additionally shows the routed notice in
+  // the managed frame.
   test('folds streamed tool output into the tool panel instead of leaking raw stdout', async ({
     terminal,
   }) => {
@@ -163,9 +164,10 @@ test.describe('gth chat TUI — live tool output in the managed frame (tool-outp
     ).toBeVisible();
     await expect(terminal.getByText('Executing run_shell_command')).not.toBeVisible();
 
-    // Expand tool detail, then run turn 2: the routed notice + child stdout render in-panel.
-    terminal.write('/tools');
-    await expect(terminal.getByText('> /tools')).toBeVisible();
+    // Expand tool detail (GS2-8: /verbose, formerly /tools), then run turn 2: the routed
+    // notice + child stdout render in-panel.
+    terminal.write('/verbose');
+    await expect(terminal.getByText('> /verbose')).toBeVisible();
     terminal.submit();
     await expect(terminal.getByText('Tool details: on')).toBeVisible();
 

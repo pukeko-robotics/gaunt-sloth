@@ -29,7 +29,39 @@ describe('tui/slashCommands parseSlashCommand', () => {
   it('parses the command name (lower-cased) and args', async () => {
     const { parseSlashCommand } = await import('#src/tui/slashCommands.js');
     expect(parseSlashCommand('/Help')).toEqual({ name: 'help', args: [] });
-    expect(parseSlashCommand('  /mode  foo bar ')).toEqual({ name: 'mode', args: ['foo', 'bar'] });
+    expect(parseSlashCommand('  /status  foo bar ')).toEqual({
+      name: 'status',
+      args: ['foo', 'bar'],
+    });
+  });
+
+  // GS2-8 — the `/`-vs-path heuristic (Mari's dogfood addendum): a real command has no further
+  // `/` after the leading one, so a pasted filesystem path is NOT a command and falls through
+  // to the model as ordinary prompt text.
+  describe('the /-vs-path heuristic', () => {
+    it('a plain command parses (/help)', async () => {
+      const { parseSlashCommand } = await import('#src/tui/slashCommands.js');
+      expect(parseSlashCommand('/help')).toEqual({ name: 'help', args: [] });
+    });
+
+    it('a pasted path is not a command (/usr/bin, /usr/home/bob/test.md)', async () => {
+      const { parseSlashCommand } = await import('#src/tui/slashCommands.js');
+      expect(parseSlashCommand('/usr/bin')).toBeNull();
+      expect(parseSlashCommand('/usr/home/bob/test.md')).toBeNull();
+    });
+
+    it('a command with args still parses (/verbose extra-arg)', async () => {
+      const { parseSlashCommand } = await import('#src/tui/slashCommands.js');
+      expect(parseSlashCommand('/verbose extra-arg')).toEqual({
+        name: 'verbose',
+        args: ['extra-arg'],
+      });
+    });
+
+    it('a bare / is not a command', async () => {
+      const { parseSlashCommand } = await import('#src/tui/slashCommands.js');
+      expect(parseSlashCommand('/')).toBeNull();
+    });
   });
 });
 
@@ -80,28 +112,40 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     expect(result.notice?.lines[0]).toContain('closed');
   });
 
-  it('/tools requests a toggle with the ON notice when detail is currently off', async () => {
+  it('/verbose requests a toggle with the ON notice when detail is currently off (GS2-8 rename)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('#src/tui/slashCommands.js');
-    const result = dispatchSlashCommand(parseSlashCommand('/tools')!, createCommandRegistry(), {
+    const result = dispatchSlashCommand(parseSlashCommand('/verbose')!, createCommandRegistry(), {
       ...ctx,
       toolsExpanded: false,
     });
     expect(result.toggleTools).toBe(true);
     expect(result.notice?.title).toBe('Tool details: on');
     expect(result.notice?.lines[0]).toContain('full inputs and results');
+    // The current command carries no deprecation pointer.
+    expect(result.message).toBeUndefined();
     expect(result.exit).toBeUndefined();
   });
 
-  it('/tools reports the OFF notice when detail is currently on', async () => {
+  it('/verbose reports the OFF notice when detail is currently on', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('#src/tui/slashCommands.js');
-    const result = dispatchSlashCommand(parseSlashCommand('/tools')!, createCommandRegistry(), {
+    const result = dispatchSlashCommand(parseSlashCommand('/verbose')!, createCommandRegistry(), {
       ...ctx,
       toolsExpanded: true,
     });
     expect(result.notice?.title).toBe('Tool details: off');
     expect(result.notice?.lines[0]).toContain('single summary line');
+  });
+
+  it('/tools is gone (2.0 hard removal, renamed /verbose) — it now reads as an unknown command (GS2-8)', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const registry = createCommandRegistry();
+    expect(registry.some((c) => c.name === 'tools')).toBe(false);
+    const result = dispatchSlashCommand(parseSlashCommand('/tools')!, registry, ctx);
+    expect(result.notice?.title).toBe('Unknown command: /tools');
+    expect(result.toggleTools).toBeUndefined();
   });
 
   it('/auto-approve with no arg requests a toggle (App owns the runner flag + state-aware notice)', async () => {
@@ -179,12 +223,39 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     expect(result.exit).toBe(true);
   });
 
-  it('/mode surfaces the current mode as a notice', async () => {
+  it('/quit is an equal-citizen alias of /exit — quits with no deprecation notice (GS2-8)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('#src/tui/slashCommands.js');
-    const result = dispatchSlashCommand(parseSlashCommand('/mode')!, createCommandRegistry(), ctx);
-    expect(result.notice?.title).toBe('Session mode: chat');
-    expect(result.notice?.lines.length).toBeGreaterThan(0);
+    const result = dispatchSlashCommand(parseSlashCommand('/quit')!, createCommandRegistry(), ctx);
+    expect(result.exit).toBe(true);
+    expect(result.message).toBeUndefined();
+    expect(result.notice).toBeUndefined();
+  });
+
+  it('/mode is gone (2.0 hard removal) — it now reads as an unknown command (GS2-8)', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const registry = createCommandRegistry();
+    expect(registry.some((c) => c.name === 'mode')).toBe(false);
+    const result = dispatchSlashCommand(parseSlashCommand('/mode')!, registry, ctx);
+    expect(result.notice?.title).toBe('Unknown command: /mode');
+    expect(result.notice?.tone).toBe('warn');
+  });
+
+  it('/status folds in the old /mode info (mode, model, turns) as one notice (GS2-8)', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('#src/tui/slashCommands.js');
+    const result = dispatchSlashCommand(
+      parseSlashCommand('/status')!,
+      createCommandRegistry(),
+      ctx
+    );
+    expect(result.notice?.title).toBe('Session status');
+    const joined = result.notice?.lines.join('\n') ?? '';
+    expect(joined).toContain('Mode: chat');
+    expect(joined).toContain('how the agent handles your messages');
+    expect(joined).toContain('Model: claude-opus-4');
+    expect(joined).toContain('Turns so far: 3');
   });
 
   it('/model surfaces the model display name as a notice', async () => {
@@ -584,9 +655,15 @@ describe('tui/slashCommands slashMenuQuery (TUI-C10 menu trigger)', () => {
     const { slashMenuQuery } = await import('#src/tui/slashCommands.js');
     expect(slashMenuQuery('')).toBeNull();
     expect(slashMenuQuery('hello')).toBeNull();
-    expect(slashMenuQuery(' /mode')).toBeNull(); // leading space: not a trigger
-    expect(slashMenuQuery('/mode ')).toBeNull(); // space started args -> menu closes
-    expect(slashMenuQuery('/mode foo')).toBeNull();
+    expect(slashMenuQuery(' /model')).toBeNull(); // leading space: not a trigger
+    expect(slashMenuQuery('/model ')).toBeNull(); // space started args -> menu closes
+    expect(slashMenuQuery('/model foo')).toBeNull();
+  });
+
+  it('a pasted path never triggers the menu — mirrors the /-vs-path heuristic (GS2-8)', async () => {
+    const { slashMenuQuery } = await import('#src/tui/slashCommands.js');
+    expect(slashMenuQuery('/usr/bin')).toBeNull();
+    expect(slashMenuQuery('/usr/home/bob/test.md')).toBeNull();
   });
 });
 
@@ -608,9 +685,8 @@ describe('tui/slashCommands filterSlashCommands (TUI-C10 menu filter)', () => {
     const { createCommandRegistry, filterSlashCommands } =
       await import('#src/tui/slashCommands.js');
     const registry = createCommandRegistry();
-    expect(filterSlashCommands(registry, 'mo').map((c) => c.name)).toEqual(['mode', 'model']);
-    // 'model' also starts with 'mode' (m-o-d-e-l), so both match the prefix.
-    expect(filterSlashCommands(registry, 'MODE').map((c) => c.name)).toEqual(['mode', 'model']);
+    expect(filterSlashCommands(registry, 'mo').map((c) => c.name)).toEqual(['model']);
+    expect(filterSlashCommands(registry, 'MODEL').map((c) => c.name)).toEqual(['model']);
     expect(filterSlashCommands(registry, 'model').map((c) => c.name)).toEqual(['model']);
   });
 
@@ -637,5 +713,37 @@ describe('tui/slashCommands filterSlashCommands (TUI-C10 menu filter)', () => {
     registry.push({ name: 'ping', description: 'extension command', run: () => ({}) });
     expect(filterSlashCommands(registry, 'pi').map((c) => c.name)).toEqual(['ping']);
     expect(filterSlashCommands(registry, '').map((c) => c.name)).toContain('ping');
+  });
+});
+
+describe('readline/TUI registry parity (GS2-8 single source of truth)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('the TUI command set is IDENTICAL to the readline command set (one shared registry)', async () => {
+    // The TUI's historical import path is a re-export of the agent module the readline
+    // (`--no-tui`) session dispatches through. Comparing the two proves the re-export stays a
+    // re-export — if either surface ever grew its own registry, the sets would drift and this
+    // test would name the divergence.
+    const tui = await import('#src/tui/slashCommands.js');
+    const readline = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    const tuiNames = tui.createCommandRegistry().map((c) => c.name);
+    const readlineNames = readline.createCommandRegistry().map((c) => c.name);
+    expect(tuiNames).toEqual(readlineNames);
+    // Not just equal-by-value: the factory itself must be the same function object.
+    expect(tui.createCommandRegistry).toBe(readline.createCommandRegistry);
+    expect(tui.dispatchSlashCommand).toBe(readline.dispatchSlashCommand);
+    expect(tui.parseSlashCommand).toBe(readline.parseSlashCommand);
+  });
+
+  it('the renamed/added commands are all present exactly once', async () => {
+    const { createCommandRegistry } = await import('#src/tui/slashCommands.js');
+    const names = createCommandRegistry().map((c) => c.name);
+    for (const expected of ['verbose', 'quit', 'exit', 'status', 'help']) {
+      expect(names.filter((n) => n === expected)).toHaveLength(1);
+    }
+    expect(names).not.toContain('mode');
+    expect(names).not.toContain('tools');
   });
 });

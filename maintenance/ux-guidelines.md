@@ -57,7 +57,7 @@ top of `decideToolApproval`.
   the session flag ON from `run_shell_command.yolo`, so the user sees no prompt by default **but can still restore
   it** with `/auto-approve off`. (Only a non-interactive `exec` / `ask --write` yolo run keeps the
   tool ungated, since its single-shot path never drains interrupts.)
-- **State-aware copy.** Like `/tools` and `/debug`, the App owns the runner flag, so it applies the
+- **State-aware copy.** Like `/verbose` and `/debug`, the App owns the runner flag, so it applies the
   requested action and commits the notice for the **resulting** state via the shared
   `autoApproveNotice(on)` builder (`Auto-approve ON — shell commands run without asking` /
   `Auto-approve OFF — approvals required`). The command's pure `run()` only returns
@@ -125,7 +125,8 @@ rendering supplied by the **surface-agnostic tool-display registry** (TUI-C30,
 - **`write_file`/`edit_file` render as a diff, not a dump.** The change is derived from the tool's
   args — added lines green with a `+` prefix, removed lines red with `-` (DL-8 colour semantics);
   the prefixes keep the diff readable on monochrome terminals (DL-7).
-- **Expand on demand:** `/tools` toggles detail (it is `availableDuringRun`, so it works idle **and**
+- **Expand on demand:** `/verbose` (GS2-8 rename of `/tools`, which is removed — no alias)
+  toggles detail (it is `availableDuringRun`, so it works idle **and**
   mid-turn); **`Ctrl+T`** is the mid-turn keyboard shortcut for the same toggle. Expanded panels show
   the FULL body: the raw streamed `args`, the routed `🔧 Executing …` notice (expanded-only chrome,
   kept off the collapsed preview), and the uncapped output/result — **deduped** for shell-shaped
@@ -224,12 +225,12 @@ their config has a problem.
 ## Keyboard model (DL-9 keyboard-first)
 
 - **`Esc`** — abort the in-flight turn (only while running).
-- **`Ctrl+C`** — exit the app. (The bare `exit` keyword and `/exit` also quit.)
-- **`Ctrl+T`** — toggle tool-call detail mid-turn (mirrors `/tools`).
+- **`Ctrl+C`** — exit the app. (The bare `exit` keyword, `/exit` and `/quit` also quit.)
+- **`Ctrl+T`** — toggle tool-call detail mid-turn (mirrors `/verbose`).
 - **`o` / `s` / `a` / `y` / anything-else** at a pending shell approval — approve once / session /
   always / turn on auto-approve-all (then approve this one) / reject (fail-closed).
 - **slash commands mid-turn** — the prompt stays mounted while a turn streams, so run-safe commands
-  (`/auto-approve`, `/tools`, `/debug`, `/help`, `/model`, …) work during inference; a plain message
+  (`/auto-approve`, `/verbose`, `/debug`, `/help`, `/model`, …) work during inference; a plain message
   or an idle-only command is refused with a hint until the turn finishes.
 - **`Tab`** — focus the docked debug panel when visible/idle; once focused, `Tab` cycles its views
   (`Shift+Tab` reverses), `↑`/`↓` scroll one line and `PageUp`/`PageDown` page-step (arrows are the
@@ -332,7 +333,7 @@ The TUI has two zones and the boundary is a hard design constraint:
 - **Always say what happened AND how it affects the user** — the title is the *what*, the body lines
   are the *how* (`History cleared` → "The model no longer sees the prior conversation" +
   "Scroll up to revisit…").
-- Tell the user the next move when there is one ("Run `/tools` again to collapse…", "Run `/help` to
+- Tell the user the next move when there is one ("Run `/verbose` again to collapse…", "Run `/help` to
   see everything available").
 - Match the tone of the existing notices in `slashCommands.ts`; don't introduce a louder or
   cuter register.

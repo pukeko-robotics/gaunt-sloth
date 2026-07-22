@@ -30,6 +30,13 @@ import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import { createResolvers } from '#src/resolvers.js';
 import { resolveAgentFactory } from '#src/core/resolveAgentFactory.js';
+import {
+  createCommandRegistry,
+  dispatchSlashCommand,
+  formatConfigSummary,
+  parseSlashCommand,
+  type SlashCommandNotice,
+} from '#src/modules/slashCommands.js';
 
 export interface SessionConfig {
   mode: 'chat' | 'code';
@@ -77,6 +84,11 @@ export async function createInteractiveSession(
     await runner.init(sessionConfig.mode, config, checkpointSaver);
     const rl = createInterface({ input, output });
     let shouldExit = false;
+    // GS2-8 — the readline surface shares the SAME command registry as the Ink TUI (one source
+    // of truth): every registered command parses, appears in /help, and dispatches here too.
+    const registry = createCommandRegistry();
+    // Committed-turn counter for the /status command (mirrors the TUI's status-bar counter).
+    let turnCount = 0;
 
     // EXT-18: ref stdin before every rl.question() that can run AFTER an agent turn/stream end.
     // When a run suspends (tool-approval interrupt) or throws, the stream's finally calls
@@ -185,6 +197,28 @@ export async function createInteractiveSession(
         tools: runStats.tools.length > 0 ? runStats.tools : undefined,
         durationMs: Date.now() - startedAt,
       });
+      turnCount += 1; // GS2-8 — feeds the /status turn counter
+    };
+
+    // GS2-8 — render a structured command notice on the plain-text surface: tone-matched title
+    // (warn ⇒ yellow), then the body lines indented under it.
+    const printNotice = (notice: SlashCommandNotice) => {
+      if (notice.tone === 'warn') {
+        displayWarning(notice.title);
+      } else {
+        displayInfo(notice.title);
+      }
+      for (const line of notice.lines) {
+        display(`  ${line}`);
+      }
+    };
+
+    const endSession = async () => {
+      display('Exiting...');
+      shouldExit = true;
+      await runner.cleanup();
+      stopSessionLogging();
+      rl.close();
     };
 
     const askQuestion = async () => {
@@ -194,49 +228,74 @@ export async function createInteractiveSession(
         if (!userInput.trim()) {
           continue; // Skip inference if no input
         }
-        const lowerInput = userInput.toLowerCase().trim();
-        if (lowerInput === 'exit' || lowerInput === '/exit') {
-          display('Exiting...');
-          shouldExit = true;
-          await runner.cleanup();
-          stopSessionLogging();
-          rl.close();
+        // Legacy bare `exit` keyword still quits (parity with the TUI's plain-exit handling).
+        if (userInput.toLowerCase().trim() === 'exit') {
+          await endSession();
           break;
         }
-        // EXT-12 — `/auto-approve` (with the `/yolo` alias) sets session-wide shell auto-approval
-        // at the approval-decision layer (the runner flag). `on`/`off` set it explicitly, no arg
-        // (or `/yolo`) toggles. Session-scoped, reversible, never persisted; the hardline floor
-        // still blocks catastrophic commands. The runner seeds this from the static `shellYolo`
-        // config, so `/auto-approve off` also turns off a config-enabled auto-approval.
-        if (
-          lowerInput === '/auto-approve' ||
-          lowerInput.startsWith('/auto-approve ') ||
-          lowerInput === '/yolo'
-        ) {
-          const arg = lowerInput.startsWith('/auto-approve ')
-            ? lowerInput.slice('/auto-approve '.length).trim()
-            : '';
-          let enabled: boolean;
-          if (arg === 'on' || arg === 'enable' || arg === 'true')
-            enabled = runner.setSessionYolo(true);
-          else if (arg === 'off' || arg === 'disable' || arg === 'false')
-            enabled = runner.setSessionYolo(false);
-          else if (arg === '' || arg === 'toggle') enabled = runner.toggleSessionYolo();
-          else {
-            displayWarning(
-              `Unknown option "${arg}". Usage: /auto-approve [on|off] (no arg toggles).`
-            );
-            continue;
+
+        // GS2-8 — every `/command` dispatches through the SAME registry as the Ink TUI (single
+        // source of truth). parseSlashCommand's `/`-vs-path heuristic means a pasted filesystem
+        // path (`/usr/home/bob/test.md`) is NOT a command and falls through to the model below.
+        const parsed = parseSlashCommand(userInput);
+        if (parsed) {
+          const result = dispatchSlashCommand(parsed, registry, {
+            mode: sessionConfig.mode,
+            modelDisplayName: config.modelDisplayName ?? '',
+            turnCount,
+            // No tool-detail panels or debug pane exist on this surface; their commands degrade
+            // below rather than vanishing from the catalog.
+            toolsExpanded: false,
+            debugVisible: false,
+            configSummary: formatConfigSummary(config),
+          });
+          if (result.exit) {
+            await endSession();
+            break;
           }
-          if (enabled) {
-            displayWarning(
-              'Auto-approve ON — shell commands run this session without the per-command prompt. ' +
-                'The hardline safety floor still blocks catastrophic commands. Run /auto-approve off to require approvals.'
+          if (result.autoApprove) {
+            // EXT-12 — `/auto-approve` (with the `/yolo` alias) sets session-wide shell
+            // auto-approval at the approval-decision layer (the runner flag). Session-scoped,
+            // reversible, never persisted; the hardline floor still blocks catastrophic commands.
+            // The runner seeds this from the static `shellYolo` config, so `/auto-approve off`
+            // also turns off a config-enabled auto-approval.
+            const enabled =
+              result.autoApprove === 'toggle'
+                ? runner.toggleSessionYolo()
+                : runner.setSessionYolo(result.autoApprove === 'on');
+            if (enabled) {
+              displayWarning(
+                'Auto-approve ON — shell commands run this session without the per-command prompt. ' +
+                  'The hardline safety floor still blocks catastrophic commands. Run /auto-approve off to require approvals.'
+              );
+            } else {
+              displayInfo('Auto-approve OFF — approvals required before each shell command.');
+            }
+          } else if (
+            result.clearTranscript ||
+            result.toggleDebug ||
+            result.toggleTools ||
+            result.reprintReasoning
+          ) {
+            // TUI-only effects (transcript clear, debug pane, tool-detail fold, reasoning
+            // reprint) have no equivalent on the plain readline surface — degrade with a clear
+            // pointer instead of silently doing nothing (GS2-8).
+            displayInfo(
+              `/${parsed.name} is not available without the TUI — start the session on an ` +
+                `interactive terminal without --no-tui/GTH_NO_TUI to use it.`
             );
-          } else {
-            displayInfo('Auto-approve OFF — approvals required before each shell command.');
+          } else if (result.notice) {
+            printNotice(result.notice);
           }
-          continue; // do not send the command to the model
+          if (result.message) {
+            // Incidental system line (e.g. the /tools→/verbose deprecation pointer).
+            if (result.level === 'warning') {
+              displayWarning(result.message);
+            } else {
+              displayInfo(result.message);
+            }
+          }
+          continue; // never send a slash command to the model
         }
 
         let shouldRetry = false;

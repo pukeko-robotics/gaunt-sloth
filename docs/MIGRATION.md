@@ -389,6 +389,16 @@ real prompt), and guidelines default to empty until you create the file — or p
 `prompts.guidelines` at one you already have (e.g. `AGENTS.md`). Existing planted files keep
 working; they are simply no longer created for you.
 
+## Interactive slash commands (renames)
+
+Inside `chat`/`code` sessions (both the TUI and the plain `--no-tui` readline surface, which now
+share one command registry):
+
+- `/tools` renamed to `/verbose` — same tool-detail toggle. `/tools` is removed (no alias; 2.0
+  is still in alpha).
+- `/mode` removed — its output is folded into `/status`.
+- `/quit` added as an alias of `/exit`.
+
 ## Migration checklist
 
 1. Move top-level command keys (`pr`, `review`, `ask`, `chat`, `code`, `exec`, `api`) under

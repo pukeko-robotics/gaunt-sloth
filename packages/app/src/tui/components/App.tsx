@@ -121,7 +121,7 @@ export function App(props: TuiAppProps): React.ReactElement {
   const approvalQueueRef = useRef<PendingApproval[]>([]);
   approvalQueueRef.current = approvalQueue;
   // Mirror of toolsExpanded for the slash-command handler (memoized without it in deps), so
-  // /tools can compute the next state without a stale closure or a side effect in the updater.
+  // /verbose can compute the next state without a stale closure or a side effect in the updater.
   const toolsExpandedRef = useRef(false);
   // Likewise a mirror of debugVisible, so the slash dispatch can pass the current panel state
   // into the command context (for state-aware /debug copy) without a stale closure.
@@ -279,7 +279,7 @@ export function App(props: TuiAppProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exit]);
 
-  // Flip the tool-detail mode and commit the matching notice. Single-sourced so the `/tools`
+  // Flip the tool-detail mode and commit the matching notice. Single-sourced so the `/verbose`
   // command and the Ctrl+T key handler give the user identical, state-aware feedback (TUI-C14).
   // Committed turns are frozen in Ink's <Static> and never re-fold, so this only affects the
   // live / next turn — the notice copy says exactly that.
@@ -441,7 +441,7 @@ export function App(props: TuiAppProps): React.ReactElement {
         }
         if (result.toggleTools) {
           // Flip the fold mode and commit the notice via the shared helper (single-sourced with
-          // Ctrl+T). The command's own `result.notice` is intentionally not pushed for /tools —
+          // Ctrl+T). The command's own `result.notice` is intentionally not pushed for /verbose —
           // toggleTools owns the notice so the copy matches the state actually applied.
           toggleTools();
         }
@@ -474,7 +474,7 @@ export function App(props: TuiAppProps): React.ReactElement {
         if (result.reprintReasoning) {
           push({ kind: 'reasoning', ...result.reprintReasoning });
         }
-        // Commit a structured notice (TUI-C14). /tools and /auto-approve own their notices above
+        // Commit a structured notice (TUI-C14). /verbose and /auto-approve own their notices above
         // (the state-aware copy is committed there), so skip result.notice in those cases.
         if (result.notice && !result.toggleTools && !result.autoApprove) {
           const { title, lines, tone } = result.notice;
@@ -527,9 +527,9 @@ export function App(props: TuiAppProps): React.ReactElement {
     // Ctrl+T toggles tool-call detail (compact summary ⇄ expanded args/result) while a turn
     // is streaming — the moment a live tool watch is most useful. We gate it on `running`
     // because the prompt's <TextInput> (mounted only when idle) would otherwise also receive
-    // the keystroke and insert a stray 't'. The `/tools` slash command covers the idle case.
+    // the keystroke and insert a stray 't'. The `/verbose` slash command covers the idle case.
     if (key.ctrl && input === 't' && runningRef.current) {
-      // Share the /tools helper so the same state-aware notice is committed (TUI-C14).
+      // Share the /verbose helper so the same state-aware notice is committed (TUI-C14).
       toggleTools();
       return;
     }
