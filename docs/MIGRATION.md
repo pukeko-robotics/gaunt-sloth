@@ -64,6 +64,7 @@ these before you upgrade.
 | Deprecated `*Provider*` config keys | `contentProvider` / `requirementsProvider` (and the `*ProviderConfig` variants) are rejected: `Config property "contentProvider" was renamed in 2.0. Use "contentSource" instead.` | Rename to `contentSource` / `requirementSource` (and `*SourceConfig`) |
 | `--content-provider` / `--requirements-provider` CLI flags removed | Scripts passing those flags error out | `--content-source` / `--requirements-source` (`-p` still aliases `--requirements-source`) |
 | `ContentProviderType` / `RequirementsProviderType` type exports removed, and the runtime `contentProvider` / `requirementsProvider` fields removed | TypeScript / programmatic configs that import those types or read those fields fail to compile or resolve | Use `contentSource` / `requirementSource` (and their `string` types) |
+| The `gaunt-sloth` app package no longer exports modules (its `exports` map keeps only `./package.json`) | Any `import ... from 'gaunt-sloth/<path>'` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`; the CLI binaries (`gth`, `gsloth`, `gaunt-sloth`) are unaffected | Import from the scoped packages instead: `@gaunt-sloth/core`, `@gaunt-sloth/agent`, `@gaunt-sloth/review` (see each package's README for the embed surface) |
 
 There is also one behaviour change (array merge across config layers) that is not a
 validation error but can change results silently. It is covered in section D below.

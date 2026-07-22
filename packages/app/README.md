@@ -1,14 +1,15 @@
 # gaunt-sloth
 
-The main CLI application for Gaunt Sloth.
+The main CLI application for Gaunt Sloth — the fat package that turns the `@gaunt-sloth/*`
+libraries into the `gth` command.
 
 ## Contents
 
-- CLI entry point and commander-based command registration
-- Commands: `ask`, `review`, `pr`, `chat`, `code`, `init`, `get`, `api`
-- Command utilities and config setup
+- CLI entry point, commander-based command registration, and the Ink TUI
+- Commands: `ask`, `review`, `pr`, `chat`, `code`, `exec`, `init`, `config`, `get`, `api`,
+  `batch`, `eval`, `workflow`, `history`, `insights`, `models` — see
+  [docs/COMMANDS.md](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/docs/COMMANDS.md)
 - Vendor package wiring (all LangChain provider packages)
-- Integration tests
 
 ## CLI Binaries
 
@@ -23,14 +24,29 @@ The package registers three equivalent binary aliases:
 - `@gaunt-sloth/core`
 - `@gaunt-sloth/agent`
 - `@gaunt-sloth/review`
+- `@gaunt-sloth/batch`
+- `@gaunt-sloth/eval-reporter-junit`
 - `commander`
-- All LangChain vendor packages (anthropic, google-genai, groq, openai, vertexai, xai, etc.)
+- All LangChain vendor packages (anthropic, google, groq, openai, xai, etc.)
 
 This is the only package in the workspace that pulls in AI vendor dependencies directly. All other packages treat vendors as optional peers.
 
-## Re-exports
+## Not a library
 
-`gaunt-sloth` re-exports public APIs from the sub-packages for convenience, so common imports are available from a single entry point.
+This package deliberately exports **no importable modules** — its `exports` map exposes only
+`./package.json`. It is the CLI product: install it globally and run `gth`. To embed Gaunt Sloth
+functionality in your own code, depend on the scoped packages instead — they are the supported
+embeddable surface:
+
+- [`@gaunt-sloth/core`](https://www.npmjs.com/package/@gaunt-sloth/core) — config resolution and
+  the provider factory
+- [`@gaunt-sloth/agent`](https://www.npmjs.com/package/@gaunt-sloth/agent) — the agent runtime,
+  tools, and the AG-UI/ACP servers
+- [`@gaunt-sloth/review`](https://www.npmjs.com/package/@gaunt-sloth/review) — programmatic code
+  review (see its README for a worked embed example)
+
+(Until 2.0 the app exposed a `./*` deep-path wildcard over a tree of re-export shims; the shims
+are gone and the wildcard with them.)
 
 ## Installation
 
