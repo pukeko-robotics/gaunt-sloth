@@ -42,7 +42,6 @@
     "@gaunt-sloth/batch": "workspace:*",
     "@gaunt-sloth/core": "workspace:*",
     "@gaunt-sloth/eval-reporter-junit": "workspace:*",
-    "@gaunt-sloth/eval-reporter-teamcity": "workspace:*",
     "@gaunt-sloth/review": "workspace:*",
     "@langchain/anthropic": "^1.5.1",
     "@langchain/core": "^1.2.3",

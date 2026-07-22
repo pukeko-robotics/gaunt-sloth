@@ -1,6 +1,8 @@
 import { Command } from 'commander';
 import { readdirSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { basename, extname, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   CommandLineConfigOverrides,
   initConfig,
@@ -65,18 +67,68 @@ export function normalizeReporterNames(collected: string[]): string[] {
 }
 
 /**
- * Build the `custom` reporter-factory map handed to `resolveReporters`. It always registers the
- * BUNDLED reporters — JUnit (results.xml artifact) and TeamCity (live service messages) — through
- * the SAME public `custom` seam a user reporter uses (the point: it proves the plug-in contract
- * from an out-of-core package), then overlays any config-declared reporters. A config reporter may
- * reuse a built-in/bundled name — config wins on a collision, so it is added last.
+ * True when a `reporters` config module STRING is a FILE PATH rather than a bare package specifier:
+ * a relative path (`./x`, `../x`), an absolute POSIX path (`/x`), a `file:` URL, or a Windows drive
+ * path (`C:\x` / `C:/x`). Everything else — `@scope/name`, `name`, `name/sub` — is treated as a
+ * package specifier resolved from the project's `node_modules`.
+ */
+export function isReporterFilePath(modulePath: string): boolean {
+  return (
+    modulePath.startsWith('.') ||
+    modulePath.startsWith('/') ||
+    modulePath.startsWith('file:') ||
+    /^[a-zA-Z]:[\\/]/.test(modulePath)
+  );
+}
+
+/**
+ * Resolve a `reporters` config module STRING to an absolute file path {@link importExternalFile} can
+ * load (BATCH-22 — the third-party-reporter enabler):
+ * - A **file path** ({@link isReporterFilePath}) keeps the original behavior: resolved against the
+ *   PROJECT dir (the same base `readFileFromProjectDir` uses).
+ * - A **bare package specifier** (`@scope/eval-reporter-foo`, `eval-reporter-foo`) is resolved by
+ *   NODE MODULE RESOLUTION against the PROJECT dir's `node_modules` — the user installs the reporter
+ *   in THEIR project, not in the CLI's install tree — via a `require` bound to the project dir
+ *   (`createRequire`), which honors the package's `exports`. A plain `import(specifier)` would
+ *   resolve against the CLI's own `node_modules` and only find what the CLI itself bundles.
  *
- * A config reporter's module path is resolved relative to the PROJECT dir (the same base
- * `readFileFromProjectDir` uses) and imported via {@link importExternalFile} (which turns it into a
+ * An unresolvable specifier (package not installed) throws a clear harness error naming it and
+ * suggesting `npm i` — the caller wraps it into the per-suite harness error → exit 2.
+ */
+export function resolveReporterModule(modulePath: string): string {
+  const projectDir = getProjectDir();
+  if (isReporterFilePath(modulePath)) {
+    return resolve(projectDir, modulePath);
+  }
+  // Bind `require` to a file INSIDE the project dir (it need not exist) so `require.resolve` walks
+  // the PROJECT's `node_modules`, not the CLI's.
+  const requireFromProject = createRequire(pathToFileURL(join(projectDir, 'noop.js')));
+  try {
+    return requireFromProject.resolve(modulePath);
+  } catch {
+    throw new Error(
+      `reporter package "${modulePath}" could not be resolved from this project — ` +
+        `install it (\`npm i -D ${modulePath}\`) or use a relative module path (\`./…\`).`
+    );
+  }
+}
+
+/**
+ * Build the `custom` reporter-factory map handed to `resolveReporters`. It always registers the ONE
+ * BUNDLED reporter — JUnit (results.xml artifact) — through the SAME public `custom` seam a user
+ * reporter uses (the point: it proves the plug-in contract from an out-of-core package), then
+ * overlays any config-declared reporters. A config reporter may reuse the bundled name — config wins
+ * on a collision, so it is added last. TeamCity is NO LONGER bundled: it ships as the optional,
+ * separately-installed `@gaunt-sloth/eval-reporter-teamcity` package, registered via `reporters`
+ * like any third-party reporter (it doubles as the worked example for writing one).
+ *
+ * Each config reporter's module STRING is resolved by {@link resolveReporterModule} — a file path
+ * against the PROJECT dir, or a bare package specifier by node resolution against the PROJECT dir's
+ * `node_modules` — then imported via {@link importExternalFile} (which turns the absolute path into a
  * `file://` URL and supports `.ts` through jiti). Its DEFAULT export must be an `EvalReporterFactory`
- * (`() => EvalReporter`); a missing file, a failed import, or a non-function default export THROWS —
- * caught by the command's outer try/catch → exit 2 (harness error). It is the user's own trusted
- * config (already arbitrary JS), so nothing is sandboxed.
+ * (`() => EvalReporter`); an unresolvable specifier, a missing file, a failed import, or a
+ * non-function default export THROWS — caught by the command's outer try/catch → exit 2 (harness
+ * error). It is the user's own trusted config (already arbitrary JS), so nothing is sandboxed.
  */
 async function buildCustomReporterFactories(
   config: GthConfig
@@ -87,18 +139,14 @@ async function buildCustomReporterFactories(
     await import('@gaunt-sloth/eval-reporter-junit/index.js');
   custom[JUNIT_REPORTER_NAME] = createJUnitReporter;
 
-  const { createTeamCityReporter, TEAMCITY_REPORTER_NAME } =
-    await import('@gaunt-sloth/eval-reporter-teamcity/index.js');
-  custom[TEAMCITY_REPORTER_NAME] = createTeamCityReporter;
-
   for (const [name, modulePath] of Object.entries(config.reporters ?? {})) {
-    const absPath = resolve(getProjectDir(), modulePath);
     let mod: Record<string, unknown>;
     try {
+      const absPath = resolveReporterModule(modulePath);
       mod = await importExternalFile(absPath);
     } catch (error) {
       throw new Error(
-        `failed to load config reporter "${name}" from "${modulePath}" (${absPath}): ` +
+        `failed to load config reporter "${name}" from "${modulePath}": ` +
           (error instanceof Error ? error.message : String(error))
       );
     }
@@ -301,9 +349,9 @@ export function evalCommand(
     .option(
       '-r, --reporter <names>',
       'Reporter(s) to render the run through (repeatable; comma-separated). Built-in: "text" ' +
-        '(default), "junit" (writes results.xml), "teamcity" (live ##teamcity[...] service ' +
-        'messages). REPLACES the default, so "--reporter junit" is JUnit only. The always-on ' +
-        'results.json + per-cell JSON are written regardless.',
+        '(default) and "junit" (writes results.xml). REPLACES the default, so "--reporter junit" ' +
+        'is JUnit only. The always-on results.json + per-cell JSON are written regardless. ' +
+        'Register more reporters (e.g. teamcity) via config `reporters`.',
       (value: string, previous: string[] = []) => [...previous, value]
     )
     .addHelpText(
@@ -312,11 +360,11 @@ export function evalCommand(
         'Reporters:\n' +
         '  text (default)  a human-readable PASS/FAIL summary on the console\n' +
         '  junit           an Ant-JUnit results.xml (for TeamCity / CI JUnit readers)\n' +
-        '  teamcity        live ##teamcity[...] service messages on stdout (a TeamCity build\n' +
-        '                  shows per-case pass/fail live; no artifact wiring needed)\n' +
-        '  Custom reporters are declared in config under `reporters: { <name>: <module path> }`.\n' +
-        '  --reporter REPLACES the default set (it does not add to it); pass every reporter you\n' +
-        '  want, e.g. `--reporter text,junit`. results.json is always written, regardless.\n' +
+        '  Register more reporters in config under `reporters: { <name>: <package-or-path> }` — an\n' +
+        '  installed package (e.g. `@gaunt-sloth/eval-reporter-teamcity` for live ##teamcity[...]\n' +
+        '  service messages) or a local module path. --reporter REPLACES the default set (it does\n' +
+        '  not add to it); pass every reporter you want, e.g. `--reporter text,junit`. results.json\n' +
+        '  is always written, regardless.\n' +
         '\n' +
         'Examples:\n' +
         '  $ gsloth eval eval/js-basics.yaml\n' +

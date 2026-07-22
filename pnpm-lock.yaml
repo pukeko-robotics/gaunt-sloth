@@ -143,9 +143,6 @@ importers:
       '@gaunt-sloth/eval-reporter-junit':
         specifier: workspace:*
         version: link:../eval-reporter-junit
-      '@gaunt-sloth/eval-reporter-teamcity':
-        specifier: workspace:*
-        version: link:../eval-reporter-teamcity
       '@gaunt-sloth/review':
         specifier: workspace:*
         version: link:../review
