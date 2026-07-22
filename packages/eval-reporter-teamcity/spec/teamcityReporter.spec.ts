@@ -263,4 +263,37 @@ describe('createTeamCityReporter — live ##teamcity[...] service messages', () 
       stdoutSpy.mockRestore();
     }
   });
+
+  // BATCH-22: the package now default-exports the factory, so the `reporters` config seam can
+  // register the INSTALLED package by bare name (`reporters: { teamcity:
+  // "@gaunt-sloth/eval-reporter-teamcity" }`) with no shim file. Prove the default export IS the
+  // factory AND drives a working reporter (real ##teamcity[...] output), not merely that a default
+  // export exists.
+  it('default-exports createTeamCityReporter and it produces a working reporter', async () => {
+    // Import through the package ROOT (`/index.js`) — the exact module the config seam loads via
+    // `mod.default` — so this exercises the public default export, not the internal factory module.
+    const mod = await import('@gaunt-sloth/eval-reporter-teamcity/index.js');
+    expect(typeof mod.default).toBe('function');
+    expect(mod.default).toBe(mod.createTeamCityReporter);
+
+    const summary = craftSummary();
+    const chunks: string[] = [];
+    const reporter = (mod.default as typeof mod.createTeamCityReporter)((chunk: string) => {
+      chunks.push(chunk);
+    });
+    await reporter.onSuiteStart?.(CTX);
+    for (const result of summary.cases) {
+      await reporter.onCellResult?.(result, CTX);
+    }
+    await reporter.onSuiteEnd?.(summary, CTX);
+
+    const messages = parseServiceMessages(chunks);
+    expect(messages[0]).toMatchObject({
+      message: 'testSuiteStarted',
+      attrs: { name: 'authz-matrix' },
+    });
+    expect(messages.at(-1)!.message).toBe('testSuiteFinished');
+    // The default-export reporter reported the FAIL cells (proof it graded the run, not just opened).
+    expect(messages.some((m) => m.message === 'testFailed')).toBe(true);
+  });
 });
