@@ -21,6 +21,13 @@ function readJson(path: string): Record<string, unknown> {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
+/**
+ * The migration-doc URL every deprecated-shape message must carry (GS2-70) — a deliberate
+ * copy of schema.ts's MIGRATION_HINT link, so a wording change is a conscious two-place edit.
+ */
+const MIGRATION_DOC_URL =
+  'https://github.com/pukeko-robotics/gaunt-sloth/blob/main/docs/MIGRATION.md';
+
 describe('config schema (GS2-1 B1)', () => {
   describe('parse success / failure', () => {
     it('parses a minimal valid config', () => {
@@ -201,7 +208,7 @@ describe('config schema (GS2-1 B1)', () => {
       expect(issues).toHaveLength(1);
       expect(issues[0].path).toBe('pr');
       expect(issues[0].message).toContain('commands.pr');
-      expect(issues[0].message).toContain('gth config migrate');
+      expect(issues[0].message).toContain(MIGRATION_DOC_URL);
     });
 
     it('flags every command name used at the root', () => {
@@ -245,7 +252,7 @@ describe('config schema (GS2-1 B1)', () => {
       expect(issues[0].path).toBe('commands.code.devTools');
       expect(issues[0].message).toContain('no longer supported in 2.0');
       expect(issues[0].message).toContain('builtInTools');
-      expect(issues[0].message).toContain('gth config migrate');
+      expect(issues[0].message).toContain(MIGRATION_DOC_URL);
     });
 
     it('validateRawGthConfig HARD-rejects commands.<cmd>.devTools (NOT a silent strip)', () => {
@@ -376,9 +383,9 @@ describe('config schema (GS2-1 B1)', () => {
       });
       const byPath = Object.fromEntries(issues.map((i) => [i.path, i.message]));
       expect(byPath.projectGuidelines).toContain('prompts.guidelines');
-      expect(byPath.projectGuidelines).toContain('gth config migrate');
+      expect(byPath.projectGuidelines).toContain(MIGRATION_DOC_URL);
       expect(byPath.projectReviewInstructions).toContain('prompts.review');
-      expect(byPath.projectReviewInstructions).toContain('gth config migrate');
+      expect(byPath.projectReviewInstructions).toContain(MIGRATION_DOC_URL);
     });
 
     it('validateRawGthConfig HARD-rejects each removed flat key (ok:false, no warning)', () => {

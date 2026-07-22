@@ -474,11 +474,13 @@ const REMOVED_COMMAND_KEYS: ReadonlyArray<readonly [string, string]> = [
 
 /**
  * Pointer to the migration path, appended to every deprecated-shape error so the user
- * always learns HOW to fix it, not just that it broke. Matches the guidance the 2.0
- * migration notes carry.
+ * always learns HOW to fix it, not just that it broke. Doc link only, per DOC-STYLE
+ * rule 9 (user-visible doc references are absolute GitHub URLs).
+ * GS2-5 (B15) will ship `gth config migrate` / `gth doctor --fix`; restore the command
+ * reference here when that tooling lands.
  */
 const MIGRATION_HINT =
-  'See the 2.0 migration notes (or run `gth config migrate` / `gth doctor --fix`).';
+  'See the 2.0 migration notes: https://github.com/pukeko-robotics/gaunt-sloth/blob/main/docs/MIGRATION.md';
 
 /** A single deprecated-config-shape rejection: the offending `path` and the migration message. */
 export interface DeprecatedConfigIssue {
