@@ -3,7 +3,7 @@ import React from 'react';
 import { render } from 'ink-testing-library';
 import { PromptInput } from '#src/tui/components/PromptInput.js';
 import { SlashCommandMenu } from '#src/tui/components/SlashCommandMenu.js';
-import { createCommandRegistry, type SlashCommand } from '#src/tui/slashCommands.js';
+import { createCommandRegistry, type SlashCommand } from '@gaunt-sloth/agent/modules/slashCommands.js';
 
 const DOWN = '\x1b[B'; // Down arrow CSI sequence
 const UP = '\x1b[A'; // Up arrow CSI sequence

@@ -24,7 +24,7 @@ import type {
   RunConversationFn,
   TurnRunOutcome,
 } from '@gaunt-sloth/batch';
-import { A2AClientWrapper } from '#src/modules/a2a/A2AClientWrapper.js';
+import { A2AClientWrapper } from '@gaunt-sloth/agent/modules/a2a/A2AClientWrapper.js';
 
 /** One A2A turn's result as the ADK runner needs it: the answer text plus the continuity handles to
  * thread into follow-up turns. */

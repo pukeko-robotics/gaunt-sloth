@@ -6,7 +6,7 @@ import {
   formatHelp,
   parseSlashCommand,
   type SlashCommandContext,
-} from '#src/tui/slashCommands.js';
+} from '@gaunt-sloth/agent/modules/slashCommands.js';
 
 /**
  * GS2-7 (B20) — the `/history` `/search` `/insights` slash commands live in the pure registry, so

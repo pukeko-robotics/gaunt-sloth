@@ -35,7 +35,10 @@ import type { SessionConfig } from '@gaunt-sloth/agent/modules/interactiveSessio
 import type { BaseMessage } from '@langchain/core/messages';
 import { writeDebugDump } from '@gaunt-sloth/core/utils/debugDump.js';
 import { App } from '#src/tui/components/App.js';
-import { formatConfigSummary, type DebugDumpInput } from '#src/tui/slashCommands.js';
+import {
+  formatConfigSummary,
+  type DebugDumpInput,
+} from '@gaunt-sloth/agent/modules/slashCommands.js';
 import type { PendingApproval, TuiAgent, TuiDebugCapture } from '#src/tui/types.js';
 import {
   collectMcpOverview,

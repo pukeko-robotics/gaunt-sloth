@@ -30,7 +30,7 @@ import {
   dispatchSlashCommand,
   parseSlashCommand,
   toolsToggleNotice,
-} from '#src/tui/slashCommands.js';
+} from '@gaunt-sloth/agent/modules/slashCommands.js';
 import { viewportBumpSequence } from '#src/tui/terminal.js';
 import { findMatches, scrollOffsetForLine, stepMatch } from '#src/tui/debugSearch.js';
 
