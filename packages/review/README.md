@@ -2,8 +2,7 @@
 
 The review engine behind `gth review` / `gth pr`, packaged for embedding: run an AI code review
 programmatically from your own tool or pipeline, or via the standalone `gaunt-sloth-review`
-binary. Also contains the question-answering module and the content/requirement sources
-(GitHub, Jira, file, text).
+binary. Also contains the content/requirement sources (GitHub, Jira, file, text) that feed it.
 
 **When to depend on this package** — you want review results inside your own process or a
 minimal CI job. It has no dependency on `commander`, MCP, or A2A, so the install stays small.
@@ -102,7 +101,9 @@ Useful when CI uses different credentials or a different LLM provider than local
 ## Exports
 
 - `@gaunt-sloth/review` (the root export) is the public API: the review module (`review`,
-  `ReviewContext`), the question-answering module, `commandUtils`, and the `gh` read-file tool.
+  `ReviewContext`), `commandUtils`, and the `gh` read-file tool — plus, deliberately, the whole
+  `@gaunt-sloth/core` config barrel (`initConfig`, `GthConfig`, `DEFAULT_CONFIG`, …), re-exported
+  so an embedder can resolve config from the review root without importing core directly.
   This surface is what the embed example above and the fat CLI use.
 - `@gaunt-sloth/review/<path>.js` deep paths (e.g.
   `@gaunt-sloth/review/modules/reviewModule.js`) mirror the package's internal `dist/` layout

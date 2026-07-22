@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 /**
  * GS2-2 B7 — the flagship embed e2e for `@gaunt-sloth/review`.
@@ -23,8 +24,13 @@ import os from 'node:os';
 
 const REVIEW_MARKER = 'LGTM-EMBED-MARKER';
 
+// This spec lives at packages/review/embed-e2e/; the workspace root is three levels up.
+const reviewPkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const rootDir = path.resolve(reviewPkgDir, '..', '..');
+
 // Exactly the worked example from packages/review/README.md ("Embedding: review a diff
-// programmatically"). If this drifts from the README, update both.
+// programmatically") — byte-equality with the README's js fence is asserted by the drift
+// guard test below, so an edit to either side fails the e2e until both match again.
 const EMBED_SCRIPT = `// review-diff.mjs
 import { readFileSync } from 'node:fs';
 import { initConfig } from '@gaunt-sloth/core/config.js';
@@ -84,7 +90,6 @@ describe('@gaunt-sloth/review embed e2e (packed tarballs, temp-dir consumer)', (
   beforeAll(() => {
     // realpath: os.tmpdir() may be a symlink; import.meta.resolve returns real paths.
     tempDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gsloth-review-embed-')));
-    const rootDir = path.resolve('.');
 
     // `pnpm pack` (per package dir) rewrites review's `@gaunt-sloth/core: workspace:*` to the
     // concrete version, so the tarballs install cleanly outside the workspace.
@@ -136,6 +141,17 @@ describe('@gaunt-sloth/review embed e2e (packed tarballs, temp-dir consumer)', (
     if (tempDir && fs.existsSync(tempDir)) {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it('runs the README embed example verbatim (drift guard)', () => {
+    // The consumer script IS the README's worked example: extract the README's only `js`
+    // fence and require byte-equality, so a change to either side fails here instead of
+    // silently invalidating the "verbatim README example" guarantee.
+    const readme = fs.readFileSync(path.join(reviewPkgDir, 'README.md'), 'utf8');
+    const jsFences = readme.match(/```js\n[\s\S]*?```/g) ?? [];
+    expect(jsFences).toHaveLength(1);
+    const fenceBody = jsFences[0].replace(/^```js\n/, '').replace(/```$/, '');
+    expect(fenceBody).toBe(EMBED_SCRIPT);
   });
 
   it('resolves @gaunt-sloth/* from the installed tarballs, not the workspace', () => {

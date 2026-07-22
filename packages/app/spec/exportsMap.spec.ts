@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -20,10 +20,6 @@ import path from 'node:path';
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 describe('gaunt-sloth (app) exports map', () => {
-  beforeEach(() => {
-    vi.resetAllMocks();
-  });
-
   it('declares only ./package.json in exports, no main and no types', () => {
     const require = createRequire(import.meta.url);
     const pkg = require(path.join(appDir, 'package.json'));

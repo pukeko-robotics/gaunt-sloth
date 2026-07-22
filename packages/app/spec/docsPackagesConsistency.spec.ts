@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -84,10 +84,6 @@ function documentedBinTokens(markdown: string): string[] {
 }
 
 describe('packages docs <-> package.json consistency', () => {
-  beforeEach(() => {
-    vi.resetAllMocks();
-  });
-
   it('finds the workspace packages', () => {
     expect(packages.length).toBeGreaterThanOrEqual(7);
   });
