@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import type { SlashCommand } from '#src/tui/slashCommands.js';
+import type { SlashCommand } from '@gaunt-sloth/agent/modules/slashCommands.js';
 
 /**
  * TUI-C10 — the slash-command discovery menu. A read-only, presentational list of the commands

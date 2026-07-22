@@ -42,8 +42,11 @@ if (process.argv.includes('--acp-agent')) {
   }
 } else {
   // This is a minimalistic entry point that sets the installDir in systemUtils
-  // and delegates to the compiled TypeScript code in dist/cli.js
-  const { setEntryPoint } = await import('./dist/utils/systemUtils.js');
+  // and delegates to the compiled TypeScript code in dist/cli.js.
+  // systemUtils lives in @gaunt-sloth/core (the app-side re-export shim died in
+  // GS2-2 B4); importing it from core directly binds the same module instance
+  // the rest of the app reads, so setEntryPoint state is shared as before.
+  const { setEntryPoint } = await import('@gaunt-sloth/core/utils/systemUtils.js');
 
   // Set the installation directory in systemUtils
   setEntryPoint(import.meta.url);

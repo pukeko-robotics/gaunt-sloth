@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { get } from '#src/providers/ghPrDiffProvider.js';
+import { get } from '#src/sources/ghPrDiffSource.js';
 import { ProgressIndicator } from '#src/utils/ProgressIndicator.js';
 
 // Mock dependencies

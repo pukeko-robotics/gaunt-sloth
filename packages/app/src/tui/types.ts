@@ -6,7 +6,7 @@ import type {
 } from '@gaunt-sloth/core/core/types.js';
 import type { TurnViewModel } from '#src/tui/viewModel.js';
 import type { CommandNoticeTone } from '#src/tui/components/CommandNotice.js';
-import type { DebugDumpInput } from '#src/tui/slashCommands.js';
+import type { DebugDumpInput } from '@gaunt-sloth/agent/modules/slashCommands.js';
 
 /**
  * One in-flight tool-approval request bridged from the runner into the mounted `<App>`

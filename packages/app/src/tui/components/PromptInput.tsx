@@ -2,7 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { Box, Text, useInput, usePaste } from 'ink';
 import TextInput from 'ink-text-input';
 import { SlashCommandMenu } from '#src/tui/components/SlashCommandMenu.js';
-import { filterSlashCommands, slashMenuQuery, type SlashCommand } from '#src/tui/slashCommands.js';
+import {
+  filterSlashCommands,
+  slashMenuQuery,
+  type SlashCommand,
+} from '@gaunt-sloth/agent/modules/slashCommands.js';
 import { normalizePastedText } from '#src/tui/pasteParser.js';
 
 /**

@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SlashCommand, SlashCommandContext } from '#src/tui/slashCommands.js';
+import { existsSync } from 'node:fs';
+import type {
+  SlashCommand,
+  SlashCommandContext,
+} from '@gaunt-sloth/agent/modules/slashCommands.js';
 
 const ctx: SlashCommandContext = {
   mode: 'chat',
@@ -15,19 +19,19 @@ describe('tui/slashCommands parseSlashCommand', () => {
   });
 
   it('returns null for plain (non-slash) input', async () => {
-    const { parseSlashCommand } = await import('#src/tui/slashCommands.js');
+    const { parseSlashCommand } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     expect(parseSlashCommand('hello world')).toBeNull();
     expect(parseSlashCommand('  not a command')).toBeNull();
   });
 
   it('returns null for a bare slash', async () => {
-    const { parseSlashCommand } = await import('#src/tui/slashCommands.js');
+    const { parseSlashCommand } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     expect(parseSlashCommand('/')).toBeNull();
     expect(parseSlashCommand('  /   ')).toBeNull();
   });
 
   it('parses the command name (lower-cased) and args', async () => {
-    const { parseSlashCommand } = await import('#src/tui/slashCommands.js');
+    const { parseSlashCommand } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     expect(parseSlashCommand('/Help')).toEqual({ name: 'help', args: [] });
     expect(parseSlashCommand('  /status  foo bar ')).toEqual({
       name: 'status',
@@ -40,18 +44,18 @@ describe('tui/slashCommands parseSlashCommand', () => {
   // to the model as ordinary prompt text.
   describe('the /-vs-path heuristic', () => {
     it('a plain command parses (/help)', async () => {
-      const { parseSlashCommand } = await import('#src/tui/slashCommands.js');
+      const { parseSlashCommand } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
       expect(parseSlashCommand('/help')).toEqual({ name: 'help', args: [] });
     });
 
     it('a pasted path is not a command (/usr/bin, /usr/home/bob/test.md)', async () => {
-      const { parseSlashCommand } = await import('#src/tui/slashCommands.js');
+      const { parseSlashCommand } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
       expect(parseSlashCommand('/usr/bin')).toBeNull();
       expect(parseSlashCommand('/usr/home/bob/test.md')).toBeNull();
     });
 
     it('a command with args still parses (/verbose extra-arg)', async () => {
-      const { parseSlashCommand } = await import('#src/tui/slashCommands.js');
+      const { parseSlashCommand } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
       expect(parseSlashCommand('/verbose extra-arg')).toEqual({
         name: 'verbose',
         args: ['extra-arg'],
@@ -59,7 +63,7 @@ describe('tui/slashCommands parseSlashCommand', () => {
     });
 
     it('a bare / is not a command', async () => {
-      const { parseSlashCommand } = await import('#src/tui/slashCommands.js');
+      const { parseSlashCommand } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
       expect(parseSlashCommand('/')).toBeNull();
     });
   });
@@ -72,7 +76,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   it('/help renders a notice listing every registered command', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
     const result = dispatchSlashCommand(parseSlashCommand('/help')!, registry, ctx);
     expect(result.notice?.title).toBe('Slash commands');
@@ -83,14 +87,14 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   it('/clear requests a transcript clear (banner is the visible feedback)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/clear')!, createCommandRegistry(), ctx);
     expect(result.clearTranscript).toBe(true);
   });
 
   it('/debug requests a debug-panel toggle with a state-aware notice (showing when hidden)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/debug')!, createCommandRegistry(), {
       ...ctx,
       debugVisible: false,
@@ -103,7 +107,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   it('/debug reports the hiding notice when the panel is currently shown', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/debug')!, createCommandRegistry(), {
       ...ctx,
       debugVisible: true,
@@ -114,7 +118,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   it('/verbose requests a toggle with the ON notice when detail is currently off (GS2-8 rename)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/verbose')!, createCommandRegistry(), {
       ...ctx,
       toolsExpanded: false,
@@ -129,7 +133,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   it('/verbose reports the OFF notice when detail is currently on', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/verbose')!, createCommandRegistry(), {
       ...ctx,
       toolsExpanded: true,
@@ -140,7 +144,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   it('/tools is gone (2.0 hard removal, renamed /verbose) — it now reads as an unknown command (GS2-8)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
     expect(registry.some((c) => c.name === 'tools')).toBe(false);
     const result = dispatchSlashCommand(parseSlashCommand('/tools')!, registry, ctx);
@@ -150,7 +154,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   it('/auto-approve with no arg requests a toggle (App owns the runner flag + state-aware notice)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(
       parseSlashCommand('/auto-approve')!,
       createCommandRegistry(),
@@ -165,7 +169,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   it('/auto-approve on|off request explicit states; an unknown arg returns a usage notice', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
     expect(
       dispatchSlashCommand(parseSlashCommand('/auto-approve on')!, registry, ctx).autoApprove
@@ -181,13 +185,13 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   it('/yolo remains a back-compat alias that requests a toggle', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/yolo')!, createCommandRegistry(), ctx);
     expect(result.autoApprove).toBe('toggle');
   });
 
   it('autoApproveNotice copy: ON is warn-tone and mentions the hardline floor; OFF is info', async () => {
-    const { autoApproveNotice } = await import('#src/tui/slashCommands.js');
+    const { autoApproveNotice } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const on = autoApproveNotice(true);
     expect(on.title).toContain('Auto-approve ON');
     expect(on.tone).toBe('warn');
@@ -199,7 +203,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   it('dispatch during a run refuses idle-only commands but allows availableDuringRun ones', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
     // /auto-approve is run-safe → still requests the change mid-turn.
     expect(
@@ -218,14 +222,14 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   it('/exit requests an app quit', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/exit')!, createCommandRegistry(), ctx);
     expect(result.exit).toBe(true);
   });
 
   it('/quit is an equal-citizen alias of /exit — quits with no deprecation notice (GS2-8)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/quit')!, createCommandRegistry(), ctx);
     expect(result.exit).toBe(true);
     expect(result.message).toBeUndefined();
@@ -234,7 +238,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   it('/mode is gone (2.0 hard removal) — it now reads as an unknown command (GS2-8)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
     expect(registry.some((c) => c.name === 'mode')).toBe(false);
     const result = dispatchSlashCommand(parseSlashCommand('/mode')!, registry, ctx);
@@ -244,7 +248,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   it('/status folds in the old /mode info (mode, model, turns) as one notice (GS2-8)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(
       parseSlashCommand('/status')!,
       createCommandRegistry(),
@@ -260,14 +264,14 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   it('/model surfaces the model display name as a notice', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/model')!, createCommandRegistry(), ctx);
     expect(result.notice?.title).toBe('Model: claude-opus-4');
   });
 
   it('/model falls back to "unknown" when no display name is set', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/model')!, createCommandRegistry(), {
       ...ctx,
       modelDisplayName: '',
@@ -277,7 +281,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   it('an unknown command yields a friendly warn-tone notice, never throws', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/foo')!, createCommandRegistry(), ctx);
     expect(result.notice?.title).toBe('Unknown command: /foo');
     expect(result.notice?.tone).toBe('warn');
@@ -287,7 +291,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   it('registry is a fresh array each call so extensions can append (EXT-5)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
     expect(createCommandRegistry()).not.toBe(registry);
     registry.push({
@@ -307,7 +311,7 @@ describe('tui/slashCommands /config (GS2-1 read-only)', () => {
 
   it('surfaces the pre-rendered config summary as a notice', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/config')!, createCommandRegistry(), {
       ...ctx,
       configSummary: ['Model: claude-x', 'Agent backend: lean'],
@@ -318,7 +322,7 @@ describe('tui/slashCommands /config (GS2-1 read-only)', () => {
 
   it('shows an "unavailable" line when no summary is present (e.g. fixture agent)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(
       parseSlashCommand('/config')!,
       createCommandRegistry(),
@@ -328,14 +332,14 @@ describe('tui/slashCommands /config (GS2-1 read-only)', () => {
   });
 
   it('is listed in the registry (so it appears in the /help + / menu)', async () => {
-    const { createCommandRegistry } = await import('#src/tui/slashCommands.js');
+    const { createCommandRegistry } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     expect(createCommandRegistry().some((c) => c.name === 'config')).toBe(true);
   });
 
   // TUI-C19 — /config renders the actual validation warnings the standing advisory line points at.
   it('renders the config-validation warnings above the summary when present (TUI-C19)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const warning =
       'Unknown top-level config key in .gsloth.config.json: pullrequest. It is kept as-is but ignored by Gaunt Sloth; check for typos.';
     const result = dispatchSlashCommand(parseSlashCommand('/config')!, createCommandRegistry(), {
@@ -356,7 +360,7 @@ describe('tui/slashCommands /config (GS2-1 read-only)', () => {
 
   it('shows NO warnings and no warn tone when the config is clean (TUI-C19)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/config')!, createCommandRegistry(), {
       ...ctx,
       configSummary: ['Model: claude-x', 'Agent backend: lean'],
@@ -370,7 +374,7 @@ describe('tui/slashCommands /config (GS2-1 read-only)', () => {
 
 describe('tui/slashCommands formatConfigSummary (GS2-1)', () => {
   it('summarizes the orienting resolved-config fields, secret-free', async () => {
-    const { formatConfigSummary } = await import('#src/tui/slashCommands.js');
+    const { formatConfigSummary } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const lines = formatConfigSummary({
       modelDisplayName: 'gpt-5.5',
       agent: { backend: 'lean' },
@@ -388,14 +392,14 @@ describe('tui/slashCommands formatConfigSummary (GS2-1)', () => {
   });
 
   it('defaults the agent backend to lean and the model to unknown when absent', async () => {
-    const { formatConfigSummary } = await import('#src/tui/slashCommands.js');
+    const { formatConfigSummary } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const lines = formatConfigSummary({});
     expect(lines.join('\n')).toContain('Model: unknown');
     expect(lines.join('\n')).toContain('Agent backend: lean');
   });
 
   it('renders an array filesystem policy as JSON', async () => {
-    const { formatConfigSummary } = await import('#src/tui/slashCommands.js');
+    const { formatConfigSummary } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const lines = formatConfigSummary({ filesystem: ['./src', './docs'] });
     expect(lines.join('\n')).toContain('Filesystem: ["./src","./docs"]');
   });
@@ -411,7 +415,7 @@ describe('tui/slashCommands /reasoning (TUI-C18 recall a turn’s thinking)', ()
   const reasonings = ['A thought', '', 'C thought', ''];
 
   it('is listed in the registry (so it appears in /help + the / menu) and is run-safe', async () => {
-    const { createCommandRegistry } = await import('#src/tui/slashCommands.js');
+    const { createCommandRegistry } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const cmd = createCommandRegistry().find((c) => c.name === 'reasoning');
     expect(cmd).toBeDefined();
     expect(cmd?.availableDuringRun).toBe(true);
@@ -419,7 +423,7 @@ describe('tui/slashCommands /reasoning (TUI-C18 recall a turn’s thinking)', ()
 
   it('no arg resolves to the most recent turn that HAS reasoning (turn 3, skipping the empty turn 4)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(parseSlashCommand('/reasoning')!, createCommandRegistry(), {
       ...ctx,
       turnReasonings: reasonings,
@@ -430,7 +434,7 @@ describe('tui/slashCommands /reasoning (TUI-C18 recall a turn’s thinking)', ()
 
   it('/reasoning <n> resolves to that 1-based turn', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(
       parseSlashCommand('/reasoning 1')!,
       createCommandRegistry(),
@@ -441,7 +445,7 @@ describe('tui/slashCommands /reasoning (TUI-C18 recall a turn’s thinking)', ()
 
   it('a turn with no thinking gives a friendly info notice, not a reprint', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(
       parseSlashCommand('/reasoning 2')!,
       createCommandRegistry(),
@@ -454,7 +458,7 @@ describe('tui/slashCommands /reasoning (TUI-C18 recall a turn’s thinking)', ()
 
   it('an out-of-range <n> gives a warn notice (never throws / mis-indexes)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
     const withReasonings = { ...ctx, turnReasonings: reasonings };
     for (const n of ['5', '0', '-1', 'abc']) {
@@ -471,7 +475,7 @@ describe('tui/slashCommands /reasoning (TUI-C18 recall a turn’s thinking)', ()
 
   it('no committed reasoning anywhere gives the "nothing to show" notice', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
     // Empty transcript.
     const none = dispatchSlashCommand(parseSlashCommand('/reasoning')!, registry, {
@@ -490,7 +494,7 @@ describe('tui/slashCommands /reasoning (TUI-C18 recall a turn’s thinking)', ()
 
   it('stays run-safe: it still resolves during inference', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(
       parseSlashCommand('/reasoning')!,
       createCommandRegistry(),
@@ -508,7 +512,7 @@ describe('tui/slashCommands /debug-dump (GS2-46)', () => {
 
   it('calls the injected dumpDebugSession with redact ON by default and renders the path + softened redacted note (GS2-47)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const dumpDebugSession = vi.fn().mockReturnValue({
       archiveDir: '/home/user/.gsloth/debug-dumps/2026-07-18T12-00-00-000Z',
     });
@@ -546,7 +550,7 @@ describe('tui/slashCommands /debug-dump (GS2-46)', () => {
 
   it('opts OUT via config `debugDump.redact: false` — passes redact:false AND fires the loud UNSANITIZED warning', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const dumpDebugSession = vi.fn().mockReturnValue({ archiveDir: '/tmp/raw-dump' });
 
     const result = dispatchSlashCommand(
@@ -571,7 +575,7 @@ describe('tui/slashCommands /debug-dump (GS2-46)', () => {
 
   it('opts OUT via the `--unsafe-no-redact` command flag — passes redact:false and the loud warning', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const dumpDebugSession = vi.fn().mockReturnValue({ archiveDir: '/tmp/raw-dump' });
 
     const result = dispatchSlashCommand(
@@ -587,7 +591,7 @@ describe('tui/slashCommands /debug-dump (GS2-46)', () => {
 
   it('defaults transcript to [] and passes through an undefined resolvedConfig (redact still ON) when the context omits them', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const dumpDebugSession = vi.fn().mockReturnValue({ archiveDir: '/tmp/whatever' });
 
     dispatchSlashCommand(parseSlashCommand('/debug-dump')!, createCommandRegistry(), {
@@ -606,7 +610,7 @@ describe('tui/slashCommands /debug-dump (GS2-46)', () => {
 
   it('reports itself unavailable (never throws) when no dumpDebugSession writer is injected', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const result = dispatchSlashCommand(
       parseSlashCommand('/debug-dump')!,
       createCommandRegistry(),
@@ -618,7 +622,7 @@ describe('tui/slashCommands /debug-dump (GS2-46)', () => {
 
   it('stays run-safe: it is dispatchable while a turn is streaming', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const dumpDebugSession = vi.fn().mockReturnValue({ archiveDir: '/tmp/mid-turn-dump' });
     const result = dispatchSlashCommand(
       parseSlashCommand('/debug-dump')!,
@@ -632,7 +636,7 @@ describe('tui/slashCommands /debug-dump (GS2-46)', () => {
 
   it('is listed in /help', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
     const result = dispatchSlashCommand(parseSlashCommand('/help')!, registry, ctx);
     expect(result.notice?.lines.some((l) => l.startsWith('/debug-dump —'))).toBe(true);
@@ -645,14 +649,14 @@ describe('tui/slashCommands slashMenuQuery (TUI-C10 menu trigger)', () => {
   });
 
   it('returns the lower-cased query after the slash for a bare in-progress command', async () => {
-    const { slashMenuQuery } = await import('#src/tui/slashCommands.js');
+    const { slashMenuQuery } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     expect(slashMenuQuery('/')).toBe('');
     expect(slashMenuQuery('/mo')).toBe('mo');
     expect(slashMenuQuery('/MODE')).toBe('mode');
   });
 
   it('returns null for non-slash input or once a space begins the args', async () => {
-    const { slashMenuQuery } = await import('#src/tui/slashCommands.js');
+    const { slashMenuQuery } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     expect(slashMenuQuery('')).toBeNull();
     expect(slashMenuQuery('hello')).toBeNull();
     expect(slashMenuQuery(' /model')).toBeNull(); // leading space: not a trigger
@@ -661,7 +665,7 @@ describe('tui/slashCommands slashMenuQuery (TUI-C10 menu trigger)', () => {
   });
 
   it('a pasted path never triggers the menu — mirrors the /-vs-path heuristic (GS2-8)', async () => {
-    const { slashMenuQuery } = await import('#src/tui/slashCommands.js');
+    const { slashMenuQuery } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     expect(slashMenuQuery('/usr/bin')).toBeNull();
     expect(slashMenuQuery('/usr/home/bob/test.md')).toBeNull();
   });
@@ -674,7 +678,7 @@ describe('tui/slashCommands filterSlashCommands (TUI-C10 menu filter)', () => {
 
   it('an empty query returns the whole registry (bare "/" lists everything)', async () => {
     const { createCommandRegistry, filterSlashCommands } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
     const all = filterSlashCommands(registry, '');
     expect(all.map((c) => c.name)).toEqual(registry.map((c) => c.name));
@@ -683,7 +687,7 @@ describe('tui/slashCommands filterSlashCommands (TUI-C10 menu filter)', () => {
 
   it('filters by prefix, case-insensitively', async () => {
     const { createCommandRegistry, filterSlashCommands } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
     expect(filterSlashCommands(registry, 'mo').map((c) => c.name)).toEqual(['model']);
     expect(filterSlashCommands(registry, 'MODEL').map((c) => c.name)).toEqual(['model']);
@@ -691,7 +695,7 @@ describe('tui/slashCommands filterSlashCommands (TUI-C10 menu filter)', () => {
   });
 
   it('ranks prefix matches ahead of looser substring matches', async () => {
-    const { filterSlashCommands } = await import('#src/tui/slashCommands.js');
+    const { filterSlashCommands } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry: SlashCommand[] = [
       { name: 'compare', description: '', run: () => ({}) },
       { name: 'clear', description: '', run: () => ({}) },
@@ -708,7 +712,7 @@ describe('tui/slashCommands filterSlashCommands (TUI-C10 menu filter)', () => {
 
   it('includes extension-registered commands automatically (no hardcoded list)', async () => {
     const { createCommandRegistry, filterSlashCommands } =
-      await import('#src/tui/slashCommands.js');
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
     registry.push({ name: 'ping', description: 'extension command', run: () => ({}) });
     expect(filterSlashCommands(registry, 'pi').map((c) => c.name)).toEqual(['ping']);
@@ -721,24 +725,28 @@ describe('readline/TUI registry parity (GS2-8 single source of truth)', () => {
     vi.resetAllMocks();
   });
 
-  it('the TUI command set is IDENTICAL to the readline command set (one shared registry)', async () => {
-    // The TUI's historical import path is a re-export of the agent module the readline
-    // (`--no-tui`) session dispatches through. Comparing the two proves the re-export stays a
-    // re-export — if either surface ever grew its own registry, the sets would drift and this
-    // test would name the divergence.
-    const tui = await import('#src/tui/slashCommands.js');
-    const readline = await import('@gaunt-sloth/agent/modules/slashCommands.js');
-    const tuiNames = tui.createCommandRegistry().map((c) => c.name);
-    const readlineNames = readline.createCommandRegistry().map((c) => c.name);
-    expect(tuiNames).toEqual(readlineNames);
-    // Not just equal-by-value: the factory itself must be the same function object.
-    expect(tui.createCommandRegistry).toBe(readline.createCommandRegistry);
-    expect(tui.dispatchSlashCommand).toBe(readline.dispatchSlashCommand);
-    expect(tui.parseSlashCommand).toBe(readline.parseSlashCommand);
+  it('the TUI consumes the ONE agent registry (no app-side registry can exist)', async () => {
+    // Until GS2-2 (B4) the TUI reached the registry through an app-side re-export shim
+    // (`src/tui/slashCommands.ts`), and this test compared the two import paths for function
+    // identity. The shim is deleted, so only one import path is left; what remains to prove is
+    // that no app-local slash-command module has re-grown for a TUI-side fork to hide in —
+    // the agent module the readline (`--no-tui`) session dispatches through is the single
+    // source of truth the TUI's `createCommandRegistry()` call resolves to.
+    const appLocalModule = new URL('../../src/tui/slashCommands.ts', import.meta.url);
+    expect(existsSync(appLocalModule)).toBe(false);
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    // The one registry is real and complete: the factory and dispatch/parse seam the TUI
+    // imports are live functions producing a non-empty, duplicate-free command set.
+    expect(typeof dispatchSlashCommand).toBe('function');
+    expect(typeof parseSlashCommand).toBe('function');
+    const names = createCommandRegistry().map((c) => c.name);
+    expect(names.length).toBeGreaterThan(0);
+    expect(new Set(names).size).toBe(names.length);
   });
 
   it('the renamed/added commands are all present exactly once', async () => {
-    const { createCommandRegistry } = await import('#src/tui/slashCommands.js');
+    const { createCommandRegistry } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const names = createCommandRegistry().map((c) => c.name);
     for (const expected of ['verbose', 'quit', 'exit', 'status', 'help']) {
       expect(names.filter((n) => n === expected)).toHaveLength(1);
