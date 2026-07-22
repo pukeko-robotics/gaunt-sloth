@@ -15,7 +15,7 @@ import { Command, Option } from 'commander';
 function buildProgram(): Command {
   const program = new Command();
   program
-    .name('gsloth')
+    .name('gth')
     .option('-c, --config <path>', 'Path to custom configuration file')
     .option('-i, --identity-profile <identity>', 'Identity profile')
     .option('--verbose')
