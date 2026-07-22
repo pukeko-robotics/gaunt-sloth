@@ -403,10 +403,11 @@ not cover.
 ## Custom Eval Reporters (reporters)
 
 `gth eval` renders a run through one or more reporters, selected with `--reporter <names>` (built-in:
-`text`, the default console summary, and `junit`, which writes a JUnit `results.xml`). Selecting
-**replaces** the default set rather than adding to it — pass `--reporter text,junit` if you want the
-console summary alongside another reporter. The always-on `results.json` + per-cell JSON are written
-regardless of which reporters are selected.
+`text`, the default console summary; `junit`, which writes a JUnit `results.xml`; and `teamcity`,
+which streams live TeamCity `##teamcity[...]` service messages to stdout — no artifact wiring
+needed). Selecting **replaces** the default set rather than adding to it — pass
+`--reporter text,junit` if you want the console summary alongside another reporter. The always-on
+`results.json` + per-cell JSON are written regardless of which reporters are selected.
 
 `reporters` registers your OWN reporters. Each entry maps a name (the one you then pass to
 `--reporter`) to a module path, resolved relative to the project directory, whose **default export**

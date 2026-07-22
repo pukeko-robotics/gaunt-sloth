@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Create git tags for the released Gaunt Sloth packages. The locked FIVE:
 # @gaunt-sloth/{core,agent,review,batch} and the fat CLI `gaunt-sloth` (dir app)
-# all share one synced version. PLUS the independently-versioned reporter plugin
-# @gaunt-sloth/eval-reporter-junit (dir eval-reporter-junit) — tagged here at its
-# OWN version (0.1.0), NOT part of the synced five (bump.mjs never touches it; the
+# all share one synced version. PLUS the independently-versioned reporter plugins
+# @gaunt-sloth/eval-reporter-junit and @gaunt-sloth/eval-reporter-teamcity (dirs
+# eval-reporter-junit / eval-reporter-teamcity) — tagged here at their OWN
+# versions (0.1.0), NOT part of the synced five (bump.mjs never touches them; the
 # @gaunt-sloth/eval-reporter-* plugin family is bumped by hand).
 #
 # Tags are annotated and named "<package-name>@<version>" (npm monorepo
@@ -21,10 +22,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Packages to tag, by DIRECTORY — the locked set (same as bump.mjs) plus the
-# independently-versioned eval-reporter-junit (same publish set as
+# independently-versioned eval-reporter-* packages (same publish set as
 # publish-all.sh). batch and the fat CLI (dir app, name gaunt-sloth) are locked;
-# eval-reporter-junit is tagged at its own version, not the synced one.
-PACKAGES=(core agent review batch eval-reporter-junit app)
+# the eval-reporter-* packages are tagged at their own versions, not the synced one.
+PACKAGES=(core agent review batch eval-reporter-junit eval-reporter-teamcity app)
 
 PUSH="${PUSH:-0}"
 [[ "${1:-}" == "--push" ]] && PUSH=1

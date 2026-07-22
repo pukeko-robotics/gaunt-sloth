@@ -143,6 +143,9 @@ importers:
       '@gaunt-sloth/eval-reporter-junit':
         specifier: workspace:*
         version: link:../eval-reporter-junit
+      '@gaunt-sloth/eval-reporter-teamcity':
+        specifier: workspace:*
+        version: link:../eval-reporter-teamcity
       '@gaunt-sloth/review':
         specifier: workspace:*
         version: link:../review
@@ -274,6 +277,12 @@ importers:
       fast-xml-parser:
         specifier: ^5.0.0
         version: 5.10.1
+
+  packages/eval-reporter-teamcity:
+    devDependencies:
+      '@gaunt-sloth/batch':
+        specifier: workspace:*
+        version: link:../batch
 
   packages/review:
     dependencies:

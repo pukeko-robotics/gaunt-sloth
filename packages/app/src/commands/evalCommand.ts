@@ -66,10 +66,10 @@ export function normalizeReporterNames(collected: string[]): string[] {
 
 /**
  * Build the `custom` reporter-factory map handed to `resolveReporters`. It always registers the
- * BUNDLED JUnit reporter through the SAME public `custom` seam a user reporter uses (the point: it
- * proves the plug-in contract from an out-of-core package), then overlays any config-declared
- * reporters. A config reporter may reuse a built-in/bundled name — config wins on a collision, so it
- * is added last.
+ * BUNDLED reporters — JUnit (results.xml artifact) and TeamCity (live service messages) — through
+ * the SAME public `custom` seam a user reporter uses (the point: it proves the plug-in contract
+ * from an out-of-core package), then overlays any config-declared reporters. A config reporter may
+ * reuse a built-in/bundled name — config wins on a collision, so it is added last.
  *
  * A config reporter's module path is resolved relative to the PROJECT dir (the same base
  * `readFileFromProjectDir` uses) and imported via {@link importExternalFile} (which turns it into a
@@ -86,6 +86,10 @@ async function buildCustomReporterFactories(
   const { createJUnitReporter, JUNIT_REPORTER_NAME } =
     await import('@gaunt-sloth/eval-reporter-junit/index.js');
   custom[JUNIT_REPORTER_NAME] = createJUnitReporter;
+
+  const { createTeamCityReporter, TEAMCITY_REPORTER_NAME } =
+    await import('@gaunt-sloth/eval-reporter-teamcity/index.js');
+  custom[TEAMCITY_REPORTER_NAME] = createTeamCityReporter;
 
   for (const [name, modulePath] of Object.entries(config.reporters ?? {})) {
     const absPath = resolve(getProjectDir(), modulePath);
@@ -297,8 +301,9 @@ export function evalCommand(
     .option(
       '-r, --reporter <names>',
       'Reporter(s) to render the run through (repeatable; comma-separated). Built-in: "text" ' +
-        '(default), "junit" (writes results.xml). REPLACES the default, so "--reporter junit" is ' +
-        'JUnit only. The always-on results.json + per-cell JSON are written regardless.',
+        '(default), "junit" (writes results.xml), "teamcity" (live ##teamcity[...] service ' +
+        'messages). REPLACES the default, so "--reporter junit" is JUnit only. The always-on ' +
+        'results.json + per-cell JSON are written regardless.',
       (value: string, previous: string[] = []) => [...previous, value]
     )
     .addHelpText(
@@ -307,6 +312,8 @@ export function evalCommand(
         'Reporters:\n' +
         '  text (default)  a human-readable PASS/FAIL summary on the console\n' +
         '  junit           an Ant-JUnit results.xml (for TeamCity / CI JUnit readers)\n' +
+        '  teamcity        live ##teamcity[...] service messages on stdout (a TeamCity build\n' +
+        '                  shows per-case pass/fail live; no artifact wiring needed)\n' +
         '  Custom reporters are declared in config under `reporters: { <name>: <module path> }`.\n' +
         '  --reporter REPLACES the default set (it does not add to it); pass every reporter you\n' +
         '  want, e.g. `--reporter text,junit`. results.json is always written, regardless.\n' +
