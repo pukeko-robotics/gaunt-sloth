@@ -258,11 +258,6 @@ describe('prCommand', () => {
     const { prCommand } = await import('#src/commands/prCommand.js');
     const program = new Command();
 
-    const textProvider = vi.fn().mockResolvedValue('text content');
-    vi.doMock('#src/sources/textSource.js', () => ({
-      get: textProvider,
-    }));
-
     prCommand(program, {});
     await program.parseAsync(['na', 'na', 'pr', 'some-content-id', 'req-1']);
 

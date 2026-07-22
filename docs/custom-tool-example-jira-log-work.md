@@ -6,10 +6,10 @@ config-dependent availability with a clear error when configuration is missing, 
 to an external API. Custom tools are configured through a JavaScript config's `tools` array —
 see [Custom tools in JavaScript configuration](CONFIGURATION.md#javascript-configuration).
 
-The code below is the tool as it lived in the repo. It imported two app-internal helpers
-(`jiraLogWork`, which POSTs to Jira's worklog REST endpoint, and `displayWarning`) that are not
-part of the published API — in your own config you would inline your API call and logging
-instead. The shape is what matters:
+The code below is the tool as it lived in the repo. It imported an app-internal helper
+(`jiraLogWork`, which POSTs to Jira's worklog REST endpoint) that is not part of the published
+API — in your own config you would inline your API call instead. (`displayWarning` IS
+importable, from `@gaunt-sloth/core/utils/consoleUtils.js`.) The shape is what matters:
 
 ```typescript
 import { type StructuredToolInterface, tool } from '@langchain/core/tools';
