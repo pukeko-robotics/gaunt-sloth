@@ -269,7 +269,13 @@ jobs:
           if [ "$IS_PRERELEASE" = "true" ]; then
             PRE_FLAG="--prerelease"
           fi
-          gh release create "v${VERSION}" --title "v${VERSION}" --generate-notes $PRE_FLAG
+          # Idempotent like the tag step: a re-dispatch after a failed publish
+          # finds the Release already created by the first attempt — skip, don't die.
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            echo "Release v${VERSION} already exists — skipping creation (re-dispatch)"
+          else
+            gh release create "v${VERSION}" --title "v${VERSION}" --generate-notes $PRE_FLAG
+          fi
       - name: Publish all five to npmjs (current version)
         env:
           REGISTRY: https://registry.npmjs.org

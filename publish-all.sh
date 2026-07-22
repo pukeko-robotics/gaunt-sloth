@@ -65,6 +65,23 @@ echo "Publishing Gaunt Sloth packages to ${REGISTRY} (dist-tag: ${DIST_TAG})"
 for dir in "${ORDER[@]}"; do
   name="$(node -p "require('${ROOT}/packages/${dir}/package.json').name")"
   version="$(node -p "require('${ROOT}/packages/${dir}/package.json').version")"
+  # Idempotency guard (npmjs only): skip a version that is already on the registry.
+  # Two real cases: (a) a re-dispatch after a mid-loop failure — the packages that
+  # DID ship must not abort the retry (npm answers a republish with E403, and
+  # `set -e` would kill the run at the first already-published package, exactly
+  # what stranded the 2.0.0-alpha.21 run); (b) the independently-versioned
+  # eval-reporter-junit, whose version only moves when bumped by hand — every
+  # release between its bumps must skip it, not die on it. `npm view` prints the
+  # version iff that exact version exists; any lookup failure leaves `published`
+  # empty and we attempt the publish as before. Scoped to the real registry so the
+  # local Verdaccio flow (which proxies npmjs and would false-positive) is untouched.
+  if [[ "${REGISTRY}" == "https://registry.npmjs.org" ]]; then
+    published="$(npm view "${name}@${version}" version --registry "${REGISTRY}" 2>/dev/null || true)"
+    if [[ "${published}" == "${version}" ]]; then
+      echo "==> ${name}@${version} already on ${REGISTRY} — skipping"
+      continue
+    fi
+  fi
   echo "==> ${name}@${version}  --tag ${DIST_TAG}"
   # TAG_ARG + NPM_PUBLISH_ARGS are intentionally left unquoted so multiple flags
   # split into separate arguments; both default to empty for the plain local
