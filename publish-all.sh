@@ -32,40 +32,42 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # install resolves even though they ride the same alpha dist-tag as the synced set.
 ORDER=(core agent review batch eval-reporter-junit eval-reporter-teamcity app)
 
-# Derive the dist-tag from the CURRENT version (source of truth: packages/core),
-# same rule as .github/workflows/release.yml: a prerelease (2.0.0-alpha.0) maps to
-# its alpha/beta/rc id; a plain release maps to `latest`. We pass this as an
-# EXPLICIT `--tag` because npm (>=11) does NOT reliably honour `publishConfig.tag`
-# for a bare publish — relying on it would route a prerelease to `latest` and
-# hijack the stable channel. The explicit flag is the real guard (publishConfig
-# stays as defence-in-depth). If the caller already passed `--tag` via
-# NPM_PUBLISH_ARGS (the CI workflow does), we don't add a second one.
+# Each package's npm dist-tag (publish CHANNEL) is derived from THAT package's OWN
+# version, per package, inside the loop below (see scripts/dist-tag.mjs): a
+# prerelease (2.0.0-alpha.0) maps to its alpha/beta/rc id; a plain release (0.1.1)
+# maps to `latest`. Deriving per package is what lets the INDEPENDENTLY-versioned,
+# stable-`0.x` eval-reporter-* tier land on `latest` while the version-locked
+# synced set rides its prerelease channel — a single core-derived tag applied to
+# every package is exactly what stranded a stable reporter under `--tag alpha`
+# (OPS-22). Because the synced set is version-locked to core, own-version
+# derivation yields the same channel it always had.
 #
-# The derivation is a tiny INLINE parse — no `semver` (REL-4). `semver` is only a
-# *transitive* dep, so `require('semver')` could fail to hoist and, under
-# `set -euo pipefail`, abort the whole publish before anything ships. Reading the
-# version from the package's own package.json (its own file, not a transitive dep)
-# is safe; the prerelease id is the part after the first `-`, up to the first `.`.
-# A plain release, a numeric-only id, or an empty parse all fall back to `latest`.
-CORE_VERSION="$(node -p "require('${ROOT}/packages/core/package.json').version")"
-DIST_TAG="latest"
-if [[ "${CORE_VERSION}" == *-* ]]; then
-  pre="${CORE_VERSION#*-}"   # 2.0.0-alpha.0 -> alpha.0
-  pre="${pre%%.*}"          #              -> alpha
-  # a real channel is a non-empty, non-numeric identifier; else stay on latest
-  if [[ -n "${pre}" && ! "${pre}" =~ ^[0-9]+$ ]]; then
-    DIST_TAG="${pre}"
-  fi
-fi
-TAG_ARG=""
-if [[ "${NPM_PUBLISH_ARGS:-}" != *"--tag"* ]]; then
-  TAG_ARG="--tag ${DIST_TAG}"
-fi
+# We pass the tag as an EXPLICIT `--tag` because npm (>=11) does NOT reliably
+# honour `publishConfig.tag` for a bare publish — relying on it would route a
+# prerelease to `latest` and hijack the stable channel. The explicit flag is the
+# real guard (publishConfig.tag stays as defence-in-depth).
+#
+# The derivation lives in a tiny, dependency-free node helper — NO `semver`
+# (REL-4). `semver` is only a *transitive* dep, so `require('semver')` could fail
+# to hoist and, under `set -euo pipefail`, abort the whole publish before anything
+# ships. The helper reads a plain version string; the prerelease id is the part
+# after the first `-`, up to the first `.`. A plain release, a numeric-only id, or
+# an empty parse all fall back to `latest`.
+#
+# NOTE the CI caller passes NPM_PUBLISH_ARGS="--access public --provenance"
+# WITHOUT a `--tag`: the per-package `--tag` computed below is authoritative, so a
+# global `--tag` must NOT be re-added there or it would double the flag and
+# re-hijack `latest` for the reporters.
+DIST_TAG_HELPER="${ROOT}/scripts/dist-tag.mjs"
 
-echo "Publishing Gaunt Sloth packages to ${REGISTRY} (dist-tag: ${DIST_TAG})"
+echo "Publishing Gaunt Sloth packages to ${REGISTRY} (dist-tag derived per package)"
 for dir in "${ORDER[@]}"; do
   name="$(node -p "require('${ROOT}/packages/${dir}/package.json').name")"
   version="$(node -p "require('${ROOT}/packages/${dir}/package.json').version")"
+  # Derive THIS package's dist-tag from its OWN version (the OPS-22 fix): the
+  # synced set yields its prerelease channel, the stable-0.x eval-reporter-* tier
+  # yields `latest`.
+  dist_tag="$(node "${DIST_TAG_HELPER}" "${version}")"
   # Idempotency guard (npmjs only): skip a version that is already on the registry.
   # Two real cases: (a) a re-dispatch after a mid-loop failure — the packages that
   # DID ship must not abort the retry (npm answers a republish with E403, and
@@ -83,10 +85,10 @@ for dir in "${ORDER[@]}"; do
       continue
     fi
   fi
-  echo "==> ${name}@${version}  --tag ${DIST_TAG}"
-  # TAG_ARG + NPM_PUBLISH_ARGS are intentionally left unquoted so multiple flags
-  # split into separate arguments; both default to empty for the plain local
-  # Verdaccio path (where everything is a prerelease → tag follows the version).
+  echo "==> ${name}@${version}  --tag ${dist_tag}"
+  # NPM_PUBLISH_ARGS is intentionally left unquoted so multiple flags split into
+  # separate arguments; it defaults to empty for the plain local Verdaccio path
+  # (where the per-package `--tag ${dist_tag}` still follows each version).
   #
   # We publish with `pnpm publish`, NOT `npm publish`: internal cross-deps use the
   # `workspace:*` protocol, and ONLY pnpm rewrites `workspace:*` to the concrete
@@ -95,6 +97,6 @@ for dir in "${ORDER[@]}"; do
   # `--no-git-checks` is required because pnpm otherwise refuses to publish from a
   # non-release branch / dirty tree (we gate releases via the CI pipeline instead).
   # shellcheck disable=SC2086
-  (cd "${ROOT}/packages/${dir}" && pnpm publish --registry "${REGISTRY}" --no-git-checks ${TAG_ARG} ${NPM_PUBLISH_ARGS:-})
+  (cd "${ROOT}/packages/${dir}" && pnpm publish --registry "${REGISTRY}" --no-git-checks --tag "${dist_tag}" ${NPM_PUBLISH_ARGS:-})
 done
 echo "Done."

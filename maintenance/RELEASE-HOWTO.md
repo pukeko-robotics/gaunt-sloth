@@ -58,6 +58,27 @@ suffix. Two guards keep a prerelease (`-alpha`/`-beta`/`-rc`) off `latest`:
 
 A stable version derives `latest`; a prerelease derives its preid.
 
+### The `eval-reporter-*` tier publishes on `latest` (its own `0.x` track)
+
+The two `gth eval` reporter plugins — `@gaunt-sloth/eval-reporter-junit` and
+`@gaunt-sloth/eval-reporter-teamcity` — are **independently versioned** (a plain, stable `0.x`;
+`bump.mjs` never touches them) but are published and git-tagged alongside the locked set. Their
+dist-tag is therefore derived from **their own stable version → `latest`**, *decoupled* from the
+synced set's prerelease channel.
+
+This is automatic: `publish-all.sh` derives **each** package's dist-tag from **that package's own
+version** via `scripts/dist-tag.mjs` (stable `0.x` → `latest`; a prerelease → its preid). So a single
+release run ships the synced set on `alpha`/`beta`/`rc` and the reporters on `latest` in the same
+loop. Each reporter's own `publishConfig.tag` is `latest` too (belt-and-suspenders), so even a bare
+`pnpm publish` of a reporter lands on `latest`.
+
+Why it matters: npm sets `latest` automatically only on a package's **first** publish. A reporter
+published under `--tag alpha` (as happened to `eval-reporter-teamcity@0.1.1`) leaves `latest` frozen
+at the first version, so a user running the README's plain `npm i -D
+@gaunt-sloth/eval-reporter-teamcity` (which resolves `latest`) gets the **stale** version. Deriving
+the tag per package keeps each reporter's `latest` current (OPS-22). **Never pass `--tag alpha` for a
+reporter** — a plain `pnpm publish` is what you want.
+
 ### Releasing — the consolidated pipeline (CI, recommended)
 
 **One workflow, [release.yml](../.github/workflows/release.yml), replaces the old `publish.yml`
@@ -159,7 +180,12 @@ REGISTRY=https://registry.npmjs.org \
   bash -c 'cd packages/<straggler-package> && pnpm publish --registry "$REGISTRY" --no-git-checks $NPM_PUBLISH_ARGS'
 ```
 
-then re-create the tag/release/post-bump steps as needed. This trade-off (manual straggler
+Here `<derived>` is that package's OWN channel — `node scripts/dist-tag.mjs <version>` prints it: a
+synced-set straggler derives `alpha`/`beta`/`rc`, but a straggler in the `eval-reporter-*` tier
+derives `latest` (its stable `0.x`). **Never pass `--tag alpha` for a reporter**; a bare
+`pnpm publish` (its `publishConfig.tag` is `latest`) also lands it on `latest`.
+
+Then re-create the tag/release/post-bump steps as needed. This trade-off (manual straggler
 recovery in a rare outage) was chosen over baking skip-if-published logic into `publish-all.sh`.
 
 The `release` job uses npm Trusted Publishing (OIDC) — no token. Each package's Trusted Publisher
@@ -198,9 +224,13 @@ REGISTRY=https://registry.npmjs.org pnpm run release:publish
 ```
 
 Note: the first ever publish of a scoped package requires `--access public` (pass it via
-`NPM_PUBLISH_ARGS="--access public"`). After that it's not needed. To force a dist-tag for a
-prerelease when running manually, add `--tag <alpha|beta|rc>` to `NPM_PUBLISH_ARGS`
-(`publishConfig.tag` already covers this, but the explicit flag is belt-and-suspenders).
+`NPM_PUBLISH_ARGS="--access public"`). After that it's not needed. `pnpm run release:publish`
+derives each package's `--tag` from its OWN version automatically (`scripts/dist-tag.mjs`), so you do
+**not** pass a global `--tag` — the synced set gets its prerelease channel and the `eval-reporter-*`
+tier gets `latest` in the same run. Only when publishing a **single** package by hand, outside the
+script, force its channel with `--tag <alpha|beta|rc>` (a synced-set prerelease) — never for a
+reporter, which belongs on `latest`; `publishConfig.tag` covers this either way, the flag is
+belt-and-suspenders.
 
 ### Test-deploying library packages
 

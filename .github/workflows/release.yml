@@ -25,9 +25,11 @@ name: Release
 # AFTER this release), NOT the version being shipped.
 #
 # Publishing uses npm Trusted Publishing (OIDC) — no NPM_TOKEN, just
-# `id-token: write`. The npm dist-tag is DERIVED from the CURRENT version
-# (prerelease -> alpha/beta/rc, else latest); publishConfig.tag (written by
-# bump.mjs) is belt-and-suspenders for the same guarantee.
+# `id-token: write`. publish-all.sh derives EACH package's npm dist-tag from its
+# OWN version (prerelease -> alpha/beta/rc, else latest), so the version-locked
+# set rides its prerelease channel while the independently-versioned, stable-0.x
+# eval-reporter-* tier lands on `latest` (OPS-22); publishConfig.tag (written by
+# bump.mjs for the synced set) is belt-and-suspenders for the same guarantee.
 
 on:
   workflow_dispatch:
@@ -276,12 +278,16 @@ jobs:
           else
             gh release create "v${VERSION}" --title "v${VERSION}" --generate-notes $PRE_FLAG
           fi
-      - name: Publish all five to npmjs (current version)
+      - name: Publish all packages to npmjs (current version)
         env:
           REGISTRY: https://registry.npmjs.org
-          # Explicit --tag (belt-and-suspenders alongside each package's
-          # publishConfig.tag) so a prerelease never lands on `latest`.
-          NPM_PUBLISH_ARGS: --access public --provenance --tag ${{ steps.current.outputs.dist_tag }}
+          # No global --tag: publish-all.sh derives each package's dist-tag from
+          # its OWN version (scripts/dist-tag.mjs), so the version-locked set rides
+          # its prerelease channel while the independently-versioned, stable-0.x
+          # eval-reporter-* tier lands on `latest` (OPS-22). A global --tag here
+          # would override that per-package decision and re-hijack `latest`. The
+          # dist_tag output (steps.current) is retained only for the log line above.
+          NPM_PUBLISH_ARGS: --access public --provenance
         run: pnpm run release:publish
       # ----- Only after a successful publish: move main to the NEXT version -----
       - name: Post-bump main to the next version (drives bump.mjs from dispatch inputs)
