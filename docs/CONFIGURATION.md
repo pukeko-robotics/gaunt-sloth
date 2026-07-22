@@ -373,9 +373,10 @@ Lower levels are more verbose. Valid values for JSON configs:
 
 Non-TUI text runs — `ask`, `exec`, `eval`, `pr`, `review`, and `chat`/`code` with `--no-tui` or
 piped output (e.g. in CI) — open with a technical run-header preamble: the
-Workdir/Model/Tools/Middleware status lines and the `Press Escape or Q to interrupt Agent` hint
-box. This is **on by default**. Set `output.header: false` to suppress the preamble when captured
-stdout should stay clean — a CI job or script that diffs, logs, or post-processes the output.
+Workdir/Model/Tools/Middleware status lines, plus (in interactive terminal runs only) the
+`Press Escape or Q to interrupt Agent` hint box. This is **on by default**. Set
+`output.header: false` to suppress the preamble when captured stdout should stay clean — a CI
+job or script that diffs, logs, or post-processes the output.
 
 ```json
 {
@@ -386,7 +387,8 @@ stdout should stay clean — a CI job or script that diffs, logs, or post-proces
 ```
 
 Only the preamble is suppressed — model/tool output, errors, and config-validation warnings always
-print, and Esc/Q interruption stays armed even though the hint box is hidden. The interactive TUI
+print. In interactive terminal runs Esc/Q interruption stays armed even though the hint box is
+hidden; piped/non-TTY runs never arm Esc/Q regardless of this setting. The interactive TUI
 ignores the setting and always shows the header.
 
 ## Prompt Files (prompts)
