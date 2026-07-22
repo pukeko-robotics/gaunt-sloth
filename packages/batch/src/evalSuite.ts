@@ -42,6 +42,9 @@ import type { EvalCase, EvalExpectation, EvalSuite, EvalTarget, EvalTurn } from 
  *     json_path:                                # BATCH-10: over the answer parsed as JSON
  *       - { path: "$.items[0].scope", equals: "caller" }
  *       - { path: "data.status", contains: "ok" }
+ *     must_error: [ "mcp__unimarket__*" ]       # BATCH-21: a matching called tool RETURNED an error
+ *     tool_result_json_path:                    # BATCH-21: over a matching tool RESULT's payload
+ *       - { tool: "mcp__unimarket__*", path: "error.code", equals: "ACCESS_DENIED" }
  *     judge: "Answers with a ranked summary and correctly formatted values."
  *     pass_threshold: 7
  *   # Matrix case — per-identity expectations:
@@ -62,6 +65,16 @@ const RawJsonPathCheckSchema = z.object({
   contains: z.string().optional(),
 });
 
+/** BATCH-21 — one `tool_result_json_path` entry: `json_path`'s shape plus the `tool` name pattern
+ * selecting whose result to check. `equals`/`contains` exclusivity (at most one; neither = pure
+ * existence check) is enforced in code, mirroring `json_path`'s. */
+const RawToolResultJsonPathCheckSchema = z.object({
+  tool: z.string().min(1, 'tool_result_json_path entry must have a non-empty tool pattern'),
+  path: z.string().min(1, 'tool_result_json_path entry must have a non-empty path'),
+  equals: z.unknown().optional(),
+  contains: z.string().optional(),
+});
+
 /** The assertion bundle keys shared by a flat case and an `expect:` block. `expect:` blocks may also
  * carry `identities`; the flat case has no `identities` key (it always applies to every identity). */
 const RawAssertionsSchema = z.object({
@@ -73,6 +86,9 @@ const RawAssertionsSchema = z.object({
   must_match: z.array(z.string()).optional(),
   must_not_match: z.array(z.string()).optional(),
   json_path: z.array(RawJsonPathCheckSchema).optional(),
+  // BATCH-21 tool-RESULT assertions (gth-agent target only, enforced after normalization below).
+  must_error: z.array(z.string()).optional(),
+  tool_result_json_path: z.array(RawToolResultJsonPathCheckSchema).optional(),
   judge: z.string().optional(),
 });
 
@@ -151,6 +167,8 @@ const FLAT_ASSERTION_KEYS = [
   'must_match',
   'must_not_match',
   'json_path',
+  'must_error',
+  'tool_result_json_path',
   'judge',
 ] as const;
 
@@ -198,7 +216,11 @@ type RawAssertions = z.infer<typeof RawAssertionsSchema>;
  *   here; the runner also guards it as a per-cell FAIL as a backstop).
  * - A flat case or `expect:` block with no checks of any kind AND no `judge` rubric.
  * - An invalid `must_match`/`must_not_match` regex, or a `json_path` entry not setting exactly one
- *   of `equals`/`contains`.
+ *   of `equals`/`contains`, or a `tool_result_json_path` entry setting BOTH (at most one; neither
+ *   is a pure existence check).
+ * - A tool-RESULT assertion (`must_error` / `tool_result_json_path`, BATCH-21) against an
+ *   `adk-agent` OR `ag-ui` target — tool results exist only on the in-process `gth-agent` target
+ *   (the AG-UI wire streams call names but no result payloads; A2A exposes no tool trace at all).
  * - A `judge_profile` containing a path separator or `..`.
  *
  * @param yamlText Raw suite file content.
@@ -464,6 +486,33 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
     }
   }
 
+  // BATCH-21 — the honest tool-RESULT boundary, for BOTH external targets. Only the in-process
+  // `gth-agent` target produces `ToolMessage`s, so only it can carry tool RESULTS: the `adk-agent`
+  // (A2A) wire has an invisible tool trace entirely, and the `ag-ui` wire streams TOOL_CALL_START
+  // events (call NAMES — which is why `must_call` IS graded there) but no result payloads. A
+  // tool-result assertion against either would be ungradeable, and an ungradeable assertion that
+  // silently PASSES is the worst outcome for an eval tool — reject it at parse time, naming the
+  // offending case (→ the eval command's catch → exit 2), exactly like the adk `must_call` guard.
+  if (target.type === 'adk-agent' || target.type === 'ag-ui') {
+    for (const evalCase of cases) {
+      for (const turn of evalCase.turns) {
+        for (const expectation of turn.expectations) {
+          if (expectation.mustError.length > 0 || expectation.toolResultJsonPath.length > 0) {
+            throw new Error(
+              `Invalid eval suite${suffix}: case "${evalCase.id}" uses \`must_error\`/` +
+                '`tool_result_json_path` — tool-result assertions require target.type: gth-agent ' +
+                `(only the in-process agent surfaces tool results; ${
+                  target.type === 'ag-ui'
+                    ? 'the AG-UI wire streams tool-call names only, with no result payload'
+                    : "A2A does not expose the agent's tool trace at all"
+                }). Use content assertions, or a \`gth-agent\` target for tool-result grading.`
+            );
+          }
+        }
+      }
+    }
+  }
+
   // Normalize a blank/whitespace-only judge_profile to undefined (= no separate judge) so the CLI's
   // resolution treats it the same as absent.
   const judgeProfile = data.judge_profile?.trim() || undefined;
@@ -676,6 +725,26 @@ function buildExpectation(
       : { path: entry.path, equals: entry.equals };
   });
 
+  // BATCH-21 tool-RESULT assertions. `must_error` needs no per-entry validation (plain name
+  // patterns, same as must_call). A tool_result_json_path entry may set AT MOST one of
+  // equals/contains — unlike json_path's exactly-one, NEITHER is valid here and means a pure
+  // path-existence check (the key is normalized OUT so graders can discriminate on key presence;
+  // an explicit `equals: null` keeps its key and asserts the value is null).
+  const mustError = raw.must_error ?? [];
+  const toolResultJsonPath = (raw.tool_result_json_path ?? []).map((entry) => {
+    const hasEquals = entry.equals !== undefined;
+    const hasContains = entry.contains !== undefined;
+    if (hasEquals && hasContains) {
+      throw new Error(
+        `Invalid eval suite${ctx.suffix}: ${where} tool_result_json_path entry for ` +
+          `"${entry.path}" must set at most one of "equals" or "contains" (neither = existence check).`
+      );
+    }
+    if (hasContains) return { tool: entry.tool, path: entry.path, contains: entry.contains };
+    if (hasEquals) return { tool: entry.tool, path: entry.path, equals: entry.equals };
+    return { tool: entry.tool, path: entry.path };
+  });
+
   const hasChecks =
     mustContain.length > 0 ||
     mustNotContain.length > 0 ||
@@ -684,7 +753,9 @@ function buildExpectation(
     mustNotCall.length > 0 ||
     mustMatch.length > 0 ||
     mustNotMatch.length > 0 ||
-    jsonPath.length > 0;
+    jsonPath.length > 0 ||
+    mustError.length > 0 ||
+    toolResultJsonPath.length > 0;
   const judgeRubric = raw.judge?.trim();
   const hasJudge = !!judgeRubric;
 
@@ -692,7 +763,8 @@ function buildExpectation(
     throw new Error(
       `Invalid eval suite${ctx.suffix}: ${where} has no checks and no judge rubric — it must ` +
         'declare at least one of must_contain / must_not_contain / should_contain_any / must_call ' +
-        '/ must_not_call / must_match / must_not_match / json_path, or a judge rubric.'
+        '/ must_not_call / must_match / must_not_match / json_path / must_error / ' +
+        'tool_result_json_path, or a judge rubric.'
     );
   }
 
@@ -706,6 +778,8 @@ function buildExpectation(
     mustMatch,
     mustNotMatch,
     jsonPath,
+    mustError,
+    toolResultJsonPath,
     judgeRubric: hasJudge ? judgeRubric : undefined,
   };
 }

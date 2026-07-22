@@ -42,6 +42,29 @@ export interface GthRunStats {
   tokensOutput?: number;
   /** Names of tools invoked during the run (deduplicated); empty when no tools were used. */
   tools: string[];
+  /**
+   * BATCH-21 — one record per executed tool result (`ToolMessage`) observed during the run, in
+   * arrival order and NOT deduplicated (a tool called twice yields two records), so `gth eval`'s
+   * tool-RESULT assertions (`must_error` / `tool_result_json_path`) can grade what a tool
+   * *returned*, not just that it was called. Optional (additive): producers that predate the field
+   * simply omit it; {@link runStats.js finalizeRunStats} always sets it.
+   */
+  toolResults?: GthToolResult[];
+}
+
+/**
+ * BATCH-21 — one executed tool call's result, harvested from its `ToolMessage` by the GS2-16
+ * run-stats accumulator (`core/runStats.ts`). Fail-soft like everything else there: `content` is
+ * omitted when no text payload could be derived, and is size-capped
+ * ({@link runStats.js TOOL_RESULT_CONTENT_CAP}) so a giant payload can't bloat run stats.
+ */
+export interface GthToolResult {
+  /** The tool that produced the result (`ToolMessage.name`). */
+  name: string;
+  /** `true` iff the result carried LangChain's real error signal (`ToolMessage.status === 'error'`). */
+  isError: boolean;
+  /** The result payload as text (a non-string payload is JSON-stringified), capped in length. */
+  content?: string;
 }
 
 /**

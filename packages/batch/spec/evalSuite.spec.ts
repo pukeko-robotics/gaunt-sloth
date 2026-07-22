@@ -51,6 +51,8 @@ describe('parseEvalSuite', () => {
               mustMatch: [],
               mustNotMatch: [],
               jsonPath: [],
+              mustError: [],
+              toolResultJsonPath: [],
               judgeRubric: undefined,
             },
           ],
@@ -1013,6 +1015,174 @@ cases:
     must_contain: ["x"]
 `)
       ).toThrow(/must declare a non-empty `prompt`/);
+    });
+  });
+
+  // BATCH-21: the tool-RESULT assertion surface — `must_error` + `tool_result_json_path` parse
+  // into camelCase with `[]` defaults, count as checks, and are rejected at parse time against
+  // BOTH external targets (only the in-process gth-agent surfaces tool results).
+  describe('BATCH-21 tool-result assertions', () => {
+    it('parses must_error and tool_result_json_path (equals / contains / existence) into camelCase', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: denied
+    prompt: "get the data"
+    must_error: ["mcp__authz__*"]
+    tool_result_json_path:
+      - { tool: "mcp__authz__*", path: "error.code", equals: "MODULE_DISABLED" }
+      - { tool: "mcp__authz__*", path: "error.message", contains: "denied" }
+      - { tool: "mcp__authz__*", path: "error" }
+`);
+      const block = suite.cases[0].turns[0].expectations[0];
+      expect(block.mustError).toEqual(['mcp__authz__*']);
+      expect(block.toolResultJsonPath).toEqual([
+        { tool: 'mcp__authz__*', path: 'error.code', equals: 'MODULE_DISABLED' },
+        { tool: 'mcp__authz__*', path: 'error.message', contains: 'denied' },
+        { tool: 'mcp__authz__*', path: 'error' }, // existence check: no equals/contains key at all
+      ]);
+    });
+
+    it('defaults both to [] when absent', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+`);
+      const block = suite.cases[0].turns[0].expectations[0];
+      expect(block.mustError).toEqual([]);
+      expect(block.toolResultJsonPath).toEqual([]);
+    });
+
+    it('counts a must_error-only block as having checks (no "no checks" rejection)', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: only-error
+    prompt: "p"
+    must_error: ["mcp__*"]
+`);
+      expect(suite.cases[0].turns[0].expectations[0].mustError).toEqual(['mcp__*']);
+    });
+
+    it('rejects a tool_result_json_path entry setting BOTH equals and contains', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    tool_result_json_path:
+      - { tool: "t", path: "a.b", equals: "x", contains: "y" }
+`)
+      ).toThrow(
+        /tool_result_json_path entry for "a\.b" must set at most one of "equals" or "contains"/
+      );
+    });
+
+    it('rejects a tool_result_json_path entry missing its tool pattern or path', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    tool_result_json_path:
+      - { path: "a.b" }
+`)
+      ).toThrow(/Invalid eval suite/);
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    tool_result_json_path:
+      - { tool: "t" }
+`)
+      ).toThrow(/Invalid eval suite/);
+    });
+
+    it('treats the new keys as flat assertions for flat-vs-expect exclusivity', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+identities: [admin]
+cases:
+  - id: c1
+    prompt: "p"
+    must_error: ["mcp__*"]
+    expect:
+      - identities: [admin]
+        must_contain: ["x"]
+`)
+      ).toThrow(/declares BOTH case-level assertions and an `expect:` array/);
+    });
+
+    it('rejects must_error on an ag-ui target — no result payloads on that wire (→ exit 2 via the eval command catch)', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: ag-ui, url: "http://localhost:3000", agent_id: gth }
+cases:
+  - id: denied
+    prompt: "get the data"
+    must_error: ["mcp__*"]
+`)
+      ).toThrow(
+        /case "denied" uses `must_error`.*tool-result assertions require target\.type: gth-agent/s
+      );
+    });
+
+    it('rejects tool_result_json_path on an ag-ui target, even buried in a turn expect block', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: ag-ui, url: "http://localhost:3000", agent_id: gth }
+cases:
+  - id: multi
+    turns:
+      - user: "hi"
+        must_contain: ["hello"]
+      - user: "now fetch"
+        expect:
+          - tool_result_json_path:
+              - { tool: "mcp__*", path: "error.code", equals: "DENIED" }
+`)
+      ).toThrow(/tool-result assertions require target\.type: gth-agent/);
+    });
+
+    it('rejects must_error on an adk-agent target (its tool trace is invisible entirely)', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: adk-agent, url: "http://localhost:8080" }
+cases:
+  - id: denied
+    prompt: "get the data"
+    must_error: ["mcp__*"]
+`)
+      ).toThrow(/tool-result assertions require target\.type: gth-agent/);
+    });
+
+    it('still ALLOWS must_call alongside a rejected-free ag-ui suite (BATCH-15 behavior unchanged)', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: ag-ui, url: "http://localhost:3000", agent_id: gth }
+cases:
+  - id: uses-tool
+    prompt: "look it up"
+    must_call: ["mcp__*"]
+`);
+      expect(suite.cases[0].turns[0].expectations[0].mustCall).toEqual(['mcp__*']);
     });
   });
 });

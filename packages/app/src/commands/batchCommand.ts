@@ -132,7 +132,7 @@ export async function buildProductionRunCell(
     // an orphaned-process leak, one per cell.
     const resolvers = createResolvers();
     try {
-      const { ok, answer, tokensInput, tokensOutput, tools } = await runSingleShot(
+      const { ok, answer, tokensInput, tokensOutput, tools, toolResults } = await runSingleShot(
         `${options.sourcePrefix}-${cell.id}`,
         preamble,
         content,
@@ -143,7 +143,7 @@ export async function buildProductionRunCell(
         // config.agent.backend wins.
         resolveAgentFactory(cellConfig, 'lean')
       );
-      return { ok, answer, tokensInput, tokensOutput, tools };
+      return { ok, answer, tokensInput, tokensOutput, tools, toolResults };
     } catch (error) {
       // runSingleShot itself is documented to never throw for a normal LLM/tool failure (it
       // returns false instead); this guards the rare case of a genuinely unexpected exception so
@@ -215,12 +215,13 @@ export async function buildProductionRunConversation(
         options.command,
         resolveAgentFactory(cellConfig, 'lean')
       );
-      return turns.map(({ ok, answer, tokensInput, tokensOutput, tools, error }) => ({
+      return turns.map(({ ok, answer, tokensInput, tokensOutput, tools, toolResults, error }) => ({
         ok,
         answer,
         tokensInput,
         tokensOutput,
         tools,
+        toolResults,
         error,
       }));
     } finally {

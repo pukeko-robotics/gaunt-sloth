@@ -364,7 +364,7 @@ A suite is a single YAML document with these top-level keys:
 
 | Key | Required | Meaning |
 |-----|----------|---------|
-| `target` | yes | The system under test. `type` must be `gth-agent` (the only supported target); `profile` is optional and, if set, must be `default`. |
+| `target` | yes | The system under test. `type` is `gth-agent` (the in-process agent, the default choice; `profile` is optional and, if set, must be `default`), `adk-agent` (an external Google ADK agent over A2A; requires `url`), or `ag-ui` (an external agent over the AG-UI protocol; requires `url` and `agent_id`). |
 | `cases` | yes | A non-empty list of cases (below). |
 | `defaults` | no | Suite-wide defaults. `defaults.pass_threshold` (0–10) is the judge score gate applied to any case that doesn't set its own; the built-in default is `6`. |
 | `judge_profile` | no | Identity profile whose model grades `judge:` rubrics. See [Judging](#judging) below. |
@@ -391,7 +391,26 @@ These grade the agent's answer (and its tool trace). Use them at case level, ins
 | `must_match` | string[] | **Every** regex matches the answer. Case-sensitive — the pattern owns its own flags (unlike the substring checks). |
 | `must_not_match` | string[] | **No** regex matches the answer. |
 | `json_path` | list | The answer parses as JSON and every entry holds. Each entry is `{ path, equals }` or `{ path, contains }` (exactly one), where `path` is a minimal dotted/indexed path (`$.items[0].scope`, `data.status`). |
+| `must_error` | string[] | For **each** pattern, at least one called tool matching it **returned an error** (the tool result's real error status, not text sniffing). Globs supported, same matcher as `must_call`. |
+| `tool_result_json_path` | list | Each entry is `{ tool, path }` plus optionally `equals` **or** `contains`. At least one result from a tool matching `tool` (glob) parses as JSON and `path` resolves in it (and matches `equals`/`contains` when set; neither = existence check). A non-JSON payload fails the entry. |
 | `judge` | string | A rubric graded 0–10 by the judge model; passes when the score is ≥ the case's `pass_threshold`. |
+
+#### Tool-result assertions
+
+`must_call` proves a tool was *called*; `must_error` and `tool_result_json_path` prove what it *returned*. That closes the authorization-suite gap: a restricted identity that called the tool and got real data back looks identical to one that got denied, unless you check the result — and without these keys only the judge could tell them apart. Assert "called **and** denied" structurally:
+
+```yaml
+- id: restricted-module-denied
+  prompt: "Fetch the contracts report."
+  expect:
+    - identities: [limited]
+      must_call: ["mcp__contracts__report"]        # it tried the tool…
+      must_error: ["mcp__contracts__report"]       # …and the call came back as an error
+      tool_result_json_path:
+        - { tool: "mcp__contracts__report", path: "error.code", equals: "MODULE_DISABLED" }
+```
+
+Tool-result assertions read the in-process tool trace, so they require `target.type: gth-agent`; a suite using them with an `ag-ui` or `adk-agent` target is rejected before anything runs (exit `2`). Result payloads are captured up to 8 KB — a longer payload is truncated and then fails `tool_result_json_path` as non-JSON.
 
 ### Identity matrix
 
