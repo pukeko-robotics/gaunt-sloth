@@ -25,7 +25,15 @@ import { display, displayInfo, displayWarning } from '@gaunt-sloth/core/utils/co
 export function historyCommand(program: Command): void {
   const history = program
     .command('history')
-    .description('Search and list locally-recorded session history (opt-in; local only)');
+    .description('Search and list locally-recorded session history (opt-in; local only)')
+    .addHelpText(
+      'after',
+      '\n' +
+        'Examples:\n' +
+        '  $ gsloth history list\n' +
+        '  $ gsloth history search vertexai timeout\n' +
+        '  $ gsloth history show 42\n'
+    );
 
   history
     .command('search')

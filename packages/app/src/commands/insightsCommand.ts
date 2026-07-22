@@ -14,6 +14,13 @@ export function insightsCommand(program: Command): void {
     .command('insights')
     .description('Show local analytics over recorded session history (opt-in; local only)')
     .option('--db <path>', 'path to the history DB (defaults to ~/.gsloth/history.db)')
+    .addHelpText(
+      'after',
+      '\n' +
+        'Examples:\n' +
+        '  $ gsloth insights\n' +
+        '  $ gsloth insights --db ./project-history.db\n'
+    )
     .action((options: { db?: string }) => {
       const store = openHistoryStore(resolveHistoryDbPath(options.db), { create: false });
       if (!store) {
