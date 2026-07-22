@@ -5,8 +5,8 @@ import type { SessionConfig } from '#src/modules/interactiveSessionModule.js';
 // the Ink TUI (single source of truth) instead of its old hardcoded `exit`/`/yolo` handling.
 // These tests drive the real dispatch path (the slashCommands module is deliberately NOT mocked)
 // with a scripted readline, asserting: shared commands answer, `/quit`/`/exit` end the session,
-// TUI-only commands degrade with a clear message, the deprecated `/tools` alias points at
-// `/verbose`, and the `/`-vs-path heuristic sends a pasted filesystem path to the MODEL.
+// TUI-only commands degrade with a clear message, removed commands (`/mode`, `/tools`) read
+// as unknown, and the `/`-vs-path heuristic sends a pasted filesystem path to the MODEL.
 
 // Scripted readline: each `rl.question` call pops the next input; 'exit' as a safety default.
 let inputs: string[] = [];
@@ -147,12 +147,10 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
     expect(runnerInstanceMock.processMessages).not.toHaveBeenCalled();
   });
 
-  it('/tools (deprecated alias) degrades AND prints the one-line /verbose pointer', async () => {
+  it('/tools is gone (2.0 hard removal, renamed /verbose): it reads as an unknown command here too', async () => {
     await runSession('/tools', 'exit');
-    const out = allOutput();
-    expect(out).toContain('/tools is not available without the TUI');
-    expect(out).toContain('/tools is deprecated');
-    expect(out).toContain('/verbose');
+    expect(allOutput()).toContain('Unknown command: /tools');
+    expect(runnerInstanceMock.processMessages).not.toHaveBeenCalled();
   });
 
   it('/clear and /debug (TUI-only) degrade instead of vanishing from the catalog', async () => {

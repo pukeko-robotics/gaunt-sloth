@@ -138,20 +138,14 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     expect(result.notice?.lines[0]).toContain('single summary line');
   });
 
-  it('/tools stays as a deprecated alias: still toggles, plus a one-line pointer at /verbose (GS2-8)', async () => {
+  it('/tools is gone (2.0 hard removal, renamed /verbose) — it now reads as an unknown command (GS2-8)', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('#src/tui/slashCommands.js');
-    const result = dispatchSlashCommand(parseSlashCommand('/tools')!, createCommandRegistry(), {
-      ...ctx,
-      toolsExpanded: false,
-    });
-    // The alias still works (same toggle + state-aware notice as /verbose)…
-    expect(result.toggleTools).toBe(true);
-    expect(result.notice?.title).toBe('Tool details: on');
-    // …and carries the deprecation pointer as an incidental system line.
-    expect(result.message).toContain('deprecated');
-    expect(result.message).toContain('/verbose');
-    expect(result.level).toBe('warning');
+    const registry = createCommandRegistry();
+    expect(registry.some((c) => c.name === 'tools')).toBe(false);
+    const result = dispatchSlashCommand(parseSlashCommand('/tools')!, registry, ctx);
+    expect(result.notice?.title).toBe('Unknown command: /tools');
+    expect(result.toggleTools).toBeUndefined();
   });
 
   it('/auto-approve with no arg requests a toggle (App owns the runner flag + state-aware notice)', async () => {
@@ -746,9 +740,10 @@ describe('readline/TUI registry parity (GS2-8 single source of truth)', () => {
   it('the renamed/added commands are all present exactly once', async () => {
     const { createCommandRegistry } = await import('#src/tui/slashCommands.js');
     const names = createCommandRegistry().map((c) => c.name);
-    for (const expected of ['verbose', 'tools', 'quit', 'exit', 'status', 'help']) {
+    for (const expected of ['verbose', 'quit', 'exit', 'status', 'help']) {
       expect(names.filter((n) => n === expected)).toHaveLength(1);
     }
     expect(names).not.toContain('mode');
+    expect(names).not.toContain('tools');
   });
 });

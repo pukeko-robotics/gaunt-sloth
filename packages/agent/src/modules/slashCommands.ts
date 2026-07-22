@@ -347,7 +347,7 @@ export function filterSlashCommands(registry: SlashCommand[], query: string): Sl
 
 /**
  * The notice for the tool-detail toggle, given the RESULTING (post-toggle) state. Shared by the
- * `/verbose` command (and its deprecated `/tools` alias) and the Ctrl+T key handler so the copy
+ * `/verbose` command (GS2-8 rename of `/tools`) and the Ctrl+T key handler so the copy
  * is single-sourced (TUI-C14).
  */
 export function toolsToggleNotice(expanded: boolean): SlashCommandNotice {
@@ -597,21 +597,6 @@ export function createCommandRegistry(): SlashCommand[] {
       availableDuringRun: true,
       // State-aware: report the notice for the state the toggle will land on (the inverse of now).
       run: (ctx) => ({ toggleTools: true, notice: toolsToggleNotice(!ctx.toolsExpanded) }),
-    },
-    {
-      name: 'tools',
-      description: 'Deprecated alias for /verbose (to be removed in the next minor)',
-      availableDuringRun: true,
-      // GS2-8 — `/tools` was renamed to `/verbose` (freeing the name for the future tool catalog,
-      // GS2-3). The alias still toggles for one minor, with a one-line notice pointing at the new
-      // name (`message` is committed by the surfaces independently of the toggle's own notice).
-      run: (ctx) => ({
-        toggleTools: true,
-        notice: toolsToggleNotice(!ctx.toolsExpanded),
-        message:
-          '/tools is deprecated — use /verbose (this alias will be removed in the next minor).',
-        level: 'warning',
-      }),
     },
     {
       name: 'auto-approve',

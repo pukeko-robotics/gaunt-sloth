@@ -280,8 +280,7 @@ export function App(props: TuiAppProps): React.ReactElement {
   }, [exit]);
 
   // Flip the tool-detail mode and commit the matching notice. Single-sourced so the `/verbose`
-  // command (and its deprecated `/tools` alias) and the Ctrl+T key handler give the user
-  // identical, state-aware feedback (TUI-C14).
+  // command and the Ctrl+T key handler give the user identical, state-aware feedback (TUI-C14).
   // Committed turns are frozen in Ink's <Static> and never re-fold, so this only affects the
   // live / next turn — the notice copy says exactly that.
   const toggleTools = useCallback(() => {
@@ -443,8 +442,7 @@ export function App(props: TuiAppProps): React.ReactElement {
         if (result.toggleTools) {
           // Flip the fold mode and commit the notice via the shared helper (single-sourced with
           // Ctrl+T). The command's own `result.notice` is intentionally not pushed for /verbose —
-          // toggleTools owns the notice so the copy matches the state actually applied. (The
-          // deprecated /tools alias's pointer line still lands via `result.message` below.)
+          // toggleTools owns the notice so the copy matches the state actually applied.
           toggleTools();
         }
         if (result.autoApprove) {

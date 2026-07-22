@@ -835,7 +835,7 @@ describe('tui <App>', () => {
     unmount();
   });
 
-  it('/tools (deprecated alias, GS2-8) still toggles AND prints the one-line /verbose pointer', async () => {
+  it('/tools is gone (2.0 hard removal, GS2-8) — the TUI reports an unknown command', async () => {
     const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
     const { stdin, lastFrame, frames, unmount } = render(<App {...baseProps} agent={agent} />);
 
@@ -845,10 +845,7 @@ describe('tui <App>', () => {
     await vi.waitFor(() => expect(lastFrame()).toContain('/tools'));
     stdin.write('\r');
     await vi.waitFor(() => {
-      const all = frames.join('\n');
-      expect(all).toContain('Tool details: on'); // the alias still applies the toggle
-      expect(all).toContain('deprecated'); // …and points at the new name
-      expect(all).toContain('/verbose');
+      expect(frames.join('\n')).toContain('Unknown command: /tools');
     });
 
     unmount();

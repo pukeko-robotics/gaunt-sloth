@@ -125,8 +125,8 @@ rendering supplied by the **surface-agnostic tool-display registry** (TUI-C30,
 - **`write_file`/`edit_file` render as a diff, not a dump.** The change is derived from the tool's
   args — added lines green with a `+` prefix, removed lines red with `-` (DL-8 colour semantics);
   the prefixes keep the diff readable on monochrome terminals (DL-7).
-- **Expand on demand:** `/verbose` (GS2-8 rename; `/tools` remains a deprecated alias for one
-  minor) toggles detail (it is `availableDuringRun`, so it works idle **and**
+- **Expand on demand:** `/verbose` (GS2-8 rename of `/tools`, which is removed — no alias)
+  toggles detail (it is `availableDuringRun`, so it works idle **and**
   mid-turn); **`Ctrl+T`** is the mid-turn keyboard shortcut for the same toggle. Expanded panels show
   the FULL body: the raw streamed `args`, the routed `🔧 Executing …` notice (expanded-only chrome,
   kept off the collapsed preview), and the uncapped output/result — **deduped** for shell-shaped
