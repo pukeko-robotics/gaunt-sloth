@@ -6,12 +6,14 @@ import {
   GSLOTH_CODE_PROMPT,
   GSLOTH_EXEC_PROMPT,
   GSLOTH_SYSTEM_PROMPT,
+  PROJECT_GUIDELINES,
+  PROJECT_REVIEW_INSTRUCTIONS,
 } from '#src/constants.js';
 import { getGslothConfigReadPath, readFileFromInstallDir } from '#src/utils/fileUtils.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { debugLog } from '#src/utils/debugUtils.js';
 import { truncateString } from '#src/utils/stringUtils.js';
-import { GthConfig } from '#src/config.js';
+import { GthConfig, PromptSegmentName } from '#src/config.js';
 import { SystemMessage } from '@langchain/core/messages';
 
 /**
@@ -27,17 +29,65 @@ export function getNewRunnableConfig(recursionLimit: number = 1000): RunnableCon
   };
 }
 
-export function readBackstory(
-  config: Pick<GthConfig, 'identityProfile' | 'noDefaultPrompts'>
-): string {
-  return readPromptFile(GSLOTH_BACKSTORY, config.identityProfile, config.noDefaultPrompts);
+/**
+ * GS2-43 — each prompt segment's default-named file. The `prompts.<segment>` config retargets,
+ * disables, or composes against these; with no config the segment resolves exactly as before
+ * (config-dir/project file of this name, else the bundled default).
+ */
+const PROMPT_SEGMENT_FILES: Record<PromptSegmentName, string> = {
+  backstory: GSLOTH_BACKSTORY,
+  guidelines: PROJECT_GUIDELINES,
+  system: GSLOTH_SYSTEM_PROMPT,
+  chat: GSLOTH_CHAT_PROMPT,
+  code: GSLOTH_CODE_PROMPT,
+  exec: GSLOTH_EXEC_PROMPT,
+  review: PROJECT_REVIEW_INSTRUCTIONS,
+};
+
+/** The config slice every prompt-segment read needs. */
+type PromptReadConfig = Pick<GthConfig, 'prompts' | 'identityProfile' | 'noDefaultPrompts'>;
+
+/**
+ * GS2-43 — the single composition point for one prompt segment, honouring the segment's
+ * `prompts.<segment>` config:
+ * - no setting → the segment's default-named file ({@link PROMPT_SEGMENT_FILES}), falling back
+ *   to the bundled default unless `noDefaultPrompts` — exactly the pre-GS2-43 behaviour;
+ * - a `string` → shorthand for `{ path }`;
+ * - `enabled: false` → the segment is dropped entirely (returns `''`), even its bundled default;
+ * - `path` + `mode: 'replace'` (default) → the file replaces the built-in segment content;
+ * - `path` + `mode: 'append'` → the file content is appended after the built-in content.
+ */
+export function readPromptSegment(segment: PromptSegmentName, config: PromptReadConfig): string {
+  const setting = config.prompts?.[segment];
+  const segmentConfig = typeof setting === 'string' ? { path: setting } : (setting ?? {});
+  if (segmentConfig.enabled === false) {
+    return '';
+  }
+  const readBuiltIn = () =>
+    readPromptFile(PROMPT_SEGMENT_FILES[segment], config.identityProfile, config.noDefaultPrompts);
+  if (!segmentConfig.path) {
+    return readBuiltIn();
+  }
+  const fileContent = readPromptFile(
+    segmentConfig.path,
+    config.identityProfile,
+    config.noDefaultPrompts
+  );
+  if (segmentConfig.mode === 'append') {
+    return [readBuiltIn(), fileContent].filter(Boolean).join('\n');
+  }
+  return fileContent;
+}
+
+export function readBackstory(config: PromptReadConfig): string {
+  return readPromptSegment('backstory', config);
 }
 
 export function readGuidelines(
   config:
     | Pick<
         GthConfig,
-        | 'projectGuidelines'
+        | 'prompts'
         | 'includeCurrentDateAfterGuidelines'
         | 'organization'
         | 'identityProfile'
@@ -48,11 +98,7 @@ export function readGuidelines(
   if (typeof config === 'string') {
     return readPromptFile(config, undefined);
   }
-  const guidelines = readPromptFile(
-    config.projectGuidelines,
-    config.identityProfile,
-    config.noDefaultPrompts
-  );
+  const guidelines = readPromptSegment('guidelines', config);
   if (config.includeCurrentDateAfterGuidelines) {
     const currentDate = new Date();
 
@@ -82,30 +128,19 @@ export function readGuidelines(
   return guidelines;
 }
 
-export function readReviewInstructions(
-  config:
-    Pick<GthConfig, 'projectReviewInstructions' | 'identityProfile' | 'noDefaultPrompts'> | string
-): string {
+export function readReviewInstructions(config: PromptReadConfig | string): string {
   if (typeof config === 'string') {
     return readPromptFile(config, undefined);
   }
-  return readPromptFile(
-    config.projectReviewInstructions,
-    config.identityProfile,
-    config.noDefaultPrompts
-  );
+  return readPromptSegment('review', config);
 }
 
-export function readSystemPrompt(
-  config: Pick<GthConfig, 'identityProfile' | 'noDefaultPrompts'>
-): string {
-  return readPromptFile(GSLOTH_SYSTEM_PROMPT, config.identityProfile, config.noDefaultPrompts);
+export function readSystemPrompt(config: PromptReadConfig): string {
+  return readPromptSegment('system', config);
 }
 
-export function readChatPrompt(
-  config: Pick<GthConfig, 'identityProfile' | 'noDefaultPrompts'>
-): string {
-  return readPromptFile(GSLOTH_CHAT_PROMPT, config.identityProfile, config.noDefaultPrompts);
+export function readChatPrompt(config: PromptReadConfig): string {
+  return readPromptSegment('chat', config);
 }
 
 export function buildSystemMessages(
@@ -120,16 +155,12 @@ export function buildSystemMessages(
   return content.trim() ? [new SystemMessage(content)] : [];
 }
 
-export function readCodePrompt(
-  config: Pick<GthConfig, 'identityProfile' | 'noDefaultPrompts'>
-): string {
-  return readPromptFile(GSLOTH_CODE_PROMPT, config.identityProfile, config.noDefaultPrompts);
+export function readCodePrompt(config: PromptReadConfig): string {
+  return readPromptSegment('code', config);
 }
 
-export function readExecPrompt(
-  config: Pick<GthConfig, 'identityProfile' | 'noDefaultPrompts'>
-): string {
-  return readPromptFile(GSLOTH_EXEC_PROMPT, config.identityProfile, config.noDefaultPrompts);
+export function readExecPrompt(config: PromptReadConfig): string {
+  return readPromptSegment('exec', config);
 }
 
 /**

@@ -106,7 +106,6 @@ const withStructuredOutput = vi.fn(() => ({ invoke: structuredInvoke }));
 
 const mockConfig = {
   llm: { invoke: vi.fn(), model: 'base-model', withStructuredOutput },
-  projectGuidelines: '.gsloth.guidelines.md',
   streamOutput: true,
   writeOutputToFile: true,
   canInterruptInferenceWithEsc: true,

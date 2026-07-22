@@ -10,6 +10,51 @@ import type { StatusLevel } from '#src/core/types.js';
 import type { BuiltInToolsSetting } from '#src/config/shell-policy.js';
 
 /**
+ * GS2-43 — the seven configurable prompt segments. Each maps to a prompt file with a
+ * well-known default name (`.gsloth.backstory.md`, `.gsloth.guidelines.md`,
+ * `.gsloth.system.md`, `.gsloth.chat.md`, `.gsloth.code.md`, `.gsloth.exec.md`,
+ * `.gsloth.review.md`) and can be retargeted / disabled / composed via
+ * {@link GthConfig.prompts}.
+ */
+export type PromptSegmentName =
+  'backstory' | 'guidelines' | 'system' | 'chat' | 'code' | 'exec' | 'review';
+
+/**
+ * GS2-43 — configuration for one prompt segment.
+ */
+export interface PromptSegmentConfig {
+  /**
+   * File to read for this segment. Resolved like every prompt file: the config dir
+   * (`.gsloth/.gsloth-settings[/<profile>]/`) first, then relative to the project root.
+   */
+  path?: string;
+  /**
+   * `false` drops the segment entirely — even its bundled default. Default `true`.
+   */
+  enabled?: boolean;
+  /**
+   * `'replace'` (default): the {@link path} file replaces the built-in segment content.
+   * `'append'`: the file content is appended after the built-in content.
+   */
+  mode?: 'replace' | 'append';
+}
+
+/**
+ * GS2-43 — one segment's setting: a `string` path (shorthand for `{ path }`) or a
+ * {@link PromptSegmentConfig} object.
+ */
+export type PromptSegmentSetting = string | PromptSegmentConfig;
+
+/**
+ * GS2-43 — the unified `prompts` config object. Replaces the removed flat
+ * `projectGuidelines` / `projectReviewInstructions` keys and makes all seven prompt
+ * segments retargetable through config. Sibling keys are trivially addable (GS2-44 will
+ * add `agents` for AGENTS.md auto-discovery), so keep segment names and future siblings
+ * in this one flat namespace.
+ */
+export type PromptsConfig = Partial<Record<PromptSegmentName, PromptSegmentSetting>>;
+
+/**
  * Shared per-command tooling configuration (the knobs every actionable command carries).
  * Reused across the per-command types in {@link GthConfig.commands} and by
  * {@link PrCommandConfig}. Type-level dedupe only — no runtime/behaviour change.
@@ -75,11 +120,12 @@ export interface GthConfig {
    */
   requirementSource: string;
   /**
-   * Path to project-specific guidelines.
-   * The default is `.gsloth.guidelines.md`; this config may be used to point Gaunt Sloth to a different file,
-   * for example, to AGENTS.md
+   * GS2-43 — the unified prompt-segment config (see {@link PromptsConfig}). Each of the seven
+   * segments (`backstory | guidelines | system | chat | code | exec | review`) accepts a string
+   * path (e.g. `"guidelines": "AGENTS.md"`) or an object (`{ path?, enabled?, mode? }`). When a
+   * segment is omitted its default-named file / bundled default applies unchanged.
    */
-  projectGuidelines: string;
+  prompts?: PromptsConfig;
   /**
    * Separate identity profile.
    * May include separate identity, guidelines and command protocol,
@@ -103,7 +149,6 @@ export interface GthConfig {
     locale?: string;
     timezone?: string;
   };
-  projectReviewInstructions: string;
   /**
    * If true, only use user-provided system prompts. Do not fall back to the
    * bundled `.gsloth.*.md` prompt files shipped with the installation.

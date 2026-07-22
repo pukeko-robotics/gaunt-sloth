@@ -50,8 +50,6 @@ vi.mock('@gaunt-sloth/review/utils/fileUtils.js', () => fileUtilsMock);
 // Set up static mocks
 const mockConfig = {
   llm: { invoke: vi.fn() } as unknown as BaseChatModel,
-  projectGuidelines: '.gsloth.guidelines.md',
-  projectReviewInstructions: '.gsloth.review.md',
   contentSource: 'file',
   requirementSource: 'file',
   streamOutput: true,
@@ -115,10 +113,7 @@ describe('reviewCommand', () => {
       'REVIEW',
       'INTERNAL BACKSTORY\nPROJECT GUIDELINES\nREVIEW INSTRUCTIONS',
       'test.file:\n```\nFILE TO REVIEW\n```',
-      expect.objectContaining({
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
-      }),
+      expect.objectContaining({}),
       'review',
       expect.any(Object)
     );
@@ -140,10 +135,7 @@ describe('reviewCommand', () => {
       'REVIEW',
       'INTERNAL BACKSTORY\nPROJECT GUIDELINES\nREVIEW INSTRUCTIONS',
       'test.file:\n```\nFILE TO REVIEW\n```\n\ntest2.file:\n```\nFILE2 TO REVIEW\n```',
-      expect.objectContaining({
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
-      }),
+      expect.objectContaining({}),
       'review',
       expect.any(Object)
     );
@@ -219,8 +211,6 @@ describe('reviewCommand', () => {
       '\nProvided requirements follows within jira-legacy-1234567 block\n<jira-legacy-1234567>\nJIRA Requirements\n</jira-legacy-1234567>\n\n\nProvided content follows within text-1234567 block\n<text-1234567>\ncontent-id\n</text-1234567>\n',
       expect.objectContaining({
         requirementSource: 'jira-legacy',
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
       }),
       'review',
       expect.any(Object)
@@ -265,8 +255,6 @@ describe('reviewCommand', () => {
       '\nProvided GitHub diff follows within github-1234567 block\n<github-1234567>\nPR Diff Content\n</github-1234567>\n',
       expect.objectContaining({
         contentSource: 'github',
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
       }),
       'review',
       expect.any(Object)
@@ -296,10 +284,7 @@ describe('reviewCommand', () => {
         '<message-1234567>\n' +
         'Please check for memory leaks\n' +
         '</message-1234567>\n',
-      expect.objectContaining({
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
-      }),
+      expect.objectContaining({}),
       'review',
       expect.any(Object)
     );
@@ -332,8 +317,6 @@ describe('reviewCommand', () => {
       '\nProvided GitHub diff follows within github-1234567 block\n<github-1234567>\nPR Diff Content\n</github-1234567>\n\n\nProvided user message follows within message-1234567 block\n<message-1234567>\nFocus on code style\n</message-1234567>\n',
       expect.objectContaining({
         contentSource: 'github',
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
       }),
       'review',
       expect.any(Object)

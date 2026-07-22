@@ -11,7 +11,7 @@
       "transport": "sse"
     }
   },
-  "requirementsProviderConfig": {
+  "requirementSourceConfig": {
     "jira": {
       "cloudId": "00000000-0000-0000-0000-000000000000",
       "displayUrl": "https://YOURBUSINESS.atlassian.net/browse/"
@@ -19,9 +19,11 @@
   },
   "commands": {
     "pr": {
-      "contentProvider": "github",
-      "requirementsProvider": "jira"
+      "contentSource": "github",
+      "requirementSource": "jira"
     }
   },
-  "projectGuidelines": "AGENTS.md"
+  "prompts": {
+    "guidelines": "AGENTS.md"
+  }
 }

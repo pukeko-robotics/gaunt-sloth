@@ -41,7 +41,7 @@ const JSONC_CONTENT = `{
     "type": "vertexai", // provider
   },
   /* trailing commas everywhere */
-  "projectGuidelines": "FROM-JSONC.md",
+  "prompts": { "guidelines": "FROM-JSONC.md" },
 }`;
 
 describe('.gsloth.config.jsonc support (GS2-69)', () => {
@@ -120,13 +120,13 @@ describe('.gsloth.config.jsonc support (GS2-69)', () => {
     expect(processJsonConfigMock).toHaveBeenCalledWith({ type: 'vertexai' });
     // ...and the rest of the jsonc content survived into the effective config.
     expect(config.llm).toBe(FAKE_LLM);
-    expect(config.projectGuidelines).toBe('FROM-JSONC.md');
+    expect(config.prompts?.guidelines).toBe('FROM-JSONC.md');
   });
 
   it('prefers .gsloth.config.json when BOTH .json and .jsonc exist', async () => {
     const jsonPath = project(
       '.gsloth.config.json',
-      '{"llm":{"type":"vertexai"},"projectGuidelines":"FROM-JSON.md"}'
+      '{"llm":{"type":"vertexai"},"prompts":{"guidelines":"FROM-JSON.md"}}'
     );
     writeFileSync(resolve(root, 'proj', '.gsloth.config.jsonc'), JSONC_CONTENT);
 
@@ -135,7 +135,7 @@ describe('.gsloth.config.jsonc support (GS2-69)', () => {
 
     const config = await initConfig({});
     expect(exitMock).not.toHaveBeenCalled();
-    expect(config.projectGuidelines).toBe('FROM-JSON.md');
+    expect(config.prompts?.guidelines).toBe('FROM-JSON.md');
   });
 
   it('loads an explicit -c path/to/custom.jsonc via the JSONC branch (not the module importer)', async () => {
@@ -150,14 +150,17 @@ describe('.gsloth.config.jsonc support (GS2-69)', () => {
 
     expect(exitMock).not.toHaveBeenCalled();
     expect(config.llm).toBe(FAKE_LLM);
-    expect(config.projectGuidelines).toBe('FROM-JSONC.md');
+    expect(config.prompts?.guidelines).toBe('FROM-JSONC.md');
   });
 
   it('loads a global ~/.gsloth/.gsloth.config.jsonc (loadGlobalRawConfig)', async () => {
-    globalConfig('.gsloth.config.jsonc', '{\n  // global\n  "projectGuidelines": "GLOBAL.md",\n}');
+    globalConfig(
+      '.gsloth.config.jsonc',
+      '{\n  // global\n  "prompts": { "guidelines": "GLOBAL.md" },\n}'
+    );
 
     const { loadGlobalRawConfig } = await import('#src/config/loader.js');
-    expect(await loadGlobalRawConfig()).toEqual({ projectGuidelines: 'GLOBAL.md' });
+    expect(await loadGlobalRawConfig()).toEqual({ prompts: { guidelines: 'GLOBAL.md' } });
   });
 
   it('a global-only .gsloth.config.jsonc drives a full initConfig run (no project config)', async () => {
@@ -170,15 +173,15 @@ describe('.gsloth.config.jsonc support (GS2-69)', () => {
 
     expect(exitMock).not.toHaveBeenCalled();
     expect(config.llm).toBe(FAKE_LLM);
-    expect(config.projectGuidelines).toBe('FROM-JSONC.md');
+    expect(config.prompts?.guidelines).toBe('FROM-JSONC.md');
   });
 
   it('prefers the global .json over the global .jsonc when both exist', async () => {
-    globalConfig('.gsloth.config.json', '{"projectGuidelines":"GLOBAL-JSON.md"}');
-    globalConfig('.gsloth.config.jsonc', '{"projectGuidelines":"GLOBAL-JSONC.md",}');
+    globalConfig('.gsloth.config.json', '{"prompts":{"guidelines":"GLOBAL-JSON.md"}}');
+    globalConfig('.gsloth.config.jsonc', '{"prompts":{"guidelines":"GLOBAL-JSONC.md"},}');
 
     const { loadGlobalRawConfig } = await import('#src/config/loader.js');
-    expect(await loadGlobalRawConfig()).toEqual({ projectGuidelines: 'GLOBAL-JSON.md' });
+    expect(await loadGlobalRawConfig()).toEqual({ prompts: { guidelines: 'GLOBAL-JSON.md' } });
   });
 
   describe('gth config validate (read-side)', () => {
@@ -210,7 +213,7 @@ describe('.gsloth.config.jsonc support (GS2-69)', () => {
 
     it('reports the global .jsonc layer under its own label', async () => {
       project('.gsloth.config.json', '{"llm":{"type":"vertexai"}}');
-      globalConfig('.gsloth.config.jsonc', '{"projectGuidelines":"GLOBAL.md",}');
+      globalConfig('.gsloth.config.jsonc', '{"prompts":{"guidelines":"GLOBAL.md"},}');
 
       const { validateConfig } = await import('#src/config/loader.js');
       const report = await validateConfig({});

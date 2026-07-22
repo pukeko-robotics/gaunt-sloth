@@ -57,6 +57,7 @@ these before you upgrade.
 | `rating` is now an object | `rating: false` (or any boolean) is a validation abort: `expected object, received boolean` | `rating: { enabled: false }` |
 | Command configs must nest under `commands.*` | A top-level command key (e.g. `pr`) is a validation abort: `Top-level command config "pr" is no longer supported in 2.0. Move it under "commands.pr".` | Move it under `commands.<cmd>` |
 | Per-command `devTools` folded into `builtInTools` | `commands.<cmd>.devTools` is a validation abort: `Config property "devTools" in commands.code is no longer supported in 2.0. Configure tools under "builtInTools" instead.` | Move the dev/shell tools into the `builtInTools` registry (see section G) |
+| `projectGuidelines` / `projectReviewInstructions` folded into `prompts` | Either key is a validation abort: `Config property "projectGuidelines" was renamed in 2.0. Use "prompts.guidelines" instead.` | `prompts.guidelines` / `prompts.review` (see section H) |
 | Deprecated `*Provider*` config keys | `contentProvider` / `requirementsProvider` (and the `*ProviderConfig` variants) are rejected: `Config property "contentProvider" was renamed in 2.0. Use "contentSource" instead.` | Rename to `contentSource` / `requirementSource` (and `*SourceConfig`) |
 | `--content-provider` / `--requirements-provider` CLI flags removed | Scripts passing those flags error out | `--content-source` / `--requirements-source` (`-p` still aliases `--requirements-source`) |
 | `ContentProviderType` / `RequirementsProviderType` type exports removed, and the runtime `contentProvider` / `requirementsProvider` fields removed | TypeScript / programmatic configs that import those types or read those fields fail to compile or resolve | Use `contentSource` / `requirementSource` (and their `string` types) |
@@ -350,6 +351,44 @@ Notes:
 - The string-array form still works for tools that need no configuration
   (`"builtInTools": ["gth_checklist", "gth_web_fetch"]`).
 
+## H. Flat prompt keys folded into the `prompts` object (HARD)
+
+The flat `projectGuidelines` and `projectReviewInstructions` keys are removed. Prompt-file
+config now lives in one `prompts` object whose segments
+(`backstory | guidelines | system | chat | code | exec | review`) each accept a string path or
+an object `{ path?, enabled?, mode? }` — see
+[CONFIGURATION.md → Prompt Files](CONFIGURATION.md#prompt-files-prompts). A leftover flat key is
+a hard validation error naming the replacement:
+`Config property "projectGuidelines" was renamed in 2.0. Use "prompts.guidelines" instead.`
+
+Before:
+
+```json
+{
+  "projectGuidelines": "AGENTS.md",
+  "projectReviewInstructions": "REVIEW.md"
+}
+```
+
+After:
+
+```json
+{
+  "prompts": {
+    "guidelines": "AGENTS.md",
+    "review": "REVIEW.md"
+  }
+}
+```
+
+**`gth init` no longer plants template files.** In 1.x, `init` (and the first-run dialog)
+copied starter `.gsloth.guidelines.md` and `.gsloth.review.md` files into your project; the
+guidelines template made the assistant nag about filling it in. 2.0 writes only
+`.gsloth.config.json`: review behaviour is unchanged (the bundled review prompt is a complete
+real prompt), and guidelines default to empty until you create the file — or point
+`prompts.guidelines` at one you already have (e.g. `AGENTS.md`). Existing planted files keep
+working; they are simply no longer created for you.
+
 ## Migration checklist
 
 1. Move top-level command keys (`pr`, `review`, `ask`, `chat`, `code`, `exec`, `api`) under
@@ -363,4 +402,6 @@ Notes:
    `writeOutputToFile: true` (or a string path) — the default is now `false` (E).
 6. Move any `commands.<cmd>.devTools` into the `builtInTools` registry (`run_*` → `{ "command": … }`,
    `shell`/`shellYolo` → the `run_shell_command` entry with `yolo`) (G).
-7. Run `gth config validate` (and optionally `gth config print`) to confirm the result.
+7. Rename `projectGuidelines` → `prompts.guidelines` and `projectReviewInstructions` →
+   `prompts.review` (H).
+8. Run `gth config validate` (and optionally `gth config print`) to confirm the result.

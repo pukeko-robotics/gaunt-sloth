@@ -66,7 +66,6 @@ vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => consoleUtilsMock);
 
 const mockConfig = {
   llm: { invoke: vi.fn(), temperature: 0.7 },
-  projectGuidelines: '.gsloth.guidelines.md',
   streamOutput: true,
   writeOutputToFile: true,
   canInterruptInferenceWithEsc: true,

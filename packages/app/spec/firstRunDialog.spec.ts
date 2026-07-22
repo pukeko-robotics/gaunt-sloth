@@ -131,7 +131,6 @@ describe('runFirstRunDialog', () => {
   let deps: FirstRunDialogDeps;
   let writeConfig: ReturnType<typeof vi.fn>;
   let ensureGslothDir: ReturnType<typeof vi.fn>;
-  let writeProjectReviewPreamble: ReturnType<typeof vi.fn>;
   let resolveConfigPath: ReturnType<typeof vi.fn>;
   let configExists: ReturnType<typeof vi.fn>;
 
@@ -141,7 +140,6 @@ describe('runFirstRunDialog', () => {
     vi.clearAllMocks();
     writeConfig = vi.fn((_scope: string, _content: string) => '/written/path');
     ensureGslothDir = vi.fn();
-    writeProjectReviewPreamble = vi.fn();
     resolveConfigPath = vi.fn((scope: string) =>
       scope === 'global' ? '/global/.gsloth.config.json' : '/project/.gsloth.config.json'
     );
@@ -156,7 +154,6 @@ describe('runFirstRunDialog', () => {
       fetchModels: vi.fn(),
       withProgress: vi.fn((_label: string, run: () => Promise<unknown>) => run()),
       ensureGslothDir,
-      writeProjectReviewPreamble,
       resolveConfigPath,
       configExists,
       writeConfig,
@@ -165,7 +162,7 @@ describe('runFirstRunDialog', () => {
     } as unknown as FirstRunDialogDeps;
   });
 
-  it('writes project config with the default (preferred) model and scaffolds the preamble', async () => {
+  it('writes project config with the default (preferred) model (config only — no planted templates)', async () => {
     deps.detectProviders = vi.fn().mockResolvedValue([
       provider({
         id: 'anthropic',
@@ -183,7 +180,6 @@ describe('runFirstRunDialog', () => {
     await runFirstRunDialog(deps);
 
     expect(ensureGslothDir).toHaveBeenCalledTimes(1);
-    expect(writeProjectReviewPreamble).toHaveBeenCalledTimes(1);
     expect(writeConfig).toHaveBeenCalledTimes(1);
     const [scope, content] = writeConfig.mock.calls[0];
     expect(scope).toBe('project');
@@ -208,7 +204,6 @@ describe('runFirstRunDialog', () => {
     await runFirstRunDialog(deps);
 
     expect(ensureGslothDir).not.toHaveBeenCalled();
-    expect(writeProjectReviewPreamble).not.toHaveBeenCalled();
     const [scope, content] = writeConfig.mock.calls[0];
     expect(scope).toBe('global');
     expect(JSON.parse(content)).toEqual({
@@ -310,7 +305,6 @@ describe('runFirstRunDialog', () => {
 
     expect(writeConfig).not.toHaveBeenCalled();
     expect(ensureGslothDir).not.toHaveBeenCalled();
-    expect(writeProjectReviewPreamble).not.toHaveBeenCalled();
     expect(vi.mocked(displayInfo)).toHaveBeenCalledWith(
       expect.stringContaining('Kept existing config at /project/.gsloth.config.json')
     );
@@ -338,7 +332,6 @@ describe('runFirstRunDialog', () => {
     expect(deps.fetchModels).not.toHaveBeenCalled();
     expect(writeConfig).not.toHaveBeenCalled();
     expect(ensureGslothDir).not.toHaveBeenCalled();
-    expect(writeProjectReviewPreamble).not.toHaveBeenCalled();
     expect(vi.mocked(displaySuccess)).not.toHaveBeenCalledWith(
       expect.stringContaining('Configured')
     );
@@ -370,7 +363,6 @@ describe('runFirstRunDialog', () => {
     // The abort must unwind before any write / project scaffold, even though we got past model pick.
     expect(writeConfig).not.toHaveBeenCalled();
     expect(ensureGslothDir).not.toHaveBeenCalled();
-    expect(writeProjectReviewPreamble).not.toHaveBeenCalled();
     expect(vi.mocked(displaySuccess)).not.toHaveBeenCalledWith(
       expect.stringContaining('Configured')
     );

@@ -320,6 +320,82 @@ describe('config schema (GS2-1 B1)', () => {
     });
   });
 
+  describe('prompts object (GS2-43)', () => {
+    const SEGMENTS = ['backstory', 'guidelines', 'system', 'chat', 'code', 'exec', 'review'];
+
+    it('accepts the string (path shorthand) form for every segment', () => {
+      for (const segment of SEGMENTS) {
+        const result = rawGthConfigSchema.safeParse({
+          llm: { type: 'anthropic' },
+          prompts: { [segment]: 'SOME-FILE.md' },
+        });
+        expect(result.success, `string form for ${segment}`).toBe(true);
+      }
+    });
+
+    it('accepts the object form ({ path, enabled, mode }) for every segment', () => {
+      for (const segment of SEGMENTS) {
+        const result = rawGthConfigSchema.safeParse({
+          llm: { type: 'anthropic' },
+          prompts: { [segment]: { path: 'SOME-FILE.md', enabled: true, mode: 'append' } },
+        });
+        expect(result.success, `object form for ${segment}`).toBe(true);
+      }
+    });
+
+    it('accepts partial object forms ({ enabled: false } alone, { path } alone)', () => {
+      expect(
+        rawGthConfigSchema.safeParse({ prompts: { review: { enabled: false } } }).success
+      ).toBe(true);
+      expect(
+        rawGthConfigSchema.safeParse({ prompts: { guidelines: { path: 'AGENTS.md' } } }).success
+      ).toBe(true);
+    });
+
+    it('rejects an invalid mode with a path-scoped error', () => {
+      const result = rawGthConfigSchema.safeParse({
+        prompts: { guidelines: { path: 'AGENTS.md', mode: 'prepend' } },
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(formatConfigValidationError(result.error)).toContain('prompts.guidelines');
+      }
+    });
+
+    it('treats prompts as a known top-level key (no unknown-key warning)', () => {
+      expect(findUnknownTopLevelKeys({ llm: {}, prompts: { guidelines: 'AGENTS.md' } })).toEqual(
+        []
+      );
+    });
+
+    it('flags the removed flat keys, naming the prompts.* replacement + migration path', () => {
+      const issues = findDeprecatedConfigIssues({
+        llm: { type: 'openai' },
+        projectGuidelines: 'AGENTS.md',
+        projectReviewInstructions: 'REVIEW.md',
+      });
+      const byPath = Object.fromEntries(issues.map((i) => [i.path, i.message]));
+      expect(byPath.projectGuidelines).toContain('prompts.guidelines');
+      expect(byPath.projectGuidelines).toContain('gth config migrate');
+      expect(byPath.projectReviewInstructions).toContain('prompts.review');
+      expect(byPath.projectReviewInstructions).toContain('gth config migrate');
+    });
+
+    it('validateRawGthConfig HARD-rejects each removed flat key (ok:false, no warning)', () => {
+      for (const [removed, replacement] of [
+        ['projectGuidelines', 'prompts.guidelines'],
+        ['projectReviewInstructions', 'prompts.review'],
+      ] as const) {
+        const result = validateRawGthConfig({ llm: { type: 'openai' }, [removed]: 'X.md' });
+        expect(result.ok, removed).toBe(false);
+        expect(result.errorMessage).toContain(removed);
+        expect(result.errorMessage).toContain(replacement);
+        // Rejected as a removed shape — never doubled as an unknown-key warning.
+        expect(result.warnings).toEqual([]);
+      }
+    });
+  });
+
   describe('agent.backend selector (GS2-2 B5)', () => {
     it("accepts agent.backend 'deep' and 'lean'", () => {
       for (const backend of ['deep', 'lean'] as const) {

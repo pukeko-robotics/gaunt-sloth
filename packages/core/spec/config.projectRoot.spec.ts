@@ -76,7 +76,7 @@ describe('project-root propagation (GS2-11)', () => {
     await initConfig({});
 
     expect(getProjectDir()).toBe(proj);
-    // projectGuidelines: "CLAUDE.md" must resolve under the project root, not the cwd subdir
+    // prompts.guidelines: "CLAUDE.md" must resolve under the project root, not the cwd subdir
     // (which would miss it) and not the install dir (the fatal fall-through before this fix).
     expect(getGslothConfigReadPath('CLAUDE.md', undefined)).toBe(resolve(proj, 'CLAUDE.md'));
   });

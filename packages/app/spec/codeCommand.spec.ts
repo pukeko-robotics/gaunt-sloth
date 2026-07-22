@@ -11,7 +11,6 @@ import type { GthConfig } from '#src/config.js';
 // Mock modules
 vi.mock('#src/config.js', () => ({
   initConfig: vi.fn().mockResolvedValue({
-    projectGuidelines: 'Mock guidelines',
     llm: 'Mock LLM',
     streamSessionInferenceLog: true,
     writeOutputToFile: true,
@@ -303,12 +302,10 @@ describe('codeCommand', () => {
 
   it('Should maintain conversation context between messages', async () => {
     const mockConfig = {
-      projectGuidelines: 'Mock guidelines',
       llm: new FakeStreamingChatModel({}),
       streamOutput: false,
       contentSource: 'file',
       requirementSource: 'file',
-      projectReviewInstructions: '.gsloth.review.md',
       filesystem: 'none' as const,
       streamSessionInferenceLog: true,
     } as Partial<GthConfig>;
@@ -339,12 +336,10 @@ describe('codeCommand', () => {
 
   it('Should configure logging for the session', async () => {
     const mockConfig = {
-      projectGuidelines: 'Mock guidelines',
       llm: new FakeStreamingChatModel({}),
       streamOutput: false,
       contentSource: 'file',
       requirementSource: 'file',
-      projectReviewInstructions: '.gsloth.review.md',
       filesystem: 'none' as const,
       streamSessionInferenceLog: true,
       writeOutputToFile: true,
@@ -368,12 +363,10 @@ describe('codeCommand', () => {
 
   it('Should flush session log after processing user input', async () => {
     const mockConfig = {
-      projectGuidelines: 'Mock guidelines',
       llm: new FakeStreamingChatModel({}),
       streamOutput: false,
       contentSource: 'file',
       requirementSource: 'file',
-      projectReviewInstructions: '.gsloth.review.md',
       filesystem: 'none' as const,
       streamSessionInferenceLog: true,
     } as Partial<GthConfig>;

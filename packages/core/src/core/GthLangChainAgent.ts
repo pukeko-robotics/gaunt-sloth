@@ -264,7 +264,7 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // GS2-21: compose gsloth's system prompt (backstory + guidelines + per-command mode prompt +
     // system prompt) EXACTLY as GthDeepAgent does, so identity profiles and `.gsloth.*.md` are
     // honored on the lean backend too. Previously the lean agent gave the model NO system prompt
-    // (only the deep agent composed one), so `system-prompt.md` / projectGuidelines never reached
+    // (only the deep agent composed one), so `system-prompt.md` / the guidelines never reached
     // the model — the robot (agent.backend: lean) behaved as if it never got its guidelines.
     // This is passed to createAgent as `systemPrompt`, which langchain applies as the agent's
     // static system message on every turn — NOT injected as a separate mid-conversation

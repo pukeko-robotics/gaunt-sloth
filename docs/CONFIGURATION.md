@@ -4,18 +4,17 @@
 > [Migrating to 2.0](MIGRATION.md) for the HARD vs SOFT change list and before/after
 > snippets, then run `gth config validate` to check your migrated config.
 
-Populate `.gsloth.guidelines.md` with your project details and quality requirements.
-A proper preamble is paramount for good inference.
-Check [.gsloth.guidelines.md](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/.gsloth.guidelines.md) for example.
+Your project needs a configuration file (one of) for gsloth to function:
 
-Your project should have the following files in order for gsloth to function:
+- `.gsloth.config.js` (JavaScript module)
+- `.gsloth.config.json` (JSON file)
+- `.gsloth.config.jsonc` (JSON with comments)
+- `.gsloth.config.mjs` (JavaScript module with explicit module extension)
 
-- Configuration file (one of):
-  - `.gsloth.config.js` (JavaScript module)
-  - `.gsloth.config.json` (JSON file)
-  - `.gsloth.config.jsonc` (JSON with comments)
-  - `.gsloth.config.mjs` (JavaScript module with explicit module extension)
-- `.gsloth.guidelines.md`
+Project guidelines are optional but strongly recommended — a proper preamble is paramount
+for good inference. Create a `.gsloth.guidelines.md` with your project details and quality
+requirements, or point gsloth at an existing file (e.g. `AGENTS.md`) with the
+[`prompts` config](#prompt-files-prompts).
 
 When more than one config file exists in the same location, the first match wins:
 `.json` → `.jsonc` → `.js` → `.mjs`. This order also applies to the global `~/.gsloth/` config.
@@ -25,7 +24,7 @@ file. Use the `.jsonc` name when you want comments in your config without editor
 flagging them as invalid JSON; `$schema` autocompletion works in `.jsonc` files in editors that
 treat the extension as JSONC.
 
-> Gaunt Sloth currently only functions from the directory which has one of the configuration files and `.gsloth.guidelines.md`. Configuration files can be located in the project root or in the `.gsloth/.gsloth-settings/` directory.
+> Gaunt Sloth currently only functions from a directory tree which has one of the configuration files. Configuration files can be located in the project root or in the `.gsloth/.gsloth-settings/` directory.
 >
 > You can also specify a path to a configuration file directly using the `-c` or `--config` global flag, for example `gth -c /path/to/your/config.json ask "who are you?"`
 
@@ -370,9 +369,55 @@ Lower levels are more verbose. Valid values for JSON configs:
 }
 ```
 
+## Prompt Files (prompts)
+
+Gaunt Sloth composes its system prompt from seven segments, each backed by a prompt file with a
+well-known default name:
+
+| Segment | Default file | Used |
+| --- | --- | --- |
+| `backstory` | `.gsloth.backstory.md` | every command (identity) |
+| `guidelines` | `.gsloth.guidelines.md` | every command (project guidelines) |
+| `system` | `.gsloth.system.md` | every command (appended last) |
+| `chat` | `.gsloth.chat.md` | `chat` mode prompt |
+| `code` | `.gsloth.code.md` | `code` mode prompt |
+| `exec` | `.gsloth.exec.md` | `exec` mode prompt |
+| `review` | `.gsloth.review.md` | `review` / `pr` instructions |
+
+With no config, each segment reads its default-named file from the config dir
+(`.gsloth/.gsloth-settings/`, honouring [identity profiles](#identity-profiles)) or the project
+root, falling back to the bundled default shipped with the installation.
+
+The `prompts` config object retargets, disables, or extends any segment. Each segment accepts a
+string (a file path — the common case) or an object `{ path?, enabled?, mode? }`:
+
+```json
+{
+  "prompts": {
+    "guidelines": "AGENTS.md",
+    "review": { "path": "docs/review-checklist.md", "mode": "append" },
+    "backstory": { "enabled": false }
+  }
+}
+```
+
+- A **string** is shorthand for `{ "path": … }`: the file replaces the segment's built-in
+  content. Pointing `guidelines` at an existing `AGENTS.md` is the typical use.
+- **`path`** resolves like every prompt file: the config dir (and identity profile) first, then
+  relative to the project root.
+- **`enabled: false`** drops the segment entirely — even its bundled default. Use it to run
+  without a segment rather than shadowing it with an empty file.
+- **`mode`** controls composition when `path` is set: `"replace"` (default) substitutes the
+  built-in segment content; `"append"` keeps the built-in content (your default-named file, or
+  the bundled default) and appends the file after it — use it to add project rules on top of the
+  stock review prompt instead of rewriting it.
+
+`gth init` scaffolds only `.gsloth.config.json` — no template prompt files are planted; the
+bundled defaults apply until you add your own files or `prompts` config.
+
 ## No Default Prompts
 
-By default, Gaunt Sloth falls back to its bundled `.gsloth.*.md` prompt files when no user-provided files are found. Setting `noDefaultPrompts` to `true` disables this fallback, so only user-provided prompt files are used. This applies to all `.gsloth.*.md` files including backstory, system, chat, code, guidelines, and review instructions.
+By default, Gaunt Sloth falls back to its bundled `.gsloth.*.md` prompt files when no user-provided files are found. Setting `noDefaultPrompts` to `true` disables this fallback, so only user-provided prompt files are used. This applies to all `.gsloth.*.md` files including backstory, system, chat, code, guidelines, and review instructions. To drop a single segment (including its bundled default), use `prompts.<segment>.enabled: false` instead.
 
 **Example config:**
 

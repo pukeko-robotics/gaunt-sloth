@@ -126,8 +126,185 @@
       },
       "additionalProperties": {}
     },
-    "projectGuidelines": {
-      "type": "string"
+    "prompts": {
+      "type": "object",
+      "properties": {
+        "backstory": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "replace",
+                    "append"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "guidelines": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "replace",
+                    "append"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "system": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "replace",
+                    "append"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "chat": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "replace",
+                    "append"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "replace",
+                    "append"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "exec": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "replace",
+                    "append"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "review": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "replace",
+                    "append"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
     },
     "identityProfile": {
       "type": "string"
@@ -148,9 +325,6 @@
           "type": "string"
         }
       }
-    },
-    "projectReviewInstructions": {
-      "type": "string"
     },
     "noDefaultPrompts": {
       "type": "boolean"

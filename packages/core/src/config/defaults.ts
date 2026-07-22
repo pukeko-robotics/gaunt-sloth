@@ -3,7 +3,6 @@
  * Default Gaunt Sloth configuration ({@link DEFAULT_CONFIG}). Extracted verbatim from
  * the former `config.ts` god-file; values are unchanged.
  */
-import { PROJECT_GUIDELINES, PROJECT_REVIEW_INSTRUCTIONS } from '#src/constants.js';
 import { StatusLevel } from '#src/core/types.js';
 import type { GthConfig } from '#src/config/types.js';
 
@@ -13,17 +12,13 @@ import type { GthConfig } from '#src/config/types.js';
 export const DEFAULT_CONFIG = {
   contentSource: 'file',
   requirementSource: 'file',
-  /**
-   * Path to project-specific guidelines.
-   * The default is `.gsloth.guidelines.md`; this config may be used to point Gaunt Sloth to a different file,
-   * for example, to AGENTS.md
-   */
-  projectGuidelines: PROJECT_GUIDELINES,
+  // GS2-43: prompt segments (backstory/guidelines/system/chat/code/exec/review) are configured
+  // via the optional `prompts` object and DEFAULTED AT THE READ SITE (`readPromptSegment` falls
+  // back to each segment's default-named file), so `prompts` is intentionally absent here.
   /**
    * Whether to include the current date in the project review instructions or not.
    */
   includeCurrentDateAfterGuidelines: false,
-  projectReviewInstructions: PROJECT_REVIEW_INSTRUCTIONS,
   filesystem: 'none',
   // Enabled built-in tools. `gth_checklist` (the lean agent's planning/todo tool) and `gth_grep`
   // (the permission-light content-search tool, GS2-51) are on by default across commands; a user

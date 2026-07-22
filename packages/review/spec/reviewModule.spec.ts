@@ -105,8 +105,6 @@ const BASE_GTH_CONFIG: Pick<
   GthConfig,
   | 'contentSource'
   | 'requirementSource'
-  | 'projectGuidelines'
-  | 'projectReviewInstructions'
   | 'streamOutput'
   | 'commands'
   | 'filesystem'
@@ -118,8 +116,6 @@ const BASE_GTH_CONFIG: Pick<
 > = {
   contentSource: 'file',
   requirementSource: 'file',
-  projectGuidelines: '.gsloth.guidelines.md',
-  projectReviewInstructions: '.gsloth.review.md',
   streamOutput: false,
   commands: {
     pr: {

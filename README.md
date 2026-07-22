@@ -190,7 +190,7 @@ in `docs/MIGRATION.md` first.
 
 ## Configuration
 
-> Gaunt Sloth currently only functions from the directory which has a configuration file (`.gsloth.config.js`, `.gsloth.config.json`, or `.gsloth.config.mjs`) and `.gsloth.guidelines.md`. Configuration files can be located in the project root or in the `.gsloth/.gsloth-settings/` directory.
+> Gaunt Sloth currently only functions from a directory tree which has a configuration file (`.gsloth.config.js`, `.gsloth.config.json`, or `.gsloth.config.mjs`). Configuration files can be located in the project root or in the `.gsloth/.gsloth-settings/` directory.
 >
 > You can also specify a path to a configuration file directly using the `-c` or `--config` global flag, for example `gth -c /path/to/your/config.json ask "who are you?"`
 > Note, however, is that project guidelines are going to be used from current directory if they exist and simple install dir prompt is going to be used if nothing found.

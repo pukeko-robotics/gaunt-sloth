@@ -27,10 +27,12 @@ gsloth init [type]
 - `[type]` - Configuration type (optional). Available options: `anthropic`, `groq`, `deepseek`, `openai`, `google-genai`, `vertexai`, `openrouter`, `xai`. When omitted, the command detects available API keys in the environment and prompts you to select a provider.
 
 ### Description
-Creates the necessary configuration files for your project. By default, a `.gsloth` directory is created in the project root, and configuration files are placed in `.gsloth/.gsloth-settings/`. For backward compatibility, if configuration is created in a project without a `.gsloth` directory already present, it will be created automatically.
+Creates the project configuration file. By default, a `.gsloth` directory is created in the project root, and the configuration file is placed in `.gsloth/.gsloth-settings/`. For backward compatibility, if configuration is created in a project without a `.gsloth` directory already present, it will be created automatically.
 - `.gsloth.config.json` - Configuration file
-- `.gsloth.guidelines.md` - Project guidelines file
-- `.gsloth.review.md` - Code review instructions
+
+No prompt template files are planted — the bundled prompt defaults apply until you create your own
+prompt files (e.g. `.gsloth.guidelines.md`) or configure the
+[`prompts` object](CONFIGURATION.md#prompt-files-prompts).
 
 ### Examples
 ```bash

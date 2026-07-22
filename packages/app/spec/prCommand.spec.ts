@@ -62,8 +62,6 @@ const utilsMock = {
 // Set up static mocks
 const mockConfig = {
   llm: { invoke: vi.fn() } as unknown as BaseChatModel,
-  projectGuidelines: '.gsloth.guidelines.md',
-  projectReviewInstructions: '.gsloth.review.md',
   contentSource: 'file',
   requirementSource: 'file',
   streamOutput: true,
@@ -152,10 +150,7 @@ describe('prCommand', () => {
       'PR-discovery',
       'INTERNAL BACKSTORY\nPROJECT GUIDELINES\nREVIEW INSTRUCTIONS',
       '\nProvided requirements follows within discovered-requirements-1234567 block\n<discovered-requirements-1234567>\nAuto requirements\n</discovered-requirements-1234567>\n\n\nProvided GitHub diff follows within discovered-diff-1234567 block\n<discovered-diff-1234567>\nAuto PR Diff Content\n</discovered-diff-1234567>\n',
-      expect.objectContaining({
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
-      }),
+      expect.objectContaining({}),
       'pr',
       expect.any(Object),
       { prId: undefined }
@@ -254,8 +249,6 @@ describe('prCommand', () => {
       '\nProvided GitHub diff follows within github-1234567 block\n<github-1234567>\nPR Diff Content\n</github-1234567>\n',
       expect.objectContaining({
         contentSource: 'text',
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
       }),
       'pr',
       expect.any(Object),
@@ -342,10 +335,7 @@ describe('prCommand', () => {
       'PR-123',
       'INTERNAL BACKSTORY\nPROJECT GUIDELINES\nREVIEW INSTRUCTIONS',
       '\nProvided requirements follows within text-1234567 block\n<text-1234567>\nRequirements content\n</text-1234567>\n\n\nProvided GitHub diff follows within github-1234567 block\n<github-1234567>\nPR Diff Content\n</github-1234567>\n',
-      expect.objectContaining({
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
-      }),
+      expect.objectContaining({}),
       'pr',
       expect.any(Object),
       { prId: '123' }
@@ -469,8 +459,6 @@ describe('prCommand', () => {
       '\nProvided GitHub diff follows within github-1234567 block\n<github-1234567>\nPR Diff Content\n</github-1234567>\n\n\nProvided user message follows within message-1234567 block\n<message-1234567>\nPlease pay attention to security issues\n</message-1234567>\n',
       expect.objectContaining({
         contentSource: 'text',
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
       }),
       'pr',
       expect.any(Object),
@@ -516,10 +504,7 @@ describe('prCommand', () => {
       'PR-123',
       'INTERNAL BACKSTORY\nPROJECT GUIDELINES\nREVIEW INSTRUCTIONS',
       '\nProvided requirements follows within text-1234567 block\n<text-1234567>\nRequirements content\n</text-1234567>\n\n\nProvided GitHub diff follows within github-1234567 block\n<github-1234567>\nPR Diff Content\n</github-1234567>\n\n\nProvided user message follows within message-1234567 block\n<message-1234567>\nFocus on performance\n</message-1234567>\n',
-      expect.objectContaining({
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
-      }),
+      expect.objectContaining({}),
       'pr',
       expect.any(Object),
       { prId: '123' }
