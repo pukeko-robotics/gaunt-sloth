@@ -23,10 +23,11 @@ which is the 1.x package name. Read this section before you run the install comm
 after.
 
 **If `gaunt-sloth-assistant` is still installed globally, installing `gaunt-sloth` on top of
-it can fail outright.** Both packages declare the same four bins (`gth`, `gsloth`,
-`gaunt-sloth`, `gaunt-sloth-assistant`), so `npm i -g gaunt-sloth` can hit `npm error EEXIST`
-on a bin shim the old package already owns, and the **entire install aborts** — not just
-that one shim. Confirmed via automated Windows CI (`windows-latest`, run
+it can fail outright.** 2.0 no longer ships a `gaunt-sloth-assistant` bin — it declares three
+bins (`gth`, `gsloth`, `gaunt-sloth`) — but the 1.x package owns those same names too, so
+`npm i -g gaunt-sloth` can still hit `npm error EEXIST` on a bin shim the old package already
+owns, and the **entire install aborts** — not just that one shim. The `npm rm -g` step below
+is only needed by users who still have the 1.x `gaunt-sloth-assistant` package installed. Confirmed via automated Windows CI (`windows-latest`, run
 [29638001306](https://github.com/pukeko-robotics/gaunt-sloth/actions/runs/29638001306)):
 after the failed install, `gth`/`gsloth`/`gaunt-sloth --version` (PowerShell *and*
 `cmd.exe`) all kept silently reporting the **old 1.x version**, with no further error

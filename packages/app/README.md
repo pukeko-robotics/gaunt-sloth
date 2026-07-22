@@ -12,12 +12,11 @@ The main CLI application for Gaunt Sloth.
 
 ## CLI Binaries
 
-The package registers four equivalent binary aliases:
+The package registers three equivalent binary aliases:
 
-- `gaunt-sloth` (primary)
-- `gth`
-- `gsloth`
-- `gaunt-sloth-assistant` (back-compat alias for the former package name)
+- `gth` (primary)
+- `gsloth` (long-form alias)
+- `gaunt-sloth` (package-name alias)
 
 ## Dependencies
 
