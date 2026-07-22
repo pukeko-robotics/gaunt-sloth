@@ -1,7 +1,30 @@
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import { displayError } from '@gaunt-sloth/core/utils/consoleUtils.js';
 
-import { wrapContent } from '@gaunt-sloth/core/utils/llmUtils.js';
+import {
+  readBackstory,
+  readGuidelines,
+  readReviewInstructions,
+  readSystemPrompt,
+  wrapContent,
+} from '@gaunt-sloth/core/utils/llmUtils.js';
+
+/**
+ * Compose the review system preamble the way the fat CLI's `gth review` / `gth pr` do:
+ * backstory + guidelines + review instructions + the optional project system prompt, each
+ * segment honouring the GS2-43 `prompts.*` config. Empty segments are dropped rather than
+ * left as blank lines (the shape the README embed example documents).
+ */
+export function getReviewPreamble(config: GthConfig): string {
+  return [
+    readBackstory(config),
+    readGuidelines(config),
+    readReviewInstructions(config),
+    readSystemPrompt(config),
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
 
 /**
  * Requirement sources. Expected to be in `.sources/` dir.
@@ -23,6 +46,7 @@ export type RequirementSourceType = keyof typeof REQUIREMENTS_SOURCES;
  */
 export const CONTENT_SOURCES = {
   github: 'ghPrDiffSource.js',
+  git: 'gitDiffSource.js',
   text: 'textSource.js',
   file: 'fileSource.js',
 } as const;
@@ -57,7 +81,7 @@ export async function getContentFromSource(
   return wrapContent(
     content,
     contentSource,
-    contentSource === 'github' ? 'GitHub diff' : 'content'
+    contentSource === 'github' ? 'GitHub diff' : contentSource === 'git' ? 'git diff' : 'content'
   );
 }
 

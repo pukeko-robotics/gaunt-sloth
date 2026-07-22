@@ -211,6 +211,65 @@ describe('prCommand', () => {
     expect(review).not.toHaveBeenCalled();
   });
 
+  it('Should reject a non-numeric PR id even when a requirements id is present', async () => {
+    const testConfig = {
+      ...mockConfig,
+      commands: {
+        pr: {
+          contentSource: 'github',
+          requirementSource: 'github',
+        },
+        review: {},
+      },
+      streamOutput: false,
+    };
+    configMock.initConfig.mockResolvedValue(testConfig);
+
+    const { prCommand } = await import('#src/commands/prCommand.js');
+    const program = new Command();
+
+    prCommand(program, {});
+    // Not requirements-only mode (a requirements id follows), but the PR id is garbage that
+    // would otherwise only be caught downstream by the source's own validation.
+    await program.parseAsync(['na', 'na', 'pr', '42;rm-rf', '45']);
+
+    expect(displayErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining('Invalid pull request ID "42;rm-rf"')
+    );
+    expect(runPrDiscovery).not.toHaveBeenCalled();
+    expect(review).not.toHaveBeenCalled();
+  });
+
+  it('Should accept a non-numeric content id when the content source is not github', async () => {
+    const testConfig = {
+      ...mockConfig,
+      requirementSource: 'text',
+      commands: {
+        pr: {
+          contentSource: 'text',
+          requirementSource: 'text',
+        },
+        review: {},
+      },
+      streamOutput: false,
+    };
+    configMock.initConfig.mockResolvedValue(testConfig);
+
+    const { prCommand } = await import('#src/commands/prCommand.js');
+    const program = new Command();
+
+    const textProvider = vi.fn().mockResolvedValue('text content');
+    vi.doMock('#src/sources/textSource.js', () => ({
+      get: textProvider,
+    }));
+
+    prCommand(program, {});
+    await program.parseAsync(['na', 'na', 'pr', 'some-content-id', 'req-1']);
+
+    expect(displayErrorMock).not.toHaveBeenCalled();
+    expect(review).toHaveBeenCalled();
+  });
+
   it('Should call pr command', async () => {
     // Setup specific config for this test
     const testConfig = {
@@ -386,7 +445,9 @@ describe('prCommand', () => {
 
     prCommand(program, {});
 
-    await expect(program.parseAsync(['na', 'na', 'pr', 'content-id', 'JIRA-123'])).rejects.toThrow(
+    // prId must be numeric now (the pr command validates it upfront for the github content
+    // source); the requirements fetch below is what this test exercises.
+    await expect(program.parseAsync(['na', 'na', 'pr', '42', 'JIRA-123'])).rejects.toThrow(
       'Missing JIRA Legacy API token. ' +
         'The legacy token can be defined as JIRA_LEGACY_API_TOKEN environment variable ' +
         'or as "token" in config.'

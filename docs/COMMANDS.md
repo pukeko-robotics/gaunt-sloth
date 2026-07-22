@@ -146,22 +146,33 @@ gsloth review [contentId]
 ```
 
 ### Arguments
-- `[contentId]` - Optional content ID to retrieve content from provider
+- `[contentId]` - Optional content ID to retrieve content from provider. For the `git` content source this is an optional ref range (e.g. `origin/main...HEAD`)
 
 ### Options
 - `-f, --file [files...]` - Input files to add before the content
 - `-r, --requirements <requirements>` - Requirements for this review
 - `-p, --requirements-source <requirementSource>` - Requirement source
-- `--content-source <contentSource>` - Content source
+- `--content-source <contentSource>` - Content source (`github`, `git`, `text` or `file`)
 - `-m, --message <message>` - Extra message to provide before the content
 
 ### Description
 Flexible review command that can process content from various sources including stdin, files, or configured providers.
 
+The `git` content source runs `git --no-pager diff` itself, so you can review local changes
+without piping: `gsloth review --content-source git` reviews the working tree, and an optional
+`contentId` selects a ref range. It fails with a clear error outside a git repository or when
+the diff is empty.
+
 ### Examples
 ```bash
 # Review current git changes
 git --no-pager diff | gsloth review
+
+# The same without a pipe, via the git content source
+gsloth review --content-source git
+
+# Review a specific commit range via the git content source
+gsloth review origin/main...feature-branch --content-source git
 
 # Review specific commit range
 git --no-pager diff origin/main...feature-branch | gsloth review

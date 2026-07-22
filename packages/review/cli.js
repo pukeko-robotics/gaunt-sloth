@@ -25,8 +25,11 @@ setEntryPoint(import.meta.url);
 import { initConfig } from '@gaunt-sloth/core/config.js';
 import { review } from '#src/modules/reviewModule.js';
 import { displayError } from '@gaunt-sloth/core/utils/consoleUtils.js';
-import { getContentFromSource, getRequirementsFromSource } from '#src/commands/commandUtils.js';
-import { buildSystemMessages } from '@gaunt-sloth/core/utils/llmUtils.js';
+import {
+  getContentFromSource,
+  getRequirementsFromSource,
+  getReviewPreamble,
+} from '#src/commands/commandUtils.js';
 
 async function main() {
   try {
@@ -53,11 +56,9 @@ async function main() {
       }
     }
 
-    // Build preamble from system messages
-    const preamble = buildSystemMessages(config, 'pr');
-    const preambleText = preamble
-      .map((m) => (typeof m.content === 'string' ? m.content : ''))
-      .join('\n');
+    // Build the review preamble (backstory + guidelines + review instructions + optional
+    // system prompt), the same composition `gth review` / `gth pr` use.
+    const preambleText = getReviewPreamble(config);
 
     // Combine requirements and content for the review
     const diffWithReqs = requirements

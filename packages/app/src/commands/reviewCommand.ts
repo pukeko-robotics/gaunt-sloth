@@ -1,5 +1,6 @@
 import { Command, Option } from 'commander';
-import { getStringFromStdin } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { displayError } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import { getStringFromStdin, setExitCode } from '@gaunt-sloth/core/utils/systemUtils.js';
 import {
   getCommandSourceInput,
   getEffectiveContentSource,
@@ -32,14 +33,16 @@ export function reviewCommand(
   program
     .command('review')
     .description('Review provided diff or other content')
-    .argument('[contentId]', 'Optional content ID argument to retrieve content with content source')
+    .argument(
+      '[contentId]',
+      'Optional content ID argument to retrieve content with content source. ' +
+        'For the git content source this is an optional ref range, e.g. origin/main...HEAD'
+    )
     .alias('r')
-    // TODO add source to get results of git --no-pager diff
     .option(
       '-f, --file [files...]',
       'Input files. Content of these files will be added BEFORE the diff, but after requirements'
     )
-    // TODO figure out what to do with this (we probably want to merge it with requirementsId)?
     .option('-r, --requirements <requirements>', 'Requirements for this review.')
     .addOption(
       new Option(
@@ -58,6 +61,8 @@ export function reviewCommand(
       '\n' +
         'Examples:\n' +
         '  $ git --no-pager diff | gsloth review\n' +
+        '  $ gsloth review --content-source git\n' +
+        '  $ gsloth review origin/main...HEAD --content-source git\n' +
         '  $ gsloth review -r requirements.md\n' +
         '  $ git diff | gsloth review -m "Please focus on security implications"\n'
     )
@@ -73,7 +78,6 @@ export function reviewCommand(
       );
       const contentSource = getEffectiveContentSource('review', config, options.contentSource);
 
-      // TODO consider calling these in parallel
       const requirements = await getCommandSourceInput(
         'review',
         'requirements',
@@ -85,13 +89,22 @@ export function reviewCommand(
         content.push(requirements);
       }
 
-      const providedContent = await getCommandSourceInput(
-        'review',
-        'content',
-        contentId,
-        config,
-        contentSource
-      );
+      // Fail loudly on a content-source error (e.g. the git source outside a repository or with
+      // an empty diff) instead of surfacing a raw unhandled rejection — same shape as `gth pr`.
+      let providedContent: string;
+      try {
+        providedContent = await getCommandSourceInput(
+          'review',
+          'content',
+          contentId,
+          config,
+          contentSource
+        );
+      } catch (error) {
+        displayError(error instanceof Error ? error.message : String(error));
+        setExitCode(1);
+        return;
+      }
       if (providedContent) {
         content.push(providedContent);
       }
