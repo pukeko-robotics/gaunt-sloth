@@ -402,33 +402,49 @@ not cover.
 
 ## Custom Eval Reporters (reporters)
 
-`gth eval` renders a run through one or more reporters, selected with `--reporter <names>` (built-in:
-`text`, the default console summary; `junit`, which writes a JUnit `results.xml`; and `teamcity`,
-which streams live TeamCity `##teamcity[...]` service messages to stdout — no artifact wiring
-needed). Selecting **replaces** the default set rather than adding to it — pass
-`--reporter text,junit` if you want the console summary alongside another reporter. The always-on
-`results.json` + per-cell JSON are written regardless of which reporters are selected.
+`gth eval` renders a run through one or more reporters, selected with `--reporter <names>`. Two are
+built in: `text` (the default console summary) and `junit` (which writes a JUnit `results.xml`).
+Selecting **replaces** the default set rather than adding to it — pass `--reporter text,junit` if you
+want the console summary alongside another reporter. The always-on `results.json` + per-cell JSON are
+written regardless of which reporters are selected.
 
-`reporters` registers your OWN reporters. Each entry maps a name (the one you then pass to
-`--reporter`) to a module path, resolved relative to the project directory, whose **default export**
-is a reporter factory (`() => EvalReporter`):
+`reporters` registers additional reporters — your own, or ones installed from npm. Each entry maps a
+name (the one you then pass to `--reporter`) to either an **installed package** or a **local module
+path**, whose **default export** is a reporter factory (`() => EvalReporter`):
 
 ```json
 {
   "reporters": {
+    "teamcity": "@gaunt-sloth/eval-reporter-teamcity",
     "my-report": "./eval/my-report-reporter.mjs"
   }
 }
 ```
 
 ```bash
-gth eval eval/js-basics.yaml --reporter my-report
+npm i -D @gaunt-sloth/eval-reporter-teamcity
+gth eval eval/js-basics.yaml --reporter text,teamcity
 ```
 
-A config reporter is loaded through the same seam the built-ins use, so a name here can also override
-a built-in of the same name. A missing file, a failed import, or a default export that isn't a
-function is a harness error (`gth eval` exits 2). It runs as trusted code — it is your own config,
+A **package specifier** (`@scope/name` or `name`) is resolved by Node module resolution against your
+**project's** `node_modules`, honoring the package's `exports`; a value starting with `.`, `/`, or
+`file:` is a **module path** resolved relative to the project directory. Either way it loads through
+the same seam the built-ins use, so a name here can also override a built-in of the same name. An
+unresolvable package (not installed), a missing file, a failed import, or a default export that isn't
+a function is a harness error (`gth eval` exits 2). It runs as trusted code — it is your own config,
 which already executes arbitrary JS.
+
+**Example external reporter — live TeamCity.**
+[`@gaunt-sloth/eval-reporter-teamcity`](https://www.npmjs.com/package/@gaunt-sloth/eval-reporter-teamcity)
+streams live TeamCity `##teamcity[...]` service messages to stdout (per-case pass/fail live, no
+artifact wiring). It is no longer bundled with the CLI — install and register it as shown above.
+
+**Writing a custom reporter.** Implement the `EvalReporter` contract from
+[`@gaunt-sloth/batch`](https://www.npmjs.com/package/@gaunt-sloth/batch) (the optional
+`onSuiteStart` / `onCellResult` / `onSuiteEnd` hooks), default-export a factory, and register it
+under `reporters`. The teamcity package is the worked example — see its
+[README](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/eval-reporter-teamcity#readme)
+and small [source](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/eval-reporter-teamcity/src).
 
 ## Configuration Object
 

@@ -1,6 +1,6 @@
 {
   "name": "@gaunt-sloth/eval-reporter-teamcity",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Live TeamCity service-message reporter for `gth eval` — the second member of the @gaunt-sloth/eval-reporter-* plugin family",
   "license": "MIT",
   "author": "Andrew Kondratev",

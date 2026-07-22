@@ -14,3 +14,9 @@ export type { TeamCityWrite } from '#src/teamcityReporter.js';
 
 /** The name the CLI (and a user's config) selects this reporter under: `--reporter teamcity`. */
 export const TEAMCITY_REPORTER_NAME = 'teamcity';
+
+// The `reporters` config seam registers an installed package by name and requires its DEFAULT export
+// to be the `EvalReporterFactory` (`() => EvalReporter`). Re-export the factory as default so a user
+// only writes `reporters: { teamcity: "@gaunt-sloth/eval-reporter-teamcity" }` — no shim file.
+import { createTeamCityReporter } from '#src/teamcityReporter.js';
+export default createTeamCityReporter;

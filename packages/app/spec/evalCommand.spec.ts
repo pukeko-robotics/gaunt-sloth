@@ -973,6 +973,26 @@ cases:
   // BATCH-19 A2/A3: `--reporter` selection, the bundled JUnit reporter, and config-declared custom
   // reporters. The always-on results.json + per-cell JSON are unchanged; reporters render IN ADDITION.
   describe('reporter selection (--reporter / config.reporters)', () => {
+    // BATCH-22: write a tiny reporter PACKAGE into `<projectDir>/node_modules/<pkgName>/` as REAL
+    // files on disk, so the un-mocked resolver (`createRequire(...).resolve(specifier)`) resolves it
+    // by bare specifier against THIS project's node_modules — no mock of the thing under test. `body`
+    // is the ESM module source; its default export must be the reporter factory.
+    function installReporterPackage(projectDir: string, pkgName: string, body: string): void {
+      const pkgDir = join(projectDir, 'node_modules', ...pkgName.split('/'));
+      mkdirSync(pkgDir, { recursive: true });
+      writeFileSync(
+        join(pkgDir, 'package.json'),
+        JSON.stringify({
+          name: pkgName,
+          version: '1.0.0',
+          type: 'module',
+          main: 'index.mjs',
+          exports: './index.mjs',
+        })
+      );
+      writeFileSync(join(pkgDir, 'index.mjs'), body);
+    }
+
     it('default (no --reporter) prints the text summary + writes results.json, but NO results.xml', async () => {
       const { evalCommand } = await import('#src/commands/evalCommand.js');
       const program = new Command();
@@ -1037,10 +1057,66 @@ cases:
       expect(consoleUtilsMock.display).toHaveBeenCalledWith('PASS  greets-politely');
     });
 
-    // BATCH-20: the bundled live TeamCity reporter, registered over the same seam as junit.
-    it('--reporter teamcity streams ##teamcity[...] service messages to stdout (live, no artifact)', async () => {
-      const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    // BATCH-22: teamcity is NO LONGER a bundled built-in — it is the optional, separately-installed
+    // `@gaunt-sloth/eval-reporter-teamcity` package, registered via config like any third-party
+    // reporter. (a) it is unknown without registration; (b) it works once installed + registered.
+    it('teamcity is NOT a built-in: `--reporter teamcity` with no config registration is an unknown-reporter harness error (exit 2)', async () => {
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'eval',
+        'suite.yaml',
+        '-o',
+        outputDir,
+        '--reporter',
+        'teamcity',
+      ]);
+
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+      // Fail-fast: nothing ran, no partial output.
+      expect(runSingleShot).not.toHaveBeenCalled();
+      expect(existsSync(join(outputDir, 'results.json'))).toBe(false);
+      const errorArgs = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
+      expect(errorArgs).toContain('unknown reporter "teamcity"');
+      // The bundled set is text + junit only.
+      expect(errorArgs).toContain('text');
+      expect(errorArgs).toContain('junit');
+    });
+
+    it('teamcity works once registered via config as an installed package (bare specifier)', async () => {
+      // Stand in for the installed `@gaunt-sloth/eval-reporter-teamcity` with a tiny node_modules
+      // package by that name (the REAL package's default export is covered in its own spec) — this
+      // proves the resolve-by-installed-package + `--reporter teamcity` wiring the CLI now relies on.
+      const projectDir = mkdtempSync(join(tmpdir(), 'gth-eval-proj-'));
+      installReporterPackage(
+        projectDir,
+        '@gaunt-sloth/eval-reporter-teamcity',
+        `import { writeFileSync } from 'node:fs';
+         import { join } from 'node:path';
+         export default function () {
+           const observed = [];
+           return {
+             onCellResult(result) { observed.push(result.id); },
+             onSuiteEnd(summary, ctx) {
+               writeFileSync(join(ctx.outputDir, 'teamcity-fixture.json'), JSON.stringify({ observed }));
+             },
+           };
+         }`
+      );
       try {
+        systemUtilsMock.getProjectDir.mockReturnValue(projectDir);
+        fileUtilsMock.importExternalFile.mockImplementation(
+          (p: string) => import(pathToFileURL(p).href)
+        );
+        configMock.initConfig.mockResolvedValue({
+          ...mockConfig,
+          llm: { ...mockConfig.llm },
+          reporters: { teamcity: '@gaunt-sloth/eval-reporter-teamcity' },
+        });
+
         const { evalCommand } = await import('#src/commands/evalCommand.js');
         const program = new Command();
         evalCommand(program, {});
@@ -1055,25 +1131,14 @@ cases:
           'teamcity',
         ]);
 
+        // Registered → resolved from the project's node_modules → driven over the run, exit 0.
         expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
-
-        // The service-message lifecycle went to stdout (suite stem = basename sans extension),
-        // with the passing cell reported started + finished and never failed.
-        const written = stdoutSpy.mock.calls.map((c) => String(c[0])).join('');
-        expect(written).toContain("##teamcity[testSuiteStarted name='suite']");
-        expect(written).toContain("##teamcity[testStarted name='greets-politely']");
-        expect(written).toContain("##teamcity[testFinished name='greets-politely'");
-        expect(written).toContain("##teamcity[testSuiteFinished name='suite']");
-        expect(written).not.toContain('testFailed');
-
-        // Live only — no artifact; the always-on results.json is still written.
-        expect(existsSync(join(outputDir, 'results.xml'))).toBe(false);
-        expect(existsSync(join(outputDir, 'results.json'))).toBe(true);
-
-        // --reporter REPLACES the default set, so `teamcity` alone silences the text reporter.
+        const marker = JSON.parse(readFileSync(join(outputDir, 'teamcity-fixture.json'), 'utf8'));
+        expect(marker.observed).toEqual(['greets-politely']);
+        // `teamcity` alone (via config) still REPLACES the default text reporter.
         expect(consoleUtilsMock.display).not.toHaveBeenCalledWith('PASS  greets-politely');
       } finally {
-        stdoutSpy.mockRestore();
+        rmSync(projectDir, { recursive: true, force: true });
       }
     });
 
@@ -1097,19 +1162,20 @@ cases:
       expect(runSingleShot).not.toHaveBeenCalled();
       expect(existsSync(join(outputDir, 'results.json'))).toBe(false);
       expect(existsSync(join(outputDir, 'results.xml'))).toBe(false);
-      // The message quotes the bad name and lists the available reporters (text + bundled
-      // junit/teamcity).
+      // The message quotes the bad name and lists the available reporters (text + the ONE bundled
+      // reporter, junit). BATCH-22: teamcity is no longer bundled, so it is NOT listed.
       const errorArgs = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
       expect(errorArgs).toContain('unknown reporter "bogus"');
       expect(errorArgs).toContain('text');
       expect(errorArgs).toContain('junit');
-      expect(errorArgs).toContain('teamcity');
+      expect(errorArgs).not.toContain('teamcity');
     });
 
     it('drives a config-declared custom reporter over the same seam (config.reporters + --reporter mine)', async () => {
       const fixturesDir = fileURLToPath(new URL('./fixtures', import.meta.url));
-      // The module path is RESOLVED RELATIVE TO THE PROJECT DIR — set the project dir to the
-      // fixtures dir and reference the module by a project-relative path.
+      // BATCH-22: a module string starting with `.` is a FILE PATH — resolved RELATIVE TO THE PROJECT
+      // DIR (the original behavior, a regression guard now that bare specifiers take a new branch).
+      // Set the project dir to the fixtures dir and reference the module by a project-relative path.
       systemUtilsMock.getProjectDir.mockReturnValue(fixturesDir);
       fileUtilsMock.importExternalFile.mockImplementation(
         (p: string) => import(pathToFileURL(p).href)
@@ -1163,6 +1229,100 @@ cases:
       expect(runSingleShot).not.toHaveBeenCalled();
       const errorArgs = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
       expect(errorArgs).toContain('broken');
+    });
+
+    // BATCH-22: the ecosystem enabler — a config reporter given as a BARE PACKAGE SPECIFIER is
+    // resolved by node module resolution against the PROJECT dir's node_modules (not the CLI's), so a
+    // user installs a reporter and registers it by name. Real resolver, real installed package on
+    // disk — the resolver under test is NOT mocked.
+    it('resolves a config reporter given as an INSTALLED PACKAGE (bare specifier) from the project node_modules', async () => {
+      const projectDir = mkdtempSync(join(tmpdir(), 'gth-eval-proj-'));
+      installReporterPackage(
+        projectDir,
+        'eval-reporter-fixture',
+        `import { writeFileSync } from 'node:fs';
+         import { join } from 'node:path';
+         export default function () {
+           const observed = [];
+           return {
+             onCellResult(result) { observed.push(result.id); },
+             onSuiteEnd(summary, ctx) {
+               writeFileSync(join(ctx.outputDir, 'pkg-reporter.json'), JSON.stringify({ observed, total: summary.total }));
+             },
+           };
+         }`
+      );
+      try {
+        // getProjectDir points the resolver at THIS temp project; importExternalFile does a real
+        // dynamic import of whatever absolute path the resolver returns.
+        systemUtilsMock.getProjectDir.mockReturnValue(projectDir);
+        fileUtilsMock.importExternalFile.mockImplementation(
+          (p: string) => import(pathToFileURL(p).href)
+        );
+        configMock.initConfig.mockResolvedValue({
+          ...mockConfig,
+          llm: { ...mockConfig.llm },
+          reporters: { pkg: 'eval-reporter-fixture' },
+        });
+
+        const { evalCommand } = await import('#src/commands/evalCommand.js');
+        const program = new Command();
+        evalCommand(program, {});
+        await program.parseAsync([
+          'na',
+          'na',
+          'eval',
+          'suite.yaml',
+          '-o',
+          outputDir,
+          '--reporter',
+          'pkg',
+        ]);
+
+        expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+        // The installed package was resolved by bare specifier and driven over the run's cells.
+        const marker = JSON.parse(readFileSync(join(outputDir, 'pkg-reporter.json'), 'utf8'));
+        expect(marker).toEqual({ observed: ['greets-politely'], total: 1 });
+      } finally {
+        rmSync(projectDir, { recursive: true, force: true });
+      }
+    });
+
+    it('a config reporter given as an UNINSTALLED package specifier is a harness error (exit 2), suggesting npm i', async () => {
+      const projectDir = mkdtempSync(join(tmpdir(), 'gth-eval-proj-'));
+      // No node_modules → the bare specifier cannot be resolved. The resolver throws BEFORE any
+      // importExternalFile call (fail-fast), naming the specifier and suggesting installation.
+      try {
+        systemUtilsMock.getProjectDir.mockReturnValue(projectDir);
+        configMock.initConfig.mockResolvedValue({
+          ...mockConfig,
+          llm: { ...mockConfig.llm },
+          reporters: { missing: '@acme/eval-reporter-nope' },
+        });
+
+        const { evalCommand } = await import('#src/commands/evalCommand.js');
+        const program = new Command();
+        evalCommand(program, {});
+        await program.parseAsync([
+          'na',
+          'na',
+          'eval',
+          'suite.yaml',
+          '-o',
+          outputDir,
+          '--reporter',
+          'missing',
+        ]);
+
+        expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+        expect(runSingleShot).not.toHaveBeenCalled();
+        expect(existsSync(join(outputDir, 'results.json'))).toBe(false);
+        const errorArgs = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
+        expect(errorArgs).toContain('@acme/eval-reporter-nope');
+        expect(errorArgs).toContain('npm i');
+      } finally {
+        rmSync(projectDir, { recursive: true, force: true });
+      }
     });
   });
 
