@@ -1,7 +1,7 @@
 /**
  * @packageDocumentation
  * Configuration discovery + the layered load/merge pipeline (global + project layers,
- * format fall-through JSON → JS → MJS, schema validation, deep-merge with defaults).
+ * format fall-through JSON → JSONC → JS → MJS, schema validation, deep-merge with defaults).
  * Extracted from the former `config.ts` god-file; behaviour is unchanged.
  */
 import {
@@ -9,6 +9,7 @@ import {
   GSLOTH_SETTINGS_DIR,
   USER_PROJECT_CONFIG_JS,
   USER_PROJECT_CONFIG_JSON,
+  USER_PROJECT_CONFIG_JSONC,
   USER_PROJECT_CONFIG_MJS,
   USER_PROJECT_CONFIG_TS,
 } from '#src/constants.js';
@@ -113,15 +114,36 @@ function validateRawConfigLayer<T extends Record<string, unknown>>(raw: T, sourc
 }
 
 /**
- * Project config file lookup order, highest precedence first. JSON wins, then the
- * `configure()`-style module formats (JS → MJS → TS). Used to pick THE config within a dir.
+ * Project config file lookup order, highest precedence first. JSON wins, then its `.jsonc`
+ * spelling (GS2-69 — same {@link parseJsonc} parse either way), then the `configure()`-style
+ * module formats (JS → MJS → TS). Used to pick THE config within a dir.
  */
 const PROJECT_CONFIG_FORMATS: readonly string[] = [
   USER_PROJECT_CONFIG_JSON,
+  USER_PROJECT_CONFIG_JSONC,
   USER_PROJECT_CONFIG_JS,
   USER_PROJECT_CONFIG_MJS,
   USER_PROJECT_CONFIG_TS,
 ];
+
+/**
+ * GS2-69 — the lookup order for the two JSON-family filenames wherever they are probed as a
+ * pair (the global `~/.gsloth` lookup and its read-side mirror). `.json` first, so it wins
+ * when both exist — matching {@link PROJECT_CONFIG_FORMATS}.
+ */
+const JSON_CONFIG_FILENAMES: readonly string[] = [
+  USER_PROJECT_CONFIG_JSON,
+  USER_PROJECT_CONFIG_JSONC,
+];
+
+/**
+ * True when `path` belongs to the JSONC-parsing branch (a `.json` OR `.jsonc` file, GS2-69) as
+ * opposed to the `configure()`-module importer. Single-sources the run-path gate so an explicit
+ * `-c foo.jsonc` can never fall through to the module importer again.
+ */
+function isJsonConfigPath(path: string): boolean {
+  return path.endsWith('.json') || path.endsWith('.jsonc');
+}
 
 /**
  * Dir-aware version of {@link getGslothConfigReadPath} for ancestor dirs during the up-tree
@@ -281,7 +303,7 @@ export function resolveIdentityProfileConfigPath(identityProfile: string): strin
  * user-controlled layer (still above {@link DEFAULT_CONFIG}).
  *
  * Lookup order within the global folder, first match wins:
- *   `.gsloth.config.json` -> `.gsloth.config.js` -> `.gsloth.config.mjs`
+ *   `.gsloth.config.json` -> `.gsloth.config.jsonc` -> `.gsloth.config.js` -> `.gsloth.config.mjs`
  *
  * Absence of every variant is a no-op: returns `undefined` so behaviour is unchanged.
  *
@@ -291,22 +313,21 @@ export function resolveIdentityProfileConfigPath(identityProfile: string): strin
  * @returns The raw global config object, or `undefined` when no global config exists.
  */
 export async function loadGlobalRawConfig(): Promise<Partial<RawGthConfig> | undefined> {
-  // JSON first (the must-have format).
-  const jsonPath = getGlobalGslothConfigReadPath(USER_PROJECT_CONFIG_JSON);
-  if (existsSync(jsonPath)) {
-    try {
-      const parsed = parseJsonc(
-        readFileSync(jsonPath, 'utf8'),
-        `${USER_PROJECT_CONFIG_JSON} (global)`
-      ) as Record<string, unknown>;
-      return validateRawConfigLayer(
-        parsed,
-        `${USER_PROJECT_CONFIG_JSON} (global)`
-      ) as Partial<RawGthConfig>;
-    } catch (e) {
-      displayDebug(e instanceof Error ? e : String(e));
-      displayWarning(`Failed to read global config from ${jsonPath}, ignoring it.`);
-      return undefined;
+  // JSON/JSONC first (the must-have formats; `.json` wins when both exist — GS2-69).
+  for (const filename of JSON_CONFIG_FILENAMES) {
+    const jsonPath = getGlobalGslothConfigReadPath(filename);
+    if (existsSync(jsonPath)) {
+      try {
+        const parsed = parseJsonc(readFileSync(jsonPath, 'utf8'), `${filename} (global)`) as Record<
+          string,
+          unknown
+        >;
+        return validateRawConfigLayer(parsed, `${filename} (global)`) as Partial<RawGthConfig>;
+      } catch (e) {
+        displayDebug(e instanceof Error ? e : String(e));
+        displayWarning(`Failed to read global config from ${jsonPath}, ignoring it.`);
+        return undefined;
+      }
     }
   }
 
@@ -359,7 +380,7 @@ async function applyGlobalConfigBase<T extends Record<string, unknown>>(
  */
 
 /**
- * Returns true when a project-level config file (json/js/mjs) exists for the given
+ * Returns true when a project-level config file (json/jsonc/js/mjs) exists for the given
  * overrides. Honours `customConfigPath` and the active identity profile so the check
  * matches exactly what {@link initConfig} would attempt to load.
  *
@@ -372,7 +393,7 @@ export function hasProjectConfig(commandLineConfigOverrides: CommandLineConfigOv
 
 /**
  * CFG-10 — true when ANY usable configuration is present, either a project config file
- * (json/js/mjs) or a standalone global config (`~/.gsloth/.gsloth.config.*`). When this
+ * (json/jsonc/js/mjs) or a standalone global config (`~/.gsloth/.gsloth.config.*`). When this
  * returns false the caller should run the first-run dialog instead of erroring.
  *
  * Reuses CFG-8's project + global detection so the two paths can never disagree.
@@ -422,8 +443,15 @@ export async function initConfig(
   // and when it is an ancestor resolveConfigPath takes its explicit-dir branch (never getProjectDir).
   setProjectDir(discovered?.dir);
 
+  // GS2-69 — prefer the DISCOVERED path when it is a JSON-family file, so a discovered
+  // `.gsloth.config.jsonc` reaches the parseJsonc branch below (re-resolving only the `.json`
+  // name here would miss it). When discovery found a module config (or nothing), fall back to
+  // resolving the `.json` name — it won't exist, so the module fall-through below is unchanged.
+  const discoveredJsonConfigPath =
+    discovered && isJsonConfigPath(discovered.path) ? discovered.path : undefined;
   const jsonConfigPath =
     commandLineConfigOverrides.customConfigPath ??
+    discoveredJsonConfigPath ??
     resolveConfigPath(
       baseDir,
       USER_PROJECT_CONFIG_JSON,
@@ -474,18 +502,19 @@ export async function initConfig(
     }
   }
 
-  // Try loading the JSON config file first
-  if (jsonConfigPath.endsWith('.json') && existsSync(jsonConfigPath)) {
+  // Try loading the JSON/JSONC config file first (GS2-69 — an explicit `-c foo.jsonc` takes
+  // this branch too instead of falling into the `configure()`-module importer).
+  if (isJsonConfigPath(jsonConfigPath) && existsSync(jsonConfigPath)) {
+    const jsonConfigName = jsonConfigPath.endsWith('.jsonc')
+      ? USER_PROJECT_CONFIG_JSONC
+      : USER_PROJECT_CONFIG_JSON;
     try {
       // Validate the project config layer against the Zod schema (single source of
       // truth): pre-map deprecated names, warn on unknown top-level keys, and fail
       // with a friendly, path-scoped message on a genuine type mismatch.
       const projectJsonConfig = validateRawConfigLayer(
-        parseJsonc(readFileSync(jsonConfigPath, 'utf8'), USER_PROJECT_CONFIG_JSON) as Record<
-          string,
-          unknown
-        >,
-        USER_PROJECT_CONFIG_JSON
+        parseJsonc(readFileSync(jsonConfigPath, 'utf8'), jsonConfigName) as Record<string, unknown>,
+        jsonConfigName
       ) as unknown as RawGthConfig;
       // Apply global config as the base layer (project config wins on conflicts).
       const jsonConfig = (await applyGlobalConfigBase(
@@ -504,9 +533,7 @@ export async function initConfig(
       }
     } catch (e) {
       displayDebug(e instanceof Error ? e : String(e));
-      displayError(
-        `Failed to read config from ${USER_PROJECT_CONFIG_JSON}, will try other formats.`
-      );
+      displayError(`Failed to read config from ${jsonConfigName}, will try other formats.`);
       // Continue to try other formats
       return await tryModuleConfig('js', commandLineConfigOverrides, baseDir);
     }
@@ -548,7 +575,8 @@ const MODULE_CONFIG_EXT: Record<ModuleConfigFormat, string> = {
  * `tryJsConfig`/`tryMjsConfig` helpers into one format-parameterized loader.
  *
  * NOTE: the terminal "No configuration file found" message intentionally advertises only
- * json/js/mjs (the historical, asserted wording) — `.ts` is a quiet lowest-precedence fallback.
+ * json/js/mjs (the historical, asserted wording) — `.ts` is a quiet lowest-precedence fallback,
+ * and `.jsonc` (GS2-69) is a quiet spelling variant of the advertised `.json`.
  */
 async function tryModuleConfig(
   format: ModuleConfigFormat,
@@ -981,7 +1009,7 @@ async function readRawConfigAtPath(path: string): Promise<Record<string, unknown
 
 /**
  * Global config read for the read-side {@link validateConfig}: mirrors
- * {@link loadGlobalRawConfig}'s lookup order (JSON → JS → MJS) but does NOT validate or
+ * {@link loadGlobalRawConfig}'s lookup order (JSON → JSONC → JS → MJS) but does NOT validate or
  * `exit` — it just returns the raw object + a source label so the validator owns the verdict.
  *
  * Ignore-on-error, exactly like {@link loadGlobalRawConfig}: a parse/module failure of the
@@ -998,18 +1026,20 @@ async function readRawConfigAtPath(path: string): Promise<Record<string, unknown
 async function loadGlobalRawConfigUnvalidated(): Promise<
   { raw: Record<string, unknown>; label: string } | undefined
 > {
-  const jsonPath = getGlobalGslothConfigReadPath(USER_PROJECT_CONFIG_JSON);
-  if (existsSync(jsonPath)) {
-    const label = `${USER_PROJECT_CONFIG_JSON} (global)`;
-    try {
-      return {
-        raw: parseJsonc(readFileSync(jsonPath, 'utf8'), label) as Record<string, unknown>,
-        label,
-      };
-    } catch (e) {
-      displayDebug(e instanceof Error ? e : String(e));
-      displayWarning(`Failed to read global config from ${jsonPath}, ignoring it.`);
-      return undefined;
+  for (const filename of JSON_CONFIG_FILENAMES) {
+    const jsonPath = getGlobalGslothConfigReadPath(filename);
+    if (existsSync(jsonPath)) {
+      const label = `${filename} (global)`;
+      try {
+        return {
+          raw: parseJsonc(readFileSync(jsonPath, 'utf8'), label) as Record<string, unknown>,
+          label,
+        };
+      } catch (e) {
+        displayDebug(e instanceof Error ? e : String(e));
+        displayWarning(`Failed to read global config from ${jsonPath}, ignoring it.`);
+        return undefined;
+      }
     }
   }
   for (const filename of [USER_PROJECT_CONFIG_JS, USER_PROJECT_CONFIG_MJS]) {

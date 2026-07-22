@@ -13,8 +13,17 @@ Your project should have the following files in order for gsloth to function:
 - Configuration file (one of):
   - `.gsloth.config.js` (JavaScript module)
   - `.gsloth.config.json` (JSON file)
+  - `.gsloth.config.jsonc` (JSON with comments)
   - `.gsloth.config.mjs` (JavaScript module with explicit module extension)
 - `.gsloth.guidelines.md`
+
+When more than one config file exists in the same location, the first match wins:
+`.json` → `.jsonc` → `.js` → `.mjs`. This order also applies to the global `~/.gsloth/` config.
+
+Both JSON names get the same lenient JSONC parsing — comments and trailing commas work in either
+file. Use the `.jsonc` name when you want comments in your config without editors and review tools
+flagging them as invalid JSON; `$schema` autocompletion works in `.jsonc` files in editors that
+treat the extension as JSONC.
 
 > Gaunt Sloth currently only functions from the directory which has one of the configuration files and `.gsloth.guidelines.md`. Configuration files can be located in the project root or in the `.gsloth/.gsloth-settings/` directory.
 >
