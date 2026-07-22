@@ -30,11 +30,9 @@ describe('GthAgentRunner', () => {
 
   const BASE_GTH_CONFIG: Pick<
     GthConfig,
-    | 'projectGuidelines'
     | 'streamOutput'
     | 'contentSource'
     | 'requirementSource'
-    | 'projectReviewInstructions'
     | 'filesystem'
     | 'useColour'
     | 'writeOutputToFile'
@@ -43,11 +41,9 @@ describe('GthAgentRunner', () => {
     | 'canInterruptInferenceWithEsc'
     | 'includeCurrentDateAfterGuidelines'
   > = {
-    projectGuidelines: 'test guidelines',
     streamOutput: false,
     contentSource: 'file',
     requirementSource: 'file',
-    projectReviewInstructions: '.gsloth.review.md',
     filesystem: 'none',
     useColour: false,
     writeOutputToFile: true,

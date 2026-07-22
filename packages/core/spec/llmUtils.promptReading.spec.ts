@@ -142,7 +142,7 @@ describe('prompt reading functions', async () => {
       vi.setSystemTime(new Date('2024-08-25T10:20:30.000Z'));
 
       const cfg = {
-        projectGuidelines: filename,
+        prompts: { guidelines: filename },
         includeCurrentDateAfterGuidelines: true,
         organization: { name: 'Dancing Kakapo', locale: 'en-NZ', timezone: 'Pacific/Auckland' },
       };
@@ -173,7 +173,7 @@ describe('prompt reading functions', async () => {
       vi.setSystemTime(new Date('2024-08-25T10:20:30.000Z'));
 
       const cfg = {
-        projectGuidelines: filename,
+        prompts: { guidelines: filename },
         includeCurrentDateAfterGuidelines: true,
       };
 
@@ -271,7 +271,7 @@ describe('prompt reading with identityProfile variations', async () => {
     });
 
     const result = (prompt as any).readGuidelines({
-      projectGuidelines: filename,
+      prompts: { guidelines: filename },
       includeCurrentDateAfterGuidelines: false,
       identityProfile: profile,
     });
@@ -290,7 +290,7 @@ describe('prompt reading with identityProfile variations', async () => {
     });
 
     const result = (prompt as any).readGuidelines({
-      projectGuidelines: filename,
+      prompts: { guidelines: filename },
       includeCurrentDateAfterGuidelines: false,
       identityProfile: profile,
     });
@@ -354,7 +354,6 @@ describe('noDefaultPrompts behavior', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);
 
     const result = (prompt as any).readGuidelines({
-      projectGuidelines: '.gsloth.guidelines.md',
       includeCurrentDateAfterGuidelines: false,
       noDefaultPrompts: true,
     });
@@ -366,7 +365,6 @@ describe('noDefaultPrompts behavior', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);
 
     const result = (prompt as any).readReviewInstructions({
-      projectReviewInstructions: '.gsloth.review.md',
       noDefaultPrompts: true,
     });
     expect(result).toBe('');
@@ -384,5 +382,118 @@ describe('noDefaultPrompts behavior', async () => {
 
     const result = (prompt as any).readBackstory({ noDefaultPrompts: true });
     expect(result).toBe('user backstory');
+  });
+});
+
+// GS2-43 — the unified `prompts` config object semantics at the composition point
+describe('prompts config segments (GS2-43)', async () => {
+  const prefix = platform() == 'win32' ? 'C:\\' : '/';
+  const mockProjectDir = `${prefix}project`;
+
+  const systemUtils = await import('#src/utils/systemUtils.js');
+  const prompt = await import('#src/utils/llmUtils.js');
+
+  /** Wires the fs mocks so exactly the given project-root files exist with the given content. */
+  const givenProjectFiles = (files: Record<string, string>) => {
+    const paths = new Map(
+      Object.entries(files).map(([name, content]) => [`${mockProjectDir}${sep}${name}`, content])
+    );
+    vi.mocked(fs.existsSync).mockImplementation((path) => paths.has(String(path)));
+    vi.mocked(fs.readFileSync).mockImplementation((path: unknown) => {
+      const content = paths.get(String(path));
+      if (content !== undefined) return content;
+      // Anything else resolves as an install-dir (bundled default) read.
+      return `bundled:${String(path).split(sep).pop()}`;
+    });
+  };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.spyOn(systemUtils, 'getCurrentWorkDir').mockReturnValue(mockProjectDir);
+    vi.spyOn(systemUtils, 'getProjectDir').mockReturnValue(mockProjectDir);
+
+    vi.mocked(fs.existsSync).mockReset();
+    vi.mocked(fs.readFileSync).mockReset();
+  });
+
+  test('string shorthand retargets a segment (≡ { path }, replace)', () => {
+    givenProjectFiles({ 'AGENTS.md': 'agents content' });
+
+    const result = (prompt as any).readGuidelines({
+      prompts: { guidelines: 'AGENTS.md' },
+      includeCurrentDateAfterGuidelines: false,
+    });
+    expect(result).toBe('agents content');
+  });
+
+  test('object form { path } retargets a segment (replace is the default mode)', () => {
+    givenProjectFiles({
+      'my-backstory.md': 'custom backstory',
+      '.gsloth.backstory.md': 'default backstory',
+    });
+
+    const result = (prompt as any).readBackstory({
+      prompts: { backstory: { path: 'my-backstory.md' } },
+    });
+    expect(result).toBe('custom backstory');
+  });
+
+  test('previously-hardcoded segments (code) are retargetable through prompts', () => {
+    givenProjectFiles({ 'my-code-prompt.md': 'custom code prompt' });
+
+    const result = (prompt as any).readCodePrompt({
+      prompts: { code: 'my-code-prompt.md' },
+    });
+    expect(result).toBe('custom code prompt');
+  });
+
+  test('enabled: false drops the segment entirely — even the bundled default', () => {
+    // No project files at all: without the setting the bundled default would be returned.
+    givenProjectFiles({});
+
+    const result = (prompt as any).readReviewInstructions({
+      prompts: { review: { enabled: false } },
+    });
+    expect(result).toBe('');
+    expect(fs.readFileSync).not.toHaveBeenCalled();
+  });
+
+  test('enabled: false wins over a configured path', () => {
+    givenProjectFiles({ 'extra.md': 'extra' });
+
+    const result = (prompt as any).readChatPrompt({
+      prompts: { chat: { path: 'extra.md', enabled: false } },
+    });
+    expect(result).toBe('');
+    expect(fs.readFileSync).not.toHaveBeenCalled();
+  });
+
+  test("mode: 'append' appends the file after the built-in content (project default file)", () => {
+    givenProjectFiles({
+      '.gsloth.guidelines.md': 'base guidelines',
+      'extra-guidelines.md': 'extra guidelines',
+    });
+
+    const result = (prompt as any).readGuidelines({
+      prompts: { guidelines: { path: 'extra-guidelines.md', mode: 'append' } },
+      includeCurrentDateAfterGuidelines: false,
+    });
+    expect(result).toBe('base guidelines\nextra guidelines');
+  });
+
+  test("mode: 'append' appends after the bundled default when no user default file exists", () => {
+    givenProjectFiles({ 'extra-exec.md': 'extra exec' });
+
+    const result = (prompt as any).readExecPrompt({
+      prompts: { exec: { path: 'extra-exec.md', mode: 'append' } },
+    });
+    expect(result).toBe('bundled:.gsloth.exec.md\nextra exec');
+  });
+
+  test('a segment left unset resolves exactly as before (default-named file)', () => {
+    givenProjectFiles({ '.gsloth.system.md': 'project system prompt' });
+
+    const result = (prompt as any).readSystemPrompt({ prompts: { guidelines: 'AGENTS.md' } });
+    expect(result).toBe('project system prompt');
   });
 });

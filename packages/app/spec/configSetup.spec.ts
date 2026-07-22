@@ -5,8 +5,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const constantsMock = {
   GSLOTH_DIR: '.gsloth',
   USER_PROJECT_CONFIG_JSON: '.gsloth.config.json',
-  PROJECT_GUIDELINES: '.gsloth.guidelines.md',
-  PROJECT_REVIEW_INSTRUCTIONS: '.gsloth.review.md',
 };
 vi.mock('@gaunt-sloth/core/constants.js', () => constantsMock);
 
@@ -100,5 +98,19 @@ describe('createProjectConfig (gth init <provider>)', () => {
 
     expect(vertexaiInit).toHaveBeenCalledTimes(1);
     expect(vertexaiInit).toHaveBeenCalledWith(CONFIG_PATH, false, undefined);
+  });
+
+  // GS2-43: `gth init` scaffolds the config file ONLY — no planted `.gsloth.guidelines.md` /
+  // `.gsloth.review.md` templates (the bundled defaults apply) and no guidelines nag warning.
+  it('writes only .gsloth.config.json — no template files, no nag warning', async () => {
+    fsMock.existsSync.mockImplementation((p: string) => p !== CONFIG_PATH);
+
+    const { createProjectConfig } = await import('#src/commands/configSetup.js');
+    await createProjectConfig('vertexai', false);
+
+    expect(writeFileIfNotExistsWithMessages).not.toHaveBeenCalled();
+    expect(getGslothConfigWritePath).toHaveBeenCalledTimes(1);
+    expect(getGslothConfigWritePath).toHaveBeenCalledWith('.gsloth.config.json');
+    expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
   });
 });

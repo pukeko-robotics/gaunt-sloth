@@ -63,8 +63,6 @@ describe('getCommand', () => {
 
     configMock.initConfig.mockResolvedValue({
       llm: { invoke: vi.fn() } as unknown as BaseChatModel,
-      projectGuidelines: '.gsloth.guidelines.md',
-      projectReviewInstructions: '.gsloth.review.md',
       contentSource: 'text',
       requirementSource: 'text',
       streamOutput: true,
@@ -154,8 +152,6 @@ describe('getCommand', () => {
 
     configMock.initConfig.mockResolvedValue({
       llm: { invoke: vi.fn() } as unknown as BaseChatModel,
-      projectGuidelines: '.gsloth.guidelines.md',
-      projectReviewInstructions: '.gsloth.review.md',
       contentSource: 'text',
       requirementSource: 'text',
       streamOutput: true,

@@ -144,8 +144,6 @@ describe('config', async () => {
         llm: { type: 'vertexai' },
         contentSource: 'file',
         requirementSource: 'file',
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
         writeOutputToFile: false,
         writeBinaryOutputsToFile: true,
@@ -248,8 +246,6 @@ describe('config', async () => {
         llm: { type: 'anthropic' },
         contentSource: 'file',
         requirementSource: 'file',
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
         writeOutputToFile: false,
         writeBinaryOutputsToFile: true,
@@ -384,8 +380,6 @@ describe('config', async () => {
         llm: { type: 'groq' },
         contentSource: 'file',
         requirementSource: 'file',
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
         writeOutputToFile: false,
         writeBinaryOutputsToFile: true,
@@ -636,7 +630,7 @@ describe('config', async () => {
 
     it('Should apply global-only config when project does not set the key', async () => {
       setupGlobalAndProject(
-        { projectGuidelines: 'GLOBAL.md', streamOutput: false },
+        { prompts: { guidelines: 'GLOBAL.md' }, streamOutput: false },
         { llm: { type: 'vertexai' } }
       );
 
@@ -644,21 +638,21 @@ describe('config', async () => {
       const config = await initConfig({});
 
       // Global value flows through where the project config is silent.
-      expect(config.projectGuidelines).toBe('GLOBAL.md');
+      expect(config.prompts?.guidelines).toBe('GLOBAL.md');
       expect(config.streamOutput).toBe(false);
     });
 
     it('Should let project config override global on a conflicting key', async () => {
       setupGlobalAndProject(
-        { projectGuidelines: 'GLOBAL.md', streamOutput: false },
-        { llm: { type: 'vertexai' }, projectGuidelines: 'PROJECT.md' }
+        { prompts: { guidelines: 'GLOBAL.md' }, streamOutput: false },
+        { llm: { type: 'vertexai' }, prompts: { guidelines: 'PROJECT.md' } }
       );
 
       const { initConfig } = await import('#src/config.js');
       const config = await initConfig({});
 
       // Project wins on the conflicting key, global still wins where project is silent.
-      expect(config.projectGuidelines).toBe('PROJECT.md');
+      expect(config.prompts?.guidelines).toBe('PROJECT.md');
       expect(config.streamOutput).toBe(false);
     });
 
@@ -681,7 +675,10 @@ describe('config', async () => {
     });
 
     it('Should fall back to defaults when neither global nor project sets a key', async () => {
-      setupGlobalAndProject({ projectGuidelines: 'GLOBAL.md' }, { llm: { type: 'vertexai' } });
+      setupGlobalAndProject(
+        { prompts: { guidelines: 'GLOBAL.md' } },
+        { llm: { type: 'vertexai' } }
+      );
 
       const { initConfig } = await import('#src/config.js');
       const config = await initConfig({});
@@ -694,13 +691,13 @@ describe('config', async () => {
     it('Should be a no-op (unchanged behaviour) when no global config exists', async () => {
       setupGlobalAndProject(undefined, {
         llm: { type: 'vertexai' },
-        projectGuidelines: 'PROJECT.md',
+        prompts: { guidelines: 'PROJECT.md' },
       });
 
       const { initConfig } = await import('#src/config.js');
       const config = await initConfig({});
 
-      expect(config.projectGuidelines).toBe('PROJECT.md');
+      expect(config.prompts?.guidelines).toBe('PROJECT.md');
       // Defaults intact, no global influence.
       expect(config.writeOutputToFile).toBe(false);
       expect(config.streamOutput).toBe(true);
@@ -723,7 +720,10 @@ describe('config', async () => {
       fsMock.readFileSync.mockImplementation((path: string) => {
         if (path === GLOBAL_JSON_PATH) return '{ this is not valid json';
         if (path === `/mock/read/${PROJECT_JSON_MARKER}`)
-          return JSON.stringify({ llm: { type: 'vertexai' }, projectGuidelines: 'PROJECT.md' });
+          return JSON.stringify({
+            llm: { type: 'vertexai' },
+            prompts: { guidelines: 'PROJECT.md' },
+          });
         return '';
       });
       vi.doMock('#src/providers/vertexai.js', () => ({
@@ -735,7 +735,7 @@ describe('config', async () => {
       const config = await initConfig({});
 
       // Project config still loads; bad global is ignored with a warning (no secrets logged).
-      expect(config.projectGuidelines).toBe('PROJECT.md');
+      expect(config.prompts?.guidelines).toBe('PROJECT.md');
       expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
         expect.stringContaining('Failed to read global config')
       );
@@ -776,7 +776,7 @@ describe('config', async () => {
     it('Should load a standalone global config when no project config exists', async () => {
       setupGlobalOnly({
         llm: { type: 'vertexai', model: 'global-model' },
-        projectGuidelines: 'GLOBAL.md',
+        prompts: { guidelines: 'GLOBAL.md' },
       });
 
       const { initConfig } = await import('#src/config.js');
@@ -784,13 +784,13 @@ describe('config', async () => {
 
       expect((config.llm as unknown as Record<string, unknown>).type).toBe('vertexai');
       expect((config.llm as unknown as Record<string, unknown>).model).toBe('global-model');
-      expect(config.projectGuidelines).toBe('GLOBAL.md');
+      expect(config.prompts?.guidelines).toBe('GLOBAL.md');
       // Must NOT error when a usable global config is the only config present.
       expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });
 
     it('Should error when a global config exists but lacks llm.type', async () => {
-      setupGlobalOnly({ projectGuidelines: 'GLOBAL.md' });
+      setupGlobalOnly({ prompts: { guidelines: 'GLOBAL.md' } });
 
       const { initConfig } = await import('#src/config.js');
       try {
@@ -856,7 +856,7 @@ describe('config', async () => {
     it('GS2-62: an explicit-but-missing identity profile ERRORS instead of silently loading the global', async () => {
       setupGlobalOnly({
         llm: { type: 'vertexai', model: 'global-model' },
-        projectGuidelines: 'GLOBAL.md',
+        prompts: { guidelines: 'GLOBAL.md' },
       });
 
       const { initConfig } = await import('#src/config.js');
@@ -883,14 +883,14 @@ describe('config', async () => {
     it('GS2-62: a run with NO identity profile still falls back to the global config (CFG-8 preserved)', async () => {
       setupGlobalOnly({
         llm: { type: 'vertexai', model: 'global-model' },
-        projectGuidelines: 'GLOBAL.md',
+        prompts: { guidelines: 'GLOBAL.md' },
       });
 
       const { initConfig } = await import('#src/config.js');
       const config = await initConfig({});
 
       expect((config.llm as unknown as Record<string, unknown>).type).toBe('vertexai');
-      expect(config.projectGuidelines).toBe('GLOBAL.md');
+      expect(config.prompts?.guidelines).toBe('GLOBAL.md');
       expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
       expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });
@@ -1392,8 +1392,6 @@ describe('config', async () => {
         modelProviderType: 'vertexai',
         contentSource: 'file',
         requirementSource: 'file',
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
         canInterruptInferenceWithEsc: true,
         streamOutput: true,
         streamSessionInferenceLog: true,
@@ -1850,8 +1848,6 @@ describe('config', async () => {
         modelProviderType: 'vertexai',
         contentSource: 'file',
         requirementSource: 'file',
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
         streamSessionInferenceLog: true,
         writeOutputToFile: false,
@@ -1937,8 +1933,6 @@ describe('config', async () => {
         llm: { type: 'anthropic' },
         contentSource: 'file',
         requirementSource: 'file',
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
         streamSessionInferenceLog: true,
         writeOutputToFile: false,
@@ -2024,8 +2018,6 @@ describe('config', async () => {
         llm: { type: 'groq' },
         contentSource: 'file',
         requirementSource: 'file',
-        projectGuidelines: '.gsloth.guidelines.md',
-        projectReviewInstructions: '.gsloth.review.md',
         streamOutput: true,
         streamSessionInferenceLog: true,
         writeOutputToFile: false,
@@ -2204,24 +2196,18 @@ describe('config', async () => {
         'Creating project config for vertexai'
       );
 
-      // Verify displayWarning was called
-      expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
-        'Make sure you add as much detail as possible to your .gsloth.guidelines.md.\n'
-      );
-
       // Verify init was called with correct parameters
       expect(mockInit).toHaveBeenCalledWith('/mock/write/.gsloth.config.json', false, undefined);
 
-      // Verify writeFileIfNotExistsWithMessages was called for guidelines and review instructions
-      expect(fileUtilsMock.writeFileIfNotExistsWithMessages).toHaveBeenCalledTimes(2);
-      expect(fileUtilsMock.writeFileIfNotExistsWithMessages).toHaveBeenCalledWith(
-        '/mock/write/.gsloth.guidelines.md',
-        expect.stringContaining('# Development Guidelines')
+      // GS2-43: `gth init` scaffolds the config file ONLY — no planted
+      // `.gsloth.guidelines.md` / `.gsloth.review.md` templates and no nag warning.
+      expect(fileUtilsMock.writeFileIfNotExistsWithMessages).not.toHaveBeenCalled();
+      expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+      expect(fileUtilsMock.getGslothConfigWritePath).toHaveBeenCalledWith('.gsloth.config.json');
+      expect(fileUtilsMock.getGslothConfigWritePath).not.toHaveBeenCalledWith(
+        '.gsloth.guidelines.md'
       );
-      expect(fileUtilsMock.writeFileIfNotExistsWithMessages).toHaveBeenCalledWith(
-        '/mock/write/.gsloth.review.md',
-        expect.stringContaining('# Code Review Guidelines')
-      );
+      expect(fileUtilsMock.getGslothConfigWritePath).not.toHaveBeenCalledWith('.gsloth.review.md');
     });
 
     it('Should not recreate .gsloth directory if it already exists', async () => {

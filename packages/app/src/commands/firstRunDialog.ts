@@ -26,7 +26,7 @@ import {
   getGslothConfigWritePath,
   writeFileWithMessages,
 } from '@gaunt-sloth/review/utils/fileUtils.js';
-import { ensureGslothDir, writeProjectReviewPreamble } from '#src/commands/configSetup.js';
+import { ensureGslothDir } from '#src/commands/configSetup.js';
 import { existsSync } from 'node:fs';
 import { shouldUseTui } from '#src/tui/shouldUseTui.js';
 import { isInkAvailable } from '#src/tui/loadInk.js';
@@ -71,7 +71,6 @@ export interface FirstRunDialogDeps {
    */
   withProgress: <T>(label: string, run: () => Promise<T>) => Promise<T>;
   ensureGslothDir: typeof ensureGslothDir;
-  writeProjectReviewPreamble: typeof writeProjectReviewPreamble;
   /** Resolves the config file path for the chosen scope (does not write). */
   resolveConfigPath: (scope: ConfigScope) => string;
   /** True when a config file already exists at `path`. */
@@ -250,8 +249,9 @@ export function makeDefaultProgress(): <T>(label: string, run: () => Promise<T>)
  * Walks the user through: (1) picking a provider (usable ones first, detected via
  * CFG-1), (2) picking a model (⭐ preferred ones flagged, first preferred is the
  * default), and (3) choosing whether to store the config for this project or
- * globally (CFG-3). Writes a minimal `{ llm: { type, model } }` config and, for
- * the project scope, scaffolds the review/guidelines preamble.
+ * globally (CFG-3). Writes a minimal `{ llm: { type, model } }` config (and, for
+ * the project scope, ensures the `.gsloth` dir exists). Nothing else is planted —
+ * the bundled prompt defaults apply until the user adds files or `prompts.*` config.
  */
 export async function runFirstRunDialog(
   overrides: Partial<FirstRunDialogDeps> = {},
@@ -274,7 +274,6 @@ export async function runFirstRunDialog(
       discoverModelsWithProvenance(providerId, { timeoutMs: INTERACTIVE_MODEL_FETCH_TIMEOUT_MS }),
     withProgress: makeDefaultProgress(),
     ensureGslothDir,
-    writeProjectReviewPreamble,
     resolveConfigPath: resolveConfigWritePath,
     configExists: existsSync,
     writeConfig: defaultWriteConfig,
@@ -363,10 +362,10 @@ export async function runFirstRunDialog(
       }
     }
 
-    // 5. Scaffold (project only) + write.
+    // 5. Scaffold (project only) + write. GS2-43: only the `.gsloth` dir + the config file —
+    // no planted prompt-template files (bundled defaults apply until the user adds their own).
     if (scope === 'project') {
       deps.ensureGslothDir();
-      deps.writeProjectReviewPreamble();
     }
     const writtenPath = deps.writeConfig(scope, buildConfigContent(provider.id, model));
 

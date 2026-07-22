@@ -161,7 +161,6 @@ describe('GthLangChainAgent', () => {
     statusUpdateCallback = vi.fn();
 
     mockConfig = {
-      projectGuidelines: 'test guidelines',
       llm: {
         _llmType: vi.fn().mockReturnValue('test'),
         verbose: false,
@@ -170,7 +169,6 @@ describe('GthLangChainAgent', () => {
       streamOutput: false,
       contentSource: 'file',
       requirementSource: 'file',
-      projectReviewInstructions: '.gsloth.review.md',
       filesystem: 'none',
       useColour: false,
       writeOutputToFile: true,
@@ -767,27 +765,27 @@ describe('GthLangChainAgent', () => {
     });
 
     // GS2-21: the lean agent must give the model a system prompt, composed exactly like the deep
-    // agent (backstory + projectGuidelines + mode prompt + system prompt) and handed to createAgent
+    // agent (backstory + guidelines + mode prompt + system prompt) and handed to createAgent
     // as its `systemPrompt` (a static per-turn system message, NOT a mid-conversation SystemMessage
     // Anthropic would reject). Before the fix it passed NONE, so the robot (agent.backend: lean)
     // behaved as if it never received its guidelines.
     describe('system prompt composition (GS2-21)', () => {
-      it('passes a systemPrompt to createAgent that includes the config projectGuidelines', async () => {
+      it('passes a systemPrompt to createAgent that includes the configured guidelines', async () => {
         const sentinel = 'GS2-21-SENTINEL-PROJECT-GUIDELINES';
         // buildSystemMessages composes backstory + guidelines + mode + system; echo the config's
-        // projectGuidelines through so we can prove it reaches the model's system prompt.
+        // prompts.guidelines path through so we can prove it reaches the model's system prompt.
         buildSystemMessagesMock.mockImplementation((cfg: GthConfig, modePrompt?: string) => [
-          { content: `${cfg.projectGuidelines}\n${modePrompt ?? ''}`.trim() },
+          { content: `${cfg.prompts?.guidelines}\n${modePrompt ?? ''}`.trim() },
         ]);
 
         const agent = new GthLangChainAgent(statusUpdateCallback);
-        const config = { ...mockConfig, projectGuidelines: sentinel } as GthConfig;
+        const config = { ...mockConfig, prompts: { guidelines: sentinel } } as GthConfig;
         await agent.init(undefined, config);
 
         // Default command → chat-mode prompt, fed to buildSystemMessages together with the config.
         expect(readChatPromptMock).toHaveBeenCalled();
         expect(buildSystemMessagesMock).toHaveBeenCalledWith(
-          expect.objectContaining({ projectGuidelines: sentinel }),
+          expect.objectContaining({ prompts: { guidelines: sentinel } }),
           'chat-mode-prompt'
         );
         const systemPrompt = createAgentMock.mock.calls.at(-1)?.[0].systemPrompt as

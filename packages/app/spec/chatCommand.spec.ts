@@ -67,7 +67,6 @@ describe('chatCommand', () => {
     program = new Command();
 
     configMock.initConfig.mockResolvedValue({
-      projectGuidelines: 'Mock guidelines',
       llm: 'Mock LLM',
     });
 
@@ -184,7 +183,6 @@ describe('Default Chat Behavior (no arguments)', () => {
     program = new Command();
 
     configMock.initConfig.mockResolvedValue({
-      projectGuidelines: 'Mock guidelines',
       llm: 'Mock LLM',
     });
 

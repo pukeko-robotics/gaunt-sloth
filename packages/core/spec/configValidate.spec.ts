@@ -215,7 +215,7 @@ describe('validateConfig (GS2-1 `gth config validate`)', () => {
 
     it('is OK when BOTH the project and global layers are clean (both layers reported)', async () => {
       project('{"llm":{"type":"openai"}}');
-      global('{"projectGuidelines":"GLOBAL.md"}');
+      global('{"prompts":{"guidelines":"GLOBAL.md"}}');
 
       const report = await validateConfig({});
 

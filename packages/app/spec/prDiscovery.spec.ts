@@ -62,8 +62,6 @@ vi.mock('@gaunt-sloth/review/sources/jiraIssueLegacySource.js', () => ({
 describe('runPrDiscovery', () => {
   const config = {
     llm: { invoke: vi.fn() } as unknown as BaseChatModel,
-    projectGuidelines: '.gsloth.guidelines.md',
-    projectReviewInstructions: '.gsloth.review.md',
     contentSource: 'github',
     requirementSource: 'github',
     streamOutput: false,

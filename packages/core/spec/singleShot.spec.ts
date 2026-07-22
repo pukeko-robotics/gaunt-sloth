@@ -85,8 +85,6 @@ const mockConfig = {
   }),
   contentSource: 'file',
   requirementSource: 'file',
-  projectGuidelines: '.gsloth.guidelines.md',
-  projectReviewInstructions: '.gsloth.review.md',
   streamOutput: false,
   commands: {
     pr: {

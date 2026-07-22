@@ -51,8 +51,6 @@ const mockConfig = {
   llm: {
     invoke: vi.fn(),
   },
-  projectGuidelines: '.gsloth.guidelines.md',
-  projectReviewInstructions: '.gsloth.review.md',
   contentSource: 'file',
   requirementSource: 'file',
   streamOutput: true,

@@ -74,7 +74,6 @@ vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => systemUtilsMock);
 
 const mockConfig = {
   llm: { invoke: vi.fn(), model: 'base-model' },
-  projectGuidelines: '.gsloth.guidelines.md',
   streamOutput: true,
   writeOutputToFile: true,
   canInterruptInferenceWithEsc: true,

@@ -135,6 +135,42 @@ const builtInToolsSchema = z.union([
   z.record(z.string(), z.union([z.boolean(), builtInToolConfigSchema])),
 ]);
 
+/**
+ * GS2-43 — one prompt segment inside the {@link promptsSchema} object. Either a `string`
+ * (shorthand for `{ path }`) or a config object:
+ * - `path` — file to read for this segment (resolved like every prompt file: config dir /
+ *   identity profile first, then relative to the project root).
+ * - `enabled: false` — drop the segment entirely (even its bundled default).
+ * - `mode` — `'replace'` (default): the file replaces the built-in segment content;
+ *   `'append'`: the file content is appended after the built-in content.
+ */
+const promptSegmentSchema = z.union([
+  z.string(),
+  z.object({
+    path: z.string().optional(),
+    enabled: z.boolean().optional(),
+    mode: z.enum(['replace', 'append']).optional(),
+  }),
+]);
+
+/**
+ * GS2-43 — the unified `prompts` config object (CFG-18's flat-key→rich-object precedent).
+ * Replaces the removed flat `projectGuidelines` / `projectReviewInstructions` keys and makes
+ * ALL seven prompt segments retargetable through config (previously backstory/system/chat/
+ * code/exec were reachable only by placing a file in the config dir). Kept as a plain
+ * `z.object` of optional sibling keys so a future segment (e.g. GS2-44's `agents`) is a
+ * one-line addition with no collision risk.
+ */
+const promptsSchema = z.object({
+  backstory: promptSegmentSchema.optional(),
+  guidelines: promptSegmentSchema.optional(),
+  system: promptSegmentSchema.optional(),
+  chat: promptSegmentSchema.optional(),
+  code: promptSegmentSchema.optional(),
+  exec: promptSegmentSchema.optional(),
+  review: promptSegmentSchema.optional(),
+});
+
 const prCommandSchema = z.object({
   contentSource: z.string().optional(),
   requirementSource: z.string().optional(),
@@ -258,7 +294,8 @@ export const rawGthConfigSchema = z.looseObject({
   requirementSource: z.string().optional(),
   contentSourceConfig: z.record(z.string(), z.unknown()).optional(),
   requirementSourceConfig: z.record(z.string(), z.unknown()).optional(),
-  projectGuidelines: z.string().optional(),
+  // GS2-43 — the unified prompt-segment config; replaces projectGuidelines/projectReviewInstructions.
+  prompts: promptsSchema.optional(),
   identityProfile: z.string().optional(),
   includeCurrentDateAfterGuidelines: z.boolean().optional(),
   organization: z
@@ -268,7 +305,6 @@ export const rawGthConfigSchema = z.looseObject({
       timezone: z.string().optional(),
     })
     .optional(),
-  projectReviewInstructions: z.string().optional(),
   noDefaultPrompts: z.boolean().optional(),
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
@@ -414,6 +450,9 @@ const DEPRECATED_ROOT_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ['requirementsProvider', 'requirementSource'],
   ['contentProviderConfig', 'contentSourceConfig'],
   ['requirementsProviderConfig', 'requirementSourceConfig'],
+  // GS2-43 — the flat prompt-path keys were folded into the `prompts` object.
+  ['projectGuidelines', 'prompts.guidelines'],
+  ['projectReviewInstructions', 'prompts.review'],
 ];
 
 /** Deprecated → canonical key pairs inside a `commands.<name>` block (SSOT for the rejecter). */

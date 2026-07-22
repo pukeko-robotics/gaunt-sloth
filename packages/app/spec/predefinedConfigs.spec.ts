@@ -52,8 +52,6 @@ describe('predefined AI provider configurations', () => {
       llm: mockChatInstance,
       contentSource: 'file',
       requirementSource: 'file',
-      projectGuidelines: '.gsloth.guidelines.md',
-      projectReviewInstructions: '.gsloth.review.md',
       streamOutput: true,
       commands: {
         pr: { contentSource: 'github', requirementSource: 'github' },
@@ -113,8 +111,6 @@ describe('predefined AI provider configurations', () => {
       llm: mockChatInstance,
       contentSource: 'file',
       requirementSource: 'file',
-      projectGuidelines: '.gsloth.guidelines.md',
-      projectReviewInstructions: '.gsloth.review.md',
       streamOutput: true,
       commands: {
         pr: { contentSource: 'github', requirementSource: 'github' },
@@ -174,8 +170,6 @@ describe('predefined AI provider configurations', () => {
       llm: mockChatInstance,
       contentSource: 'file',
       requirementSource: 'file',
-      projectGuidelines: '.gsloth.guidelines.md',
-      projectReviewInstructions: '.gsloth.review.md',
       streamOutput: true,
       commands: {
         pr: { contentSource: 'github', requirementSource: 'github' },
