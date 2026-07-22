@@ -609,7 +609,7 @@ export function createCommandRegistry(): SlashCommand[] {
         toggleTools: true,
         notice: toolsToggleNotice(!ctx.toolsExpanded),
         message:
-          '/tools is deprecated — use /verbose (this alias will be removed in a future release).',
+          '/tools is deprecated — use /verbose (this alias will be removed in the next minor).',
         level: 'warning',
       }),
     },
