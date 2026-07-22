@@ -195,19 +195,44 @@ function describeLiveModel(
 }
 
 /**
- * GS2-54 (gap 3) — defense-in-depth for the CONFIG artifact: return a shallow clone of `config` with
- * a *live* `llm` (a `BaseChatModel`) replaced by a `{ type, model }` descriptor, so the model's large
- * internal surface (client objects, cached kwargs, inline keys) never reaches disk — rather than
- * relying on {@link redactValue}'s field-masking alone. PURE: never mutates the caller's config.
- * FAIL-SAFE: on any error, or when `llm` is absent / not a live model, return the ORIGINAL config
- * unchanged so {@link redactValue}'s existing GS2-47 masking still applies (never less-redacted).
+ * GS2-54 (gap 3) + GS2-66 (residual 3) — defense-in-depth for the CONFIG artifact: return a shallow
+ * clone of `config` with the LIVE instances stripped to short descriptors so their large internal
+ * surface (client objects, cached kwargs, inline keys, and non-secret-NAMED opaque fields the
+ * `caCert` class that field-masking cannot catch) never reaches disk — rather than relying on
+ * {@link redactValue}'s field-masking alone. Mirrors `configCommand.ts`'s `redactConfigForPrint`:
+ *  - a *live* `llm` (a `BaseChatModel`) → a `{ type, model }` descriptor;
+ *  - a `tools` array → `[N tool instance(s)]`;
+ *  - a `middleware` array → `[N middleware]`.
+ * PURE: never mutates the caller's config (a fresh clone is made only if something is stripped).
+ * FAIL-SAFE: on any error, or when a field is absent / not a live instance, that field is left as-is
+ * so {@link redactValue}'s existing GS2-47 masking still applies (never less-redacted). The `llm`,
+ * `tools` and `middleware` strips are independent — `tools`/`middleware` are stripped even when the
+ * config carries no live `llm`.
  */
-function stripLiveModelForConfig(config: unknown): unknown {
+function stripLiveInstancesForConfig(config: unknown): unknown {
   try {
     if (config == null || typeof config !== 'object' || Array.isArray(config)) return config;
     const record = config as Record<string, unknown>;
-    if (!('llm' in record) || !isLiveChatModel(record.llm)) return config;
-    return { ...record, llm: describeLiveModel(record, record.llm as object) };
+    // Clone lazily: only spread into a new object once we know a field is actually being replaced,
+    // so a config with no live instances is returned untouched (===).
+    let out: Record<string, unknown> = record;
+    const clone = (): Record<string, unknown> => {
+      if (out === record) out = { ...record };
+      return out;
+    };
+    if ('llm' in record && isLiveChatModel(record.llm)) {
+      clone().llm = describeLiveModel(record, record.llm as object);
+    }
+    // Hoist before the mutating clone() call so TS keeps the `Array` narrowing on `.length`.
+    const tools = record.tools;
+    if (Array.isArray(tools)) {
+      clone().tools = `[${tools.length} tool instance(s)]`;
+    }
+    const middleware = record.middleware;
+    if (Array.isArray(middleware)) {
+      clone().middleware = `[${middleware.length} middleware]`;
+    }
+    return out;
   } catch {
     return config; // fail safe: fall back to redactValue over the untouched config
   }
@@ -219,15 +244,16 @@ function stripLiveModelForConfig(config: unknown): unknown {
  * any throw yields the fully-withheld marker rather than raw content ("redact more on error, never
  * write a raw artifact because redaction hiccuped").
  *
- * GS2-54 (gap 3) — before redaction, {@link stripLiveModelForConfig} swaps a live `llm` for a
- * `{ type, model }` descriptor so the live model's internals never serialize. This runs on a fresh
- * clone only; the caller's config (and the {@link collectSecretValues} harvest already taken from it)
- * is untouched, so inline secrets inside the model are still scrubbed from the OTHER artifacts.
+ * GS2-54 (gap 3) + GS2-66 (residual 3) — before redaction, {@link stripLiveInstancesForConfig} swaps
+ * a live `llm` for a `{ type, model }` descriptor and the `tools`/`middleware` arrays for count
+ * descriptors, so those live instances' internals never serialize. This runs on a fresh clone only;
+ * the caller's config (and the {@link collectSecretValues} harvest already taken from it) is
+ * untouched, so inline secrets inside those instances are still scrubbed from the OTHER artifacts.
  */
 function renderConfig(config: unknown, redact: boolean, secrets: readonly string[]): string {
   if (!redact) return safeStringify(config);
   try {
-    return safeStringify(redactValue(stripLiveModelForConfig(config), secrets));
+    return safeStringify(redactValue(stripLiveInstancesForConfig(config), secrets));
   } catch {
     return REDACTED;
   }

@@ -196,6 +196,62 @@ describe('utils/debugDump — GS2-47 secret redaction', () => {
     // …and the inline key is absent too.
     expect(configText).not.toContain(INLINE_KEY);
   });
+
+  it('GS2-66 (residual 3): strips the `tools` + `middleware` arrays to count descriptors — instance internals (incl. a non-secret-named opaque field) never reach config.json — INDEPENDENT of a live llm', async () => {
+    const { writeDebugDump } = await import('#src/utils/debugDump.js');
+
+    // Opaque, sensitive values under field names that do NOT match the secret-key regex, so
+    // redactValue's field-masking would MISS them. Their absence proves the DESCRIPTOR strip (not
+    // field-masking) hid the live instances — the discriminating assertion the brief calls for.
+    const TOOL_OPAQUE = 'PRIVATE-TOOL-CACERT-BLOB-not-secret-named-abc';
+    const MW_OPAQUE = 'PRIVATE-MW-INTERNAL-BLOB-not-secret-named-xyz';
+
+    // NOTE: no live `llm` on this config — proves tools/middleware are stripped independently (the
+    // pre-GS2-66 early-return `if (!('llm' in record) ...) return config` would have skipped them).
+    const { archiveDir } = writeDebugDump({
+      transcript: [],
+      config: {
+        modelDisplayName: 'test-model',
+        tools: [
+          { name: 'read_file', func: () => {}, caCert: TOOL_OPAQUE },
+          { name: 'write_file', func: () => {} },
+        ],
+        middleware: [{ name: 'summarization', internalState: MW_OPAQUE }],
+      },
+      modelDisplayName: 'test-model',
+      cwd: notGitDir,
+    });
+
+    const configText = readFileSync(resolve(archiveDir, 'config.json'), 'utf8');
+    const config = JSON.parse(configText);
+
+    // Arrays collapsed to short count descriptors (mirrors configCommand.ts redactConfigForPrint).
+    expect(config.tools).toBe('[2 tool instance(s)]');
+    expect(config.middleware).toBe('[1 middleware]');
+    // The opaque, non-secret-NAMED instance internals are gone ONLY because the whole arrays were
+    // stripped — the descriptor doing the work, not redactValue field-masking.
+    expect(configText).not.toContain(TOOL_OPAQUE);
+    expect(configText).not.toContain(MW_OPAQUE);
+    // The descriptors carry no live instance fields.
+    expect(configText).not.toContain('read_file');
+    expect(configText).not.toContain('internalState');
+    // Non-instance config shape is preserved.
+    expect(config.modelDisplayName).toBe('test-model');
+  });
+
+  it('GS2-66 (residual 3, negative): a config WITHOUT tools/middleware does not fabricate descriptor keys', async () => {
+    const { writeDebugDump } = await import('#src/utils/debugDump.js');
+    const { archiveDir } = writeDebugDump({
+      transcript: [],
+      config: { modelDisplayName: 'test-model', agent: { backend: 'lean' } },
+      modelDisplayName: 'test-model',
+      cwd: notGitDir,
+    });
+    const config = JSON.parse(readFileSync(resolve(archiveDir, 'config.json'), 'utf8'));
+    expect(config).not.toHaveProperty('tools');
+    expect(config).not.toHaveProperty('middleware');
+    expect(config.agent).toEqual({ backend: 'lean' });
+  });
 });
 
 // The one-time false-positive spot-check the brief asks for: run the redactor over an ORDINARY,
@@ -297,5 +353,113 @@ describe('utils/redactSecrets — GS2-54 hardening (gaps 1 & 2)', () => {
     expect(redactText('server http://localhost:3000/health', [])).toBe(
       'server http://localhost:3000/health'
     );
+  });
+});
+
+// GS2-66 — the four GS2-54 residuals, exercised at the pure `redactText` level (secrets=[] → only
+// the provider/auth patterns are in play, deterministic + machine-independent). Residual 3 (live
+// tools/middleware → descriptor) is a debugDump-config concern, tested through `writeDebugDump` above.
+describe('utils/redactSecrets — GS2-66 hardening (residuals 1, 2 & 4)', () => {
+  it('residual 1: bounds the auth value across STRUCTURED credential tails (id:secret, k="v", k=v list, Digest) — no raw tail past the token charset', async () => {
+    const { redactText } = await import('#src/utils/redactSecrets.js');
+    // `id:secret` — GS2-54 left `<redacted>:secret123`; the whole value must go now.
+    expect(redactText('Authorization: ApiKey clientid:secret123', [])).toBe(
+      'Authorization: <redacted>'
+    );
+    // `k="quoted"` — GS2-54 left `<redacted>"abc123"`.
+    expect(redactText('Authorization: Token token="abc123"', [])).toBe('Authorization: <redacted>');
+    // `k=v,k=v` list — GS2-54 left `<redacted>,key2=supersecret`.
+    expect(redactText('Authorization: Custom key1=v1,key2=supersecret', [])).toBe(
+      'Authorization: <redacted>'
+    );
+    // Digest — a `response="…"` hash must NOT survive beside the marker.
+    const digest =
+      'Authorization: Digest username="admin", realm="test", response="deadbeefhashvalue"';
+    const digestOut = redactText(digest, []);
+    expect(digestOut).toBe('Authorization: <redacted>');
+    expect(digestOut).not.toContain('deadbeefhashvalue');
+    expect(digestOut).not.toContain('response=');
+  });
+
+  it('residual 1 (negative): an auth value does NOT swallow following prose — after a period OR after a bare comma-word (GS2-47 invariant)', async () => {
+    const { redactText } = await import('#src/utils/redactSecrets.js');
+    // Prose after the credential (period boundary).
+    const afterPeriod = redactText(
+      'Sent header Authorization: ApiKey abc123def456. Then the request succeeded and returned 200.',
+      []
+    );
+    expect(afterPeriod).toContain('Authorization: <redacted>');
+    expect(afterPeriod).toContain('Then the request succeeded and returned 200.');
+    expect(afterPeriod).not.toContain('abc123def456');
+    // A comma followed by a bare (non-param-shaped) word is prose, not a credential param: the
+    // comma-continuation requires `k=…`/quoted, so the sentence after the comma is preserved.
+    const afterComma = redactText(
+      'Authorization: Bearer tok123abcdef, then we retried the call and it worked.',
+      []
+    );
+    expect(afterComma).toContain('Authorization: <redacted>');
+    expect(afterComma).toContain(', then we retried the call and it worked.');
+    expect(afterComma).not.toContain('tok123abcdef');
+  });
+
+  it('residual 1 (negative): a SigV4 header is untouched by the general rule — SignedHeaders stays, Credential/Signature are redacted by the dedicated rule', async () => {
+    const { redactText } = await import('#src/utils/redactSecrets.js');
+    const CRED = 'AKIAIOSFODNN7EXAMPLE/20260720/us-east-1/s3/aws4_request';
+    const SIG = 'fe5f80f77d5fa3beca038a248ff027d0445342fe2855ddc963176630326f1024';
+    const out = redactText(
+      `Authorization: AWS4-HMAC-SHA256 Credential=${CRED}, SignedHeaders=host;x-amz-date, Signature=${SIG}`,
+      []
+    );
+    expect(out).not.toContain('AKIAIOSFODNN7EXAMPLE');
+    expect(out).not.toContain(SIG);
+    // The `(?!AWS4-HMAC-SHA256[ \t]+Credential=)` exclusion is why SignedHeaders survives (the
+    // broadened value rule would otherwise cross the comma into it).
+    expect(out).toContain('SignedHeaders=host;x-amz-date');
+    expect(out).toContain('Credential=<redacted>');
+    expect(out).toContain('Signature=<redacted>');
+  });
+
+  it('residual 1 (positive): the SigV4 exclusion is NARROW — a malformed bare-token `AWS4-HMAC-SHA256 <token>` (no Credential=) is still redacted, not let through', async () => {
+    const { redactText } = await import('#src/utils/redactSecrets.js');
+    // The exclusion targets a GENUINE SigV4 shape only; a bare token under the AWS4 scheme has no
+    // dedicated Credential/Signature rule to catch it, so the general rule MUST redact it (the old
+    // two-token rule did — the narrow guard preserves that "redact any scheme" contract).
+    expect(redactText('Authorization: AWS4-HMAC-SHA256 mysecrettoken123', [])).toBe(
+      'Authorization: <redacted>'
+    );
+  });
+
+  it('residual 2: redacts colon-LESS bare-userinfo (`opaquetoken@host`), keeping scheme + host', async () => {
+    const { redactText } = await import('#src/utils/redactSecrets.js');
+    // Colon-less userinfo (a PAT/opaque token in a clone URL) — GS2-54 required a `:` and missed this.
+    expect(redactText('clone url https://s0m3-0paqu3-t0k3n@github.com/owner/repo.git', [])).toBe(
+      'clone url https://<redacted>@github.com/owner/repo.git'
+    );
+    // The colon-FUL form still works (single merged rule).
+    expect(redactText('fetch https://user:tok@example.com/x', [])).toBe(
+      'fetch https://<redacted>@example.com/x'
+    );
+    // An ordinary URL without userinfo is still untouched (no `@` after the authority).
+    expect(redactText('remote https://github.com/owner/repo.git', [])).toBe(
+      'remote https://github.com/owner/repo.git'
+    );
+    // host:port with no `@` is not mistaken for userinfo.
+    expect(redactText('server http://localhost:3000/health', [])).toBe(
+      'server http://localhost:3000/health'
+    );
+  });
+
+  it('residual 4 (safe direction): the header-prefix `\\s*` spans a newline (over-redacts a next-line value), while the credential body does not cross a newline', async () => {
+    const { redactText } = await import('#src/utils/redactSecrets.js');
+    // The prefix `\s*` includes `\n`, so a value on the next line is still caught — over-redaction in
+    // the SAFE direction (never a leak). Documents the behavior the corrected comment describes.
+    expect(redactText('Authorization:\nBearer s3cr3t-token-abc', [])).toBe(
+      'Authorization:\n<redacted>'
+    );
+    // The credential body uses only horizontal ws, so a genuinely separate next line is preserved.
+    const twoLines = redactText('Authorization: ApiKey secret-token-123\nnext line of the log', []);
+    expect(twoLines).toContain('Authorization: <redacted>');
+    expect(twoLines).toContain('next line of the log');
+    expect(twoLines).not.toContain('secret-token-123');
   });
 });
