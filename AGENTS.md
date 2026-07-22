@@ -84,9 +84,9 @@ Middleware provides hooks to intercept and control agent execution at critical p
 - Middleware types are in [src/middleware/types.ts](src/middleware/types.ts)
 - Provider-specific middleware can be auto-injected via `postProcessJsonConfig()` in preset files
 
-### AG-UI Server (`@gaunt-sloth/api`)
+### AG-UI Server (`@gaunt-sloth/agent`)
 
-`startAgUiServer()` ([packages/api/src/modules/apiAgUiModule.ts](packages/api/src/modules/apiAgUiModule.ts))
+`startAgUiServer()` ([packages/agent/src/modules/apiAgUiModule.ts](packages/agent/src/modules/apiAgUiModule.ts))
 exposes the agent over the AG-UI protocol at `POST /agents/:agentId/run`,
 streaming typed SSE events. It is intended for **local clients only** (a local
 web UI talking to a local CLI agent); do not expose it to public networks.
