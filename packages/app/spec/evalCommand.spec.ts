@@ -1037,6 +1037,46 @@ cases:
       expect(consoleUtilsMock.display).toHaveBeenCalledWith('PASS  greets-politely');
     });
 
+    // BATCH-20: the bundled live TeamCity reporter, registered over the same seam as junit.
+    it('--reporter teamcity streams ##teamcity[...] service messages to stdout (live, no artifact)', async () => {
+      const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      try {
+        const { evalCommand } = await import('#src/commands/evalCommand.js');
+        const program = new Command();
+        evalCommand(program, {});
+        await program.parseAsync([
+          'na',
+          'na',
+          'eval',
+          'suite.yaml',
+          '-o',
+          outputDir,
+          '--reporter',
+          'teamcity',
+        ]);
+
+        expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+
+        // The service-message lifecycle went to stdout (suite stem = basename sans extension),
+        // with the passing cell reported started + finished and never failed.
+        const written = stdoutSpy.mock.calls.map((c) => String(c[0])).join('');
+        expect(written).toContain("##teamcity[testSuiteStarted name='suite']");
+        expect(written).toContain("##teamcity[testStarted name='greets-politely']");
+        expect(written).toContain("##teamcity[testFinished name='greets-politely'");
+        expect(written).toContain("##teamcity[testSuiteFinished name='suite']");
+        expect(written).not.toContain('testFailed');
+
+        // Live only — no artifact; the always-on results.json is still written.
+        expect(existsSync(join(outputDir, 'results.xml'))).toBe(false);
+        expect(existsSync(join(outputDir, 'results.json'))).toBe(true);
+
+        // --reporter REPLACES the default set, so `teamcity` alone silences the text reporter.
+        expect(consoleUtilsMock.display).not.toHaveBeenCalledWith('PASS  greets-politely');
+      } finally {
+        stdoutSpy.mockRestore();
+      }
+    });
+
     it('an unknown --reporter name exits 2 (harness error) naming the available reporters, running NOTHING', async () => {
       const { evalCommand } = await import('#src/commands/evalCommand.js');
       const program = new Command();
@@ -1057,11 +1097,13 @@ cases:
       expect(runSingleShot).not.toHaveBeenCalled();
       expect(existsSync(join(outputDir, 'results.json'))).toBe(false);
       expect(existsSync(join(outputDir, 'results.xml'))).toBe(false);
-      // The message quotes the bad name and lists the available reporters (text + bundled junit).
+      // The message quotes the bad name and lists the available reporters (text + bundled
+      // junit/teamcity).
       const errorArgs = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
       expect(errorArgs).toContain('unknown reporter "bogus"');
       expect(errorArgs).toContain('text');
       expect(errorArgs).toContain('junit');
+      expect(errorArgs).toContain('teamcity');
     });
 
     it('drives a config-declared custom reporter over the same seam (config.reporters + --reporter mine)', async () => {
