@@ -908,6 +908,9 @@ The example demonstrates:
 - Combining built-in and custom middleware
 - Practical patterns for extending Gaunt Sloth functionality
 
+For a more realistic custom tool (zod schema, config-dependent availability, external API call),
+see the worked [Jira work-log tool example](custom-tool-example-jira-log-work.md).
+
 **Example with Custom Tools**
 
 ```javascript
@@ -1277,6 +1280,8 @@ Gaunt Sloth has OAuth client for MCP and is confirmed to work with public Jira M
 Jira API is used with `pr` and `review` commands.
 
 This method uses the Atlassian REST API v3 with a Personal Access Token (PAT). It requires your Atlassian Cloud ID.
+
+This source only works with an authenticated Atlassian Cloud instance (it needs your Cloud ID and an API token); anonymous access to a public Jira instance is not supported.
 
 **Prerequisites:**
 

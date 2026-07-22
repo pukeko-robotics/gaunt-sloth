@@ -2,7 +2,7 @@
 
 The review engine behind `gth review` / `gth pr`, packaged for embedding: run an AI code review
 programmatically from your own tool or pipeline, or via the standalone `gaunt-sloth-review`
-binary. Also contains the content/requirement sources (GitHub, Jira, file, text) that feed it.
+binary. Also contains the content/requirement sources (GitHub, local git diff, Jira, file, text) that feed it.
 
 **When to depend on this package** — you want review results inside your own process or a
 minimal CI job. It has no dependency on `commander`, MCP, or A2A, so the install stays small.

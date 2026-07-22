@@ -19,7 +19,8 @@ interface JiraIssueResponse {
 /**
  * Gets Jira issue using Atlassian REST API v3 with Personal Access Token
  *
- * TODO we need to figure out how would this work with public jira.
+ * Requires an authenticated Atlassian Cloud instance (Cloud ID + API token); anonymous
+ * access to a public Jira instance is not supported.
  *
  * @param config Jira configuration
  * @param issueId Jira issue ID

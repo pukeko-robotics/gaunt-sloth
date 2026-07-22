@@ -81,6 +81,18 @@ export function prCommand(
         return;
       }
 
+      // With the GitHub content source, prId ends up interpolated into `gh pr diff <prId>` and
+      // the gh read-file tool's `gh api` calls. Both sinks validate again themselves (defense in
+      // depth), but reject garbage upfront with a clear error instead of a downstream warning.
+      // Non-GitHub content sources (file/text) accept arbitrary content ids and stay untouched.
+      if (contentSource === 'github' && prId && !/^\d+$/.test(prId)) {
+        displayError(
+          `Invalid pull request ID "${prId}"; expected a numeric PR number, e.g. \`gth pr 42\`.`
+        );
+        setExitCode(1);
+        return;
+      }
+
       if (isDiscovery) {
         if (config.commands?.pr?.discovery?.enabled === false) {
           displayError(
@@ -157,8 +169,6 @@ export function prCommand(
 
       const { review } = await import('@gaunt-sloth/review/modules/reviewModule.js');
       const { createResolvers } = await import('@gaunt-sloth/agent/resolvers.js');
-      // TODO consider including requirements id
-      // TODO sanitize prId
       await review(
         prId ? `PR-${prId}` : 'PR-discovery',
         getReviewSystemPrompt(config),
@@ -177,7 +187,6 @@ export function prCommand(
         (config.commands?.pr?.requirementSource ?? config.requirementSource) === 'jira' &&
         config.commands?.pr?.logWorkForReviewInSeconds
       ) {
-        // TODO we need to figure out some sort of post-processors
         let jiraConfig =
           config.builtInToolsConfig?.jira || (config.requirementSourceConfig?.jira as JiraConfig);
         await jiraLogWork(

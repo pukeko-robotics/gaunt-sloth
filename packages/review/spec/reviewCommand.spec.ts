@@ -17,6 +17,29 @@ const resolversMock = {
 };
 vi.mock('@gaunt-sloth/agent/resolvers.js', () => resolversMock);
 
+const displayErrorMock = vi.fn();
+vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', async () => {
+  const actual = await vi.importActual<typeof import('@gaunt-sloth/core/utils/consoleUtils.js')>(
+    '@gaunt-sloth/core/utils/consoleUtils.js'
+  );
+  return {
+    ...actual,
+    displayError: displayErrorMock,
+  };
+});
+
+// Keep setExitCode from touching the real process.exitCode in the error-path tests.
+const setExitCodeMock = vi.fn();
+vi.mock('@gaunt-sloth/core/utils/systemUtils.js', async () => {
+  const actual = await vi.importActual<typeof import('@gaunt-sloth/core/utils/systemUtils.js')>(
+    '@gaunt-sloth/core/utils/systemUtils.js'
+  );
+  return {
+    ...actual,
+    setExitCode: setExitCodeMock,
+  };
+});
+
 const review = vi.fn();
 const llmUtils = {
   readBackstory: vi.fn(),
@@ -159,7 +182,7 @@ describe('reviewCommand', () => {
 
     // Verify content providers are displayed
     expect(testOutput.text).toContain('--content-source <contentSource>');
-    expect(testOutput.text).toContain('(choices: "github", "text", "file")');
+    expect(testOutput.text).toContain('(choices: "github", "git", "text", "file")');
 
     // Verify requirements providers are displayed
     expect(testOutput.text).toContain('--requirements-source <requirementSource>');
@@ -259,6 +282,71 @@ describe('reviewCommand', () => {
       'review',
       expect.any(Object)
     );
+  });
+
+  it('Should call review with the git content source', async () => {
+    const testConfig = {
+      ...mockConfig,
+      streamOutput: false,
+    };
+    configMock.initConfig.mockResolvedValue(testConfig);
+
+    const { reviewCommand } = await import('#src/commands/reviewCommand.js');
+    const program = new Command();
+
+    // Mock the git diff provider
+    const gitProvider = vi.fn().mockResolvedValue('LOCAL GIT DIFF');
+    vi.doMock('#src/sources/gitDiffSource.js', () => ({
+      get: gitProvider,
+    }));
+
+    reviewCommand(program, {});
+    await program.parseAsync([
+      'na',
+      'na',
+      'review',
+      'origin/main...HEAD',
+      '--content-source',
+      'git',
+    ]);
+
+    expect(gitProvider).toHaveBeenCalledWith(undefined, 'origin/main...HEAD');
+    expect(review).toHaveBeenCalledWith(
+      'REVIEW',
+      'INTERNAL BACKSTORY\nPROJECT GUIDELINES\nREVIEW INSTRUCTIONS',
+      '\nProvided git diff follows within git-1234567 block\n<git-1234567>\nLOCAL GIT DIFF\n</git-1234567>\n',
+      expect.objectContaining({}),
+      'review',
+      expect.any(Object)
+    );
+  });
+
+  it('Should fail loudly when the git content source throws instead of running an empty review', async () => {
+    const testConfig = {
+      ...mockConfig,
+      streamOutput: false,
+    };
+    configMock.initConfig.mockResolvedValue(testConfig);
+
+    const { reviewCommand } = await import('#src/commands/reviewCommand.js');
+    const program = new Command();
+
+    const gitProvider = vi
+      .fn()
+      .mockRejectedValue(
+        new Error('Failed to get git diff for the working tree: fatal: not a git repository')
+      );
+    vi.doMock('#src/sources/gitDiffSource.js', () => ({
+      get: gitProvider,
+    }));
+
+    reviewCommand(program, {});
+    await program.parseAsync(['na', 'na', 'review', '--content-source', 'git']);
+
+    expect(gitProvider).toHaveBeenCalled();
+    expect(displayErrorMock).toHaveBeenCalledWith(expect.stringContaining('not a git repository'));
+    expect(setExitCodeMock).toHaveBeenCalledWith(1);
+    expect(review).not.toHaveBeenCalled();
   });
 
   it('Should call review with message parameter', async () => {

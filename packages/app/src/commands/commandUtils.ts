@@ -21,6 +21,7 @@ export type RequirementSourceType = keyof typeof REQUIREMENTS_SOURCES;
  */
 export const CONTENT_SOURCES = {
   github: '@gaunt-sloth/review/sources/ghPrDiffSource.js',
+  git: '@gaunt-sloth/review/sources/gitDiffSource.js',
   text: '@gaunt-sloth/review/sources/textSource.js',
   file: '@gaunt-sloth/review/sources/fileSource.js',
 } as const;
@@ -55,7 +56,7 @@ export async function getContentFromSource(
   return wrapContent(
     content,
     contentSource,
-    contentSource === 'github' ? 'GitHub diff' : 'content'
+    contentSource === 'github' ? 'GitHub diff' : contentSource === 'git' ? 'git diff' : 'content'
   );
 }
 
