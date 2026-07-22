@@ -62,6 +62,42 @@ const SECRET_KEY_RE = /(api[-_]?key|secret|token|password|passwd|authorization|b
 const NON_SECRET_KEY_NAMES = new Set(['apikeyenvironmentvariable']);
 
 /**
+ * GS2-66 (residual 1) — building blocks for the `Authorization`-header VALUE grammar. GS2-54 bounded
+ * the value to `<scheme?> <one token>` where a token is {@link AUTH_TOKEN}; a credential with a char
+ * OUTSIDE that charset (`clientid:secret`, `token="…"`, `k=v,k=v`, Digest `response="…"`) left a raw
+ * tail beside the marker. These fragments extend the value across the STRUCTURED credential
+ * components (colon-joined `id:secret`, quoted `k="v"`, comma-separated param lists) WITHOUT
+ * re-introducing the greedy prose-swallow GS2-47 removed: horizontal whitespace only (`[ \t]`, never
+ * a newline), a tight colon (no surrounding ws), and a comma-continuation whose atom must be
+ * *param-shaped* (contain `=` or be quoted) so `Authorization: … , then we retried` keeps its prose.
+ */
+// A credential "word": the same token charset the SigV4 / standalone-`Bearer` rules already use.
+const AUTH_TOKEN = String.raw`[A-Za-z0-9._~+/=-]+`;
+// A quoted credential value (`"…"` / `'…'`) that never spans a newline — `k="v"` params + bare quotes.
+const AUTH_QUOTED = String.raw`"[^"\n]*"|'[^'\n]*'`;
+// One credential atom: a token optionally glued to a quoted value (`token="…"`), or a bare quote.
+const AUTH_ATOM = `(?:${AUTH_TOKEN}(?:${AUTH_QUOTED})?|${AUTH_QUOTED})`;
+// A colon-joined chain (`clientid:secret`); the colon is TIGHT (no surrounding whitespace) so a
+// following `Header: value` pair or a prose colon on the same line is not chained in.
+const AUTH_COLON_CHAIN = `${AUTH_ATOM}(?::${AUTH_ATOM})*`;
+// A comma-separated PARAM continuation (`, key2=v2`; Digest `, realm="…"`): the atom after a comma
+// must be param-shaped — `key=…` or quoted — so a comma followed by prose is NOT swallowed.
+const AUTH_PARAM = `(?:[A-Za-z0-9._~+/-]+=(?:${AUTH_QUOTED}|${AUTH_TOKEN})?|${AUTH_QUOTED})`;
+// The full value: an optional scheme word (`Bearer` / `ApiKey` / `Digest` / …) + horizontal ws, then
+// a colon-chain, then zero+ comma-separated params. The `(?!AWS4-HMAC-SHA256[ \t]+Credential=)`
+// lookahead excludes ONLY a genuine SigV4 header (scheme immediately followed by `Credential=`) — its
+// `SignedHeaders=…` is deliberately preserved, so it is owned solely by the Credential/Signature
+// rule. The guard is narrow ON PURPOSE: a malformed/bare `AWS4-HMAC-SHA256 <token>` (no
+// `Credential=`) still falls through here and IS redacted, so the "redact any scheme" contract holds.
+const AUTH_VALUE =
+  `(?!AWS4-HMAC-SHA256[ \\t]+Credential=)(?:${AUTH_TOKEN}[ \\t]+)?${AUTH_COLON_CHAIN}` +
+  `(?:[ \\t]*,[ \\t]*${AUTH_PARAM})*`;
+// The header prefix (name + separator + optional opening quote), captured so `$1` is preserved. Its
+// `\s*` gaps CAN include a newline (over-redacts a value on the next line — SAFE direction, never a
+// leak); the VALUE above uses only horizontal ws and so never crosses a newline.
+const AUTH_HEADER_PREFIX = String.raw`(\bAuthorization["']?\s*[:=]\s*["']?)`;
+
+/**
  * Provider key / auth-header PATTERNS (technique 2) — a tight, prefix-anchored set. Each entry is
  * `[regex, replacement]`. Kept deliberately narrow (well-known key prefixes + explicit auth
  * contexts); we do NOT blanket-redact long alphanumeric strings — that IS the entropy trap the
@@ -85,26 +121,37 @@ const PROVIDER_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   // GS2-54 (gap 2) — GitHub fine-grained PATs (`github_pat_…`); the value carries an inner `_`, so
   // its charset includes `_`. Distinct prefix from the classic rule above (`github_` ≠ `gh[oprsu]_`).
   [/\bgithub_pat_[A-Za-z0-9_]{16,}/g, REDACTED],
-  // GS2-54 (gap 2) — credentials embedded in a URL (`scheme://user:password@host`). Redact the
-  // `user:password` userinfo, KEEP the scheme + host so the artifact stays debuggable. Bounded: the
-  // userinfo stops at `@` (and the password never spans `/` or whitespace), so it cannot swallow the
-  // rest of the URL/line. A URL without userinfo (`https://host:port/path`) has no `user:pass@` and
-  // is left untouched.
-  [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi, `$1${REDACTED}@`],
-  // GS2-54 (gap 1) — an `Authorization` header value (`Authorization: <scheme?> <credential>` /
-  // `"Authorization":"…"`): keep the header name + separator, redact the value REGARDLESS OF SCHEME.
-  // Generalized beyond the old fixed `Bearer|Basic|Token|Digest|Negotiate` list so a non-standard
-  // scheme (`ApiKey <secret>`, an unknown scheme, `AWS4-HMAC-SHA256 Credential=…`) no longer leaks
-  // its token beside the marker. Bounded to <scheme> + ONE credential token (two token runs max,
-  // separated by horizontal whitespace only — never a newline), so it can never swallow following
-  // prose the way the original `[^"]+` did. An optional value-quote is consumed so JSON
-  // `"Authorization":"…"` works too. Runs before the SigV4 and standalone-`Bearer` rules so a normal
-  // header collapses to a single marker; a SigV4 header's `Credential=…` is eaten here and its
-  // trailing `Signature=…` is mopped up by the next rule.
-  [
-    /(\bAuthorization["']?\s*[:=]\s*["']?)[A-Za-z0-9._~+/=-]+(?:[ \t]+[A-Za-z0-9._~+/=-]+)?/gi,
-    `$1${REDACTED}`,
-  ],
+  // GS2-54 (gap 2) + GS2-66 (residual 2) — credentials embedded in a URL. Redact the whole userinfo
+  // (`user:password@` AND the colon-less bare-token form `opaquetoken@`, e.g. a PAT in a clone URL),
+  // KEEP the scheme + host so the artifact stays debuggable. GS2-54 required a `:` in the userinfo
+  // (`[^\s/@:]+:[^\s/@]+@`), so `https://opaquetoken@host` slipped through; the charset now allows the
+  // userinfo to include an internal `:` (or none) and simply stops at `@`. Bounded: userinfo can't
+  // contain `/` or whitespace, so it never swallows the rest of the URL/line. A URL WITHOUT userinfo
+  // (`https://host:port/path`) has no `@` after the authority and is left untouched.
+  [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, `$1${REDACTED}@`],
+  // GS2-54 (gap 1) + GS2-66 (residual 1 & 4) — an `Authorization` header value
+  // (`Authorization: <scheme?> <credential>` / `"Authorization":"…"`): keep the header name +
+  // separator ($1), redact the value REGARDLESS OF SCHEME. Generalized beyond the old fixed
+  // `Bearer|Basic|Token|Digest|Negotiate` list so a non-standard scheme (`ApiKey <secret>`, an
+  // unknown scheme) no longer leaks its token beside the marker.
+  //
+  // GS2-66 extends the value across STRUCTURED credential components (see {@link AUTH_VALUE}):
+  // `clientid:secret`, `token="…"`, `k=v,k=v` lists and a Digest `response="…"` no longer leave a raw
+  // tail past the token charset. It still cannot swallow following PROSE: the credential body is
+  // horizontal-whitespace-only and a comma-continuation must be param-shaped (GS2-47 invariant).
+  //
+  // NEWLINE precision (residual 4): the *credential body* uses only `[ \t]` and so never crosses a
+  // newline — but the header-PREFIX `\s*` gaps CAN span `\n` (`Authorization:\n<token>`), which
+  // over-redacts a next-line value in the SAFE direction (never a leak), not something this rule
+  // guards against. An optional value-quote is consumed so JSON `"Authorization":"…"` works too.
+  //
+  // A genuine SigV4 header is EXCLUDED here via `(?!AWS4-HMAC-SHA256[ \t]+Credential=)` (were it
+  // consumed, its intentionally-kept `SignedHeaders=…` would be eaten): SigV4 is owned entirely by
+  // the next rule, which redacts its `Credential=…`/`Signature=…` and leaves the scheme +
+  // `SignedHeaders` visible. The guard is scoped to a real SigV4 shape so a malformed bare-token
+  // `AWS4-HMAC-SHA256 <token>` is NOT let through unredacted. Runs before the standalone-`Bearer`
+  // rule so a normal header collapses to a single marker.
+  [new RegExp(AUTH_HEADER_PREFIX + AUTH_VALUE, 'gi'), `$1${REDACTED}`],
   // GS2-54 (gap 1) — AWS SigV4 authorization components. The header is comma-separated `key=value`
   // pairs; redact the SENSITIVE `Credential=…` (access-key id) and `Signature=…` values wherever they
   // appear (header value OR a presigned-URL `X-Amz-Credential=…&X-Amz-Signature=…` query), keeping the
