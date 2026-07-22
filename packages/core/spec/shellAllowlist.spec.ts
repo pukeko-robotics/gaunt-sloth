@@ -7,7 +7,7 @@ import {
   PersistedAllowlist,
   hasWideningFlag,
   matchesApproval,
-} from '#src/tools/shell/allowlist.js';
+} from '#src/core/shell/allowlist.js';
 
 describe('hasWideningFlag', () => {
   it('flags operation-widening flags (git clone transport override)', () => {

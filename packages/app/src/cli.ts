@@ -24,7 +24,7 @@ import { coerceBooleanOrString } from '@gaunt-sloth/core/utils/consoleUtils.js';
 const program = new Command();
 
 program
-  .name('gsloth')
+  .name('gth')
   .description('Gaunt Sloth reviewing your PRs')
   .version(getSlothVersion())
   .option(

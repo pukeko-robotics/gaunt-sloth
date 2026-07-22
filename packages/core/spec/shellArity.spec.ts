@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { classifyCommand, meaningfulPrefixTokens, tokenize } from '#src/tools/shell/arity.js';
-import { normalizeCommand } from '#src/tools/shell/normalize.js';
+import { classifyCommand, meaningfulPrefixTokens, tokenize } from '#src/core/shell/arity.js';
+import { normalizeCommand } from '#src/core/shell/normalize.js';
 
 const classify = (cmd: string) => classifyCommand(cmd, normalizeCommand);
 

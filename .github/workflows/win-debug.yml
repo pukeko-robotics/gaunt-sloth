@@ -44,8 +44,8 @@ jobs:
 
   rel8-shim-conflict-repro:
     name: rel8-shim-conflict-repro (windows-latest)
-    # REL-8: cross-package bin-shim conflict. gaunt-sloth-assistant (1.x) and gaunt-sloth
-    # (2.x) both declare the same four bins (gth/gsloth/gaunt-sloth/gaunt-sloth-assistant ->
+    # REL-8: cross-package bin-shim conflict. gaunt-sloth-assistant (1.x) declares four bins
+    # and gaunt-sloth (2.x) three; the three shared names (gth/gsloth/gaunt-sloth ->
     # cli.js). A user who has the 1.x package installed and then installs the 2.x package on
     # top, without removing the old one first, has two global npm packages fighting over the
     # same shim files. This job installs real, already-published packages from the registry

@@ -31,7 +31,6 @@
     "prepack": "tsc"
   },
   "bin": {
-    "gaunt-sloth-assistant": "cli.js",
     "gaunt-sloth": "cli.js",
     "gsloth": "cli.js",
     "gth": "cli.js"

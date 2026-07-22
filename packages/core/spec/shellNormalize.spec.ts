@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeCommand } from '#src/tools/shell/normalize.js';
+import { normalizeCommand } from '#src/core/shell/normalize.js';
 
 describe('normalizeCommand', () => {
   it('folds runs of whitespace and trims', () => {
