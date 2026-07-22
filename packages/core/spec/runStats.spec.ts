@@ -5,6 +5,7 @@ import {
   createRunStatsAccumulator,
   extractRunStats,
   finalizeRunStats,
+  TOOL_RESULT_CONTENT_CAP,
 } from '#src/core/runStats.js';
 
 /**
@@ -69,6 +70,95 @@ describe('core/runStats', () => {
     expect(stats.tokensInput).toBe(0);
     expect(stats.tokensOutput).toBe(0);
     expect(stats.tools.sort()).toEqual(['read_file', 'run_shell_command']);
+  });
+
+  // BATCH-21 — the tool-RESULT capture rides the SAME ToolMessage loop as name capture: one
+  // record per executed tool result (isError from `.status`, capped `content`), with the existing
+  // name/token capture unchanged.
+  it('captures per-tool-result records (isError + content) while name capture stays unchanged', () => {
+    const messages = [
+      new HumanMessage('call two tools'),
+      new AIMessage({
+        content: '',
+        tool_calls: [
+          { id: 'c1', name: 'mcp__authz__get_data', args: {} },
+          { id: 'c2', name: 'read_file', args: { path: 'a.txt' } },
+        ],
+      }),
+      new ToolMessage({
+        content: '{"error":{"code":"MODULE_DISABLED"}}',
+        tool_call_id: 'c1',
+        name: 'mcp__authz__get_data',
+        status: 'error',
+      }),
+      new ToolMessage({ content: 'file body', tool_call_id: 'c2', name: 'read_file' }),
+      new AIMessage({ content: 'done' }),
+    ];
+
+    const stats = extractRunStats(messages);
+    // Existing name capture: unchanged (deduped across request + execution, same as before).
+    expect(stats.tools.sort()).toEqual(['mcp__authz__get_data', 'read_file']);
+    // New result capture: one record per ToolMessage, in arrival order.
+    expect(stats.toolResults).toEqual([
+      {
+        name: 'mcp__authz__get_data',
+        isError: true,
+        content: '{"error":{"code":"MODULE_DISABLED"}}',
+      },
+      { name: 'read_file', isError: false, content: 'file body' },
+    ]);
+  });
+
+  it('does NOT dedupe toolResults: a tool called twice yields two records (names stay deduped)', () => {
+    const acc = createRunStatsAccumulator();
+    accumulateMessage(acc, new ToolMessage({ content: 'a', tool_call_id: '1', name: 'read_file' }));
+    accumulateMessage(
+      acc,
+      new ToolMessage({ content: 'b', tool_call_id: '2', name: 'read_file', status: 'error' })
+    );
+    const stats = finalizeRunStats(acc);
+    expect(stats.tools).toEqual(['read_file']);
+    expect(stats.toolResults).toEqual([
+      { name: 'read_file', isError: false, content: 'a' },
+      { name: 'read_file', isError: true, content: 'b' },
+    ]);
+  });
+
+  it('JSON-stringifies a non-string tool payload (complex content blocks) into content', () => {
+    const acc = createRunStatsAccumulator();
+    accumulateMessage(
+      acc,
+      new ToolMessage({
+        content: [{ type: 'text', text: 'denied' }],
+        tool_call_id: 'c1',
+        name: 'mcp__x__y',
+      })
+    );
+    const stats = finalizeRunStats(acc);
+    expect(stats.toolResults).toEqual([
+      { name: 'mcp__x__y', isError: false, content: '[{"type":"text","text":"denied"}]' },
+    ]);
+  });
+
+  it(`caps a giant tool payload at TOOL_RESULT_CONTENT_CAP (${TOOL_RESULT_CONTENT_CAP}) chars`, () => {
+    const acc = createRunStatsAccumulator();
+    const giant = 'x'.repeat(TOOL_RESULT_CONTENT_CAP + 1000);
+    accumulateMessage(
+      acc,
+      new ToolMessage({ content: giant, tool_call_id: 'c1', name: 'read_file' })
+    );
+    const stats = finalizeRunStats(acc);
+    expect(stats.toolResults).toHaveLength(1);
+    expect(stats.toolResults![0].content).toHaveLength(TOOL_RESULT_CONTENT_CAP);
+    expect(stats.toolResults![0].content).toBe(giant.slice(0, TOOL_RESULT_CONTENT_CAP));
+  });
+
+  it('records no toolResult for a ToolMessage without a usable name (matches name capture)', () => {
+    const acc = createRunStatsAccumulator();
+    accumulateMessage(acc, new ToolMessage({ content: 'x', tool_call_id: 'c1', name: '' }));
+    const stats = finalizeRunStats(acc);
+    expect(stats.tools).toEqual([]);
+    expect(stats.toolResults).toEqual([]);
   });
 
   it('is fail-soft on malformed / non-message input (never throws)', () => {

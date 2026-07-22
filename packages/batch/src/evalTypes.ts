@@ -5,6 +5,7 @@
  * (BATCH-1's cell/outcome shapes), which documents itself as scoped to "cells and outcomes" only
  * — eval's shapes layer on top of (not into) that file.
  */
+import type { ToolResultRecord } from '#src/types.js';
 
 /** The 0-10 judge scale's default pass threshold, matching `review`'s own (unexported)
  * `DEFAULT_PASS_THRESHOLD` in `packages/review/src/middleware/reviewRateMiddleware.ts` — same
@@ -86,6 +87,26 @@ export interface JsonPathCheck {
 }
 
 /**
+ * One `tool_result_json_path` assertion (BATCH-21): select tool results by name `tool` (exact or
+ * glob, the same matcher `must_call` uses), parse each matching result's payload as JSON, and
+ * resolve `path` against it (the same minimal dot/`[index]` path `json_path` uses). At most one of
+ * `equals`/`contains` may be set (enforced in {@link ../evalSuite.js}'s parse):
+ * - neither — pure existence check: the path must resolve in a matching result's payload;
+ * - `equals` — the resolved value must deep-equal this (any JSON value, incl. `null`);
+ * - `contains` — the resolved value must be a string containing this substring.
+ * The assertion passes when AT LEAST ONE matching tool result satisfies it; a non-JSON payload is a
+ * deterministic FAIL for that result, never a throw. Requires the `gth-agent` target (rejected at
+ * parse time otherwise — only the in-process agent surfaces tool results).
+ */
+export interface ToolResultJsonPathCheck {
+  /** Tool-name pattern (exact or glob) selecting which tool's result(s) to check. */
+  tool: string;
+  path: string;
+  equals?: unknown;
+  contains?: string;
+}
+
+/**
  * One expectation block (BATCH-12) — the BATCH-10 assertion bundle PLUS an optional `identities`
  * scope. This is the atom the whole eval layer normalizes to: a flat case is sugar for ONE
  * unscoped expectation (applies to every identity), and a matrix case's `expect:` array is a list
@@ -114,6 +135,13 @@ export interface EvalExpectation {
   mustNotMatch: RegExp[];
   /** BATCH-10 minimal JSON-path assertions over the answer parsed as JSON — see {@link JsonPathCheck}. */
   jsonPath: JsonPathCheck[];
+  /** BATCH-21 tool-RESULT assertion: for each tool-name pattern (exact/glob, `must_call`'s
+   * matcher), at least one called tool matching it returned an ERROR (`isError: true`). Grades the
+   * captured tool results, so it requires the `gth-agent` target (parse-rejected otherwise). */
+  mustError: string[];
+  /** BATCH-21 minimal JSON-path assertions over a matching tool result's payload — see
+   * {@link ToolResultJsonPathCheck}. `gth-agent` target only (parse-rejected otherwise). */
+  toolResultJsonPath: ToolResultJsonPathCheck[];
   /** The judge rubric, when present and non-blank. `undefined` = no judge for this block. */
   judgeRubric?: string;
 }
@@ -142,6 +170,9 @@ export interface TurnRunOutcome {
   tokensInput?: number;
   tokensOutput?: number;
   tools?: string[];
+  /** BATCH-21 — this turn's per-tool-call result records (parallel to {@link tools}; a per-turn
+   * delta like everything else here). Only the in-process `gth-agent` runner populates it. */
+  toolResults?: ToolResultRecord[];
   error?: string;
 }
 
@@ -235,6 +266,8 @@ export interface EvalTurnResult {
   tokensInput?: number;
   tokensOutput?: number;
   tools?: string[];
+  /** BATCH-21 — this turn's per-tool-call result records (mirrors {@link TurnRunOutcome.toolResults}). */
+  toolResults?: ToolResultRecord[];
   /** Whether this turn's SUT invocation ran (mirrors {@link TurnRunOutcome.ok}); `false` = the turn
    * produced no answer (transport/agent error, or the conversation aborted before reaching it). */
   ok: boolean;
@@ -263,6 +296,10 @@ export interface EvalCaseResult {
   tokensInput?: number;
   tokensOutput?: number;
   tools?: string[];
+  /** BATCH-21 — the cell's per-tool-call result records (parallel to {@link tools}; omitted when
+   * the runner produced none, so a pre-BATCH-21 `<id>.json` stays byte-for-byte identical). For a
+   * multi-turn cell this stays unset like `tools` — read {@link turns} instead. */
+  toolResults?: ToolResultRecord[];
   durationMs: number;
   checks?: DeterministicCheckResult;
   judge?: JudgeOutcome;

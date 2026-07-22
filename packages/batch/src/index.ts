@@ -11,6 +11,7 @@ export type {
   MatrixCell,
   MatrixRow,
   RunCellFn,
+  ToolResultRecord,
 } from '#src/types.js';
 export { DEFAULT_CONCURRENCY } from '#src/types.js';
 

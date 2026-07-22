@@ -1,7 +1,8 @@
 import { runBatchMatrix } from '#src/BatchRunner.js';
 import { runDeterministicChecks } from '#src/deterministicChecks.js';
 import { runToolCallChecks } from '#src/toolChecks.js';
-import type { CellResult, MatrixCell, RunCellFn } from '#src/types.js';
+import { runToolResultChecks } from '#src/toolResultChecks.js';
+import type { CellResult, MatrixCell, RunCellFn, ToolResultRecord } from '#src/types.js';
 import type {
   EvalCase,
   EvalCaseResult,
@@ -271,14 +272,16 @@ export function classifyEvalExit(summary: EvalSuiteSummary): EvalExitCode {
 /**
  * Grade ONE answer (+ its tool trace) against a set of APPLICABLE expectation blocks — the shared
  * inner loop of both the single-turn {@link gradeUnit} and the multi-turn {@link gradeConversationUnit}.
- * Runs each block's deterministic checks, tool-trace checks, and judge (when it declares a rubric),
- * accumulating failure `reasons` (a passing block/judge appends nothing). `judgeOutcome` is the FIRST
- * block that declared a judge, so a single-block case's `judge` field is exactly that block's outcome
- * (back-compat). For a single applicable block this reproduces the pre-BATCH-12 grading byte-for-byte.
+ * Runs each block's deterministic checks, tool-trace checks, tool-RESULT checks (BATCH-21), and
+ * judge (when it declares a rubric), accumulating failure `reasons` (a passing block/judge appends
+ * nothing). `judgeOutcome` is the FIRST block that declared a judge, so a single-block case's
+ * `judge` field is exactly that block's outcome (back-compat). For a single applicable block this
+ * reproduces the pre-BATCH-12 grading byte-for-byte.
  */
 async function gradeApplicableBlocks(
   answer: string,
   tools: string[],
+  toolResults: ToolResultRecord[],
   applicable: EvalExpectation[],
   passThreshold: number,
   judge: JudgeFn | undefined
@@ -296,8 +299,12 @@ async function gradeApplicableBlocks(
     // Tool-trace assertions read the captured tool names, not the answer, so they are graded
     // separately (see #src/toolChecks.js) and merged into `reasons` alongside the answer checks.
     const toolFailures = runToolCallChecks(tools, block);
+    // BATCH-21 tool-RESULT assertions read the captured per-call results (isError + payload) — a
+    // third input kind, graded by its own checker (#src/toolResultChecks.js) and merged into the
+    // same `reasons` so they drive the same PASS/FAIL/exit contract.
+    const toolResultFailures = runToolResultChecks(toolResults, block);
     deterministicFailures.push(...checks.failures);
-    reasons.push(...checks.failures, ...toolFailures);
+    reasons.push(...checks.failures, ...toolFailures, ...toolResultFailures);
 
     if (block.judgeRubric) {
       let outcome: JudgeOutcome;
@@ -345,6 +352,9 @@ async function gradeUnit(
     tokensInput: cellResult.tokensInput,
     tokensOutput: cellResult.tokensOutput,
     tools: cellResult.tools,
+    // BATCH-21: threaded parallel to `tools`; `undefined` for a runner that captured none, so a
+    // pre-BATCH-21 cell's `<id>.json` keeps its exact keys (JSON.stringify drops undefined).
+    toolResults: cellResult.toolResults,
     durationMs: cellResult.durationMs,
   };
 
@@ -373,9 +383,11 @@ async function gradeUnit(
 
   const answer = cellResult.answer ?? '';
   const tools = cellResult.tools ?? [];
+  const toolResults = cellResult.toolResults ?? [];
   const { reasons, deterministicFailures, judgeOutcome } = await gradeApplicableBlocks(
     answer,
     tools,
+    toolResults,
     applicable,
     evalCase.passThreshold,
     judge
@@ -455,6 +467,7 @@ async function gradeConversationUnit(
         tokensInput: outcome?.tokensInput,
         tokensOutput: outcome?.tokensOutput,
         tools: outcome?.tools,
+        toolResults: outcome?.toolResults,
         ok: false,
         verdict: 'FAIL',
         reasons: [detail],
@@ -466,9 +479,11 @@ async function gradeConversationUnit(
     anyTurnRan = true;
     const answer = outcome.answer ?? '';
     const tools = outcome.tools ?? [];
+    const toolResults = outcome.toolResults ?? [];
     const { reasons, deterministicFailures, judgeOutcome } = await gradeApplicableBlocks(
       answer,
       tools,
+      toolResults,
       applicable,
       evalCase.passThreshold,
       judge
@@ -480,6 +495,7 @@ async function gradeConversationUnit(
       tokensInput: outcome.tokensInput,
       tokensOutput: outcome.tokensOutput,
       tools: outcome.tools,
+      toolResults: outcome.toolResults,
       ok: true,
       verdict: turnVerdict,
       checks: { passed: deterministicFailures.length === 0, failures: deterministicFailures },

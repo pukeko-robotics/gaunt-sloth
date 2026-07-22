@@ -20,6 +20,8 @@ function makeExpectation(overrides: Partial<EvalExpectation> = {}): EvalExpectat
     mustMatch: [],
     mustNotMatch: [],
     jsonPath: [],
+    mustError: [],
+    toolResultJsonPath: [],
     judgeRubric: undefined,
     ...overrides,
   };
@@ -336,6 +338,226 @@ describe('runEvalSuite tool-call assertions', () => {
       'missing "hello"',
       'called forbidden tool "read_file" (matched "read_file")',
     ]);
+  });
+});
+
+// BATCH-21: tool-RESULT assertions graded end-to-end through the runner — the acceptance scenario
+// is "the restricted identity CALLED the tool AND the call came back denied", deterministic (no
+// judge), from a fake runCell that stubs the captured `toolResults`.
+describe('runEvalSuite tool-result assertions', () => {
+  it('PASSes called-AND-denied deterministically (must_call + must_error + payload path)', async () => {
+    const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
+    const suite = makeSuite([
+      makeCase({
+        mustCall: ['mcp__authz__*'],
+        mustError: ['mcp__authz__*'],
+        toolResultJsonPath: [
+          { tool: 'mcp__authz__*', path: 'error.code', equals: 'MODULE_DISABLED' },
+        ],
+      }),
+    ]);
+    const runCell = runCellReturning({
+      'case-1': {
+        ok: true,
+        answer: 'Access to that module is disabled for your account.',
+        tools: ['mcp__authz__get_data'],
+        toolResults: [
+          {
+            name: 'mcp__authz__get_data',
+            isError: true,
+            content: '{"error":{"code":"MODULE_DISABLED"}}',
+          },
+        ],
+      },
+    });
+
+    const summary = await runEvalSuite(suite, { runCell });
+
+    expect(summary.cases[0]).toMatchObject({ verdict: 'PASS', reasons: [] });
+    expect(classifyEvalExit(summary)).toBe(0);
+  });
+
+  it('FAILs (exit 1) when the tool was called but returned real data instead of the denial', async () => {
+    const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
+    const suite = makeSuite([
+      makeCase({
+        mustCall: ['mcp__authz__*'],
+        mustError: ['mcp__authz__*'],
+        toolResultJsonPath: [
+          { tool: 'mcp__authz__*', path: 'error.code', equals: 'MODULE_DISABLED' },
+        ],
+      }),
+    ]);
+    const runCell = runCellReturning({
+      'case-1': {
+        ok: true,
+        answer: 'Here are the rows.',
+        tools: ['mcp__authz__get_data'],
+        toolResults: [
+          { name: 'mcp__authz__get_data', isError: false, content: '{"rows":[1,2,3]}' },
+        ],
+      },
+    });
+
+    const summary = await runEvalSuite(suite, { runCell });
+
+    expect(summary.cases[0].verdict).toBe('FAIL');
+    expect(summary.cases[0].reasons).toEqual([
+      'tool "mcp__authz__*" did not return an error',
+      'tool_result_json_path "error.code" (tool "mcp__authz__*"): path did not resolve',
+    ]);
+    expect(classifyEvalExit(summary)).toBe(1);
+  });
+
+  it('FAILs deterministically on a NON-JSON tool payload (no throw, a graded reason)', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    const suite = makeSuite([
+      makeCase({
+        toolResultJsonPath: [{ tool: 'mcp__authz__*', path: 'error.code' }],
+      }),
+    ]);
+    const runCell = runCellReturning({
+      'case-1': {
+        ok: true,
+        answer: 'denied',
+        tools: ['mcp__authz__get_data'],
+        toolResults: [
+          { name: 'mcp__authz__get_data', isError: true, content: 'Error: access denied' },
+        ],
+      },
+    });
+
+    const summary = await runEvalSuite(suite, { runCell });
+
+    expect(summary.cases[0].verdict).toBe('FAIL');
+    expect(summary.cases[0].reasons).toEqual([
+      'tool_result_json_path "error.code" (tool "mcp__authz__*"): result payload is not JSON',
+    ]);
+  });
+
+  it('treats a missing toolResults capture as "no results" (must_error fails, never passes silently)', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    const suite = makeSuite([makeCase({ mustError: ['mcp__*'] })]);
+    // Outcome has tools but NO toolResults field (e.g. an older/fake producer).
+    const runCell = runCellReturning({
+      'case-1': { ok: true, answer: 'done', tools: ['mcp__authz__get_data'] },
+    });
+
+    const summary = await runEvalSuite(suite, { runCell });
+
+    expect(summary.cases[0].verdict).toBe('FAIL');
+    expect(summary.cases[0].reasons).toEqual(['tool "mcp__*" did not return an error']);
+  });
+
+  it('merges tool-result failures after answer + tool-call failures in reasons', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    const suite = makeSuite([
+      makeCase({ mustContain: ['denied'], mustCall: ['mcp__*'], mustError: ['mcp__*'] }),
+    ]);
+    const runCell = runCellReturning({
+      'case-1': { ok: true, answer: 'here you go', tools: ['read_file'], toolResults: [] },
+    });
+
+    const summary = await runEvalSuite(suite, { runCell });
+
+    expect(summary.cases[0].reasons).toEqual([
+      'missing "denied"',
+      'did not call "mcp__*"',
+      'tool "mcp__*" did not return an error',
+    ]);
+  });
+
+  it('threads toolResults through to the EvalCaseResult (parallel to tools)', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    const toolResults = [
+      { name: 'mcp__authz__get_data', isError: true, content: '{"error":{"code":"X"}}' },
+    ];
+    const suite = makeSuite([makeCase({ mustError: ['mcp__authz__*'] })]);
+    const runCell = runCellReturning({
+      'case-1': { ok: true, answer: 'denied', tools: ['mcp__authz__get_data'], toolResults },
+    });
+
+    const summary = await runEvalSuite(suite, { runCell });
+
+    expect(summary.cases[0].toolResults).toEqual(toolResults);
+    // And when the runner captured none, the field stays absent (pre-BATCH-21 JSON byte-stable).
+    const summary2 = await runEvalSuite(makeSuite([makeCase({ mustContain: ['hi'] })]), {
+      runCell: runCellReturning({ 'case-1': { ok: true, answer: 'hi' } }),
+    });
+    expect(summary2.cases[0].toolResults).toBeUndefined();
+  });
+
+  it('grades EACH turn of a multi-turn case against its OWN per-turn toolResults delta', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    const evalCase: EvalCase = {
+      id: 'conv-1',
+      passThreshold: 6,
+      turns: [
+        {
+          user: 'fetch as admin scope',
+          expectations: [makeExpectation({ mustCall: ['mcp__authz__*'] })],
+        },
+        {
+          user: 'now fetch the restricted module',
+          expectations: [makeExpectation({ mustError: ['mcp__authz__*'] })],
+        },
+      ],
+    };
+    const runConversation: RunConversationFn = async () => [
+      {
+        ok: true,
+        answer: 'rows',
+        tools: ['mcp__authz__get_data'],
+        toolResults: [{ name: 'mcp__authz__get_data', isError: false, content: '{"rows":[1]}' }],
+      },
+      {
+        ok: true,
+        answer: 'denied',
+        tools: ['mcp__authz__get_data'],
+        toolResults: [
+          { name: 'mcp__authz__get_data', isError: true, content: '{"error":"denied"}' },
+        ],
+      },
+    ];
+
+    const summary = await runEvalSuite(makeSuite([evalCase]), { runConversation });
+
+    expect(summary.cases[0].verdict).toBe('PASS');
+    expect(summary.cases[0].turns).toHaveLength(2);
+    expect(summary.cases[0].turns![0].toolResults).toEqual([
+      { name: 'mcp__authz__get_data', isError: false, content: '{"rows":[1]}' },
+    ]);
+    expect(summary.cases[0].turns![1].toolResults).toEqual([
+      { name: 'mcp__authz__get_data', isError: true, content: '{"error":"denied"}' },
+    ]);
+  });
+
+  it('FAILs the right turn when only turn 2 misses its tool-result assertion', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    const evalCase: EvalCase = {
+      id: 'conv-2',
+      passThreshold: 6,
+      turns: [
+        { user: 'one', expectations: [makeExpectation({ mustContain: ['ok'] })] },
+        { user: 'two', expectations: [makeExpectation({ mustError: ['mcp__*'] })] },
+      ],
+    };
+    const runConversation: RunConversationFn = async () => [
+      { ok: true, answer: 'ok', tools: [], toolResults: [] },
+      {
+        ok: true,
+        answer: 'here',
+        tools: ['mcp__x__y'],
+        toolResults: [{ name: 'mcp__x__y', isError: false, content: '{}' }],
+      },
+    ];
+
+    const summary = await runEvalSuite(makeSuite([evalCase]), { runConversation });
+
+    expect(summary.cases[0].verdict).toBe('FAIL');
+    expect(summary.cases[0].reasons).toEqual(['turn 2: tool "mcp__*" did not return an error']);
+    expect(summary.cases[0].turns![0].verdict).toBe('PASS');
+    expect(summary.cases[0].turns![1].verdict).toBe('FAIL');
   });
 });
 

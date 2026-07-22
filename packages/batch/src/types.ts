@@ -36,6 +36,21 @@ export interface MatrixCell {
   content: string;
 }
 
+/**
+ * BATCH-21 — one executed tool call's result record, as captured by core's GS2-16 run-stats
+ * accumulator (a structural mirror of `@gaunt-sloth/core`'s `GthToolResult`, kept local so this
+ * package's cell/outcome shapes stay independent of LLM/runner types — same reason `tools` is a
+ * plain `string[]` here). One record per executed tool call, in arrival order, NOT deduplicated.
+ */
+export interface ToolResultRecord {
+  /** The tool that produced the result. */
+  name: string;
+  /** `true` iff the tool result carried the error status (LangChain `ToolMessage.status === 'error'`). */
+  isError: boolean;
+  /** The result payload as text (non-string payloads JSON-stringified), size-capped at capture. */
+  content?: string;
+}
+
 /** What one attempt at running a cell through the shared single-shot runtime produced. */
 export interface CellRunOutcome {
   /** `true` when the cell's run completed without error; mirrors `runSingleShot`'s contract. */
@@ -53,6 +68,10 @@ export interface CellRunOutcome {
   tokensOutput?: number;
   /** Names of tools invoked during the run, when available (see {@link answer}'s caveat). */
   tools?: string[];
+  /** BATCH-21 — per-tool-call result records for the run, when available; parallel to
+   * {@link tools} but un-deduped and carrying each result's error status + payload. Only the
+   * in-process `gth-agent` runner can populate this (external adk-agent/ag-ui targets never do). */
+  toolResults?: ToolResultRecord[];
   /** A human-readable failure reason, set when `ok` is `false`. */
   error?: string;
 }
