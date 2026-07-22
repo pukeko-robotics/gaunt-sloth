@@ -3,6 +3,12 @@ export const GSLOTH_SETTINGS_DIR = '.gsloth-settings';
 export const GSLOTH_AUTH = '.gsloth-auth';
 export const USER_PROJECT_CONFIG_JS = '.gsloth.config.js';
 export const USER_PROJECT_CONFIG_JSON = '.gsloth.config.json';
+/**
+ * GS2-69 — the `.jsonc` filename variant. Both JSON names are parsed by the same lenient
+ * {@link import('#src/config/jsonc.js').parseJsonc}; this one just carries the conventional
+ * extension so editors/review tools expect the comments. `.json` wins when both exist.
+ */
+export const USER_PROJECT_CONFIG_JSONC = '.gsloth.config.jsonc';
 export const USER_PROJECT_CONFIG_MJS = '.gsloth.config.mjs';
 export const USER_PROJECT_CONFIG_TS = '.gsloth.config.ts';
 export const GSLOTH_BACKSTORY = '.gsloth.backstory.md';
