@@ -12,12 +12,12 @@
  * `chmod -R 777 ./dir`, `curl | sh`) are intentionally NOT here — those are what
  * the confirmation dialog / yolo are for.
  *
- * Patterns match the NORMALIZED command ({@link ./normalize.js}) so obfuscation
- * (ANSI/fullwidth/backslash splits/whitespace padding) cannot bypass them.
+ * Patterns match the NORMALIZED command (`@gaunt-sloth/core` `core/shell/normalize`) so
+ * obfuscation (ANSI/fullwidth/backslash splits/whitespace padding) cannot bypass them.
  *
  * Patterned after hermes-agent `tools/approval.py` HARDLINE_PATTERNS.
  */
-import { normalizeCommand } from '#src/tools/shell/normalize.js';
+import { normalizeCommand } from '@gaunt-sloth/core/core/shell/normalize.js';
 
 // Matches a position where the shell would begin parsing a NEW command: start of
 // string, after a separator (; & | newline), after `$(` or backtick, optionally
