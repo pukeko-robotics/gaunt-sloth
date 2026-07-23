@@ -229,6 +229,19 @@ export class GthAgentRunner {
           );
         }
         debugLog(`Stream completed. Total response length: ${result.length}`);
+        // EXT-37: a content-policy refusal (OpenAI content_filter / Anthropic stop_reason=refusal /
+        // Bedrock guardrail_intervened) is detected one layer down in GthAbstractAgent — the only
+        // place a message's response_metadata is visible — and surfaced there as a clear, non-empty
+        // terminal answer. That non-empty result intentionally bypasses this empty-response retry:
+        // a refusal is deterministic, so re-invoking the SAME model would only burn a paid call and
+        // fail identically. Only a genuinely empty turn reaches the retry below.
+        //
+        // Fallback-model EXTENSION POINT: hermes tries a *different* model once on refusal (a
+        // different model may not refuse). gaunt-sloth has no runtime fallback-model config today
+        // (`getCuratedFallbackModel` is init-time per-provider defaulting, not runtime failover), so
+        // per YAGNI none is built. When such a config is added, the one-shot fallback belongs where
+        // the refusal is detected (GthAbstractAgent.surfaceRefusal): try the fallback model ONCE
+        // before surfacing, and never retry the same model.
         if (result.trim().length === 0) {
           debugLog('Stream produced empty response, retrying once with non-streaming invoke.');
           const fallback = await this.agent.invoke(messages, this.runConfig);

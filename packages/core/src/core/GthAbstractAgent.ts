@@ -32,6 +32,7 @@ import {
   materializeBinaryOutputs,
   renderAssistantContent,
 } from '#src/utils/binaryOutputUtils.js';
+import { detectRefusal, buildRefusalMessage, type RefusalInfo } from '#src/core/refusal.js';
 
 /** TUI-C22 — one classified slice of streamed assistant text: answer prose vs. inline thinking. */
 type ThinkSegment = { kind: 'answer' | 'reasoning'; text: string };
@@ -283,6 +284,20 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   ): Promise<void>;
 
   /**
+   * EXT-37 — surface a detected content-policy refusal: emit the clear, user-facing explanation at
+   * WARNING level (an empty-content refusal streams nothing, so without this the console shows
+   * nothing) and return the same message so it becomes the turn's terminal answer. Shared by the
+   * non-streaming {@link invoke} and streaming {@link streamFromInput} paths so both render a
+   * refusal identically. A refusal is a *successful* (if declined) response — never a retry.
+   */
+  protected surfaceRefusal(info: RefusalInfo): string {
+    const message = buildRefusalMessage(info);
+    debugLog(`Content-policy refusal detected (provider=${info.provider} reason=${info.reason})`);
+    this.statusUpdate(StatusLevel.WARNING, message);
+    return message;
+  }
+
+  /**
    * Invoke LLM with a message and runnable config.
    * For streaming use {@link #stream} method, streaming is preferred if model API supports it.
    * Please note that this when tools are involved, this method will anyway do multiple LLM
@@ -316,6 +331,21 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
         const allMessages = Array.isArray(response.messages) ? response.messages : [];
         for (const m of allMessages.slice(priorMessageCount)) this.recordRunStats(m);
         const finalMessage = response.messages[response.messages.length - 1];
+
+        // EXT-37: content-policy refusal. A successful response whose stop/finish reason is a
+        // refusal (OpenAI content_filter / Anthropic stop_reason=refusal / Bedrock
+        // guardrail_intervened) is terminal-but-clear: surface the model's explanation and RETURN
+        // it as the answer. It must NOT flow into the empty-response retry (a refusal is
+        // deterministic — retrying just burns a paid call). Returning a non-empty message means the
+        // caller writes it to the output file and exits ok, rather than re-wrapping a *successful*
+        // (if declined) response as "Failed to get answer". A fallback-model attempt would hang
+        // here (see the extension point in GthAgentRunner.processMessages), but no runtime
+        // fallback-model config exists today, so we surface terminally.
+        const refusal = detectRefusal(finalMessage);
+        if (refusal) {
+          return this.surfaceRefusal(refusal);
+        }
+
         const finalContent = finalMessage?.content;
         const processedContent = !this.config.writeBinaryOutputsToFile
           ? {
@@ -408,6 +438,9 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
     // GS2-16: bound so the stream `start()` closure (whose `this` is the stream source, not the
     // agent) can fold each chunk into the run tally. Fail-soft inside recordRunStats.
     const recordRunStats = (m: unknown) => this.recordRunStats(m);
+    // EXT-37: bound so the stream `start()` closure can surface a detected refusal (WARNING +
+    // returns the message to enqueue) without a `this` reference.
+    const surfaceRefusal = (info: RefusalInfo) => this.surfaceRefusal(info);
     // TUI-C30 — compact per-tool-call indication for the plain surface (`name(args…)` + the
     // canonical 10-line greyed preview when each ToolMessage lands). Per-stream state; emits at
     // INFO level so the existing consoleLevel gate governs it like the historical tool notices.
@@ -460,12 +493,21 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
           let totalChunks = 0;
           const seenBinaryBlocks = new Set<string>();
           const binaryBlocks: Array<{ mimeType: string; data: string }> = [];
+          // EXT-37: a content-policy refusal's stop/finish reason rides on a chunk's
+          // response_metadata (usually with empty content). Capture it here and surface it AFTER
+          // the stream drains, so the returned text is non-empty and the run loop treats it as
+          // terminal-but-clear instead of routing an empty streamed turn into the retry.
+          let refusalInfo: RefusalInfo | null = null;
 
           for await (const [chunk, _metadata] of stream) {
             debugLogObject('Stream chunk', { chunk, _metadata });
             // GS2-16: fold every chunk (AIMessageChunk usage/tool_calls, ToolMessage name) into
             // the run tally before the text-only handling below.
             recordRunStats(chunk);
+            // EXT-37: first refusal signal wins; keep scanning chunks for text/binary as normal.
+            if (!refusalInfo) {
+              refusalInfo = detectRefusal(chunk);
+            }
             // TUI-C30: fold the chunk into the plain-surface tool indication (renders each
             // completed call when its ToolMessage arrives; a no-op for plain text chunks).
             toolIndication.observe(chunk);
@@ -507,6 +549,13 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
             for (const successMessage of processedContent.successMessages) {
               statusUpdate(StatusLevel.SUCCESS, successMessage);
             }
+          }
+          // EXT-37: surface a captured refusal as the terminal answer. Enqueue the clear message
+          // (so the drained result is non-empty and bypasses the empty-response retry) and print it
+          // once at WARNING level (surfaceRefusal). Any partial content already streamed is kept;
+          // the refusal notice follows it, and its explanation carries any model-provided text.
+          if (refusalInfo) {
+            controller.enqueue(surfaceRefusal(refusalInfo));
           }
           debugLog(`Stream completed. Total chunks: ${totalChunks}`);
           controller.close();
