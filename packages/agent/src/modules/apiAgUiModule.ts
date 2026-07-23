@@ -12,6 +12,7 @@ import {
   displayWarning,
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { getNewRunnableConfig } from '@gaunt-sloth/core/utils/llmUtils.js';
+import { textToNativeToolCalls } from '@gaunt-sloth/core/core/toolCallRepair/index.js';
 import { HumanMessage, AIMessage, SystemMessage, ToolMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import { tool } from '@langchain/core/tools';
@@ -116,15 +117,26 @@ function parseToolArguments(raw: string | undefined, toolName: string): Record<s
 }
 
 /**
- * Convert AG-UI message format to LangChain BaseMessage
+ * Convert AG-UI message format to LangChain BaseMessage.
+ *
+ * `allowedToolNames` is the set of tool names bound to this run (config.tools + any run-input
+ * client tools). It gates EXT-35 plain-text tool-call repair on the assistant branch: an incoming
+ * assistant message with NO native `toolCalls` whose content is a STANDALONE text-emitted call
+ * (bracket / `<function=…>` / Harmony — the dialects small/local models produce) is promoted to a
+ * native tool_call so a replayed history turn is a real tool call rather than inert prose. An empty
+ * (or absent) allow-list promotes nothing — the prose-safe default. This runs alongside
+ * {@link parseToolArguments} (which rescues malformed args on an ALREADY-native tool_call).
  */
-function convertMessage(msg: {
-  role: string;
-  content?: string;
-  id: string;
-  toolCalls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>;
-  toolCallId?: string;
-}): BaseMessage {
+export function convertMessage(
+  msg: {
+    role: string;
+    content?: string;
+    id: string;
+    toolCalls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>;
+    toolCallId?: string;
+  },
+  allowedToolNames?: Set<string>
+): BaseMessage {
   const content = typeof msg.content === 'string' ? msg.content : '';
   switch (msg.role) {
     case 'user':
@@ -140,6 +152,16 @@ function convertMessage(msg: {
             type: 'tool_call' as const,
           })),
         });
+      }
+      // EXT-35: no native tool_calls — a small/local model may have emitted the call as assistant
+      // TEXT. Promote a standalone text-emitted call (gated by the bound-tool allow-list + payload
+      // cap + standalone-only) to a native tool_call; otherwise fall through to plain text.
+      const repairedToolCalls =
+        allowedToolNames && allowedToolNames.size > 0
+          ? textToNativeToolCalls(content, { allowedToolNames })
+          : undefined;
+      if (repairedToolCalls) {
+        return new AIMessage({ content: '', tool_calls: repairedToolCalls });
       }
       return new AIMessage(content);
     }
@@ -264,6 +286,16 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
     const hasClientTools = Array.isArray(tools) && tools.length > 0;
     const activeAgent = hasClientTools ? await getAgentForTools(tools as RunInputTool[]) : agent;
 
+    // EXT-35: the names of the tools bound to THIS run (server config.tools + any run-input client
+    // tools) — the allow-list for plain-text tool-call repair in convertMessage. Only a text-emitted
+    // call naming one of these is promoted to a native tool_call; an empty set promotes nothing.
+    const allowedToolNames = new Set<string>(
+      [
+        ...((config.tools as Array<{ name?: string }> | undefined) ?? []).map((t) => t?.name),
+        ...(hasClientTools ? (tools as RunInputTool[]).map((t) => t.name) : []),
+      ].filter((name): name is string => Boolean(name))
+    );
+
     const encoder = new EventEncoder({ accept: req.headers.accept });
     res.setHeader('Content-Type', encoder.getContentType());
     res.setHeader('Cache-Control', 'no-cache');
@@ -350,7 +382,7 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
               .map((s: unknown) =>
                 typeof s === 'string'
                   ? new HumanMessage(s)
-                  : convertMessage(s as Parameters<typeof convertMessage>[0])
+                  : convertMessage(s as Parameters<typeof convertMessage>[0], allowedToolNames)
               )
               .filter((m): m is BaseMessage => Boolean(m))
           : [];
@@ -364,7 +396,9 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
         // The system prompt (backstory + guidelines + mode prompt + identity) lives in the
         // deep-agent graph via createDeepAgent({ systemPrompt }) — see GthDeepAgent — so it is no
         // longer prepended here. A separate, non-first SystemMessage would be rejected by Anthropic.
-        const langChainMessages: BaseMessage[] = (messages || []).map(convertMessage);
+        const langChainMessages: BaseMessage[] = (messages || []).map(
+          (m: Parameters<typeof convertMessage>[0]) => convertMessage(m, allowedToolNames)
+        );
         eventStream = activeAgent.streamWithEvents(langChainMessages, runConfig, ac.signal);
       }
 
