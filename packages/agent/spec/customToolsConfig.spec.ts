@@ -23,7 +23,14 @@ const systemUtilsMock = {
   },
   getCurrentWorkDir: vi.fn(() => '/test/project'),
 };
-vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
+// EXT-42: partial mock (spread over the real module) so buildScrubbedEnv()'s real `env` — and the
+// stdin/createInterface the validation-override prompt uses — survive, while keeping the intentional
+// stdout + getCurrentWorkDir stubs. GthCustomToolkit now reaches `env`/work-dir through the shared
+// scrub/work-dir helpers; a full replacement would drop those exports and throw at spawn time.
+vi.mock('#src/utils/systemUtils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#src/utils/systemUtils.js')>();
+  return { ...actual, ...systemUtilsMock };
+});
 
 // Mock GthFileSystemToolkit
 vi.mock('#src/tools/GthFileSystemToolkit.js', () => ({

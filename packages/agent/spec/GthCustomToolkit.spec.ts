@@ -1,9 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import path from 'node:path';
 
-// Mock child_process
+// Mock child_process. EXT-42: `spawnSync` is required because GthCustomToolkit now imports
+// GthDevToolkit's `killProcessGroup`, and that module imports `{ spawn, spawnSync }` — on the
+// Windows kill branch killProcessGroup calls spawnSync('taskkill', …), so it must be a mock fn.
 const childProcessMock = {
   spawn: vi.fn(),
+  spawnSync: vi.fn(),
 };
 vi.mock('child_process', () => childProcessMock);
 
@@ -29,11 +32,31 @@ const systemUtilsMock = {
   },
   createInterface: vi.fn(),
 };
-vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
+// EXT-42: partial mock (spread over the real module) so the terminal handles stay stubbed while the
+// REAL `env` / `getCurrentWorkDir` survive — GthCustomToolkit now reaches them via the shared
+// buildScrubbedEnv() / getShellWorkDir() helpers. A full replacement would drop those exports and
+// break the scrub/cwd path (the same importOriginal pattern GthDevToolkit.shell.integration uses).
+vi.mock('#src/utils/systemUtils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#src/utils/systemUtils.js')>();
+  return { ...actual, ...systemUtilsMock };
+});
 
 describe('GthCustomToolkit', () => {
   let GthCustomToolkit: typeof import('#src/tools/GthCustomToolkit.js').default;
   let toolkit: InstanceType<typeof import('#src/tools/GthCustomToolkit.js').default>;
+
+  // EXT-42: the timeout-kill tests below pin the platform to linux so `killProcessGroup` takes the
+  // POSIX negative-pid branch (asserted via a `process.kill` spy). Cross-platform kill mechanics are
+  // covered by GthDevToolkit.killProcessGroup.spec.ts; pinning here keeps THIS suite's group-kill
+  // assertion deterministic on any CI host (a win32 runner would otherwise hit the taskkill branch).
+  const realPlatform = process.platform;
+  const setPlatform = (value: NodeJS.Platform): void => {
+    Object.defineProperty(process, 'platform', { value, configurable: true });
+  };
+
+  afterEach(() => {
+    setPlatform(realPlatform);
+  });
 
   beforeEach(async () => {
     vi.resetAllMocks();
@@ -343,10 +366,12 @@ describe('GthCustomToolkit', () => {
       const tool = toolkit.tools.find((t) => t.name === 'deploy')!;
       const result = await tool.invoke({});
       expect(result).toContain("Command 'npm run deploy' completed successfully");
-      expect(childProcessMock.spawn).toHaveBeenCalledWith('npm run deploy', {
-        shell: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      // EXT-42: spawn now also carries cwd/detached/env; assert the unchanged core options here and
+      // the added hardening in the dedicated EXT-42 tests.
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        'npm run deploy',
+        expect.objectContaining({ shell: true, stdio: ['ignore', 'pipe', 'pipe'] })
+      );
     });
 
     it('should invoke custom command with parameters using placeholders', async () => {
@@ -440,7 +465,7 @@ describe('GthCustomToolkit', () => {
       );
       expect(childProcessMock.spawn).toHaveBeenCalledWith(
         'mpremote connect /dev/ttyUSB0 fs cp fixed/lesson5/Move_Dance1.py :main.py',
-        { shell: true, stdio: ['ignore', 'pipe', 'pipe'] }
+        expect.objectContaining({ shell: true, stdio: ['ignore', 'pipe', 'pipe'] })
       );
     });
 
@@ -471,7 +496,7 @@ describe('GthCustomToolkit', () => {
         expect(systemUtilsMock.createInterface).not.toHaveBeenCalled();
         expect(childProcessMock.spawn).toHaveBeenCalledWith(
           'mpremote connect /dev/ttyUSB0 fs cp fixed/lesson5/Move_Dance1.py :main.py',
-          { shell: true, stdio: ['ignore', 'pipe', 'pipe'] }
+          expect.objectContaining({ shell: true, stdio: ['ignore', 'pipe', 'pipe'] })
         );
       }
     );
@@ -629,10 +654,48 @@ describe('GthCustomToolkit', () => {
       expect(consoleUtilsMock.displayInfo).toHaveBeenCalledWith(
         '\n🔧 Executing test_tool: echo test'
       );
-      expect(childProcessMock.spawn).toHaveBeenCalledWith('echo test', {
-        shell: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        'echo test',
+        expect.objectContaining({ shell: true, stdio: ['ignore', 'pipe', 'pipe'] })
+      );
+    });
+
+    it('EXT-42: spawns with the scrubbed env, the shared work dir, and a detached process group', async () => {
+      const { getShellWorkDir } = await import('#src/tools/shell/workDir.js');
+      // A credential-shaped var in the PARENT env must NOT reach the child; a generic var must.
+      process.env.EXT42_MOCK_SECRET = 'nope-should-be-scrubbed';
+      process.env.EXT42_MOCK_KEEP = 'keep-me';
+      try {
+        await toolkit['executeCommand']('echo test', 'test_tool');
+
+        expect(childProcessMock.spawn).toHaveBeenCalledWith(
+          'echo test',
+          expect.objectContaining({
+            shell: true,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            // Same shared working directory GthDevToolkit's run_shell_command uses.
+            cwd: getShellWorkDir(),
+            // POSIX own process group so a timeout reaps the whole tree (see the timeout tests).
+            detached: process.platform !== 'win32',
+          })
+        );
+
+        const opts = childProcessMock.spawn.mock.calls.at(-1)![1] as {
+          env: NodeJS.ProcessEnv;
+        };
+        // The env is the SCRUBBED copy from buildScrubbedEnv, not the raw parent env object.
+        expect(opts.env).toBeDefined();
+        expect(opts.env).not.toBe(process.env);
+        // Credential (matches the `_SECRET` wildcard sweep) is gone; a generic keeper survives.
+        // NB: buildScrubbedEnv returns a plain, case-SENSITIVE object keyed by the parent env's
+        // original casing, so we assert a keeper whose name-case we control (EXT42_MOCK_KEEP) rather
+        // than PATH — on Windows the parent key is `Path`, so `opts.env.PATH` would be undefined.
+        expect(opts.env.EXT42_MOCK_SECRET).toBeUndefined();
+        expect(opts.env.EXT42_MOCK_KEEP).toBe('keep-me');
+      } finally {
+        delete process.env.EXT42_MOCK_SECRET;
+        delete process.env.EXT42_MOCK_KEEP;
+      }
     });
 
     it('should handle command failure', async () => {
@@ -665,11 +728,16 @@ describe('GthCustomToolkit', () => {
       expect(consoleUtilsMock.displayError).toHaveBeenCalled();
     });
 
-    it('should kill command after timeout and report timeout message', async () => {
+    it('should kill the whole process group after timeout and report the timeout message', async () => {
       vi.useFakeTimers();
+      // EXT-42: the timeout now reaps the process GROUP via killProcessGroup. Pin to linux so the
+      // POSIX negative-pid branch runs, and spy process.kill to assert it (not child.kill).
+      setPlatform('linux');
+      const procKill = vi.spyOn(process, 'kill').mockImplementation(() => true);
       const mockKill = vi.fn();
       let closeCallback: ((_code: number | null) => void) | undefined;
       const mockChild = {
+        pid: 4321,
         on: vi.fn((event: string, callback: (_arg: any) => void) => {
           if (event === 'close') closeCallback = callback;
         }),
@@ -684,13 +752,17 @@ describe('GthCustomToolkit', () => {
       // Advance past timeout
       vi.advanceTimersByTime(10_000);
 
-      // Simulate the close event that follows child.kill()
-      expect(mockKill).toHaveBeenCalled();
+      // Group-kill: the NEGATIVE pid is signalled with SIGTERM (historical signal, widened target),
+      // and the lone-child kill is NOT used on the POSIX success path.
+      expect(procKill).toHaveBeenCalledWith(-4321, 'SIGTERM');
+      expect(mockKill).not.toHaveBeenCalled();
+      // Simulate the close event that follows the group kill.
       closeCallback?.(null);
 
       const result = await resultPromise;
       expect(result).toContain("Command 'slow cmd' timed out after 10 seconds");
 
+      procKill.mockRestore();
       vi.useRealTimers();
     });
 
@@ -749,11 +821,15 @@ describe('GthCustomToolkit', () => {
   });
 
   describe('custom command tool invocation with timeout', () => {
-    it('should pass timeout from config to executeCommand', async () => {
+    it('should pass timeout from config to executeCommand (group-kill on timeout)', async () => {
       vi.useFakeTimers();
+      // EXT-42: pin to linux + spy process.kill so the group-kill (negative pid) is asserted.
+      setPlatform('linux');
+      const procKill = vi.spyOn(process, 'kill').mockImplementation(() => true);
       const mockKill = vi.fn();
       let closeCallback: ((_code: number | null) => void) | undefined;
       const mockChild = {
+        pid: 5678,
         on: vi.fn((event: string, callback: (_arg: any) => void) => {
           if (event === 'close') closeCallback = callback;
         }),
@@ -776,12 +852,13 @@ describe('GthCustomToolkit', () => {
 
       // advanceTimersByTimeAsync flushes microtasks (LangChain async chain) before advancing
       await vi.advanceTimersByTimeAsync(5_000);
-      expect(mockKill).toHaveBeenCalled();
+      expect(procKill).toHaveBeenCalledWith(-5678, 'SIGTERM');
       closeCallback?.(null);
 
       const result = await resultPromise;
       expect(result).toContain('timed out after 5 seconds');
 
+      procKill.mockRestore();
       vi.useRealTimers();
     });
   });

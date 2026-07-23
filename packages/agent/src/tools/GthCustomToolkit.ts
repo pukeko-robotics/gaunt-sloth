@@ -17,6 +17,12 @@ import {
 } from '@gaunt-sloth/core/config.js';
 import { emitToolOutput } from '@gaunt-sloth/core/core/toolOutputChannel.js';
 import { createInterface, stdin, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
+// EXT-42: reuse GthDevToolkit's OWN spawn-hardening helpers so the two toolkits share one
+// implementation and cannot drift. `buildScrubbedEnv`/`getShellWorkDir` are the shell helpers the
+// dev toolkit imports; `killProcessGroup` is exported from GthDevToolkit itself. Do NOT re-implement.
+import { buildScrubbedEnv } from '#src/tools/shell/env.js';
+import { getShellWorkDir } from '#src/tools/shell/workDir.js';
+import { killProcessGroup } from '#src/tools/GthDevToolkit.js';
 
 // Helper function to create a tool with execute type. The fn's second parameter is LangChain's
 // ToolRunnableConfig — when the framework invokes the tool with a ToolCall, `config.toolCall.id`
@@ -221,6 +227,10 @@ export default class GthCustomToolkit extends BaseToolkit {
     return new Promise((resolve, reject) => {
       const child = spawn(command, {
         shell: true,
+        // EXT-42: spawn in the SAME working directory as GthDevToolkit's `run_shell_command`, via
+        // the shared getShellWorkDir() helper, so custom-tool subprocesses and the agent's own shell
+        // agree on one path namespace (the deepagents fs-backend root, tracking the ACP session cwd).
+        cwd: getShellWorkDir(),
         // EXT-39 (part 2): give the child /dev/null on stdin so it reads EOF immediately instead
         // of inheriting an open-but-never-written `pipe` (spawn's default). Without this, a spawned
         // command that probes stdin — notably a nested `gth` invocation (a custom tool shelling out
@@ -232,6 +242,15 @@ export default class GthCustomToolkit extends BaseToolkit {
         // GthDevToolkit's `run_shell_command` spawn, which already sets the same stdio for the same
         // reason.
         stdio: ['ignore', 'pipe', 'pipe'],
+        // EXT-42: POSIX own process group so a timeout can reap the WHOLE child tree via
+        // killProcessGroup (negative pid), not just the shell. No-op/harmful on Windows, which uses
+        // taskkill /T inside that shared helper. Mirrors GthDevToolkit's `run_shell_command` exactly.
+        detached: process.platform !== 'win32',
+        // EXT-42 (headline, security): child env with LLM/cloud credentials removed via the shared
+        // buildScrubbedEnv(). Without this a user-defined custom tool that shells out inherits the
+        // RAW parent env and can leak API keys / secrets to the subprocess and its logs. Closes the
+        // parity gap with the agent's own `run_shell_command`, which already gets a scrubbed env.
+        env: buildScrubbedEnv(),
       });
 
       let output = '';
@@ -241,7 +260,12 @@ export default class GthCustomToolkit extends BaseToolkit {
       if (timeoutSeconds !== undefined && timeoutSeconds > 0) {
         timer = setTimeout(() => {
           timedOut = true;
-          child.kill();
+          // EXT-42: reap the whole process GROUP (not just the shell) so a `detached` child's
+          // descendants die too, via GthDevToolkit's exported killProcessGroup (negative-pid on
+          // POSIX, taskkill /T on Windows). Single-shot SIGTERM keeps the historical signal and the
+          // "timed out after N seconds" message byte-for-byte unchanged — only the kill TARGET
+          // widens from the lone shell to its group.
+          killProcessGroup(child, 'SIGTERM');
         }, timeoutSeconds * 1000);
       }
 
