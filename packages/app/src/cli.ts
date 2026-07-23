@@ -20,6 +20,12 @@ import { commandSkipsStdin, resolveInvokedCommandName } from '#src/utils/stdinPo
 import type { CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
 
 import { coerceBooleanOrString } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import { installCrashHandler } from '@gaunt-sloth/core/utils/crashHandler.js';
+
+// GS2-48 — install the process-level crash handler as early as possible, so an uncaughtException /
+// unhandledRejection anywhere in the run writes a redacted debug snapshot to ~/.gsloth/debug-dumps/
+// before the process dies. Idempotent and inert on a normal exit.
+installCrashHandler();
 
 const program = new Command();
 
