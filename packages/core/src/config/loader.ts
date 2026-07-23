@@ -376,6 +376,17 @@ async function applyGlobalConfigBase<T extends Record<string, unknown>>(
 const MAX_EXTENDS_CHAIN_DEPTH = 50;
 
 /**
+ * GS2-73 — the typed failure the `extends` traversal ({@link resolveExtendsChain}) raises on a
+ * cycle, a missing base, an over-deep chain, or an unreadable base. It carries the SAME clear,
+ * user-facing message the run path prints, so the two consumers can translate one shared failure
+ * into their own convention WITHOUT the traversal being forked or the checks duplicated:
+ *   - the run path ({@link resolveConfigExtends}) → `displayError` + `exit(1)` (hard-fail a run),
+ *   - the read path ({@link validateConfig}) → a `not-ok` layer with this message (collect, never
+ *     `exit`), so `gth config validate` mirrors what a real run would hit (GS2-29 invariant).
+ */
+class ConfigExtendsError extends Error {}
+
+/**
  * GS2-41 — resolve a named profile's `extends` inheritance into a single composed raw config,
  * riding the SAME GS2-1 deep-merge the config LAYERS use (NO second merge engine). When the given
  * profile config declares `extends: "<base>"`, the base profile's config resolves FIRST
@@ -412,6 +423,35 @@ export async function resolveConfigExtends(
   rawConfig: Record<string, unknown>,
   profileLabel: string | undefined
 ): Promise<Record<string, unknown>> {
+  try {
+    return await composeExtends(rawConfig, profileLabel);
+  } catch (e) {
+    // GS2-73 — the traversal now RAISES a {@link ConfigExtendsError} rather than exiting inline, so
+    // the read side ({@link validateConfig}) can report the same failure without terminating. On the
+    // RUN path we translate it back to the original behaviour: print the clear message and exit(1).
+    if (e instanceof ConfigExtendsError) {
+      displayError(e.message);
+      exit(1);
+      // Unreachable past exit(1) in production; LOAD-BEARING under the specs' mocked exit so the
+      // caller never observes a silently-composed config after a cycle/missing base.
+      throw new Error('Unexpected error occurred.');
+    }
+    throw e;
+  }
+}
+
+/**
+ * GS2-73 — seed the `extends` chain from the selected profile's own name and run the throwing
+ * traversal ({@link resolveExtendsChain}). Shared by BOTH consumers so the walk and its
+ * cycle/missing-base checks live in ONE place: the run-path {@link resolveConfigExtends} (which
+ * translates a {@link ConfigExtendsError} into `displayError` + `exit`) and the read-path
+ * {@link validateConfig} (which records it as a not-ok layer). Propagates the typed error to its
+ * caller; the caller owns the reporting convention.
+ */
+async function composeExtends(
+  rawConfig: Record<string, unknown>,
+  profileLabel: string | undefined
+): Promise<Record<string, unknown>> {
   const seed = profileLabel?.trim();
   return resolveExtendsChain(rawConfig, seed ? [seed] : []);
 }
@@ -420,6 +460,10 @@ export async function resolveConfigExtends(
  * The recursive worker for {@link resolveConfigExtends}. `chain` is the ordered list of profile
  * names already being resolved (the selected profile first, then each `extends` base as it is
  * descended into) — used both for the name-based cycle guard and to render the cycle in the error.
+ *
+ * GS2-73 — on any hard failure (cycle, over-deep chain, missing base, unreadable base) it RAISES a
+ * {@link ConfigExtendsError} rather than printing + `exit`ing inline, so the same traversal serves
+ * both the run path and the read-side `validateConfig` (each translates the error its own way).
  */
 async function resolveExtendsChain(
   rawConfig: Record<string, unknown>,
@@ -431,38 +475,30 @@ async function resolveExtendsChain(
   }
 
   // Cycle guard (name-based): a base already present in the chain we are resolving loops back on
-  // itself. Fail fast, naming the cycle — never recurse without bound.
+  // itself. Fail fast, naming the cycle — never recurse without bound. GS2-73 — raise the shared
+  // {@link ConfigExtendsError}; the caller (run path vs. `validateConfig`) owns how it is surfaced.
   if (chain.includes(baseName)) {
-    displayError(
+    throw new ConfigExtendsError(
       `Profile inheritance cycle detected: ${[...chain, baseName].join(' -> ')}. ` +
         `A profile's "extends" chain must not refer back to itself.`
     );
-    exit(1);
-    // Unreachable past exit(1) in production; LOAD-BEARING under the specs' mocked exit so the
-    // caller never observes a silently-composed config after a cycle (matches the loader's
-    // post-exit sentinel-throw pattern).
-    throw new Error('Unexpected error occurred.');
   }
 
   // Depth backstop behind the name guard — a chain this long can only be a misconfiguration.
   if (chain.length >= MAX_EXTENDS_CHAIN_DEPTH) {
-    displayError(
+    throw new ConfigExtendsError(
       `Profile inheritance chain exceeds the maximum depth of ${MAX_EXTENDS_CHAIN_DEPTH}: ` +
         `${[...chain, baseName].join(' -> ')}. This is almost certainly a misconfiguration.`
     );
-    exit(1);
-    throw new Error('Unexpected error occurred.');
   }
 
   const basePath = resolveIdentityProfileConfigPath(baseName);
   if (!basePath) {
     const from = chain.length > 0 ? ` (referenced from "${chain[chain.length - 1]}")` : '';
-    displayError(
+    throw new ConfigExtendsError(
       `Profile "${baseName}" referenced by "extends"${from} was not found: no config file in ` +
         `${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${baseName}/ (checked ${PROJECT_CONFIG_FORMATS.join(', ')}).`
     );
-    exit(1);
-    throw new Error('Unexpected error occurred.');
   }
 
   let baseRaw: Record<string, unknown>;
@@ -470,9 +506,7 @@ async function resolveExtendsChain(
     baseRaw = await readRawConfigAtPath(basePath);
   } catch (e) {
     displayDebug(e instanceof Error ? e : String(e));
-    displayError(`Failed to read base profile "${baseName}" from ${basePath}.`);
-    exit(1);
-    throw new Error('Unexpected error occurred.');
+    throw new ConfigExtendsError(`Failed to read base profile "${baseName}" from ${basePath}.`);
   }
 
   // Validate the base layer exactly as the project layer is validated (deprecated-shape reject,
@@ -842,9 +876,11 @@ export async function tryJsonConfig(
  * | `binaryFormats`      | replace  | the declared format policy IS the set                |
  * | (every other array)  | replace  | default; preserves historical behaviour              |
  *
- * NOTE: the additive fields only live at the config ROOT, so only the
- * `applyGlobalConfigBase(global, project)` merge can trigger them; the per-command
- * `deepMerge` calls start at command scope and never reach these paths.
+ * NOTE: the additive fields only live at the config ROOT, so they are triggered only by the
+ * `deepMerge` calls that START at the config root (path === ''). There are TWO such sites: the
+ * `applyGlobalConfigBase(global, project)` merge, and — as of GS2-41 — the root-level `deepMerge`
+ * inside {@link resolveConfigExtends} that composes an `extends` base with its child profile. The
+ * per-command `deepMerge` calls start at command scope and never reach these paths.
  *
  * NAMESPACE CAVEAT: these keys are config-ROOT-relative, but the per-command
  * `deepMerge(DEFAULT_CONFIG.commands.X, …)` calls also start at `path === ''`. No command
@@ -1247,6 +1283,12 @@ export interface ConfigValidationReport {
  * global (no layer added) but is surfaced with a `displayWarning` — exactly as a run does (it
  * warns the user while ignoring the broken global's value) — see {@link
  * loadGlobalRawConfigUnvalidated}.
+ *
+ * GS2-73 — for the PROJECT layer it also walks the GS2-41 profile `extends` chain (via the SAME
+ * {@link composeExtends}/{@link resolveExtendsChain} the run path uses), so a cycle or a missing
+ * base — which fail a real run — is reported here as a not-ok layer instead of passing OK and only
+ * failing at run time. The GLOBAL layer is NOT walked, mirroring the run (`resolveConfigExtends`
+ * runs on the project/profile layer only).
  */
 export async function validateConfig(
   commandLineConfigOverrides: CommandLineConfigOverrides
@@ -1258,7 +1300,33 @@ export async function validateConfig(
   const discovered = findProjectConfigPath(commandLineConfigOverrides);
   if (discovered) {
     const raw = await readRawConfigAtPath(discovered.path);
-    layers.push({ sourceLabel: discovered.path, ...validateRawGthConfig(raw) });
+    const layer: ConfigLayerValidationReport = {
+      sourceLabel: discovered.path,
+      ...validateRawGthConfig(raw),
+    };
+
+    // GS2-73 — mirror the run's `extends` resolution. GS2-41's `resolveConfigExtends` walks the
+    // profile inheritance chain and hard-fails a real run on a cycle or a missing base; the read
+    // side must surface the SAME failures, else a profile whose `extends` names a missing base (or
+    // forms a cycle) reports OK here yet dies at run time — the exact GS2-29 "validate mirrors the
+    // layer set a run loads" divergence. Reuse the SAME traversal (via {@link composeExtends}) —
+    // no forked walk — and record its typed failure as a not-ok layer instead of exiting. Gated on
+    // `layer.ok` and on a string `extends`, mirroring run order (a run validates the raw shape and
+    // only THEN resolves `extends`) and skipping the read + walk for the common no-`extends` config.
+    if (layer.ok && typeof raw.extends === 'string') {
+      try {
+        await composeExtends(raw, commandLineConfigOverrides.identityProfile);
+      } catch (e) {
+        if (e instanceof ConfigExtendsError) {
+          layer.ok = false;
+          layer.errorMessage = e.message;
+        } else {
+          throw e;
+        }
+      }
+    }
+
+    layers.push(layer);
   }
 
   // Global layer next: a run ALWAYS applies it (applyGlobalConfigBase in the project path,
