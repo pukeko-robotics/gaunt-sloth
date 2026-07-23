@@ -66,10 +66,10 @@ const NON_SECRET_KEY_NAMES = new Set(['apikeyenvironmentvariable']);
  * the value to `<scheme?> <one token>` where a token is {@link AUTH_TOKEN}; a credential with a char
  * OUTSIDE that charset (`clientid:secret`, `token="…"`, `k=v,k=v`, Digest `response="…"`) left a raw
  * tail beside the marker. These fragments extend the value across the STRUCTURED credential
- * components (colon-joined `id:secret`, quoted `k="v"`, comma-separated param lists) WITHOUT
+ * components (colon-joined `id:secret`, quoted `k="v"`, comma/semicolon-separated param lists) WITHOUT
  * re-introducing the greedy prose-swallow GS2-47 removed: horizontal whitespace only (`[ \t]`, never
- * a newline), a tight colon (no surrounding ws), and a comma-continuation whose atom must be
- * *param-shaped* (contain `=` or be quoted) so `Authorization: … , then we retried` keeps its prose.
+ * a newline), a tight colon (no surrounding ws), and a param-continuation (`,` or `;`) whose atom must
+ * be *param-shaped* (contain `=` or be quoted) so `Authorization: … ; then we retried` keeps its prose.
  */
 // A credential "word": the same token charset the SigV4 / standalone-`Bearer` rules already use.
 const AUTH_TOKEN = String.raw`[A-Za-z0-9._~+/=-]+`;
@@ -80,18 +80,20 @@ const AUTH_ATOM = `(?:${AUTH_TOKEN}(?:${AUTH_QUOTED})?|${AUTH_QUOTED})`;
 // A colon-joined chain (`clientid:secret`); the colon is TIGHT (no surrounding whitespace) so a
 // following `Header: value` pair or a prose colon on the same line is not chained in.
 const AUTH_COLON_CHAIN = `${AUTH_ATOM}(?::${AUTH_ATOM})*`;
-// A comma-separated PARAM continuation (`, key2=v2`; Digest `, realm="…"`): the atom after a comma
-// must be param-shaped — `key=…` or quoted — so a comma followed by prose is NOT swallowed.
+// A `,`- or `;`-separated PARAM continuation (`, key2=v2`; `;key2=v2`; Digest `, realm="…"`): the atom
+// after the separator must be param-shaped — `key=…` or quoted — so a `,`/`;` followed by prose is NOT
+// swallowed. (M1, GS2-71: `;` joined the accepted separators alongside `,`; the atom shape is unchanged,
+// so `Authorization: … ; then we retried` still keeps its prose — same as the `,` case always has.)
 const AUTH_PARAM = `(?:[A-Za-z0-9._~+/-]+=(?:${AUTH_QUOTED}|${AUTH_TOKEN})?|${AUTH_QUOTED})`;
 // The full value: an optional scheme word (`Bearer` / `ApiKey` / `Digest` / …) + horizontal ws, then
-// a colon-chain, then zero+ comma-separated params. The `(?!AWS4-HMAC-SHA256[ \t]+Credential=)`
+// a colon-chain, then zero+ `,`- or `;`-separated params. The `(?!AWS4-HMAC-SHA256[ \t]+Credential=)`
 // lookahead excludes ONLY a genuine SigV4 header (scheme immediately followed by `Credential=`) — its
 // `SignedHeaders=…` is deliberately preserved, so it is owned solely by the Credential/Signature
 // rule. The guard is narrow ON PURPOSE: a malformed/bare `AWS4-HMAC-SHA256 <token>` (no
 // `Credential=`) still falls through here and IS redacted, so the "redact any scheme" contract holds.
 const AUTH_VALUE =
   `(?!AWS4-HMAC-SHA256[ \\t]+Credential=)(?:${AUTH_TOKEN}[ \\t]+)?${AUTH_COLON_CHAIN}` +
-  `(?:[ \\t]*,[ \\t]*${AUTH_PARAM})*`;
+  `(?:[ \\t]*[,;][ \\t]*${AUTH_PARAM})*`;
 // The header prefix (name + separator + optional opening quote), captured so `$1` is preserved. Its
 // `\s*` gaps CAN include a newline (over-redacts a value on the next line — SAFE direction, never a
 // leak); the VALUE above uses only horizontal ws and so never crosses a newline.
@@ -136,9 +138,10 @@ const PROVIDER_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   // unknown scheme) no longer leaks its token beside the marker.
   //
   // GS2-66 extends the value across STRUCTURED credential components (see {@link AUTH_VALUE}):
-  // `clientid:secret`, `token="…"`, `k=v,k=v` lists and a Digest `response="…"` no longer leave a raw
-  // tail past the token charset. It still cannot swallow following PROSE: the credential body is
-  // horizontal-whitespace-only and a comma-continuation must be param-shaped (GS2-47 invariant).
+  // `clientid:secret`, `token="…"`, `k=v,k=v` / `k=v;k=v` lists and a Digest `response="…"` no longer
+  // leave a raw tail past the token charset. It still cannot swallow following PROSE: the credential
+  // body is horizontal-whitespace-only and a `,`/`;` param-continuation must be param-shaped (GS2-47
+  // invariant, preserved by GS2-71's M1 widening of the separator to `[,;]`).
   //
   // NEWLINE precision (residual 4): the *credential body* uses only `[ \t]` and so never crosses a
   // newline — but the header-PREFIX `\s*` gaps CAN span `\n` (`Authorization:\n<token>`), which
