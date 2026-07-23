@@ -82,6 +82,19 @@ describe('validateConfig (GS2-1 `gth config validate`)', () => {
     return p;
   };
 
+  /**
+   * GS2-73 — write a named profile config under
+   * `root/.gsloth/.gsloth-settings/<name>/.gsloth.config.json`, the exact profile dir the strict
+   * up-tree `extends` walk (`resolveIdentityProfileConfigPath`) resolves a base from.
+   */
+  const profile = (name: string, content: string): string => {
+    const dir = resolve(root, '.gsloth', '.gsloth-settings', name);
+    mkdirSync(dir, { recursive: true });
+    const p = resolve(dir, '.gsloth.config.json');
+    writeFileSync(p, content);
+    return p;
+  };
+
   it('reports a valid config as ok, with its source path (single project layer)', async () => {
     const p = project('{"llm":{"type":"openai"}}');
     const report = await validateConfig({});
@@ -286,6 +299,58 @@ describe('validateConfig (GS2-1 `gth config validate`)', () => {
       expect(report.ok).toBe(true);
       expect(report.found).toBe(true);
       expect(report.layers).toHaveLength(1);
+    });
+  });
+
+  // GS2-73 — validate walks the GS2-41 profile `extends` chain, reusing the run path's SAME
+  // cycle/missing-base checks. Before this, a project config whose `extends` named a missing base
+  // (or formed a cycle) reported OK under `gth config validate` yet died at real run time
+  // (`resolveConfigExtends` exits(1)). The read side now mirrors that failure as a not-ok layer.
+  describe('GS2-73: the profile extends chain is walked (validate mirrors the run)', () => {
+    it('reports a MISSING extends base as not ok (previously reported OK), naming the base', async () => {
+      // Project config extends a base profile that has no config dir at all.
+      project('{"extends":"ghost","llm":{"type":"openai"}}');
+
+      const report = await validateConfig({});
+
+      expect(report.found).toBe(true);
+      expect(report.ok).toBe(false);
+      expect(report.layers).toHaveLength(1);
+      expect(report.layers[0].ok).toBe(false);
+      // Same message the run emits (resolveConfigExtends' missing-base branch).
+      expect(report.layers[0].errorMessage).toContain('"ghost"');
+      expect(report.layers[0].errorMessage).toContain('was not found');
+    });
+
+    it('reports a CYCLIC extends chain as not ok (previously reported OK), naming the cycle', async () => {
+      // child extends A, A extends B, B extends A — a cycle a real run fails fast on.
+      project('{"extends":"A","llm":{"type":"openai"}}');
+      profile('A', '{"extends":"B","llm":{"type":"anthropic"}}');
+      profile('B', '{"extends":"A","llm":{"type":"anthropic"}}');
+
+      const report = await validateConfig({});
+
+      expect(report.found).toBe(true);
+      expect(report.ok).toBe(false);
+      expect(report.layers).toHaveLength(1);
+      expect(report.layers[0].ok).toBe(false);
+      // Same message + rendered cycle the run emits (resolveConfigExtends' cycle guard).
+      expect(report.layers[0].errorMessage).toMatch(/inheritance cycle detected/i);
+      expect(report.layers[0].errorMessage).toContain('A -> B -> A');
+    });
+
+    it('accepts a VALID extends chain as ok (no false positive)', async () => {
+      // child extends base; base resolves cleanly — no cycle, base present + valid shape.
+      project('{"extends":"base","llm":{"type":"openai"}}');
+      profile('base', '{"llm":{"type":"anthropic"},"streamOutput":true}');
+
+      const report = await validateConfig({});
+
+      expect(report.found).toBe(true);
+      expect(report.ok).toBe(true);
+      expect(report.layers).toHaveLength(1);
+      expect(report.layers[0].ok).toBe(true);
+      expect(report.layers[0].errorMessage).toBeUndefined();
     });
   });
 });
