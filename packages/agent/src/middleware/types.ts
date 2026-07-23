@@ -13,7 +13,10 @@ import { AgentMiddleware } from 'langchain';
  * Predefined middleware types that can be configured via JSON config.
  */
 export type PredefinedMiddlewareName =
-  'anthropic-prompt-caching' | 'summarization' | 'binary-content-injection';
+  | 'anthropic-prompt-caching'
+  | 'summarization'
+  | 'binary-content-injection'
+  | 'frontend-image-injection';
 
 /**
  * Configuration for Anthropic prompt caching middleware.
@@ -82,12 +85,26 @@ export interface BinaryContentInjectionConfig {
 }
 
 /**
+ * Configuration for frontend image injection middleware (RC-22).
+ * Converts a frontend capture tool's `{mimeType,data}` tool result into a vision HumanMessage the
+ * model can see. Opt-in — resolved only when named in `config.middleware`.
+ */
+export interface FrontendImageInjectionConfig {
+  /**
+   * Name of the frontend capture tool whose result is converted into a vision message.
+   * Defaults to `capture_image`.
+   */
+  toolName?: string;
+}
+
+/**
  * Union type of all predefined middleware configurations.
  */
 export type PredefinedMiddlewareConfig =
   | ({ name: 'anthropic-prompt-caching' } & AnthropicPromptCachingConfig)
   | ({ name: 'summarization' } & SummarizationConfig)
-  | ({ name: 'binary-content-injection' } & BinaryContentInjectionConfig);
+  | ({ name: 'binary-content-injection' } & BinaryContentInjectionConfig)
+  | ({ name: 'frontend-image-injection' } & FrontendImageInjectionConfig);
 
 /**
  * Middleware configuration that can be specified in JSON or JS config.
