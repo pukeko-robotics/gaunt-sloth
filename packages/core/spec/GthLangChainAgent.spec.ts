@@ -764,6 +764,96 @@ describe('GthLangChainAgent', () => {
       });
     });
 
+    // EXT-35 — the lean agent installs an afterModel middleware that promotes a text-emitted tool
+    // call (a small/local model serialising a call as assistant TEXT) into a native tool_call, so
+    // the ReAct router sees tool_calls on the last message and CONTINUES the loop instead of ending
+    // ("no tool calls = done"). The graph is mocked here, so we exercise the middleware directly (as
+    // the softener tests do) and lean on the verified langchain routing contract (route-to-tools on
+    // the last AIMessage having tool_calls) + the id-preserving reducer to conclude the loop runs on.
+    describe('GthMiddlewareToolCallRepair (EXT-35 promote text-emitted tool call)', () => {
+      const getRepairMw = () => {
+        const middleware = createAgentMock.mock.calls.at(-1)?.[0].middleware as {
+          name: string;
+
+          afterModel?: (_state: any) => any;
+        }[];
+        return middleware.find((m) => m.name === 'GthMiddlewareToolCallRepair');
+      };
+
+      async function initWithTool() {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        // get_weather is the only bound tool, so it is the repair allow-list.
+        await agent.init('code', {
+          ...mockConfig,
+          tools: [{ name: 'get_weather', invoke: vi.fn(), description: 'x' }],
+        } as GthConfig);
+        return agent;
+      }
+
+      it('is installed AFTER the status middleware (so a promoted call is also reported)', async () => {
+        await initWithTool();
+        const middleware = createAgentMock.mock.calls.at(-1)?.[0].middleware as { name: string }[];
+        const statusIdx = middleware.findIndex(
+          (m) => m.name === 'GthMiddlewareToolCallStatusUpdate'
+        );
+        const repairIdx = middleware.findIndex((m) => m.name === 'GthMiddlewareToolCallRepair');
+        expect(statusIdx).toBeGreaterThan(-1);
+        expect(repairIdx).toBeGreaterThan(statusIdx);
+      });
+
+      it('promotes a text-emitted call and REPLACES the message (same id, length unchanged) so the loop continues', async () => {
+        await initWithTool();
+        const repair = getRepairMw();
+        expect(repair).toBeDefined();
+
+        const textMsg = new AIMessage({ id: 'lc1', content: '[tool:get_weather]{"city":"Paris"}' });
+        const result = repair!.afterModel!({ messages: [new HumanMessage('hi'), textMsg] });
+
+        // A messages update carrying the promoted native tool_call is returned...
+        expect(result.messages).toHaveLength(1);
+        const promoted = result.messages[0];
+        // ...with the SAME id as the model's text message. This is the discriminating assertion:
+        // LangGraph's message reducer merges by id, so a same-id message REPLACES the original
+        // (routing to tools → loop continues) rather than APPENDING a duplicate/dangling message.
+        expect(promoted.id).toBe('lc1');
+        expect(promoted.tool_calls).toHaveLength(1);
+        expect(promoted.tool_calls[0]).toMatchObject({
+          name: 'get_weather',
+          args: { city: 'Paris' },
+        });
+      });
+
+      it('leaves a native-tool_calls message untouched (returns state unchanged — happy path)', async () => {
+        await initWithTool();
+        const repair = getRepairMw();
+        const nativeMsg = new AIMessage({
+          content: '',
+          tool_calls: [{ id: 't', name: 'get_weather', args: {}, type: 'tool_call' }],
+        });
+        const state = { messages: [nativeMsg] };
+        expect(repair!.afterModel!(state)).toBe(state);
+      });
+
+      it('leaves ordinary prose untouched (returns state unchanged)', async () => {
+        await initWithTool();
+        const repair = getRepairMw();
+        const state = { messages: [new AIMessage({ id: 'lc2', content: 'Looks sunny today.' })] };
+        expect(repair!.afterModel!(state)).toBe(state);
+      });
+
+      it('does not promote a call naming an UNBOUND tool (allow-list = bound tools)', async () => {
+        await initWithTool();
+        const repair = getRepairMw();
+        const state = {
+          messages: [new AIMessage({ id: 'lc3', content: '[tool:rm_rf]{"path":"/"}' })],
+        };
+        expect(repair!.afterModel!(state)).toBe(state);
+      });
+    });
+
     // GS2-21: the lean agent must give the model a system prompt, composed exactly like the deep
     // agent (backstory + guidelines + mode prompt + system prompt) and handed to createAgent
     // as its `systemPrompt` (a static per-turn system message, NOT a mid-conversation SystemMessage
