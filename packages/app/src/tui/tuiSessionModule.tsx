@@ -2,7 +2,10 @@ import React from 'react';
 import { render } from 'ink';
 import { type CommandLineConfigOverrides, initConfig } from '@gaunt-sloth/core/config.js';
 import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
-import { mergeToolOutputIntoEvents } from '@gaunt-sloth/core/core/toolOutputChannel.js';
+import {
+  mergeToolOutputIntoEvents,
+  setToolOutputSuppressed,
+} from '@gaunt-sloth/core/core/toolOutputChannel.js';
 import { StatusLevel } from '@gaunt-sloth/core/core/types.js';
 import type { PendingToolInterrupt, ToolApprovalDecision } from '@gaunt-sloth/core/core/types.js';
 import {
@@ -426,6 +429,14 @@ export async function createTuiSession(
     // writes the scroll/viewport-clear escapes, then calls this to make Ink forget its last
     // frame so the re-render lands cleanly at the top (TUI-C12).
     let resetFrame: (() => void) | undefined;
+
+    // TUI-C31 (d): from here on Ink owns the terminal frame. Mark the tool-output channel
+    // suppressed so a straggler child that outlived a turn's kill grace and emits BETWEEN turns
+    // (when no per-turn subscriber is attached) is dropped rather than written raw over the
+    // managed frame. Per-turn output is unaffected — the active subscriber always takes
+    // precedence — and the `finally` below clears it on every exit path, restoring the headless
+    // stdout sink once the TUI is gone.
+    setToolOutputSuppressed(true);
     const instance = render(
       <App
         agent={tuiAgent}
@@ -463,5 +474,9 @@ export async function createTuiSession(
     await runner.cleanup();
     stopSessionLogging();
     throw err;
+  } finally {
+    // TUI-C31 (d): the TUI has unmounted (normal exit or throw) — restore the headless stdout
+    // sink so any later tool output is no longer suppressed once Ink no longer owns the frame.
+    setToolOutputSuppressed(false);
   }
 }

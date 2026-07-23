@@ -397,6 +397,60 @@ describe('GthDevToolkit - Basic Tests', () => {
         unsubscribe();
       }
     });
+
+    it('TUI-C31 (a): a hardline refusal routes to the subscriber as a warning chunk, NOT raw displayWarning', async () => {
+      const { subscribeToolOutput } = await import('@gaunt-sloth/core/core/toolOutputChannel.js');
+      const received: Array<{ kind: string; text: string; toolCallId?: string }> = [];
+      const unsubscribe = subscribeToolOutput((chunk) => received.push(chunk));
+      try {
+        toolkit = new GthDevToolkit({ run_tests: 'npm test' });
+        // A hardline command is refused WITHOUT spawning; the refusal used to hit raw displayWarning.
+        const refusal = await toolkit['executeCommand'](
+          'rm -rf /',
+          'run_shell_command',
+          'call-hard'
+        );
+        expect(refusal).toContain('blocked by hardline safety policy');
+
+        const warning = received.find((c) => c.kind === 'warning');
+        expect(warning).toBeDefined();
+        expect(warning!.text).toContain('⛔');
+        expect(warning!.text).toContain('blocked by hardline safety policy');
+        expect(warning!.toolCallId).toBe('call-hard');
+        // Under the managed frame the refusal must NOT leak to raw displayWarning.
+        expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+      } finally {
+        unsubscribe();
+      }
+    });
+
+    it('TUI-C31 (a): a spawn-level failure routes to the subscriber as an error chunk, NOT raw displayError', async () => {
+      const { subscribeToolOutput } = await import('@gaunt-sloth/core/core/toolOutputChannel.js');
+      const received: Array<{ kind: string; text: string; toolCallId?: string }> = [];
+      const unsubscribe = subscribeToolOutput((chunk) => received.push(chunk));
+      try {
+        const mockChild = {
+          on: vi.fn((event: string, callback: (_arg: any) => void) => {
+            if (event === 'error') callback(new Error('spawn ENOENT'));
+          }),
+          stdout: { on: vi.fn() },
+          stderr: { on: vi.fn() },
+        };
+        childProcessMock.spawn.mockReturnValueOnce(mockChild as any);
+
+        toolkit = new GthDevToolkit({ run_tests: 'npm test' });
+        await toolkit['executeCommand']('nope', 'run_shell_command', 'call-err').catch(() => {});
+
+        const err = received.find((c) => c.kind === 'error');
+        expect(err).toBeDefined();
+        expect(err!.text).toContain("Failed to start command 'nope'");
+        expect(err!.toolCallId).toBe('call-err');
+        // Under the managed frame the advisory must NOT leak to raw displayError.
+        expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      } finally {
+        unsubscribe();
+      }
+    });
   });
 
   describe('tool invocation', () => {

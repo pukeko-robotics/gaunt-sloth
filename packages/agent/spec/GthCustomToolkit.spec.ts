@@ -893,6 +893,38 @@ describe('GthCustomToolkit', () => {
         unsubscribe();
       }
     });
+
+    it('TUI-C31 (a): a spawn-level failure routes to the subscriber as an error chunk, NOT raw displayError', async () => {
+      const { subscribeToolOutput } = await import('@gaunt-sloth/core/core/toolOutputChannel.js');
+      const received: Array<{ kind: string; text: string; toolCallId?: string }> = [];
+      const unsubscribe = subscribeToolOutput((chunk) => received.push(chunk));
+      try {
+        const mockChild = {
+          on: vi.fn((event: string, callback: (_arg: any) => void) => {
+            if (event === 'error') callback(new Error('spawn ENOENT'));
+          }),
+          stdout: { on: vi.fn() },
+          stderr: { on: vi.fn() },
+        };
+        childProcessMock.spawn.mockReturnValueOnce(mockChild as any);
+
+        toolkit = new GthCustomToolkit({
+          list_files: { command: 'ls -la', description: 'List files' },
+        });
+        await toolkit['executeCommand']('nope', 'list_files', undefined, 'call-err').catch(
+          () => {}
+        );
+
+        const err = received.find((c) => c.kind === 'error');
+        expect(err).toBeDefined();
+        expect(err!.text).toContain("Failed to execute command 'nope'");
+        expect(err!.toolCallId).toBe('call-err');
+        // Under the managed frame the advisory must NOT leak to raw displayError.
+        expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      } finally {
+        unsubscribe();
+      }
+    });
   });
 
   describe('custom command tool invocation with timeout', () => {
