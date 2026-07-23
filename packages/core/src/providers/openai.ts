@@ -27,6 +27,38 @@ function isTemperatureRestrictedModel(model: string | undefined): boolean {
   return !!model && TEMPERATURE_RESTRICTED_MODEL.test(model);
 }
 
+/**
+ * Decide whether to force the OpenAI Responses API (`/v1/responses`) for this request.
+ *
+ * OpenAI's `/v1/chat/completions` endpoint rejects reasoning-capable models (the gpt-5.x / o-series
+ * families) when `reasoning_effort` is combined with function tools:
+ *   "Function tools with reasoning_effort are not supported for gpt-5.6-luna in
+ *    /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to
+ *    'none'."
+ * LangChain's auto-router only flips to the Responses API for OpenAI built-in tools,
+ * `reasoning.summary` (not `.effort`), custom tools, or a hardcoded model allowlist — none of which
+ * covers gth's `reasoning.effort` + ordinary function tools on a model that isn't yet on that
+ * allowlist (e.g. gpt-5.6-luna). So when a reasoning-capable model actually has reasoning
+ * configured, and the user has not made an explicit choice, default `useResponsesApi` to true.
+ *
+ * Guards: (1) only reasoning-capable models — leave gpt-4o etc. on completions; (2) only when
+ * reasoning is actually configured — nothing to collide otherwise; (3) never override an explicit
+ * `useResponsesApi` the user set (true OR false). The model-name guard also scopes this away from
+ * OpenAI-compatible providers that reuse this file (Inception/DeepSeek/xAI ids don't match the regex).
+ */
+function shouldUseResponsesApi(fields: {
+  model?: string;
+  useResponsesApi?: boolean;
+  reasoning?: unknown;
+  reasoningEffort?: unknown;
+}): boolean {
+  return (
+    fields.useResponsesApi === undefined &&
+    isTemperatureRestrictedModel(fields.model) &&
+    (!!fields.reasoningEffort || !!fields.reasoning)
+  );
+}
+
 // Function to process JSON config and create OpenAI LLM instance
 // noinspection JSUnusedGlobalSymbols
 export async function processJsonConfig(
@@ -60,6 +92,12 @@ export async function processJsonConfig(
     );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     delete (configFields as any).temperature;
+  }
+
+  // Reasoning-capable OpenAI models 400 on `/v1/chat/completions` when `reasoning_effort` meets
+  // function tools; route them to the Responses API unless the user pinned `useResponsesApi`.
+  if (shouldUseResponsesApi(configFields)) {
+    configFields.useResponsesApi = true;
   }
 
   return new ChatOpenAI(configFields);
