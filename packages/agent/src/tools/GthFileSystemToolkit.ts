@@ -473,10 +473,14 @@ export default class GthFileSystemToolkit extends BaseToolkit {
       const occurrences = this.countOccurrences(modifiedContent, normalizedOld);
       if (occurrences > 0) {
         if (occurrences > 1 && edit.replaceAll !== true) {
-          // Ambiguous match: refuse rather than silently editing the first occurrence.
+          // Ambiguous match: refuse rather than silently editing the first occurrence. Thrown here
+          // and caught at the tool boundary (GS2-36), which surfaces it as a recoverable errored
+          // result naming the path — so the model can add surrounding context and retry instead of
+          // the run aborting. Phrased as an action-oriented recovery hint (EXT-34 hermes style).
           throw new Error(
-            `Found ${occurrences} occurrences of the oldText in ${filePath}. ` +
-              'Provide more surrounding context to make it unique, or set replaceAll: true.\n' +
+            `found ${occurrences} occurrences of the search text, so the edit is ambiguous and the ` +
+              'file was NOT modified. Add more surrounding context to make the match unique, or set ' +
+              'replaceAll: true to replace every occurrence.\n' +
               edit.oldText
           );
         }
@@ -522,7 +526,16 @@ export default class GthFileSystemToolkit extends BaseToolkit {
       }
 
       if (!matchFound) {
-        throw new Error(`Could not find exact match for edit:\n${edit.oldText}`);
+        // No occurrence of the search text (exact or fuzzy) — thrown here and caught at the tool
+        // boundary (GS2-36) so it reaches the model as a recoverable errored result naming the
+        // path, not a fatal abort. Action-oriented recovery hint (EXT-34 hermes style): re-read to
+        // get the exact current text, or fall back to a whole-file write_file.
+        throw new Error(
+          'no occurrence of the search text was found, so the file was NOT modified. Re-read the ' +
+            'file to get its exact current text (whitespace and indentation must match), then retry ' +
+            'the edit, or use write_file to replace the whole file.\n' +
+            edit.oldText
+        );
       }
       // Fuzzy (trim-based line) match applied: flag it so the model knows the edit
       // landed on a near-match, not an exact one.
@@ -783,6 +796,26 @@ export default class GthFileSystemToolkit extends BaseToolkit {
     return result;
   }
 
+  /**
+   * GS2-36 — turn a fatal tool throw into a recoverable, action-oriented errored result.
+   *
+   * A filesystem tool that throws (a denied/symlinked-out path from validatePath, a missing file,
+   * EISDIR, permission-denied, a directory-not-empty refusal, …) otherwise propagates to
+   * GthAgentRunner as a fatal `Stream processing failed` and crashes the whole turn. The house
+   * convention (AGENTS.md: a tool result must never abort a run; the write_file precedent in
+   * `5892801a`) is to return the failure to the model as a plain string it can act on. This wraps
+   * that string in a uniform `Error <action>: <message>` shape — the underlying fs/validation
+   * message (ENOENT / EISDIR / EACCES / "Access denied - …") is itself the actionable detail, and
+   * the deliberately-thrown logical messages (edit_file no-match/ambiguous, "Directory not empty",
+   * "Cannot delete protected directory") are already phrased as recovery hints. EXT-14 containment
+   * is preserved everywhere: validatePath runs first and throws on a symlink-out BEFORE any fs
+   * mutation, so the mutation never happens — the denial is merely surfaced as a result here.
+   */
+  private recoverableError(action: string, error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
+    return `Error ${action}: ${message}`;
+  }
+
   private createReadBinaryTool(): StructuredToolInterface {
     return createGthTool(
       async (args: z.infer<typeof ReadBinaryArgsSchema>): Promise<string> => {
@@ -881,68 +914,75 @@ export default class GthFileSystemToolkit extends BaseToolkit {
             );
           }
 
-          const validPath = await this.validatePath(args.path);
+          // GS2-36: a missing file, a denied / symlinked-out path (validatePath throws before any
+          // read), or a read failure (EISDIR, EACCES) becomes a recoverable errored result the
+          // model can act on, instead of a fatal `Stream processing failed` that aborts the run.
+          try {
+            const validPath = await this.validatePath(args.path);
 
-          // Line window (offset/limit). offset defaults to 1; limit defaults to and is hard-capped
-          // at MAX_READ_LINES. windowFile returns from offset to EOF and capReadContent (maxLines =
-          // limit) does the slicing, so a limit-bounded read that leaves more file behind is
-          // *observable* and gets a resume notice. That notice fires only when the limit is the
-          // hard envelope — defaulted, or an explicit limit clamped down to MAX_READ_LINES — so a
-          // deliberately small explicit window (fully satisfied) stays quiet.
-          if (hasWindow) {
-            const offset = args.offset !== undefined ? Math.max(1, Math.trunc(args.offset)) : 1;
-            const limitWasDefaulted = args.limit === undefined;
-            const limitWasClamped =
-              args.limit !== undefined && Math.trunc(args.limit) > MAX_READ_LINES;
-            const limit = limitWasDefaulted
-              ? MAX_READ_LINES
-              : Math.min(Math.max(1, Math.trunc(args.limit as number)), MAX_READ_LINES);
-            const lineCapIsHard = limitWasDefaulted || limitWasClamped;
-            const windowed = await this.windowFile(validPath, offset);
-            return this.capReadContent(windowed, limit, offset, lineCapIsHard);
-          }
+            // Line window (offset/limit). offset defaults to 1; limit defaults to and is hard-capped
+            // at MAX_READ_LINES. windowFile returns from offset to EOF and capReadContent (maxLines =
+            // limit) does the slicing, so a limit-bounded read that leaves more file behind is
+            // *observable* and gets a resume notice. That notice fires only when the limit is the
+            // hard envelope — defaulted, or an explicit limit clamped down to MAX_READ_LINES — so a
+            // deliberately small explicit window (fully satisfied) stays quiet.
+            if (hasWindow) {
+              const offset = args.offset !== undefined ? Math.max(1, Math.trunc(args.offset)) : 1;
+              const limitWasDefaulted = args.limit === undefined;
+              const limitWasClamped =
+                args.limit !== undefined && Math.trunc(args.limit) > MAX_READ_LINES;
+              const limit = limitWasDefaulted
+                ? MAX_READ_LINES
+                : Math.min(Math.max(1, Math.trunc(args.limit as number)), MAX_READ_LINES);
+              const lineCapIsHard = limitWasDefaulted || limitWasClamped;
+              const windowed = await this.windowFile(validPath, offset);
+              return this.capReadContent(windowed, limit, offset, lineCapIsHard);
+            }
 
-          // head/tail paths respect the explicit line count the model asked for (maxLines =
-          // Infinity, so the line cap never fires — lineCapIsHard is moot), but still get the
-          // per-line and byte safety envelope — e.g. a `tail 1` that returns one multi-MB minified
-          // line is still truncated. No resume offset is emitted for these paths because the first
-          // emitted line is not line 1 of the file.
-          if (args.head && args.tail) {
+            // head/tail paths respect the explicit line count the model asked for (maxLines =
+            // Infinity, so the line cap never fires — lineCapIsHard is moot), but still get the
+            // per-line and byte safety envelope — e.g. a `tail 1` that returns one multi-MB minified
+            // line is still truncated. No resume offset is emitted for these paths because the first
+            // emitted line is not line 1 of the file.
+            if (args.head && args.tail) {
+              return this.capReadContent(
+                await this.headAndTailFile(validPath, args.head, args.tail),
+                Number.POSITIVE_INFINITY,
+                undefined,
+                false
+              );
+            }
+
+            if (args.tail) {
+              return this.capReadContent(
+                await this.tailFile(validPath, args.tail),
+                Number.POSITIVE_INFINITY,
+                undefined,
+                false
+              );
+            }
+
+            if (args.head) {
+              return this.capReadContent(
+                await this.headFile(validPath, args.head),
+                Number.POSITIVE_INFINITY,
+                undefined,
+                false
+              );
+            }
+
+            // Default whole-file read: capped at MAX_READ_LINES / MAX_READ_BYTES with per-line
+            // truncation (the line cap here IS the hard envelope). Files under the caps come back
+            // byte-identical to the old uncapped read.
             return this.capReadContent(
-              await this.headAndTailFile(validPath, args.head, args.tail),
-              Number.POSITIVE_INFINITY,
-              undefined,
-              false
+              await fs.readFile(validPath, 'utf-8'),
+              MAX_READ_LINES,
+              1,
+              true
             );
+          } catch (error) {
+            return this.recoverableError(`reading file ${args.path}`, error);
           }
-
-          if (args.tail) {
-            return this.capReadContent(
-              await this.tailFile(validPath, args.tail),
-              Number.POSITIVE_INFINITY,
-              undefined,
-              false
-            );
-          }
-
-          if (args.head) {
-            return this.capReadContent(
-              await this.headFile(validPath, args.head),
-              Number.POSITIVE_INFINITY,
-              undefined,
-              false
-            );
-          }
-
-          // Default whole-file read: capped at MAX_READ_LINES / MAX_READ_BYTES with per-line
-          // truncation (the line cap here IS the hard envelope). Files under the caps come back
-          // byte-identical to the old uncapped read.
-          return this.capReadContent(
-            await fs.readFile(validPath, 'utf-8'),
-            MAX_READ_LINES,
-            1,
-            true
-          );
         },
         {
           name: 'read_file',
@@ -1049,8 +1089,17 @@ export default class GthFileSystemToolkit extends BaseToolkit {
       createGthTool(
         async (args: z.infer<typeof EditFileArgsSchema>): Promise<string> => {
           displayInfo(`\n📁 Editing file: ${args.path}\n`);
-          const validPath = await this.validatePath(args.path);
-          return await this.applyFileEdits(validPath, args.edits, args.dryRun);
+          // GS2-36: a no-match / ambiguous edit, a missing file, a denied or symlinked-out path
+          // (validatePath throws BEFORE applyFileEdits mutates anything — EXT-14 containment
+          // preserved), or a write failure becomes a recoverable errored result the model can act
+          // on, instead of a fatal throw that aborts the whole run. applyFileEdits' no-match /
+          // ambiguous messages are already phrased as action-oriented recovery hints.
+          try {
+            const validPath = await this.validatePath(args.path);
+            return await this.applyFileEdits(validPath, args.edits, args.dryRun);
+          } catch (error) {
+            return this.recoverableError(`editing file ${args.path}`, error);
+          }
         },
         {
           name: 'edit_file',
@@ -1071,9 +1120,15 @@ export default class GthFileSystemToolkit extends BaseToolkit {
       createGthTool(
         async (args: z.infer<typeof CreateDirectoryArgsSchema>): Promise<string> => {
           displayInfo(`\n📁 Creating directory: ${args.path}\n`);
-          const validPath = await this.validatePath(args.path);
-          await fs.mkdir(validPath, { recursive: true });
-          return `Successfully created directory ${args.path}`;
+          // GS2-36: a denied / symlinked-out path or an mkdir failure (e.g. a file already exists at
+          // the path) becomes a recoverable errored result rather than a fatal run abort.
+          try {
+            const validPath = await this.validatePath(args.path);
+            await fs.mkdir(validPath, { recursive: true });
+            return `Successfully created directory ${args.path}`;
+          } catch (error) {
+            return this.recoverableError(`creating directory ${args.path}`, error);
+          }
         },
         {
           name: 'create_directory',
@@ -1090,21 +1145,27 @@ export default class GthFileSystemToolkit extends BaseToolkit {
       createGthTool(
         async (args: z.infer<typeof ListDirectoryArgsSchema>): Promise<string> => {
           displayInfo(`\n📁 Listing directory: ${args.path}\n`);
-          const validPath = await this.validatePath(args.path);
-          const entries = await fs.readdir(validPath, { withFileTypes: true });
-          const aiignoreConfig = this.aiignoreConfig;
-          const filteredEntries = entries.filter((entry) => {
-            const fullPath = path.join(validPath, entry.name);
-            return !shouldIgnoreFile(
-              fullPath,
-              getCurrentWorkDir(),
-              aiignoreConfig?.patterns,
-              aiignoreConfig?.enabled
-            );
-          });
-          return filteredEntries
-            .map((entry) => `${entry.isDirectory() ? '[DIR]' : '[FILE]'} ${entry.name}`)
-            .join('\n');
+          // GS2-36: a missing directory, a denied / symlinked-out path, or a not-a-directory
+          // (ENOTDIR) error becomes a recoverable errored result rather than a fatal run abort.
+          try {
+            const validPath = await this.validatePath(args.path);
+            const entries = await fs.readdir(validPath, { withFileTypes: true });
+            const aiignoreConfig = this.aiignoreConfig;
+            const filteredEntries = entries.filter((entry) => {
+              const fullPath = path.join(validPath, entry.name);
+              return !shouldIgnoreFile(
+                fullPath,
+                getCurrentWorkDir(),
+                aiignoreConfig?.patterns,
+                aiignoreConfig?.enabled
+              );
+            });
+            return filteredEntries
+              .map((entry) => `${entry.isDirectory() ? '[DIR]' : '[FILE]'} ${entry.name}`)
+              .join('\n');
+          } catch (error) {
+            return this.recoverableError(`listing directory ${args.path}`, error);
+          }
         },
         {
           name: 'list_directory',
@@ -1121,8 +1182,17 @@ export default class GthFileSystemToolkit extends BaseToolkit {
       createGthTool(
         async (args: z.infer<typeof ListDirectoryWithSizesArgsSchema>): Promise<string> => {
           displayInfo(`\n📁 Listing directory with sizes: ${args.path}\n`);
-          const validPath = await this.validatePath(args.path);
-          const entries = await fs.readdir(validPath, { withFileTypes: true });
+          // GS2-36: a missing directory or denied path becomes a recoverable errored result rather
+          // than a fatal run abort. Only validatePath + readdir can throw fatally here (the per-entry
+          // stat below already has its own try/catch), so guard just those.
+          let validPath: string;
+          let entries: Dirent[];
+          try {
+            validPath = await this.validatePath(args.path);
+            entries = (await fs.readdir(validPath, { withFileTypes: true })) as Dirent[];
+          } catch (error) {
+            return this.recoverableError(`listing directory ${args.path}`, error);
+          }
           const aiignoreConfig = this.aiignoreConfig;
           const filteredEntries = entries.filter((entry) => {
             const fullPath = path.join(validPath, entry.name);
@@ -1247,8 +1317,15 @@ export default class GthFileSystemToolkit extends BaseToolkit {
             return result;
           };
 
-          const treeData = await buildTree(args.path);
-          return JSON.stringify(treeData, null, 2);
+          // GS2-36: a missing directory, denied path, or a symlink-out encountered mid-walk
+          // (buildTree calls validatePath on each level) becomes a recoverable errored result
+          // rather than a fatal run abort.
+          try {
+            const treeData = await buildTree(args.path);
+            return JSON.stringify(treeData, null, 2);
+          } catch (error) {
+            return this.recoverableError(`building directory tree for ${args.path}`, error);
+          }
         },
         {
           name: 'directory_tree',
@@ -1265,10 +1342,16 @@ export default class GthFileSystemToolkit extends BaseToolkit {
       createGthTool(
         async (args: z.infer<typeof MoveFileArgsSchema>): Promise<string> => {
           displayInfo(`\n📁 Moving ${args.source} to ${args.destination}\n`);
-          const validSourcePath = await this.validatePath(args.source);
-          const validDestPath = await this.validatePath(args.destination);
-          await fs.rename(validSourcePath, validDestPath);
-          return `Successfully moved ${args.source} to ${args.destination}`;
+          // GS2-36: a missing source, an existing destination, or a denied / symlinked-out path
+          // becomes a recoverable errored result rather than a fatal run abort.
+          try {
+            const validSourcePath = await this.validatePath(args.source);
+            const validDestPath = await this.validatePath(args.destination);
+            await fs.rename(validSourcePath, validDestPath);
+            return `Successfully moved ${args.source} to ${args.destination}`;
+          } catch (error) {
+            return this.recoverableError(`moving ${args.source} to ${args.destination}`, error);
+          }
         },
         {
           name: 'move_file',
@@ -1285,9 +1368,15 @@ export default class GthFileSystemToolkit extends BaseToolkit {
       createGthTool(
         async (args: z.infer<typeof SearchFilesArgsSchema>): Promise<string> => {
           displayInfo(`\n📁 Searching for '${args.pattern}' in ${args.path}\n`);
-          const validPath = await this.validatePath(args.path);
-          const results = await this.searchFiles(validPath, args.pattern, args.excludePatterns);
-          return results.length > 0 ? results.join('\n') : 'No matches found';
+          // GS2-36: a missing or denied root path becomes a recoverable errored result rather than a
+          // fatal run abort (searchFiles already swallows per-entry errors internally).
+          try {
+            const validPath = await this.validatePath(args.path);
+            const results = await this.searchFiles(validPath, args.pattern, args.excludePatterns);
+            return results.length > 0 ? results.join('\n') : 'No matches found';
+          } catch (error) {
+            return this.recoverableError(`searching ${args.path}`, error);
+          }
         },
         {
           name: 'search_files',
@@ -1305,11 +1394,17 @@ export default class GthFileSystemToolkit extends BaseToolkit {
       createGthTool(
         async (args: z.infer<typeof GetFileInfoArgsSchema>): Promise<string> => {
           displayInfo(`\n📁 Getting file info: ${args.path}\n`);
-          const validPath = await this.validatePath(args.path);
-          const info = await this.getFileStats(validPath);
-          return Object.entries(info)
-            .map(([key, value]) => `${key}: ${value}`)
-            .join('\n');
+          // GS2-36: a missing file or denied path becomes a recoverable errored result rather than a
+          // fatal run abort.
+          try {
+            const validPath = await this.validatePath(args.path);
+            const info = await this.getFileStats(validPath);
+            return Object.entries(info)
+              .map(([key, value]) => `${key}: ${value}`)
+              .join('\n');
+          } catch (error) {
+            return this.recoverableError(`getting file info for ${args.path}`, error);
+          }
         },
         {
           name: 'get_file_info',
@@ -1326,15 +1421,21 @@ export default class GthFileSystemToolkit extends BaseToolkit {
       createGthTool(
         async (args: z.infer<typeof DeleteFileArgsSchema>): Promise<string> => {
           displayInfo(`\n📁 Deleting file: ${args.path}\n`);
-          const validPath = await this.validatePath(args.path);
-          const stats = await fs.stat(validPath);
-          if (stats.isDirectory()) {
-            throw new Error(
-              `Cannot delete directory: ${args.path}. Use rmdir or a recursive delete tool for directories.`
-            );
+          // GS2-36: a missing file, a denied path, or the "this is a directory" refusal becomes a
+          // recoverable errored result the model can act on, rather than a fatal run abort.
+          try {
+            const validPath = await this.validatePath(args.path);
+            const stats = await fs.stat(validPath);
+            if (stats.isDirectory()) {
+              throw new Error(
+                `Cannot delete directory: ${args.path}. Use rmdir or a recursive delete tool for directories.`
+              );
+            }
+            await fs.unlink(validPath);
+            return `Successfully deleted file: ${args.path}`;
+          } catch (error) {
+            return this.recoverableError(`deleting file ${args.path}`, error);
           }
-          await fs.unlink(validPath);
-          return `Successfully deleted file: ${args.path}`;
         },
         {
           name: 'delete_file',
@@ -1352,33 +1453,40 @@ export default class GthFileSystemToolkit extends BaseToolkit {
           displayInfo(
             `\n📁 Deleting directory: ${args.path}${args.recursive ? ' (recursive)' : ''}\n`
           );
-          const validPath = await this.validatePath(args.path);
+          // GS2-36: a missing directory, a denied path, the protected-root / not-a-directory /
+          // not-empty refusals all become recoverable errored results the model can act on, rather
+          // than a fatal run abort. Each refusal message is already an action-oriented hint.
+          try {
+            const validPath = await this.validatePath(args.path);
 
-          // Check if this is a protected directory
-          if (this.isProtectedDirectory(validPath)) {
-            throw new Error(
-              `Cannot delete protected directory: ${args.path}. This is one of the allowed root directories.`
-            );
-          }
-
-          const stats = await fs.stat(validPath);
-          if (!stats.isDirectory()) {
-            throw new Error(`Not a directory: ${args.path}. Use delete_file for files.`);
-          }
-
-          if (args.recursive) {
-            await fs.rm(validPath, { recursive: true, force: true });
-            return `Successfully deleted directory and all contents: ${args.path}`;
-          } else {
-            // For non-recursive delete, check if directory is empty
-            const entries = await fs.readdir(validPath);
-            if (entries.length > 0) {
+            // Check if this is a protected directory
+            if (this.isProtectedDirectory(validPath)) {
               throw new Error(
-                `Directory not empty: ${args.path}. Use recursive: true to delete non-empty directories.`
+                `Cannot delete protected directory: ${args.path}. This is one of the allowed root directories.`
               );
             }
-            await fs.rmdir(validPath);
-            return `Successfully deleted empty directory: ${args.path}`;
+
+            const stats = await fs.stat(validPath);
+            if (!stats.isDirectory()) {
+              throw new Error(`Not a directory: ${args.path}. Use delete_file for files.`);
+            }
+
+            if (args.recursive) {
+              await fs.rm(validPath, { recursive: true, force: true });
+              return `Successfully deleted directory and all contents: ${args.path}`;
+            } else {
+              // For non-recursive delete, check if directory is empty
+              const entries = await fs.readdir(validPath);
+              if (entries.length > 0) {
+                throw new Error(
+                  `Directory not empty: ${args.path}. Use recursive: true to delete non-empty directories.`
+                );
+              }
+              await fs.rmdir(validPath);
+              return `Successfully deleted empty directory: ${args.path}`;
+            }
+          } catch (error) {
+            return this.recoverableError(`deleting directory ${args.path}`, error);
           }
         },
         {

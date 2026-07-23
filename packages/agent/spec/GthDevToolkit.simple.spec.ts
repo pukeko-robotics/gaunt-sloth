@@ -312,7 +312,12 @@ describe('GthDevToolkit - Basic Tests', () => {
       }
     });
 
-    it('should handle execution error', async () => {
+    it('GS2-36: a spawn-level failure rejects a ShellCommandFailedError (softenable), not a plain Error', async () => {
+      // Previously the 'error' event rejected a plain Error, which neither shell-exit softener
+      // recognises → a fatal `Stream processing failed` that aborted the whole run. Now it rejects a
+      // ShellCommandFailedError (exitCode null, like a timeout-kill), so BOTH softeners convert it
+      // into a recoverable status:'error' ToolMessage and the model can route around it.
+      const { ShellCommandFailedError } = await import('#src/tools/GthDevToolkit.js');
       const mockChild = {
         on: vi.fn((event, callback) => {
           if (event === 'error') callback(new Error('Spawn error'));
@@ -322,9 +327,17 @@ describe('GthDevToolkit - Basic Tests', () => {
       };
       childProcessMock.spawn.mockReturnValueOnce(mockChild as any);
 
-      await expect(toolkit['executeCommand']('error cmd', 'test_tool')).rejects.toThrow(
-        'Failed to execute command'
-      );
+      const error = (await toolkit['executeCommand']('error cmd', 'run_shell_command').catch(
+        (e) => e
+      )) as InstanceType<typeof ShellCommandFailedError>;
+
+      expect(error).toBeInstanceOf(ShellCommandFailedError);
+      expect(error.exitCode).toBeNull();
+      expect(error.command).toBe('error cmd');
+      expect(error.toolName).toBe('run_shell_command');
+      expect(error.output).toContain("Failed to start command 'error cmd'");
+      expect(error.output).toContain('Spawn error');
+      expect(error.output).toContain('working directory is valid');
       expect(consoleUtilsMock.displayError).toHaveBeenCalled();
     });
 
