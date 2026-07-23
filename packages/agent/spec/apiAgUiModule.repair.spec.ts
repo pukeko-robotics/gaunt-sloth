@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AIMessage } from '@langchain/core/messages';
-import { convertMessage } from '#src/modules/apiAgUiModule.js';
+import { convertMessage, convertMessages } from '#src/modules/apiAgUiModule.js';
 
 // EXT-35 — the AG-UI convertMessage wire-in point. An INCOMING assistant message with no native
 // `toolCalls` whose content is a STANDALONE text-emitted call (a small/local model serialising a
@@ -43,6 +43,19 @@ describe('apiAgUiModule.convertMessage — EXT-35 plain-text tool-call repair', 
       ALLOW
     ) as AIMessage;
     expect(harmony.tool_calls![0]).toMatchObject({ name: 'get_weather', args: { city: 'NYC' } });
+  });
+
+  it('promotes the real gpt-oss Harmony variant (dotted name + `<|constrain|>json`)', () => {
+    const msg = convertMessage(
+      {
+        role: 'assistant',
+        content:
+          '<|channel|>commentary to=functions.get_weather<|constrain|>json<|message|>{"city":"Paris"}<|call|>',
+        id: 'g',
+      },
+      ALLOW
+    ) as AIMessage;
+    expect(msg.tool_calls![0]).toMatchObject({ name: 'get_weather', args: { city: 'Paris' } });
   });
 
   it('leaves ordinary assistant prose as plain text (no promotion)', () => {
@@ -93,5 +106,75 @@ describe('apiAgUiModule.convertMessage — EXT-35 plain-text tool-call repair', 
       name: 'get_weather',
       args: { city: 'Paris' },
     });
+  });
+});
+
+// EXT-43 — the history-convert path (convertMessages) applies a dangling-call guard: promoting a
+// STALLED text call replayed in history would yield an AIMessage with tool_calls and NO following
+// tool_result, which a strict provider (Anthropic) 400s on. So a history text-call is promoted ONLY
+// when it is immediately followed by its `tool` result; a dangling one stays plain text (as the
+// pre-EXT-35 wire did). The live middleware path (fixing the CURRENT turn) is unaffected.
+describe('apiAgUiModule.convertMessages — EXT-43 dangling history tool_call guard', () => {
+  const ALLOW = new Set(['get_weather']);
+
+  it('does NOT promote a dangling/stalled history text call (stays plain text)', () => {
+    const converted = convertMessages(
+      [
+        { role: 'user', content: 'weather in Paris?', id: 'u1' },
+        { role: 'assistant', content: '[tool:get_weather]{"city":"Paris"}', id: 'a1' },
+      ],
+      ALLOW
+    );
+    const assistant = converted[1] as AIMessage;
+    expect(AIMessage.isInstance(assistant)).toBe(true);
+    expect(assistant.tool_calls ?? []).toHaveLength(0);
+    // Stays exactly as the wire text — the pre-EXT-35 shape a strict provider accepts.
+    expect(assistant.content).toBe('[tool:get_weather]{"city":"Paris"}');
+  });
+
+  it('DOES promote a history text call that IS followed by its tool_result', () => {
+    const converted = convertMessages(
+      [
+        { role: 'user', content: 'weather in Paris?', id: 'u1' },
+        { role: 'assistant', content: '[tool:get_weather]{"city":"Paris"}', id: 'a1' },
+        { role: 'tool', content: '{"tempC":21}', id: 't1', toolCallId: 'call_1' },
+      ],
+      ALLOW
+    );
+    const assistant = converted[1] as AIMessage;
+    expect(assistant.tool_calls).toHaveLength(1);
+    expect(assistant.tool_calls![0]).toMatchObject({
+      name: 'get_weather',
+      args: { city: 'Paris' },
+    });
+    expect(assistant.content).toBe('');
+  });
+
+  it('does not promote a dangling widened gpt-oss variant either (guard is dialect-agnostic)', () => {
+    const converted = convertMessages(
+      [
+        {
+          role: 'assistant',
+          content:
+            '<|channel|>commentary to=functions.get_weather<|constrain|>json<|message|>{"city":"Paris"}<|call|>',
+          id: 'a1',
+        },
+      ],
+      ALLOW
+    );
+    const assistant = converted[0] as AIMessage;
+    expect(assistant.tool_calls ?? []).toHaveLength(0);
+  });
+
+  it('leaves ordinary history prose untouched and passes non-assistant roles through', () => {
+    const converted = convertMessages(
+      [
+        { role: 'user', content: 'hi', id: 'u1' },
+        { role: 'assistant', content: 'The weather is sunny.', id: 'a1' },
+      ],
+      ALLOW
+    );
+    expect((converted[1] as AIMessage).content).toBe('The weather is sunny.');
+    expect((converted[1] as AIMessage).tool_calls ?? []).toHaveLength(0);
   });
 });

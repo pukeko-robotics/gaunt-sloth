@@ -6,6 +6,8 @@
 //   • bracket:   `[tool:name]{...json...}`  /  `[name]\n{...json...}[/name]`
 //   • XML-ish:   `<function=name><parameter=key>value</parameter></function>`
 //   • Harmony:   `<|channel|>commentary to=name code<|message|>{...json...}<|call|>`
+//     — plus the real gpt-oss variant (EXT-43) with a NAMESPACED name and a `<|constrain|>` marker:
+//       `<|channel|>commentary to=functions.get_weather<|constrain|>json<|message|>{...}<|call|>`
 //
 // {@link parseStandalonePlainTextToolCallBlocks} is STANDALONE-only by construction: it walks the
 // WHOLE input and returns null the moment it hits text that is not a tool-call block, so prose that
@@ -16,10 +18,13 @@
 import {
   consumeLineBreak,
   END_TOOL_REQUEST,
+  finalDotSegment,
   findJsonObjectEnd,
   HARMONY_CALL_MARKER,
   HARMONY_CHANNEL_MARKER,
+  HARMONY_CONSTRAIN_MARKER,
   HARMONY_MESSAGE_MARKER,
+  isHarmonyToolNameChar,
   isPlainTextToolNameChar,
   skipHorizontalWhitespace,
   skipWhitespace,
@@ -47,7 +52,14 @@ export type PlainTextToolCallParseOptions = {
   maxPayloadBytes?: number;
 };
 
-const DEFAULT_MAX_PLAIN_TEXT_TOOL_PAYLOAD_BYTES = 256_000;
+/**
+ * The single source of truth for the plain-text tool-call payload cap (256 KB). A serialized call
+ * larger than this is never treated as a tool call. Re-exported from `./promote.js` (and the module
+ * index) as `MAX_TEXT_EMITTED_TOOL_CALL_PAYLOAD_BYTES` — the public name — so there is ONE constant,
+ * not two duplicated literals. (EXT-43 unified the former `DEFAULT_MAX_PLAIN_TEXT_TOOL_PAYLOAD_BYTES`
+ * here with `promote.ts`'s copy.)
+ */
+export const MAX_TEXT_EMITTED_TOOL_CALL_PAYLOAD_BYTES = 256_000;
 const utf8Encoder = new TextEncoder();
 
 function utf8ByteLengthWithinLimit(
@@ -126,19 +138,38 @@ function parseHarmonyOpening(text: string, start: number): PlainTextToolCallOpen
     return null;
   }
   cursor += 3;
+  // Tool name. EXT-43: accept the real gpt-oss NAMESPACED form (`to=functions.get_weather`) by
+  // scanning dot-inclusive chars, then take the FINAL dot-segment as the allow-listed tool name.
+  // The reference dotless form (`to=get_weather`) is the single-segment degenerate case.
   const nameStart = cursor;
-  while (isPlainTextToolNameChar(text[cursor])) {
+  while (isHarmonyToolNameChar(text[cursor])) {
     cursor += 1;
   }
   if (cursor === nameStart) {
     return null;
   }
-  const name = text.slice(nameStart, cursor);
-  cursor = skipHorizontalWhitespace(text, cursor);
-  if (!text.startsWith('code', cursor)) {
+  const name = finalDotSegment(text.slice(nameStart, cursor));
+  if (!name) {
+    // Trailing-dot / empty final segment (e.g. `to=functions.`) is not a valid tool name.
     return null;
   }
-  cursor += 4;
+  cursor = skipHorizontalWhitespace(text, cursor);
+  // Payload-format marker between the header and the JSON. The reference grammar requires the
+  // literal `code` token; real gpt-oss instead emits `<|constrain|>json` (EXT-43). Accept EITHER —
+  // but a marker is still REQUIRED, so the widening does not relax prose-safety (a bare
+  // `commentary to=x {…}` never promotes).
+  if (text.startsWith('code', cursor)) {
+    cursor += 4;
+  } else if (text.startsWith(HARMONY_CONSTRAIN_MARKER, cursor)) {
+    cursor += HARMONY_CONSTRAIN_MARKER.length;
+    // Optional constraint-format token that follows the marker (e.g. `json`).
+    cursor = skipHorizontalWhitespace(text, cursor);
+    while (isPlainTextToolNameChar(text[cursor])) {
+      cursor += 1;
+    }
+  } else {
+    return null;
+  }
   cursor = skipWhitespace(text, cursor);
   if (text.startsWith(HARMONY_MESSAGE_MARKER, cursor)) {
     cursor = skipWhitespace(text, cursor + HARMONY_MESSAGE_MARKER.length);
@@ -221,7 +252,7 @@ function parsePlainTextToolCallBlockAt(
   const payload = consumeJsonObject(
     text,
     opening.end,
-    options?.maxPayloadBytes ?? DEFAULT_MAX_PLAIN_TEXT_TOOL_PAYLOAD_BYTES
+    options?.maxPayloadBytes ?? MAX_TEXT_EMITTED_TOOL_CALL_PAYLOAD_BYTES
   );
   if (!payload) {
     return null;
@@ -341,7 +372,7 @@ function parseXmlishPlainTextToolCallBlockAt(
     return null;
   }
 
-  const maxPayloadBytes = options?.maxPayloadBytes ?? DEFAULT_MAX_PLAIN_TEXT_TOOL_PAYLOAD_BYTES;
+  const maxPayloadBytes = options?.maxPayloadBytes ?? MAX_TEXT_EMITTED_TOOL_CALL_PAYLOAD_BYTES;
   const args: Record<string, unknown> = {};
   let cursor = opening.end;
   let parameterCount = 0;

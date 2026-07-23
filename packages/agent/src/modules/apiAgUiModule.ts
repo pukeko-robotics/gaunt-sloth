@@ -116,6 +116,26 @@ function parseToolArguments(raw: string | undefined, toolName: string): Record<s
   }
 }
 
+/** An AG-UI wire message as received on the run input (the shape {@link convertMessage} accepts). */
+type AgUiWireMessage = {
+  role: string;
+  content?: string;
+  id: string;
+  toolCalls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>;
+  toolCallId?: string;
+};
+
+/** Per-message options for {@link convertMessage}. */
+interface ConvertMessageOptions {
+  /**
+   * Whether an assistant text-emitted tool call may be PROMOTED to a native tool_call for this
+   * message. Defaults to `true` (the EXT-35 behaviour). {@link convertMessages} sets this to `false`
+   * for a DANGLING history call (one not followed by its tool result) so a stalled replayed call
+   * stays plain text — see EXT-43 and that function's doc.
+   */
+  allowTextCallPromotion?: boolean;
+}
+
 /**
  * Convert AG-UI message format to LangChain BaseMessage.
  *
@@ -126,16 +146,14 @@ function parseToolArguments(raw: string | undefined, toolName: string): Record<s
  * native tool_call so a replayed history turn is a real tool call rather than inert prose. An empty
  * (or absent) allow-list promotes nothing — the prose-safe default. This runs alongside
  * {@link parseToolArguments} (which rescues malformed args on an ALREADY-native tool_call).
+ *
+ * EXT-43: `options.allowTextCallPromotion` (default `true`) lets a caller suppress promotion for a
+ * single message; {@link convertMessages} uses it to leave a DANGLING history call as text.
  */
 export function convertMessage(
-  msg: {
-    role: string;
-    content?: string;
-    id: string;
-    toolCalls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>;
-    toolCallId?: string;
-  },
-  allowedToolNames?: Set<string>
+  msg: AgUiWireMessage,
+  allowedToolNames?: Set<string>,
+  options?: ConvertMessageOptions
 ): BaseMessage {
   const content = typeof msg.content === 'string' ? msg.content : '';
   switch (msg.role) {
@@ -156,8 +174,10 @@ export function convertMessage(
       // EXT-35: no native tool_calls — a small/local model may have emitted the call as assistant
       // TEXT. Promote a standalone text-emitted call (gated by the bound-tool allow-list + payload
       // cap + standalone-only) to a native tool_call; otherwise fall through to plain text.
+      // EXT-43: `allowTextCallPromotion === false` (a dangling history call) short-circuits the
+      // promotion so the message stays plain text.
       const repairedToolCalls =
-        allowedToolNames && allowedToolNames.size > 0
+        options?.allowTextCallPromotion !== false && allowedToolNames && allowedToolNames.size > 0
           ? textToNativeToolCalls(content, { allowedToolNames })
           : undefined;
       if (repairedToolCalls) {
@@ -173,6 +193,30 @@ export function convertMessage(
     default:
       return new HumanMessage(content);
   }
+}
+
+/**
+ * Convert a whole AG-UI history array to LangChain messages, applying the EXT-43 dangling-call
+ * guard on the history-convert path.
+ *
+ * EXT-35's per-message promotion is unconditional, which is correct for a call that WILL be executed
+ * this turn. But when replaying HISTORY, promoting a STALLED text call (one the client recorded but
+ * that never ran) yields an `AIMessage` with `tool_calls` and NO following `tool_result` — a shape a
+ * strict provider (Anthropic) 400s on, where the pre-EXT-35 plain text was valid. So here promotion
+ * is allowed ONLY when the assistant message is immediately followed by a `tool` result message;
+ * a dangling call stays plain text (`allowTextCallPromotion: false`). The live middleware path
+ * (`GthLangChainAgent`, fixing the CURRENT turn) is unaffected — this guard is history-replay only.
+ */
+export function convertMessages(
+  messages: AgUiWireMessage[],
+  allowedToolNames?: Set<string>
+): BaseMessage[] {
+  return messages.map((msg, index) => {
+    const followedByToolResult = messages[index + 1]?.role === 'tool';
+    return convertMessage(msg, allowedToolNames, {
+      allowTextCallPromotion: followedByToolResult,
+    });
+  });
 }
 
 /**
@@ -396,8 +440,11 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
         // The system prompt (backstory + guidelines + mode prompt + identity) lives in the
         // deep-agent graph via createDeepAgent({ systemPrompt }) — see GthDeepAgent — so it is no
         // longer prepended here. A separate, non-first SystemMessage would be rejected by Anthropic.
-        const langChainMessages: BaseMessage[] = (messages || []).map(
-          (m: Parameters<typeof convertMessage>[0]) => convertMessage(m, allowedToolNames)
+        // EXT-43: convertMessages (not a bare map) applies the dangling-call guard so a stalled
+        // text call replayed in history is not promoted to a native tool_call with no result.
+        const langChainMessages: BaseMessage[] = convertMessages(
+          (messages || []) as Parameters<typeof convertMessages>[0],
+          allowedToolNames
         );
         eventStream = activeAgent.streamWithEvents(langChainMessages, runConfig, ac.signal);
       }
