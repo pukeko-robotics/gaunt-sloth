@@ -55,10 +55,14 @@ export interface ModelInfo {
  *   Covers openai, openrouter, groq, deepseek, xai and ollama (local).
  * - `anthropic` — Anthropic's native `GET /v1/models`
  *   (`{ data: [{ type, id, display_name }] }`) with `x-api-key` auth.
- * - `none`     — no cheap live endpoint; stay on the curated list
- *   (google-genai, vertexai).
+ * - `google`   — Google AI Studio's native ListModels
+ *   (`GET /v1beta/models` → `{ models: [{ name, supportedGenerationMethods }] }`)
+ *   with `x-goog-api-key` auth. Chat capability is decided by a data-driven
+ *   `supportedGenerationMethods` check rather than a name regex (google-genai).
+ * - `none`     — no cheap live endpoint; stay on the curated list (vertexai,
+ *   which authenticates via gcloud ADC rather than an API key).
  */
-export type DiscoveryKind = 'openai' | 'anthropic' | 'none';
+export type DiscoveryKind = 'openai' | 'anthropic' | 'google' | 'none';
 
 /**
  * Per-provider live-discovery adapter. Bundled on the {@link ProviderDescriptor}
@@ -180,7 +184,16 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
       'gemini-3.1-pro-preview',
       'gemini-2.5-pro',
     ],
-    discovery: { kind: 'none' },
+    discovery: {
+      kind: 'google',
+      // Native ListModels — returns the full current family (incl. the 3.x tier)
+      // that the OpenAI-compat `/v1beta/openai/models` shim can lag behind.
+      modelsUrl: () => 'https://generativelanguage.googleapis.com/v1beta/models',
+      // The key rides the header form so it reuses the existing authHeader machinery
+      // (no `?key=` URL-building). No `filter`: the google parse path decides chat
+      // capability via `supportedGenerationMethods`, not the name-regex chatOnly.
+      authHeader: (key) => ({ 'x-goog-api-key': key }),
+    },
   },
   {
     id: 'vertexai',
@@ -428,7 +441,7 @@ export const INTERACTIVE_MODEL_FETCH_TIMEOUT_MS = 12_000;
  *   failed: network error/timeout, non-2xx, or an empty/malformed payload. THIS is
  *   the "couldn't reach" case the first-run dialog surfaces.
  * - `curated`  — no live query was attempted, by design: a `kind:'none'` provider
- *   (google-genai, vertexai) or a cloud provider with no API key present. The
+ *   (vertexai) or a cloud provider with no API key present. The
  *   curated catalog is the expected result here, NOT a degrade, so the dialog must
  *   NOT show a "couldn't reach" notice for it.
  */
@@ -461,6 +474,40 @@ function parseModelIds(body: unknown): string[] {
   return data
     .map((m) => m?.id)
     .filter((id): id is string => typeof id === 'string' && id.length > 0);
+}
+
+/**
+ * Parse the Google AI Studio (`google-genai`) native ListModels envelope
+ * `{ models: [{ name: 'models/<id>', supportedGenerationMethods: [...] }] }`.
+ *
+ * Unlike the OpenAI/Anthropic `data[].id` shape, this endpoint returns the whole
+ * generative-language family — embeddings, TTS, image, etc. — alongside the chat
+ * models, so chat capability is decided by a **data-driven** check
+ * (`supportedGenerationMethods` includes `generateContent`) that REPLACES the
+ * name-regex `chatOnly` filter for this provider. Each surviving `name` is a
+ * fully-qualified `models/<id>`; the `models/` prefix is stripped to a bare slug
+ * (`gemini-3.6-flash`) — the form `ChatGoogleGenerativeAI` expects and the id the
+ * curated ⭐ overlay in {@link buildModelList} matches on.
+ */
+function parseGoogleModels(body: unknown): string[] {
+  const models = (
+    body as {
+      models?: Array<{ name?: unknown; supportedGenerationMethods?: unknown }>;
+    } | null
+  )?.models;
+  if (!Array.isArray(models)) return [];
+  return (
+    models
+      .filter((m) => {
+        const methods = m?.supportedGenerationMethods;
+        // Data-driven chat-capability check (replaces the name-regex chatOnly for google).
+        return Array.isArray(methods) && methods.includes('generateContent');
+      })
+      .map((m) => m?.name)
+      .filter((name): name is string => typeof name === 'string' && name.length > 0)
+      // Strip the `models/` prefix to the bare slug ChatGoogleGenerativeAI / the ⭐ overlay expect.
+      .map((name) => name.replace(/^models\//, ''))
+  );
 }
 
 /**
@@ -522,7 +569,10 @@ async function discoverModelsInternal(
       return curated('fallback');
     }
     const body = await res.json();
-    let ids = parseModelIds(body);
+    // The google native ListModels envelope (`{ models: [{ name, supportedGenerationMethods }] }`)
+    // differs from the OpenAI/Anthropic `data[].id` shape and carries its own
+    // capability-based chat filter + `models/` prefix strip inside the parser.
+    let ids = discovery.kind === 'google' ? parseGoogleModels(body) : parseModelIds(body);
     if (discovery.filter) {
       ids = ids.filter(discovery.filter);
     }
@@ -546,6 +596,9 @@ async function discoverModelsInternal(
  * - `kind: 'openai' | 'anthropic'` → fetches the models endpoint with a short
  *   timeout, parses `data[].id`, applies the chat-only `filter`, and overlays
  *   the ⭐ preferred flags via `buildModelList(descriptor, liveIds)`.
+ * - `kind: 'google'` → fetches the native ListModels endpoint, parses
+ *   `models[].name` keeping only `generateContent`-capable entries and stripping
+ *   the `models/` prefix, then overlays the ⭐ preferred flags likewise.
  *
  * Best-effort: any error / non-2xx / malformed / empty payload falls back to
  * the curated list. This function NEVER throws — a bad key must degrade to the
