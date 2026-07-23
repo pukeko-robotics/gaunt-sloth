@@ -257,6 +257,13 @@ export class GthAgentRunner {
         // per YAGNI none is built. When such a config is added, the one-shot fallback belongs where
         // the refusal is detected (GthAbstractAgent.surfaceRefusal): try the fallback model ONCE
         // before surfacing, and never retry the same model.
+        // GS2-72: the GS2-36 retry-budget's terminal notice — injected via a jumpTo:'end' STATE
+        // update on the lean createAgent graph — is streamed as an AIMessage chunk under
+        // streamMode:'messages' (verified on langchain 1.5.x), so it already arrives as a NON-empty
+        // `result` above and does NOT reach this fallback. Only a genuinely empty model turn falls
+        // through here, where the single retry invoke is the intended recovery. (If a future
+        // langchain stops streaming jumpTo-injected messages, the budget notice would drain empty
+        // and hit this fallback; GthAbstractAgentTerminalNotice.spec pins the current behaviour.)
         if (result.trim().length === 0) {
           debugLog('Stream produced empty response, retrying once with non-streaming invoke.');
           const fallback = await this.agent.invoke(messages, this.runConfig);
