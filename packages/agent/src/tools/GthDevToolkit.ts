@@ -225,8 +225,11 @@ export default class GthDevToolkit extends BaseToolkit {
    * and a timeout-kill instead REJECT with a {@link ShellCommandFailedError} that carries the FULL
    * model-facing body — the deep-agent {@link GthDeepShellExitSoftening} middleware converts that
    * throw into an error `ToolMessage` (status:'error' → ✗) while preserving the output, so the
-   * model still sees the killed-after-N / exit-code message and can continue. Spawn-level failures
-   * (`child.on('error')`) still reject with a plain `Error`.
+   * model still sees the killed-after-N / exit-code message and can continue. GS2-36: spawn-level
+   * failures (`child.on('error')` — missing shell binary, a non-existent cwd, EMFILE, …) ALSO reject
+   * with a {@link ShellCommandFailedError} (exitCode null) so the same softeners convert them into a
+   * recoverable error `ToolMessage`; previously they rejected a plain `Error` that neither softener
+   * recognised, so a spawn failure aborted the whole run.
    */
   private async executeCommand(
     command: string,
@@ -368,9 +371,24 @@ export default class GthDevToolkit extends BaseToolkit {
         if (settled) return;
         settled = true;
         clearTimers();
-        const errorMsg = `Failed to execute command '${command}': ${error.message}`;
+        // GS2-36: a spawn-level failure used to reject a plain Error, which neither the lean
+        // (GthLeanShellExitSoftening) nor the deep (GthDeepShellExitSoftening) softener recognises —
+        // so it propagated to GthAgentRunner as a fatal `Stream processing failed` and crashed the
+        // run. Reject a ShellCommandFailedError (exitCode null, like a timeout-kill) so BOTH softeners
+        // convert it into a recoverable status:'error' ToolMessage and the model can route around it.
+        // The message is phrased as an action-oriented recovery hint (EXT-34 hermes style).
+        const errorMsg =
+          `Failed to start command '${command}': ${error.message}. ` +
+          'Check that the command/executable exists and the working directory is valid, then retry.';
         displayError(errorMsg);
-        reject(new Error(errorMsg));
+        reject(
+          new ShellCommandFailedError({
+            output: errorMsg,
+            exitCode: null,
+            command,
+            toolName,
+          })
+        );
       });
     });
   }

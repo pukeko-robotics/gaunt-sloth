@@ -21,6 +21,10 @@ const fsMock = {
   rename: vi.fn(),
   open: vi.fn(),
   realpath: vi.fn(),
+  // GS2-36 recoverable-delete tests exercise these.
+  unlink: vi.fn(),
+  rm: vi.fn(),
+  rmdir: vi.fn(),
 };
 
 // Keep the original path methods for basic functionality
@@ -665,23 +669,35 @@ describe('GthFileSystemToolkit - Basic Tests', () => {
       // realpath echoes its input (outer beforeEach), so testPath validates.
     });
 
-    it('ambiguous match without replaceAll throws a count-naming error and does NOT write', async () => {
+    // GS2-36: an ambiguous edit is a RECOVERABLE errored result (naming the path + count), not a
+    // fatal throw — a throw aborts the whole agent run. The model can add context and retry.
+    it('ambiguous match without replaceAll returns a recoverable count-naming result and does NOT write', async () => {
       fsMock.readFile.mockResolvedValue('x = foo\ny = foo\n');
 
-      await expect(
-        editTool.invoke({ path: testPath, edits: [{ oldText: 'foo', newText: 'bar' }] })
-      ).rejects.toThrow(/Found 2 occurrences of the oldText/);
+      const result: string = await editTool.invoke({
+        path: testPath,
+        edits: [{ oldText: 'foo', newText: 'bar' }],
+      });
 
+      expect(result).toContain(`Error editing file ${testPath}`);
+      expect(result).toContain('found 2 occurrences of the search text');
+      expect(result).toContain('replaceAll: true');
       expect(fsMock.writeFile).not.toHaveBeenCalled();
     });
 
-    it('no match at all throws the existing "Could not find exact match" error and does NOT write', async () => {
+    // GS2-36: no-match is a RECOVERABLE errored result (naming the path + an action-oriented hint),
+    // not a fatal throw. The file is not modified and the run continues.
+    it('no match at all returns a recoverable "no occurrence" result and does NOT write', async () => {
       fsMock.readFile.mockResolvedValue('nothing to see here\n');
 
-      await expect(
-        editTool.invoke({ path: testPath, edits: [{ oldText: 'zzz', newText: 'yyy' }] })
-      ).rejects.toThrow(/Could not find exact match/);
+      const result: string = await editTool.invoke({
+        path: testPath,
+        edits: [{ oldText: 'zzz', newText: 'yyy' }],
+      });
 
+      expect(result).toContain(`Error editing file ${testPath}`);
+      expect(result).toContain('no occurrence of the search text was found');
+      expect(result).toContain('file was NOT modified');
       expect(fsMock.writeFile).not.toHaveBeenCalled();
     });
 
@@ -840,6 +856,104 @@ describe('GthFileSystemToolkit - Basic Tests', () => {
       expect(result).toContain('Access denied');
       expect(fsMock.mkdir).not.toHaveBeenCalled();
       expect(fsMock.writeFile).not.toHaveBeenCalled();
+    });
+  });
+
+  // GS2-36: generalize the write_file precedent across the toolkit — a fatal throw (missing file,
+  // denied / symlinked-out path, EISDIR, a deliberate refusal) must reach the model as a recoverable
+  // errored RESULT (a string), never propagate and crash the run. One representative case per tool.
+  describe('GS2-36: fatal-throw -> recoverable result across the toolkit', () => {
+    const enoent = (op: string) =>
+      Object.assign(new Error(`ENOENT: no such file or directory, ${op}`), { code: 'ENOENT' });
+    const tool = (name: string) => toolkit.tools.find((t) => t.name === name)!;
+
+    beforeEach(() => {
+      toolkit = new GthFileSystemToolkit({ allowedDirectories: [process.cwd()] });
+    });
+
+    it('edit_file: a missing file returns a recoverable read error, not a throw', async () => {
+      const p = path.join(process.cwd(), 'gone.txt');
+      fsMock.readFile.mockRejectedValueOnce(enoent("open 'gone.txt'"));
+      const result: string = await tool('edit_file').invoke({
+        path: p,
+        edits: [{ oldText: 'a', newText: 'b' }],
+      });
+      expect(result).toContain(`Error editing file ${p}`);
+      expect(result).toContain('ENOENT');
+      expect(fsMock.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('edit_file: a path outside the sandbox is denied as a recoverable result and writes nothing', async () => {
+      const outside = '/etc/passwd';
+      const result: string = await tool('edit_file').invoke({
+        path: outside,
+        edits: [{ oldText: 'a', newText: 'b' }],
+      });
+      expect(result).toContain(`Error editing file ${outside}`);
+      expect(result).toContain('Access denied');
+      expect(fsMock.readFile).not.toHaveBeenCalled();
+      expect(fsMock.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('read_file: a missing file returns a recoverable result, not a throw', async () => {
+      const p = path.join(process.cwd(), 'missing.txt');
+      fsMock.readFile.mockRejectedValueOnce(enoent("open 'missing.txt'"));
+      const result: string = await tool('read_file').invoke({ path: p });
+      expect(result).toContain(`Error reading file ${p}`);
+      expect(result).toContain('ENOENT');
+    });
+
+    it('list_directory: a missing directory returns a recoverable result, not a throw', async () => {
+      const p = path.join(process.cwd(), 'nodir');
+      fsMock.readdir.mockRejectedValueOnce(enoent("scandir 'nodir'"));
+      const result: string = await tool('list_directory').invoke({ path: p });
+      expect(result).toContain(`Error listing directory ${p}`);
+      expect(result).toContain('ENOENT');
+    });
+
+    it('get_file_info: a missing target returns a recoverable result, not a throw', async () => {
+      const p = path.join(process.cwd(), 'ghost');
+      fsMock.stat.mockRejectedValueOnce(enoent("stat 'ghost'"));
+      const result: string = await tool('get_file_info').invoke({ path: p });
+      expect(result).toContain(`Error getting file info for ${p}`);
+      expect(result).toContain('ENOENT');
+    });
+
+    it('create_directory: a path outside the sandbox is a recoverable denial (no mkdir)', async () => {
+      const outside = '/etc/evil';
+      const result: string = await tool('create_directory').invoke({ path: outside });
+      expect(result).toContain(`Error creating directory ${outside}`);
+      expect(result).toContain('Access denied');
+      expect(fsMock.mkdir).not.toHaveBeenCalled();
+    });
+
+    it('move_file: a rename failure returns a recoverable result, not a throw', async () => {
+      const src = path.join(process.cwd(), 'a.txt');
+      const dst = path.join(process.cwd(), 'b.txt');
+      fsMock.rename.mockRejectedValueOnce(enoent("rename 'a.txt'"));
+      const result: string = await tool('move_file').invoke({ source: src, destination: dst });
+      expect(result).toContain(`Error moving ${src} to ${dst}`);
+      expect(result).toContain('ENOENT');
+    });
+
+    it('delete_file: the "this is a directory" refusal is a recoverable result and does not unlink', async () => {
+      const p = path.join(process.cwd(), 'adir');
+      fsMock.stat.mockResolvedValueOnce({ isDirectory: () => true, isFile: () => false });
+      const result: string = await tool('delete_file').invoke({ path: p });
+      expect(result).toContain(`Error deleting file ${p}`);
+      expect(result).toContain('Cannot delete directory');
+      expect(fsMock.unlink).not.toHaveBeenCalled();
+    });
+
+    it('delete_directory: the protected-root refusal is a recoverable result (no rm)', async () => {
+      // The sandbox root itself is a protected directory; deleting it must be refused recoverably.
+      const result: string = await tool('delete_directory').invoke({
+        path: process.cwd(),
+        recursive: true,
+      });
+      expect(result).toContain(`Error deleting directory ${process.cwd()}`);
+      expect(result).toContain('Cannot delete protected directory');
+      expect(fsMock.rm).not.toHaveBeenCalled();
     });
   });
 

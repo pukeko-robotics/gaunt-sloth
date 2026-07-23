@@ -562,6 +562,98 @@ describe('GthLangChainAgent', () => {
       });
     });
 
+    // GS2-36: the retry budget caps a self-inflicted tool-error loop. A beforeModel guard walks the
+    // trailing messages, counts CONSECUTIVE status:'error' tool results (reset by a successful tool
+    // result or a fresh user turn), and once the cap is hit ends the run via jumpTo:'end' with an
+    // action-oriented notice — a tighter complement to createAgent's coarse recursionLimit.
+    describe('GthLeanToolErrorBudget (GS2-36 retry budget cap)', () => {
+      let createToolErrorBudgetMiddleware: typeof import('#src/core/GthLangChainAgent.js').createToolErrorBudgetMiddleware;
+      let MAX_CONSECUTIVE_TOOL_ERRORS: number;
+
+      beforeEach(async () => {
+        ({ createToolErrorBudgetMiddleware, MAX_CONSECUTIVE_TOOL_ERRORS } =
+          await import('#src/core/GthLangChainAgent.js'));
+      });
+
+      const errTool = (id: string) =>
+        new ToolMessage({ content: 'boom', tool_call_id: id, status: 'error' });
+      const okTool = (id: string) =>
+        new ToolMessage({ content: 'ok', tool_call_id: id, status: 'success' });
+      const aiCall = (id: string) =>
+        new AIMessage({ content: '', tool_calls: [{ name: 'run_shell_command', args: {}, id }] });
+      // One ReAct round: the assistant tool-call request + its resulting tool message.
+      const round = (id: string, tool: (_id: string) => ToolMessage) => [aiCall(id), tool(id)];
+
+      const runHook = (mw: any, messages: unknown[]) => mw.beforeModel.hook({ messages });
+
+      it('is installed after the softeners in the lean middleware array', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('code', mockConfig);
+
+        const middleware = createAgentMock.mock.calls.at(-1)?.[0].middleware as { name: string }[];
+        const idx = middleware.findIndex((m) => m.name === 'GthLeanToolErrorBudget');
+        expect(idx).toBeGreaterThan(-1);
+        // outboard of user middleware: right after the two softeners (indices 0 and 1).
+        expect(idx).toBe(2);
+      });
+
+      it('trips jumpTo:end once N consecutive errored tool results accrue', () => {
+        const mw = createToolErrorBudgetMiddleware(3);
+        const messages = [
+          new HumanMessage('go'),
+          ...round('a', errTool),
+          ...round('b', errTool),
+          ...round('c', errTool),
+        ];
+        const res = runHook(mw, messages);
+        expect(res?.jumpTo).toBe('end');
+        expect(AIMessage.isInstance(res.messages[0])).toBe(true);
+        expect(String(res.messages[0].content)).toContain('consecutive failed tool calls');
+        // The action-oriented notice echoes the last error and steers away from repeating it.
+        expect(String(res.messages[0].content)).toContain('last error: boom');
+      });
+
+      it('does NOT trip below the cap', () => {
+        const mw = createToolErrorBudgetMiddleware(3);
+        const messages = [new HumanMessage('go'), ...round('a', errTool), ...round('b', errTool)];
+        expect(runHook(mw, messages)).toBeUndefined();
+      });
+
+      it('resets the streak on a successful tool result (only trailing errors count)', () => {
+        const mw = createToolErrorBudgetMiddleware(3);
+        // 3 total errors, but the success breaks the streak so only the trailing 2 count → no trip.
+        const messages = [
+          new HumanMessage('go'),
+          ...round('a', errTool),
+          ...round('ok', okTool),
+          ...round('b', errTool),
+          ...round('c', errTool),
+        ];
+        expect(runHook(mw, messages)).toBeUndefined();
+      });
+
+      it('counts 0 on a fresh turn (trailing human message only)', () => {
+        const mw = createToolErrorBudgetMiddleware(3);
+        expect(runHook(mw, [new HumanMessage('hi')])).toBeUndefined();
+      });
+
+      it('the default cap is MAX_CONSECUTIVE_TOOL_ERRORS', () => {
+        const mw = createToolErrorBudgetMiddleware();
+        const atCap: unknown[] = [new HumanMessage('go')];
+        for (let i = 0; i < MAX_CONSECUTIVE_TOOL_ERRORS; i++)
+          atCap.push(...round(`r${i}`, errTool));
+        expect(runHook(mw, atCap)?.jumpTo).toBe('end');
+
+        const belowCap: unknown[] = [new HumanMessage('go')];
+        for (let i = 0; i < MAX_CONSECUTIVE_TOOL_ERRORS - 1; i++)
+          belowCap.push(...round(`r${i}`, errTool));
+        expect(runHook(mw, belowCap)).toBeUndefined();
+      });
+    });
+
     // An MCP tool that returns an `isError` result is surfaced by @langchain/mcp-adapters as a THROWN
     // ToolException; because gth installs wrapToolCall middleware, langchain's ToolNode would treat
     // that rethrow as a fatal "middleware error" and abort the turn. This middleware must instead

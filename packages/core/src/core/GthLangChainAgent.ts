@@ -31,6 +31,85 @@ import { createAgent, createMiddleware } from 'langchain';
 export type { AgentStreamEvent } from '#src/core/types.js';
 
 /**
+ * GS2-36 — default cap for the tool-error retry budget: how many status:'error' tool results may
+ * accrue back-to-back (no successful tool result in between) before the run is ended gracefully.
+ * Small on purpose: it still lets the model try a couple of genuine recovery variants (the whole
+ * point of feeding errors back — GS2-32 showed the model routes around a surfaced error in 1–2
+ * tries) while stopping a runaway self-inflicted loop long before createAgent's coarse
+ * recursionLimit backstop would.
+ */
+export const MAX_CONSECUTIVE_TOOL_ERRORS = 5;
+
+/**
+ * GS2-36 — the tool-error retry budget as a standalone, testable middleware factory (exported so the
+ * real thing can be unit-tested and exercised in a real `createAgent` graph, mirroring
+ * `createPathNamespaceCorrectionMiddleware`).
+ *
+ * Runs in `beforeModel` (like langchain's own `modelCallLimitMiddleware`): after the tools node has
+ * appended its result(s) and before the next model call is spent, it walks the trailing messages and
+ * counts CONSECUTIVE errored tool results — a `ToolMessage` with `status: 'error'` (the shape the
+ * shell/MCP softeners produce; GthAbstractAgent maps `status==='error' → isError`). The walk skips
+ * the assistant tool-call requests between rounds, and RESETS on the first successful tool result
+ * (progress / diagnosis) or a Human/System message (a fresh user turn). Once the count reaches the
+ * cap it returns `{ jumpTo: 'end', messages: [<action-oriented notice>] }`, ending the run without
+ * spending another model call.
+ *
+ * Scope: counts `status: 'error'` results only. The recoverable fs error STRINGS
+ * (`write_file`/`edit_file`/…) are `status: 'success'` by the write_file precedent, so a pure fs
+ * error loop is deliberately NOT capped here — it stays bounded by the coarse `recursionLimit` and is
+ * the remit of the loop-DETECTION node (EXT-36). Counting `status: 'error'` overall (not per-tool)
+ * catches both same-tool and alternating-tool error loops with one robust rule.
+ */
+export function createToolErrorBudgetMiddleware(
+  maxConsecutiveErrors: number = MAX_CONSECUTIVE_TOOL_ERRORS
+) {
+  return createMiddleware({
+    name: 'GthLeanToolErrorBudget',
+    beforeModel: {
+      canJumpTo: ['end'],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      hook: (state: any) => {
+        const messages: unknown[] = Array.isArray(state?.messages) ? state.messages : [];
+        let consecutive = 0;
+        let lastErrorContent = '';
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const msg = messages[i];
+          if (ToolMessage.isInstance(msg)) {
+            if (msg.status === 'error') {
+              consecutive++;
+              if (!lastErrorContent) {
+                lastErrorContent = typeof msg.content === 'string' ? msg.content : '';
+              }
+            } else {
+              // A successful tool result — the model is making progress / diagnosing, so the
+              // unrecovered-error streak is broken. Stop the walk (reset).
+              break;
+            }
+          } else if (AIMessage.isInstance(msg)) {
+            // The assistant tool-call request that produced the error above; skip and keep counting.
+            continue;
+          } else {
+            // A Human/System message: a fresh user-turn boundary — earlier errors don't count.
+            break;
+          }
+        }
+        if (consecutive >= maxConsecutiveErrors) {
+          const firstLine = (lastErrorContent.split('\n')[0] ?? '').slice(0, 300);
+          const notice =
+            `Stopped after ${consecutive} consecutive failed tool calls to avoid a retry loop that ` +
+            'keeps spending tokens without making progress' +
+            (firstLine ? ` (last error: ${firstLine})` : '') +
+            '. Do not repeat the same call: inspect the error, then change your approach — different ' +
+            'arguments, a narrower path, or a different tool — or report the blocker to the user.';
+          return { jumpTo: 'end', messages: [new AIMessage(notice)] };
+        }
+        return undefined;
+      },
+    },
+  });
+}
+
+/**
  * Lean agent: builds a standard `createAgent` (ReAct) graph. All run/stream/event
  * plumbing lives in {@link GthAbstractAgent}; this class only knows how to construct
  * the graph in {@link init}.
@@ -293,9 +372,20 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // status middleware — a promoted call is therefore reported by the "Requested tools:" line too.
     // Correctness (routing) is order-independent: the router reads final graph state after all
     // afterModel nodes, and repair replaces-by-id, so the promoted tool_calls are present regardless.
+    // GS2-36: cap a self-inflicted tool-error loop. The shell/MCP softeners above turn a failed
+    // run_*/MCP call into a status:'error' ToolMessage the model observes; a model that keeps
+    // re-issuing the same failing call would drain tokens turn after turn. This beforeModel guard
+    // ends the run gracefully once MAX_CONSECUTIVE_TOOL_ERRORS such results accrue with no successful
+    // tool result in between — a tighter, error-specific complement to createAgent's coarse
+    // recursionLimit (loop DETECTION proper is the separate EXT-36). Placed after the softeners and
+    // before user middleware so it can't be bypassed. Lean backend only (per GS2-36 scope); the deep
+    // backend keeps its own recursionLimit backstop.
+    const toolErrorBudget = createToolErrorBudgetMiddleware();
+
     const middleware = [
       shellExitSoftening,
       mcpToolErrorSoftening,
+      toolErrorBudget,
       ...configuredMiddleware,
       toolCallStatusMiddleware,
       toolCallRepairMiddleware,
