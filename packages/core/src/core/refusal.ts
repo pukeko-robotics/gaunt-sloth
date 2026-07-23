@@ -72,6 +72,9 @@ function extractRefusalText(message: unknown): string {
  *  - Bedrock Converse guardrail intervention: `stopReason`/`stop_reason`/`finish_reason` ===
  *    `'guardrail_intervened'`, or `additional_kwargs['amazon-bedrock-guardrailAction'] ===
  *    `'INTERVENED'`.
+ *  - Bedrock Converse content filter: `stopReason`/`stop_reason`/`finish_reason` ===
+ *    `'content_filtered'` (EXT-41 — a distinct `StopReason` enum value from `guardrail_intervened`
+ *    that was previously mapped to `null`, i.e. a silent empty turn / false negative).
  */
 export function detectRefusal(message: unknown): RefusalInfo | null {
   if (!message || typeof message !== 'object') return null;
@@ -111,6 +114,16 @@ export function detectRefusal(message: unknown): RefusalInfo | null {
     readField(meta, 'amazon-bedrock-guardrailAction') === 'INTERVENED'
   ) {
     return { provider: 'bedrock', reason: 'guardrail_intervened', explanation };
+  }
+  // EXT-41 — Bedrock Converse content filter. A distinct `StopReason` enum value from
+  // `guardrail_intervened` (both live in the same AWS Converse `StopReason` enum); previously
+  // unmapped, so a content-filtered turn returned `null` → the silent empty-turn false negative.
+  if (
+    stopCamel === 'content_filtered' ||
+    stopSnake === 'content_filtered' ||
+    finish === 'content_filtered'
+  ) {
+    return { provider: 'bedrock', reason: 'content_filtered', explanation };
   }
 
   return null;

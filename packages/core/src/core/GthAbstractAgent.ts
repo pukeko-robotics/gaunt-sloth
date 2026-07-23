@@ -498,6 +498,14 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
           // the stream drains, so the returned text is non-empty and the run loop treats it as
           // terminal-but-clear instead of routing an empty streamed turn into the retry.
           let refusalInfo: RefusalInfo | null = null;
+          // EXT-41: belt-and-suspenders — also concat the AI chunks so a refusal can be read off
+          // the FINAL aggregated message's stop/finish reason, not only a per-chunk one. Some
+          // providers surface the reason only on the assembled message (or split it across chunks
+          // that concat into it); without this fallback such a refusal would be swallowed by the
+          // empty-response retry, making the EXT-37 surfacing cosmetic on the DEFAULT streaming
+          // surface. Reset at each tool round (below) so a prior round's reason can't concatenate
+          // with the final turn's (mirrors processEventStream's per-round reset).
+          let aggregatedChunk: AIMessageChunk | null = null;
 
           for await (const [chunk, _metadata] of stream) {
             debugLogObject('Stream chunk', { chunk, _metadata });
@@ -507,6 +515,17 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
             // EXT-37: first refusal signal wins; keep scanning chunks for text/binary as normal.
             if (!refusalInfo) {
               refusalInfo = detectRefusal(chunk);
+            }
+            // EXT-41: fold AI chunks into an aggregate for the aggregate-level refusal fallback,
+            // resetting at tool-round boundaries so a prior round's stop/finish reason can't bleed
+            // into the final turn's aggregate.
+            if (AIMessageChunk.isInstance(chunk)) {
+              const forAggregation = stripRawResponseForAggregation(chunk);
+              aggregatedChunk = aggregatedChunk
+                ? aggregatedChunk.concat(forAggregation)
+                : forAggregation;
+            } else if (chunk instanceof ToolMessage) {
+              aggregatedChunk = null;
             }
             // TUI-C30: fold the chunk into the plain-surface tool indication (renders each
             // completed call when its ToolMessage arrives; a no-op for plain text chunks).
@@ -549,6 +568,12 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
             for (const successMessage of processedContent.successMessages) {
               statusUpdate(StatusLevel.SUCCESS, successMessage);
             }
+          }
+          // EXT-41: aggregate-level fallback — if no per-chunk metadata flagged a refusal, inspect
+          // the FINAL aggregated message's stop/finish reason. Catches providers that expose the
+          // reason only on the assembled message (or split across chunks that concat into it).
+          if (!refusalInfo && aggregatedChunk) {
+            refusalInfo = detectRefusal(aggregatedChunk);
           }
           // EXT-37: surface a captured refusal as the terminal answer. Enqueue the clear message
           // (so the drained result is non-empty and bypasses the empty-response retry) and print it
@@ -736,6 +761,11 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
     let aggregatedAIChunk: AIMessageChunk | null = null;
     let reasoningOpen = false;
     const flushed = new Set<string>();
+    // EXT-41: a content-policy refusal on this typed-event path was de-scoped by EXT-37 (there is
+    // no empty-response retry here, so no wrong-retry bug), but it still rendered as a SILENT empty
+    // turn. Capture it (first per-chunk signal wins; aggregate fallback at stream end) and surface
+    // it as a `text` event so every consumer (Ink TUI viewModel, AG-UI SSE) shows a clear notice.
+    let refusalInfo: RefusalInfo | null = null;
     // TUI-C22 — one splitter for the whole stream so a <think> opened in one chunk and closed
     // several chunks later is tracked across the boundary. Reset at message boundaries via flush().
     const thinkSplitter = createThinkTagSplitter();
@@ -792,6 +822,12 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
       // GS2-16: fold every chunk (AIMessageChunk usage/tool_calls, ToolMessage name) into the
       // run tally so the TUI turn can record real token/tool data. Fail-soft.
       this.recordRunStats(chunk);
+
+      // EXT-41: reuse EXT-37's detector (do NOT fork a second one). First per-chunk signal wins;
+      // a ToolMessage / normal chunk yields null, so a normal turn never surfaces a false refusal.
+      if (!refusalInfo) {
+        refusalInfo = detectRefusal(chunk);
+      }
 
       if (AIMessageChunk.isInstance(chunk)) {
         // TUI-C29 — aggregate a raw-response-stripped clone. OpenRouter's `__raw_response`
@@ -889,6 +925,21 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
 
     // Flush any tool calls not followed by a ToolMessage (e.g. terminal tool calls).
     yield* flushAggregated();
+
+    // EXT-41: aggregate-level fallback (I-1's robustness on this path too) — if no per-chunk
+    // metadata flagged a refusal, inspect the final aggregated message's stop/finish reason. Then
+    // surface any refusal as a `text` event so the user sees a clear notice instead of a silent
+    // empty turn. No statusUpdate here: consumers render the typed events, and a WARNING would
+    // double-render in the TUI.
+    if (!refusalInfo && aggregatedAIChunk) {
+      refusalInfo = detectRefusal(aggregatedAIChunk);
+    }
+    if (refusalInfo) {
+      debugLog(
+        `Content-policy refusal detected on typed-event path (provider=${refusalInfo.provider} reason=${refusalInfo.reason})`
+      );
+      yield { type: 'text', delta: buildRefusalMessage(refusalInfo) };
+    }
   }
 
   async cleanup(): Promise<void> {
