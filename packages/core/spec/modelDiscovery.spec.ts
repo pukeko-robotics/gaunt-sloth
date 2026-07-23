@@ -245,17 +245,17 @@ describe('modelDiscovery', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('returns the curated list for a kind:"none" provider (google-genai) without fetching', async () => {
-      systemUtilsMock.env.GOOGLE_API_KEY = 'g-123';
+    it('returns the curated list for a kind:"none" provider (vertexai) without fetching', async () => {
+      // vertexai stays kind:"none" (gcloud ADC, no cheap live endpoint) after CFG-23.
       const fetchMock = vi.fn(async () => {
         throw new Error('should not be called');
       });
       vi.stubGlobal('fetch', fetchMock);
       const { discoverModels, PROVIDER_DESCRIPTORS } =
         await import('#src/providers/modelDiscovery.js');
-      const descriptor = PROVIDER_DESCRIPTORS.find((d) => d.id === 'google-genai')!;
+      const descriptor = PROVIDER_DESCRIPTORS.find((d) => d.id === 'vertexai')!;
 
-      const models = await discoverModels('google-genai');
+      const models = await discoverModels('vertexai');
       expect(models.map((m) => m.id)).toEqual(descriptor.preferredModels);
       expect(fetchMock).not.toHaveBeenCalled();
     });
@@ -461,15 +461,15 @@ describe('modelDiscovery', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('(b) kind:"none" provider returns undefined even with a key present', async () => {
-      systemUtilsMock.env.GOOGLE_API_KEY = 'g-123';
+    it('(b) kind:"none" provider (vertexai) returns undefined without fetching', async () => {
+      // vertexai stays kind:"none" after CFG-23, so it never live-discovers.
       const fetchMock = vi.fn(async () => {
         throw new Error('should not be called');
       });
       vi.stubGlobal('fetch', fetchMock);
       const { resolveInitModel } = await import('#src/providers/modelDiscovery.js');
 
-      expect(await resolveInitModel('google-genai')).toBeUndefined();
+      expect(await resolveInitModel('vertexai')).toBeUndefined();
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -568,15 +568,15 @@ describe('modelDiscovery', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('status "curated" (NOT fallback) for a kind:"none" provider even with a key set — no fetch', async () => {
-      systemUtilsMock.env.GOOGLE_API_KEY = 'g-123';
+    it('status "curated" (NOT fallback) for a kind:"none" provider (vertexai) — no fetch', async () => {
+      // vertexai stays kind:"none" after CFG-23; its curated list is by-design, not a degrade.
       const fetchMock = vi.fn(async () => {
         throw new Error('should not be called');
       });
       vi.stubGlobal('fetch', fetchMock);
       const { discoverModelsWithProvenance } = await import('#src/providers/modelDiscovery.js');
 
-      const { status } = await discoverModelsWithProvenance('google-genai');
+      const { status } = await discoverModelsWithProvenance('vertexai');
       expect(status).toBe('curated');
       expect(fetchMock).not.toHaveBeenCalled();
     });
@@ -653,6 +653,171 @@ describe('modelDiscovery', () => {
       await expect(discoverModelsWithProvenance('nope' as any)).rejects.toThrow(
         'Unknown provider: nope'
       );
+    });
+  });
+
+  // CFG-23 — Google AI Studio (google-genai) live discovery: the native ListModels
+  // envelope `{ models: [{ name: 'models/<id>', supportedGenerationMethods: [...] }] }`,
+  // a data-driven generateContent chat filter, the `models/` prefix strip, and the three
+  // provenance outcomes (live / curated / fallback). Endpoint verified live 2026-07-24;
+  // these tests are MOCKED-fetch (no live calls).
+  describe('google-genai live discovery (CFG-23)', () => {
+    it('parses the native ListModels envelope, applies the generateContent filter and strips the models/ prefix', async () => {
+      systemUtilsMock.env.GOOGLE_API_KEY = 'g-live-123';
+      const fetchMock = okJson({
+        models: [
+          {
+            name: 'models/gemini-3.6-flash',
+            supportedGenerationMethods: ['generateContent', 'countTokens'],
+          },
+          { name: 'models/gemini-3.5-flash', supportedGenerationMethods: ['generateContent'] },
+          // Embeddings-only → NOT chat-capable → dropped by the generateContent filter.
+          { name: 'models/embedding-001', supportedGenerationMethods: ['embedContent'] },
+        ],
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const { discoverModels } = await import('#src/providers/modelDiscovery.js');
+
+      const ids = (await discoverModels('google-genai')).map((m) => m.id);
+
+      // Native ListModels endpoint + header-form key auth (rides the authHeader machinery).
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models');
+      expect((init as RequestInit).headers).toMatchObject({ 'x-goog-api-key': 'g-live-123' });
+
+      // Mutation guard (filter): the embeddings-only model must NOT leak in, under either shape.
+      expect(ids).not.toContain('embedding-001');
+      expect(ids).not.toContain('models/embedding-001');
+      // Mutation guard (strip): ids are bare slugs (no `models/`), in curated ⭐ order.
+      expect(ids).toEqual(['gemini-3.6-flash', 'gemini-3.5-flash']);
+    });
+
+    it('status "live" with the ⭐ curated overlay when a key is present and the fetch succeeds', async () => {
+      systemUtilsMock.env.GOOGLE_API_KEY = 'g-live-123';
+      vi.stubGlobal(
+        'fetch',
+        okJson({
+          models: [
+            {
+              name: 'models/gemini-experimental-xyz',
+              supportedGenerationMethods: ['generateContent'],
+            },
+            { name: 'models/gemini-3.6-flash', supportedGenerationMethods: ['generateContent'] },
+          ],
+        })
+      );
+      const { discoverModelsWithProvenance } = await import('#src/providers/modelDiscovery.js');
+
+      const { models, status } = await discoverModelsWithProvenance('google-genai');
+      expect(status).toBe('live');
+      // Curated id present in the live catalog → flagged ⭐ preferred and sorted first.
+      expect(models[0]).toEqual({ id: 'gemini-3.6-flash', preferred: true });
+      // Non-curated live id is kept but not preferred.
+      expect(models.find((m) => m.id === 'gemini-experimental-xyz')!.preferred).toBe(false);
+    });
+
+    it('status "curated" (the 4-item stub) with NO key and NO fetch', async () => {
+      const fetchMock = vi.fn(async () => {
+        throw new Error('should not be called');
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const { discoverModelsWithProvenance, PROVIDER_DESCRIPTORS } =
+        await import('#src/providers/modelDiscovery.js');
+      const descriptor = PROVIDER_DESCRIPTORS.find((d) => d.id === 'google-genai')!;
+
+      const { models, status } = await discoverModelsWithProvenance('google-genai');
+      expect(status).toBe('curated');
+      expect(models.map((m) => m.id)).toEqual(descriptor.preferredModels);
+      expect(models.every((m) => m.preferred)).toBe(true);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('no-key discoverModels("google-genai") returns exactly the curated list (unchanged)', async () => {
+      const { discoverModels, PROVIDER_DESCRIPTORS } =
+        await import('#src/providers/modelDiscovery.js');
+      const descriptor = PROVIDER_DESCRIPTORS.find((d) => d.id === 'google-genai')!;
+      // Default beforeEach fetch throws, but with no key it is never called → curated.
+      const models = await discoverModels('google-genai');
+      expect(models.map((m) => m.id)).toEqual(descriptor.preferredModels);
+      expect(models.every((m) => m.preferred)).toBe(true);
+    });
+
+    it('status "fallback" (never throws) when the key is present but the fetch is non-2xx', async () => {
+      systemUtilsMock.env.GOOGLE_API_KEY = 'g-live-123';
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => ({ ok: false, status: 403, json: async () => ({}) }))
+      );
+      const { discoverModelsWithProvenance, PROVIDER_DESCRIPTORS } =
+        await import('#src/providers/modelDiscovery.js');
+      const descriptor = PROVIDER_DESCRIPTORS.find((d) => d.id === 'google-genai')!;
+
+      const { models, status } = await discoverModelsWithProvenance('google-genai');
+      expect(status).toBe('fallback');
+      expect(models.map((m) => m.id)).toEqual(descriptor.preferredModels);
+    });
+
+    it('status "fallback" on a malformed payload (no models array)', async () => {
+      systemUtilsMock.env.GOOGLE_API_KEY = 'g-live-123';
+      vi.stubGlobal('fetch', okJson({ data: [{ id: 'wrong-envelope-shape' }] }));
+      const { discoverModelsWithProvenance } = await import('#src/providers/modelDiscovery.js');
+      expect((await discoverModelsWithProvenance('google-genai')).status).toBe('fallback');
+    });
+
+    it('status "fallback" on an empty models array', async () => {
+      systemUtilsMock.env.GOOGLE_API_KEY = 'g-live-123';
+      vi.stubGlobal('fetch', okJson({ models: [] }));
+      const { discoverModelsWithProvenance } = await import('#src/providers/modelDiscovery.js');
+      expect((await discoverModelsWithProvenance('google-genai')).status).toBe('fallback');
+    });
+
+    it('status "fallback" when the catalog has no generateContent-capable models (all filtered out)', async () => {
+      systemUtilsMock.env.GOOGLE_API_KEY = 'g-live-123';
+      // A live response with only an embeddings model: after the generateContent filter the id
+      // set is empty → fallback. (Mutation guard: dropping the filter would make this "live".)
+      vi.stubGlobal(
+        'fetch',
+        okJson({
+          models: [{ name: 'models/embedding-001', supportedGenerationMethods: ['embedContent'] }],
+        })
+      );
+      const { discoverModelsWithProvenance, PROVIDER_DESCRIPTORS } =
+        await import('#src/providers/modelDiscovery.js');
+      const descriptor = PROVIDER_DESCRIPTORS.find((d) => d.id === 'google-genai')!;
+
+      const { models, status } = await discoverModelsWithProvenance('google-genai');
+      expect(status).toBe('fallback');
+      expect(models.map((m) => m.id)).toEqual(descriptor.preferredModels);
+    });
+
+    it('resolveInitModel returns the highest-ranked curated id that is actually live (verified-present, not curated[0])', async () => {
+      systemUtilsMock.env.GOOGLE_API_KEY = 'g-live-123';
+      // curated[0] (gemini-3.6-flash) is NOT live; curated[1] (gemini-3.5-flash) IS.
+      vi.stubGlobal(
+        'fetch',
+        okJson({
+          models: [
+            {
+              name: 'models/gemini-experimental-xyz',
+              supportedGenerationMethods: ['generateContent'],
+            },
+            { name: 'models/gemini-3.5-flash', supportedGenerationMethods: ['generateContent'] },
+          ],
+        })
+      );
+      const { resolveInitModel } = await import('#src/providers/modelDiscovery.js');
+      // Proves it verifies presence against the live list rather than emitting getCuratedFallbackModel.
+      expect(await resolveInitModel('google-genai')).toBe('gemini-3.5-flash');
+    });
+
+    it('resolveInitModel returns undefined for google with no key (no fetch, no invented literal)', async () => {
+      const fetchMock = vi.fn(async () => {
+        throw new Error('should not be called');
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const { resolveInitModel } = await import('#src/providers/modelDiscovery.js');
+      expect(await resolveInitModel('google-genai')).toBeUndefined();
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 });
