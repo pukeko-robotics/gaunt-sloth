@@ -8,6 +8,12 @@ import type { Message, Part, Task } from '@a2a-js/sdk';
 import { debugLog, debugLogError } from '@gaunt-sloth/core/utils/debugUtils.js';
 import { v4 as uuidv4 } from 'uuid';
 
+/** The A2A spec's well-known agent-card path. `A2AClient.fromCardUrl` needs the full CARD url,
+ * whereas {@link A2AClientConfig.agentUrl} is the agent's BASE url — so we append this, exactly as
+ * the deprecated `new A2AClient(url)` string constructor did internally (its `resolveAgentCardUrl`
+ * used the same default). Keeps the fetched card URL byte-identical across the migration. */
+const AGENT_CARD_PATH = '.well-known/agent-card.json';
+
 /** Configuration for A2A client */
 export interface A2AClientConfig {
   /** Unique identifier for the agent */
@@ -44,13 +50,20 @@ export interface A2ASendContext {
  * @experimental
  */
 export class A2AClientWrapper {
-  private client: A2AClient;
+  private clientPromise: Promise<A2AClient>;
   private config: A2AClientConfig;
 
   constructor(config: A2AClientConfig) {
     this.config = config;
-    // Initialize with agent URL. The SDK will fetch the agent card.
-    this.client = new A2AClient(config.agentUrl);
+    // Construct via the non-deprecated `A2AClient.fromCardUrl(cardUrl)` (the string `new
+    // A2AClient(url)` constructor is deprecated and console.warns). `fromCardUrl` is async, so we
+    // hold the promise and await it per send. The agent card is fetched from the well-known path
+    // appended to the base agent URL — reproducing the old constructor's fetch target exactly.
+    const cardUrl = `${config.agentUrl.replace(/\/+$/, '')}/${AGENT_CARD_PATH}`;
+    this.clientPromise = A2AClient.fromCardUrl(cardUrl);
+    // Guard against an unhandled rejection if the wrapper is constructed but never used; real
+    // callers still observe the rejection when they await `clientPromise` inside a send method.
+    void this.clientPromise.catch(() => undefined);
   }
 
   /**
@@ -63,8 +76,9 @@ export class A2AClientWrapper {
       `Sending message to A2A agent ${this.config.agentId} at ${this.config.agentUrl}: ${messageText}`
     );
     try {
+      const client = await this.clientPromise;
       const messageId = uuidv4();
-      const response = await this.client.sendMessage({
+      const response = await client.sendMessage({
         message: {
           kind: 'message',
           messageId: messageId,
@@ -128,7 +142,8 @@ export class A2AClientWrapper {
         (context?.contextId ? ` [contextId=${context.contextId}]` : '')
     );
     try {
-      const response = await this.client.sendMessage({
+      const client = await this.clientPromise;
+      const response = await client.sendMessage({
         message: {
           kind: 'message',
           messageId: uuidv4(),

@@ -81,12 +81,19 @@ export type FetchLike = typeof fetch;
 
 /**
  * Decode an AG-UI SSE stream into an {@link AgUiRunResult}. The reference encoder frames each event
- * as `data: <json>\n\n` (`@ag-ui/encoder`), so we split on the blank-line delimiter, JSON-parse each
- * frame's `data:` payload, and fold the relevant event types:
- * - `TEXT_MESSAGE_CONTENT` → append `delta` to the answer.
+ * as `data: <json>\n\n` (`@ag-ui/encoder`), but a non-reference server may delimit frames with a
+ * lone `\n` — so we split on ANY newline boundary (a blank line from a `\n\n` separator just yields
+ * an empty payload that is ignored, so both framings decode identically). Each frame's `data:`
+ * payload is JSON-parsed and the relevant event types folded:
+ * - `TEXT_MESSAGE_CONTENT` → append `delta` to the CURRENT assistant message (keyed by `messageId`).
  * - `TOOL_CALL_START` → capture `toolCallName` into `tools`.
  * - `RUN_ERROR` → remember the message; the run FAILED.
  * - `RUN_FINISHED` → the terminal success signal.
+ *
+ * A run may emit MORE THAN ONE assistant message (each a distinct `messageId`). Their texts are kept
+ * as separate parts and joined with a newline, so two messages read as `a\nb` rather than a
+ * run-together `ab`; a single message (all deltas sharing one `messageId`, or none set) stays a
+ * single part with no spurious delimiter.
  *
  * Throws on `RUN_ERROR` OR on a stream that ends without a terminal `RUN_FINISHED` (a truncated /
  * malformed stream is a failed run, not an "empty answer" success). Non-JSON frames (SSE comments /
@@ -95,7 +102,11 @@ export type FetchLike = typeof fetch;
 async function decodeAgUiStream(body: ReadableStream<Uint8Array>): Promise<AgUiRunResult> {
   const decoder = new TextDecoder();
   let buffer = '';
-  let answer = '';
+  // One text part per distinct assistant message (by `messageId`); joined with `\n` at the end so
+  // multiple assistant messages are delimited rather than butt-joined.
+  const answerParts: string[] = [];
+  let currentMessageId: string | undefined;
+  let startedAnswer = false;
   const tools: string[] = [];
   let runError: string | undefined;
   let sawRunFinished = false;
@@ -107,7 +118,13 @@ async function decodeAgUiStream(body: ReadableStream<Uint8Array>): Promise<AgUiR
       .map((line) => line.slice('data:'.length).trim())
       .join('\n');
     if (!payload) return;
-    let event: { type?: string; delta?: unknown; toolCallName?: unknown; message?: unknown };
+    let event: {
+      type?: string;
+      delta?: unknown;
+      toolCallName?: unknown;
+      message?: unknown;
+      messageId?: unknown;
+    };
     try {
       event = JSON.parse(payload);
     } catch {
@@ -116,7 +133,17 @@ async function decodeAgUiStream(body: ReadableStream<Uint8Array>): Promise<AgUiR
     }
     switch (event.type) {
       case EventType.TEXT_MESSAGE_CONTENT:
-        if (typeof event.delta === 'string') answer += event.delta;
+        if (typeof event.delta === 'string') {
+          const messageId = typeof event.messageId === 'string' ? event.messageId : undefined;
+          // A new `messageId` (once we already have text) starts a distinct assistant message —
+          // open a fresh part so the final `join('\n')` delimits it from the previous one.
+          if (!startedAnswer || messageId !== currentMessageId) {
+            answerParts.push('');
+            currentMessageId = messageId;
+            startedAnswer = true;
+          }
+          answerParts[answerParts.length - 1] += event.delta;
+        }
         break;
       case EventType.TOOL_CALL_START:
         if (typeof event.toolCallName === 'string') tools.push(event.toolCallName);
@@ -130,15 +157,26 @@ async function decodeAgUiStream(body: ReadableStream<Uint8Array>): Promise<AgUiR
     }
   };
 
+  // Fold every COMPLETE line out of the buffer (a line ends at the next `\n`), tolerating both
+  // `\n\n` and lone-`\n` frame boundaries; the trailing partial line stays buffered for the next
+  // chunk. Reference-encoder JSON payloads contain no raw newline (they are escaped), so splitting
+  // on every `\n` never bisects a payload.
+  const flushCompleteLines = (): void => {
+    let nl: number;
+    while ((nl = buffer.indexOf('\n')) !== -1) {
+      let line = buffer.slice(0, nl);
+      buffer = buffer.slice(nl + 1);
+      if (line.endsWith('\r')) line = line.slice(0, -1);
+      handleFrame(line);
+    }
+  };
+
   for await (const chunk of body as unknown as AsyncIterable<Uint8Array>) {
     buffer += decoder.decode(chunk, { stream: true });
-    let sep: number;
-    while ((sep = buffer.indexOf('\n\n')) !== -1) {
-      handleFrame(buffer.slice(0, sep));
-      buffer = buffer.slice(sep + 2);
-    }
+    flushCompleteLines();
   }
   buffer += decoder.decode();
+  flushCompleteLines();
   if (buffer.trim().length > 0) handleFrame(buffer);
 
   if (runError !== undefined) {
@@ -149,48 +187,124 @@ async function decodeAgUiStream(body: ReadableStream<Uint8Array>): Promise<AgUiR
       'AG-UI stream ended without a terminal RUN_FINISHED event (truncated or malformed stream).'
     );
   }
-  return { answer, tools };
+  return { answer: answerParts.join('\n'), tools };
+}
+
+/**
+ * Default deadline for one AG-UI run (fetch + full SSE decode). The runner has no configured
+ * timeout, so this bounds a server that hangs at EITHER phase — one that accepts the POST but never
+ * sends response headers (the `fetch` await never returns) OR one that opens the stream but never
+ * emits `RUN_FINISHED`: past it the case FAILS with a clear error instead of wedging the process.
+ * Injectable per-client for tests.
+ */
+export const AG_UI_RUN_TIMEOUT_MS = 120_000;
+
+/** Cancel a response body so its socket is released. Used on the paths where we do NOT read the body
+ * (a non-200), where leaving it undrained would leak the connection. Guards `cancel` presence (a
+ * synthetic test body may omit it) and swallows errors (an already-closed/errored stream has nothing
+ * to release). */
+async function releaseBody(body: ReadableStream<Uint8Array> | null | undefined): Promise<void> {
+  if (body && typeof body.cancel === 'function') {
+    try {
+      await body.cancel();
+    } catch {
+      // Already closed / errored — nothing to release.
+    }
+  }
 }
 
 /**
  * Create a real {@link AgUiClient} that drives the target's AG-UI run endpoint over HTTP/SSE. Each
  * `run` POSTs a `RunAgentInput` to `{url}/agents/{agentId}/run` and decodes the SSE response via
- * {@link decodeAgUiStream}. A non-2xx response, an absent body, a `RUN_ERROR` event, or a truncated
- * stream all throw — the runner builders contain that into a failed cell (`ok:false`).
+ * {@link decodeAgUiStream}. A non-2xx response, an absent body, a `RUN_ERROR` event, a truncated
+ * stream, or a run that exceeds `timeoutMs` all throw — the runner builders contain that into a
+ * failed cell (`ok:false`).
+ *
+ * The WHOLE run is bounded by `timeoutMs` (default {@link AG_UI_RUN_TIMEOUT_MS}) via a single
+ * deadline armed BEFORE the fetch. BOTH phases are raced against it: the `fetch` await (so a server
+ * that accepts the POST but never sends response headers is bounded too) AND the SSE decode (so a
+ * body that opens but never ends still fails the case rather than hanging). Racing — not the abort
+ * signal — is the load-bearing mechanism, since a transport may ignore the abort; on timeout the
+ * `AbortController` is fired anyway to free a real socket. On a non-200 the unread body is cancelled
+ * first so its socket is released.
  *
  * `fetchImpl` defaults to global `fetch`; tests pass a fake returning a synthetic SSE `Response` so
  * the body construction + decode are exercised without a network or a live server.
  */
 export function createAgUiClient(
   target: AgUiAgentTarget,
-  fetchImpl: FetchLike = fetch
+  fetchImpl: FetchLike = fetch,
+  timeoutMs: number = AG_UI_RUN_TIMEOUT_MS
 ): AgUiClient {
   const base = target.url.replace(/\/+$/, '');
   const endpoint = `${base}/agents/${encodeURIComponent(target.agentId)}/run`;
   return {
     async run(input) {
-      const response = await fetchImpl(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-        body: JSON.stringify({
-          threadId: input.threadId,
-          runId: input.runId,
-          messages: input.messages,
-          // The eval declares no client-fulfilled frontend tools; an empty array makes the server
-          // serve the run from its own statically-configured agent.
-          tools: [],
-          forwardedProps: {},
-        }),
-      });
-      if (!response.ok) {
-        throw new Error(
-          `AG-UI server responded ${response.status} ${response.statusText || ''}`.trim()
+      const controller = new AbortController();
+      const TIMEOUT = Symbol('ag-ui-run-timeout');
+      const timeoutError = (): Error =>
+        new Error(
+          `AG-UI run exceeded ${timeoutMs}ms without a terminal RUN_FINISHED (stalled server).`
         );
+      // Arm the deadline BEFORE the fetch so it bounds the WHOLE run, not just the post-headers
+      // decode: a server that accepts the POST but never sends response headers hangs in the
+      // `fetch` await, and a body that opens but never ends hangs in the decode. Each phase is RACED
+      // against this one deadline — the transport may ignore an abort, so only the race guarantees
+      // we settle. The abort is fired INSIDE the timeout branches (after TIMEOUT has already won the
+      // race), so a real fetch's `AbortError` can't beat our clean timeout message.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<typeof TIMEOUT>((resolve) => {
+        timer = setTimeout(() => resolve(TIMEOUT), timeoutMs);
+      });
+      try {
+        const fetchPromise = fetchImpl(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+          body: JSON.stringify({
+            threadId: input.threadId,
+            runId: input.runId,
+            messages: input.messages,
+            // The eval declares no client-fulfilled frontend tools; an empty array makes the server
+            // serve the run from its own statically-configured agent.
+            tools: [],
+            forwardedProps: {},
+          }),
+          signal: controller.signal,
+        });
+        const opened = await Promise.race([fetchPromise, timeoutPromise]);
+        if (opened === TIMEOUT) {
+          // Pre-headers hang: the POST was accepted but no response headers ever arrived. Attach a
+          // swallow FIRST so the fetch's eventual abort-rejection has a handler, then abort to free
+          // a real socket, and fail with the clear timeout error. A genuine pre-deadline
+          // network/transport error instead rejects the race on its own and surfaces distinctly.
+          void fetchPromise.catch(() => undefined);
+          controller.abort();
+          throw timeoutError();
+        }
+        const response = opened;
+        if (!response.ok) {
+          // Drain the unread body so the socket is released before failing the case.
+          await releaseBody(response.body);
+          throw new Error(
+            `AG-UI server responded ${response.status} ${response.statusText || ''}`.trim()
+          );
+        }
+        if (!response.body) {
+          throw new Error('AG-UI server returned no response body to stream.');
+        }
+        const decodePromise = decodeAgUiStream(response.body);
+        const settled = await Promise.race([decodePromise, timeoutPromise]);
+        if (settled === TIMEOUT) {
+          // The stream opened but never emitted RUN_FINISHED. Swallow the decode's eventual
+          // abort-rejection FIRST, then abort the fetch to free the real socket, and fail clearly.
+          void decodePromise.catch(() => undefined);
+          controller.abort();
+          throw timeoutError();
+        }
+        return settled;
+      } finally {
+        if (timer) clearTimeout(timer);
       }
-      if (!response.body) {
-        throw new Error('AG-UI server returned no response body to stream.');
-      }
-      return decodeAgUiStream(response.body);
     },
   };
 }
