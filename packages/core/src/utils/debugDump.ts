@@ -343,3 +343,130 @@ export function writeDebugDump(input: WriteDebugDumpInput): WriteDebugDumpResult
 
   return { archiveDir };
 }
+
+/**
+ * GS2-48 — how many trailing lines of the always-on in-memory debugLog ring buffer
+ * ({@link file://./debugUtils.ts}, cap {@link DEBUG_LOG_BUFFER_MAX} = 1000) the crash snapshot keeps.
+ * The buffer itself is the "always-on capture" the crash handler relies on (nothing is written to
+ * disk until a crash — O(N) memory, zero steady-state I/O); the snapshot copies only this TAIL to
+ * stay MINIMAL (a crash file is a triage artifact, not the full session). 200 is enough to show what
+ * the agent was doing in the moments before death without bloating the file.
+ */
+const CRASH_DEBUG_LOG_TAIL_LINES = 200;
+
+/** A plain, JSON-safe, enumerable projection of the failure. */
+interface CrashErrorInfo {
+  name: string;
+  message: string;
+  stack?: string;
+}
+
+/**
+ * GS2-48 — flatten a thrown value (or a rejection reason, which need not be an `Error`) into a plain
+ * object BEFORE redaction. `Error.message`/`Error.stack` are NON-ENUMERABLE, so `Object.entries`
+ * (which {@link redactValue} walks with) would silently drop them — the crash file would carry no
+ * error and no stack. Explicitly copying them here is what makes the error survive the redaction pass.
+ * Tolerates a non-Error reason (string / number / object / undefined) without throwing.
+ */
+function normalizeError(error: unknown): CrashErrorInfo {
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message, stack: error.stack };
+  }
+  try {
+    return {
+      name: 'NonError',
+      message: typeof error === 'string' ? error : safeStringify(error),
+    };
+  } catch {
+    return { name: 'NonError', message: String(error) };
+  }
+}
+
+/** Input to {@link writeCrashSnapshot}. */
+export interface WriteCrashSnapshotInput {
+  /** The thrown error / rejection reason. Need not be an `Error`. */
+  error: unknown;
+  /** Where the failure came from — e.g. `'uncaughtException'` / `'unhandledRejection'`. */
+  origin: string;
+  /** The effective resolved config, if the crashing process had one registered. Opaque. */
+  config?: unknown;
+  /** Model display name, if known. */
+  modelDisplayName?: string;
+  /** The in-flight turn's transcript tail, if a session registered one. Opaque. */
+  transcriptTail?: unknown;
+}
+
+export interface WriteCrashSnapshotResult {
+  /** The absolute path to the crash directory just written. */
+  crashDir: string;
+  /** The absolute path to the `crash.json` file inside it. */
+  crashFile: string;
+}
+
+/**
+ * GS2-48 — write a MINIMAL, ALWAYS-REDACTED crash snapshot to
+ * `~/.gsloth/debug-dumps/crash-<timestamp>/crash.json` and return its paths.
+ *
+ * This is the unattended sibling of {@link writeDebugDump}: it fires from the process-level crash
+ * handler ({@link file://./crashHandler.ts}) with no human present, so — unlike `/debug-dump` — it
+ * exposes NO `redact` opt-out. Redaction (GS2-47, hard-dep) is MANDATORY and applied to the whole
+ * snapshot. It reuses this module's location convention (`ensureGlobalGslothDir()` + `debug-dumps/`)
+ * and rendering helpers, but deliberately stays minimal and crash-safe:
+ *  - a SINGLE `crash.json` (not the multi-file interactive archive);
+ *  - it does NOT shell out for git state (a subprocess is unsafe/slow while the process is dying);
+ *  - it keeps only the last {@link CRASH_DEBUG_LOG_TAIL_LINES} debugLog lines and the transcript TAIL.
+ *
+ * Redaction shape (conscious choice): the entire normalized snapshot is passed through
+ * {@link redactValue} in one pass. That is stricter than {@link writeDebugDump}, which uses
+ * {@link redactText} (literal+pattern only) for its non-config artifacts to avoid field-masking a
+ * legitimately `token`/`secret`-named field in tool output. For an unattended crash file the
+ * over-masking is the SAFE direction and buys uniform circular-ref / depth / function handling in
+ * one place, so it is intended, not an oversight. The config subtree is stripped of live instances
+ * first (as `writeDebugDump` does) so a live LLM client's internals never serialize.
+ *
+ * Callers wrap this in their own try/catch (see {@link file://./crashHandler.ts}); it does its best
+ * to be fail-safe internally (`redactValue`/`safeStringify` never throw), but the ONE unavoidably
+ * throwing operation is the `mkdirSync`/`writeFileSync` to disk — an unwritable `~/.gsloth` is what
+ * the handler's degraded path is for.
+ */
+export function writeCrashSnapshot(input: WriteCrashSnapshotInput): WriteCrashSnapshotResult {
+  const crashDir = resolve(ensureGlobalGslothDir(), 'debug-dumps', `crash-${debugDumpDirName()}`);
+  mkdirSync(crashDir, { recursive: true });
+
+  // Redaction is unconditional here (no opt-out) — gather the literal secret values to scrub from
+  // env + config, exactly as writeDebugDump does. `env` is the systemUtils accessor (process.env).
+  const secrets = collectSecretValues(input.config, env);
+
+  let gthVersion: string;
+  try {
+    gthVersion = getSlothVersion();
+  } catch {
+    gthVersion = 'unknown';
+  }
+
+  const snapshot = {
+    kind: 'crash',
+    origin: input.origin,
+    timestamp: new Date().toISOString(),
+    // Flattened to plain enumerable fields so message/stack survive the redaction walk.
+    error: normalizeError(input.error),
+    env: {
+      gthVersion,
+      nodeVersion: process.version,
+      platform: process.platform,
+      model: input.modelDisplayName ?? 'unknown',
+    },
+    // Strip live LLM/tool/middleware instances to short descriptors before redaction (as the
+    // interactive config artifact does), so their internals never reach disk. `?? null` so an
+    // absent config serializes as an explicit `null` (JSON drops an `undefined`-valued key).
+    config: stripLiveInstancesForConfig(input.config) ?? null,
+    debugLogTail: getDebugLogBuffer().slice(-CRASH_DEBUG_LOG_TAIL_LINES),
+    transcriptTail: input.transcriptTail ?? null,
+  };
+
+  // Single fail-safe redaction pass over the whole normalized snapshot (see doc above).
+  const crashFile = resolve(crashDir, 'crash.json');
+  writeFileSync(crashFile, safeStringify(redactValue(snapshot, secrets)), 'utf8');
+
+  return { crashDir, crashFile };
+}

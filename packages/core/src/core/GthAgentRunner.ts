@@ -46,6 +46,14 @@ import {
   debugLogError,
   debugLogObject,
 } from '#src/utils/debugUtils.js';
+import { updateCrashContext } from '#src/utils/crashHandler.js';
+
+/**
+ * GS2-48 — how many trailing messages of the in-flight turn to hand the crash handler as the
+ * transcript tail. A crash file is triage, not the full session, so only the last few messages are
+ * kept; they are redacted (GS2-47) by the crash snapshot writer before anything reaches disk.
+ */
+const CRASH_TRANSCRIPT_TAIL_MESSAGES = 8;
 
 /**
  * Agent simplifies interaction with LLM and reduces it to calling a few methods
@@ -171,6 +179,11 @@ export class GthAgentRunner {
     this.config = configIn;
     this.command = command;
 
+    // GS2-48 — register the effective config with the crash handler so an uncaughtException /
+    // unhandledRejection mid-run captures it in the (redacted) snapshot. Pure data hand-off; no
+    // behaviour change.
+    updateCrashContext({ config: configIn, modelDisplayName: configIn.modelDisplayName });
+
     // EXT-12 — seed the runtime auto-approve flag from the static `run_shell_command.yolo` config so a
     // config that pre-enables auto-approval starts ON, while the shell tool stays gated (see
     // GthDeepAgent) and therefore remains toggleable (`/auto-approve off`). Resolved per-command,
@@ -204,6 +217,8 @@ export class GthAgentRunner {
 
     // GS2-16: start this turn's analytics tally from zero (the runner is reused across turns).
     this.resetRunStats();
+    // GS2-48 — record this turn's transcript tail for the crash handler.
+    updateCrashContext({ transcriptTail: messages.slice(-CRASH_TRANSCRIPT_TAIL_MESSAGES) });
 
     debugLog('Processing messages...');
     debugLogObject('Input Messages', messages);
@@ -502,6 +517,8 @@ export class GthAgentRunner {
     }
     // GS2-16: start this turn's analytics tally from zero (the runner is reused across turns).
     this.resetRunStats();
+    // GS2-48 — record this turn's transcript tail for the crash handler.
+    updateCrashContext({ transcriptTail: messages.slice(-CRASH_TRANSCRIPT_TAIL_MESSAGES) });
     debugLog('Processing messages (event stream)...');
     debugLogObject('Input Messages', messages);
     yield* this.agent.streamWithEvents(messages, this.runConfig, signal);
