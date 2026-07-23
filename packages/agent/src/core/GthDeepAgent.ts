@@ -52,7 +52,7 @@ import {
   guardFilesystemBackend,
   type FilesystemPermission,
 } from '#src/core/deepAgentPermissions.js';
-import { extractDebugRequestExtras } from '#src/core/debugCapture.js';
+import { extractDebugRequestExtras, type DebugRequestExtras } from '#src/core/debugCapture.js';
 // Re-export so existing importers of this module (extractDebugRequestExtras.spec) keep working
 // now that the implementation lives in @gaunt-sloth/core.
 export { extractDebugRequestExtras } from '#src/core/debugCapture.js';
@@ -185,10 +185,22 @@ export class GthDeepAgent extends GthAbstractAgent {
       name: 'GthMiddlewareDebugCapture',
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       wrapModelCall: async (request: any, handler: any) => {
+        // GS2-56: stash the always-on last-model-request snapshot (extras + as-sent messages)
+        // UNCONDITIONALLY — before the `capture` short-circuit — so `/debug-dump` has the full
+        // model input even when no TUI `/debug` sink is attached (a non-TUI surface, or `/debug`
+        // never opened). Guarded: snapshotting must never break the run. The computed extras are
+        // reused for the sink below so extraction runs once. Symmetric with the lean backend.
+        let extras: DebugRequestExtras | undefined;
+        try {
+          extras = extractDebugRequestExtras(request);
+          this.setLastModelRequest(request.messages, extras);
+        } catch {
+          /* the always-on snapshot must never break the run */
+        }
         const capture = getDebugCapture();
         if (!capture) return handler(request);
         try {
-          capture.onRequest?.(request.messages, extractDebugRequestExtras(request));
+          capture.onRequest?.(request.messages, extras);
         } catch {
           /* a debug sink must never break the run */
         }

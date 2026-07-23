@@ -73,6 +73,70 @@ describe('utils/debugDump', () => {
     expect(existsSync(resolve(archiveDir, 'git-state.json'))).toBe(false);
   });
 
+  it('GS2-56 — writes model-request.json (system prompt + tool defs WITH schema + params) and model-messages.json (as-sent, distinct from transcript.json)', async () => {
+    const { writeDebugDump } = await import('#src/utils/debugDump.js');
+
+    // A transcript deliberately DIFFERENT from the as-sent messages, so "distinct" is proven, not
+    // incidental: the model-input section comes from the snapshot, not the conversation view.
+    const transcript = [{ kind: 'user', text: 'summarize the repo' }];
+    const asSentMessages = [
+      { type: 'system', content: 'You are a helpful test agent.' },
+      { type: 'human', content: 'summarize the repo (post-summarization)' },
+    ];
+    const modelRequest = {
+      extras: {
+        systemPrompt: 'You are a helpful test agent.',
+        tools: [{ name: 'read_file', description: 'read a file', schema: { type: 'object' } }],
+        modelParams: { model: 'test-model', temperature: 0 },
+        toolChoice: 'auto',
+      },
+      messages: asSentMessages,
+    };
+
+    const { archiveDir } = writeDebugDump({
+      transcript,
+      config: {},
+      modelDisplayName: 'test-model',
+      modelRequest,
+      cwd: notGitDir,
+    });
+
+    // model-request.json: the full non-message model input.
+    const modelReqOut = JSON.parse(readFileSync(resolve(archiveDir, 'model-request.json'), 'utf8'));
+    expect(modelReqOut.systemPrompt).toBe('You are a helpful test agent.');
+    expect(modelReqOut.tools).toHaveLength(1);
+    expect(modelReqOut.tools[0].name).toBe('read_file');
+    // Tool DEFS carry their JSON schema (not just the name).
+    expect(modelReqOut.tools[0].schema).toEqual({ type: 'object' });
+    expect(modelReqOut.modelParams).toMatchObject({ model: 'test-model', temperature: 0 });
+    expect(modelReqOut.toolChoice).toBe('auto');
+
+    // model-messages.json: the as-sent messages, non-empty and DISTINCT from transcript.json.
+    const modelMsgsOut = JSON.parse(
+      readFileSync(resolve(archiveDir, 'model-messages.json'), 'utf8')
+    );
+    expect(modelMsgsOut).toEqual(asSentMessages);
+    const transcriptOut = JSON.parse(readFileSync(resolve(archiveDir, 'transcript.json'), 'utf8'));
+    expect(transcriptOut).toEqual(transcript);
+    // The two are not the same array of messages — the whole point of capturing from the request.
+    expect(modelMsgsOut).not.toEqual(transcriptOut);
+  });
+
+  it('GS2-56 — omits the model-request artifacts entirely when no snapshot is threaded (no model call yet)', async () => {
+    const { writeDebugDump } = await import('#src/utils/debugDump.js');
+
+    const { archiveDir } = writeDebugDump({
+      transcript: [],
+      config: {},
+      modelDisplayName: 'test-model',
+      cwd: notGitDir,
+    });
+
+    // Before the first model call there is no snapshot, so neither file is written.
+    expect(existsSync(resolve(archiveDir, 'model-request.json'))).toBe(false);
+    expect(existsSync(resolve(archiveDir, 'model-messages.json'))).toBe(false);
+  });
+
   it('includes git-state.json (branch/remote/dirty) when run inside a git repo', async () => {
     const { writeDebugDump } = await import('#src/utils/debugDump.js');
 

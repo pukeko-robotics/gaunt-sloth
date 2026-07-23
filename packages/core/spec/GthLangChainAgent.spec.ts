@@ -854,6 +854,75 @@ describe('GthLangChainAgent', () => {
         );
         expect(handler).toHaveBeenCalledTimes(1);
       });
+
+      // GS2-56 — the ALWAYS-ON last-model-request snapshot. This is the crux of the node: the
+      // snapshot must populate on EVERY model call regardless of whether a TUI `/debug` sink is
+      // attached, because `/debug-dump` is run after something breaks (often with `/debug` never
+      // opened, or on a non-TUI surface). Mutation check: move the `setLastModelRequest` stash to
+      // AFTER `if (!capture) return handler(request)` in GthLangChainAgent's wrapModelCall and this
+      // test goes red (with no sink the early-return skips the stash → lastModelRequest undefined).
+      it('populates agent.lastModelRequest after ONE model call with NO debug sink attached (GS2-56)', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('code', mockConfig);
+
+        // Deliberately NO agent.debugCapture — the snapshot must not depend on it.
+        expect(agent.debugCapture).toBeUndefined();
+        expect(agent.lastModelRequest).toBeUndefined();
+
+        const messages = [{ content: 'system' }, { content: 'user turn' }];
+        // A request rich enough that extractDebugRequestExtras returns real extras (system prompt,
+        // a tool WITH schema, model params) — so the snapshot proves the full model input, not just
+        // the messages.
+        const request = {
+          messages,
+          systemPrompt: 'You are a helpful test agent.',
+          tools: [{ name: 'lookup', description: 'look something up', schema: { type: 'object' } }],
+          model: { model: 'test-model-x', temperature: 0 },
+        };
+        const handler = vi.fn().mockResolvedValue({ content: 'reply' });
+
+        const result = await getDebugMw()!.wrapModelCall!(request, handler);
+
+        // The middleware is a transparent pass-through (still returns the handler's response).
+        expect(result).toEqual({ content: 'reply' });
+        expect(handler).toHaveBeenCalledTimes(1);
+
+        // The snapshot is populated purely from the request, with NO sink involved.
+        expect(agent.lastModelRequest).toBeDefined();
+        // As-sent messages are the SAME array the model received (post-summarization/middleware).
+        expect(agent.lastModelRequest!.messages).toBe(messages);
+        // Extras carry the full picture: system prompt + a tool with its schema + model params.
+        expect(agent.lastModelRequest!.extras).toBeDefined();
+        expect(agent.lastModelRequest!.extras!.systemPrompt).toBe('You are a helpful test agent.');
+        expect(agent.lastModelRequest!.extras!.tools).toEqual([
+          { name: 'lookup', description: 'look something up', schema: { type: 'object' } },
+        ]);
+        expect(agent.lastModelRequest!.extras!.modelParams).toMatchObject({
+          model: 'test-model-x',
+          temperature: 0,
+        });
+      });
+
+      it('overwrites lastModelRequest with only the MOST RECENT call (O(1), no accumulation) (GS2-56)', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('code', mockConfig);
+
+        const first = [{ content: 'first turn' }];
+        const second = [{ content: 'second turn' }];
+        const handler = vi.fn().mockResolvedValue({ content: 'ok' });
+
+        await getDebugMw()!.wrapModelCall!({ messages: first }, handler);
+        await getDebugMw()!.wrapModelCall!({ messages: second }, handler);
+
+        // Only the latest call is retained — a single overwritten reference, not an accumulation.
+        expect(agent.lastModelRequest!.messages).toBe(second);
+      });
     });
 
     // EXT-35 — the lean agent installs an afterModel middleware that promotes a text-emitted tool

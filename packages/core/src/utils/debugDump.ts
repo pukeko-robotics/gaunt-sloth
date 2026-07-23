@@ -11,6 +11,7 @@ import {
   redactText,
   redactValue,
 } from '#src/utils/redactSecrets.js';
+import type { LastModelRequest } from '#src/core/debugCapture.js';
 
 /**
  * GS2-46/GS2-47 — `/debug-dump`: a live-session diagnostic archive. GS2-46 shipped it raw; GS2-47
@@ -41,6 +42,17 @@ export interface WriteDebugDumpInput {
    * depending on where the test runner happens to execute.
    */
   cwd?: string;
+  /**
+   * GS2-56 — the always-on snapshot of the last model request (the composed system prompt, tool
+   * defs with schema, model params, tool-choice, and the AS-SENT post-summarization messages),
+   * threaded straight from `agent.lastModelRequest` by the caller (both the TUI and the readline
+   * `--no-tui` surface). ADDITIVE & optional: when present, `writeDebugDump` writes
+   * `model-request.json` (the extras) and `model-messages.json` (the as-sent messages, distinct
+   * from the conversation-view `transcript.json`), both routed through the same redaction pass as
+   * every other artifact. Absent (no model call yet / a surface with no agent handle) ⇒ those two
+   * files are simply omitted.
+   */
+  modelRequest?: LastModelRequest;
 }
 
 export interface WriteDebugDumpResult {
@@ -304,6 +316,30 @@ export function writeDebugDump(input: WriteDebugDumpInput): WriteDebugDumpResult
     renderConfig(input.config, redact, secrets),
     'utf8'
   );
+
+  // GS2-56 — the always-on model-request snapshot: WHAT was actually fed to the model (the thing a
+  // bug report needs, previously omitted whenever the TUI `/debug` panel wasn't open). Written only
+  // when the caller threaded `agent.lastModelRequest` (a model call has happened), so before the
+  // first turn these files are simply absent. Both go through `renderStructured` (literal+pattern
+  // redaction, like transcript.json/env.json) rather than `renderConfig`'s field-masking, so a
+  // legitimately `token`/`secret`-named field inside a tool result or a schema isn't blanket-masked.
+  if (input.modelRequest) {
+    // model-request.json — the composed system prompt + tool defs (with JSON schema) + model params
+    // + tool-choice. `?? {}` keeps the artifact present-but-empty rather than serializing `undefined`.
+    writeFileSync(
+      resolve(archiveDir, 'model-request.json'),
+      renderStructured(input.modelRequest.extras ?? {}, redact, secrets),
+      'utf8'
+    );
+    // model-messages.json — the EXACT messages sent to the model for the last call (post-
+    // summarization / middleware), i.e. what the model actually saw. Deliberately a separate
+    // artifact from transcript.json (the conversation view): the two are distinct arrays.
+    writeFileSync(
+      resolve(archiveDir, 'model-messages.json'),
+      renderStructured(input.modelRequest.messages ?? [], redact, secrets),
+      'utf8'
+    );
+  }
 
   // getSlothVersion() reads the installed package.json via the install dir set at CLI startup
   // (setEntryPoint); guarded so a dump can never fail just because that wasn't wired (e.g. an

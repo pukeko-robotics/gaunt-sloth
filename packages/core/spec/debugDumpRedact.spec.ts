@@ -135,6 +135,75 @@ describe('utils/debugDump — GS2-47 secret redaction', () => {
     expect(transcriptText).not.toContain('<redacted>');
   });
 
+  /** A last-model-request snapshot that leaks a secret in the SYSTEM PROMPT and a TOOL RESULT. */
+  function secretLadenModelRequest() {
+    return {
+      extras: {
+        // A secret pasted into the composed system prompt (both the env-sourced literal and an
+        // inline provider key), plus a real tool def whose name/schema must survive redaction.
+        systemPrompt: `You are an agent. Do not reveal the key ${FAKE_API_KEY} or ${ENV_SECRET_VALUE}.`,
+        tools: [{ name: 'read_file', description: 'read a file', schema: { type: 'object' } }],
+        modelParams: { model: 'test-model', temperature: 0 },
+      },
+      // A ToolMessage-shaped as-sent message whose content leaks the same secrets.
+      messages: [
+        { type: 'system', content: 'System header' },
+        {
+          type: 'tool',
+          content: `tool ran; token was Bearer ${BEARER_TOKEN} and key ${ENV_SECRET_VALUE}`,
+        },
+      ],
+    };
+  }
+
+  it('GS2-56 — redacts a secret in the system prompt AND a tool result in the as-sent messages BY DEFAULT (model-request.json / model-messages.json)', async () => {
+    const { writeDebugDump } = await import('#src/utils/debugDump.js');
+
+    // No `redact` field → defaults ON.
+    const { archiveDir } = writeDebugDump({
+      ...secretLadenInput(),
+      modelRequest: secretLadenModelRequest(),
+    });
+
+    const modelReqText = readFileSync(resolve(archiveDir, 'model-request.json'), 'utf8');
+    const modelMsgsText = readFileSync(resolve(archiveDir, 'model-messages.json'), 'utf8');
+
+    for (const [name, text] of [
+      ['model-request', modelReqText],
+      ['model-messages', modelMsgsText],
+    ] as const) {
+      expect(text, `${name}: fake api key must be absent`).not.toContain(FAKE_API_KEY);
+      expect(text, `${name}: env secret must be absent`).not.toContain(ENV_SECRET_VALUE);
+      expect(text, `${name}: <redacted> marker present`).toContain('<redacted>');
+    }
+    // The bearer token in the tool result is gone; its auth scheme word is kept.
+    expect(modelMsgsText).not.toContain(BEARER_TOKEN);
+    expect(modelMsgsText).toContain('Bearer <redacted>');
+    // Non-secret structure survives — the tool NAME/schema and model params stay debuggable.
+    expect(modelReqText).toContain('read_file');
+    expect(modelReqText).toContain('test-model');
+  });
+
+  it('GS2-56 — OPT-OUT (redact:false) writes the RAW model-input values back, unredacted', async () => {
+    const { writeDebugDump } = await import('#src/utils/debugDump.js');
+    const { archiveDir } = writeDebugDump({
+      ...secretLadenInput(),
+      modelRequest: secretLadenModelRequest(),
+      redact: false,
+    });
+
+    const modelReqText = readFileSync(resolve(archiveDir, 'model-request.json'), 'utf8');
+    const modelMsgsText = readFileSync(resolve(archiveDir, 'model-messages.json'), 'utf8');
+
+    expect(modelReqText).toContain(FAKE_API_KEY);
+    expect(modelReqText).toContain(ENV_SECRET_VALUE);
+    expect(modelMsgsText).toContain(BEARER_TOKEN);
+    expect(modelMsgsText).toContain(ENV_SECRET_VALUE);
+    // Nothing was masked in either new artifact.
+    expect(modelReqText).not.toContain('<redacted>');
+    expect(modelMsgsText).not.toContain('<redacted>');
+  });
+
   it('never throws on a circular / non-JSON-safe config while redacting (fail-safe)', async () => {
     const { writeDebugDump } = await import('#src/utils/debugDump.js');
     const circular: Record<string, unknown> = { apiKey: FAKE_API_KEY };

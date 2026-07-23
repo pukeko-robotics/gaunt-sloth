@@ -337,6 +337,20 @@ export async function createTuiSession(
       agent.debugCapture = debugBridge.capture;
     }
 
+    // GS2-56: session-scoped `/debug-dump` writer that ALSO threads the agent's always-on
+    // last-model-request snapshot (system prompt + tool defs + params + as-sent messages) into the
+    // archive. Reads `agent.lastModelRequest` at CALL time (the field is overwritten each model
+    // call), so the dump carries the full model input even when `/debug` was never opened — the
+    // module-level `dumpDebugSession` (used by the fixture branch, which has no real agent) does not.
+    const dumpDebugSessionWithModelRequest = (input: DebugDumpInput): { archiveDir: string } =>
+      writeDebugDump({
+        transcript: input.transcript,
+        config: input.config,
+        modelDisplayName: input.modelDisplayName,
+        redact: input.redact,
+        modelRequest: agent instanceof GthAbstractAgent ? agent.lastModelRequest : undefined,
+      });
+
     // GS2-16: wall-clock start of the in-flight turn, stamped when runTurn begins and read by
     // logTurn on completion (turns are sequential in the TUI). 0 until the first turn runs.
     let turnStartedAt = 0;
@@ -420,7 +434,7 @@ export async function createTuiSession(
         initialAutoApprove={runner.isSessionYolo()}
         configSummary={formatConfigSummary(config)}
         resolvedConfig={config}
-        dumpDebugSession={dumpDebugSession}
+        dumpDebugSession={dumpDebugSessionWithModelRequest}
         advisories={startupAdvisories}
         mcpFailures={mcpFailures}
         {...buildHistorySlashProps(config)}

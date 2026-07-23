@@ -17,7 +17,7 @@ import {
   finalizeRunStats,
   type RunStatsAccumulator,
 } from '#src/core/runStats.js';
-import type { DebugCapture } from '#src/core/debugCapture.js';
+import type { DebugCapture, DebugRequestExtras, LastModelRequest } from '#src/core/debugCapture.js';
 import { createPlainToolIndication } from '#src/core/plainToolIndication.js';
 import { debugLog, debugLogError, debugLogObject } from '#src/utils/debugUtils.js';
 import { ProgressIndicator } from '#src/utils/ProgressIndicator.js';
@@ -208,6 +208,26 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
    * server / non-TUI callers simply never set it, so those contracts are unchanged.
    */
   public debugCapture: DebugCapture | undefined;
+
+  /**
+   * GS2-56 — the ALWAYS-ON snapshot of the most recent model request (extras + the as-sent,
+   * post-summarization messages), populated UNCONDITIONALLY at each backend's `wrapModelCall` feed
+   * site — NOT gated on {@link debugCapture} being attached. This is what lets `/debug-dump` render
+   * the full model input even when the TUI `/debug` panel was never opened and on non-TUI surfaces
+   * (the sink only ever fed the live `/debug` panel). O(1): a single overwritten reference retaining
+   * only the LAST call — no accumulation, so the "pay nothing until you need it" intent is kept.
+   */
+  public lastModelRequest: LastModelRequest | undefined;
+
+  /**
+   * GS2-56 — stash the last model request (the as-sent messages + {@link DebugRequestExtras}).
+   * Called unconditionally from each backend's capture middleware, independent of the debug sink,
+   * so the snapshot is available to `/debug-dump` on every surface. Overwrites (retains only the
+   * most recent call). Callers already guard the invocation; kept trivial so it can never throw.
+   */
+  protected setLastModelRequest(messages: BaseMessage[], extras?: DebugRequestExtras): void {
+    this.lastModelRequest = { messages, extras };
+  }
 
   /**
    * GS2-16 — per-run analytics tally (token usage + invoked tool names) folded from the messages

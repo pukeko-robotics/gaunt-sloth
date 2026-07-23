@@ -50,12 +50,25 @@ const runnerInstanceMock = {
   setToolApprovalCallback: vi.fn(),
   setSessionYolo: vi.fn(),
   toggleSessionYolo: vi.fn(),
+  getAgent: vi.fn(),
   cleanup: vi.fn(),
 };
 vi.mock('@gaunt-sloth/core/core/GthAgentRunner.js', () => ({
   GthAgentRunner: vi.fn(function GthAgentRunnerMock() {
     return runnerInstanceMock;
   }),
+}));
+
+// GS2-56 — the readline `/debug-dump` now forwards to the core writer AND threads the agent's
+// always-on last-model-request snapshot. Mock the writer (so no real `~/.gsloth` I/O) and stand in
+// a minimal GthAbstractAgent class so the module's `instanceof` narrowing resolves against it.
+const writeDebugDumpMock = vi.fn(() => ({ archiveDir: '/fake/.gsloth/debug-dumps/stamp' }));
+vi.mock('@gaunt-sloth/core/utils/debugDump.js', () => ({ writeDebugDump: writeDebugDumpMock }));
+class FakeAbstractAgent {
+  lastModelRequest: unknown;
+}
+vi.mock('@gaunt-sloth/core/core/GthAbstractAgent.js', () => ({
+  GthAbstractAgent: FakeAbstractAgent,
 }));
 
 vi.mock('@langchain/core/messages', () => ({ HumanMessage: vi.fn() }));
@@ -195,5 +208,39 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
     const out = allOutput();
     expect(out).toContain('Resolved configuration');
     expect(out).toContain('Model: test-model');
+  });
+
+  it('/debug-dump on the readline (non-TUI) surface writes an archive threading the always-on model-request snapshot (GS2-56)', async () => {
+    const { GthAbstractAgent } = await import('@gaunt-sloth/core/core/GthAbstractAgent.js');
+    const agent = new (GthAbstractAgent as unknown as typeof FakeAbstractAgent)();
+    agent.lastModelRequest = {
+      extras: {
+        systemPrompt: 'SYS',
+        tools: [{ name: 't', schema: {} }],
+        modelParams: { model: 'm' },
+      },
+      messages: [{ type: 'system', content: 'as-sent header' }],
+    };
+    runnerInstanceMock.getAgent.mockReturnValue(agent);
+
+    await runSession('/debug-dump', 'exit');
+
+    // The shared registry produced a REAL dump — not the old "unavailable" fallback this surface hit.
+    expect(writeDebugDumpMock).toHaveBeenCalledTimes(1);
+    const arg = writeDebugDumpMock.mock.calls[0][0] as {
+      modelRequest?: { extras?: { systemPrompt?: string }; messages?: unknown };
+      redact?: boolean;
+    };
+    // The always-on snapshot was threaded straight through from the live agent (no reshaping).
+    expect(arg.modelRequest).toBe(agent.lastModelRequest);
+    expect(arg.modelRequest!.extras!.systemPrompt).toBe('SYS');
+    expect(arg.modelRequest!.messages).toEqual([{ type: 'system', content: 'as-sent header' }]);
+    // Redaction defaults ON (no --unsafe-no-redact), resolved by the shared command.
+    expect(arg.redact).toBe(true);
+
+    const out = allOutput();
+    expect(out).toContain('Debug dump written');
+    expect(out).not.toContain('Debug dump unavailable');
+    expect(runnerInstanceMock.processMessages).not.toHaveBeenCalled();
   });
 });

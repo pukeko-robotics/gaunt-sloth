@@ -20,7 +20,7 @@ import {
   resolveModelIdentity,
 } from '#src/utils/systemPromptNotes.js';
 import { isShellCommandFailedError } from '#src/core/shell/ShellCommandFailedError.js';
-import { extractDebugRequestExtras } from '#src/core/debugCapture.js';
+import { extractDebugRequestExtras, type DebugRequestExtras } from '#src/core/debugCapture.js';
 import { promoteTextEmittedToolCallMessage } from '#src/core/toolCallRepair/index.js';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import { BaseCheckpointSaver } from '@langchain/langgraph';
@@ -350,10 +350,22 @@ export class GthLangChainAgent extends GthAbstractAgent {
       name: 'GthMiddlewareDebugCapture',
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       wrapModelCall: async (request: any, handler: any) => {
+        // GS2-56: stash the always-on last-model-request snapshot (extras + as-sent messages)
+        // UNCONDITIONALLY — before the `capture` short-circuit — so `/debug-dump` has the full
+        // model input even when no TUI `/debug` sink is attached (a non-TUI surface, or `/debug`
+        // never opened). Guarded: snapshotting must never break the run. The computed extras are
+        // reused for the sink below so extraction runs once.
+        let extras: DebugRequestExtras | undefined;
+        try {
+          extras = extractDebugRequestExtras(request);
+          this.setLastModelRequest(request.messages, extras);
+        } catch {
+          /* the always-on snapshot must never break the run */
+        }
         const capture = getDebugCapture();
         if (!capture) return handler(request);
         try {
-          capture.onRequest?.(request.messages, extractDebugRequestExtras(request));
+          capture.onRequest?.(request.messages, extras);
         } catch {
           /* a debug sink must never break the run */
         }
