@@ -234,6 +234,141 @@ describe('agUiEvalRunner', () => {
     });
   });
 
+  // BATCH-18 — hardening against UNHEALTHY servers (the healthy path is BATCH-17's live bed). Each
+  // test reproduces one failure mode a slow/broken server exhibits that a healthy one never does.
+  describe('hardening against unhealthy servers (BATCH-18)', () => {
+    // Fix #1 — a server that opens the SSE stream but never emits RUN_FINISHED must FAIL the case on
+    // a deadline, not hang the process. A stream that yields a couple of frames then stalls forever.
+    function stallingStream(prefixEvents: unknown[]): ReadableStream<Uint8Array> {
+      const enc = new TextEncoder();
+      async function* gen(): AsyncGenerator<Uint8Array> {
+        yield enc.encode(encodeSse(prefixEvents));
+        // Never resolves: the stream is open but no further frame (and no RUN_FINISHED) ever comes.
+        await new Promise<void>(() => {});
+      }
+      return gen() as unknown as ReadableStream<Uint8Array>;
+    }
+
+    it('fix #1: a stalled stream (never RUN_FINISHED) fails on the deadline instead of hanging', async () => {
+      const { fetchImpl } = fakeFetch(() => ({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        body: stallingStream([runStarted, textStart, textContent('thinking')]),
+      }));
+      // Tiny per-client deadline so the test is fast; production uses AG_UI_RUN_TIMEOUT_MS.
+      const client = createAgUiClient(TARGET, fetchImpl, 50);
+
+      const started = Date.now();
+      await expect(
+        client.run({
+          threadId: 't',
+          runId: 'r',
+          messages: [{ id: 'u1', role: 'user', content: 'x' }],
+        })
+        // Pins the TIMEOUT branch specifically (not the truncated-stream RUN_FINISHED error).
+      ).rejects.toThrow(/exceeded 50ms|stalled/i);
+      // Resolved via the deadline, not a hang — well under any real run time.
+      expect(Date.now() - started).toBeLessThan(2000);
+    });
+
+    it('fix #1 (pre-headers): a fetch that never sends response headers fails on the deadline, not a hang', async () => {
+      // Models a server that ACCEPTS the POST but never sends response headers: `fetchImpl` never
+      // resolves (and ignores the abort signal), so ONLY the whole-run deadline can settle the run.
+      // Distinct from the stalled-STREAM test above, where fetch resolves but the body stalls.
+      // On the pre-fix code the deadline was armed only AFTER `await fetchImpl` returned, so this
+      // never-resolving fetch would hang to the vitest per-test timeout — the fix bounds it.
+      const fetchImpl = vi.fn(() => new Promise<Response>(() => {})) as unknown as FetchLike;
+      const client = createAgUiClient(TARGET, fetchImpl, 50);
+
+      const started = Date.now();
+      await expect(
+        client.run({
+          threadId: 't',
+          runId: 'r',
+          messages: [{ id: 'u1', role: 'user', content: 'x' }],
+        })
+      ).rejects.toThrow(/exceeded 50ms|stalled/i);
+      // Bounded by the deadline (fetch never resolved), not a hang.
+      expect(Date.now() - started).toBeLessThan(2000);
+    });
+
+    it('fix #2: cancels/drains the response body on a non-200 so the socket is released', async () => {
+      const cancel = vi.fn().mockResolvedValue(undefined);
+      // A body that records whether it was drained; the runner must cancel it on the non-200 path.
+      const body = { cancel } as unknown as ReadableStream<Uint8Array>;
+      const { fetchImpl } = fakeFetch(() => ({
+        ok: false,
+        status: 503,
+        statusText: 'Service Unavailable',
+        body,
+      }));
+      const client = createAgUiClient(TARGET, fetchImpl);
+
+      await expect(
+        client.run({
+          threadId: 't',
+          runId: 'r',
+          messages: [{ id: 'u1', role: 'user', content: 'x' }],
+        })
+      ).rejects.toThrow(/503/);
+      // The undrained stream was cancelled exactly once (no leaked socket).
+      expect(cancel).toHaveBeenCalledTimes(1);
+    });
+
+    it('fix #3: delimits multiple assistant messages instead of butt-joining them', async () => {
+      const content = (messageId: string, delta: string) => ({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId,
+        delta,
+      });
+      const { fetchImpl } = fakeFetch(() =>
+        okStream([
+          runStarted,
+          { type: EventType.TEXT_MESSAGE_START, messageId: 'm1', role: 'assistant' },
+          content('m1', 'first message'),
+          { type: EventType.TEXT_MESSAGE_END, messageId: 'm1' },
+          { type: EventType.TEXT_MESSAGE_START, messageId: 'm2', role: 'assistant' },
+          content('m2', 'second message'),
+          { type: EventType.TEXT_MESSAGE_END, messageId: 'm2' },
+          runFinished,
+        ])
+      );
+      const client = createAgUiClient(TARGET, fetchImpl);
+
+      const result = await client.run({
+        threadId: 't',
+        runId: 'r',
+        messages: [{ id: 'u1', role: 'user', content: 'x' }],
+      });
+      // Two distinct assistant messages are newline-delimited, not run together.
+      expect(result.answer).toBe('first message\nsecond message');
+      expect(result.answer).not.toContain('messagesecond');
+    });
+
+    it('fix #4: parses an SSE payload delimited by lone "\\n" frame boundaries (not only "\\n\\n")', async () => {
+      // Single-`\n` between frames, no blank-line separators — what a non-reference server may send.
+      const lfFramed =
+        [runStarted, textStart, textContent('lf ok'), toolStart('get_weather'), runFinished]
+          .map((e) => `data: ${JSON.stringify(e)}`)
+          .join('\n') + '\n';
+      const { fetchImpl } = fakeFetch(() => ({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        body: streamOf([lfFramed]),
+      }));
+      const client = createAgUiClient(TARGET, fetchImpl);
+
+      const result = await client.run({
+        threadId: 't',
+        runId: 'r',
+        messages: [{ id: 'u1', role: 'user', content: 'x' }],
+      });
+      expect(result).toEqual({ answer: 'lf ok', tools: ['get_weather'] });
+    });
+  });
+
   // Layer 1 → grading: tool-call capture graded end-to-end through the REAL decoder (the whole point
   // of ag-ui vs adk). A fake STREAM emits a TOOL_CALL_START; must_call on that name PASSES, on
   // another name FAILS — proving the TOOL_CALL_START → tools seam, not just the grader.
