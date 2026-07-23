@@ -493,6 +493,13 @@ export type ConsoleLevelInput =
 export interface RawGthConfig extends Omit<GthConfig, 'llm' | 'consoleLevel'> {
   llm: LLMConfig;
   consoleLevel?: ConsoleLevelInput;
+  /**
+   * GS2-41 — profile composition. When set on a NAMED profile config, this profile inherits from
+   * the named base profile: the base resolves first, then this profile's fields merge on top
+   * (last-wins). Raw-config-only — resolved and consumed at load time (`resolveConfigExtends`), so
+   * it never appears on the resolved {@link GthConfig}.
+   */
+  extends?: string;
 }
 
 export type BinaryFormatType = 'image' | 'file' | 'audio' | 'video' | 'binary';

@@ -369,6 +369,128 @@ async function applyGlobalConfigBase<T extends Record<string, unknown>>(
 }
 
 /**
+ * GS2-41 — hard cap on the `extends` chain length: a belt-and-suspenders backstop BEHIND the
+ * name-cycle guard. Even if a base name somehow failed to register in the visited chain, a chain
+ * this long is a misconfiguration and must fail fast rather than recurse without bound.
+ */
+const MAX_EXTENDS_CHAIN_DEPTH = 50;
+
+/**
+ * GS2-41 — resolve a named profile's `extends` inheritance into a single composed raw config,
+ * riding the SAME GS2-1 deep-merge the config LAYERS use (NO second merge engine). When the given
+ * profile config declares `extends: "<base>"`, the base profile's config resolves FIRST
+ * (recursively — a base may itself extend another, so base-of-base resolves first), then this
+ * profile's own fields merge on top with last-wins semantics: the child overrides the base, nested
+ * objects merge, arrays REPLACE except the additive-array fields (`allowDirs`, `aiignore.patterns`,
+ * see {@link ADDITIVE_ARRAY_FIELDS}) which accumulate base+child. The `extends` key itself is
+ * consumed and never leaks into the composed output.
+ *
+ * A config WITHOUT `extends` is returned UNCHANGED — every non-inheriting config (the vast
+ * majority) is untouched and behaves exactly as before.
+ *
+ * Composition is CONFINED to the profile-dir layer: it produces the single raw config that then
+ * acts as the project-file layer the global config underlays and CLI flags overlay, preserving
+ * GS2-33's outer precedence `CLI flags > profile (base+child composed) > global > defaults`. It is
+ * therefore invoked in {@link initConfig} on the loaded project/profile config BEFORE
+ * {@link applyGlobalConfigBase}.
+ *
+ * The base profile is discovered with {@link resolveIdentityProfileConfigPath} (the SAME strict
+ * up-tree profile walk `--profile` uses), so `extends` names a profile exactly as a user selects
+ * one; a name with no config dir is a hard, clearly-named error.
+ *
+ * CYCLE GUARD: the chain of profile NAMES is tracked (seeded with the selected profile's own name);
+ * because `extends` is single-valued the chain is linear, so a repeated name — `A extends B extends
+ * A`, or a self-extend — is an unambiguous cycle and fails fast with a clear error NAMING the cycle,
+ * never infinite-looping / stack-overflowing. A hard {@link MAX_EXTENDS_CHAIN_DEPTH} cap backstops
+ * it regardless of how the base path was derived.
+ *
+ * @param rawConfig   the just-loaded, schema-validated raw config that MAY declare `extends`.
+ * @param profileLabel the selected profile's own name (for cycle detection + messages); undefined
+ *                     for a plain (non-profile) project config.
+ */
+export async function resolveConfigExtends(
+  rawConfig: Record<string, unknown>,
+  profileLabel: string | undefined
+): Promise<Record<string, unknown>> {
+  const seed = profileLabel?.trim();
+  return resolveExtendsChain(rawConfig, seed ? [seed] : []);
+}
+
+/**
+ * The recursive worker for {@link resolveConfigExtends}. `chain` is the ordered list of profile
+ * names already being resolved (the selected profile first, then each `extends` base as it is
+ * descended into) — used both for the name-based cycle guard and to render the cycle in the error.
+ */
+async function resolveExtendsChain(
+  rawConfig: Record<string, unknown>,
+  chain: string[]
+): Promise<Record<string, unknown>> {
+  const baseName = typeof rawConfig.extends === 'string' ? rawConfig.extends.trim() : undefined;
+  if (!baseName) {
+    return rawConfig;
+  }
+
+  // Cycle guard (name-based): a base already present in the chain we are resolving loops back on
+  // itself. Fail fast, naming the cycle — never recurse without bound.
+  if (chain.includes(baseName)) {
+    displayError(
+      `Profile inheritance cycle detected: ${[...chain, baseName].join(' -> ')}. ` +
+        `A profile's "extends" chain must not refer back to itself.`
+    );
+    exit(1);
+    // Unreachable past exit(1) in production; LOAD-BEARING under the specs' mocked exit so the
+    // caller never observes a silently-composed config after a cycle (matches the loader's
+    // post-exit sentinel-throw pattern).
+    throw new Error('Unexpected error occurred.');
+  }
+
+  // Depth backstop behind the name guard — a chain this long can only be a misconfiguration.
+  if (chain.length >= MAX_EXTENDS_CHAIN_DEPTH) {
+    displayError(
+      `Profile inheritance chain exceeds the maximum depth of ${MAX_EXTENDS_CHAIN_DEPTH}: ` +
+        `${[...chain, baseName].join(' -> ')}. This is almost certainly a misconfiguration.`
+    );
+    exit(1);
+    throw new Error('Unexpected error occurred.');
+  }
+
+  const basePath = resolveIdentityProfileConfigPath(baseName);
+  if (!basePath) {
+    const from = chain.length > 0 ? ` (referenced from "${chain[chain.length - 1]}")` : '';
+    displayError(
+      `Profile "${baseName}" referenced by "extends"${from} was not found: no config file in ` +
+        `${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${baseName}/ (checked ${PROJECT_CONFIG_FORMATS.join(', ')}).`
+    );
+    exit(1);
+    throw new Error('Unexpected error occurred.');
+  }
+
+  let baseRaw: Record<string, unknown>;
+  try {
+    baseRaw = await readRawConfigAtPath(basePath);
+  } catch (e) {
+    displayDebug(e instanceof Error ? e : String(e));
+    displayError(`Failed to read base profile "${baseName}" from ${basePath}.`);
+    exit(1);
+    throw new Error('Unexpected error occurred.');
+  }
+
+  // Validate the base layer exactly as the project layer is validated (deprecated-shape reject,
+  // unknown-key warn, type-mismatch fail) so a broken base surfaces loudly rather than silently.
+  const validatedBase = validateRawConfigLayer(baseRaw, `${baseName} (extends base)`);
+
+  // Resolve the base's OWN extends first (base-of-base first), THEN merge this profile's delta on
+  // top via the existing GS2-1 deep-merge (child = source, so it wins; additive-array fields at the
+  // config root accumulate).
+  const resolvedBase = await resolveExtendsChain(validatedBase, [...chain, baseName]);
+
+  // Consume `extends` so it never leaks into the composed output, then merge child over base.
+  const childDelta: Record<string, unknown> = { ...rawConfig };
+  delete childDelta.extends;
+  return deepMerge(resolvedBase, childDelta);
+}
+
+/**
  * ORDERING INVARIANT (GS2-11): detection ({@link hasProjectConfig}/{@link hasAnyConfig}) MUST run
  * before {@link initConfig} in a given process. Both resolve cwd-level candidates via
  * `getGslothConfigReadPath`, which reads `getProjectDir()`; {@link initConfig} clears `projectDir`
@@ -516,9 +638,16 @@ export async function initConfig(
         parseJsonc(readFileSync(jsonConfigPath, 'utf8'), jsonConfigName) as Record<string, unknown>,
         jsonConfigName
       ) as unknown as RawGthConfig;
+      // GS2-41 — compose profile inheritance (`extends`) WITHIN the profile-dir layer BEFORE the
+      // global base underlays it, so precedence stays CLI > profile(base+child) > global > defaults.
+      // No-op (returns the config unchanged) when there is no `extends`.
+      const composedProjectConfig = (await resolveConfigExtends(
+        projectJsonConfig as unknown as Record<string, unknown>,
+        commandLineConfigOverrides.identityProfile
+      )) as unknown as RawGthConfig;
       // Apply global config as the base layer (project config wins on conflicts).
       const jsonConfig = (await applyGlobalConfigBase(
-        projectJsonConfig as unknown as Record<string, unknown>
+        composedProjectConfig as unknown as Record<string, unknown>
       )) as unknown as RawGthConfig;
       // If the config has an LLM with a type, create the appropriate LLM instance
       if (jsonConfig.llm && typeof jsonConfig.llm === 'object' && 'type' in jsonConfig.llm) {
@@ -596,7 +725,13 @@ async function tryModuleConfig(
         (await i.configure()) as Record<string, unknown>,
         filename
       );
-      const mergedWithGlobal = await applyGlobalConfigBase(customConfig);
+      // GS2-41 — compose profile inheritance (`extends`) before the global base underlays it
+      // (parity with the JSON branch); no-op when there is no `extends`.
+      const composedConfig = await resolveConfigExtends(
+        customConfig,
+        commandLineConfigOverrides.identityProfile
+      );
+      const mergedWithGlobal = await applyGlobalConfigBase(composedConfig);
       return await mergeConfig(mergedWithGlobal, commandLineConfigOverrides);
     } catch (e) {
       displayDebug(e instanceof Error ? e : String(e));
