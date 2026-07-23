@@ -21,6 +21,7 @@ import {
 } from '#src/utils/systemPromptNotes.js';
 import { isShellCommandFailedError } from '#src/core/shell/ShellCommandFailedError.js';
 import { extractDebugRequestExtras } from '#src/core/debugCapture.js';
+import { promoteTextEmittedToolCallMessage } from '#src/core/toolCallRepair/index.js';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import { BaseCheckpointSaver } from '@langchain/langgraph';
 import { createAgent, createMiddleware } from 'langchain';
@@ -138,6 +139,42 @@ export class GthLangChainAgent extends GthAbstractAgent {
       },
     });
 
+    // EXT-35: promote a text-emitted tool call to a native tool_call so the loop doesn't stall.
+    // Small/local models (Gemma, lmstudio, gpt-oss) often serialise a tool call as assistant TEXT
+    // instead of a native `tool_call`; the ReAct router then sees no tool_calls on the last message
+    // and ENDS the turn ("no tool calls = done"). This afterModel hook runs ONLY when the last
+    // AIMessage carries no native tool_calls (the native happy path is byte-for-byte untouched):
+    // it parses a STANDALONE text-emitted call (bracket / <function=…> / Harmony), gated HARD by the
+    // bound-tool allow-list + a payload-size cap + standalone-only, and — when it promotes — returns
+    // the rewritten message. Preserving the original message id is load-bearing: LangGraph's
+    // message-state reducer merges by id, so a same-id message REPLACES the model's text message in
+    // graph state; the router then sees the native tool_calls and routes to the tools node, so the
+    // loop continues instead of concluding done. Ported from the openclaw tool-call-repair reference.
+    // Bound-tool names are the allow-list; an empty toolset promotes nothing (prose-safe default).
+    const repairToolNames = new Set(
+      tools.map((t) => t.name).filter((name): name is string => Boolean(name))
+    );
+    const toolCallRepairMiddleware = createMiddleware({
+      name: 'GthMiddlewareToolCallRepair',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      afterModel: (state: any) => {
+        const lastMessage = state.messages[state.messages.length - 1];
+        if (!AIMessage.isInstance(lastMessage)) return state;
+        if (lastMessage.tool_calls && lastMessage.tool_calls.length > 0) return state;
+        const promoted = promoteTextEmittedToolCallMessage(lastMessage, {
+          allowedToolNames: repairToolNames,
+        });
+        if (!promoted) return state;
+        debugLog(
+          `Repaired a text-emitted tool call into a native tool_call: ${formatToolCalls(
+            promoted.tool_calls ?? []
+          )}`
+        );
+        // Replace-by-id (same id) so the reducer swaps the text message rather than appending.
+        return { messages: [promoted] };
+      },
+    });
+
     // EXT-21: lean-path sibling of the deep agent's GthDeepShellExitSoftening (GthDeepAgent.ts).
     // `exec` / `ask --write` route through this lean `createAgent` graph, whose run_* shell/dev
     // tools (GthDevToolkit.executeCommand) THROW a ShellCommandFailedError on a non-zero exit or a
@@ -251,11 +288,17 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // two softeners is not load-bearing: they catch DISJOINT conditions (a ShellCommandFailedError
     // vs a name==='ToolException') and each rethrows what it doesn't recognize, so neither can
     // swallow the other.
+    // EXT-35: toolCallRepairMiddleware sits AFTER toolCallStatusMiddleware in the array. afterModel
+    // nodes execute in reverse array order (the later one runs first), so repair runs BEFORE the
+    // status middleware — a promoted call is therefore reported by the "Requested tools:" line too.
+    // Correctness (routing) is order-independent: the router reads final graph state after all
+    // afterModel nodes, and repair replaces-by-id, so the promoted tool_calls are present regardless.
     const middleware = [
       shellExitSoftening,
       mcpToolErrorSoftening,
       ...configuredMiddleware,
       toolCallStatusMiddleware,
+      toolCallRepairMiddleware,
       debugCaptureMiddleware,
     ];
 
