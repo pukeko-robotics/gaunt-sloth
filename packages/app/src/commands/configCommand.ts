@@ -3,6 +3,7 @@ import {
   type CommandLineConfigOverrides,
   type GthConfig,
   createNamedProfile,
+  hasAnyConfig,
   initConfig,
   validateConfig,
 } from '@gaunt-sloth/core/config.js';
@@ -116,13 +117,24 @@ export function configCommand(
         '  $ gsloth --profile cheap ask "summarise the open TODOs in this repo"\n'
     )
     .action(async (name: string, options: { model?: string; force?: boolean }) => {
-      // Best-effort seed from the current effective config. A missing/invalid current config is not
-      // fatal here — the scaffolder falls back to a valid template — so swallow the resolution error.
+      // Best-effort seed from the current effective config, falling back to a minimal template when
+      // no config resolves. We must NOT reach for the seed by calling initConfig blindly: when no
+      // config file is found, initConfig -> the loader calls `exit(1)` ("No configuration file
+      // found") — a real, uncatchable `process.exit`, NOT a throw — so a try/catch around the seed
+      // can never reach the template branch, and the process dies before a profile is ever written
+      // (GS2-33 review Important #1). `hasAnyConfig` is the non-exiting mirror of exactly what
+      // initConfig would discover — a project config anywhere up-tree OR a global `~/.gsloth`
+      // config — so gating the seed on it lets the template branch actually run in a pristine env.
       let seed: GthConfig | undefined;
-      try {
-        seed = await initConfig(commandLineConfigOverrides);
-      } catch {
-        seed = undefined;
+      if (await hasAnyConfig(commandLineConfigOverrides)) {
+        // A config exists, so initConfig won't hit the no-config exit. Still guard: a config that
+        // exists but fails to build (e.g. a malformed file) should fall back to the template rather
+        // than block profile creation.
+        try {
+          seed = await initConfig(commandLineConfigOverrides);
+        } catch {
+          seed = undefined;
+        }
       }
       try {
         const { path, llm } = createNamedProfile(name, {

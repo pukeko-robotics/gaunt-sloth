@@ -24,6 +24,7 @@ vi.mock('#src/utils/systemUtils.js', async () => {
 
 const configMock = {
   initConfig: vi.fn(),
+  hasAnyConfig: vi.fn(),
   validateConfig: vi.fn(),
   createNamedProfile: vi.fn(),
 };
@@ -220,6 +221,14 @@ describe('configCommand', () => {
   });
 
   describe('profile create (GS2-33)', () => {
+    beforeEach(() => {
+      // Default the create tests to the happy path: a config resolves, so the command seeds from it
+      // via initConfig. The no-config template branch is exercised explicitly below by overriding
+      // hasAnyConfig to false. (Parent beforeEach runs vi.resetAllMocks() first, so this re-applies
+      // per test.)
+      configMock.hasAnyConfig.mockResolvedValue(true);
+    });
+
     it('scaffolds a profile seeded from the current config, threading --model', async () => {
       configMock.initConfig.mockResolvedValue({
         modelProviderType: 'anthropic',
@@ -244,22 +253,34 @@ describe('configCommand', () => {
       expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
     });
 
-    it('still scaffolds (from a template) when no current config resolves', async () => {
-      configMock.initConfig.mockRejectedValue(new Error('No configuration file found'));
+    it('scaffolds from the template when no config resolves — WITHOUT calling the exiting seed path', async () => {
+      // GS2-33 review Important #1/#2: in production, when no config resolves initConfig calls
+      // `exit(1)` (a real process.exit, not a throw), so the old mockRejectedValue test was a false
+      // green — it "proved" a reject path that never happens. Exercise the REAL branch instead: no
+      // config resolves (hasAnyConfig -> false), so the command must take the template path WITHOUT
+      // ever calling the process-exiting initConfig, and still write a profile (exit 0).
+      configMock.hasAnyConfig.mockResolvedValue(false);
       configMock.createNamedProfile.mockReturnValue({
         path: '/proj/.gsloth/.gsloth-settings/blank/.gsloth.config.json',
-        llm: { type: 'anthropic', model: 'claude-sonnet-4-5' },
+        llm: { type: 'anthropic', model: 'gemini-2.0-flash-lite' },
       });
 
-      await run('profile', 'create', 'blank');
+      await run('profile', 'create', 'blank', '--model', 'gemini-2.0-flash-lite');
 
+      // The exiting seed path is never touched — this is the crux of the fix.
+      expect(configMock.initConfig).not.toHaveBeenCalled();
+      // Scaffolded from the template (no seed), with --model still applied on top of the template.
       expect(configMock.createNamedProfile).toHaveBeenCalledWith('blank', {
         seedType: undefined,
         seedModel: undefined,
-        modelOverride: undefined,
+        modelOverride: 'gemini-2.0-flash-lite',
         force: undefined,
       });
-      expect(consoleUtilsMock.displaySuccess).toHaveBeenCalled();
+      // Create SUCCEEDS (not a mocked reject), and exits clean.
+      expect(consoleUtilsMock.displaySuccess).toHaveBeenCalledWith(
+        expect.stringContaining('Created profile "blank"')
+      );
+      expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
     });
 
     it('reports a create failure (bad name / existing profile) with a non-zero exit', async () => {
