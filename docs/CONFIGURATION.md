@@ -1937,7 +1937,7 @@ Gaunt Sloth supports middleware to intercept and control agent execution at crit
 
 ### Predefined Middleware
 
-There are two predefined middleware types available:
+The following predefined middleware are available (reference by name in `middleware`):
 
 #### Anthropic Prompt Caching Middleware
 
@@ -1998,6 +1998,37 @@ Configuration options:
 - `messagesToKeep`: Number of recent messages to keep after summarization
 - `summaryPrompt`: Custom prompt template for summarization
 - `model`: Custom model for summarization (defaults to main LLM)
+
+#### Frontend Image Injection Middleware
+
+For AG-UI web clients that let the model request a photo through a frontend "capture image" tool.
+Such a tool runs in the browser and returns its result to the server as a `tool` message whose
+content is a JSON string `{"mimeType":"image/...","data":"<base64>"}`. Without this middleware the
+model receives that as plain text and cannot see the image. Enabling it converts the capture result
+into a vision message (in the shape the active provider decodes) before the next model call:
+
+```json
+{
+  "middleware": ["frontend-image-injection"]
+}
+```
+
+It is opt-in — it only runs when listed in `middleware`. The tool name it watches for defaults to
+`capture_image`; set `toolName` if your frontend tool is named differently:
+
+```json
+{
+  "middleware": [
+    {
+      "name": "frontend-image-injection",
+      "toolName": "take_photo"
+    }
+  ]
+}
+```
+
+The provider-specific vision-block shape is chosen automatically from the configured model provider,
+so the same config works across Anthropic, OpenAI-compatible, Ollama, and Google providers.
 
 ### Multiple Middleware
 

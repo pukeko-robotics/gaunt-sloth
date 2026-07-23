@@ -735,6 +735,51 @@ describe('apiAgUiModule', () => {
     });
   });
 
+  // ─── RC-22: config.middleware reaches the per-toolset (client-tool) agent ───
+  //
+  // `capture_image` runs ONLY on the per-request client-tool agent that getAgentForTools builds
+  // (reqConfig = { ...config, tools: [...] }). The frontend-image-injection middleware therefore
+  // only fires there if the `{ ...config }` spread carries `config.middleware` into that agent's
+  // init. This asserts the spread survives; that the middleware then actually fires and reaches the
+  // model input is proven hermetically in frontendImageInjectionWiring.spec.ts.
+
+  describe('client-tool agent middleware spread (RC-22)', () => {
+    async function startWithConfig(config: GthConfig) {
+      const { startAgUiServer } = await import('#src/modules/apiAgUiModule.js');
+      await startAgUiServer(config, 3000);
+      return mockPostFn.mock.calls[0][1] as (_req: unknown, _res: unknown) => Promise<void>;
+    }
+
+    it('spreads config.middleware into the per-toolset agent init for a capture_image client tool', async () => {
+      const config = {
+        commands: { api: { port: 3000 } },
+        middleware: ['frontend-image-injection'],
+      } as unknown as GthConfig;
+
+      const handler = await startWithConfig(config);
+      const req = makeRunReq({
+        threadId: 'mw-spread-thread',
+        tools: [{ name: 'capture_image', parameters: { type: 'object', properties: {} } }],
+      });
+
+      await handler(req, makeMockRes());
+
+      // The per-toolset agent's init is the one whose config.tools carries a client-flagged stub;
+      // the static startup agent's init carries the raw config.tools (no client flag).
+      const reqInit = gthLangChainAgentInitMock.mock.calls.find(
+        ([, cfg]) =>
+          Array.isArray((cfg as { tools?: unknown[] })?.tools) &&
+          (cfg as { tools: Array<{ metadata?: { client?: boolean } }> }).tools.some(
+            (t) => t?.metadata?.client
+          )
+      );
+      expect(reqInit).toBeDefined();
+      expect((reqInit![1] as { middleware?: unknown[] }).middleware).toContain(
+        'frontend-image-injection'
+      );
+    });
+  });
+
   // ─── B5: config-selectable agent backend ─────────────────────────────────────
 
   describe('agent backend selection (B5)', () => {

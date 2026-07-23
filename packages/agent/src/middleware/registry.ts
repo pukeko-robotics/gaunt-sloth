@@ -24,11 +24,31 @@ import {
   createBinaryContentInjectionMiddleware,
   type BinaryContentInjectionMiddlewareSettings,
 } from '#src/middleware/binaryContentInjectionMiddleware.js';
+import { createFrontendImageInjectionMiddleware } from '#src/middleware/frontendImageInjectionMiddleware.js';
 
 type PredefinedMiddlewareFactory = (
   settings: Record<string, unknown>,
   gthConfig: GthConfig
 ) => Promise<AgentMiddleware>;
+
+/**
+ * Derive the provider string the vision middleware maps to a per-provider block shape. Prefers the
+ * loader-stashed raw `llm.type` ({@link GthConfig.modelProviderType}) — the exact gth provider
+ * namespace (`anthropic`/`openrouter`/`deepseek`/`xai`/`groq`/`ollama`/`google-genai`/`vertexai`/…)
+ * — and falls back to the live model's `_llmType()` only when it is absent (module configs). The
+ * OpenAI-compatible shims (openrouter/deepseek/xai/groq) all report `_llmType() === 'openai'`, which
+ * maps to the same `image_url:{url}` block, so the fallback stays shape-correct.
+ */
+function resolveVisionProvider(gthConfig: GthConfig): string {
+  if (gthConfig.modelProviderType) return gthConfig.modelProviderType;
+  const llm = gthConfig.llm as { _llmType?: () => string } | undefined;
+  try {
+    if (typeof llm?._llmType === 'function') return llm._llmType();
+  } catch {
+    // A misbehaving _llmType must not break middleware resolution.
+  }
+  return '';
+}
 
 const predefinedMiddlewareFactories = {
   /**
@@ -60,6 +80,22 @@ const predefinedMiddlewareFactories = {
     createBinaryContentInjectionMiddleware(
       settings as BinaryContentInjectionMiddlewareSettings,
       gthConfig
+    ),
+  /**
+   * Frontend image injection middleware (RC-22). Converts a frontend capture tool's
+   * `{mimeType,data}` ToolMessage (default tool name `capture_image`) into a provider-appropriate
+   * vision HumanMessage the model can see. Strictly opt-in — resolved ONLY when named in
+   * `config.middleware` (no auto-inject branch). Optional `toolName` setting overrides the tool name.
+   */
+  'frontend-image-injection': (
+    settings: Record<string, unknown>,
+    gthConfig: GthConfig
+  ): Promise<AgentMiddleware> =>
+    Promise.resolve(
+      createFrontendImageInjectionMiddleware({
+        provider: resolveVisionProvider(gthConfig),
+        toolName: typeof settings.toolName === 'string' ? settings.toolName : undefined,
+      })
     ),
 } satisfies Record<string, PredefinedMiddlewareFactory>;
 
