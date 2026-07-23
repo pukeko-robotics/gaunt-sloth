@@ -256,16 +256,25 @@ export default class GthCustomToolkit extends BaseToolkit {
       let output = '';
       let timedOut = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
+      // EXT-44: the second timer that escalates the timeout kill from SIGTERM to SIGKILL after a
+      // short grace, mirroring GthDevToolkit. Cleared alongside `timer` on close/error below.
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
 
       if (timeoutSeconds !== undefined && timeoutSeconds > 0) {
         timer = setTimeout(() => {
           timedOut = true;
           // EXT-42: reap the whole process GROUP (not just the shell) so a `detached` child's
           // descendants die too, via GthDevToolkit's exported killProcessGroup (negative-pid on
-          // POSIX, taskkill /T on Windows). Single-shot SIGTERM keeps the historical signal and the
+          // POSIX, taskkill /T on Windows). SIGTERM keeps the historical signal and the
           // "timed out after N seconds" message byte-for-byte unchanged — only the kill TARGET
           // widens from the lone shell to its group.
           killProcessGroup(child, 'SIGTERM');
+          // EXT-44: escalate to SIGKILL after a short grace so a child that traps/ignores SIGTERM
+          // is still force-killed — parity with GthDevToolkit's ladder. That toolkit uses a private
+          // `KILL_GRACE_MS = 3_000` (not exported), so the same 3000ms literal is used here.
+          killTimer = setTimeout(() => killProcessGroup(child, 'SIGKILL'), 3000);
+          // The escalation timer must not keep the event loop alive on its own.
+          killTimer.unref?.();
         }, timeoutSeconds * 1000);
       }
 
@@ -288,6 +297,9 @@ export default class GthCustomToolkit extends BaseToolkit {
 
       child.on('close', (code) => {
         if (timer) clearTimeout(timer);
+        // EXT-44: cancel the pending SIGKILL escalation so a child that closes within the grace
+        // (including a normal exit) never receives a stray SIGKILL and no timer leaks.
+        if (killTimer) clearTimeout(killTimer);
         if (timedOut) {
           resolve(
             `Executing '${command}'...\n\n` +
@@ -317,6 +329,8 @@ export default class GthCustomToolkit extends BaseToolkit {
 
       child.on('error', (error) => {
         if (timer) clearTimeout(timer);
+        // EXT-44: also cancel the pending SIGKILL escalation on a spawn/runtime error.
+        if (killTimer) clearTimeout(killTimer);
         const errorMsg = `Failed to execute command '${command}': ${error.message}`;
         displayError(errorMsg);
         reject(new Error(errorMsg));
