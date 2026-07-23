@@ -2279,6 +2279,27 @@
       "additionalProperties": {
         "type": "string"
       }
+    },
+    "subagents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "profile": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "profile"
+        ]
+      }
     }
   },
   "additionalProperties": {}

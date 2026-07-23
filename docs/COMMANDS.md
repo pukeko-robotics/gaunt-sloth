@@ -701,16 +701,20 @@ Inspect and validate the resolved Gaunt Sloth configuration, without building th
 ```bash
 gsloth config print [--json]
 gsloth config validate
+gsloth config profile create <name> [--model <id>] [--force]
 ```
 
-Both subcommands resolve the config exactly as a real run would — up-tree discovery, the global base, and the defaults merge — and honour the global `--config` / `-i, --identity-profile` overrides.
+`print` / `validate` resolve the config exactly as a real run would — up-tree discovery, the global base, and the defaults merge — and honour the global `--config` / `-i, --identity-profile` (`--profile`) overrides.
 
 ### Subcommands
 - `config print` - Print the fully-resolved configuration with secrets redacted. By default it prints a source header followed by the JSON; `--json` emits only the JSON object (machine-readable, no header) so it pipes cleanly.
 - `config validate` - Validate the effective configuration against the schema. Unknown keys warn; a schema violation prints a path-scoped message and exits non-zero. Every layer (project + global) is reported, so you fix all offending files at once.
+- `config profile create <name>` - Scaffold a new [named profile](CONFIGURATION.md#identity-profiles) at `.gsloth/.gsloth-settings/<name>/.gsloth.config.json`, seeded from your current config (or a template), schema-validated before it is written. Select it later with `--profile <name>`, or reuse it inside a subagent via the [`subagents`](CONFIGURATION.md#named-profile-subagents-subagents) config.
 
 ### Options
 - `--json` - (`config print` only) Emit only the JSON object, no header.
+- `--model <id>` - (`config profile create` only) Set the profile's model id (overrides the seeded/template model).
+- `--force` - (`config profile create` only) Overwrite an existing profile of the same name.
 
 ### Examples
 ```bash
@@ -722,6 +726,10 @@ gsloth config print --json | jq '.llm'
 
 # Validate the config; exits non-zero when invalid
 gsloth config validate
+
+# Scaffold a cheap flash-lite profile, then run a command under it
+gsloth config profile create cheap --model gemini-2.0-flash-lite
+gsloth --profile cheap ask "summarise the open TODOs in this repo"
 ```
 
 ## history

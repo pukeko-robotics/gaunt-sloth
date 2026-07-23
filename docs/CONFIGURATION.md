@@ -72,9 +72,38 @@ which may contain a full set of config files:
 When no identity profile is specified in the command, for example `gth pr PR_NO`,
 the configuration is pulled from the `.gsloth/.gsloth-settings/` directory.
 
-`-i` or `-identity-profile` overrides entire configuration directory, which means it should contain
-a configuration file and prompt files. In the case if some prompt files are missing, they will be
-fetched from the installation directory.
+`-i` / `--identity-profile` (or its alias `--profile`) overrides the entire configuration directory,
+which means it should contain a configuration file and prompt files. In the case if some prompt files
+are missing, they will be fetched from the installation directory.
+
+**Precedence.** A selected profile replaces the *project-file* layer of the config cascade with the
+profile directory's config; everything else stacks as usual:
+
+```
+explicit CLI flags (-c, --model, --verbose, -w)  >  profile-dir config  >  global ~/.gsloth config  >  built-in defaults
+```
+
+So a profile is the highest-precedence *file* layer, still overridable by explicit command-line
+flags, and still sitting on top of your global `~/.gsloth` config and the built-in defaults. Naming a
+profile that has no config directory is an error (the run stops rather than silently falling back to
+the global config).
+
+#### Creating a profile
+
+`gth config profile create <name>` scaffolds a new profile directory
+(`.gsloth/.gsloth-settings/<name>/.gsloth.config.json`), seeded from your current effective config
+(or a minimal template when none resolves) and schema-validated before it is written. Pass
+`--model <id>` to set the profile's model, and `--force` to overwrite an existing profile.
+
+For example, to add a cheap flash-lite profile alongside your normal setup and then run under it:
+
+```bash
+gth config profile create cheap --model gemini-2.0-flash-lite
+gth --profile cheap ask "summarise the open TODOs in this repo"
+```
+
+Then edit `.gsloth/.gsloth-settings/cheap/.gsloth.config.json` to adjust its tools, prompts, or
+provider as needed — it is an ordinary config file.
 
 ### Controlling Output Files
 
@@ -512,6 +541,43 @@ artifact wiring). It is no longer bundled with the CLI — install and register 
 under `reporters`. The teamcity package is the worked example — see its
 [README](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/eval-reporter-teamcity#readme)
 and small [source](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/packages/eval-reporter-teamcity/src).
+
+## Named-profile subagents (subagents)
+
+`subagents` lets the agent delegate a sub-task to a subagent that runs under a **different
+[named profile](#identity-profiles)** — its own model, tools, and prompt — instead of the parent's.
+The typical use: keep the parent on a strong (expensive) model but hand routine search/recall work to
+a cheap one, so the bulk of the tokens are spent on the cheap model.
+
+Each entry names a subagent (the name the model selects it by) and the profile the child resolves:
+
+```json
+{
+  "llm": { "type": "anthropic", "model": "claude-opus-4-1" },
+  "agent": { "backend": "deep" },
+  "subagents": [
+    { "name": "recall", "description": "Cheap read-only search/recall.", "profile": "cheap" }
+  ]
+}
+```
+
+To make the example above run, create the `cheap` profile it references, then start a coding session —
+when the model delegates a recall task, that subagent runs on `gemini-2.0-flash-lite`, not on the
+parent's `claude-opus-4-1`:
+
+```bash
+gth config profile create cheap --model gemini-2.0-flash-lite
+gth code
+```
+
+The child resolves the named profile through the same config cascade a top-level `--profile` run does,
+so it picks up that profile's model, tool selection, and prompt files. A subagent whose `profile` has
+no config directory is an error, exactly as selecting a missing profile with `--profile` is.
+
+> **Deep backend only.** Subagents are dispatched through the deepagents `task` tool, which the
+> experimental `deep` backend provides — set `agent.backend: "deep"` (see the **Agent Backend**
+> section above). The default `lean` backend does not spawn subagents yet, so `subagents` has no
+> effect there.
 
 ## Configuration Object
 
