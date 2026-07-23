@@ -17,10 +17,36 @@ export const HARMONY_CHANNEL_MARKER = '<|channel|>';
 export const HARMONY_MESSAGE_MARKER = '<|message|>';
 /** Harmony stream marker that may close a serialized tool-call payload. */
 export const HARMONY_CALL_MARKER = '<|call|>';
+/**
+ * Harmony marker real gpt-oss emits in place of the reference grammar's literal `code` token —
+ * e.g. `<|constrain|>json` declares the tool-call payload format. (EXT-43.)
+ */
+export const HARMONY_CONSTRAIN_MARKER = '<|constrain|>';
 
 /** Tool names in bracket/plain-text repairs intentionally match provider-safe ids only. */
 export function isPlainTextToolNameChar(char: string | undefined): boolean {
   return Boolean(char && /[A-Za-z0-9_-]/.test(char));
+}
+
+/**
+ * Harmony tool names may be NAMESPACED with dots (real gpt-oss emits `to=functions.get_weather`),
+ * so the Harmony header scanner accepts `.` on top of the provider-safe id chars. This is a
+ * Harmony-only widening (EXT-43): the bracket/XML-ish dialects keep {@link isPlainTextToolNameChar}
+ * unchanged so their prose-safety is untouched. The final dot-segment is the tool name matched
+ * against the allow-list (see {@link finalDotSegment}).
+ */
+export function isHarmonyToolNameChar(char: string | undefined): boolean {
+  return Boolean(char && /[A-Za-z0-9_.-]/.test(char));
+}
+
+/**
+ * The tool name for a (possibly namespaced) Harmony target: the final dot-segment.
+ * `functions.get_weather` → `get_weather`; `functions.tools.get_weather` → `get_weather`; a dotless
+ * `get_weather` → itself. Returns `''` for a trailing-dot / empty final segment (rejected upstream).
+ */
+export function finalDotSegment(name: string): string {
+  const lastDot = name.lastIndexOf('.');
+  return lastDot === -1 ? name : name.slice(lastDot + 1);
 }
 
 /** Skips spaces and tabs only, preserving line boundaries for grammar decisions. */

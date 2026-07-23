@@ -22,6 +22,7 @@
 import { AIMessage } from '@langchain/core/messages';
 import { randomUUID } from 'node:crypto';
 import {
+  MAX_TEXT_EMITTED_TOOL_CALL_PAYLOAD_BYTES,
   parseStandalonePlainTextToolCallBlocks,
   type PlainTextToolCallParseOptions,
 } from './payload.js';
@@ -29,9 +30,10 @@ import {
 /**
  * A sane default cap on a single repaired call's serialized payload. A text blob larger than this
  * is never treated as a tool call. Overridable per call so a test can assert the cap with a small
- * value; production leaves it at the default.
+ * value; production leaves it at the default. The single source of truth lives in `./payload.js`
+ * and is re-exported here under its public name (EXT-43 unified the former duplicated literal).
  */
-export const MAX_TEXT_EMITTED_TOOL_CALL_PAYLOAD_BYTES = 256_000;
+export { MAX_TEXT_EMITTED_TOOL_CALL_PAYLOAD_BYTES } from './payload.js';
 
 /** LangChain native tool-call shape (structurally a `ToolCall` from `@langchain/core/messages`). */
 type NativeToolCall = {

@@ -73,6 +73,54 @@ describe('toolCallRepair — dialect parsing + promotion', () => {
     });
   });
 
+  // EXT-43 — the REAL gpt-oss Harmony variant: a NAMESPACED name (`to=functions.get_weather`) and
+  // the `<|constrain|>json` marker in place of the reference grammar's literal `code` token. Before
+  // EXT-43 neither form promoted (the `.` truncated the name to `functions`, not in the allow-list,
+  // and there was no `code` token). The tool name is the FINAL dot-segment.
+  it('promotes the real gpt-oss variant: dotted name + `<|constrain|>json`', () => {
+    const msg = new AIMessage({
+      id: 'm3b',
+      content:
+        '<|channel|>commentary to=functions.get_weather<|constrain|>json<|message|>{"city":"Paris"}<|call|>',
+    });
+    const promoted = promoteTextEmittedToolCallMessage(msg, { allowedToolNames: ALLOW });
+    expect(promoted).toBeDefined();
+    expect(promoted!.id).toBe('m3b');
+    expect(promoted!.tool_calls![0]).toMatchObject({
+      name: 'get_weather', // final dot-segment of `functions.get_weather`
+      args: { city: 'Paris' },
+      type: 'tool_call',
+    });
+  });
+
+  it('promotes the gpt-oss variant with a space before `<|constrain|>` and no closing `<|call|>`', () => {
+    const msg = new AIMessage({
+      id: 'm3c',
+      content:
+        '<|channel|>commentary to=functions.get_weather <|constrain|>json<|message|>{"city":"NYC"}',
+    });
+    const promoted = promoteTextEmittedToolCallMessage(msg, { allowedToolNames: ALLOW });
+    expect(promoted!.tool_calls![0]).toMatchObject({ name: 'get_weather', args: { city: 'NYC' } });
+  });
+
+  it('takes the FINAL segment of a multi-level namespaced name', () => {
+    const msg = new AIMessage({
+      id: 'm3d',
+      content:
+        '<|channel|>commentary to=functions.tools.get_weather<|constrain|>json<|message|>{"city":"Rome"}<|call|>',
+    });
+    const promoted = promoteTextEmittedToolCallMessage(msg, { allowedToolNames: ALLOW });
+    expect(promoted!.tool_calls![0]).toMatchObject({ name: 'get_weather', args: { city: 'Rome' } });
+  });
+
+  it('still requires a marker: a dotted name with NEITHER `code` NOR `<|constrain|>` does not promote', () => {
+    const msg = new AIMessage({
+      id: 'm3e',
+      content: '<|channel|>commentary to=functions.get_weather<|message|>{"city":"Paris"}<|call|>',
+    });
+    expect(promoteTextEmittedToolCallMessage(msg, { allowedToolNames: ALLOW })).toBeUndefined();
+  });
+
   it('promotes multiple standalone calls in one message', () => {
     const msg = new AIMessage({ id: 'm4', content: '[tool:a]{"x":1}\n[tool:b]{"y":2}' });
     const promoted = promoteTextEmittedToolCallMessage(msg, { allowedToolNames: ALLOW });
@@ -121,7 +169,28 @@ describe('toolCallRepair — the three gates', () => {
 });
 
 describe('toolCallRepair — adversarial prose safety (never misread prose as a call)', () => {
+  // EXT-43 prose-safety proof for the WIDENED Harmony grammar. The allow-list is deliberately
+  // loaded with EVERY tool/marker word these hostile inputs mention — get_weather, functions, the
+  // channel words, `code`, `json`, a destructive name, etc. — so the allow-list gate CANNOT be what
+  // saves us; only the standalone-only walk and the grammar itself can. Widening the grammar to the
+  // real gpt-oss variant (dotted name + `<|constrain|>json`) must promote ZERO of these.
+  const HOSTILE_ALLOW = [
+    'get_weather',
+    'functions',
+    'commentary',
+    'analysis',
+    'final',
+    'code',
+    'json',
+    'delete_everything',
+    'turn_right',
+    'tool',
+    'city',
+    'deg',
+  ];
+
   const CASES: Array<{ label: string; text: string }> = [
+    // — original EXT-35 battery —
     {
       label: 'mentions a tool name in a bracket with no payload',
       text: 'Use the [tool:get_weather] helper to fetch the forecast.',
@@ -146,13 +215,104 @@ describe('toolCallRepair — adversarial prose safety (never misread prose as a 
       label: 'an unterminated function tag with no parameters',
       text: '<function=get_weather> please fill this in later',
     },
+    // — EXT-43: Harmony channel/marker words appearing in ordinary prose —
+    {
+      label: 'names the Harmony target syntax inside a sentence',
+      text: 'In the commentary channel the model writes to=functions.get_weather, but that is just documentation.',
+    },
+    {
+      label: 'describes the gpt-oss format, does not emit it standalone',
+      text: 'The gpt-oss format looks like <|channel|>commentary to=functions.get_weather<|constrain|>json but here I am only describing it.',
+    },
+    {
+      label: 'explains the `<|constrain|>json` marker in prose',
+      text: 'Set constrain to json: <|constrain|>json means the tool-call output must be JSON.',
+    },
+    {
+      label: 'mentions a dotted DESTRUCTIVE target in a warning',
+      text: 'Consider to=functions.delete_everything — do NOT ever run that one.',
+    },
+    {
+      label: 'a fenced code block showing the call, then prose (not standalone)',
+      text: '```\n<|channel|>commentary to=functions.get_weather<|constrain|>json<|message|>{"city":"Paris"}<|call|>\n```\nThat is how gpt-oss serialises a call.',
+    },
+    {
+      label: 'a stray `<|call|>` marker after a JSON blob in prose',
+      text: 'The JSON was {"city":"Paris"}<|call|> — note the stray marker in the transcript.',
+    },
+    {
+      label: 'Harmony shorthand (no channel marker) embedded in a sentence',
+      text: 'commentary to=get_weather code {"city":"x"} is the shorthand, per the docs.',
+    },
+    {
+      label: 'the channel word `analysis` used as a normal word',
+      text: 'analysis: the plan is to call get_weather next, once we confirm the city.',
+    },
+    {
+      label: 'the channel word `final` used as a normal word',
+      text: 'final answer: get_weather returns sunny for that city.',
+    },
+    {
+      label: 'a bracket name + JSON with no closing marker, then prose',
+      text: '[get_weather]\n{"city":"Paris"}\nis what you would write, but here it is inline in prose.',
+    },
+    {
+      label: 'a dotted name referenced in an API-reference sentence',
+      text: 'See functions.get_weather in the API reference for the full parameter list.',
+    },
+    {
+      label: 'a JSON example that names the tool as a value',
+      text: 'Payload example: {"tool":"get_weather","args":{"city":"Paris"}} for the record.',
+    },
+    {
+      label: 'channel marker + text with no `to=` target',
+      text: '<|channel|>final Here is your answer, with no tool call at all.',
+    },
+    {
+      label: 'a bare `to=functions.get_weather {json}` with NO channel word (standalone)',
+      text: 'to=functions.get_weather {"city":"Paris"}',
+    },
+    {
+      label: 'just the channel word, standalone',
+      text: 'commentary',
+    },
+    {
+      label: 'just the `<|constrain|>json` marker, standalone',
+      text: '<|constrain|>json',
+    },
+    {
+      label: 'the REAL widened call but with TRAILING prose (not standalone)',
+      text: '<|channel|>commentary to=functions.get_weather<|constrain|>json<|message|>{"city":"Paris"}<|call|> Done!',
+    },
+    {
+      label: 'the REAL widened call but with LEADING prose (not standalone)',
+      text: 'Here you go: <|channel|>commentary to=functions.get_weather<|constrain|>json<|message|>{"city":"Paris"}<|call|>',
+    },
+    {
+      label: 'two widened calls with an interposed sentence (not all-blocks)',
+      text: '<|channel|>commentary to=functions.get_weather<|constrain|>json<|message|>{"city":"A"}<|call|> and then <|channel|>commentary to=functions.get_weather<|constrain|>json<|message|>{"city":"B"}<|call|>',
+    },
+    {
+      label: 'a sentence explaining the literal `code` token and dotted target',
+      text: 'The `code` token in Harmony is literal; to=functions.get_weather code means constrain-to-code output.',
+    },
   ];
 
   it.each(CASES)('does not promote: $label', ({ text }) => {
     const msg = new AIMessage({ id: 'p', content: text });
-    expect(promoteTextEmittedToolCallMessage(msg, { allowedToolNames: ALLOW })).toBeUndefined();
+    // Against the REAL functions, with the allow-list loaded so only the standalone/grammar gates
+    // can save us.
+    expect(
+      promoteTextEmittedToolCallMessage(msg, { allowedToolNames: HOSTILE_ALLOW })
+    ).toBeUndefined();
     // And the low-level parser agrees the whole text is not a standalone call.
-    expect(parseStandalonePlainTextToolCallBlocks(text, { allowedToolNames: ALLOW })).toBeNull();
+    expect(
+      parseStandalonePlainTextToolCallBlocks(text, { allowedToolNames: HOSTILE_ALLOW })
+    ).toBeNull();
+  });
+
+  it('the battery covers at least the 26 EXT-43-required hostile inputs', () => {
+    expect(CASES.length).toBeGreaterThanOrEqual(26);
   });
 });
 
