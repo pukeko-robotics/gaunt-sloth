@@ -8,7 +8,11 @@ import type { ToolRunnableConfig } from '@langchain/core/tools';
 import { z } from 'zod';
 import { spawn } from 'child_process';
 import path from 'node:path';
-import { displayError, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
+// TUI-C31 (a): the spawn-error advisory travels the tool-output channel (see emitToolOutput) so it
+// reaches the managed frame under the Ink TUI; the channel's default sink still renders it via
+// displayError for headless surfaces. displayWarning stays for the interactive validation-override
+// prompt below, which is a readline stdin flow (out of scope for the tool-output channel).
+import { displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import {
   CustomToolsConfig,
   CustomCommandConfig,
@@ -255,6 +259,12 @@ export default class GthCustomToolkit extends BaseToolkit {
 
       let output = '';
       let timedOut = false;
+      // TUI-C31 (a): a single-settle guard mirroring GthDevToolkit. The promise itself ignores a
+      // second resolve/reject, but the 'error' handler's SIDE EFFECT (routing an error advisory
+      // through the tool-output channel) would still run if 'error' fired after a successful
+      // 'close' — surfacing a spurious error chunk in the managed frame. Guarding both handlers
+      // makes 'close' and 'error' mutually exclusive, as they already are in GthDevToolkit.
+      let settled = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
       // EXT-44: the second timer that escalates the timeout kill from SIGTERM to SIGKILL after a
       // short grace, mirroring GthDevToolkit. Cleared alongside `timer` on close/error below.
@@ -296,6 +306,8 @@ export default class GthCustomToolkit extends BaseToolkit {
       }
 
       child.on('close', (code) => {
+        if (settled) return;
+        settled = true;
         if (timer) clearTimeout(timer);
         // EXT-44: cancel the pending SIGKILL escalation so a child that closes within the grace
         // (including a normal exit) never receives a stray SIGKILL and no timer leaks.
@@ -328,11 +340,15 @@ export default class GthCustomToolkit extends BaseToolkit {
       });
 
       child.on('error', (error) => {
+        if (settled) return;
+        settled = true;
         if (timer) clearTimeout(timer);
         // EXT-44: also cancel the pending SIGKILL escalation on a spawn/runtime error.
         if (killTimer) clearTimeout(killTimer);
         const errorMsg = `Failed to execute command '${command}': ${error.message}`;
-        displayError(errorMsg);
+        // TUI-C31 (a): route through the tool-output channel so the spawn-error advisory lands in
+        // the managed frame under the TUI (headless still gets displayError via the default sink).
+        emitToolOutput({ toolCallId, toolName, kind: 'error', text: errorMsg });
         reject(new Error(errorMsg));
       });
     });

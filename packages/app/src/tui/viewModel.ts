@@ -136,17 +136,16 @@ export function foldEvents(state: TurnViewModel, event: AgentStreamEvent): TurnV
       // call's `tool_start` (the agent stream only flushes tool_start when the round's ToolMessage
       // lands), so upsertTool's placeholder path is the common case: seed the name from the event
       // so the panel is labelled while running.
-      // Without an id (defensive: the invoking framework supplied no tool call), fall back to the
-      // most recent running call with the same name, else a synthetic per-name bucket — output is
-      // never silently dropped (mirrors the defensive posture above).
+      // Without an id (defensive: the invoking framework supplied no tool call), attribute to a
+      // synthetic per-name bucket (`${name}#live`), NOT to a running same-name call. TUI-C31 (e):
+      // pinning an id-less chunk to "the latest running same-name call" could MIS-attribute output
+      // across concurrent same-name calls (two parallel run_shell_command runs), silently splicing
+      // one call's output into another's panel. LangGraph always supplies the id today, so this is
+      // a defensive path — and the safe defensive choice is to mark the chunk (a clearly-synthetic
+      // bucket) rather than pin it to a possibly-wrong real call. Output is still never dropped.
       // TUI-C30 — notices accumulate on the SEPARATE `notice` field (newline-joined; they carry
       // no trailing newline of their own) so the output preview counts only real child output.
-      const fallbackId =
-        [...state.toolCalls]
-          .reverse()
-          .find((tc) => tc.name === event.name && tc.status === 'running')?.id ??
-        `${event.name}#live`;
-      const id = event.id ?? fallbackId;
+      const id = event.id ?? `${event.name}#live`;
       return {
         ...state,
         toolCalls: upsertTool(state.toolCalls, id, (tc) => ({

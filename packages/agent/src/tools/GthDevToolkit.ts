@@ -6,7 +6,9 @@ import type { ToolRunnableConfig } from '@langchain/core/tools';
 import { z } from 'zod';
 import { spawn, spawnSync } from 'child_process';
 import path from 'node:path';
-import { displayError, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
+// TUI-C31 (a): failure-path warnings/errors travel the tool-output channel (see emitToolOutput
+// below) so they reach the managed frame under the Ink TUI instead of raw stdout; the channel's
+// default sink still renders them via displayWarning/displayError for every headless surface.
 import {
   GthDevToolsConfig,
   getShellMaxOutputBytes,
@@ -255,7 +257,9 @@ export default class GthDevToolkit extends BaseToolkit {
         `Refusing to execute '${command}': blocked by hardline safety policy ` +
         `(${hardline.description}). This is a catastrophic, non-recoverable command ` +
         `and is blocked even when command confirmation is disabled.`;
-      displayWarning(`\n⛔ ${refusal}`);
+      // TUI-C31 (a): route through the tool-output channel so the refusal lands in the managed
+      // frame under the TUI (headless still gets displayWarning via the default sink, verbatim).
+      emitToolOutput({ toolCallId, toolName, kind: 'warning', text: `\n⛔ ${refusal}` });
       return refusal;
     }
 
@@ -380,7 +384,9 @@ export default class GthDevToolkit extends BaseToolkit {
         const errorMsg =
           `Failed to start command '${command}': ${error.message}. ` +
           'Check that the command/executable exists and the working directory is valid, then retry.';
-        displayError(errorMsg);
+        // TUI-C31 (a): route through the tool-output channel so the spawn-error advisory lands in
+        // the managed frame under the TUI (headless still gets displayError via the default sink).
+        emitToolOutput({ toolCallId, toolName, kind: 'error', text: errorMsg });
         reject(
           new ShellCommandFailedError({
             output: errorMsg,

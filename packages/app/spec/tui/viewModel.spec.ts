@@ -184,14 +184,34 @@ describe('tui/viewModel foldEvents', () => {
       expect(vm.toolCalls[1].output).toBe('build-1\n');
     });
 
-    it('falls back to the latest RUNNING call with the same name when the event has no id', async () => {
+    it('TUI-C31 (e): an id-less chunk goes to the synthetic per-name bucket, never pinned to a running same-name call', async () => {
       const { foldEventSequence } = await import('#src/tui/viewModel.js');
       const vm = foldEventSequence([
         { type: 'tool_start', id: 'real', name: 'my_tool' },
         { type: 'tool_output', name: 'my_tool', chunk: 'no-id chunk\n' },
       ]);
-      expect(vm.toolCalls).toHaveLength(1);
-      expect(vm.toolCalls[0]).toMatchObject({ id: 'real', output: 'no-id chunk\n' });
+      // The real running call is NOT polluted by an id-less chunk (the old fallback pinned it here).
+      expect(vm.toolCalls.find((t) => t.id === 'real')?.output).toBeUndefined();
+      // Instead it lands in a clearly-synthetic bucket — output is still never dropped.
+      expect(vm.toolCalls.find((t) => t.id === 'my_tool#live')?.output).toBe('no-id chunk\n');
+      expect(vm.toolCalls).toHaveLength(2);
+    });
+
+    it('TUI-C31 (e): an id-less chunk is not mis-attributed across two concurrent same-name calls', async () => {
+      const { foldEventSequence } = await import('#src/tui/viewModel.js');
+      const vm = foldEventSequence([
+        { type: 'tool_start', id: 'call-A', name: 'run_shell_command' },
+        { type: 'tool_start', id: 'call-B', name: 'run_shell_command' },
+        // A defensive id-less chunk arrives while BOTH same-name calls are running. The old fallback
+        // pinned it to the latest running one (call-B), splicing one call's live output into
+        // another's panel. It must instead go to the synthetic bucket, leaving BOTH real calls clean.
+        { type: 'tool_output', name: 'run_shell_command', chunk: 'ambiguous\n' },
+      ]);
+      expect(vm.toolCalls.find((t) => t.id === 'call-A')?.output).toBeUndefined();
+      expect(vm.toolCalls.find((t) => t.id === 'call-B')?.output).toBeUndefined();
+      expect(vm.toolCalls.find((t) => t.id === 'run_shell_command#live')?.output).toBe(
+        'ambiguous\n'
+      );
     });
 
     it('never drops id-less output with no matching running call (synthetic per-name bucket)', async () => {
