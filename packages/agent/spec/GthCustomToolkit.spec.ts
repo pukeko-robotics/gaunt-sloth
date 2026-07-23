@@ -343,7 +343,10 @@ describe('GthCustomToolkit', () => {
       const tool = toolkit.tools.find((t) => t.name === 'deploy')!;
       const result = await tool.invoke({});
       expect(result).toContain("Command 'npm run deploy' completed successfully");
-      expect(childProcessMock.spawn).toHaveBeenCalledWith('npm run deploy', { shell: true });
+      expect(childProcessMock.spawn).toHaveBeenCalledWith('npm run deploy', {
+        shell: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
     });
 
     it('should invoke custom command with parameters using placeholders', async () => {
@@ -437,7 +440,7 @@ describe('GthCustomToolkit', () => {
       );
       expect(childProcessMock.spawn).toHaveBeenCalledWith(
         'mpremote connect /dev/ttyUSB0 fs cp fixed/lesson5/Move_Dance1.py :main.py',
-        { shell: true }
+        { shell: true, stdio: ['ignore', 'pipe', 'pipe'] }
       );
     });
 
@@ -468,7 +471,7 @@ describe('GthCustomToolkit', () => {
         expect(systemUtilsMock.createInterface).not.toHaveBeenCalled();
         expect(childProcessMock.spawn).toHaveBeenCalledWith(
           'mpremote connect /dev/ttyUSB0 fs cp fixed/lesson5/Move_Dance1.py :main.py',
-          { shell: true }
+          { shell: true, stdio: ['ignore', 'pipe', 'pipe'] }
         );
       }
     );
@@ -626,7 +629,10 @@ describe('GthCustomToolkit', () => {
       expect(consoleUtilsMock.displayInfo).toHaveBeenCalledWith(
         '\n🔧 Executing test_tool: echo test'
       );
-      expect(childProcessMock.spawn).toHaveBeenCalledWith('echo test', { shell: true });
+      expect(childProcessMock.spawn).toHaveBeenCalledWith('echo test', {
+        shell: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
     });
 
     it('should handle command failure', async () => {

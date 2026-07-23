@@ -463,3 +463,45 @@ describe('utils/redactSecrets — GS2-66 hardening (residuals 1, 2 & 4)', () => 
     expect(twoLines).not.toContain('secret-token-123');
   });
 });
+
+// GS2-71 — M1 hardening from the GS2-66 adversarial review: the param-list continuation now accepts
+// `;` as well as `,` (`[,;]`), so a `;`-delimited param list is fully redacted — WITHOUT broadening
+// the token charset and WITHOUT reintroducing the GS2-47 prose-swallow (a `;`-then-prose stays intact,
+// exactly as the `,`-then-prose case already does). Pure `redactText` level (secrets=[] → only the
+// provider/auth patterns are in play, deterministic + machine-independent).
+describe('utils/redactSecrets — GS2-71 hardening (M1: `;` as a param separator)', () => {
+  it('positive: a `;`-delimited param list is fully redacted — no raw tail past the first param', async () => {
+    const { redactText } = await import('#src/utils/redactSecrets.js');
+    // GS2-66 left `<redacted>;key2=supersecret` (the `;` tail leaked); the whole value must go now.
+    const out = redactText('Authorization: Custom key1=v1;key2=supersecret', []);
+    expect(out).toBe('Authorization: <redacted>');
+    expect(out).not.toContain('key2=');
+    expect(out).not.toContain('supersecret');
+  });
+
+  it('positive: a MIXED `,` + `;` param list is fully redacted', async () => {
+    const { redactText } = await import('#src/utils/redactSecrets.js');
+    const out = redactText('Authorization: Custom key1=v1,key2=v2;key3=secret', []);
+    expect(out).toBe('Authorization: <redacted>');
+    expect(out).not.toContain('key3=');
+    expect(out).not.toContain('secret');
+  });
+
+  it('negative (the invariant guard): `;`-then-PROSE is NOT swallowed — the widening did not reintroduce the GS2-47 prose-swallow', async () => {
+    const { redactText } = await import('#src/utils/redactSecrets.js');
+    // A `;` followed by a bare (non-param-shaped) word is prose, not a param: AUTH_PARAM still requires
+    // `k=…`/quoted, so the sentence after the `;` is preserved (mirrors the GS2-66 comma-then-prose test).
+    const out = redactText('Authorization: Custom key1=v1; then the user said hello', []);
+    expect(out).toContain('Authorization: <redacted>');
+    expect(out).toContain('; then the user said hello');
+    expect(out).not.toContain('key1=v1');
+    // Same invariant with a Bearer token before the `;` — the token is redacted, the prose survives.
+    const bearer = redactText(
+      'Authorization: Bearer tok123abcdef; then we retried the call and it worked.',
+      []
+    );
+    expect(bearer).toContain('Authorization: <redacted>');
+    expect(bearer).toContain('; then we retried the call and it worked.');
+    expect(bearer).not.toContain('tok123abcdef');
+  });
+});
