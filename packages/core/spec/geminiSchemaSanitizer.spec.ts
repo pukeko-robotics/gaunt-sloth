@@ -166,13 +166,15 @@ describe('sanitizeGeminiToolSchema (GS2-58 fix-cycle 1 — allowlist)', () => {
 describe('sanitizeGeminiToolSchema (GS2-68 — resolve safe composition, characterize deferred drops)', () => {
   // --- RESOLVED: const → enum ------------------------------------------------------------------
 
-  it('resolves a const-only property to enum:[value] and infers type (string/number/boolean, incl. falsy const:0)', () => {
+  it('resolves a SCALAR const-only property to enum:[value] and infers type (string/number/boolean/null, incl. falsy const:0/false/"")', () => {
     const schema = {
       type: 'object',
       properties: {
         mode: { const: 'fast' }, // string
         zero: { const: 0 }, // falsy number — must resolve by PRESENCE, not truthiness
         flag: { const: false }, // falsy boolean
+        empty: { const: '' }, // falsy string
+        nul: { const: null }, // scalar null → enum:[null], no inferable type
       },
     };
 
@@ -188,6 +190,30 @@ describe('sanitizeGeminiToolSchema (GS2-68 — resolve safe composition, charact
 
     expect(out.properties.flag.enum).toEqual([false]);
     expect(out.properties.flag.type).toBe('boolean');
+
+    expect(out.properties.empty.enum).toEqual(['']);
+    expect(out.properties.empty.type).toBe('string');
+
+    expect(out.properties.nul.enum).toEqual([null]);
+    expect(out.properties.nul.type).toBeUndefined(); // null yields no type
+  });
+
+  it('CHARACTERIZATION: an OBJECT- or ARRAY-valued const is NOT resolved — it falls through to the safe typeless {} drop', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        obj: { const: { x: 1 } }, // object const → NOT an object-valued enum (unverified 400 path)
+        arr: { const: [1, 2] }, // array const → likewise dropped
+      },
+    };
+
+    const out = sanitizeGeminiToolSchema(schema) as any;
+    assertOnlySupportedSchemaKeys(out); // still non-400 / callable
+
+    expect(out.properties.obj).toEqual({}); // const dropped, no enum synthesised — prior GS2-58 behaviour
+    expect(out.properties.obj.enum).toBeUndefined();
+    expect(out.properties.arr).toEqual({});
+    expect(out.properties.arr.enum).toBeUndefined();
   });
 
   it('keeps a declared type when resolving const, and lets an explicit enum win over a sibling const', () => {
@@ -256,6 +282,27 @@ describe('sanitizeGeminiToolSchema (GS2-68 — resolve safe composition, charact
     // exclusiveMinimum merged as a SCALAR from an allOf branch is rewritten from the resolved node.
     expect(out.properties.p).toEqual({ type: 'number', minimum: 3, maximum: 9 });
     expect(new Set(out.required)).toEqual(new Set(['a', 'c', 'n']));
+  });
+
+  it('merges the other allOf branches and drops a bare-$ref branch (a $ref branch is still a plain object, so the merge PROCEEDS)', () => {
+    const schema = {
+      type: 'object',
+      allOf: [
+        { properties: { a: { type: 'string' } }, required: ['a'] },
+        { $ref: '#/$defs/Whatever' }, // a plain object → mergeable; its $ref is dropped by the allowlist
+      ],
+      $defs: { Whatever: { type: 'number' } },
+    };
+
+    const out = sanitizeGeminiToolSchema(schema) as any;
+    assertOnlySupportedSchemaKeys(out); // no $ref / $defs escapes
+
+    expect(out.allOf).toBeUndefined();
+    expect(out.properties.a).toEqual({ type: 'string' }); // the clean branch merged in
+    expect(out.required).toEqual(['a']);
+    const wire = JSON.stringify(out);
+    expect(wire).not.toContain('$ref');
+    expect(wire).not.toContain('$defs');
   });
 
   it('CHARACTERIZATION: leaves allOf DROPPED (branch content lost) when a branch is not a plain object', () => {

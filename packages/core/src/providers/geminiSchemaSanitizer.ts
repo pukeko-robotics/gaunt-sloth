@@ -88,8 +88,23 @@ function jsonEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-/** Infer the Gemini `type` for a `const` value when the schema declares none. Numbers map to the
- * general `number` (integer vs number is not "obvious" from a literal); `null` yields no type. */
+/**
+ * A `const` is resolved to `enum` ONLY when its value is a SCALAR (string / number / boolean / null).
+ * An object- or array-valued `const` is deliberately NOT resolved: synthesising an object/array-valued
+ * `enum` is a plausible-but-unverified Gemini 400 path, so we leave it to fall through to the safe
+ * allowlist drop (typeless `{}`) — exactly the prior GS2-58 behaviour, never widened.
+ */
+function isScalarConst(value: unknown): boolean {
+  return (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  );
+}
+
+/** Infer the Gemini `type` for a SCALAR `const` value when the schema declares none. Numbers map to
+ * the general `number` (integer vs number is not "obvious" from a literal); `null` yields no type. */
 function inferTypeFromConst(value: unknown): string | undefined {
   switch (typeof value) {
     case 'string':
@@ -98,11 +113,8 @@ function inferTypeFromConst(value: unknown): string | undefined {
       return 'boolean';
     case 'number':
       return 'number';
-    case 'object':
-      if (value === null) return undefined;
-      return Array.isArray(value) ? 'array' : 'object';
     default:
-      return undefined;
+      return undefined; // null (the only other scalar reaching here) → no type
   }
 }
 
@@ -115,9 +127,12 @@ function inferTypeFromConst(value: unknown): string | undefined {
  *  - `required` arrays are unioned;
  *  - any other (scalar) keyword is copied, but a key already set — on the parent or an earlier branch —
  *    to a DIFFERENT value is a conflict → abort.
- * On ANY conflict, or if a branch is not a plain object (e.g. a `$ref`, a boolean subschema), returns
+ * On ANY conflict, or if a branch is not a plain object (a boolean subschema `true`/`false`), returns
  * `null` so the caller leaves `allOf` in place for the allowlist to drop — the safe GS2-58 behaviour,
- * never a guessed merge. Returns a fresh object (never mutates `node`) with `allOf` removed on success.
+ * never a guessed merge. Note a branch carrying an UNRESOLVED keyword (e.g. `{ $ref: '#/…' }`) is still
+ * a plain object, so the merge PROCEEDS: the other branches merge and the `$ref` is copied onto the
+ * parent, where the allowlist then drops it — still safe, and higher-fidelity than dropping every
+ * branch. Returns a fresh object (never mutates `node`) with `allOf` removed on success.
  */
 function mergeAllOf(node: JsonSchemaObject): JsonSchemaObject | null {
   const branches = node.allOf;
@@ -165,9 +180,11 @@ function mergeAllOf(node: JsonSchemaObject): JsonSchemaObject | null {
  * none of the handled keywords, so clean schemas pass through byte-identical.
  *
  * Implemented (high-fidelity, no external context needed):
- *  - `const` → `enum: [value]` (+ infer `type` from the value when the node declares none). Gemini has
- *    no `const` but supports `enum`; a single-value `enum` is an exact model of `const`. Presence
- *    (`'const' in node`), not truthiness, so `const: 0 / false / '' / null` resolve too.
+ *  - SCALAR `const` → `enum: [value]` (+ infer `type` from the value when the node declares none).
+ *    Gemini has no `const` but supports `enum`; a single-value `enum` is an exact model of `const`.
+ *    Presence (`'const' in node`), not truthiness, so `const: 0 / false / '' / null` resolve too.
+ *    An OBJECT/ARRAY-valued `const` is NOT resolved (see {@link isScalarConst}) — it falls through to
+ *    the safe allowlist drop (typeless `{}`), never widening into an unverified object-`enum` 400 path.
  *  - `allOf` of plain-object branches → shallow-merged when clean (see {@link mergeAllOf}); otherwise
  *    left for the allowlist to drop.
  *
@@ -184,7 +201,7 @@ function mergeAllOf(node: JsonSchemaObject): JsonSchemaObject | null {
 function resolveComposition(node: JsonSchemaObject): JsonSchemaObject {
   let out = node;
 
-  if ('const' in node && !('enum' in node)) {
+  if ('const' in node && !('enum' in node) && isScalarConst(node.const)) {
     if (out === node) out = { ...node };
     out.enum = [cloneLiteral(node.const)];
     if (!('type' in out)) {
@@ -193,8 +210,8 @@ function resolveComposition(node: JsonSchemaObject): JsonSchemaObject {
     }
   }
 
-  if (Array.isArray((out === node ? node : out).allOf)) {
-    const merged = mergeAllOf(out === node ? node : out);
+  if (Array.isArray(out.allOf)) {
+    const merged = mergeAllOf(out);
     if (merged) out = merged;
     // else: leave `allOf` in place → the allowlist drops it (safe GS2-58 behaviour).
   }
