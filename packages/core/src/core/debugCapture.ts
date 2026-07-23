@@ -29,6 +29,23 @@ export interface DebugToolDef {
 }
 
 /**
+ * GS2-56 — the always-on snapshot of the LAST model request, kept on
+ * {@link import('#src/core/GthAbstractAgent.js').GthAbstractAgent} independent of any
+ * {@link DebugCapture} sink. It is the SAME data the sink reports (the as-sent, post-summarization
+ * `request.messages` plus the {@link DebugRequestExtras}), captured unconditionally at each model
+ * call so `/debug-dump` can render the full model input even when the TUI `/debug` panel was never
+ * opened and on non-TUI surfaces. Reuses {@link DebugRequestExtras} rather than forking a parallel
+ * capture shape; `WriteDebugDumpInput.modelRequest` is this same type, so the caller threads
+ * `agent.lastModelRequest` straight through with no reshaping.
+ */
+export interface LastModelRequest {
+  /** The request extras (system prompt, tool defs with schema, model params, tool-choice). */
+  extras?: DebugRequestExtras;
+  /** The exact messages sent to the model for the last call (post-summarization / middleware). */
+  messages?: BaseMessage[];
+}
+
+/**
  * Debug-capture sink for the TUI's `/debug` panel.
  *
  * A {@link DebugCapture} is an OPT-IN callback the TUI sets on a live agent after `init`

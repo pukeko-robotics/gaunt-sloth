@@ -10,5 +10,6 @@ export type {
   DebugRequestExtras,
   DebugToolDef,
   DebugCapture,
+  LastModelRequest,
 } from '@gaunt-sloth/core/core/debugCapture.js';
 export { extractDebugRequestExtras } from '@gaunt-sloth/core/core/debugCapture.js';

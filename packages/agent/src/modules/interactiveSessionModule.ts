@@ -10,6 +10,8 @@ import {
   stopSessionLogging,
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
+import { GthAbstractAgent } from '@gaunt-sloth/core/core/GthAbstractAgent.js';
+import { writeDebugDump } from '@gaunt-sloth/core/utils/debugDump.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
 import {
   openConversationSafe,
@@ -35,6 +37,7 @@ import {
   dispatchSlashCommand,
   formatConfigSummary,
   parseSlashCommand,
+  type DebugDumpInput,
   type SlashCommandNotice,
 } from '#src/modules/slashCommands.js';
 
@@ -89,6 +92,23 @@ export async function createInteractiveSession(
     const registry = createCommandRegistry();
     // Committed-turn counter for the /status command (mirrors the TUI's status-bar counter).
     let turnCount = 0;
+
+    // GS2-56 — wire `/debug-dump` on the readline (`--no-tui`) surface too. Previously this surface
+    // injected no writer, so `/debug-dump` reported itself "unavailable" here; it now forwards to the
+    // same core writer the TUI uses AND threads the agent's always-on last-model-request snapshot
+    // (read at CALL time from the live agent), so the archive carries the full model input even
+    // though this surface keeps no on-screen transcript. Fail-soft: no agent handle ⇒ the snapshot is
+    // simply omitted (the other artifacts still write). `redact` is resolved by the shared command.
+    const dumpDebugSession = (dumpInput: DebugDumpInput): { archiveDir: string } => {
+      const agent = runner.getAgent();
+      return writeDebugDump({
+        transcript: dumpInput.transcript,
+        config: dumpInput.config,
+        modelDisplayName: dumpInput.modelDisplayName,
+        redact: dumpInput.redact,
+        modelRequest: agent instanceof GthAbstractAgent ? agent.lastModelRequest : undefined,
+      });
+    };
 
     // EXT-18: ref stdin before every rl.question() that can run AFTER an agent turn/stream end.
     // When a run suspends (tool-approval interrupt) or throws, the stream's finally calls
@@ -248,6 +268,12 @@ export async function createInteractiveSession(
             toolsExpanded: false,
             debugVisible: false,
             configSummary: formatConfigSummary(config),
+            // GS2-56 — `/debug-dump` is now available here. This surface keeps no on-screen
+            // transcript array, so `transcript` is empty; the real as-sent history lands in the
+            // archive's model-messages.json from the always-on snapshot (that is the point).
+            transcript: [],
+            resolvedConfig: config,
+            dumpDebugSession,
           });
           if (result.exit) {
             await endSession();
