@@ -10,6 +10,22 @@ import {
   type AdkClientFactory,
 } from '#src/commands/adkEvalRunner.js';
 
+// Fix #5 (BATCH-18): the production factory must build the A2A client through `A2AClientWrapper`,
+// which itself now constructs via the non-deprecated `A2AClient.fromCardUrl(cardUrl)` — that
+// migration (mock the SDK) is asserted in `packages/agent/spec/A2AClientWrapper.spec.ts`, where
+// `@a2a-js/sdk` actually resolves (the app package has no such dependency, so a cross-package SDK
+// mock cannot intercept the built wrapper's import). Here we mock the WRAPPER — which DOES resolve
+// from the app package — to assert the factory wiring + preserved send behavior.
+const mockSendMessageWithContext = vi.hoisted(() => vi.fn());
+const A2AClientWrapperMock = vi.hoisted(() =>
+  vi.fn(function A2AClientWrapperMock() {
+    return { sendMessageWithContext: mockSendMessageWithContext };
+  })
+);
+vi.mock('@gaunt-sloth/agent/modules/a2a/A2AClientWrapper.js', () => ({
+  A2AClientWrapper: A2AClientWrapperMock,
+}));
+
 // BATCH-14 — the ADK (A2A) target's runner builders, driven end-to-end through the REAL
 // `runEvalSuite` with a FAKE A2A client (no network, no live ADK agent — the live bed is BATCH-16).
 // This proves both halves: the answer/contextId CAPTURE (the builders) and the GRADING (the shared
@@ -184,6 +200,53 @@ cases:
       expect(summary.cases[0].turns![1].ok).toBe(false);
       expect(summary.cases[0].reasons.some((r) => r.startsWith('turn 2:'))).toBe(true);
       expect(summary.cases[0].reasons.join(' ')).toContain('stream reset by peer');
+    });
+  });
+
+  // Fix #5 (BATCH-18) — the production factory builds an A2AClientWrapper for the target and
+  // delegates each send to its context-threading `sendMessageWithContext`. The wrapper's own
+  // migration to `A2AClient.fromCardUrl` (mock the SDK) is proven in the agent-package spec; this
+  // asserts the factory wiring and that the ADK runner's send behavior is unchanged.
+  describe('defaultAdkClientFactory — A2AClientWrapper wiring (fix #5)', () => {
+    it('constructs the wrapper for the target and delegates send to sendMessageWithContext', async () => {
+      mockSendMessageWithContext.mockReset();
+      A2AClientWrapperMock.mockClear();
+      mockSendMessageWithContext.mockResolvedValue({
+        text: 'pong',
+        contextId: 'ctx-1',
+        taskId: 'task-1',
+      });
+
+      const { defaultAdkClientFactory } = await import('#src/commands/adkEvalRunner.js');
+      const client = defaultAdkClientFactory({
+        type: 'adk-agent',
+        url: 'http://localhost:8080',
+        agentId: 'my-adk',
+      });
+      const res = await client.sendMessage('ping', { contextId: 'ctx-0' });
+
+      // One wrapper built for the target's url + agentId.
+      expect(A2AClientWrapperMock).toHaveBeenCalledWith({
+        agentId: 'my-adk',
+        agentUrl: 'http://localhost:8080',
+      });
+      // Behavior preserved: delegates to the context-threading send and returns its result verbatim.
+      expect(mockSendMessageWithContext).toHaveBeenCalledWith('ping', { contextId: 'ctx-0' });
+      expect(res).toEqual({ text: 'pong', contextId: 'ctx-1', taskId: 'task-1' });
+    });
+
+    it('defaults the wrapper agentId to "adk-agent" when the target omits it', async () => {
+      mockSendMessageWithContext.mockReset();
+      A2AClientWrapperMock.mockClear();
+      mockSendMessageWithContext.mockResolvedValue({ text: 'ok' });
+
+      const { defaultAdkClientFactory } = await import('#src/commands/adkEvalRunner.js');
+      defaultAdkClientFactory({ type: 'adk-agent', url: 'http://localhost:8080' });
+
+      expect(A2AClientWrapperMock).toHaveBeenCalledWith({
+        agentId: 'adk-agent',
+        agentUrl: 'http://localhost:8080',
+      });
     });
   });
 });

@@ -1,16 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockSendMessage = vi.hoisted(() => vi.fn());
-const A2AClientMock = vi.hoisted(() =>
-  vi.fn(function A2AClientMock() {
-    return {
-      sendMessage: mockSendMessage,
-    };
-  })
-);
+// BATCH-18: the wrapper now constructs the client via the non-deprecated async static
+// `A2AClient.fromCardUrl(cardUrl)` rather than `new A2AClient(url)`, so the mock exposes that static
+// (resolving to the fake client) instead of a constructor.
+const mockFromCardUrl = vi.hoisted(() => vi.fn());
 
 vi.mock('@a2a-js/sdk/client', () => ({
-  A2AClient: A2AClientMock,
+  A2AClient: { fromCardUrl: mockFromCardUrl },
 }));
 
 vi.mock('#src/utils/debugUtils.js', () => ({
@@ -26,12 +23,14 @@ describe('A2AClientWrapper', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSendMessage.mockReset();
-    A2AClientMock.mockClear();
+    mockFromCardUrl.mockReset();
+    // Every send now awaits the fromCardUrl-produced client, so re-arm the resolved value after the
+    // reset (the constructor also `.catch`es it — an unresolved default would break every test).
+    mockFromCardUrl.mockResolvedValue({ sendMessage: mockSendMessage });
   });
 
   describe('constructor', () => {
-    it('should initialize A2AClient with agentUrl', async () => {
-      const { A2AClient } = await import('@a2a-js/sdk/client');
+    it('should construct the A2A client via fromCardUrl with the well-known agent-card URL', async () => {
       const { A2AClientWrapper } = await import('#src/modules/a2a/A2AClientWrapper.js');
 
       new A2AClientWrapper({
@@ -39,7 +38,11 @@ describe('A2AClientWrapper', () => {
         agentUrl: 'http://localhost:8080/a2a',
       });
 
-      expect(A2AClient).toHaveBeenCalledWith('http://localhost:8080/a2a');
+      // Migrated off the deprecated `new A2AClient(url)` to `A2AClient.fromCardUrl(cardUrl)`; the
+      // well-known card path is appended to the base agent URL.
+      expect(mockFromCardUrl).toHaveBeenCalledWith(
+        'http://localhost:8080/a2a/.well-known/agent-card.json'
+      );
     });
   });
 
