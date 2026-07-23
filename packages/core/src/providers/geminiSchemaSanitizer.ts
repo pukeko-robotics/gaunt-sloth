@@ -81,6 +81,144 @@ function cloneLiteral(value: unknown): unknown {
   }
 }
 
+/** Structural equality by JSON serialisation. Used only for CONSERVATIVE conflict detection during
+ * an `allOf` merge: a false "not equal" (e.g. key-order differences) merely makes the merge abort to
+ * the safe drop, never produces an unsound merge — so a best-effort compare is sufficient here. */
+function jsonEqual(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * A `const` is resolved to `enum` ONLY when its value is a SCALAR (string / number / boolean / null).
+ * An object- or array-valued `const` is deliberately NOT resolved: synthesising an object/array-valued
+ * `enum` is a plausible-but-unverified Gemini 400 path, so we leave it to fall through to the safe
+ * allowlist drop (typeless `{}`) — exactly the prior GS2-58 behaviour, never widened.
+ */
+function isScalarConst(value: unknown): boolean {
+  return (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  );
+}
+
+/** Infer the Gemini `type` for a SCALAR `const` value when the schema declares none. Numbers map to
+ * the general `number` (integer vs number is not "obvious" from a literal); `null` yields no type. */
+function inferTypeFromConst(value: unknown): string | undefined {
+  switch (typeof value) {
+    case 'string':
+      return 'string';
+    case 'boolean':
+      return 'boolean';
+    case 'number':
+      return 'number';
+    default:
+      return undefined; // null (the only other scalar reaching here) → no type
+  }
+}
+
+/**
+ * Attempt a shallow merge of `node.allOf` (a list of subschemas) into the parent node. Gemini has no
+ * `allOf`, so GS2-58 simply drops it — losing any content carried only by the branches. When every
+ * branch is a plain-object subschema that merges CLEANLY, we fold it in instead:
+ *  - `properties` are unioned (a property name appearing in the parent or two branches with DIFFERENT
+ *    schemas is a conflict → abort);
+ *  - `required` arrays are unioned;
+ *  - any other (scalar) keyword is copied, but a key already set — on the parent or an earlier branch —
+ *    to a DIFFERENT value is a conflict → abort.
+ * On ANY conflict, or if a branch is not a plain object (a boolean subschema `true`/`false`), returns
+ * `null` so the caller leaves `allOf` in place for the allowlist to drop — the safe GS2-58 behaviour,
+ * never a guessed merge. Note a branch carrying an UNRESOLVED keyword (e.g. `{ $ref: '#/…' }`) is still
+ * a plain object, so the merge PROCEEDS: the other branches merge and the `$ref` is copied onto the
+ * parent, where the allowlist then drops it — still safe, and higher-fidelity than dropping every
+ * branch. Returns a fresh object (never mutates `node`) with `allOf` removed on success.
+ */
+function mergeAllOf(node: JsonSchemaObject): JsonSchemaObject | null {
+  const branches = node.allOf;
+  if (!Array.isArray(branches) || branches.length === 0) return null;
+  if (!branches.every(isPlainObject)) return null;
+
+  const acc: JsonSchemaObject = { ...node };
+  delete acc.allOf;
+
+  const props: JsonSchemaObject = isPlainObject(acc.properties) ? { ...acc.properties } : {};
+  let sawProps = isPlainObject(acc.properties);
+  const required = new Set<unknown>(Array.isArray(acc.required) ? acc.required : []);
+  let sawRequired = Array.isArray(acc.required);
+
+  for (const branch of branches as JsonSchemaObject[]) {
+    for (const [key, value] of Object.entries(branch)) {
+      if (key === 'properties') {
+        if (!isPlainObject(value)) return null;
+        for (const [name, sub] of Object.entries(value)) {
+          if (name in props && !jsonEqual(props[name], sub)) return null; // conflicting property
+          props[name] = sub;
+        }
+        sawProps = true;
+      } else if (key === 'required') {
+        if (Array.isArray(value)) for (const r of value) required.add(r);
+        sawRequired = true;
+      } else {
+        // scalar / other keyword: parent and every branch must agree on it.
+        if (key in acc && !jsonEqual(acc[key], value)) return null;
+        acc[key] = value;
+      }
+    }
+  }
+
+  if (sawProps) acc.properties = props;
+  if (sawRequired) acc.required = [...required];
+  return acc;
+}
+
+/**
+ * Resolve the SAFE structural-composition keywords Gemini rejects into supported equivalents, BEFORE
+ * {@link sanitizeNode}'s allowlist drops the rest. Its output feeds the same allowlist + `exclusive*`
+ * rewrite pass, so merged-in `properties`/`items`/`anyOf` are still recursed and a merged-in
+ * `exclusiveMinimum` is still rewritten. A strict NO-OP (returns the input node) when the node carries
+ * none of the handled keywords, so clean schemas pass through byte-identical.
+ *
+ * Implemented (high-fidelity, no external context needed):
+ *  - SCALAR `const` → `enum: [value]` (+ infer `type` from the value when the node declares none).
+ *    Gemini has no `const` but supports `enum`; a single-value `enum` is an exact model of `const`.
+ *    Presence (`'const' in node`), not truthiness, so `const: 0 / false / '' / null` resolve too.
+ *    An OBJECT/ARRAY-valued `const` is NOT resolved (see {@link isScalarConst}) — it falls through to
+ *    the safe allowlist drop (typeless `{}`), never widening into an unverified object-`enum` 400 path.
+ *  - `allOf` of plain-object branches → shallow-merged when clean (see {@link mergeAllOf}); otherwise
+ *    left for the allowlist to drop.
+ *
+ * Deliberately NOT resolved — kept as the safe GS2-58 drop (see the GS2-68 characterization tests):
+ *  - `oneOf` / `not`: `oneOf` is XOR, semantically distinct from `anyOf`'s OR, so remapping it would
+ *    silently change a tool's contract; `not` has no Gemini equivalent. Both are dropped.
+ *  - `$ref` / `$defs` / `definitions`: inlining a same-document `$ref` is only sound when fully self-
+ *    contained AND cycle-guarded, and is NEAR-ZERO in practice — `@langchain/mcp-adapters` dereferences
+ *    `$ref` and merges `allOf` UPSTREAM before tools reach this boundary, and gaunt-sloth's own zod
+ *    tools inline+type their schemas. No live path authors a bare `$ref` here, so this is DEFERRED
+ *    (GS2-68): a `$ref`-only property still sanitizes to a typeless `{}` — non-400 and callable, just
+ *    without type fidelity. A raw non-adapter tool that needs it should dereference upstream, not here.
+ */
+function resolveComposition(node: JsonSchemaObject): JsonSchemaObject {
+  let out = node;
+
+  if ('const' in node && !('enum' in node) && isScalarConst(node.const)) {
+    if (out === node) out = { ...node };
+    out.enum = [cloneLiteral(node.const)];
+    if (!('type' in out)) {
+      const inferred = inferTypeFromConst(node.const);
+      if (inferred) out.type = inferred;
+    }
+  }
+
+  if (Array.isArray(out.allOf)) {
+    const merged = mergeAllOf(out);
+    if (merged) out = merged;
+    // else: leave `allOf` in place → the allowlist drops it (safe GS2-58 behaviour).
+  }
+
+  return out;
+}
+
 /**
  * Recursively normalise one schema node to Gemini's supported subset:
  *  - rewrite `exclusiveMinimum`→`minimum` / `exclusiveMaximum`→`maximum` (Gemini has no exclusive
@@ -98,8 +236,13 @@ function sanitizeNode(node: unknown): unknown {
     return node;
   }
 
+  // Resolve the safe composition keywords (const → enum, clean allOf → shallow merge) BEFORE the
+  // allowlist drop, so their content survives; the allowlist below then still guarantees no
+  // unsupported keyword escapes. `resolved` is `node` itself when nothing needed resolving.
+  const resolved = resolveComposition(node);
+
   const out: JsonSchemaObject = {};
-  for (const [key, value] of Object.entries(node)) {
+  for (const [key, value] of Object.entries(resolved)) {
     // Allowlist: silently drop any keyword Gemini's Schema type does not declare (this is where
     // $defs / definitions / patternProperties / const / multipleOf / $ref / allOf / oneOf / not /
     // additionalProperties / $schema / exclusive* are removed).
@@ -125,12 +268,13 @@ function sanitizeNode(node: unknown): unknown {
   // exclusive* → inclusive of the SAME value. Gemini has no exclusive bound; args are hints, so the
   // loosening is accepted. When both an exclusive and an inclusive bound are present, keep the TIGHTER
   // one (higher lower-bound / lower upper-bound) rather than letting the exclusive value clobber it.
-  const exclusiveMinimum = node.exclusiveMinimum;
+  // Read from `resolved` so a bound merged in from an `allOf` branch is rewritten too.
+  const exclusiveMinimum = resolved.exclusiveMinimum;
   if (typeof exclusiveMinimum === 'number') {
     out.minimum =
       typeof out.minimum === 'number' ? Math.max(out.minimum, exclusiveMinimum) : exclusiveMinimum;
   }
-  const exclusiveMaximum = node.exclusiveMaximum;
+  const exclusiveMaximum = resolved.exclusiveMaximum;
   if (typeof exclusiveMaximum === 'number') {
     out.maximum =
       typeof out.maximum === 'number' ? Math.min(out.maximum, exclusiveMaximum) : exclusiveMaximum;
@@ -140,9 +284,12 @@ function sanitizeNode(node: unknown): unknown {
 }
 
 /**
- * Pure, recursive allowlist normaliser: returns a cleaned DEEP COPY of a JSON-Schema containing only
- * keywords Gemini's function-declaration `Schema` accepts, so its OpenAPI-3.0 subset accepts the tool.
- * Does not mutate the input. See {@link sanitizeNode} for the transform; `anyOf` unions survive.
+ * Pure, recursive normaliser: returns a cleaned DEEP COPY of a JSON-Schema containing only keywords
+ * Gemini's function-declaration `Schema` accepts, so its OpenAPI-3.0 subset accepts the tool. At each
+ * node the SAFE composition keywords are first RESOLVED into supported equivalents
+ * ({@link resolveComposition}: `const` → `enum`, clean `allOf` → shallow merge) and only then does the
+ * allowlist drop the rest. Does not mutate the input. `anyOf` unions survive; `$ref`/`oneOf`/`not` are
+ * dropped (see {@link resolveComposition} for why the last three are deferred, not resolved).
  */
 export function sanitizeGeminiToolSchema<T = unknown>(schema: T): T {
   return sanitizeNode(schema) as T;
