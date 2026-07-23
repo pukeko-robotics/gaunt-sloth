@@ -192,8 +192,10 @@ async function decodeAgUiStream(body: ReadableStream<Uint8Array>): Promise<AgUiR
 
 /**
  * Default deadline for one AG-UI run (fetch + full SSE decode). The runner has no configured
- * timeout, so this bounds a server that opens the stream but never emits `RUN_FINISHED`: past it the
- * case FAILS with a clear error instead of wedging the process. Injectable per-client for tests.
+ * timeout, so this bounds a server that hangs at EITHER phase — one that accepts the POST but never
+ * sends response headers (the `fetch` await never returns) OR one that opens the stream but never
+ * emits `RUN_FINISHED`: past it the case FAILS with a clear error instead of wedging the process.
+ * Injectable per-client for tests.
  */
 export const AG_UI_RUN_TIMEOUT_MS = 120_000;
 
@@ -218,11 +220,13 @@ async function releaseBody(body: ReadableStream<Uint8Array> | null | undefined):
  * stream, or a run that exceeds `timeoutMs` all throw — the runner builders contain that into a
  * failed cell (`ok:false`).
  *
- * The whole run is bounded by `timeoutMs` (default {@link AG_UI_RUN_TIMEOUT_MS}): an `AbortController`
- * signal is passed to `fetch` so a real socket is freed, and the decode is additionally raced against
- * the deadline so a stalled stream (one that opens but whose body never ends) still fails the case
- * rather than hanging — even when the transport ignores the abort. On a non-200 the unread body is
- * cancelled first so its socket is released.
+ * The WHOLE run is bounded by `timeoutMs` (default {@link AG_UI_RUN_TIMEOUT_MS}) via a single
+ * deadline armed BEFORE the fetch. BOTH phases are raced against it: the `fetch` await (so a server
+ * that accepts the POST but never sends response headers is bounded too) AND the SSE decode (so a
+ * body that opens but never ends still fails the case rather than hanging). Racing — not the abort
+ * signal — is the load-bearing mechanism, since a transport may ignore the abort; on timeout the
+ * `AbortController` is fired anyway to free a real socket. On a non-200 the unread body is cancelled
+ * first so its socket is released.
  *
  * `fetchImpl` defaults to global `fetch`; tests pass a fake returning a synthetic SSE `Response` so
  * the body construction + decode are exercised without a network or a live server.
@@ -237,46 +241,65 @@ export function createAgUiClient(
   return {
     async run(input) {
       const controller = new AbortController();
-      const response = await fetchImpl(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-        body: JSON.stringify({
-          threadId: input.threadId,
-          runId: input.runId,
-          messages: input.messages,
-          // The eval declares no client-fulfilled frontend tools; an empty array makes the server
-          // serve the run from its own statically-configured agent.
-          tools: [],
-          forwardedProps: {},
-        }),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        // Drain the unread body so the socket is released before failing the case.
-        await releaseBody(response.body);
-        throw new Error(
-          `AG-UI server responded ${response.status} ${response.statusText || ''}`.trim()
-        );
-      }
-      if (!response.body) {
-        throw new Error('AG-UI server returned no response body to stream.');
-      }
       const TIMEOUT = Symbol('ag-ui-run-timeout');
+      const timeoutError = (): Error =>
+        new Error(
+          `AG-UI run exceeded ${timeoutMs}ms without a terminal RUN_FINISHED (stalled server).`
+        );
+      // Arm the deadline BEFORE the fetch so it bounds the WHOLE run, not just the post-headers
+      // decode: a server that accepts the POST but never sends response headers hangs in the
+      // `fetch` await, and a body that opens but never ends hangs in the decode. Each phase is RACED
+      // against this one deadline — the transport may ignore an abort, so only the race guarantees
+      // we settle. The abort is fired INSIDE the timeout branches (after TIMEOUT has already won the
+      // race), so a real fetch's `AbortError` can't beat our clean timeout message.
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeoutPromise = new Promise<typeof TIMEOUT>((resolve) => {
         timer = setTimeout(() => resolve(TIMEOUT), timeoutMs);
       });
-      const decodePromise = decodeAgUiStream(response.body);
       try {
+        const fetchPromise = fetchImpl(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+          body: JSON.stringify({
+            threadId: input.threadId,
+            runId: input.runId,
+            messages: input.messages,
+            // The eval declares no client-fulfilled frontend tools; an empty array makes the server
+            // serve the run from its own statically-configured agent.
+            tools: [],
+            forwardedProps: {},
+          }),
+          signal: controller.signal,
+        });
+        const opened = await Promise.race([fetchPromise, timeoutPromise]);
+        if (opened === TIMEOUT) {
+          // Pre-headers hang: the POST was accepted but no response headers ever arrived. Attach a
+          // swallow FIRST so the fetch's eventual abort-rejection has a handler, then abort to free
+          // a real socket, and fail with the clear timeout error. A genuine pre-deadline
+          // network/transport error instead rejects the race on its own and surfaces distinctly.
+          void fetchPromise.catch(() => undefined);
+          controller.abort();
+          throw timeoutError();
+        }
+        const response = opened;
+        if (!response.ok) {
+          // Drain the unread body so the socket is released before failing the case.
+          await releaseBody(response.body);
+          throw new Error(
+            `AG-UI server responded ${response.status} ${response.statusText || ''}`.trim()
+          );
+        }
+        if (!response.body) {
+          throw new Error('AG-UI server returned no response body to stream.');
+        }
+        const decodePromise = decodeAgUiStream(response.body);
         const settled = await Promise.race([decodePromise, timeoutPromise]);
         if (settled === TIMEOUT) {
-          // Abort the fetch so the real socket is freed; swallow the decode's eventual
-          // abort-rejection (nothing awaits it now) and fail the case with a clear timeout error.
-          controller.abort();
+          // The stream opened but never emitted RUN_FINISHED. Swallow the decode's eventual
+          // abort-rejection FIRST, then abort the fetch to free the real socket, and fail clearly.
           void decodePromise.catch(() => undefined);
-          throw new Error(
-            `AG-UI run exceeded ${timeoutMs}ms without a terminal RUN_FINISHED (stalled server).`
-          );
+          controller.abort();
+          throw timeoutError();
         }
         return settled;
       } finally {

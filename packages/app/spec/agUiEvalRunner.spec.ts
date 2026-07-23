@@ -266,8 +266,30 @@ describe('agUiEvalRunner', () => {
           runId: 'r',
           messages: [{ id: 'u1', role: 'user', content: 'x' }],
         })
-      ).rejects.toThrow(/exceeded 50ms|stalled|RUN_FINISHED/i);
+        // Pins the TIMEOUT branch specifically (not the truncated-stream RUN_FINISHED error).
+      ).rejects.toThrow(/exceeded 50ms|stalled/i);
       // Resolved via the deadline, not a hang — well under any real run time.
+      expect(Date.now() - started).toBeLessThan(2000);
+    });
+
+    it('fix #1 (pre-headers): a fetch that never sends response headers fails on the deadline, not a hang', async () => {
+      // Models a server that ACCEPTS the POST but never sends response headers: `fetchImpl` never
+      // resolves (and ignores the abort signal), so ONLY the whole-run deadline can settle the run.
+      // Distinct from the stalled-STREAM test above, where fetch resolves but the body stalls.
+      // On the pre-fix code the deadline was armed only AFTER `await fetchImpl` returned, so this
+      // never-resolving fetch would hang to the vitest per-test timeout — the fix bounds it.
+      const fetchImpl = vi.fn(() => new Promise<Response>(() => {})) as unknown as FetchLike;
+      const client = createAgUiClient(TARGET, fetchImpl, 50);
+
+      const started = Date.now();
+      await expect(
+        client.run({
+          threadId: 't',
+          runId: 'r',
+          messages: [{ id: 'u1', role: 'user', content: 'x' }],
+        })
+      ).rejects.toThrow(/exceeded 50ms|stalled/i);
+      // Bounded by the deadline (fetch never resolved), not a hang.
       expect(Date.now() - started).toBeLessThan(2000);
     });
 
