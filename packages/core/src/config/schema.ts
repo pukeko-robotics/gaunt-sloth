@@ -277,6 +277,12 @@ export const rawGthConfigSchema = z.looseObject({
   // Allow a JSON Schema reference for editor support; never read at runtime.
   $schema: z.string().optional(),
   llm: llmConfigSchema.optional(),
+  // GS2-41 — profile composition. A NAMED profile config may declare `extends: "<base-profile>"` to
+  // inherit another profile's config: the base profile resolves FIRST, then this profile's own
+  // fields merge on top (last-wins, same GS2-1 deep-merge as the config layers; a base may itself
+  // extend another, with a cycle guard). Consumed during load — never appears in the resolved
+  // config. See `resolveConfigExtends` in loader.ts.
+  extends: z.string().optional(),
   // Selects the agent backend. `lean` (the default when omitted) uses the plain LangChain agent
   // with gsloth's full toolset (no `/large_tool_results` offload). `deep` is the EXPERIMENTAL,
   // opt-in deepagents runtime and emits a warning when selected. The ACP server is deep-only.
