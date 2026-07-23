@@ -87,6 +87,13 @@ export function createToolErrorBudgetMiddleware(
             }
           } else if (AIMessage.isInstance(msg)) {
             // The assistant tool-call request that produced the error above; skip and keep counting.
+            // GS2-72: this `continue` INTENTIONALLY also skips the budget's OWN injected terminal
+            // notice (itself an AIMessage). If the run re-enters beforeModel on the same thread after
+            // a jumpTo:'end' (a re-invoke on the same thread — e.g. the no-checkpointer degrade of
+            // the string path's empty-stream fallback, or a later turn that keeps erroring), skipping
+            // the notice lets the walk still reach the errored results and re-trip deterministically.
+            // Do NOT special-case the notice to reset/break here — treating it as a fresh-turn
+            // boundary would let the capped loop resume.
             continue;
           } else {
             // A Human/System message: a fresh user-turn boundary — earlier errors don't count.
