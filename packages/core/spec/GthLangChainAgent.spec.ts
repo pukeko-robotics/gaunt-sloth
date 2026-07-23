@@ -5,7 +5,7 @@ import type { GthConfig } from '#src/config.js';
 import type { BaseToolkit, StructuredToolInterface } from '@langchain/core/tools';
 import { FakeListChatModel, FakeStreamingChatModel } from '@langchain/core/utils/testing';
 import type { RunnableConfig } from '@langchain/core/runnables';
-import { StatusLevel, type StatusUpdateCallback } from '#src/core/types.js';
+import { StatusLevel, type AgentStreamEvent, type StatusUpdateCallback } from '#src/core/types.js';
 
 const systemUtilsMock = {
   getCurrentWorkDir: vi.fn(),
@@ -1516,6 +1516,185 @@ describe('GthLangChainAgent', () => {
         StatusLevel.WARNING,
         expect.stringContaining('declined')
       );
+    });
+  });
+
+  // EXT-41 — completes EXT-37 refusal surfacing at the two boundaries its review flagged.
+  //  I-1 (streaming aggregate fallback): the DEFAULT streaming path must detect a refusal off the
+  //      FINAL AGGREGATE, not only a per-chunk metadata field — so a provider that surfaces the
+  //      reason only on the assembled message (here simulated by SPLITTING the reason token across
+  //      two chunks, which no single chunk's detectRefusal can match but their concat can) is still
+  //      surfaced, not swallowed by the empty-response retry.
+  //  I-2 (typed-event path): streamWithEvents/processEventStream surfaces the refusal as a `text`
+  //      event (rendered by the Ink TUI viewModel and AG-UI SSE alike) instead of a silent empty turn.
+  describe('EXT-41 refusal surfacing (aggregate fallback + typed-event path)', () => {
+    const runConfig: RunnableConfig = {
+      recursionLimit: 1000,
+      configurable: { thread_id: 'ext41-thread' },
+    };
+
+    function warningCalls() {
+      return statusUpdateCallback.mock.calls.filter((c) => c[0] === StatusLevel.WARNING);
+    }
+
+    async function initStreaming(agent: GthLangChainAgent) {
+      const model = new FakeStreamingChatModel({ chunks: [] });
+      model.bindTools = vi.fn().mockReturnValue(model);
+      await agent.init(undefined, { ...mockConfig, llm: model, streamOutput: true });
+    }
+
+    function textEvents(events: AgentStreamEvent[]) {
+      return events.filter(
+        (e): e is Extract<AgentStreamEvent, { type: 'text' }> => e.type === 'text'
+      );
+    }
+
+    // ---- I-1: streaming aggregate-level fallback (string path) ----
+
+    it('streaming: detects a refusal off the AGGREGATE when the reason is split across chunks', async () => {
+      // Neither chunk carries a complete refusal reason; only their concat spells 'content_filter',
+      // so this passes ONLY because of the aggregate fallback (per-chunk detection cannot match).
+      const agent = new GthLangChainAgent(statusUpdateCallback);
+      async function* splitStream() {
+        yield [
+          new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'content_' } }),
+          {},
+        ];
+        yield [
+          new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'filter' } }),
+          {},
+        ];
+      }
+      agentMock.stream.mockResolvedValue(splitStream());
+      await initStreaming(agent);
+
+      const stream = await agent.stream([new HumanMessage('disallowed')], runConfig);
+      let out = '';
+      for await (const chunk of stream) out += chunk;
+
+      // The aggregate-only refusal is surfaced (non-empty text bypasses the empty-response retry).
+      expect(out).toContain('declined');
+      expect(warningCalls().some((c) => /declined/.test(String(c[1])))).toBe(true);
+    });
+
+    it('streaming: does NOT surface a refusal when the aggregate reason is normal (no false positive)', async () => {
+      const agent = new GthLangChainAgent(statusUpdateCallback);
+      async function* normalStream() {
+        yield [new AIMessageChunk({ content: 'here is ', response_metadata: {} }), {}];
+        yield [
+          new AIMessageChunk({
+            content: 'your answer',
+            response_metadata: { finish_reason: 'stop' },
+          }),
+          {},
+        ];
+      }
+      agentMock.stream.mockResolvedValue(normalStream());
+      await initStreaming(agent);
+
+      const stream = await agent.stream([new HumanMessage('hi')], runConfig);
+      let out = '';
+      for await (const chunk of stream) out += chunk;
+
+      expect(out).toBe('here is your answer');
+      expect(out).not.toContain('declined');
+      expect(warningCalls().some((c) => /declined/.test(String(c[1])))).toBe(false);
+    });
+
+    it('streaming: reset keeps an aggregate refusal detectable after a prior tool round (reset is load-bearing)', async () => {
+      // The per-round reset is load-bearing: without it the FINAL turn's split content_filter would
+      // concat onto round 1's 'tool_calls' ('tool_calls'+'content_'+'filter') → a non-matching
+      // reason → a MISSED refusal (false negative). With the reset the final-turn aggregate is a
+      // clean 'content_filter'.
+      const agent = new GthLangChainAgent(statusUpdateCallback);
+      async function* roundedSplitRefusal() {
+        yield [
+          new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'tool_calls' } }),
+          {},
+        ];
+        yield [new ToolMessage({ content: 'ok', tool_call_id: 'tc-1' }), {}];
+        yield [
+          new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'content_' } }),
+          {},
+        ];
+        yield [
+          new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'filter' } }),
+          {},
+        ];
+      }
+      agentMock.stream.mockResolvedValue(roundedSplitRefusal());
+      await initStreaming(agent);
+
+      const stream = await agent.stream([new HumanMessage('go')], runConfig);
+      let out = '';
+      for await (const chunk of stream) out += chunk;
+
+      expect(out).toContain('declined');
+      expect(warningCalls().some((c) => /declined/.test(String(c[1])))).toBe(true);
+    });
+
+    // ---- I-2: typed-event path (streamWithEvents / processEventStream) ----
+
+    async function collectEvents(agent: GthLangChainAgent) {
+      const events: AgentStreamEvent[] = [];
+      for await (const ev of agent.streamWithEvents([new HumanMessage('go')], runConfig)) {
+        events.push(ev);
+      }
+      return events;
+    }
+
+    it('typed-event: surfaces a refusal as a text event (per-chunk Bedrock content_filtered)', async () => {
+      const agent = new GthLangChainAgent(statusUpdateCallback);
+      async function* refusalStream() {
+        yield [
+          new AIMessageChunk({
+            content: '',
+            response_metadata: { stopReason: 'content_filtered' },
+          }),
+          {},
+        ];
+      }
+      agentMock.stream.mockResolvedValue(refusalStream());
+      await initStreaming(agent);
+
+      const texts = textEvents(await collectEvents(agent));
+      expect(texts.some((e) => /declined/.test(e.delta))).toBe(true);
+    });
+
+    it('typed-event: surfaces a refusal off the AGGREGATE when the reason is split across chunks', async () => {
+      const agent = new GthLangChainAgent(statusUpdateCallback);
+      async function* splitStream() {
+        yield [
+          new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'content_' } }),
+          {},
+        ];
+        yield [
+          new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'filter' } }),
+          {},
+        ];
+      }
+      agentMock.stream.mockResolvedValue(splitStream());
+      await initStreaming(agent);
+
+      const texts = textEvents(await collectEvents(agent));
+      expect(texts.some((e) => /declined/.test(e.delta))).toBe(true);
+    });
+
+    it('typed-event: a normal run emits NO refusal text event (no false positive)', async () => {
+      const agent = new GthLangChainAgent(statusUpdateCallback);
+      async function* normalStream() {
+        yield [
+          new AIMessageChunk({ content: 'hello', response_metadata: { finish_reason: 'stop' } }),
+          {},
+        ];
+      }
+      agentMock.stream.mockResolvedValue(normalStream());
+      await initStreaming(agent);
+
+      const texts = textEvents(await collectEvents(agent));
+      // The normal answer text is still emitted, but nothing 'declined'.
+      expect(texts.map((e) => e.delta).join('')).toBe('hello');
+      expect(texts.some((e) => /declined/.test(e.delta))).toBe(false);
     });
   });
 

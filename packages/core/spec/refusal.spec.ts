@@ -49,6 +49,32 @@ describe('detectRefusal', () => {
     expect(detectRefusal(msg)?.provider).toBe('bedrock');
   });
 
+  // EXT-41 (M-1) — content_filtered is a DISTINCT StopReason enum value from guardrail_intervened
+  // in the AWS Bedrock Converse API; before this it mapped to null (a silent empty turn).
+  it('detects Bedrock Converse content_filtered (camelCase stopReason)', () => {
+    const msg = new AIMessage({
+      content: '',
+      response_metadata: { stopReason: 'content_filtered' },
+    });
+    expect(detectRefusal(msg)).toEqual({
+      provider: 'bedrock',
+      reason: 'content_filtered',
+      explanation: '',
+    });
+  });
+
+  it.each([
+    { label: 'snake stop_reason', meta: { stop_reason: 'content_filtered' } },
+    { label: 'finish_reason', meta: { finish_reason: 'content_filtered' } },
+  ])('detects Bedrock content_filtered via $label', ({ meta }) => {
+    const msg = new AIMessage({ content: '', response_metadata: meta });
+    expect(detectRefusal(msg)).toEqual({
+      provider: 'bedrock',
+      reason: 'content_filtered',
+      explanation: '',
+    });
+  });
+
   it('reads the finish/stop reason when it lands in additional_kwargs instead of response_metadata', () => {
     const msg = new AIMessage({
       content: '',
@@ -93,18 +119,25 @@ describe('detectRefusal', () => {
     expect(detectRefusal(msg)?.explanation).toBe('declined on safety grounds');
   });
 
-  it.each(['stop', 'tool_calls', 'length', 'end_turn', 'max_tokens'])(
-    'returns null for a normal finish/stop reason (%s)',
-    (reason) => {
-      const byFinish = new AIMessage({
-        content: 'ok',
-        response_metadata: { finish_reason: reason },
-      });
-      const byStop = new AIMessage({ content: 'ok', response_metadata: { stop_reason: reason } });
-      expect(detectRefusal(byFinish)).toBeNull();
-      expect(detectRefusal(byStop)).toBeNull();
-    }
-  );
+  it.each([
+    'stop',
+    'tool_calls',
+    'length',
+    'end_turn',
+    'max_tokens',
+    // EXT-41 — Bedrock Converse StopReason siblings that are NOT refusals must stay null, so the
+    // new content_filtered branch never widens into a false positive on a normal Bedrock turn.
+    'tool_use',
+    'stop_sequence',
+  ])('returns null for a normal finish/stop reason (%s)', (reason) => {
+    const byFinish = new AIMessage({
+      content: 'ok',
+      response_metadata: { finish_reason: reason },
+    });
+    const byStop = new AIMessage({ content: 'ok', response_metadata: { stop_reason: reason } });
+    expect(detectRefusal(byFinish)).toBeNull();
+    expect(detectRefusal(byStop)).toBeNull();
+  });
 
   it('returns null for a ToolMessage / non-model message', () => {
     expect(
