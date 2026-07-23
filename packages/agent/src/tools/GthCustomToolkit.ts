@@ -221,6 +221,17 @@ export default class GthCustomToolkit extends BaseToolkit {
     return new Promise((resolve, reject) => {
       const child = spawn(command, {
         shell: true,
+        // EXT-39 (part 2): give the child /dev/null on stdin so it reads EOF immediately instead
+        // of inheriting an open-but-never-written `pipe` (spawn's default). Without this, a spawned
+        // command that probes stdin — notably a nested `gth` invocation (a custom tool shelling out
+        // to `gth -i graph-recall ask …`), whose stdin heuristic sees non-TTY stdin and waits on
+        // `'end'` for piped input that never arrives — hangs forever, bounded only by this tool's
+        // timeout. Custom tools are non-interactive one-shot commands that take input via
+        // args/placeholders, never the inherited pipe, so closing child stdin is correct. stdout
+        // and stderr stay piped so the tool still captures them (below). This mirrors
+        // GthDevToolkit's `run_shell_command` spawn, which already sets the same stdio for the same
+        // reason.
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
 
       let output = '';
