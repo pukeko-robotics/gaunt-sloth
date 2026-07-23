@@ -207,6 +207,32 @@ describe('GthAgentRunner', () => {
       );
     });
 
+    // EXT-37 — a content-policy refusal is detected one layer down (GthAbstractAgent) and surfaced
+    // as a clear, NON-EMPTY terminal answer. That non-empty result must bypass the empty-response
+    // retry: unlike the empty-stream case above (which falls back to a second `invoke`), a refusal
+    // is deterministic, so the runner must NOT make a second call.
+    it('does NOT retry when the agent surfaces a refusal as terminal non-empty text (contrast with empty-response retry)', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      const refusalText =
+        'The model declined to respond (safety refusal / content filter) — this is the ' +
+        "model/provider's own policy decision, not a Gaunt Sloth error.";
+      const mockStream = {
+        async *[Symbol.asyncIterator]() {
+          yield refusalText;
+        },
+      };
+      mockAgent.stream.mockResolvedValue(mockStream);
+      mockAgent.invoke.mockResolvedValue('SHOULD NOT BE CALLED');
+
+      await runner.init(undefined, { ...mockConfig, streamOutput: true });
+      const result = await runner.processMessages([new HumanMessage('disallowed')]);
+
+      // Single streamed turn, surfaced verbatim; the empty-response `invoke` fallback never fires.
+      expect(mockAgent.stream).toHaveBeenCalledTimes(1);
+      expect(mockAgent.invoke).not.toHaveBeenCalled();
+      expect(result).toBe(refusalText);
+    });
+
     it('should handle multiple messages', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       mockAgent.invoke.mockResolvedValue('combined response');

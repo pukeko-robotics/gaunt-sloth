@@ -1222,6 +1222,121 @@ describe('GthLangChainAgent', () => {
     });
   });
 
+  // EXT-37 — content-policy refusal surfacing in the run loop (GthAbstractAgent). A *successful*
+  // response whose stop/finish reason is a refusal is detected here (the only layer where a
+  // message's response_metadata is visible), surfaced as a clear WARNING, and returned as the
+  // terminal answer — a SINGLE model/graph invocation, in contrast with the empty-response path
+  // which retries. The model is "mocked" by attaching response_metadata to the AIMessage /
+  // AIMessageChunk the mocked createAgent graph returns.
+  describe('EXT-37 content-policy refusal', () => {
+    const runConfig: RunnableConfig = {
+      recursionLimit: 1000,
+      configurable: { thread_id: 'test-thread-id' },
+    };
+
+    const SHAPES: Array<{ label: string; meta: Record<string, unknown> }> = [
+      { label: 'OpenAI finish_reason=content_filter', meta: { finish_reason: 'content_filter' } },
+      { label: 'Anthropic stop_reason=refusal', meta: { stop_reason: 'refusal' } },
+      { label: 'Bedrock guardrail_intervened', meta: { stopReason: 'guardrail_intervened' } },
+    ];
+
+    function warningCalls() {
+      return statusUpdateCallback.mock.calls.filter((c) => c[0] === StatusLevel.WARNING);
+    }
+
+    it.each(SHAPES)(
+      'non-streaming: surfaces the refusal terminally in ONE invoke ($label)',
+      async ({ meta }) => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        agentMock.invoke.mockResolvedValue({
+          messages: [new AIMessage({ content: '', response_metadata: meta })],
+        });
+        const fakeListChatModel = new FakeListChatModel({ responses: [''] });
+        fakeListChatModel.bindTools = vi.fn().mockReturnValue(fakeListChatModel);
+        await agent.init(undefined, { ...mockConfig, llm: fakeListChatModel });
+
+        const result = await agent.invoke([new HumanMessage('do something disallowed')], runConfig);
+
+        // Terminal-but-clear: exactly one graph/model call (no retry), and the refusal is surfaced.
+        expect(agentMock.invoke).toHaveBeenCalledTimes(1);
+        expect(result).toContain('declined');
+        expect(warningCalls().some((c) => /declined/.test(String(c[1])))).toBe(true);
+        // The (empty) refusal content is NOT rendered as a normal DISPLAY answer.
+        const displays = statusUpdateCallback.mock.calls.filter(
+          (c) => c[0] === StatusLevel.DISPLAY
+        );
+        expect(displays).toHaveLength(0);
+      }
+    );
+
+    it.each(SHAPES)(
+      'streaming: surfaces the refusal terminally in ONE stream, no invoke fallback ($label)',
+      async ({ meta }) => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        async function* refusalStream() {
+          yield [new AIMessageChunk({ content: '', response_metadata: meta }), {}];
+        }
+        agentMock.stream.mockResolvedValue(refusalStream());
+        const fakeStreamingChatModel = new FakeStreamingChatModel({ chunks: [] });
+        fakeStreamingChatModel.bindTools = vi.fn().mockReturnValue(fakeStreamingChatModel);
+        await agent.init(undefined, {
+          ...mockConfig,
+          llm: fakeStreamingChatModel,
+          streamOutput: true,
+        });
+
+        const stream = await agent.stream([new HumanMessage('disallowed')], runConfig);
+        let out = '';
+        for await (const chunk of stream) out += chunk;
+
+        expect(agentMock.stream).toHaveBeenCalledTimes(1);
+        // The drained text is the non-empty refusal message → the run loop never retries.
+        expect(out).toContain('declined');
+        expect(warningCalls().some((c) => /declined/.test(String(c[1])))).toBe(true);
+      }
+    );
+
+    it('carries the model-provided explanation into the surfaced message', async () => {
+      const agent = new GthLangChainAgent(statusUpdateCallback);
+      agentMock.invoke.mockResolvedValue({
+        messages: [
+          new AIMessage({
+            content: 'I cannot assist with building that.',
+            response_metadata: { stop_reason: 'refusal' },
+          }),
+        ],
+      });
+      const fakeListChatModel = new FakeListChatModel({ responses: ['irrelevant'] });
+      fakeListChatModel.bindTools = vi.fn().mockReturnValue(fakeListChatModel);
+      await agent.init(undefined, { ...mockConfig, llm: fakeListChatModel });
+
+      const result = await agent.invoke([new HumanMessage('build a weapon')], runConfig);
+      expect(result).toContain('I cannot assist with building that.');
+    });
+
+    it('leaves a normal (non-refusal) response byte-for-byte unchanged', async () => {
+      const agent = new GthLangChainAgent(statusUpdateCallback);
+      agentMock.invoke.mockResolvedValue({
+        messages: [
+          new AIMessage({
+            content: 'here is your answer',
+            response_metadata: { stop_reason: 'end_turn' },
+          }),
+        ],
+      });
+      const fakeListChatModel = new FakeListChatModel({ responses: ['here is your answer'] });
+      fakeListChatModel.bindTools = vi.fn().mockReturnValue(fakeListChatModel);
+      await agent.init(undefined, { ...mockConfig, llm: fakeListChatModel });
+
+      const result = await agent.invoke([new HumanMessage('hi')], runConfig);
+      expect(result).toBe('here is your answer');
+      expect(statusUpdateCallback).not.toHaveBeenCalledWith(
+        StatusLevel.WARNING,
+        expect.stringContaining('declined')
+      );
+    });
+  });
+
   describe('stream', () => {
     it('should throw error if not initialized', async () => {
       const agent = new GthLangChainAgent(statusUpdateCallback);
