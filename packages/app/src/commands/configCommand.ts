@@ -2,6 +2,8 @@ import { Command } from 'commander';
 import {
   type CommandLineConfigOverrides,
   type GthConfig,
+  createNamedProfile,
+  hasAnyConfig,
   initConfig,
   validateConfig,
 } from '@gaunt-sloth/core/config.js';
@@ -70,9 +72,13 @@ export function redactConfigForPrint(config: GthConfig): Record<string, unknown>
  *   JSON object (machine-readable); the default adds a source header.
  * - `gth config validate` — validate the effective raw config against the schema WITHOUT building
  *   the LLM. Unknown keys warn; a schema violation prints a path-scoped message and exits non-zero.
+ * - `gth config profile create <name>` (GS2-33) — scaffold a new named profile
+ *   (`.gsloth/.gsloth-settings/<name>/.gsloth.config.json`) seeded from the current effective config
+ *   (or a minimal template), schema-validated before it is written. Select it later with
+ *   `--profile <name>` (or reuse it inside a subagent via the `subagents` config).
  *
- * Both honour the global `--config` / `--identity-profile` overrides via
- * `commandLineConfigOverrides`.
+ * `print` / `validate` honour the global `--config` / `--identity-profile` (`--profile`) overrides
+ * via `commandLineConfigOverrides`.
  */
 export function configCommand(
   program: Command,
@@ -87,8 +93,65 @@ export function configCommand(
         'Examples:\n' +
         '  $ gsloth config print\n' +
         "  $ gsloth config print --json | jq '.llm'\n" +
-        '  $ gsloth config validate\n'
+        '  $ gsloth config validate\n' +
+        '  $ gsloth config profile create cheap --model gemini-2.0-flash-lite\n'
     );
+
+  const profile = config
+    .command('profile')
+    .description('Create and manage named config profiles (.gsloth-settings/<name>/)');
+
+  profile
+    .command('create <name>')
+    .description(
+      'Scaffold a named profile seeded from the current config (or a template); ' +
+        'select it later with --profile <name>'
+    )
+    .option('--model <id>', 'Set the profile model id (overrides the seeded/template model)')
+    .option('--force', 'Overwrite an existing profile of the same name')
+    .addHelpText(
+      'after',
+      '\n' +
+        'Examples:\n' +
+        '  $ gsloth config profile create cheap --model gemini-2.0-flash-lite\n' +
+        '  $ gsloth --profile cheap ask "summarise the open TODOs in this repo"\n'
+    )
+    .action(async (name: string, options: { model?: string; force?: boolean }) => {
+      // Best-effort seed from the current effective config, falling back to a minimal template when
+      // no config resolves. We must NOT reach for the seed by calling initConfig blindly: when no
+      // config file is found, initConfig -> the loader calls `exit(1)` ("No configuration file
+      // found") — a real, uncatchable `process.exit`, NOT a throw — so a try/catch around the seed
+      // can never reach the template branch, and the process dies before a profile is ever written
+      // (GS2-33 review Important #1). `hasAnyConfig` is the non-exiting mirror of exactly what
+      // initConfig would discover — a project config anywhere up-tree OR a global `~/.gsloth`
+      // config — so gating the seed on it lets the template branch actually run in a pristine env.
+      let seed: GthConfig | undefined;
+      if (await hasAnyConfig(commandLineConfigOverrides)) {
+        // A config exists, so initConfig won't hit the no-config exit. Still guard: a config that
+        // exists but fails to build (e.g. a malformed file) should fall back to the template rather
+        // than block profile creation.
+        try {
+          seed = await initConfig(commandLineConfigOverrides);
+        } catch {
+          seed = undefined;
+        }
+      }
+      try {
+        const { path, llm } = createNamedProfile(name, {
+          seedType: seed?.modelProviderType,
+          seedModel: seed?.modelDisplayName,
+          modelOverride: options.model,
+          force: options.force,
+        });
+        displaySuccess(`Created profile "${name}" at ${path}`);
+        displayInfo(
+          `It uses ${llm.type} / ${llm.model}. Edit that file, then run with --profile ${name}.`
+        );
+      } catch (error) {
+        displayError(error instanceof Error ? error.message : String(error));
+        setExitCode(1);
+      }
+    });
 
   config
     .command('print')

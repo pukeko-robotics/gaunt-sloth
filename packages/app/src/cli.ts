@@ -15,11 +15,11 @@ import { configCommand } from '#src/commands/configCommand.js';
 import { historyCommand } from '#src/commands/historyCommand.js';
 import { insightsCommand } from '#src/commands/insightsCommand.js';
 import { modelsCommand } from '#src/commands/modelsCommand.js';
-import { argv, getSlothVersion, readStdin } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { argv, exit, getSlothVersion, readStdin } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { commandSkipsStdin, resolveInvokedCommandName } from '#src/utils/stdinPolicy.js';
 import type { CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
 
-import { coerceBooleanOrString } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import { coerceBooleanOrString, displayError } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { installCrashHandler } from '@gaunt-sloth/core/utils/crashHandler.js';
 
 // GS2-48 — install the process-level crash handler as early as possible, so an uncaughtException /
@@ -41,6 +41,11 @@ program
   )
   .option('-c, --config <path>', 'Path to custom configuration file')
   .option('-i, --identity-profile <identity>', 'Identity profile (separate config and prompts)')
+  .option(
+    '--profile <name>',
+    'Named config profile to run under (alias of --identity-profile; ' +
+      'create one with `gth config profile create <name>`)'
+  )
   .option(
     '-w, --write-output-to-file <value>',
     'Write output to file. Accepts true/false or a filename. Shortcuts: -wn or -w0 for false.'
@@ -66,8 +71,20 @@ if (program.getOptionValue('config')) {
   // Set a custom config path
   cliConfigOverrides.customConfigPath = program.getOptionValue('config');
 }
-if (program.getOptionValue('identityProfile')) {
-  cliConfigOverrides.identityProfile = program.getOptionValue('identityProfile');
+// `--profile` (GS2-33) is the friendly alias of `-i/--identity-profile`: both select a named profile
+// block (`.gsloth/.gsloth-settings/<name>/`). If BOTH are given and disagree, that is a mistake worth
+// surfacing rather than silently picking one; identical values are harmless.
+const identityProfileOpt = program.getOptionValue('identityProfile');
+const profileOpt = program.getOptionValue('profile');
+if (identityProfileOpt && profileOpt && identityProfileOpt !== profileOpt) {
+  displayError(
+    `Conflicting profiles: --identity-profile "${identityProfileOpt}" and --profile "${profileOpt}". ` +
+      'Pass only one (they are aliases).'
+  );
+  exit(1);
+}
+if (profileOpt ?? identityProfileOpt) {
+  cliConfigOverrides.identityProfile = profileOpt ?? identityProfileOpt;
 }
 
 // Tri-state TUI flag: leave `tui` undefined (auto-detect) unless the user explicitly passed

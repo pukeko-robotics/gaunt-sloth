@@ -239,6 +239,17 @@ const apiCommandSchema = z.object({
     .optional(),
 });
 
+/**
+ * GS2-33 — one profile-backed subagent: a `name` the model selects it by, an optional
+ * `description`, and the named config `profile` the CHILD resolves through the GS2-1 cascade when
+ * spawned. See {@link SubagentProfileSpec}.
+ */
+const subagentSpecSchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  profile: z.string(),
+});
+
 const commandsSchema = z.object({
   pr: prCommandSchema.optional(),
   review: reviewCommandSchema.optional(),
@@ -382,6 +393,10 @@ export const rawGthConfigSchema = z.looseObject({
   // `EvalReporterFactory` (`() => EvalReporter`). Registered through the same seam the bundled
   // reporters use; a name here overrides a built-in of the same name.
   reporters: z.record(z.string(), z.string()).optional(),
+  // GS2-33 — profile-backed subagents. Each entry names a subagent and the named config profile the
+  // CHILD resolves when the deep backend's `task` tool spawns it, so a subagent can run under a
+  // different model/tools/prompt than the parent. See {@link subagentSpecSchema}.
+  subagents: z.array(subagentSpecSchema).optional(),
 });
 
 /**

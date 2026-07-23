@@ -23,3 +23,4 @@ export * from '#src/config/types.js';
 export * from '#src/config/shell-policy.js';
 export * from '#src/config/defaults.js';
 export * from '#src/config/loader.js';
+export * from '#src/config/profiles.js';

@@ -10,7 +10,15 @@ import {
   readCodePrompt,
   readExecPrompt,
 } from '@gaunt-sloth/core/utils/llmUtils.js';
-import { getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
+import {
+  getCurrentWorkDir,
+  getProjectDir,
+  getUseColour,
+  setProjectDir,
+  setUseColour,
+} from '@gaunt-sloth/core/utils/systemUtils.js';
+import { getConsoleLevel, setConsoleLevel } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import { buildProfileSubagents } from '#src/core/subagentProfiles.js';
 import { isToolAllowed } from '@gaunt-sloth/core/utils/toolMatching.js';
 // GS2-27: the OS/shell-dialect and real-cwd notes are backend-agnostic (both backends expose
 // run_shell_command and run on the real-fs cwd), so their canonical source moved to core so the
@@ -37,7 +45,7 @@ import type { StructuredToolInterface } from '@langchain/core/tools';
 import type { BaseCheckpointSaver } from '@langchain/langgraph';
 import { GraphInterrupt } from '@langchain/langgraph';
 import { createMiddleware, type InterruptOnConfig } from 'langchain';
-import { createDeepAgent, FilesystemBackend } from 'deepagents';
+import { createDeepAgent, FilesystemBackend, type SubAgent } from 'deepagents';
 import {
   buildPermissions,
   FILESYSTEM_TOOL_NAMES,
@@ -316,9 +324,41 @@ export class GthDeepAgent extends GthAbstractAgent {
       : (this.resolvers?.getMcpServerInstructions?.() ?? []);
     const systemPrompt = appendMcpServerInstructionsNote(modelContextPrompt, mcpInstructions);
 
+    // GS2-33 — resolve profile-backed subagents (config `subagents`). Runner-only, like the
+    // cwd/model-context notes above: it lives in init() (NOT the transport-agnostic
+    // buildDeepAgentParams), so the deepagents-acp path is unaffected and the child-config
+    // resolution's process-global side effects stay on the local-runner path. Each declared
+    // subagent's CHILD resolves its named profile through the GS2-1 cascade, so the deepagents `task`
+    // tool can dispatch it under that profile's own model + tools + prompt (e.g. a cheap flash-lite
+    // profile for recall/search while the parent runs on a strong model). Because resolving a child
+    // goes through initConfig — which mutates projectDir/consoleLevel/useColour exactly as the parent
+    // run's own initConfig did — snapshot and restore those globals so a child profile's console
+    // level / colour can never leak into the parent run.
+    let subagents: SubAgent[] | undefined;
+    const subagentSpecs = this.config?.subagents;
+    if (Array.isArray(subagentSpecs) && subagentSpecs.length > 0) {
+      const savedProjectDir = getProjectDir();
+      const savedConsoleLevel = getConsoleLevel();
+      const savedUseColour = getUseColour();
+      try {
+        subagents = await buildProfileSubagents(subagentSpecs, {
+          command: this.command,
+          resolveTools: this.resolvers?.resolveTools?.bind(this.resolvers),
+        });
+        this.headerStatus(`Loaded profile subagents: ${subagents.map((s) => s.name).join(', ')}`);
+      } finally {
+        setProjectDir(savedProjectDir);
+        setConsoleLevel(savedConsoleLevel);
+        setUseColour(savedUseColour);
+      }
+    }
+
     this.agent = createDeepAgent({
       model: params.model,
       tools: params.tools as StructuredToolInterface[],
+      // GS2-33 — profile-backed subagents (undefined when none configured → deepagents' default
+      // general-purpose subagent only, unchanged behaviour).
+      subagents,
       // gsloth's composed prompt, combined ADDITIVELY by deepagents with its base + fs prompts
       // into a single system message (avoids the two-system-message Anthropic rejection).
       systemPrompt,

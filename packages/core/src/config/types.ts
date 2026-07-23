@@ -72,6 +72,28 @@ export interface CommandToolingConfig {
 }
 
 /**
+ * GS2-33 — one profile-backed subagent declaration. When the parent agent spawns this subagent
+ * (the deepagents `task` tool), the CHILD resolves the named config {@link profile} through the
+ * GS2-1 cascade, so it runs under THAT profile's model + tools + prompt (e.g. a cheap flash-lite
+ * profile for recall/search subagents while the parent runs on a strong model).
+ *
+ * The `profile` is a named profile block created by `gth config profile create <name>` — a
+ * `.gsloth/.gsloth-settings/<name>/` config dir, the same discovery convention `--profile` /
+ * `--identity-profile` resolve.
+ */
+export interface SubagentProfileSpec {
+  /** Identifier the model selects this subagent by (the task-tool subagent name). */
+  name: string;
+  /** Description shown to the model when it chooses a subagent. Defaults to a profile note. */
+  description?: string;
+  /**
+   * Named config profile whose model + tools + prompt the CHILD resolves. Threaded through the
+   * subagent-spawn config resolution as {@link CommandLineConfigOverrides.identityProfile}.
+   */
+  profile: string;
+}
+
+/**
  * This is a processed Gaunt Sloth config ready to be passed down into components.
  *
  * Default values can be found in {@link DEFAULT_CONFIG}
@@ -424,6 +446,15 @@ export interface GthConfig {
    * it is the user's own config, which already executes arbitrary JS.
    */
   reporters?: Record<string, string>;
+  /**
+   * GS2-33 — profile-backed subagents. Each entry names a subagent and the {@link
+   * SubagentProfileSpec.profile named config profile} the CHILD resolves when the parent spawns it,
+   * so a subagent can run under a different model/tools/prompt than the parent (a cheap profile for
+   * recall/search while the parent runs on a strong model). Honored by the deep (deepagents) backend
+   * — its `task` tool gains one selectable subagent per entry; the lean backend's own subagent
+   * primitive lands in GS2-25.
+   */
+  subagents?: SubagentProfileSpec[];
 }
 
 /**

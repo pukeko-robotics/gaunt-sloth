@@ -54,6 +54,16 @@ vi.mock('@gaunt-sloth/core/utils/llmUtils.js', () => ({
   formatToolCalls: vi.fn(() => ''),
 }));
 
+// GS2-33 — profile-backed subagents resolve their child config via initConfig. Partial-mock the
+// config barrel (spread the real module so GthDeepAgent's other runtime imports — isShellToolEnabled,
+// getEffectiveDevToolsConfig — stay real) and override only initConfig, so a subagent profile name
+// maps to a deterministic child model in these tests.
+const initConfigMock = vi.fn();
+vi.mock('@gaunt-sloth/core/config.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@gaunt-sloth/core/config.js')>()),
+  initConfig: (overrides: unknown) => initConfigMock(overrides),
+}));
+
 function fakeTool(name: string, metadata?: Record<string, unknown>): any {
   const invoke = vi.fn();
   return { name, description: name, metadata, invoke, call: invoke, schema: {} };
@@ -795,6 +805,48 @@ describe('GthDeepAgent', () => {
     // extractAndFlattenTools clones client tools and replaces invoke/call with a stub.
     expect(passed[0]).not.toBe(clientTool);
     expect(passed[0].invoke).not.toBe(clientTool.invoke);
+  });
+
+  it('GS2-33: wires profile-backed subagents into createDeepAgent, each on its own profile model', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    // Each subagent's child config resolves ITS named profile to a distinct model.
+    initConfigMock.mockImplementation(async (overrides: { identityProfile?: string }) => ({
+      llm: { _id: `${overrides.identityProfile}-model`, bindTools: () => ({}) },
+    }));
+    const parentModel = { _id: 'parent-model', bindTools: () => ({}) } as any;
+    const resolvers = { resolveTools: vi.fn().mockResolvedValue([]) };
+    const agent = new GthDeepAgent(statusUpdate, resolvers);
+
+    await agent.init(
+      'chat',
+      makeConfig({
+        llm: parentModel,
+        subagents: [
+          { name: 'recall', profile: 'cheap' },
+          { name: 'auditor', profile: 'strong' },
+        ],
+      })
+    );
+
+    const params = createDeepAgentMock.mock.calls[0][0];
+    // The parent runs on its own model...
+    expect(params.model).toBe(parentModel);
+    // ...and each subagent resolved its OWN profile's model, distinct from the parent's.
+    expect(params.subagents.map((s: { name: string }) => s.name)).toEqual(['recall', 'auditor']);
+    expect((params.subagents[0].model as { _id: string })._id).toBe('cheap-model');
+    expect((params.subagents[1].model as { _id: string })._id).toBe('strong-model');
+    expect(initConfigMock).toHaveBeenCalledWith({ identityProfile: 'cheap' });
+    expect(initConfigMock).toHaveBeenCalledWith({ identityProfile: 'strong' });
+  });
+
+  it('GS2-33: passes no subagents (and never resolves a profile) when none are configured', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+
+    await agent.init('chat', makeConfig());
+
+    expect(createDeepAgentMock.mock.calls[0][0].subagents).toBeUndefined();
+    expect(initConfigMock).not.toHaveBeenCalled();
   });
 });
 
