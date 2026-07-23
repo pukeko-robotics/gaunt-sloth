@@ -173,11 +173,12 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     label: 'Google AI Studio (Gemini)',
     apiKeyEnvironmentVariables: ['GOOGLE_API_KEY'],
     // AI Studio exposes the 3.1 Pro tier only as a `-preview` slug.
+    // 3.6-flash verified live on AI Studio (ListModels + a tool-call probe) 2026-07-24.
     preferredModels: [
+      'gemini-3.6-flash',
       'gemini-3.5-flash',
       'gemini-3.1-pro-preview',
       'gemini-2.5-pro',
-      'gemini-2.5-flash',
     ],
     discovery: { kind: 'none' },
   },
