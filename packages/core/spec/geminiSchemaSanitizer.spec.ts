@@ -163,6 +163,186 @@ describe('sanitizeGeminiToolSchema (GS2-58 fix-cycle 1 — allowlist)', () => {
   });
 });
 
+describe('sanitizeGeminiToolSchema (GS2-68 — resolve safe composition, characterize deferred drops)', () => {
+  // --- RESOLVED: const → enum ------------------------------------------------------------------
+
+  it('resolves a const-only property to enum:[value] and infers type (string/number/boolean, incl. falsy const:0)', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        mode: { const: 'fast' }, // string
+        zero: { const: 0 }, // falsy number — must resolve by PRESENCE, not truthiness
+        flag: { const: false }, // falsy boolean
+      },
+    };
+
+    const out = sanitizeGeminiToolSchema(schema) as any;
+    assertOnlySupportedSchemaKeys(out);
+
+    expect(out.properties.mode.enum).toEqual(['fast']);
+    expect(out.properties.mode.type).toBe('string');
+    expect(out.properties.mode.const).toBeUndefined(); // the unsupported keyword is gone
+
+    expect(out.properties.zero.enum).toEqual([0]);
+    expect(out.properties.zero.type).toBe('number');
+
+    expect(out.properties.flag.enum).toEqual([false]);
+    expect(out.properties.flag.type).toBe('boolean');
+  });
+
+  it('keeps a declared type when resolving const, and lets an explicit enum win over a sibling const', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        n: { type: 'integer', const: 5 }, // keep integer, don't overwrite with number
+        c: { enum: ['a', 'b'], const: 'a' }, // enum already present → keep it, drop const
+      },
+    };
+
+    const out = sanitizeGeminiToolSchema(schema) as any;
+    assertOnlySupportedSchemaKeys(out);
+
+    expect(out.properties.n.type).toBe('integer');
+    expect(out.properties.n.enum).toEqual([5]);
+
+    expect(out.properties.c.enum).toEqual(['a', 'b']); // untouched
+    expect(out.properties.c.const).toBeUndefined();
+  });
+
+  it('resolves const inside an anyOf member (resolution composes with the existing recursion)', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        pick: { anyOf: [{ const: 'x' }, { type: 'number' }] },
+      },
+    };
+
+    const out = sanitizeGeminiToolSchema(schema) as any;
+    assertOnlySupportedSchemaKeys(out);
+    expect(out.properties.pick.anyOf[0]).toEqual({ enum: ['x'], type: 'string' });
+    expect(out.properties.pick.anyOf[1]).toEqual({ type: 'number' });
+  });
+
+  // --- RESOLVED: allOf shallow merge -----------------------------------------------------------
+
+  it('shallow-merges allOf of plain-object branches: properties + required unioned, merged-in exclusive* still rewritten', () => {
+    const schema = {
+      type: 'object',
+      allOf: [
+        { properties: { a: { type: 'string' } }, required: ['a'] },
+        {
+          properties: { n: { type: 'number', exclusiveMinimum: 3 } },
+          required: ['n'],
+        },
+      ],
+      properties: {
+        c: { type: 'boolean' },
+        // A property whose bound comes from a SCALAR allOf branch: proves resolve's output feeds the
+        // exclusive*→inclusive rewrite (the pass reads the RESOLVED node, not the raw one).
+        p: { type: 'number', allOf: [{ exclusiveMinimum: 3 }, { maximum: 9 }] },
+      },
+      required: ['c'],
+    };
+
+    const out = sanitizeGeminiToolSchema(schema) as any;
+    assertOnlySupportedSchemaKeys(out);
+
+    expect(out.allOf).toBeUndefined(); // composition resolved away
+    expect(Object.keys(out.properties).sort()).toEqual(['a', 'c', 'n', 'p']);
+    expect(out.properties.a).toEqual({ type: 'string' });
+    expect(out.properties.c).toEqual({ type: 'boolean' });
+    // exclusiveMinimum nested in a merged branch property is still rewritten by the downstream pass.
+    expect(out.properties.n).toEqual({ type: 'number', minimum: 3 });
+    // exclusiveMinimum merged as a SCALAR from an allOf branch is rewritten from the resolved node.
+    expect(out.properties.p).toEqual({ type: 'number', minimum: 3, maximum: 9 });
+    expect(new Set(out.required)).toEqual(new Set(['a', 'c', 'n']));
+  });
+
+  it('CHARACTERIZATION: leaves allOf DROPPED (branch content lost) when a branch is not a plain object', () => {
+    const schema = {
+      type: 'object',
+      allOf: [{ properties: { a: { type: 'string' } } }, true], // boolean subschema → not mergeable
+      properties: { keep: { type: 'number' } },
+    };
+
+    const out = sanitizeGeminiToolSchema(schema) as any;
+    assertOnlySupportedSchemaKeys(out);
+
+    // Merge aborts → the whole allOf is dropped by the allowlist; only the parent's own property survives.
+    expect(out.allOf).toBeUndefined();
+    expect(out.properties).toEqual({ keep: { type: 'number' } });
+    expect(out.properties.a).toBeUndefined();
+  });
+
+  it('CHARACTERIZATION: leaves allOf DROPPED when branches conflict on a property or a scalar keyword', () => {
+    const propConflict = {
+      type: 'object',
+      allOf: [{ properties: { x: { type: 'string' } } }, { properties: { x: { type: 'number' } } }],
+    };
+    const scalarConflict = {
+      type: 'object',
+      allOf: [{ format: 'email' }, { format: 'uri' }],
+    };
+
+    const outProp = sanitizeGeminiToolSchema(propConflict) as any;
+    assertOnlySupportedSchemaKeys(outProp);
+    expect(outProp.allOf).toBeUndefined();
+    expect(outProp.properties).toBeUndefined(); // conflicting merge aborted → whole allOf dropped
+
+    const outScalar = sanitizeGeminiToolSchema(scalarConflict) as any;
+    assertOnlySupportedSchemaKeys(outScalar);
+    expect(outScalar.allOf).toBeUndefined();
+    expect(outScalar.format).toBeUndefined();
+  });
+
+  // --- DEFERRED: characterize the safe drop (not resolved) -------------------------------------
+
+  it('CHARACTERIZATION: oneOf and not are DROPPED, never remapped to anyOf (XOR≠OR is deferred)', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        pick: {
+          oneOf: [{ type: 'string' }, { type: 'number' }],
+          not: { type: 'null' },
+        },
+      },
+    };
+
+    const out = sanitizeGeminiToolSchema(schema) as any;
+    assertOnlySupportedSchemaKeys(out);
+    expect(out.properties.pick.oneOf).toBeUndefined();
+    expect(out.properties.pick.not).toBeUndefined();
+    expect(out.properties.pick.anyOf).toBeUndefined(); // NOT synthesised from oneOf
+    expect(out.properties.pick).toEqual({}); // typeless residue — non-400, callable
+  });
+
+  it('CHARACTERIZATION: a $ref-only property (with a $defs / definitions sibling) sanitizes to a typeless {} — deferred, mcp-adapters dereferences upstream', () => {
+    const withDefs = {
+      type: 'object',
+      $defs: { Tag: { type: 'string', enum: ['a', 'b'] } },
+      properties: { tag: { $ref: '#/$defs/Tag' } },
+      required: ['tag'],
+    };
+    const withDefinitions = {
+      type: 'object',
+      definitions: { Tag: { type: 'string' } },
+      properties: { tag: { $ref: '#/definitions/Tag' } },
+    };
+
+    const out = sanitizeGeminiToolSchema(withDefs) as any;
+    assertOnlySupportedSchemaKeys(out); // still non-400 / callable
+    expect(out.$defs).toBeUndefined();
+    expect(out.properties.tag).toEqual({}); // sole content was $ref → typeless empty schema
+    expect(out.properties.tag.type).toBeUndefined();
+    expect(out.required).toEqual(['tag']); // the property still exists, just untyped
+
+    const out2 = sanitizeGeminiToolSchema(withDefinitions) as any;
+    assertOnlySupportedSchemaKeys(out2);
+    expect(out2.definitions).toBeUndefined();
+    expect(out2.properties.tag).toEqual({});
+  });
+});
+
 describe('applyGeminiToolSchemaSanitizer wiring (GS2-58, real @langchain/google converter)', () => {
   // Raw JSON schema (not zod) carrying the keywords that live-400 gemini-flash: $defs, patternProperties,
   // additionalProperties, exclusive/multipleOf, $ref — plus a supported anyOf union that must survive.
