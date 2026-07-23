@@ -766,6 +766,81 @@ describe('GthCustomToolkit', () => {
       vi.useRealTimers();
     });
 
+    it('escalates to SIGKILL after the grace when the child ignores SIGTERM (EXT-44)', async () => {
+      vi.useFakeTimers();
+      // Pin to linux so killProcessGroup takes the POSIX negative-pid branch (asserted via a
+      // process.kill spy). The mock child never fires 'close' after SIGTERM — i.e. it traps/ignores
+      // the signal — so the escalation timer must force-kill the group with SIGKILL after the grace.
+      setPlatform('linux');
+      const procKill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+      const mockKill = vi.fn();
+      let closeCallback: ((_code: number | null) => void) | undefined;
+      const mockChild = {
+        pid: 4321,
+        on: vi.fn((event: string, callback: (_arg: any) => void) => {
+          if (event === 'close') closeCallback = callback;
+        }),
+        stdout: { on: vi.fn() },
+        stderr: { on: vi.fn() },
+        kill: mockKill,
+      };
+      childProcessMock.spawn.mockReturnValueOnce(mockChild as any);
+
+      const resultPromise = toolkit['executeCommand']('slow cmd', 'test_tool', 10);
+
+      // Timeout fires → SIGTERM to the group; no SIGKILL yet (still within the grace).
+      vi.advanceTimersByTime(10_000);
+      expect(procKill).toHaveBeenCalledWith(-4321, 'SIGTERM');
+      expect(procKill).not.toHaveBeenCalledWith(-4321, 'SIGKILL');
+
+      // After the 3s grace with no exit, the escalation timer force-kills the group.
+      vi.advanceTimersByTime(3_000);
+      expect(procKill).toHaveBeenCalledWith(-4321, 'SIGKILL');
+      // The lone-child kill is never used on the POSIX success path.
+      expect(mockKill).not.toHaveBeenCalled();
+
+      // The child finally goes away; the tool still resolves with the timeout message.
+      closeCallback?.(null);
+      const result = await resultPromise;
+      expect(result).toContain("Command 'slow cmd' timed out after 10 seconds");
+
+      procKill.mockRestore();
+      vi.useRealTimers();
+    });
+
+    it('does NOT escalate to SIGKILL when the child exits within the grace after SIGTERM (EXT-44)', async () => {
+      vi.useFakeTimers();
+      setPlatform('linux');
+      const procKill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+      let closeCallback: ((_code: number | null) => void) | undefined;
+      const mockChild = {
+        pid: 4321,
+        on: vi.fn((event: string, callback: (_arg: any) => void) => {
+          if (event === 'close') closeCallback = callback;
+        }),
+        stdout: { on: vi.fn() },
+        stderr: { on: vi.fn() },
+        kill: vi.fn(),
+      };
+      childProcessMock.spawn.mockReturnValueOnce(mockChild as any);
+
+      const resultPromise = toolkit['executeCommand']('slow cmd', 'test_tool', 10);
+
+      // Timeout fires → SIGTERM; then the child DOES exit before the grace elapses.
+      vi.advanceTimersByTime(10_000);
+      expect(procKill).toHaveBeenCalledWith(-4321, 'SIGTERM');
+      closeCallback?.(null);
+      await resultPromise;
+
+      // Advancing past the grace must NOT trigger a stray SIGKILL — the escalation timer was
+      // cleared in the 'close' handler, so a normally-exiting child never gets force-killed.
+      vi.advanceTimersByTime(3_000);
+      expect(procKill).not.toHaveBeenCalledWith(-4321, 'SIGKILL');
+
+      procKill.mockRestore();
+      vi.useRealTimers();
+    });
+
     it('should not timeout when timeoutSeconds is not provided', async () => {
       const result = await toolkit['executeCommand']('echo test', 'test_tool');
       expect(result).toContain("Command 'echo test' completed successfully");
