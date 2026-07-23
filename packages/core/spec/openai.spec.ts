@@ -95,3 +95,57 @@ describe('openai provider processJsonConfig temperature handling', () => {
     expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
   });
 });
+
+describe('openai provider processJsonConfig useResponsesApi routing', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    systemUtilsMock.env = { OPENAI_API_KEY: 'test-key' };
+  });
+
+  it('forces useResponsesApi for a reasoning model (gpt-5.6-luna) with reasoningEffort set', async () => {
+    const { processJsonConfig } = await import('#src/providers/openai.js');
+
+    await processJsonConfig(buildConfig({ model: 'gpt-5.6-luna', reasoningEffort: 'medium' }));
+
+    const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
+    expect(builtConfig.useResponsesApi).toBe(true);
+  });
+
+  it('forces useResponsesApi for an o-series model (o3) with a reasoning object set', async () => {
+    const { processJsonConfig } = await import('#src/providers/openai.js');
+
+    await processJsonConfig(buildConfig({ model: 'o3', reasoning: { effort: 'high' } }));
+
+    const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
+    expect(builtConfig.useResponsesApi).toBe(true);
+  });
+
+  it('leaves useResponsesApi unset for a reasoning model with no reasoning configured', async () => {
+    const { processJsonConfig } = await import('#src/providers/openai.js');
+
+    await processJsonConfig(buildConfig({ model: 'gpt-5.6-luna' }));
+
+    const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
+    expect(builtConfig.useResponsesApi).toBeUndefined();
+  });
+
+  it('leaves useResponsesApi unset for a non-reasoning model (gpt-4o) even with reasoningEffort', async () => {
+    const { processJsonConfig } = await import('#src/providers/openai.js');
+
+    await processJsonConfig(buildConfig({ model: 'gpt-4o', reasoningEffort: 'medium' }));
+
+    const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
+    expect(builtConfig.useResponsesApi).toBeUndefined();
+  });
+
+  it('respects an explicit useResponsesApi:false on a reasoning model with reasoning configured', async () => {
+    const { processJsonConfig } = await import('#src/providers/openai.js');
+
+    await processJsonConfig(
+      buildConfig({ model: 'gpt-5.6-luna', reasoningEffort: 'medium', useResponsesApi: false })
+    );
+
+    const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
+    expect(builtConfig.useResponsesApi).toBe(false);
+  });
+});
