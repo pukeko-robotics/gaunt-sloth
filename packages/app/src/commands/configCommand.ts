@@ -80,7 +80,15 @@ export function configCommand(
 ): void {
   const config = program
     .command('config')
-    .description('Inspect and validate the resolved Gaunt Sloth configuration');
+    .description('Inspect and validate the resolved Gaunt Sloth configuration')
+    .addHelpText(
+      'after',
+      '\n' +
+        'Examples:\n' +
+        '  $ gsloth config print\n' +
+        "  $ gsloth config print --json | jq '.llm'\n" +
+        '  $ gsloth config validate\n'
+    );
 
   config
     .command('print')
