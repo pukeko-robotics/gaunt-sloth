@@ -103,43 +103,40 @@ describe('xx-small marker/synthesis smoke (QA-8, ported from the QA-7 ollama smo
   });
 
   // Discrimination proof — the permanent replacement for the bash smoke's SMOKE_FORCE_FAIL knob,
-  // now running EVERY time. Plant a DECOY marker file, run `ask`, and assert the output contains the
-  // REAL asserted marker — which the model can never produce, because it read the decoy. The inner
-  // marker assertion therefore FAILS deterministically, so the `fails: true` expectation PASSES.
-  // This proves the marker/synthesis assertion genuinely bites on a broken/empty synthesis (the
-  // GS2-59 signature: a successful tool call + a clean exit, but the wrong/empty answer).
+  // now running EVERY time. Plant a DECOY marker file, run `ask`, then assert the marker/synthesis
+  // check would BITE on a broken synthesis: a tool DID run (reproducing GS2-59's "successful tool
+  // call"), yet the asserted marker — which the model can never produce, because it read the decoy —
+  // is ABSENT from the output.
   //
-  // `retry: 0` is deliberate (Task-1 empirical finding): with the global `retry: 2`, a bare
-  // `it.fails` re-runs the body the FULL retry count — 3 real-LLM calls — because vitest marks the
-  // task failed BEFORE applying the fails() inversion, so the retry scheduler still fires. It stays
-  // correct (all 3 attempts fail the inner assertion, so the expected-fail still passes and can
-  // never false-green), but it wastes two extra ollama calls every run. `{ fails: true, retry: 0 }`
-  // keeps the `it.fails` semantics while pinning it to a single deterministic attempt. The counter
-  // logs exactly one body invocation; see task-1-report.md.
-  let decoyAttempts = 0;
-  it(
-    'discrimination: the asserted marker is ABSENT when the file holds a decoy (proves the check bites)',
-    { fails: true, retry: 0 },
-    async () => {
-      decoyAttempts += 1;
-
-      console.log(`[xx-small decoy] body invocation #${decoyAttempts}`);
-      const rand = randomBytes(4).toString('hex');
-      const assertedMarker = `MARKER-ASKDECOY-${rand}`; // NEVER written to disk — unreadable by design
-      const dir = path.join(WORKDIR, `xxs-decoy-${rand}`);
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(
-        path.join(dir, 'marker.txt'),
-        'The secret marker string is DECOY-NOT-THE-ASSERTED-MARKER. Do not lose it.\n',
-        'utf8'
-      );
-      createdDirs.push(dir);
-      const output = await runCommandWithArgs('npx', ['gth', 'ask', PROMPT], undefined, dir);
-      // Sanity: the tool DID run (reproduces GS2-59's "successful tool call") — so the failure below
-      // is specifically the missing asserted marker, not a crash / no-tool-call.
-      expect(checkOutputForExpectedContent(output, 'Requested tools:')).toBe(true);
-      // The assertion that MUST fail: the asserted marker never appears (the model read the decoy).
-      expect(checkOutputForExpectedContent(output, assertedMarker)).toBe(true);
-    }
-  );
+  // Asserted DIRECTLY (tool-ran == true AND asserted-marker == false) rather than via `it.fails`.
+  // `it.fails` would also "pass" if the body threw for the WRONG reason — a no-tool-call, or a
+  // transient the `retry:0` no longer absorbs — so it could go green without ever exercising the
+  // marker check. This plain form passes ONLY for the intended reason (tool ran + wrong/empty
+  // synthesis, the exact GS2-59 signature) and fails loudly if the tool didn't run or if the marker
+  // ever appears. Deterministic at temp:0, so the global retry:2 never fires (it only absorbs a rare
+  // transient here — harmless, no inverted expectation to interact with).
+  it('discrimination: a tool runs but the asserted marker is ABSENT when the file holds a decoy (proves the check bites)', async () => {
+    const rand = randomBytes(4).toString('hex');
+    const assertedMarker = `MARKER-ASKDECOY-${rand}`; // NEVER written to disk — unreadable by design
+    const dir = path.join(WORKDIR, `xxs-decoy-${rand}`);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'marker.txt'),
+      'The secret marker string is DECOY-NOT-THE-ASSERTED-MARKER. Do not lose it.\n',
+      'utf8'
+    );
+    createdDirs.push(dir);
+    const output = await runCommandWithArgs('npx', ['gth', 'ask', PROMPT], undefined, dir);
+    // The tool DID run (reproduces GS2-59's "successful tool call") — so an absent marker below is
+    // specifically a broken/empty synthesis, not a crash or a no-tool-call.
+    expect(checkOutputForExpectedContent(output, 'Requested tools:'), 'a tool must have run').toBe(
+      true
+    );
+    // The marker/synthesis check bites: the asserted marker (never on disk) is ABSENT. Were it ever
+    // present, the positive cases' synthesis assertion could false-pass — so this MUST be false.
+    expect(
+      checkOutputForExpectedContent(output, assertedMarker),
+      'asserted marker must be ABSENT — the model read the decoy'
+    ).toBe(false);
+  });
 });
