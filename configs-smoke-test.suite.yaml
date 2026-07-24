@@ -1,0 +1,11 @@
+# CFG-22 (b) — cross-provider agentic tool-call validation (judge-free).
+# A planted unique marker read via tools proves the model ACTUALLY performed a tool call and
+# synthesized the result. Deterministic must_contain only (no judge) — robust across providers.
+# The identities matrix runs the one case once per provider profile.
+target:
+  type: gth-agent
+identities: [anthropic-haiku-4-5,anthropic-opus-4-8,anthropic-sonnet-5,deepseek-chat,deepseek-reasoner,deepseek-v4-flash,deepseek-v4-pro,google-3.1-pro,google-3.5-flash-lite,google-3.6-flash,google-flash-latest,groq-gpt-oss-120b,groq-gpt-oss-20b,groq-qwen3-32b,hf-glm-5.2,hf-kimi-k2.7-code,hf-qwen3.6-27b,inception-mercury-2,ollama-gemma4-12b,ollama-gemma4-31b,ollama-qwen3.6-35b,openai-5.5,openai-5.5-pro,openai-5.6,openai-5.6-luna,openai-5.6-sol,openai-5.6-terra,openrouter-deepseek-v4-pro,openrouter-gemini-3.6-flash,openrouter-kimi-k3,openrouter-longcat-2.0,xai-grok-4.3,xai-grok-4.5]
+cases:
+  - id: read-marker
+    prompt: 'Read the file configs-smoke-test-marker.txt using your tools and report the exact secret marker string it contains.'
+    must_contain: ['CFG22-TOOLCALL-K7QX9']

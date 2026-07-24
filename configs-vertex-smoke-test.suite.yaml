@@ -1,0 +1,11 @@
+# CFG-22 (b) — cross-provider agentic tool-call validation (judge-free).
+# A planted unique marker read via tools proves the model ACTUALLY performed a tool call and
+# synthesized the result. Deterministic must_contain only (no judge) — robust across providers.
+# The identities matrix runs the one case once per provider profile.
+target:
+  type: gth-agent
+identities: [vertexai-3.6-flash, vertexai-3.5-flash-lite, vertexai-3.1-pro-preview]
+cases:
+  - id: read-marker
+    prompt: 'Read the file configs-smoke-test-marker.txt using your tools and report the exact secret marker string it contains.'
+    must_contain: ['CFG22-TOOLCALL-K7QX9']
