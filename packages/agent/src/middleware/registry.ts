@@ -78,7 +78,10 @@ const predefinedMiddlewareFactories = {
     gthConfig: GthConfig
   ): Promise<AgentMiddleware> =>
     createBinaryContentInjectionMiddleware(
-      settings as BinaryContentInjectionMiddlewareSettings,
+      {
+        ...(settings as BinaryContentInjectionMiddlewareSettings),
+        provider: resolveVisionProvider(gthConfig),
+      },
       gthConfig
     ),
   /**
