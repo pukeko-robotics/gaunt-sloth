@@ -196,27 +196,73 @@ export function convertMessage(
 }
 
 /**
- * Convert a whole AG-UI history array to LangChain messages, applying the EXT-43 dangling-call
- * guard on the history-convert path.
+ * Convert a whole AG-UI history array to LangChain messages, applying TWO symmetric replay guards
+ * so a poisoned history can never abort every subsequent turn on the thread.
  *
- * EXT-35's per-message promotion is unconditional, which is correct for a call that WILL be executed
- * this turn. But when replaying HISTORY, promoting a STALLED text call (one the client recorded but
- * that never ran) yields an `AIMessage` with `tool_calls` and NO following `tool_result` — a shape a
- * strict provider (Anthropic) 400s on, where the pre-EXT-35 plain text was valid. So here promotion
- * is allowed ONLY when the assistant message is immediately followed by a `tool` result message;
- * a dangling call stays plain text (`allowTextCallPromotion: false`). The live middleware path
- * (`GthLangChainAgent`, fixing the CURRENT turn) is unaffected — this guard is history-replay only.
+ * EXT-43 (forward, dangling-CALL): EXT-35's per-message promotion is unconditional, which is correct
+ * for a call that WILL be executed this turn. But when replaying HISTORY, promoting a STALLED text
+ * call (one the client recorded but that never ran) yields an `AIMessage` with `tool_calls` and NO
+ * following `tool_result` — a shape a strict provider (Anthropic) 400s on, where the pre-EXT-35
+ * plain text was valid. So promotion is allowed ONLY when the assistant message is immediately
+ * followed by a `tool` result message; a dangling call stays plain text (`allowTextCallPromotion:
+ * false`).
+ *
+ * RC-18 (backward, orphan-RESULT): the mirror image. A replayed `role:'tool'` message whose matching
+ * `tool_call` id is absent from EVERY PRECEDING assistant message is an ORPHAN — converting it to a
+ * `ToolMessage` yields a tool result with no preceding `AIMessage.tool_calls`, which the same strict
+ * provider 400s on (`Invalid parameter: messages with role 'tool' must be a response to a preceding
+ * message with 'tool_calls'`, INVALID_TOOL_RESULTS). Such orphans arise when a terminal
+ * (`returnDirect`) tool call's result is reconstructed by the client without its parenting assistant
+ * `tool_call`. We DROP the orphan (match on tool_call_id, NOT adjacency; keep genuine pairs; do NOT
+ * fabricate a synthetic call — mirroring EXT-43's demote-don't-invent spirit). Ids are accumulated
+ * in iteration order, so a result whose matching call appears only LATER is still an orphan.
+ *
+ * The live middleware path (`GthLangChainAgent`, fixing the CURRENT turn) is unaffected — both
+ * guards are history-replay only.
  */
 export function convertMessages(
   messages: AgUiWireMessage[],
   allowedToolNames?: Set<string>
 ): BaseMessage[] {
-  return messages.map((msg, index) => {
+  // Ids of tool calls emitted by PRECEDING assistant messages, accumulated as we iterate in order.
+  // A `tool` result whose tool_call_id is not yet in this set has no preceding assistant tool_call.
+  const seenToolCallIds = new Set<string>();
+  const converted: BaseMessage[] = [];
+
+  messages.forEach((msg, index) => {
+    // RC-18 backward orphan-RESULT guard.
+    if (msg.role === 'tool') {
+      const toolCallId = msg.toolCallId || msg.id;
+      if (!seenToolCallIds.has(toolCallId)) {
+        displayWarning(
+          `Dropping orphan tool result (tool_call_id ${JSON.stringify(toolCallId)}) with no ` +
+            'preceding assistant tool_call in the replayed history; converting it would 400 the ' +
+            'provider (INVALID_TOOL_RESULTS).'
+        );
+        return; // drop — do not convert to a ToolMessage
+      }
+      converted.push(convertMessage(msg, allowedToolNames));
+      return;
+    }
+
+    // Record this assistant's native tool_call ids BEFORE any following tool result is checked, so
+    // a genuine call→result pair (id present on a preceding assistant) survives the guard above.
+    if (msg.role === 'assistant' && msg.toolCalls) {
+      for (const tc of msg.toolCalls) {
+        if (tc?.id) seenToolCallIds.add(tc.id);
+      }
+    }
+
+    // EXT-43 forward dangling-CALL guard (PRESERVED, unchanged).
     const followedByToolResult = messages[index + 1]?.role === 'tool';
-    return convertMessage(msg, allowedToolNames, {
-      allowTextCallPromotion: followedByToolResult,
-    });
+    converted.push(
+      convertMessage(msg, allowedToolNames, {
+        allowTextCallPromotion: followedByToolResult,
+      })
+    );
   });
+
+  return converted;
 }
 
 /**
