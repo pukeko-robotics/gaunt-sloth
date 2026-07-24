@@ -7,7 +7,7 @@ import { checkOutputForExpectedContent } from './support/outputChecker';
 
 /**
  * QA-8 xx-small tier — the smallest capability floor. A whole-agent marker/synthesis smoke ported
- * from the QA-7 ollama bash smoke (ollama-smoke-it/run-ollama-smoke.sh) into the vitest harness.
+ * from the QA-7 ollama bash smoke (since retired, QA-8) into the vitest harness.
  *
  * Provider-agnostic: it runs under whatever provider `pnpm run it <provider>` selected. gemma4:12b
  * is proven to pass it (that is what makes it the xx-small floor).

@@ -1,1 +1,0 @@
-The secret marker string is MARKER-EVAL-3D8T. Do not lose it.

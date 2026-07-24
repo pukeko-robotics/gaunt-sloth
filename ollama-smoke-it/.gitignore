@@ -1,6 +1,0 @@
-# QA-7 ollama-smoke-it: generated run artifacts. The smoke runs in a per-run mktemp workspace, but
-# a manual `gth eval` from workdir/ would drop these here — keep them out of git.
-workdir/out/
-workdir/eval-out/
-workdir/.gsloth/gth_*_EVAL/
-node_modules/

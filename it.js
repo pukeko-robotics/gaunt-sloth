@@ -14,8 +14,8 @@ if (process.env.HTTPS_PROXY || process.env.HTTP_PROXY) {
 
 const provider = process.argv[2];
 
-// QA-8 — run-level, OLLAMA-SCOPED skip preflight, ported from ollama-smoke-it/run-ollama-smoke.sh's
-// ollama_ready(). ONLY when the selected provider is `ollama`: if the daemon is unreachable or the
+// QA-8 — run-level, OLLAMA-SCOPED skip preflight, ported from the QA-7 ollama bash smoke's
+// ollama_ready() probe. ONLY when the selected provider is `ollama`: if the daemon is unreachable or the
 // resolved OLLAMA_IT_MODEL tag is absent, print a loud SKIPPED line (saying which — daemon vs model)
 // and exit 0 WITHOUT running vitest — so `it ollama …` is runnable anywhere and green where it can't
 // run (local-GPU-only, like the bash smoke). Every other provider is UNCHANGED: a missing API key
