@@ -47,6 +47,19 @@ if (provider === 'ollama') {
     process.exit(0);
   }
   console.log(`==> ollama OK: daemon ${host}, model ${model}`);
+
+  // OPS-24 — the local GPU is one non-partitionable card; two ollama runs at once thrash VRAM and
+  // time out (looks like a capability failure). Serialize ollama runs behind a machine-local lock,
+  // keyed by the already-computed `host`. Acquired ONLY on this ollama path, only after the skip
+  // preflight confirmed ollama is present; every other provider path is untouched. The blocking
+  // execSync(vitest…) holds the lock for the whole run; a single sync release on 'exit' fires on
+  // normal exit, on the catch-block process.exit(1), and on a throw.
+  const { createOllamaLock, defaultLockPath } =
+    await import('./packages/app/integration-tests/support/ollamaLock.mjs');
+  const _lock = createOllamaLock({ lockPath: defaultLockPath(host) });
+  const _release = await _lock.acquire(); // async wait-loop; blocks until acquired or throws loud
+  process.on('exit', _release); // single sync release path
+  console.log(`==> ollama GPU lock acquired (${_lock.lockPath})`);
 }
 
 execSync('node packages/app/integration-tests/setup-config.js ' + provider, {
