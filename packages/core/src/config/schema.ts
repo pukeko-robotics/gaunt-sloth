@@ -104,6 +104,24 @@ const shellJudgeSchema = z.union([
 ]);
 
 /**
+ * EXT-36 — the tool-loop guard (repeated identical `(tool, args)` / no-progress detector), the
+ * orthogonal sibling of GS2-36's error budget. Modeled on {@link shellJudgeSchema}: `false` disables
+ * it entirely; `true`/absent is warn-on defaults; the object form is fine-grained. `warn` (default
+ * ON) injects a control-flow-free nudge at the threshold; `halt` (default OFF, opt-in) ends the run
+ * cleanly at the threshold; `threshold` is the number of consecutive identical calls that trip it.
+ * The warn-on default is applied at the read site, so this field is intentionally absent from
+ * DEFAULT_CONFIG.
+ */
+const toolLoopGuardSchema = z.union([
+  z.boolean(),
+  z.object({
+    warn: z.boolean().optional(),
+    halt: z.boolean().optional(),
+    threshold: z.number().optional(),
+  }),
+]);
+
+/**
  * CFG-18 — the per-tool config object carried as a value in the widened `builtInTools` registry.
  * One permissive shape covering every tool: `command` for the fixed dev-command tools
  * (run_tests/run_lint/run_build/run_single_test), the EXT-9/10/12 knobs for `run_shell_command`
@@ -394,6 +412,12 @@ export const rawGthConfigSchema = z.looseObject({
       header: z.boolean().optional(),
     })
     .optional(),
+  // EXT-36 — tool-loop guard (repeated identical (tool, args) / no-progress detector), the sibling
+  // of GS2-36's error budget. `false` disables; `true`/absent = warn-on defaults; object =
+  // fine-grained ({ warn, halt, threshold }). WARN (default ON) injects a control-flow-free nudge;
+  // HALT (default OFF, opt-in) ends the run cleanly at the threshold. Defaulted at the read site
+  // (warn on), not in DEFAULT_CONFIG, so the effective-config snapshot never churns.
+  toolLoopGuard: toolLoopGuardSchema.optional(),
   // BATCH-19 — custom `gth eval` reporters. Maps a reporter NAME (as selected with
   // `--reporter <name>`) to a MODULE PATH (relative to the project dir) whose default export is an
   // `EvalReporterFactory` (`() => EvalReporter`). Registered through the same seam the bundled

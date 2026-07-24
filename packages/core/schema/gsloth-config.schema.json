@@ -2274,6 +2274,27 @@
         }
       }
     },
+    "toolLoopGuard": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "warn": {
+              "type": "boolean"
+            },
+            "halt": {
+              "type": "boolean"
+            },
+            "threshold": {
+              "type": "number"
+            }
+          }
+        }
+      ]
+    },
     "reporters": {
       "type": "object",
       "propertyNames": {

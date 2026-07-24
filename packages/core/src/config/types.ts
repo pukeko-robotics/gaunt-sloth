@@ -437,6 +437,23 @@ export interface GthConfig {
     header?: boolean;
   };
   /**
+   * EXT-36 — the tool-loop guard: a repeated-identical-`(tool, args)` / no-progress detector that
+   * runs as a lean-backend `beforeModel` middleware, the orthogonal sibling of GS2-36's
+   * consecutive-tool-ERROR budget. It catches the case GS2-36 leaves open — a model re-issuing the
+   * SAME call verbatim, whether it keeps erroring or keeps "succeeding" with the same result.
+   *
+   * - `false` disables it entirely.
+   * - `true` / omitted → WARN on, HALT off, default threshold ({@link DEFAULT_TOOL_LOOP_THRESHOLD}).
+   * - object → per-field: `warn` (default ON) injects a control-flow-free nudge at the threshold;
+   *   `halt` (default OFF, opt-in) ends the run cleanly (`jumpTo:'end'`, never a throw) at the
+   *   threshold; `threshold` is the number of consecutive identical calls that trip it.
+   *
+   * WARN is provably harmless (no routing effect, one nudge per signature per streak). The WARN-on
+   * default is applied at the read site (not in {@link DEFAULT_CONFIG}) to avoid churning the
+   * effective-config snapshot.
+   */
+  toolLoopGuard?: boolean | { warn?: boolean; halt?: boolean; threshold?: number };
+  /**
    * BATCH-19 — custom `gth eval` reporters, keyed by the NAME they are selected under
    * (`gth eval … --reporter <name>`). Each value is a MODULE PATH, resolved relative to the project
    * dir, whose **default export** is an `EvalReporterFactory` (`() => EvalReporter`). Loaded and

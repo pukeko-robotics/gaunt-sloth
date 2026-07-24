@@ -654,6 +654,230 @@ describe('GthLangChainAgent', () => {
       });
     });
 
+    // EXT-36: the tool-loop guard — the ORTHOGONAL sibling of GS2-36's error budget. A stateless
+    // beforeModel guard recomputes, each turn, the streak of CONSECUTIVE identical (tool, args)
+    // signatures since the last Human/System boundary (a different signature = progress = reset). At
+    // threshold it WARNS by default (a control-flow-free AIMessage nudge, throttled to one per
+    // signature per streak) and HALTS only when opted in (jumpTo:'end', never a throw). Unlike GS2-36
+    // it counts repeats regardless of tool status, so it also catches a no-progress "success" loop.
+    describe('GthLeanToolLoopGuard (EXT-36 repeated-signature / no-progress guard)', () => {
+      let createToolLoopGuardMiddleware: typeof import('#src/core/GthLangChainAgent.js').createToolLoopGuardMiddleware;
+      let resolveToolLoopGuardOptions: typeof import('#src/core/GthLangChainAgent.js').resolveToolLoopGuardOptions;
+      let DEFAULT_TOOL_LOOP_THRESHOLD: number;
+      let TOOL_LOOP_GUARD_MARKER: string;
+
+      beforeEach(async () => {
+        ({
+          createToolLoopGuardMiddleware,
+          resolveToolLoopGuardOptions,
+          DEFAULT_TOOL_LOOP_THRESHOLD,
+          TOOL_LOOP_GUARD_MARKER,
+        } = await import('#src/core/GthLangChainAgent.js'));
+      });
+
+      const okTool = (id: string) =>
+        new ToolMessage({ content: 'ok', tool_call_id: id, status: 'success' });
+      // A tool-call request. Same (name, args) → same SIGNATURE; the id is unique per round (real
+      // tool_call ids are), which is exactly how identical calls are recovered and counted.
+      const aiCall = (id: string, name = 'read_file', args: unknown = { path: 'a.txt' }) =>
+        new AIMessage({ content: '', tool_calls: [{ name, args: args as any, id }] });
+      // One ReAct round: the assistant tool-call request + its resulting tool message.
+      const round = (
+        id: string,
+        name = 'read_file',
+        args: unknown = { path: 'a.txt' },
+        tool: (_id: string) => ToolMessage = okTool
+      ) => [aiCall(id, name, args), tool(id)];
+      // n identical rounds (same signature, unique ids).
+      const identicalRounds = (
+        n: number,
+        name = 'read_file',
+        args: unknown = { path: 'a.txt' },
+        tool: (_id: string) => ToolMessage = okTool
+      ) => {
+        const out: unknown[] = [];
+        for (let i = 0; i < n; i++) out.push(...round(`c${i}`, name, args, tool));
+        return out;
+      };
+
+      const runHook = (mw: any, messages: unknown[]) => mw.beforeModel.hook({ messages });
+
+      it('is installed at index 3, immediately after the error budget (index 2)', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init('code', mockConfig);
+
+        const middleware = createAgentMock.mock.calls.at(-1)?.[0].middleware as { name: string }[];
+        // Pin the composition: EXT-36 sits at index 3, right after GS2-36's budget at index 2, and
+        // outboard of user middleware (…configuredMiddleware follows).
+        expect(middleware.findIndex((m) => m.name === 'GthLeanToolErrorBudget')).toBe(2);
+        expect(middleware.findIndex((m) => m.name === 'GthLeanToolLoopGuard')).toBe(3);
+      });
+
+      it('WARN: injects exactly ONE nudge (no jumpTo) at threshold', () => {
+        const mw = createToolLoopGuardMiddleware({ threshold: 3 });
+        const res = runHook(mw, [new HumanMessage('go'), ...identicalRounds(3)]);
+        // Control-flow-free: a nudge is added but routing is untouched (NO jumpTo).
+        expect(res?.jumpTo).toBeUndefined();
+        expect(res.messages).toHaveLength(1);
+        expect(AIMessage.isInstance(res.messages[0])).toBe(true);
+        expect(String(res.messages[0].content)).toContain('same arguments');
+        expect(String(res.messages[0].content)).toContain('read_file');
+        // The nudge carries the throttle marker keyed to the offending signature.
+        expect(res.messages[0].additional_kwargs?.[TOOL_LOOP_GUARD_MARKER]).toBeDefined();
+      });
+
+      it('WARN throttle: does NOT re-inject when its own nudge for this signature is already present', () => {
+        const mw = createToolLoopGuardMiddleware({ threshold: 3 });
+        const first = [new HumanMessage('go'), ...identicalRounds(3)];
+        const r1 = runHook(mw, first);
+        const nudge = r1.messages[0];
+
+        // The model looped AGAIN after the nudge (nudge + one more identical round). Still over
+        // threshold, but the prior nudge for this signature suppresses a re-fire → undefined.
+        const second = [...first, nudge, ...round('c9')];
+        expect(runHook(mw, second)).toBeUndefined();
+      });
+
+      it('WARN re-fires for a NEW signature after the streak was interrupted (per-streak, not per-session)', () => {
+        const mw = createToolLoopGuardMiddleware({ threshold: 3 });
+        const first = [new HumanMessage('go'), ...identicalRounds(3)];
+        const nudge = runHook(mw, first).messages[0];
+
+        // After the nudge the model tried a DIFFERENT call (progress), then fell back into the SAME
+        // loop for 3 more rounds. The differing signature breaks the walk before the old nudge is
+        // reached, so the fresh streak is nudged again.
+        const second = [
+          ...first,
+          nudge,
+          ...round('d0', 'write_file', { path: 'b.txt' }),
+          ...identicalRounds(3),
+        ];
+        const r2 = runHook(mw, second);
+        expect(r2?.jumpTo).toBeUndefined();
+        expect(r2.messages).toHaveLength(1);
+      });
+
+      it('resets the streak when the signature CHANGES before threshold (a different call = progress)', () => {
+        const mw = createToolLoopGuardMiddleware({ threshold: 3 });
+        // Two read_file, then a different call at the tail: the trailing streak is only 1.
+        const messages = [
+          new HumanMessage('go'),
+          ...round('a', 'read_file', { path: 'a.txt' }),
+          ...round('b', 'read_file', { path: 'a.txt' }),
+          ...round('c', 'read_file', { path: 'DIFFERENT.txt' }),
+        ];
+        expect(runHook(mw, messages)).toBeUndefined();
+      });
+
+      it('a Human/System boundary resets the streak (fresh user turn)', () => {
+        const mw = createToolLoopGuardMiddleware({ threshold: 3 });
+        // Three identical calls in total, but a fresh human turn splits them, so the trailing
+        // streak is 1 — the boundary is a hard reset even for the same signature.
+        const messages = [
+          new HumanMessage('go'),
+          ...round('a'),
+          ...round('b'),
+          new HumanMessage('actually, do this'),
+          ...round('c'),
+        ];
+        expect(runHook(mw, messages)).toBeUndefined();
+      });
+
+      it('passes through below threshold (undefined; no message, no jumpTo)', () => {
+        const mw = createToolLoopGuardMiddleware({ threshold: 3 });
+        expect(runHook(mw, [new HumanMessage('go'), ...identicalRounds(2)])).toBeUndefined();
+      });
+
+      it('catches a no-progress SUCCESS loop (not only errors — the GS2-36 gap)', () => {
+        const mw = createToolLoopGuardMiddleware({ threshold: 3 });
+        // Every tool result is status:'success' yet the same call repeats — GS2-36's error budget
+        // would never fire here; EXT-36 does.
+        const res = runHook(mw, [
+          new HumanMessage('go'),
+          ...identicalRounds(3, 'read_file', { path: 'a.txt' }, okTool),
+        ]);
+        expect(res?.messages).toHaveLength(1);
+        expect(res?.jumpTo).toBeUndefined();
+      });
+
+      it('identical NO-ARG calls collide by design (empty args are the loop signal)', () => {
+        const mw = createToolLoopGuardMiddleware({ threshold: 3 });
+        const res = runHook(mw, [
+          new HumanMessage('go'),
+          ...identicalRounds(3, 'gth_checklist', {}),
+        ]);
+        expect(res?.messages).toHaveLength(1);
+        expect(String(res.messages[0].content)).toContain('gth_checklist');
+      });
+
+      it('WARN NEVER halts — a benign repeat under the default returns no jumpTo (advisor guard)', () => {
+        // Default construction is warn-on / halt-off. Even well over threshold there is NO jumpTo.
+        const mw = createToolLoopGuardMiddleware();
+        const res = runHook(mw, [new HumanMessage('go'), ...identicalRounds(5)]);
+        expect(res?.jumpTo).toBeUndefined();
+        expect(res?.messages).toHaveLength(1);
+      });
+
+      it('HALT (opt-in): trips jumpTo:end at threshold with a terminal AIMessage', () => {
+        const mw = createToolLoopGuardMiddleware({ halt: true, threshold: 3 });
+        const res = runHook(mw, [new HumanMessage('go'), ...identicalRounds(3)]);
+        expect(res?.jumpTo).toBe('end');
+        expect(AIMessage.isInstance(res.messages[0])).toBe(true);
+        expect(String(res.messages[0].content)).toContain('Stopped after');
+        expect(String(res.messages[0].content)).toContain('read_file');
+        // A halt terminal is NOT a throttled nudge — it carries no throttle marker.
+        expect(res.messages[0].additional_kwargs?.[TOOL_LOOP_GUARD_MARKER]).toBeUndefined();
+      });
+
+      it('HALT is opt-in only: the same input under the default (halt off) never jumps', () => {
+        const mw = createToolLoopGuardMiddleware({ threshold: 3 });
+        expect(
+          runHook(mw, [new HumanMessage('go'), ...identicalRounds(3)])?.jumpTo
+        ).toBeUndefined();
+      });
+
+      it('the default threshold is DEFAULT_TOOL_LOOP_THRESHOLD', () => {
+        const mw = createToolLoopGuardMiddleware();
+        const atThreshold = [
+          new HumanMessage('go'),
+          ...identicalRounds(DEFAULT_TOOL_LOOP_THRESHOLD),
+        ];
+        expect(runHook(mw, atThreshold)?.messages).toHaveLength(1);
+        const below = [new HumanMessage('go'), ...identicalRounds(DEFAULT_TOOL_LOOP_THRESHOLD - 1)];
+        expect(runHook(mw, below)).toBeUndefined();
+      });
+
+      it('disabled (both modes off) is a no-op even over threshold', () => {
+        const mw = createToolLoopGuardMiddleware({ warn: false, halt: false });
+        expect(runHook(mw, [new HumanMessage('go'), ...identicalRounds(5)])).toBeUndefined();
+      });
+
+      describe('resolveToolLoopGuardOptions (config union → options; warn-ON default)', () => {
+        it('false → both modes off (a no-op guard)', () => {
+          expect(resolveToolLoopGuardOptions(false)).toEqual({ warn: false, halt: false });
+        });
+        it('true / undefined / null → warn-on defaults (empty options)', () => {
+          expect(resolveToolLoopGuardOptions(true)).toEqual({});
+          expect(resolveToolLoopGuardOptions(undefined)).toEqual({});
+          expect(resolveToolLoopGuardOptions(null)).toEqual({});
+        });
+        it('object → passes each field through', () => {
+          expect(resolveToolLoopGuardOptions({ warn: false, halt: true, threshold: 7 })).toEqual({
+            warn: false,
+            halt: true,
+            threshold: 7,
+          });
+        });
+        it('config false, resolved + constructed, is a no-op even over threshold', () => {
+          const mw = createToolLoopGuardMiddleware(resolveToolLoopGuardOptions(false));
+          expect(runHook(mw, [new HumanMessage('go'), ...identicalRounds(5)])).toBeUndefined();
+        });
+      });
+    });
+
     // An MCP tool that returns an `isError` result is surfaced by @langchain/mcp-adapters as a THROWN
     // ToolException; because gth installs wrapToolCall middleware, langchain's ToolNode would treat
     // that rethrow as a fatal "middleware error" and abort the turn. This middleware must instead

@@ -127,6 +127,33 @@ describe('config schema (GS2-1 B1)', () => {
       }
     });
 
+    // EXT-36 — the tool-loop guard knob. Boolean (false disables / true = warn-on) OR the
+    // fine-grained { warn, halt, threshold } object; a wrong type is a path-scoped failure. Like
+    // injectModelContext the WARN-on default is a READ-SITE default, so it is intentionally NOT a
+    // schema/DEFAULT_CONFIG default here.
+    it('accepts toolLoopGuard as a boolean or a { warn, halt, threshold } object', () => {
+      expect(rawGthConfigSchema.safeParse({ toolLoopGuard: false }).success).toBe(true);
+      expect(rawGthConfigSchema.safeParse({ toolLoopGuard: true }).success).toBe(true);
+      expect(
+        rawGthConfigSchema.safeParse({ toolLoopGuard: { warn: true, halt: true, threshold: 4 } })
+          .success
+      ).toBe(true);
+      // Partial object forms are valid (every field optional).
+      expect(rawGthConfigSchema.safeParse({ toolLoopGuard: { halt: true } }).success).toBe(true);
+    });
+
+    it('rejects a non-numeric toolLoopGuard.threshold with a path-scoped message', () => {
+      const bad = rawGthConfigSchema.safeParse({ toolLoopGuard: { threshold: 'lots' } });
+      expect(bad.success).toBe(false);
+      if (!bad.success) {
+        expect(formatConfigValidationError(bad.error)).toContain('toolLoopGuard');
+      }
+    });
+
+    it('treats toolLoopGuard as a known top-level key (no unknown-key warning)', () => {
+      expect(findUnknownTopLevelKeys({ llm: {}, toolLoopGuard: { halt: true } })).toEqual([]);
+    });
+
     it.each([
       'examples/jira-mcp/.gsloth.config.json',
       'examples/lmstudio/.gsloth.config.json',
