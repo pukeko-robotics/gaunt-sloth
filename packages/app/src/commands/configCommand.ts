@@ -91,10 +91,10 @@ export function configCommand(
       'after',
       '\n' +
         'Examples:\n' +
-        '  $ gsloth config print\n' +
-        "  $ gsloth config print --json | jq '.llm'\n" +
-        '  $ gsloth config validate\n' +
-        '  $ gsloth config profile create cheap --model gemini-2.0-flash-lite\n'
+        '  $ gth config print\n' +
+        "  $ gth config print --json | jq '.llm'\n" +
+        '  $ gth config validate\n' +
+        '  $ gth config profile create cheap --model gemini-2.0-flash-lite\n'
     );
 
   const profile = config
@@ -113,8 +113,8 @@ export function configCommand(
       'after',
       '\n' +
         'Examples:\n' +
-        '  $ gsloth config profile create cheap --model gemini-2.0-flash-lite\n' +
-        '  $ gsloth --profile cheap ask "summarise the open TODOs in this repo"\n'
+        '  $ gth config profile create cheap --model gemini-2.0-flash-lite\n' +
+        '  $ gth --profile cheap ask "summarise the open TODOs in this repo"\n'
     )
     .action(async (name: string, options: { model?: string; force?: boolean }) => {
       // Best-effort seed from the current effective config, falling back to a minimal template when

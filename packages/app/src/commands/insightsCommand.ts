@@ -18,8 +18,8 @@ export function insightsCommand(program: Command): void {
       'after',
       '\n' +
         'Examples:\n' +
-        '  $ gsloth insights\n' +
-        '  $ gsloth insights --db ./project-history.db\n'
+        '  $ gth insights\n' +
+        '  $ gth insights --db ./project-history.db\n'
     )
     .action((options: { db?: string }) => {
       const store = openHistoryStore(resolveHistoryDbPath(options.db), { create: false });

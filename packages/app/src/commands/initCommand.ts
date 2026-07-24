@@ -28,6 +28,13 @@ export function initCommand(program: Command): void {
       ).choices(availableDefaultConfigs)
     )
     .option('-f, --force', 'Overwrite an existing config file')
+    .addHelpText(
+      'after',
+      '\n' +
+        'Examples:\n' +
+        '  $ gth init              # Auto-detect API keys and prompt for provider\n' +
+        '  $ gth init vertexai\n'
+    )
     .action(async (config: ConfigType | undefined, options: { force?: boolean }) => {
       const force = !!options.force;
       if (config) {

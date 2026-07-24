@@ -24,6 +24,13 @@ export function getCommand(
     .argument('<command>', 'Command to introspect')
     .argument('<subject>', 'Either prompt, content, or requirements')
     .argument('[id]', 'Source-backed content identifier')
+    .addHelpText(
+      'after',
+      '\n' +
+        'Examples:\n' +
+        '  $ gth get review prompt\n' +
+        '  $ gth get pr content 42\n'
+    )
     .action(async (command: string, subject: string, id: string | undefined) => {
       try {
         const config = await initConfig(commandLineConfigOverrides);

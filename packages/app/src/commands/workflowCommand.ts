@@ -56,8 +56,8 @@ export function workflowCommand(
       'after',
       '\n' +
         'Examples:\n' +
-        '  $ gsloth workflow workflows/summarize-prs.mjs\n' +
-        '  $ gsloth workflow workflows/triage.mjs --args \'{"label":"bug","limit":20}\'\n'
+        '  $ gth workflow workflows/summarize-prs.mjs\n' +
+        '  $ gth workflow workflows/triage.mjs --args \'{"label":"bug","limit":20}\'\n'
     )
     .action(async (script: string, options: WorkflowCommandOptions) => {
       let args: unknown;
