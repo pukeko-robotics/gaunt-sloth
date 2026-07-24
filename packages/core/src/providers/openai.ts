@@ -37,26 +37,24 @@ function isTemperatureRestrictedModel(model: string | undefined): boolean {
  *    'none'."
  * LangChain's auto-router only flips to the Responses API for OpenAI built-in tools,
  * `reasoning.summary` (not `.effort`), custom tools, or a hardcoded model allowlist — none of which
- * covers gth's `reasoning.effort` + ordinary function tools on a model that isn't yet on that
- * allowlist (e.g. gpt-5.6-luna). So when a reasoning-capable model actually has reasoning
- * configured, and the user has not made an explicit choice, default `useResponsesApi` to true.
+ * covers ordinary function tools on a reasoning model that isn't yet on that allowlist (e.g.
+ * gpt-5.6-luna). Crucially, these models **default `reasoning_effort` to a non-`none` value**, so the
+ * collision fires even when the gth config sets NO reasoning at all (the failing case: a bare
+ * `{ type: openai, model: gpt-5.6-luna }` still 400s on `chat/completions` + tools). So for any
+ * reasoning-capable model, when the user has not made an explicit choice, default `useResponsesApi`
+ * to true — do NOT gate on reasoning being explicitly configured (GS2-74's original bug: it required
+ * `reasoningEffort`/`reasoning` to be set, missing the far more common bare-config path).
  *
- * Guards: (1) only reasoning-capable models — leave gpt-4o etc. on completions; (2) only when
- * reasoning is actually configured — nothing to collide otherwise; (3) never override an explicit
- * `useResponsesApi` the user set (true OR false). The model-name guard also scopes this away from
- * OpenAI-compatible providers that reuse this file (Inception/DeepSeek/xAI ids don't match the regex).
+ * Guards: (1) only reasoning-capable models — leave gpt-4o etc. on completions; (2) never override an
+ * explicit `useResponsesApi` the user set (true OR false). The model-name guard also scopes this away
+ * from OpenAI-compatible providers that reuse this file (Inception/DeepSeek/xAI ids don't match the
+ * regex). Routing a no-tools/plain call to Responses is still correct FOR GTH because gth never
+ * injects reasoning params itself — so even a non-reasoning `gpt-5`-prefixed id (e.g.
+ * `gpt-5-chat-latest`, which this regex also sweeps) is accepted there. (Responses isn't a universal
+ * superset — it drops some chat/completions-only params like `n>1` — but gth uses none of those.)
  */
-function shouldUseResponsesApi(fields: {
-  model?: string;
-  useResponsesApi?: boolean;
-  reasoning?: unknown;
-  reasoningEffort?: unknown;
-}): boolean {
-  return (
-    fields.useResponsesApi === undefined &&
-    isTemperatureRestrictedModel(fields.model) &&
-    (!!fields.reasoningEffort || !!fields.reasoning)
-  );
+function shouldUseResponsesApi(fields: { model?: string; useResponsesApi?: boolean }): boolean {
+  return fields.useResponsesApi === undefined && isTemperatureRestrictedModel(fields.model);
 }
 
 // Function to process JSON config and create OpenAI LLM instance
