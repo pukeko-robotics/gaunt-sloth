@@ -183,9 +183,10 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'google-genai',
     label: 'Google AI Studio (Gemini)',
     apiKeyEnvironmentVariables: ['GOOGLE_API_KEY'],
-    // AI Studio exposes the 3.1 Pro tier only as a `-preview` slug.
-    // 3.6-flash verified live on AI Studio (ListModels + a tool-call probe) 2026-07-24.
-    preferredModels: ['gemini-3.6-flash', 'gemini-3.1-pro-preview'],
+    // GA-only defaults (Andrew 2026-07-24): the Gemini 3.x Pro tier is preview-only, so the curated
+    // defaults stay on GA flash tiers — gemini-3.6-flash (head, verified live via ListModels +
+    // tool-call probe) and gemini-3.5-flash-lite (the GA routing/summarizing workhorse).
+    preferredModels: ['gemini-3.6-flash', 'gemini-3.5-flash-lite'],
     discovery: {
       kind: 'google',
       // Native ListModels — returns the full current family (incl. the 3.x tier)
@@ -201,12 +202,11 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'vertexai',
     label: 'Google Vertex AI (Gemini)',
     apiKeyEnvironmentVariables: [],
-    // Vertex mirrors the AI Studio (google-genai) family under the SAME slugs, incl. the `-preview`
-    // pro slug (the older "bare-slug" assumption was wrong). Verified live 2026-07-24 (Andrew, ADC
-    // box): all mirror-genai models resolve; preview models are served only at the GLOBAL location,
-    // which works with no extra config. Kept in sync with google-genai; retired `gemini-2.5-flash`
-    // dropped — CFG-22.
-    preferredModels: ['gemini-3.6-flash', 'gemini-3.1-pro-preview'],
+    // Vertex mirrors the AI Studio (google-genai) family under the SAME slugs (the older "bare-slug"
+    // assumption was wrong). Verified live 2026-07-24 (Andrew, ADC box): all mirror-genai models
+    // resolve, and these GA flash defaults resolve with no extra config (preview models, not used
+    // here, are global-location only). Kept exactly in sync with the google-genai GA-only defaults.
+    preferredModels: ['gemini-3.6-flash', 'gemini-3.5-flash-lite'],
     discovery: { kind: 'none' },
     requiresExternalAuth: true,
   },

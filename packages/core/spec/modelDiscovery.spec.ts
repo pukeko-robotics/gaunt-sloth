@@ -789,7 +789,7 @@ describe('modelDiscovery', () => {
 
     it('resolveInitModel returns the highest-ranked curated id that is actually live (verified-present, not curated[0])', async () => {
       systemUtilsMock.env.GOOGLE_API_KEY = 'g-live-123';
-      // curated[0] (gemini-3.6-flash) is NOT live; curated[1] (gemini-3.1-pro-preview) IS.
+      // curated[0] (gemini-3.6-flash) is NOT live; curated[1] (gemini-3.5-flash-lite) IS.
       vi.stubGlobal(
         'fetch',
         okJson({
@@ -799,7 +799,7 @@ describe('modelDiscovery', () => {
               supportedGenerationMethods: ['generateContent'],
             },
             {
-              name: 'models/gemini-3.1-pro-preview',
+              name: 'models/gemini-3.5-flash-lite',
               supportedGenerationMethods: ['generateContent'],
             },
           ],
@@ -807,7 +807,7 @@ describe('modelDiscovery', () => {
       );
       const { resolveInitModel } = await import('#src/providers/modelDiscovery.js');
       // Proves it verifies presence against the live list rather than emitting getCuratedFallbackModel.
-      expect(await resolveInitModel('google-genai')).toBe('gemini-3.1-pro-preview');
+      expect(await resolveInitModel('google-genai')).toBe('gemini-3.5-flash-lite');
     });
 
     it('resolveInitModel returns undefined for google with no key (no fetch, no invented literal)', async () => {
