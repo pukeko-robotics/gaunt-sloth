@@ -47,6 +47,7 @@ import {
   debugLogObject,
 } from '#src/utils/debugUtils.js';
 import { updateCrashContext } from '#src/utils/crashHandler.js';
+import { setToolDisplayConfig } from '#src/core/toolDisplay.js';
 
 /**
  * GS2-48 — how many trailing messages of the in-flight turn to hand the crash handler as the
@@ -183,6 +184,11 @@ export class GthAgentRunner {
     // unhandledRejection mid-run captures it in the (redacted) snapshot. Pure data hand-off; no
     // behaviour change.
     updateCrashContext({ config: configIn, modelDisplayName: configIn.modelDisplayName });
+
+    // TUI-C32 residual a — register the live config with the shared tool-display redactor so its
+    // secret-literal collection walks INLINE config secrets (a pasted `apiKey`/`token` value), not
+    // only env-derived ones. Both surfaces (plain observer + Ink TUI) render through this module.
+    setToolDisplayConfig(configIn);
 
     // EXT-12 — seed the runtime auto-approve flag from the static `run_shell_command.yolo` config so a
     // config that pre-enables auto-approval starts ON, while the shell tool stays gated (see

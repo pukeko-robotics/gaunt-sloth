@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AIMessageChunk, HumanMessage, ToolMessage } from '@langchain/core/messages';
+import { AIMessage, AIMessageChunk, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import type { RunnableConfig } from '@langchain/core/runnables';
 
 /**
@@ -79,6 +79,50 @@ describe('GthAbstractAgent plain-surface tool indication (TUI-C30)', () => {
     for await (const chunk of stream) text += chunk;
 
     expect(text).toBe('The file says…'); // the model-facing text stream is untouched
+    expect(consoleUtilsMock.displayToolIndication).toHaveBeenCalledTimes(1);
+    const block = consoleUtilsMock.displayToolIndication.mock.calls[0][0] as string;
+    expect(block).toContain('✓ 📁 read_file(path=README.md)');
+    expect(block).toContain('    line-1');
+    expect(block).toContain('    line-2');
+  });
+
+  // TUI-C32 residual f — the non-streaming `invoke` path (`streamOutput: false`) had no plain-surface
+  // indication (the observer lived only on the streaming path). Feed this turn's new messages through
+  // the SAME observer so a tool call surfaces its compact block here too.
+  it('renders the tool indication on the non-streaming invoke path (streamOutput:false)', async () => {
+    const { GthAbstractAgent } = await import('#src/core/GthAbstractAgent.js');
+
+    class TestAgent extends GthAbstractAgent {
+      async init(): Promise<void> {
+        /* graph injected directly below */
+      }
+    }
+    const agent = new TestAgent(() => {});
+
+    (agent as any).config = { writeBinaryOutputsToFile: false };
+
+    // No getState → getStateMessageCount returns 0, so all response.messages count as this turn's.
+    (agent as any).agent = {
+      async stream() {
+        throw new Error('not used');
+      },
+      async invoke() {
+        return {
+          messages: [
+            new AIMessage({
+              content: '',
+              tool_calls: [{ id: 'c1', name: 'read_file', args: { path: 'README.md' } }],
+            }),
+            new ToolMessage({ content: 'line-1\nline-2', tool_call_id: 'c1' }),
+            new AIMessage({ content: 'The file says…' }),
+          ],
+        };
+      },
+    };
+
+    const result = await agent.invoke([new HumanMessage('read it')], runConfig);
+
+    expect(result).toBe('The file says…'); // the model-facing answer is untouched
     expect(consoleUtilsMock.displayToolIndication).toHaveBeenCalledTimes(1);
     const block = consoleUtilsMock.displayToolIndication.mock.calls[0][0] as string;
     expect(block).toContain('✓ 📁 read_file(path=README.md)');

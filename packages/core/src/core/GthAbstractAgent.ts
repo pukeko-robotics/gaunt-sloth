@@ -348,8 +348,18 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
         const response = await this.agent.invoke({ messages }, runConfig);
         // Harvest token usage + invoked tool names from THIS turn's new messages only (fail-soft)
         // so the opt-in history recorder can populate `gth insights`.
+        // TUI-C32 residual f — the streaming path renders the compact per-tool indication via
+        // streamFromInput's observer; the non-streaming invoke path (`streamOutput: false`) had
+        // none, so a plain-surface tool call surfaced nothing after the legacy fs notices were
+        // dropped (residual b). Feed THIS turn's new messages through the SAME observer so each
+        // tool call gets its `✓ 📁 name(args…)` block here too. Only the plain surface reaches
+        // invoke (the TUI uses processMessagesWithEvents); observe() is fail-soft internally.
         const allMessages = Array.isArray(response.messages) ? response.messages : [];
-        for (const m of allMessages.slice(priorMessageCount)) this.recordRunStats(m);
+        const toolIndication = createPlainToolIndication();
+        for (const m of allMessages.slice(priorMessageCount)) {
+          this.recordRunStats(m);
+          toolIndication.observe(m);
+        }
         const finalMessage = response.messages[response.messages.length - 1];
 
         // EXT-37: content-policy refusal. A successful response whose stop/finish reason is a

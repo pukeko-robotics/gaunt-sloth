@@ -86,6 +86,15 @@ interface ToolDisplayEntry {
   /** Leading glyph for the call line (falls back to {@link FALLBACK_GLYPH}). */
   glyph?: string;
   /**
+   * TUI-C32 residual c — this tool genuinely emits the shell result shape (`<COMMAND_OUTPUT>…`),
+   * so its child output streams live and the shell body formatter + live-output dedupe apply. A
+   * REGISTERED tool that is NOT flagged is never shell-shaped even if its result happens to
+   * contain the marker string (e.g. `read_file` reading a file that quotes `<COMMAND_OUTPUT>`).
+   * Unregistered/custom tool names fall back to shape-detection (they own user-defined names and
+   * DO share the shape — cf. `GthCustomToolkit`/`GthDevToolkit`).
+   */
+  shellShaped?: boolean;
+  /**
    * Arg keys to include in the params summary, in order. `undefined` → all args in their
    * streamed order; `[]` → none (renders `name()`).
    */
@@ -126,16 +135,37 @@ export function parseToolArgsSafe(argsText: string | undefined): Record<string, 
 }
 
 /**
- * Lazily-computed default secret literals for redaction (GS2-47 technique 1), harvested from
- * the process env the same way `/debug-dump` does. Cached because `collectSecretValues` walks
- * the whole env; the set cannot change mid-process in any way this render path must react to.
- * `redactText` additionally always applies the provider-key patterns (technique 2).
+ * The live gth config, registered once per run so {@link getDefaultSecrets} can harvest INLINE
+ * config secrets (a pasted `apiKey`/`token` value) via the GS2-47 config walk — not only the
+ * env-derived literals. `GthAgentRunner.init` sets this next to the crash-context hand-off, so
+ * both render surfaces (the plain observer and the Ink TUI) see it. `undefined` (no config yet)
+ * degrades to env-only collection + the provider patterns, exactly as before.
+ */
+let displayConfig: unknown = undefined;
+
+/**
+ * Register the live config for inline-secret collection (TUI-C32 residual a). Resets the secret
+ * cache so the next {@link getDefaultSecrets} recomputes with the config's inline literals folded
+ * in. Idempotent; a later call with a fresh config supersedes the previous one.
+ */
+export function setToolDisplayConfig(config: unknown): void {
+  displayConfig = config;
+  cachedSecrets = null;
+}
+
+/**
+ * Lazily-computed default secret literals for redaction (GS2-47 technique 1), harvested from the
+ * process env AND the registered config (inline `apiKey`/`token` values) the same way
+ * `/debug-dump` does. Cached because `collectSecretValues` walks the whole env + config; the set
+ * cannot change mid-process in any way this render path must react to (a new config resets it via
+ * {@link setToolDisplayConfig}). `redactText` additionally always applies the provider-key
+ * patterns (technique 2).
  */
 let cachedSecrets: string[] | null = null;
 function getDefaultSecrets(): string[] {
   if (cachedSecrets === null) {
     try {
-      cachedSecrets = collectSecretValues(undefined, env ?? {});
+      cachedSecrets = collectSecretValues(displayConfig, env ?? {});
     } catch {
       cachedSecrets = []; // patterns still apply via redactText
     }
@@ -143,9 +173,10 @@ function getDefaultSecrets(): string[] {
   return cachedSecrets;
 }
 
-/** Test seam: drop the cached env-derived secret literals so specs can vary the env. */
+/** Test seam: drop the cached secret literals + registered config so specs can vary both. */
 export function resetToolDisplaySecretsCacheForTests(): void {
   cachedSecrets = null;
+  displayConfig = undefined;
 }
 
 /** Collapse whitespace runs (incl. newlines) so a value stays a one-line token. */
@@ -221,6 +252,28 @@ export function parseCommandOutputResult(
 }
 
 /**
+ * TUI-C32 residual c — may this tool NAME be treated as shell-shaped at all? A registered entry
+ * must be explicitly {@link ToolDisplayEntry.shellShaped}; an unregistered/custom name falls back
+ * to shape-detection (custom toolkit tools own user-defined names yet share the result shape). A
+ * registered non-shell tool (`read_file`, `list_directory`, …) is therefore NEVER shell-parsed
+ * just because its result happens to contain the `<COMMAND_OUTPUT>` marker.
+ */
+function nameAllowsShellShape(name: string): boolean {
+  const entry = TOOL_DISPLAY_REGISTRY[name];
+  return entry ? entry.shellShaped === true : true;
+}
+
+/**
+ * TUI-C32 residual c — is THIS tool call genuinely a shell-shaped result (name allows it AND the
+ * result actually carries the `<COMMAND_OUTPUT>` shape)? Used by the plain surface to decide
+ * `liveOutputAlreadyShown` (the child streamed live via the tool-output channel's default sink),
+ * so a non-shell tool whose result merely quotes the marker no longer has its body suppressed.
+ */
+export function isShellShapedResult(name: string, result: string | undefined): boolean {
+  return nameAllowsShellShape(name) && parseCommandOutputResult(result) !== null;
+}
+
+/**
  * Body formatter for shell-shaped calls: the child's output (preferring the LIVE streamed
  * output — verbatim what the child printed — over the result's `<COMMAND_OUTPUT>` copy of it,
  * which is the TUI-C17 dedupe) followed by the closing status line. When the live output
@@ -235,7 +288,15 @@ function formatShellBody(input: ToolCallDisplayInput): ToolDisplayLine[] | null 
   if (!parsed && (input.result || !input.output)) return null;
   const lines: ToolDisplayLine[] = [];
   if (!input.liveOutputAlreadyShown) {
-    const body = input.output && input.output.length > 0 ? input.output : (parsed?.body ?? '');
+    // TUI-C32 residual d — the streamed live output is normally the verbatim, most-complete copy,
+    // so it is preferred (TUI-C17 dedupe). But if the live channel dropped straggler/tail chunks
+    // it can be a strict PREFIX of the result's `<COMMAND_OUTPUT>` copy (which the model always
+    // receives in full) — in that case fall back to the fuller copy so the expanded view can still
+    // recover what the stream missed. The common case (live === result, an independent/capped
+    // result, or an empty live output) is unchanged: only a genuine dropped-tail prefix overrides.
+    const live = input.output ?? '';
+    const resultBody = parsed?.body ?? '';
+    const body = resultBody.length > live.length && resultBody.startsWith(live) ? resultBody : live;
     if (body.trim().length > 0) lines.push(...styled(toLines(body), 'dim'));
   }
   if (parsed && parsed.tail.length > 0) {
@@ -331,11 +392,17 @@ const TOOL_DISPLAY_REGISTRY: Record<string, ToolDisplayEntry> = {
     glyph: SHELL_GLYPH,
     summariseArgs: ['command'],
     formatBody: formatShellBody,
+    shellShaped: true,
   },
-  run_tests: { glyph: SHELL_GLYPH, formatBody: formatShellBody },
-  run_single_test: { glyph: SHELL_GLYPH, summariseArgs: ['testPath'], formatBody: formatShellBody },
-  run_lint: { glyph: SHELL_GLYPH, formatBody: formatShellBody },
-  run_build: { glyph: SHELL_GLYPH, formatBody: formatShellBody },
+  run_tests: { glyph: SHELL_GLYPH, formatBody: formatShellBody, shellShaped: true },
+  run_single_test: {
+    glyph: SHELL_GLYPH,
+    summariseArgs: ['testPath'],
+    formatBody: formatShellBody,
+    shellShaped: true,
+  },
+  run_lint: { glyph: SHELL_GLYPH, formatBody: formatShellBody, shellShaped: true },
+  run_build: { glyph: SHELL_GLYPH, formatBody: formatShellBody, shellShaped: true },
   task: { glyph: '🤖', summariseArgs: ['subagent_type', 'description'] },
 };
 
@@ -406,7 +473,10 @@ export function buildToolBodyLines(
   const args = parseToolArgsSafe(input.argsText);
   const entry = TOOL_DISPLAY_REGISTRY[input.name];
   let lines = entry?.formatBody?.(input, args) ?? null;
-  if (lines === null) lines = formatShellBody(input);
+  // TUI-C32 residual c — only fall back to the shape-based shell formatter for names that may be
+  // shell-shaped (flagged registry entries + unregistered custom tools), so a registered non-shell
+  // tool whose result merely contains `<COMMAND_OUTPUT>` is rendered generically, not shell-parsed.
+  if (lines === null && nameAllowsShellShape(input.name)) lines = formatShellBody(input);
   if (lines === null) {
     lines = [];
     if (input.output && input.output.trim().length > 0 && !input.liveOutputAlreadyShown) {

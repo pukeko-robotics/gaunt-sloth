@@ -300,6 +300,34 @@ describe('plainToolIndication (TUI-C30 — the --no-tui / piped surface)', () =>
     expect(text).not.toContain('deadbeef'); // no leaked head anywhere in the block
   });
 
+  // TUI-C32 residual e — the fail-soft try/catch used to wrap ONLY the ToolMessage branch; the
+  // AIMessage branch(es) parse tool_calls (`JSON.stringify(tc.args)` can throw on an unserialisable
+  // arg, e.g. a BigInt) unguarded. A throw there would break the run's stream loop. Wrap them too.
+  it('fail-soft: an unserialisable tool_call arg in the AIMessage branch does not throw', async () => {
+    const { createPlainToolIndication } = await import('#src/core/plainToolIndication.js');
+    const sink = vi.fn();
+    const observer = createPlainToolIndication(sink);
+    // JSON.stringify throws on a BigInt — the AIMessage branch must swallow it like the ToolMessage
+    // branch, never propagating out of observe().
+    expect(() =>
+      observer.observe(
+        new AIMessage({
+          content: '',
+          tool_calls: [{ id: 'c1', name: 'read_file', args: { n: 1n } as never }],
+        })
+      )
+    ).not.toThrow();
+    // The observer stays usable: a subsequent well-formed round still renders.
+    observer.observe(
+      new AIMessage({
+        content: '',
+        tool_calls: [{ id: 'c2', name: 'read_file', args: { path: 'ok.md' } }],
+      })
+    );
+    observer.observe(new ToolMessage({ content: 'body-ok', tool_call_id: 'c2' }));
+    expect(sink.mock.calls.at(-1)?.[0]).toContain('read_file(path=ok.md)');
+  });
+
   it('ignores plain text chunks and human messages entirely', async () => {
     const { createPlainToolIndication } = await import('#src/core/plainToolIndication.js');
     const sink = vi.fn();

@@ -5,7 +5,6 @@ import type { Dirent } from 'node:fs';
 import path from 'node:path';
 import os from 'os';
 import { createTwoFilesPatch } from 'diff';
-import { displayInfo } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { shouldIgnoreFile } from '@gaunt-sloth/core/utils/aiignoreUtils.js';
 import { getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
 import type { BinaryFormatConfig, BinaryFormatType } from '@gaunt-sloth/core/config.js';
@@ -823,7 +822,6 @@ export default class GthFileSystemToolkit extends BaseToolkit {
           return 'Binary formats are not configured. Add binaryFormats to your config to enable this feature.';
         }
 
-        displayInfo(`\n📁 Reading binary file: ${args.path}\n`);
         let validPath: string;
         try {
           validPath = await this.validatePath(args.path);
@@ -897,8 +895,9 @@ export default class GthFileSystemToolkit extends BaseToolkit {
     const tools: StructuredToolInterface[] = [
       createGthTool(
         async (args: z.infer<typeof ReadFileArgsSchema>): Promise<string> => {
-          displayInfo(`\n📁 Reading file: ${args.path}\n`);
-
+          // TUI-C32 residual b — the legacy `📁 Reading file: …` notice is dropped: the surface-
+          // agnostic tool-call block (`✓ 📁 read_file(path=…)`, TUI-C30) now announces the op once
+          // on both surfaces, so the old notice was a DL-10 double announcement.
           const hasWindow = args.offset !== undefined || args.limit !== undefined;
           const hasHeadTail = Boolean(args.head) || Boolean(args.tail);
 
@@ -1009,7 +1008,6 @@ export default class GthFileSystemToolkit extends BaseToolkit {
 
       createGthTool(
         async (args: z.infer<typeof ReadMultipleFilesArgsSchema>): Promise<string> => {
-          displayInfo(`\n📁 Reading ${args.paths.length} files\n`);
           const results = await Promise.all(
             args.paths.map(async (filePath: string) => {
               try {
@@ -1053,7 +1051,8 @@ export default class GthFileSystemToolkit extends BaseToolkit {
 
       createGthTool(
         async (args: z.infer<typeof WriteFileArgsSchema>): Promise<string> => {
-          displayInfo(`\n📁 Writing file: ${args.path}\n`);
+          // TUI-C32 residual b — legacy `📁 Writing file: …` notice dropped (see read_file above);
+          // the TUI-C30 tool-call block announces the write once on both surfaces.
           try {
             const validPath = await this.validatePath(args.path);
             // Create any missing parent directories (mkdir -p) so a write into a
@@ -1088,7 +1087,8 @@ export default class GthFileSystemToolkit extends BaseToolkit {
 
       createGthTool(
         async (args: z.infer<typeof EditFileArgsSchema>): Promise<string> => {
-          displayInfo(`\n📁 Editing file: ${args.path}\n`);
+          // TUI-C32 residual b — legacy `📁 Editing file: …` notice dropped (see read_file above);
+          // the TUI-C30 tool-call block announces the edit once on both surfaces.
           // GS2-36: a no-match / ambiguous edit, a missing file, a denied or symlinked-out path
           // (validatePath throws BEFORE applyFileEdits mutates anything — EXT-14 containment
           // preserved), or a write failure becomes a recoverable errored result the model can act
@@ -1119,7 +1119,6 @@ export default class GthFileSystemToolkit extends BaseToolkit {
 
       createGthTool(
         async (args: z.infer<typeof CreateDirectoryArgsSchema>): Promise<string> => {
-          displayInfo(`\n📁 Creating directory: ${args.path}\n`);
           // GS2-36: a denied / symlinked-out path or an mkdir failure (e.g. a file already exists at
           // the path) becomes a recoverable errored result rather than a fatal run abort.
           try {
@@ -1144,7 +1143,6 @@ export default class GthFileSystemToolkit extends BaseToolkit {
 
       createGthTool(
         async (args: z.infer<typeof ListDirectoryArgsSchema>): Promise<string> => {
-          displayInfo(`\n📁 Listing directory: ${args.path}\n`);
           // GS2-36: a missing directory, a denied / symlinked-out path, or a not-a-directory
           // (ENOTDIR) error becomes a recoverable errored result rather than a fatal run abort.
           try {
@@ -1181,7 +1179,6 @@ export default class GthFileSystemToolkit extends BaseToolkit {
 
       createGthTool(
         async (args: z.infer<typeof ListDirectoryWithSizesArgsSchema>): Promise<string> => {
-          displayInfo(`\n📁 Listing directory with sizes: ${args.path}\n`);
           // GS2-36: a missing directory or denied path becomes a recoverable errored result rather
           // than a fatal run abort. Only validatePath + readdir can throw fatally here (the per-entry
           // stat below already has its own try/catch), so guard just those.
@@ -1269,8 +1266,6 @@ export default class GthFileSystemToolkit extends BaseToolkit {
 
       createGthTool(
         async (args: z.infer<typeof DirectoryTreeArgsSchema>): Promise<string> => {
-          displayInfo(`\n📁 Building directory tree: ${args.path}\n`);
-
           interface TreeEntry {
             name: string;
             type: 'file' | 'directory';
@@ -1341,7 +1336,6 @@ export default class GthFileSystemToolkit extends BaseToolkit {
 
       createGthTool(
         async (args: z.infer<typeof MoveFileArgsSchema>): Promise<string> => {
-          displayInfo(`\n📁 Moving ${args.source} to ${args.destination}\n`);
           // GS2-36: a missing source, an existing destination, or a denied / symlinked-out path
           // becomes a recoverable errored result rather than a fatal run abort.
           try {
@@ -1367,7 +1361,6 @@ export default class GthFileSystemToolkit extends BaseToolkit {
 
       createGthTool(
         async (args: z.infer<typeof SearchFilesArgsSchema>): Promise<string> => {
-          displayInfo(`\n📁 Searching for '${args.pattern}' in ${args.path}\n`);
           // GS2-36: a missing or denied root path becomes a recoverable errored result rather than a
           // fatal run abort (searchFiles already swallows per-entry errors internally).
           try {
@@ -1393,7 +1386,6 @@ export default class GthFileSystemToolkit extends BaseToolkit {
 
       createGthTool(
         async (args: z.infer<typeof GetFileInfoArgsSchema>): Promise<string> => {
-          displayInfo(`\n📁 Getting file info: ${args.path}\n`);
           // GS2-36: a missing file or denied path becomes a recoverable errored result rather than a
           // fatal run abort.
           try {
@@ -1420,7 +1412,6 @@ export default class GthFileSystemToolkit extends BaseToolkit {
 
       createGthTool(
         async (args: z.infer<typeof DeleteFileArgsSchema>): Promise<string> => {
-          displayInfo(`\n📁 Deleting file: ${args.path}\n`);
           // GS2-36: a missing file, a denied path, or the "this is a directory" refusal becomes a
           // recoverable errored result the model can act on, rather than a fatal run abort.
           try {
@@ -1450,9 +1441,6 @@ export default class GthFileSystemToolkit extends BaseToolkit {
 
       createGthTool(
         async (args: z.infer<typeof DeleteDirectoryArgsSchema>): Promise<string> => {
-          displayInfo(
-            `\n📁 Deleting directory: ${args.path}${args.recursive ? ' (recursive)' : ''}\n`
-          );
           // GS2-36: a missing directory, a denied path, the protected-root / not-a-directory /
           // not-empty refusals all become recoverable errored results the model can act on, rather
           // than a fatal run abort. Each refusal message is already an action-oriented hint.
