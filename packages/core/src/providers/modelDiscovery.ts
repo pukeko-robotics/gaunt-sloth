@@ -201,10 +201,12 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'vertexai',
     label: 'Google Vertex AI (Gemini)',
     apiKeyEnvironmentVariables: [],
-    // Vertex mirrors the AI Studio (google-genai) family under bare (non-preview) slugs; kept in
-    // sync with the google-genai head. Unverified from here (Vertex needs ADC, not a key) — CFG-22.
-    // Retired `gemini-2.5-flash` dropped.
-    preferredModels: ['gemini-3.6-flash', 'gemini-3.1-pro'],
+    // Vertex mirrors the AI Studio (google-genai) family under the SAME slugs, incl. the `-preview`
+    // pro slug (the older "bare-slug" assumption was wrong). Verified live 2026-07-24 (Andrew, ADC
+    // box): all mirror-genai models resolve; preview models are served only at the GLOBAL location,
+    // which works with no extra config. Kept in sync with google-genai; retired `gemini-2.5-flash`
+    // dropped — CFG-22.
+    preferredModels: ['gemini-3.6-flash', 'gemini-3.1-pro-preview'],
     discovery: { kind: 'none' },
     requiresExternalAuth: true,
   },
