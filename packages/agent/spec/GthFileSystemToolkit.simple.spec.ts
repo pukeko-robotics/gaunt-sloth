@@ -1120,4 +1120,40 @@ describe('GthFileSystemToolkit - Basic Tests', () => {
       });
     });
   });
+
+  // TUI-C32 residual b — fs tools must NOT print the legacy `📁 Reading/Writing/Editing file: …`
+  // notice: the surface-agnostic tool-call block (`✓ 📁 name(args…)`, TUI-C30) now announces each
+  // op once on both surfaces, so the old notice was a DL-10 double announcement. displayInfo is the
+  // channel the legacy notice used; a single announcement means it is no longer called for fs ops.
+  describe('single announcement (no legacy 📁 notice, TUI-C32 residual b)', () => {
+    beforeEach(() => {
+      toolkit = new GthFileSystemToolkit({ allowedDirectories: [process.cwd()] });
+    });
+
+    it('read_file announces exactly once (no displayInfo notice)', async () => {
+      const testPath = path.join(process.cwd(), 'r.txt');
+      fsMock.readFile.mockResolvedValue('hello');
+      const readFile = toolkit.tools.find((t) => t.name === 'read_file')!;
+      await readFile.invoke({ path: testPath });
+      expect(consoleUtilsMock.displayInfo).not.toHaveBeenCalled();
+    });
+
+    it('write_file announces exactly once (no displayInfo notice)', async () => {
+      const testPath = path.join(process.cwd(), 'w.txt');
+      fsMock.writeFile.mockResolvedValue(undefined);
+      fsMock.mkdir.mockResolvedValue(undefined);
+      const writeFile = toolkit.tools.find((t) => t.name === 'write_file')!;
+      await writeFile.invoke({ path: testPath, content: 'body' });
+      expect(consoleUtilsMock.displayInfo).not.toHaveBeenCalled();
+    });
+
+    it('edit_file announces exactly once (no displayInfo notice)', async () => {
+      const testPath = path.join(process.cwd(), 'e.txt');
+      fsMock.readFile.mockResolvedValue('old');
+      fsMock.writeFile.mockResolvedValue(undefined);
+      const editFile = toolkit.tools.find((t) => t.name === 'edit_file')!;
+      await editFile.invoke({ path: testPath, edits: [{ oldText: 'old', newText: 'new' }] });
+      expect(consoleUtilsMock.displayInfo).not.toHaveBeenCalled();
+    });
+  });
 });

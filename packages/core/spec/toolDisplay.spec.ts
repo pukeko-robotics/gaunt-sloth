@@ -342,4 +342,79 @@ describe('toolDisplay (TUI-C30)', () => {
       expect(getToolGlyph('never_heard_of_it')).toBe('⚙');
     });
   });
+
+  // TUI-C32 residual a — getDefaultSecrets used to pass `undefined` for the config, skipping the
+  // GS2-47 config walk, so an INLINE config secret (a pasted key/token that matches no provider
+  // pattern) was never collected and so never literal-redacted. setToolDisplayConfig wires the live
+  // config back in.
+  describe('setToolDisplayConfig — inline config secret collection (TUI-C32 residual a)', () => {
+    it('redacts an inline config apiKey (patternless, config-only) in a summary', async () => {
+      const { summariseToolCall, setToolDisplayConfig } = await import('#src/core/toolDisplay.js');
+      // ≥6 chars, matches NO provider pattern, and lives ONLY in config (env is mocked empty) — so
+      // the config walk is the only path that can collect it. That path is exactly residual a.
+      const inlineSecret = 'inline-config-secret-value';
+      setToolDisplayConfig({ llm: { apiKey: inlineSecret } });
+      const summary = summariseToolCall('echo_tool', JSON.stringify({ text: inlineSecret }));
+      expect(summary).toBe('echo_tool(text=<redacted>)');
+      expect(summary).not.toContain('inline-config-secret-value');
+    });
+  });
+
+  // TUI-C32 residual c — the shell body formatter/dedupe must key on tool NAME + shape, not shape
+  // alone, so a NON-shell tool whose result merely contains the `<COMMAND_OUTPUT>` marker is not
+  // mis-treated as shell (its body stripped of tags + pre-marker prefix).
+  describe('shell-shape is name-gated (TUI-C32 residual c)', () => {
+    const shellResult =
+      "Executing 'ls'...\n\n<COMMAND_OUTPUT>\nfile-a\n</COMMAND_OUTPUT>\n\n\nCommand 'ls' done";
+
+    it('does NOT shell-parse a registered non-shell tool whose result contains <COMMAND_OUTPUT>', async () => {
+      const { buildToolBodyLines } = await import('#src/core/toolDisplay.js');
+      // read_file returning a file that quotes the marker: the shell parser would drop the
+      // "preamble" line and the wrapper tags; the generic render keeps the whole result verbatim.
+      const fileContent = 'preamble line\n<COMMAND_OUTPUT>\ninner\n</COMMAND_OUTPUT>\ntail line';
+      const lines = buildToolBodyLines({ name: 'read_file', result: fileContent }, []);
+      expect(lines.map((l) => l.text)).toEqual([
+        'preamble line',
+        '<COMMAND_OUTPUT>',
+        'inner',
+        '</COMMAND_OUTPUT>',
+        'tail line',
+      ]);
+    });
+
+    it('isShellShapedResult: true for a flagged shell tool, false for a registered non-shell one, shape for custom', async () => {
+      const { isShellShapedResult } = await import('#src/core/toolDisplay.js');
+      expect(isShellShapedResult('run_shell_command', shellResult)).toBe(true);
+      expect(isShellShapedResult('read_file', shellResult)).toBe(false); // registered, not shell
+      expect(isShellShapedResult('my_custom_build', shellResult)).toBe(true); // custom → shape
+      expect(isShellShapedResult('run_shell_command', 'plain result, no marker')).toBe(false);
+    });
+  });
+
+  // TUI-C32 residual d — the expanded-panel dedupe used to trust live-output completeness: if the
+  // streamed `output` was non-empty at all, the result's `<COMMAND_OUTPUT>` copy was never rendered.
+  // A live channel that dropped straggler/tail chunks was then unrecoverable. Fall back to the fuller
+  // result copy when the live output is a strict prefix of it.
+  describe('expanded-panel shell dedupe reconciles a truncated live stream (TUI-C32 residual d)', () => {
+    it('falls back to the fuller result <COMMAND_OUTPUT> copy when live output is a truncated prefix', async () => {
+      const { buildToolBodyLines } = await import('#src/core/toolDisplay.js');
+      // The live channel dropped the tail: streamed output is a strict PREFIX of the model-facing
+      // copy (the realistic post-TUI-C31 straggler-loss case).
+      const liveOutput = 'file-a\nfile-b\n';
+      const fullResult =
+        "Executing 'ls'...\n\n<COMMAND_OUTPUT>\nfile-a\nfile-b\nfile-c\nfile-d\n</COMMAND_OUTPUT>\n" +
+        "\n\nCommand 'ls' completed successfully";
+      const lines = buildToolBodyLines(
+        { name: 'run_shell_command', output: liveOutput, result: fullResult },
+        []
+      );
+      expect(lines.map((l) => l.text)).toEqual([
+        'file-a',
+        'file-b',
+        'file-c', // recovered from the result copy — absent from the truncated live stream
+        'file-d',
+        "Command 'ls' completed successfully",
+      ]);
+    });
+  });
 });

@@ -29,7 +29,7 @@ import type { BaseMessage } from '@langchain/core/messages';
 import {
   buildToolPreviewLines,
   getToolGlyph,
-  parseCommandOutputResult,
+  isShellShapedResult,
   renderToolLineAnsi,
   summariseToolCall,
 } from '#src/core/toolDisplay.js';
@@ -104,8 +104,10 @@ export function createPlainToolIndication(
       result,
       isError,
       // Shell-shaped results stream their child output live through the channel's default
-      // sink on this surface — suppress the duplicated body, keep the status tail.
-      liveOutputAlreadyShown: parseCommandOutputResult(result) !== null,
+      // sink on this surface — suppress the duplicated body, keep the status tail. TUI-C32
+      // residual c: gate on the tool NAME + shape (not shape alone), so a non-shell tool whose
+      // result merely quotes `<COMMAND_OUTPUT>` keeps its preview body instead of being suppressed.
+      liveOutputAlreadyShown: isShellShapedResult(name, result),
     });
     const body = preview.map((line) => INDENT + renderToolLineAnsi(line, colour));
     // Leading newline mirrors the historical notice framing (the model text stream may have
@@ -118,20 +120,44 @@ export function createPlainToolIndication(
       // Order matters: AIMessageChunk extends AIMessage, so test the chunk shape first
       // (mirrors processEventStream).
       if (AIMessageChunk.isInstance(chunk as BaseMessage)) {
-        const c = chunk as AIMessageChunk;
-        const deltas = c.tool_call_chunks ?? [];
-        if (deltas.length > 0) {
-          for (const delta of deltas) {
-            const index = typeof delta.index === 'number' ? delta.index : 0;
-            const entry = streaming.get(index) ?? { name: '', argsText: '' };
-            if (delta.id) entry.id = delta.id;
-            if (delta.name) entry.name = entry.name || delta.name;
-            if (delta.args) entry.argsText += delta.args;
-            streaming.set(index, entry);
+        // TUI-C32 residual e — fail-soft, matching the ToolMessage branch: accumulating tool-call
+        // deltas (`JSON.stringify(tc.args)` can throw on an unserialisable arg, e.g. a BigInt) must
+        // never break the run's stream loop. On any error we simply skip this chunk's tracking.
+        try {
+          const c = chunk as AIMessageChunk;
+          const deltas = c.tool_call_chunks ?? [];
+          if (deltas.length > 0) {
+            for (const delta of deltas) {
+              const index = typeof delta.index === 'number' ? delta.index : 0;
+              const entry = streaming.get(index) ?? { name: '', argsText: '' };
+              if (delta.id) entry.id = delta.id;
+              if (delta.name) entry.name = entry.name || delta.name;
+              if (delta.args) entry.argsText += delta.args;
+              streaming.set(index, entry);
+            }
+          } else {
+            // Some providers surface COMPLETE tool_calls on a chunk instead of deltas.
+            for (const tc of c.tool_calls ?? []) {
+              if (tc.id) {
+                byId.set(tc.id, {
+                  id: tc.id,
+                  name: tc.name,
+                  argsText: JSON.stringify(tc.args ?? {}),
+                });
+              }
+            }
           }
-        } else {
-          // Some providers surface COMPLETE tool_calls on a chunk instead of deltas.
-          for (const tc of c.tool_calls ?? []) {
+        } catch {
+          /* indication is best-effort; the model-facing stream is untouched */
+        }
+        return;
+      }
+      if (AIMessage.isInstance(chunk as BaseMessage)) {
+        // A non-chunk AIMessage (resumed/checkpoint-replayed runs) carries final tool_calls.
+        // TUI-C32 residual e — same fail-soft wrap as above/the ToolMessage branch.
+        try {
+          const m = chunk as AIMessage;
+          for (const tc of m.tool_calls ?? []) {
             if (tc.id) {
               byId.set(tc.id, {
                 id: tc.id,
@@ -140,16 +166,8 @@ export function createPlainToolIndication(
               });
             }
           }
-        }
-        return;
-      }
-      if (AIMessage.isInstance(chunk as BaseMessage)) {
-        // A non-chunk AIMessage (resumed/checkpoint-replayed runs) carries final tool_calls.
-        const m = chunk as AIMessage;
-        for (const tc of m.tool_calls ?? []) {
-          if (tc.id) {
-            byId.set(tc.id, { id: tc.id, name: tc.name, argsText: JSON.stringify(tc.args ?? {}) });
-          }
+        } catch {
+          /* indication is best-effort; the model-facing stream is untouched */
         }
         return;
       }
