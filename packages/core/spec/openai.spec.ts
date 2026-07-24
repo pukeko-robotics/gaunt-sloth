@@ -120,13 +120,28 @@ describe('openai provider processJsonConfig useResponsesApi routing', () => {
     expect(builtConfig.useResponsesApi).toBe(true);
   });
 
-  it('leaves useResponsesApi unset for a reasoning model with no reasoning configured', async () => {
+  it('forces useResponsesApi for a reasoning model even with NO reasoning configured (they default reasoning_effort on)', async () => {
+    // GS2-74 regression: a bare `{ type: openai, model: gpt-5.6-luna }` config (no reasoningEffort /
+    // reasoning) still 400s on chat/completions + tools because the model defaults reasoning_effort
+    // to a non-'none' value. The original guard required reasoning to be explicitly set and missed this.
     const { processJsonConfig } = await import('#src/providers/openai.js');
 
     await processJsonConfig(buildConfig({ model: 'gpt-5.6-luna' }));
 
     const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
-    expect(builtConfig.useResponsesApi).toBeUndefined();
+    expect(builtConfig.useResponsesApi).toBe(true);
+  });
+
+  it('routes a non-reasoning gpt-5-prefixed model (gpt-5-chat-latest) to Responses too — deliberate, safe (gth injects no reasoning params)', async () => {
+    // The `/^(gpt-5|o\d)/i` sweep intentionally catches gpt-5-chat-latest as well. Routing it to
+    // Responses is a harmless side-effect (Responses accepts it for a plain call), NOT an accident —
+    // pinned so a future reader doesn't "narrow" the regex and reintroduce the bare-config 400 class.
+    const { processJsonConfig } = await import('#src/providers/openai.js');
+
+    await processJsonConfig(buildConfig({ model: 'gpt-5-chat-latest' }));
+
+    const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
+    expect(builtConfig.useResponsesApi).toBe(true);
   });
 
   it('leaves useResponsesApi unset for a non-reasoning model (gpt-4o) even with reasoningEffort', async () => {
