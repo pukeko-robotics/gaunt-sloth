@@ -117,6 +117,187 @@ export function createToolErrorBudgetMiddleware(
 }
 
 /**
+ * EXT-36 — default number of consecutive identical `(tool, args)` calls before the tool-loop guard
+ * fires. Small on purpose: it must catch a genuine no-progress loop (a model re-issuing the SAME
+ * call verbatim) while never tripping a legitimate one-off retry (2x). Kept below GS2-36's coarser
+ * error cap (5) because a same-signature repeat is a stronger, more specific loop signal than "an
+ * error happened again".
+ */
+export const DEFAULT_TOOL_LOOP_THRESHOLD = 3;
+
+/** EXT-36 — resolved knobs for {@link createToolLoopGuardMiddleware}. */
+export interface ToolLoopGuardOptions {
+  /** Surface a user-visible notice at threshold (NO model-input mutation). Default ON. */
+  warn?: boolean;
+  /** End the run via `jumpTo:'end'` at threshold (opt-in, active loop-breaking). Default OFF. */
+  halt?: boolean;
+  /** Consecutive identical-signature repeats that trip the guard. Default {@link DEFAULT_TOOL_LOOP_THRESHOLD}. */
+  threshold?: number;
+}
+
+/**
+ * EXT-36 — normalise the `toolLoopGuard` config union (`false | true | { warn?, halt?, threshold? }`)
+ * into concrete {@link ToolLoopGuardOptions}, applying the WARN-ON-by-default policy at the read site
+ * (mirrors how `output.header` / `debugDump.redact` default with `!== false`, NOT in DEFAULT_CONFIG,
+ * so the effective-config snapshot never churns).
+ * - `false` → both modes off (a no-op guard);
+ * - `true` / absent → warn on, halt off, default threshold;
+ * - object → per-field, with warn defaulting ON and halt defaulting OFF.
+ */
+export function resolveToolLoopGuardOptions(
+  setting: boolean | ToolLoopGuardOptions | undefined | null
+): ToolLoopGuardOptions {
+  if (setting === false) return { warn: false, halt: false };
+  if (setting === true || setting === undefined || setting === null) return {};
+  return { warn: setting.warn, halt: setting.halt, threshold: setting.threshold };
+}
+
+/**
+ * EXT-36 — a deterministic, key-sorted stringify so `(tool, args)` signatures are stable regardless
+ * of object key order. No-args (`{}`) collapses to `"{}"`, so identical no-arg repeats collide BY
+ * DESIGN — that is exactly the loop signal. Known limitation: args carrying a volatile value (a
+ * timestamp / uuid) make every call look distinct, so the guard cannot see that loop; volatile-key
+ * stripping is deliberately NOT attempted (over-engineering for a rare, model-authored case).
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(record[k])}`).join(',')}}`;
+}
+
+/**
+ * EXT-36 — the tool-loop guardrail as a standalone, testable middleware factory. The ORTHOGONAL
+ * sibling of {@link createToolErrorBudgetMiddleware}: GS2-36 caps a consecutive-tool-ERROR streak;
+ * this catches a **repeated identical `(tool, args)` / no-progress loop** — the same call re-issued
+ * verbatim, whether it keeps erroring OR keeps "succeeding" with the same result (the fs-error-string
+ * loop GS2-36's comment explicitly leaves to EXT-36).
+ *
+ * STATELESS (the critical trap): the factory runs ONCE per session, so a closure-held counter would
+ * bleed across every turn. Like GS2-36 it holds NO state — each `beforeModel` recomputes the streak
+ * from the message tail.
+ *
+ * Detection. A signature is `(tool_name, args_hash)`. Name + args live on `AIMessage.tool_calls[]`,
+ * NOT on the `ToolMessage` (softener ToolMessages carry only content+tool_call_id+status), so each
+ * `ToolMessage` is paired to its call by `tool_call_id === AIMessage.tool_calls[].id` to recover the
+ * signature. The backward walk counts CONSECUTIVE ToolMessages with the SAME signature; a DIFFERENT
+ * signature breaks the streak (the model tried something else = progress), and a Human/System message
+ * is a fresh-turn boundary. Assistant messages (the tool-call requests) are skipped. Known no-op
+ * (safe, never a false trip): a single AIMessage issuing PARALLEL tool calls yields back-to-back
+ * differing signatures, which the walk reads as progress and resets.
+ *
+ * Two modes (composable):
+ * - WARN (default ON, provably harmless): the default path must NOT change what the model sees.
+ *   Appending ANY message then re-invoking the model mutates its input — a *steer*, not a *warn* —
+ *   and is provider-unsafe by default (Gemini expects a trailing user turn → crash risk; Anthropic
+ *   treats a trailing assistant as PREFILL → the note silently becomes the opening of the model's own
+ *   next reply, corrupt with no error; a HumanMessage after a ToolMessage is two consecutive user
+ *   turns for Anthropic/Gemini). So WARN instead SURFACES a user-visible notice via {@link onWarn}
+ *   and returns `undefined` — zero `state.messages` mutation, zero control-flow. Fired statelessly
+ *   ONCE per streak at the exact crossing (`streak === threshold`): a still-looping streak on later
+ *   turns (`streak > threshold`) does not re-surface, while an interrupted-then-resumed loop
+ *   re-reaches `threshold` and surfaces again — no marker/`additional_kwargs` machinery needed.
+ * - HALT (opt-in only, active loop-breaking): at/over threshold, return
+ *   `{ jumpTo: 'end', messages: [new AIMessage(reason)] }` — a TERMINAL notice (the model is never
+ *   re-invoked after it, so the prefill/role hazard cannot arise; the GS2-72-proven clean-stream
+ *   path). NEVER throws. A validated behaviour change lives behind this opt-in.
+ *
+ * @param onWarn TUI-safe user-notice sink for WARN, wired at the read site to
+ *   `statusUpdate(StatusLevel.WARNING, …)` (routed through the agent's status callback the renderer
+ *   consumes, never raw stdout, so it can't leak over the Ink frame). Omitted → WARN still runs but
+ *   surfaces nothing (still zero model-input mutation).
+ */
+export function createToolLoopGuardMiddleware(
+  options: ToolLoopGuardOptions = {},
+  onWarn?: (message: string) => void
+) {
+  const warn = options.warn ?? true;
+  const halt = options.halt ?? false;
+  const threshold = options.threshold ?? DEFAULT_TOOL_LOOP_THRESHOLD;
+  return createMiddleware({
+    name: 'GthLeanToolLoopGuard',
+    beforeModel: {
+      canJumpTo: ['end'],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      hook: (state: any) => {
+        // `false` config resolves to warn:false + halt:false — a genuine no-op (fast bail).
+        if (!warn && !halt) return undefined;
+        const messages: unknown[] = Array.isArray(state?.messages) ? state.messages : [];
+
+        // Recover each tool call's signature by id — name + args are on the AIMessage, not the
+        // ToolMessage. One pass over all AIMessages builds the id → {sig, name} lookup.
+        const callById = new Map<string, { sig: string; name: string }>();
+        for (const msg of messages) {
+          if (AIMessage.isInstance(msg) && Array.isArray(msg.tool_calls)) {
+            for (const tc of msg.tool_calls) {
+              const id = tc?.id;
+              if (typeof id === 'string') {
+                const name = typeof tc.name === 'string' ? tc.name : '';
+                callById.set(id, { sig: `${name} ${stableStringify(tc.args ?? {})}`, name });
+              }
+            }
+          }
+        }
+
+        // Walk the tail backward, counting consecutive identical signatures since the last boundary.
+        let streak = 0;
+        let currentSig: string | undefined;
+        let currentName = '';
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const msg = messages[i];
+          if (ToolMessage.isInstance(msg)) {
+            const call = callById.get(msg.tool_call_id as string);
+            // No paired call → cannot prove a repeat; treat as a boundary (never a false trip).
+            if (!call) break;
+            if (currentSig === undefined) {
+              currentSig = call.sig;
+              currentName = call.name;
+              streak = 1;
+            } else if (call.sig === currentSig) {
+              streak++;
+            } else {
+              break; // different signature = the model tried something else = progress
+            }
+          } else if (AIMessage.isInstance(msg)) {
+            continue; // the tool-call request — skip and keep counting the streak
+          } else {
+            break; // Human/System message: a fresh user turn resets everything.
+          }
+        }
+
+        if (currentSig === undefined || streak < threshold) return undefined;
+
+        // HALT (opt-in): end the run cleanly — never a throw. Terminal, so the model is never
+        // re-invoked after this AIMessage (no prefill/role hazard). Takes precedence over WARN.
+        if (halt) {
+          const notice =
+            `Stopped after ${streak} identical calls to the \`${currentName}\` tool with the same ` +
+            'arguments to avoid a loop that keeps spending tokens without making progress. ' +
+            'The same call cannot yield a different result: change your approach — different ' +
+            'arguments, a narrower step, or a different tool — or report the blocker to the user.';
+          return { jumpTo: 'end', messages: [new AIMessage(notice)] };
+        }
+
+        // WARN (default): SURFACE a user-visible notice and DO NOT touch state.messages (return
+        // undefined → the model's input is byte-for-byte unchanged, so no prefill/role hazard on any
+        // provider). Fire once per streak at the exact crossing: `streak === threshold` is a
+        // stateless "fire once" — a still-looping streak (streak > threshold) stays quiet, while an
+        // interrupted-then-resumed loop re-reaches threshold and surfaces again.
+        if (warn && streak === threshold) {
+          onWarn?.(
+            `Tool-loop guard: the agent has called \`${currentName}\` with the same arguments ` +
+              `${streak} times without new progress. It may be stuck — consider interrupting and ` +
+              'refining the request.'
+          );
+        }
+        return undefined;
+      },
+    },
+  });
+}
+
+/**
  * Lean agent: builds a standard `createAgent` (ReAct) graph. All run/stream/event
  * plumbing lives in {@link GthAbstractAgent}; this class only knows how to construct
  * the graph in {@link init}.
@@ -401,10 +582,33 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // backend keeps its own recursionLimit backstop.
     const toolErrorBudget = createToolErrorBudgetMiddleware();
 
+    // EXT-36: the ORTHOGONAL loop guard — repeated identical (tool, args) / no-progress detection,
+    // the sibling of GS2-36's error budget above. It catches the case GS2-36 explicitly leaves open:
+    // a model re-issuing the SAME call verbatim, whether it keeps erroring or keeps "succeeding" with
+    // the same result. Placed at index 3, immediately AFTER toolErrorBudget (index 2) and BEFORE user
+    // middleware: beforeModel hooks run in forward order with jumpTo short-circuiting, so on a
+    // simultaneous trip GS2-36's coarse error cap wins first and EXT-36 fires on its own
+    // signature-repeat threshold otherwise; keeping it outboard of user middleware means it can't be
+    // bypassed. WARN is on by default and SURFACES a user notice WITHOUT touching state.messages (the
+    // default path must never mutate the model's input — appending a message + re-invoking is a
+    // provider-unsafe steer, not a warn); HALT (opt-in) actively breaks the loop via a terminal
+    // jumpTo:'end'. Default WARN-ON is applied here at the read site (resolveToolLoopGuardOptions),
+    // NOT in DEFAULT_CONFIG, so the
+    // effective-config snapshot never churns. Lean backend only (like GS2-36); the deep array is
+    // untouched. `toolLoopGuard: false` resolves to a no-op guard (still installed at index 3 so the
+    // placement is stable).
+    const toolLoopGuard = createToolLoopGuardMiddleware(
+      resolveToolLoopGuardOptions(this.config.toolLoopGuard),
+      // WARN surfaces through the same TUI-safe status channel every other agent notice uses
+      // (renderer-consumed, never raw stdout) so it can't leak over the Ink frame (TUI-C31).
+      (message) => statusUpdate(StatusLevel.WARNING, message)
+    );
+
     const middleware = [
       shellExitSoftening,
       mcpToolErrorSoftening,
       toolErrorBudget,
+      toolLoopGuard,
       ...configuredMiddleware,
       toolCallStatusMiddleware,
       toolCallRepairMiddleware,
