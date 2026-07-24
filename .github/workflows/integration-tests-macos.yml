@@ -2,7 +2,7 @@ name: Integration tests (macOS, full)
 
 # Manual full integration-test suite on macOS. Mirrors integration-tests.yml
 # (the canonical ubuntu full run) but on macos-latest, so the complete suite —
-# not just the lite `simple` subset of integration-tests-platforms.yml — can be
+# not just the lite `xx-small` subset of integration-tests-platforms.yml — can be
 # exercised on macOS on demand.
 
 on:

@@ -178,7 +178,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Run lite integration tests with ${{ matrix.provider }}
-        run: pnpm run it ${{ matrix.provider }} simple
+        run: pnpm run it ${{ matrix.provider }} xx-small
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}

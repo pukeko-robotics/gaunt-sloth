@@ -140,7 +140,7 @@ Faster integration tests have `simple` suffix, which allows running a subset of 
 this also helps with less intelligent models:
 
 ```bash
-pnpm run it vertexai simple
+pnpm run it vertexai xx-small
 ```
 
 Run multiple integration test patterns:

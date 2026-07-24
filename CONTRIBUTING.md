@@ -166,7 +166,7 @@ Integration tests are available when relevant:
 
 ```bash
 pnpm run it <provider>
-pnpm run it <provider> simple
+pnpm run it <provider> xx-small
 ```
 
 See [integration-tests/README.md](./integration-tests/README.md) for details.

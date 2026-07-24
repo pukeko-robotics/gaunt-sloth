@@ -2,7 +2,7 @@ name: Integration tests (Windows, full)
 
 # Manual full integration-test suite on Windows. Mirrors integration-tests.yml
 # (the canonical ubuntu full run) but on windows-latest, so the complete suite —
-# not just the lite `simple` subset of integration-tests-platforms.yml — can be
+# not just the lite `xx-small` subset of integration-tests-platforms.yml — can be
 # exercised on Windows on demand (e.g. to validate Windows-specific fs/shell
 # behavior like the EXT-15/EXT-16 fixes).
 
