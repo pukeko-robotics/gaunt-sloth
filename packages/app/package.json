@@ -55,10 +55,10 @@
   },
   "optionalDependencies": {
     "chalk": "^5.6.2",
-    "ink": "^7.1.0",
+    "ink": "^7.1.1",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
-    "react": "^19.2.7"
+    "react": "^19.2.8"
   },
   "devDependencies": {
     "@microsoft/tui-test": "^0.0.4",
