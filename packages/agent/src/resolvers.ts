@@ -20,6 +20,7 @@ import type { StructuredToolInterface } from '@langchain/core/tools';
 import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
 import { displayInfo, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { createA2AAgentTool } from '#src/tools/A2AAgentTool.js';
+import { createMcpResourceTools } from '#src/tools/McpResourceTool.js';
 import { prepareMcpTools } from '#src/utils/mcpUtils.js';
 import { formatMcpConnectFailureMessage } from '#src/utils/mcpAuthError.js';
 import { createAuthProviderAndAuthenticate } from '#src/mcp/OAuthClientProviderImpl.js';
@@ -116,6 +117,9 @@ export function createResolvers(): AgentResolvers {
     // instructions contribute nothing (trimmed, then omitted). The captured value is injected —
     // fenced + per-server-labelled — into the composed system prompt on BOTH backends.
     if (mcpClientInstance) {
+      // Narrow the mutable `| null` field once so the synthesized resource tools can close over a
+      // non-null client (like A2A tools close over their wrapper).
+      const activeClient = mcpClientInstance;
       const serverNames = Object.keys(config.mcpServers || {});
       for (const serverName of serverNames) {
         try {
@@ -123,6 +127,17 @@ export function createResolvers(): AgentResolvers {
           const instructions = client?.getInstructions()?.trim();
           if (instructions) {
             mcpServerInstructions.push({ server: serverName, instructions });
+          }
+          // EXT-48: if this server advertises the `resources` capability, synthesize two
+          // agent-callable tools (mcp__<server>__list_resources / __read_resource) bound to the
+          // live client + server name, and push them into the SAME tools array both backends
+          // consume — no agent-backend edit. On-by-default when advertised; opt-out is the
+          // existing allowedTools glob (mcp__<server>__*). Concrete-URI list/read only —
+          // resource TEMPLATES are deferred. Reuses this loop's per-server try/catch: a server
+          // that lacks resources or throws on capability/synthesis contributes no resource tools
+          // and does not abort the rest.
+          if (client?.getServerCapabilities()?.resources) {
+            tools.push(...createMcpResourceTools(activeClient, serverName));
           }
         } catch (error) {
           debugLog(`MCP instructions capture error for '${serverName}': ${error}`);
