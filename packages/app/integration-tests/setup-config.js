@@ -19,6 +19,7 @@ const validConfigs = [
   'google-genai',
   'xai',
   'openrouter',
+  'ollama',
 ];
 
 console.log(`Provided config "${configName}"`);
@@ -49,6 +50,23 @@ let providerLLM = undefined;
 try {
   const providerConfigRaw = fs.readFileSync(sourceFile, 'utf8');
   const providerConfig = JSON.parse(providerConfigRaw);
+
+  // Ollama uses an ENV-DRIVEN model — the independent test axis (QA-8). The config file pins
+  // the provider + params (numCtx/temperature); OLLAMA_IT_MODEL selects the actual model tag.
+  // This is the ONLY place the model is chosen: nothing branches the model on the tier/filter.
+  // Default `gemma4:12b` MUST match the it.js ollama preflight default so the probe and the SUT
+  // agree on which model tag to require/run.
+  if (configName === 'ollama' && providerConfig?.llm) {
+    const ollamaModel = process.env.OLLAMA_IT_MODEL || 'gemma4:12b';
+    providerConfig.llm.model = ollamaModel;
+    // copyFileSync above wrote the source's default model; re-write workdir config with the
+    // resolved model. temperature:0 and numCtx are left exactly as authored.
+    fs.writeFileSync(workdirTargetFile, JSON.stringify(providerConfig, null, 2), 'utf8');
+    console.log(
+      `Ollama model set to "${ollamaModel}" (OLLAMA_IT_MODEL) in workdir/.gsloth.config.json`
+    );
+  }
+
   providerLLM = providerConfig?.llm;
   if (!providerLLM) {
     console.warn(

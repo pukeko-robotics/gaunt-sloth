@@ -12,6 +12,43 @@ if (process.env.HTTPS_PROXY || process.env.HTTP_PROXY) {
   }
 }
 
+const provider = process.argv[2];
+
+// QA-8 — run-level, OLLAMA-SCOPED skip preflight, ported from ollama-smoke-it/run-ollama-smoke.sh's
+// ollama_ready(). ONLY when the selected provider is `ollama`: if the daemon is unreachable or the
+// resolved OLLAMA_IT_MODEL tag is absent, print a loud SKIPPED line (saying which — daemon vs model)
+// and exit 0 WITHOUT running vitest — so `it ollama …` is runnable anywhere and green where it can't
+// run (local-GPU-only, like the bash smoke). Every other provider is UNCHANGED: a missing API key
+// must still fail loudly, so there is deliberately no generic provider-skip here.
+if (provider === 'ollama') {
+  const host = (process.env.OLLAMA_HOST || 'http://127.0.0.1:11434').replace(/\/+$/, '');
+  // Same default as setup-config.js so the probe and the SUT agree on which model tag to require.
+  const model = process.env.OLLAMA_IT_MODEL || 'gemma4:12b';
+  let modelNames = null;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(`${host}/api/tags`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const json = await res.json();
+    modelNames = (json.models || []).map((m) => m.name);
+  } catch {
+    console.log(
+      `SKIPPED: ollama daemon not reachable at ${host} — this is a local-GPU-only gate (start ollama to enable).`
+    );
+    process.exit(0);
+  }
+  if (!modelNames.includes(model)) {
+    console.log(
+      `SKIPPED: model '${model}' not present in ollama at ${host} — this is a local-GPU-only gate ` +
+        `(\`ollama pull ${model}\` to enable).`
+    );
+    process.exit(0);
+  }
+  console.log(`==> ollama OK: daemon ${host}, model ${model}`);
+}
+
 execSync('node packages/app/integration-tests/setup-config.js ' + process.argv[2], {
   stdio: [process.stdin, process.stdout, process.stderr],
 });
