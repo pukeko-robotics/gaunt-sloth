@@ -125,19 +125,11 @@ export function createToolErrorBudgetMiddleware(
  */
 export const DEFAULT_TOOL_LOOP_THRESHOLD = 3;
 
-/**
- * EXT-36 — the additional_kwargs key stamped on a warn nudge so the SAME streak is nudged at most
- * once. The value is the offending signature; the guard suppresses a re-nudge idempotently by
- * finding a prior nudge carrying this key === the current signature WITHIN the current streak (the
- * backward walk stops at the streak boundary, so the check is per-streak, not per-session).
- */
-export const TOOL_LOOP_GUARD_MARKER = 'gth_tool_loop_guard';
-
 /** EXT-36 — resolved knobs for {@link createToolLoopGuardMiddleware}. */
 export interface ToolLoopGuardOptions {
-  /** Inject a (control-flow-free) nudge at threshold. Default ON. */
+  /** Surface a user-visible notice at threshold (NO model-input mutation). Default ON. */
   warn?: boolean;
-  /** End the run via `jumpTo:'end'` at threshold. Default OFF (opt-in). */
+  /** End the run via `jumpTo:'end'` at threshold (opt-in, active loop-breaking). Default OFF. */
   halt?: boolean;
   /** Consecutive identical-signature repeats that trip the guard. Default {@link DEFAULT_TOOL_LOOP_THRESHOLD}. */
   threshold?: number;
@@ -191,25 +183,35 @@ function stableStringify(value: unknown): string {
  * `ToolMessage` is paired to its call by `tool_call_id === AIMessage.tool_calls[].id` to recover the
  * signature. The backward walk counts CONSECUTIVE ToolMessages with the SAME signature; a DIFFERENT
  * signature breaks the streak (the model tried something else = progress), and a Human/System message
- * is a fresh-turn boundary. Assistant messages (the tool-call requests AND this guard's own injected
- * nudge, both AIMessages) are skipped — so a nudge never resets the streak, letting HALT re-trip
- * deterministically. Known no-op (safe, never a false trip): a single AIMessage issuing PARALLEL tool
- * calls yields back-to-back differing signatures, which the walk reads as progress and resets.
+ * is a fresh-turn boundary. Assistant messages (the tool-call requests) are skipped. Known no-op
+ * (safe, never a false trip): a single AIMessage issuing PARALLEL tool calls yields back-to-back
+ * differing signatures, which the walk reads as progress and resets.
  *
  * Two modes (composable):
- * - WARN (default ON, provably harmless): at threshold, return `{ messages: [nudge] }` with NO
- *   `jumpTo` — zero control-flow effect, so a false positive can never halt or reroute. The nudge is
- *   an AIMessage (NOT a mid-list SystemMessage, which ChatAnthropic rejects — GS2-21; and NOT a
- *   HumanMessage, which would need a special-case in the boundary rule): the walk already skips
- *   AIMessages, so it composes with zero special-casing, exactly like GS2-36's AIMessage notice.
- *   Re-fire throttle: because the walk re-runs every turn, a still-over-threshold signature is
- *   suppressed by finding this guard's own prior nudge (its {@link TOOL_LOOP_GUARD_MARKER}
- *   additional_kwargs === the signature) WITHIN the current streak → one nudge per signature per
- *   streak.
- * - HALT (opt-in only): at threshold, return `{ jumpTo: 'end', messages: [new AIMessage(reason)] }`
- *   — the same clean terminal GS2-36 uses (proven to stream cleanly, GS2-72). NEVER throws.
+ * - WARN (default ON, provably harmless): the default path must NOT change what the model sees.
+ *   Appending ANY message then re-invoking the model mutates its input — a *steer*, not a *warn* —
+ *   and is provider-unsafe by default (Gemini expects a trailing user turn → crash risk; Anthropic
+ *   treats a trailing assistant as PREFILL → the note silently becomes the opening of the model's own
+ *   next reply, corrupt with no error; a HumanMessage after a ToolMessage is two consecutive user
+ *   turns for Anthropic/Gemini). So WARN instead SURFACES a user-visible notice via {@link onWarn}
+ *   and returns `undefined` — zero `state.messages` mutation, zero control-flow. Fired statelessly
+ *   ONCE per streak at the exact crossing (`streak === threshold`): a still-looping streak on later
+ *   turns (`streak > threshold`) does not re-surface, while an interrupted-then-resumed loop
+ *   re-reaches `threshold` and surfaces again — no marker/`additional_kwargs` machinery needed.
+ * - HALT (opt-in only, active loop-breaking): at/over threshold, return
+ *   `{ jumpTo: 'end', messages: [new AIMessage(reason)] }` — a TERMINAL notice (the model is never
+ *   re-invoked after it, so the prefill/role hazard cannot arise; the GS2-72-proven clean-stream
+ *   path). NEVER throws. A validated behaviour change lives behind this opt-in.
+ *
+ * @param onWarn TUI-safe user-notice sink for WARN, wired at the read site to
+ *   `statusUpdate(StatusLevel.WARNING, …)` (routed through the agent's status callback the renderer
+ *   consumes, never raw stdout, so it can't leak over the Ink frame). Omitted → WARN still runs but
+ *   surfaces nothing (still zero model-input mutation).
  */
-export function createToolLoopGuardMiddleware(options: ToolLoopGuardOptions = {}) {
+export function createToolLoopGuardMiddleware(
+  options: ToolLoopGuardOptions = {},
+  onWarn?: (message: string) => void
+) {
   const warn = options.warn ?? true;
   const halt = options.halt ?? false;
   const threshold = options.threshold ?? DEFAULT_TOOL_LOOP_THRESHOLD;
@@ -242,7 +244,6 @@ export function createToolLoopGuardMiddleware(options: ToolLoopGuardOptions = {}
         let streak = 0;
         let currentSig: string | undefined;
         let currentName = '';
-        let alreadyNudged = false;
         for (let i = messages.length - 1; i >= 0; i--) {
           const msg = messages[i];
           if (ToolMessage.isInstance(msg)) {
@@ -259,14 +260,7 @@ export function createToolLoopGuardMiddleware(options: ToolLoopGuardOptions = {}
               break; // different signature = the model tried something else = progress
             }
           } else if (AIMessage.isInstance(msg)) {
-            // Skip the tool-call request AND this guard's own nudge (both AIMessages). Detecting the
-            // nudge here scopes the throttle to the CURRENT streak: a boundary (or a differing
-            // signature) breaks the walk before an older-streak nudge could be reached.
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            if ((msg as any).additional_kwargs?.[TOOL_LOOP_GUARD_MARKER] === currentSig) {
-              alreadyNudged = true;
-            }
-            continue;
+            continue; // the tool-call request — skip and keep counting the streak
           } else {
             break; // Human/System message: a fresh user turn resets everything.
           }
@@ -274,7 +268,8 @@ export function createToolLoopGuardMiddleware(options: ToolLoopGuardOptions = {}
 
         if (currentSig === undefined || streak < threshold) return undefined;
 
-        // HALT (opt-in): end the run cleanly — never a throw. Takes precedence over WARN.
+        // HALT (opt-in): end the run cleanly — never a throw. Terminal, so the model is never
+        // re-invoked after this AIMessage (no prefill/role hazard). Takes precedence over WARN.
         if (halt) {
           const notice =
             `Stopped after ${streak} identical calls to the \`${currentName}\` tool with the same ` +
@@ -284,17 +279,19 @@ export function createToolLoopGuardMiddleware(options: ToolLoopGuardOptions = {}
           return { jumpTo: 'end', messages: [new AIMessage(notice)] };
         }
 
-        // WARN (default): inject a control-flow-free nudge, once per signature per streak.
-        if (alreadyNudged) return undefined;
-        const nudge = new AIMessage({
-          content:
-            `You have called the \`${currentName}\` tool with the same arguments ${streak} times ` +
-            'in a row without making new progress. Repeating an identical call cannot produce a ' +
-            'different result — try a different approach (different arguments, a different tool, or ' +
-            'a narrower step), or stop and tell the user what is blocking you.',
-          additional_kwargs: { [TOOL_LOOP_GUARD_MARKER]: currentSig },
-        });
-        return { messages: [nudge] };
+        // WARN (default): SURFACE a user-visible notice and DO NOT touch state.messages (return
+        // undefined → the model's input is byte-for-byte unchanged, so no prefill/role hazard on any
+        // provider). Fire once per streak at the exact crossing: `streak === threshold` is a
+        // stateless "fire once" — a still-looping streak (streak > threshold) stays quiet, while an
+        // interrupted-then-resumed loop re-reaches threshold and surfaces again.
+        if (warn && streak === threshold) {
+          onWarn?.(
+            `Tool-loop guard: the agent has called \`${currentName}\` with the same arguments ` +
+              `${streak} times without new progress. It may be stuck — consider interrupting and ` +
+              'refining the request.'
+          );
+        }
+        return undefined;
       },
     },
   });
@@ -592,13 +589,19 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // middleware: beforeModel hooks run in forward order with jumpTo short-circuiting, so on a
     // simultaneous trip GS2-36's coarse error cap wins first and EXT-36 fires on its own
     // signature-repeat threshold otherwise; keeping it outboard of user middleware means it can't be
-    // bypassed. WARN is on by default (control-flow-free nudge); HALT is opt-in. Default WARN-ON is
-    // applied here at the read site (resolveToolLoopGuardOptions), NOT in DEFAULT_CONFIG, so the
+    // bypassed. WARN is on by default and SURFACES a user notice WITHOUT touching state.messages (the
+    // default path must never mutate the model's input — appending a message + re-invoking is a
+    // provider-unsafe steer, not a warn); HALT (opt-in) actively breaks the loop via a terminal
+    // jumpTo:'end'. Default WARN-ON is applied here at the read site (resolveToolLoopGuardOptions),
+    // NOT in DEFAULT_CONFIG, so the
     // effective-config snapshot never churns. Lean backend only (like GS2-36); the deep array is
     // untouched. `toolLoopGuard: false` resolves to a no-op guard (still installed at index 3 so the
     // placement is stable).
     const toolLoopGuard = createToolLoopGuardMiddleware(
-      resolveToolLoopGuardOptions(this.config.toolLoopGuard)
+      resolveToolLoopGuardOptions(this.config.toolLoopGuard),
+      // WARN surfaces through the same TUI-safe status channel every other agent notice uses
+      // (renderer-consumed, never raw stdout) so it can't leak over the Ink frame (TUI-C31).
+      (message) => statusUpdate(StatusLevel.WARNING, message)
     );
 
     const middleware = [
