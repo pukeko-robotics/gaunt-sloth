@@ -21,9 +21,17 @@ import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
 import { ToolMessage, HumanMessage } from '@langchain/core/messages';
 import type { MessageContent } from '@langchain/core/messages';
+import { imageBlockFor } from '#src/middleware/frontendImageInjectionMiddleware.js';
 
 export interface BinaryContentInjectionMiddlewareSettings {
   name?: 'binary-content-injection';
+  /**
+   * The gth provider string selecting the per-provider image-block shape (see
+   * {@link imageBlockFor}). Derived by the registry factory via `resolveVisionProvider(gthConfig)`;
+   * may be `''`/absent, in which case the standard base64 image block is emitted. Only affects the
+   * `image` format — file/video/audio blocks are provider-agnostic.
+   */
+  provider?: string;
 }
 
 interface ParsedBinaryContent {
@@ -97,10 +105,13 @@ function getFormatLabel(formatType: string): string {
 }
 
 export function createBinaryContentInjectionMiddleware(
-  _settings: BinaryContentInjectionMiddlewareSettings,
+  settings: BinaryContentInjectionMiddlewareSettings,
   _gthConfig: GthConfig
 ): Promise<AgentMiddleware> {
   debugLog('Creating binary content injection middleware');
+
+  // The provider selecting the image-block shape; '' falls to the standard base64 block.
+  const provider = settings.provider ?? '';
 
   return Promise.resolve(
     createMiddleware({
@@ -136,7 +147,14 @@ export function createBinaryContentInjectionMiddleware(
 
           for (const { binaryData } of binaryMessages) {
             const formatLabel = getFormatLabel(binaryData.formatType);
-            const contentBlock = createContentBlock(binaryData);
+            // Images go through the per-provider builder so OpenAI reasoning models (Responses API,
+            // GS2-74) get a valid `image_url` block instead of the standard `source_type` data block,
+            // which @langchain/openai mis-serialises to an invalid Responses image part (GS2-75).
+            // file/video/audio keep the standard block (they already convert correctly).
+            const contentBlock =
+              binaryData.formatType === 'image'
+                ? imageBlockFor(provider, binaryData.media_type, binaryData.data)
+                : createContentBlock(binaryData);
 
             const humanMessage = new HumanMessage({
               content: [
