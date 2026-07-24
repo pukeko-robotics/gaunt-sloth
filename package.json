@@ -25,7 +25,6 @@
     "it": "pnpm run build && node it.js",
     "it-verbose": "pnpm run build && GSLOTH_IT_VERBOSE=1 node it.js",
     "it-tui": "pnpm run build && node packages/app/run-tui-e2e.js",
-    "smoke:ollama": "./ollama-smoke-it/run-ollama-smoke.sh",
     "lint": "eslint . --ext .js,.ts",
     "lint-n-fix": "eslint . --ext .js,.ts --fix",
     "format": "prettier --write 'packages/*/src/**/*.{js,ts}'",

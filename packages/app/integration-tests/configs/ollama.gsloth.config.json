@@ -1,0 +1,20 @@
+{
+  "llm": {
+    "type": "ollama",
+    "model": "gemma4:12b",
+    "numCtx": 16384,
+    "temperature": 0
+  },
+  "commands": {
+    "api": {
+      "builtInTools": ["show_a2ui_surface"]
+    },
+    "pr": {
+      "filesystem": "none"
+    },
+    "review": {
+      "filesystem": "none"
+    }
+  },
+  "canInterruptInferenceWithEsc": false
+}

@@ -154,16 +154,18 @@ Before merging a change to the **agent runtime, the provider layer, or the CLI v
 whole-agent functional gate:
 
 ```bash
-pnpm run smoke:ollama          # or: ollama-smoke-it/run-ollama-smoke.sh
+pnpm run it ollama xx-small
 ```
 
-It drives the **real `gth` CLI** (`ask` / `exec` / `code --no-tui` / `eval`) against a **local ollama
-model** (`gemma4:12b` by default) and asserts each verb runs, calls a tool, and **synthesizes** a
-non-empty answer from the tool result — catching whole-agent regressions the unit suite can't (the
-[GS2-59](ollama-smoke-it/README.md) class: gemma-over-ollama returned empty content on the post-tool
-turn while every unit test stayed green). It is **local-GPU-only** and **SKIPs (exit 0)** when ollama
-is absent, so it is safe to run anywhere; it is deliberately **not** in CI. See
-[`ollama-smoke-it/README.md`](ollama-smoke-it/README.md).
+It runs the **`xx-small` integration-test tier** — the `ask`/`exec`/`code`/`review`/`pr` verbs plus a
+marker/synthesis smoke — driving the **real `gth` CLI** against a **local ollama model** (`gemma4:12b`
+by default, overridable via `OLLAMA_IT_MODEL`). Each marker case asserts the verb runs, calls a tool,
+and **synthesizes** the planted marker from the tool result (a permanent decoy-marker case proves that
+check bites), catching whole-agent regressions the unit suite can't — the GS2-59 class: gemma-over-
+ollama returned empty content on the post-tool turn while every unit test stayed green. It is
+**local-GPU-only** and **SKIPs (exit 0)** when ollama is absent, so it is safe to run anywhere; it is
+deliberately **not** in CI. Model is an independent axis (`OLLAMA_IT_MODEL=gemma4:31b …`); see
+[`packages/app/integration-tests/README.md`](packages/app/integration-tests/README.md#test-tiers-model-size-floor).
 
 ### TUI PTY e2e gate (it-tui)
 
