@@ -1,0 +1,11 @@
+{
+  "$schema": "https://gauntsloth.app/schema/v2/gsloth-config.schema.json",
+  "llm": {
+    "type": "openai",
+    "model": "mercury-2",
+    "apiKeyEnvironmentVariable": "INCEPTION_API_KEY",
+    "configuration": {
+      "baseURL": "https://api.inceptionlabs.ai/v1"
+    }
+  }
+}

@@ -88,10 +88,7 @@ describe('modelDiscovery', () => {
         'HUGGINGFACEHUB_API_TOKEN',
         'HF_API_KEY',
       ]);
-      expect(descriptor.preferredModels).toEqual([
-        'openai/gpt-oss-120b',
-        'Qwen/Qwen3-Coder-480B-A35B-Instruct',
-      ]);
+      expect(descriptor.preferredModels).toEqual(['zai-org/GLM-5.2', 'moonshotai/Kimi-K2.7-Code']);
     });
   });
 
@@ -716,7 +713,7 @@ describe('modelDiscovery', () => {
       expect(models.find((m) => m.id === 'gemini-experimental-xyz')!.preferred).toBe(false);
     });
 
-    it('status "curated" (the 4-item stub) with NO key and NO fetch', async () => {
+    it('status "curated" (the curated stub) with NO key and NO fetch', async () => {
       const fetchMock = vi.fn(async () => {
         throw new Error('should not be called');
       });
@@ -792,7 +789,7 @@ describe('modelDiscovery', () => {
 
     it('resolveInitModel returns the highest-ranked curated id that is actually live (verified-present, not curated[0])', async () => {
       systemUtilsMock.env.GOOGLE_API_KEY = 'g-live-123';
-      // curated[0] (gemini-3.6-flash) is NOT live; curated[1] (gemini-3.5-flash) IS.
+      // curated[0] (gemini-3.6-flash) is NOT live; curated[1] (gemini-3.1-pro-preview) IS.
       vi.stubGlobal(
         'fetch',
         okJson({
@@ -801,13 +798,16 @@ describe('modelDiscovery', () => {
               name: 'models/gemini-experimental-xyz',
               supportedGenerationMethods: ['generateContent'],
             },
-            { name: 'models/gemini-3.5-flash', supportedGenerationMethods: ['generateContent'] },
+            {
+              name: 'models/gemini-3.1-pro-preview',
+              supportedGenerationMethods: ['generateContent'],
+            },
           ],
         })
       );
       const { resolveInitModel } = await import('#src/providers/modelDiscovery.js');
       // Proves it verifies presence against the live list rather than emitting getCuratedFallbackModel.
-      expect(await resolveInitModel('google-genai')).toBe('gemini-3.5-flash');
+      expect(await resolveInitModel('google-genai')).toBe('gemini-3.1-pro-preview');
     });
 
     it('resolveInitModel returns undefined for google with no key (no fetch, no invented literal)', async () => {
