@@ -27,17 +27,43 @@ integration-tests/
 
 **Important**: All integration tests (except profile tests) run from `workdir/` as their working directory. Test data and configuration files should only be placed in `workdir/`, not in the integration-tests root.
 
-## Test Structure
+## Test tiers (model-size floor)
 
-Some tests intentionally contain `simple` in their name to indicate that fast models with lower intelligence, such as mercury, can run them without failing. Moreover, they take fewer tokens, which means they may be run in CI matrix.
+A test's filename carries a **tier** — the *smallest model class expected to pass it*, i.e. its
+complexity floor. The tier is **orthogonal to the model you run it against**: it only selects *which*
+tests run; the *model* is chosen by the provider config. Any provider can run any tier — a frontier
+model trivially passes the easy tiers.
+
+- **`*.xx-small.it.ts`** — passes on a small local model (gemma via ollama). The fast, free iteration
+  loop; also the local pre-merge gate. Cheap, few tokens, CI-matrix-able.
+- **`*.small.it.ts`** — needs a stronger cheap model (gpt-oss-120b, e.g. the `groq` config).
+  *Reserved — no existing test carries it yet.*
+- **untagged `*.it.ts`** — frontier tests that need a full cloud model.
+
+Selection is a plain vitest filename-substring filter, and the tier names nest (`xx-small` is a
+substring of `small`), so a filter runs *that tier and everything cheaper*:
 
 ```bash
-pnpm run it inception simple
+pnpm run it ollama xx-small     # the local-gemma fast loop (see "Local ollama" below)
+pnpm run it groq small          # runs small + xx-small on gpt-oss-120b
+pnpm run it anthropic           # no filter → everything, including frontier
 ```
 
+An `x-small` tier (a mid model such as gemma-31b) can be reintroduced the day a test needs a floor
+*between* xx-small and small — nothing does today, so the scale stays at two named tiers.
+
+### Local ollama (free, no API key)
+
+`pnpm run it ollama <tier>` drives a **local ollama** model — no API key, runs anywhere ollama is up.
+The model is an independent axis via `OLLAMA_IT_MODEL` (default `gemma4:12b`):
+
 ```bash
-pnpm run it groq simple
+pnpm run it ollama xx-small                              # gemma4:12b
+OLLAMA_IT_MODEL=gemma4:31b pnpm run it ollama xx-small   # same tests, a bigger local model
 ```
+
+If the ollama daemon (or the requested model tag) isn't present, the ollama run **SKIPs and exits 0**
+— so it is safe to run on any box, including one without a GPU.
 
 ## Running the Tests
 
@@ -59,7 +85,8 @@ To run the integration tests:
    pnpm run it anthropic
    ```
 
-Or `pnpm run it vertexai` or `pnpm run it groq simple`,
+Or `pnpm run it vertexai` or `pnpm run it groq small`, or — free and key-less —
+`pnpm run it ollama xx-small` against a local gemma (see "Test tiers" above).
 
 please note if you are on free tier of Groq review and PR tests are likely to fail,
 because tokens limit has been hit.
