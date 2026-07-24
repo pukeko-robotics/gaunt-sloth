@@ -4,7 +4,7 @@ This page preserves a retired in-tree tool (`gth_jira_log_work`, removed unused 
 worked example of the shape a custom LangChain tool for Gaunt Sloth takes: a zod input schema,
 config-dependent availability with a clear error when configuration is missing, and a call out
 to an external API. Custom tools are configured through a JavaScript config's `tools` array —
-see [Custom tools in JavaScript configuration](CONFIGURATION.md#javascript-configuration).
+see [Custom tools in JavaScript configuration](configuration/providers.md#javascript-configuration).
 
 The code below is the tool as it lived in the repo. It imported an app-internal helper
 (`jiraLogWork`, which POSTs to Jira's worklog REST endpoint) that is not part of the published
@@ -67,4 +67,4 @@ export function get(config: GthConfig) {
 
 Note: automatic work logging after `gth pr` reviews does not need a tool at all — it is a
 config setting, see
-[Automatic work logging for Jira reviews](CONFIGURATION.md#automatic-work-logging-for-jira-reviews).
+[Automatic work logging for Jira reviews](configuration/content-sources.md#automatic-work-logging-for-jira-reviews).

@@ -60,11 +60,11 @@ export function reviewCommand(
       'after',
       '\n' +
         'Examples:\n' +
-        '  $ git --no-pager diff | gsloth review\n' +
-        '  $ gsloth review --content-source git\n' +
-        '  $ gsloth review origin/main...HEAD --content-source git\n' +
-        '  $ gsloth review -r requirements.md\n' +
-        '  $ git diff | gsloth review -m "Please focus on security implications"\n'
+        '  $ git --no-pager diff | gth review\n' +
+        '  $ gth review --content-source git\n' +
+        '  $ gth review origin/main...HEAD --content-source git\n' +
+        '  $ gth review -r requirements.md\n' +
+        '  $ git diff | gth review -m "Please focus on security implications"\n'
     )
     .action(async (contentId: string | undefined, options: ReviewCommandOptions) => {
       const { initConfig } = await import('@gaunt-sloth/core/config.js');

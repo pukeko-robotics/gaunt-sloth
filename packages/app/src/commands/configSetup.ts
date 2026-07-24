@@ -44,7 +44,7 @@ export async function createProjectConfig(configType: string, force = false): Pr
 }
 
 /**
- * Ensures that the .gsloth directory exists in the project root.
+ * Ensures that the .gth directory exists in the project root.
  * Creates it if it does not exist.
  */
 export function ensureGslothDir(): void {

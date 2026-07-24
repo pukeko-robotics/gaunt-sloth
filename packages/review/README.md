@@ -71,7 +71,7 @@ The review text is written to stdout. With rating enabled, `review()` sets `proc
 when the rating comes back below `passThreshold` (or when the model fails to produce a rating),
 so the script exits non-zero exactly when `gth review` would — that is the whole embed contract.
 Configuration (provider, prompts, rating thresholds) is the standard Gaunt Sloth config, see
-[docs/CONFIGURATION.md](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/docs/CONFIGURATION.md).
+[the configuration guide](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/docs/configuration/index.md).
 
 This exact flow is verified by the workspace embed e2e (`pnpm run test:embed`), which packs the
 published tarballs and runs the snippet above from a temp-dir consumer against a stub model.

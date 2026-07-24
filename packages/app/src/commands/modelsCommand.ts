@@ -31,6 +31,14 @@ export function modelsCommand(program: Command): void {
     .description('List available models, enriched with cost/context metadata from models.dev')
     .option('--refresh', 'Force a models.dev catalog re-fetch past the cache TTL')
     .option('--provider <id>', 'Only list models for a single provider (e.g. anthropic, openai)')
+    .addHelpText(
+      'after',
+      '\n' +
+        'Examples:\n' +
+        '  $ gth models\n' +
+        '  $ gth models --refresh\n' +
+        '  $ gth models --provider anthropic\n'
+    )
     .action(async (options: { refresh?: boolean; provider?: string }) => {
       const providers = await detectProviders();
       const filtered = options.provider
