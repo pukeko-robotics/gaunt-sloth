@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AIMessage } from '@langchain/core/messages';
+import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import { convertMessage, convertMessages } from '#src/modules/apiAgUiModule.js';
 
 // EXT-35 — the AG-UI convertMessage wire-in point. An INCOMING assistant message with no native
@@ -176,5 +176,122 @@ describe('apiAgUiModule.convertMessages — EXT-43 dangling history tool_call gu
     );
     expect((converted[1] as AIMessage).content).toBe('The weather is sunny.');
     expect((converted[1] as AIMessage).tool_calls ?? []).toHaveLength(0);
+  });
+});
+
+// RC-18 — the symmetric backward guard (convertMessages). A replayed `role:'tool'` result whose
+// matching tool_call id is not present on any PRECEDING assistant message is an ORPHAN: converting
+// it to a ToolMessage yields a tool result with no preceding AIMessage.tool_calls, which a strict
+// provider (Anthropic) 400s on (INVALID_TOOL_RESULTS). The bug: the robot's terminal `finish_task`
+// result was replayed without its parenting assistant tool_call. The guard drops such orphans while
+// keeping genuine call→result pairs (matched by tool_call_id, accumulated in iteration order).
+describe('apiAgUiModule.convertMessages — RC-18 orphan tool-result guard', () => {
+  const ALLOW = new Set(['finish_task']);
+
+  const toolMessages = (msgs: ReturnType<typeof convertMessages>) =>
+    msgs.filter((m): m is ToolMessage => ToolMessage.isInstance(m));
+
+  it('drops an orphan tool result with no preceding assistant tool_call', () => {
+    const converted = convertMessages(
+      [
+        { role: 'user', content: 'finish it', id: 'u1' },
+        { role: 'tool', content: 'FINISH[success]: done', id: 't1', toolCallId: 'X' },
+      ],
+      ALLOW
+    );
+    // The orphan is filtered out entirely — no ToolMessage survives.
+    expect(toolMessages(converted)).toHaveLength(0);
+    expect(converted).toHaveLength(1);
+    expect((converted[0] as { content: unknown }).content).toBe('finish it');
+  });
+
+  it('keeps a genuine pair (assistant native tool_call + matching tool result)', () => {
+    const converted = convertMessages(
+      [
+        { role: 'user', content: 'finish it', id: 'u1' },
+        {
+          role: 'assistant',
+          content: '',
+          id: 'a1',
+          toolCalls: [
+            { id: 'X', type: 'function', function: { name: 'finish_task', arguments: '{}' } },
+          ],
+        },
+        { role: 'tool', content: 'FINISH[success]: done', id: 't1', toolCallId: 'X' },
+      ],
+      ALLOW
+    );
+    const assistant = converted[1] as AIMessage;
+    expect(assistant.tool_calls).toHaveLength(1);
+    expect(assistant.tool_calls![0]).toMatchObject({ id: 'X', name: 'finish_task' });
+    const tools = toolMessages(converted);
+    expect(tools).toHaveLength(1);
+    expect(tools[0].tool_call_id).toBe('X');
+  });
+
+  it('drops only the orphan in a mixed history (paired result survives)', () => {
+    const converted = convertMessages(
+      [
+        { role: 'user', content: 'go', id: 'u1' },
+        {
+          role: 'assistant',
+          content: '',
+          id: 'a1',
+          toolCalls: [
+            { id: 'PAIRED', type: 'function', function: { name: 'finish_task', arguments: '{}' } },
+          ],
+        },
+        { role: 'tool', content: 'result for paired', id: 't1', toolCallId: 'PAIRED' },
+        // No assistant ever emitted tool_call ORPHAN — this result is an orphan.
+        { role: 'tool', content: 'result for orphan', id: 't2', toolCallId: 'ORPHAN' },
+      ],
+      ALLOW
+    );
+    const tools = toolMessages(converted);
+    expect(tools.map((t) => t.tool_call_id)).toEqual(['PAIRED']);
+    expect(tools.map((t) => t.content)).toEqual(['result for paired']);
+  });
+
+  it('drops a result whose matching call appears only LATER (ordering: call-after-result)', () => {
+    const converted = convertMessages(
+      [
+        { role: 'user', content: 'go', id: 'u1' },
+        // Result comes BEFORE its would-be call — still an orphan (set is accumulated in order).
+        { role: 'tool', content: 'premature result', id: 't1', toolCallId: 'X' },
+        {
+          role: 'assistant',
+          content: '',
+          id: 'a1',
+          toolCalls: [
+            { id: 'X', type: 'function', function: { name: 'finish_task', arguments: '{}' } },
+          ],
+        },
+      ],
+      ALLOW
+    );
+    // The premature tool result is dropped; the (now result-less) assistant call is left untouched.
+    expect(toolMessages(converted)).toHaveLength(0);
+    expect((converted[converted.length - 1] as AIMessage).tool_calls).toHaveLength(1);
+  });
+
+  it('matches on tool_call_id via msg.id when toolCallId is absent', () => {
+    const converted = convertMessages(
+      [
+        {
+          role: 'assistant',
+          content: '',
+          id: 'a1',
+          toolCalls: [
+            { id: 'ID1', type: 'function', function: { name: 'finish_task', arguments: '{}' } },
+          ],
+        },
+        // No toolCallId — falls back to msg.id, which matches the preceding call id.
+        { role: 'tool', content: 'ok', id: 'ID1' },
+      ],
+      ALLOW
+    );
+    const tools = toolMessages(converted);
+    expect(tools).toHaveLength(1);
+    expect(tools[0].tool_call_id).toBe('ID1');
   });
 });
