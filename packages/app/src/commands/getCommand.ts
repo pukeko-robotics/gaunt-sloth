@@ -26,10 +26,7 @@ export function getCommand(
     .argument('[id]', 'Source-backed content identifier')
     .addHelpText(
       'after',
-      '\n' +
-        'Examples:\n' +
-        '  $ gth get review prompt\n' +
-        '  $ gth get pr content 42\n'
+      '\n' + 'Examples:\n' + '  $ gth get review prompt\n' + '  $ gth get pr content 42\n'
     )
     .action(async (command: string, subject: string, id: string | undefined) => {
       try {
