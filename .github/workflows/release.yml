@@ -9,8 +9,10 @@ name: Release
 # before the gates run. Here the tag + GitHub Release + npm publish are the LAST
 # job, reached only after every quality gate is green:
 #
-#   lint+unit  ->  integration-tests (big provider)
+#   lint+unit (ubuntu + mac/win unit matrix, via unit-tests.yml)
+#              ->  integration-tests (big provider)
 #              ->  integration-tests-platforms (mac + win)
+#              ->  tui-e2e (linux + mac + win, via tui-e2e.yml)
 #              ->  release   (ship CURRENT version, THEN post-bump to next)
 #
 # RELEASE-VERSIONING MODEL B — "release CURRENT, then post-bump to next".
@@ -97,29 +99,18 @@ jobs:
           echo "Dispatch inputs OK (bump=$BUMP preid=$PREID explicit_version='$EXPLICIT_VERSION')"
 
   lint-and-unit:
-    name: Lint and unit tests
+    name: Lint and unit tests (all platforms)
+    # OPS-26: this used to be a duplicated, ubuntu-ONLY copy of unit-tests.yml's `test-and-lint`,
+    # so a release could ship with the unit suite red on Windows — and one nearly did: `main` sat
+    # red on the Windows unit cell for a week (12 failures) with no automated gate catching it.
+    # It now calls the reusable unit-tests.yml, which is BOTH the ubuntu lint+unit job and the
+    # macOS/Windows x node-24.x/latest `test-platforms` matrix. Single source of truth, no
+    # duplicated YAML, and `pnpm run lint` still runs exactly once (only `test-and-lint` runs it).
+    # The job id is unchanged on purpose: the three downstream `needs: lint-and-unit` still bind.
     needs: validate-inputs
-    runs-on: ubuntu-latest
     permissions:
       contents: read
-    strategy:
-      matrix:
-        node-version: [24.x]
-    steps:
-      - uses: actions/checkout@v6
-      - name: Enable Corepack
-        run: corepack enable
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'pnpm'
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Run ESLint
-        run: pnpm run lint
-      - name: Run Tests
-        run: pnpm test
+    uses: ./.github/workflows/unit-tests.yml
 
   integration-tests:
     name: Integration tests

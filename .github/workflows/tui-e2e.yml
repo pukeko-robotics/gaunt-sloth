@@ -10,8 +10,14 @@ name: TUI PTY e2e (it-tui)
 # Windows — blocks a release. `workflow_dispatch` is retained so it can still be run by
 # hand against any branch for verification. Locally it is the coordinator/subagent
 # pre-merge gate for TUI changes (`pnpm run it-tui`), documented in AGENTS.md.
+#
+# OPS-26: it also runs automatically on every push to `main`. It is hermetic and key-free and
+# costs ~2-3 min per cell, so it is cheap per merge and catches a TUI regression on trunk without
+# waiting for a release dispatch. `workflow_call` is retained — `release.yml` depends on it.
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
   workflow_call:
 

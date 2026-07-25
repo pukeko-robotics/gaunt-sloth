@@ -12,6 +12,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const HELPER = '../../../scripts/dist-tag.mjs';
 
 describe('deriveDistTag (scripts/dist-tag.mjs)', () => {
+  // Guards the `server.deps.external` entry in vitest.config.ts that keeps this helper OUT of
+  // Vitest's inline transform. The helper is a Node CLI script and carries a `#!` shebang; when
+  // inlined, Vitest evaluates it inside an AsyncFunction wrapper where a surviving shebang is a
+  // hard `SyntaxError: Invalid or unexpected token` — which is exactly how all 11 cases below
+  // failed on Windows and only on Windows (OPS-26). Externalized, Node imports it natively and
+  // strips the shebang per spec on every platform. The two are told apart by the export
+  // descriptor: a real ESM namespace exposes a non-configurable DATA property, while Vitest's
+  // inlined exports object exposes a configurable GETTER. So this fails loudly here if the config
+  // entry is ever dropped, instead of going red on the Windows cell alone.
+  it('imports the helper natively (externalized, not inlined by Vitest)', async () => {
+    const mod = await import(HELPER);
+    const descriptor = Object.getOwnPropertyDescriptor(mod, 'deriveDistTag');
+    expect(typeof descriptor?.value).toBe('function');
+    expect(descriptor?.get).toBeUndefined();
+    expect(descriptor?.configurable).toBe(false);
+  });
+
   beforeEach(() => {
     vi.resetAllMocks();
   });

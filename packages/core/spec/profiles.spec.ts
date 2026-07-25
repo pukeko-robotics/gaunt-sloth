@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { join, resolve } from 'node:path';
 
 // Mock the filesystem + project-dir resolver so createNamedProfile's writes are observable and the
 // target path is deterministic. The schema validator (schema.js → zod) stays REAL — we want the
@@ -42,8 +43,12 @@ describe('config profiles — create/scaffold (GS2-33)', () => {
       modelOverride: 'gemini-2.0-flash-lite',
     });
 
-    expect(result.path).toBe('/proj/.gsloth/.gsloth-settings/cheap/.gsloth.config.json');
-    expect(fsMock.mkdirSync).toHaveBeenCalledWith('/proj/.gsloth/.gsloth-settings/cheap', {
+    // Build the expectation through the SAME platform-native resolution the production path uses
+    // (resolveProfileConfigPath -> path.resolve), so it is separator- and drive-correct everywhere.
+    // A POSIX-joined literal here pinned '/proj/...' against Windows' 'D:\proj\...' (OPS-26).
+    const expectedDir = resolve('/proj', '.gsloth', '.gsloth-settings', 'cheap');
+    expect(result.path).toBe(join(expectedDir, '.gsloth.config.json'));
+    expect(fsMock.mkdirSync).toHaveBeenCalledWith(expectedDir, {
       recursive: true,
     });
     expect(fsMock.writeFileSync).toHaveBeenCalledTimes(1);

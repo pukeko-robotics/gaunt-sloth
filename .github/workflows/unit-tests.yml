@@ -1,7 +1,20 @@
 name: Tests and Lint
 
+# Lint + the unit suite, on ubuntu (`test-and-lint`) and across the macOS/Windows x
+# node-24.x/latest matrix (`test-platforms`).
+#
+# OPS-26: this workflow used to be `workflow_dispatch`-only, so nothing watched the Windows unit
+# cell — `main` sat red there for a week (12 failures) and no automated gate caught it, up to and
+# including a release. It now runs automatically on every push to `main`, and is exposed as a
+# reusable workflow so `release.yml` gates the publish on the SAME matrix (a Windows unit cell in
+# the release gate) instead of a duplicated ubuntu-only copy. `workflow_dispatch` is retained so it
+# can still be run by hand against any branch.
+
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   test-and-lint:
@@ -42,6 +55,9 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     strategy:
+      # Report every cell: a failure on one OS/node combination must not cancel its siblings,
+      # or a single red cell hides the state of the other three (OPS-26). Matches tui-e2e.yml.
+      fail-fast: false
       matrix:
         node-version: [24.x, latest]
         os: [macos-latest, windows-latest]
