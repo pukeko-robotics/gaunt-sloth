@@ -105,6 +105,9 @@ function normalizeConcurrency(concurrency: number | undefined): number {
  *
  * @param unitCount - how many cells/cases the run actually processed
  * @param explicitConcurrency - the user's `-j/--concurrency` value, `undefined` when not supplied
+ * Not re-exported from the package root: it is an internal detail two first-party commands share
+ * (both import it via the `@gaunt-sloth/batch/BatchRunner.js` subpath), not part of the plugin API.
+ *
  * @param noun - what the units are called on this surface (`batch` cells vs `eval` cases)
  */
 export function concurrencyHint(

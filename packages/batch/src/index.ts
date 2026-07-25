@@ -1,7 +1,7 @@
 export { buildMatrix } from '#src/matrix.js';
 export { bindCellContent } from '#src/interpolate.js';
 export { parseOverFile } from '#src/parseOver.js';
-export { runBatchMatrix, buildBatchSummary, concurrencyHint } from '#src/BatchRunner.js';
+export { runBatchMatrix, buildBatchSummary } from '#src/BatchRunner.js';
 export { writeBatchOutput } from '#src/output.js';
 export type {
   BatchRunnerOptions,

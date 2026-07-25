@@ -109,7 +109,7 @@ import { runEvalSuite } from '@gaunt-sloth/batch/evalRunner.js';
 The public API (see the package's `index.ts`) groups by command:
 
 - **Matrix** (`gth batch`): `buildMatrix`, `bindCellContent`, `parseOverFile`, `runBatchMatrix`,
-  `buildBatchSummary`, `writeBatchOutput`, `concurrencyHint`, `DEFAULT_CELL_CONCURRENCY`.
+  `buildBatchSummary`, `writeBatchOutput`, `DEFAULT_CELL_CONCURRENCY`.
 - **Eval** (`gth eval`): `parseEvalSuite`, `runDeterministicChecks`, `judgeEvalCase`, `runEvalSuite`,
   `writeEvalOutput`, `EvalVerdictSchema`, `DEFAULT_EVAL_PASS_THRESHOLD`.
 - **Workflow** (`gth workflow`): `runWorkflow`, `DEFAULT_WORKFLOW_CONCURRENCY` (the

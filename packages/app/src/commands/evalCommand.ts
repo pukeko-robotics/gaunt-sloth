@@ -677,7 +677,21 @@ export function evalCommand(
         // very end of the whole invocation (not per suite) — otherwise a slow multi-case run looks
         // like the tool being slow rather than a default the user can change (DL-1: no surprising
         // behaviour is silent; DL-8: dim = contextual aside).
-        const hint = concurrencyHint(combined.total, options.concurrency, 'Cases');
+        //
+        // Deliberately NOT part of the reporter layer: like `EVAL TOTAL`, the stem-collision
+        // warning and the harness-error lines, this describes how the HARNESS ran, not how the
+        // results render, so it prints for any `--reporter` selection (a `--reporter junit` CI run
+        // is if anything the one that most wants to know its cases were serialized).
+        //
+        // Noun follows the same M1 rule as the text reporter (`reporters/textReporter.ts`): once
+        // any cell carries an identity the run is counted in CELLS (one per case × identity), so
+        // saying "Cases" would contradict the verdict line's own denominator.
+        const isMatrix = combinedCases.some((caseResult) => caseResult.identity !== undefined);
+        const hint = concurrencyHint(
+          combined.total,
+          options.concurrency,
+          isMatrix ? 'Cells' : 'Cases'
+        );
         if (hint) {
           displayInfo(hint);
         }
