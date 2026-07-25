@@ -72,71 +72,81 @@ export async function runSingleShot(
   agentFactory?: GthAgentFactory
 ): Promise<SingleShotResult> {
   const progressIndicator = config.streamOutput ? undefined : new ProgressIndicator('Thinking.');
-  // Only the human turn: the agent supplies the system prompt via `createAgent({ systemPrompt })`.
-  const messages = [new HumanMessage(content)];
-
-  // Resolve output path and initialize session logging if enabled
-  const filePath = getCommandOutputFilePath(config, source);
-  if (filePath) {
-    initSessionLogging(filePath, config.streamSessionInferenceLog);
-  }
-
-  // Run via Agent Runner (consistent with interactive session)
-  const runner = new GthAgentRunner(defaultStatusCallback, resolvers, agentFactory);
-  let succeeded = true;
-  let responseText = '';
-  const startedAt = Date.now();
   try {
-    await runner.init(command, config, new MemorySaver());
-    responseText = await runner.processMessages(messages);
-  } catch (err) {
-    succeeded = false;
-    displayError(`Failed to get answer: ${err instanceof Error ? err.message : String(err)}`);
-  } finally {
-    await runner.cleanup();
-  }
+    // Only the human turn: the agent supplies the system prompt via `createAgent({ systemPrompt })`.
+    const messages = [new HumanMessage(content)];
 
-  // GS2-16: live token usage + invoked tool names for this run (fail-soft; empty when the
-  // provider reported no usage / the runner has no stats). Read post-cleanup — the runner
-  // snapshots stats at cleanup() so this still reflects the finished run.
-  let runStats: GthRunStats = { tools: [] };
-  try {
-    const s = runner.getRunStats?.();
-    if (s) runStats = s;
-  } catch {
-    /* fail-soft: analytics must never affect this run */
-  }
-
-  // GS2-7 (B20): opt-in, fail-soft session history. A no-op unless `history.enabled`; never throws
-  // (recordSessionSafe is fully guarded) so a DB problem can't abort or alter this run.
-  // GS2-16 threads token/tool analytics; costUsd is intentionally left unset (no reliable price).
-  recordSessionSafe(config, {
-    command,
-    project: getProjectDir(),
-    model: config.modelDisplayName,
-    prompt: content,
-    response: responseText,
-    tokensInput: runStats.tokensInput,
-    tokensOutput: runStats.tokensOutput,
-    tools: runStats.tools.length > 0 ? runStats.tools : undefined,
-    durationMs: Date.now() - startedAt,
-  });
-
-  progressIndicator?.stop();
-
-  if (config.writeOutputToFile === false) {
-    display('\n'); // something going on in some terminals, they swallow last line of output
-  }
-  if (filePath) {
-    try {
-      flushSessionLog();
-      stopSessionLogging();
-      displaySuccess(`\n\nThis report can be found in ${filePath}`);
-    } catch (error) {
-      displayError(`Failed to write answer to file: ${filePath}`);
-      displayError(error instanceof Error ? error.message : String(error));
+    // Resolve output path and initialize session logging if enabled
+    const filePath = getCommandOutputFilePath(config, source);
+    if (filePath) {
+      initSessionLogging(filePath, config.streamSessionInferenceLog);
     }
-  }
 
-  return { ok: succeeded, answer: responseText, ...runStats };
+    // Run via Agent Runner (consistent with interactive session)
+    const runner = new GthAgentRunner(defaultStatusCallback, resolvers, agentFactory);
+    let succeeded = true;
+    let responseText = '';
+    const startedAt = Date.now();
+    try {
+      await runner.init(command, config, new MemorySaver());
+      responseText = await runner.processMessages(messages);
+    } catch (err) {
+      succeeded = false;
+      displayError(`Failed to get answer: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      await runner.cleanup();
+    }
+
+    // GS2-16: live token usage + invoked tool names for this run (fail-soft; empty when the
+    // provider reported no usage / the runner has no stats). Read post-cleanup — the runner
+    // snapshots stats at cleanup() so this still reflects the finished run.
+    let runStats: GthRunStats = { tools: [] };
+    try {
+      const s = runner.getRunStats?.();
+      if (s) runStats = s;
+    } catch {
+      /* fail-soft: analytics must never affect this run */
+    }
+
+    // GS2-7 (B20): opt-in, fail-soft session history. A no-op unless `history.enabled`; never throws
+    // (recordSessionSafe is fully guarded) so a DB problem can't abort or alter this run.
+    // GS2-16 threads token/tool analytics; costUsd is intentionally left unset (no reliable price).
+    recordSessionSafe(config, {
+      command,
+      project: getProjectDir(),
+      model: config.modelDisplayName,
+      prompt: content,
+      response: responseText,
+      tokensInput: runStats.tokensInput,
+      tokensOutput: runStats.tokensOutput,
+      tools: runStats.tools.length > 0 ? runStats.tools : undefined,
+      durationMs: Date.now() - startedAt,
+    });
+
+    progressIndicator?.stop();
+
+    if (config.writeOutputToFile === false) {
+      display('\n'); // something going on in some terminals, they swallow last line of output
+    }
+    if (filePath) {
+      try {
+        flushSessionLog();
+        stopSessionLogging();
+        displaySuccess(`\n\nThis report can be found in ${filePath}`);
+      } catch (error) {
+        displayError(`Failed to write answer to file: ${filePath}`);
+        displayError(error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    return { ok: succeeded, answer: responseText, ...runStats };
+  } finally {
+    // EXT-53: the indicator owns a 1s setInterval — an active libuv handle that keeps Node's event
+    // loop from ever draining, so leaking it hangs the CLI forever after the work is done. The
+    // `stop()` above sits where it does for output ordering (before the trailing newline / the
+    // "report can be found in …" line); this `finally` guarantees the handle is also released when
+    // anything above throws — notably `runner.cleanup()`, which is outside the inner catch.
+    // `stop()` is idempotent, so the normal path's second call is a no-op.
+    progressIndicator?.stop();
+  }
 }
