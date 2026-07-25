@@ -125,6 +125,23 @@ export default defineConfig({
   test: {
     include: ['packages/*/spec/**/*.{ts,tsx}'],
     environment: 'node',
+    server: {
+      deps: {
+        // Import the repo-root release helper the way Node does, not through Vitest's inline
+        // transform. `scripts/dist-tag.mjs` is a Node CLI script (`node scripts/dist-tag.mjs`,
+        // mode 0755) and carries a `#!/usr/bin/env node` shebang. Vitest inlines every
+        // non-node_modules `.mjs` by default and evaluates it inside an AsyncFunction wrapper,
+        // where a surviving shebang is a hard `SyntaxError: Invalid or unexpected token`. Vite
+        // strips the shebang on the way out of `fetchModule`, but that strip did not survive the
+        // `/@id/`-prefixed request path Vitest takes for absolute Windows paths — so all of
+        // distTag.spec.ts failed on windows-latest and only there (OPS-26). Externalized, Node
+        // imports the file natively and handles the shebang per spec on every platform.
+        // distTag.spec.ts asserts this entry is in effect, so dropping it fails loudly.
+        // The `(\?|$)` tail keeps the match alive when the resolved id carries a query suffix
+        // (e.g. `?v=…`, or vitest's `_vitest_original` on an importActual path).
+        external: [/[\\/]scripts[\\/]dist-tag\.mjs(\?|$)/],
+      },
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
