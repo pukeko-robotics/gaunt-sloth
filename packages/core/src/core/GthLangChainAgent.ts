@@ -1,4 +1,4 @@
-import { getEffectiveDevToolsConfig, GthConfig, isShellToolEnabled } from '#src/config.js';
+import { GthConfig, resolveShellApprovalGate } from '#src/config.js';
 import { GthCommand, StatusLevel } from '#src/core/types.js';
 import { GthAbstractAgent } from '#src/core/GthAbstractAgent.js';
 import { debugLog, debugLogObject } from '#src/utils/debugUtils.js';
@@ -620,18 +620,14 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // gating code path drives both backends and the existing TUI + readline approval prompts fire
     // identically on lean.
     //
-    // Gate condition mirrors GthDeepAgent verbatim (EXT-12 semantics):
-    //   • interactive `code` keeps the tool GATED even when `run_shell_command.yolo` pre-enables
-    //     auto-approval, so the runner's session flag governs it and `/auto-approve off` can
-    //     restore the per-command prompt mid-session (the runner seeds the flag ON from yolo and
-    //     auto-approves the drained interrupt silently — the user still sees no prompt by default);
-    //   • non-interactive modes (exec / ask --write) with yolo keep the tool UNGATED (runs inline
-    //     without suspending), preserving prior single-shot behaviour;
-    //   • the shell tool disabled (or a non-dev-tools command: chat/api/…) wires nothing.
-    const devTools = getEffectiveDevToolsConfig(this.config ?? undefined, this.command);
-    const shellEnabled = isShellToolEnabled(devTools, this.command);
-    const isInteractive = this.command === 'code';
-    const gateShell = shellEnabled && (devTools?.shellYolo !== true || isInteractive);
+    // The gate condition and its user-facing notices are the SHARED policy
+    // (`resolveShellApprovalGate`, EXT-12 semantics documented there); the two backends differ only
+    // in how they install the interrupt — directly as middleware here, via deepagents' `interruptOn`
+    // in GthDeepAgent.
+    const { gateShell, notice: shellGateNotice } = resolveShellApprovalGate(
+      this.config ?? undefined,
+      this.command
+    );
     const shellApprovalMiddleware = gateShell
       ? [
           humanInTheLoopMiddleware({
@@ -643,21 +639,8 @@ export class GthLangChainAgent extends GthAbstractAgent {
           }),
         ]
       : [];
-    if (gateShell && devTools?.shellYolo === true) {
-      this.statusUpdate(
-        StatusLevel.INFO,
-        'Shell tool (run_shell_command) auto-approved by config (shellYolo). Type /auto-approve off to require per-command approval.'
-      );
-    } else if (gateShell) {
-      this.statusUpdate(
-        StatusLevel.INFO,
-        'Shell tool (run_shell_command) enabled with per-command approval (interruptOn).'
-      );
-    } else if (shellEnabled) {
-      this.statusUpdate(
-        StatusLevel.WARNING,
-        'Shell tool (run_shell_command) enabled in YOLO mode: commands run WITHOUT confirmation.'
-      );
+    if (shellGateNotice) {
+      this.statusUpdate(shellGateNotice.level, shellGateNotice.message);
     }
 
     // EXT-52 placement note: the HITL gate sits EARLY in the array — before user-configured

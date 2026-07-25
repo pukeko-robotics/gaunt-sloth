@@ -587,7 +587,7 @@ describe('GthLangChainAgent', () => {
         expect(middlewareNames()).toContain('HumanInTheLoopMiddleware');
         expect(statusUpdateCallback).toHaveBeenCalledWith(
           StatusLevel.INFO,
-          'Shell tool (run_shell_command) enabled with per-command approval (interruptOn).'
+          'Shell tool (run_shell_command) enabled with per-command approval.'
         );
       });
 

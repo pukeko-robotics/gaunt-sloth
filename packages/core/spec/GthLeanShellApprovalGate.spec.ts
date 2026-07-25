@@ -224,6 +224,11 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
     await runTurn(runner, 'install');
 
     expect(executed).toEqual([]);
+    // …and the run actually REACHED the gate and rejected, rather than crashing or never getting
+    // to the tool node (either of which would also leave `executed` empty). The default-reject
+    // round-tripped to the model as a ToolMessage, which it answered — a second model call.
+    const model = (runner as unknown as { config: { llm: ScriptedShellCallingModel } }).config.llm;
+    expect(model.callCount).toBe(2);
   });
 
   it('allow-list: a session-scoped approval auto-approves a variant of the same operation without re-prompting', async () => {
@@ -320,5 +325,23 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
     expect(human).toHaveBeenCalledTimes(1);
     expect(executed).toEqual(['echo str']);
     expect(result).toContain('final answer');
+  });
+
+  it('streamOutput:false parity: the non-streaming invoke branch prompts, resumes and returns the answer', async () => {
+    // `streamOutput: false` is a supported live configuration (a `--no-tui` session, or any run
+    // whose config turns streaming off). Its branch of processMessages used to `invoke` and stop:
+    // the gated call suspended the graph, the last message was the empty-content tool-calling
+    // AIMessage, and the turn died with 'Model returned an empty response' — no prompt, no command.
+    const runner = await makeRunner(['echo nostream'], {
+      streamOutput: false,
+    } as Partial<GthConfig>);
+    const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
+    runner.setToolApprovalCallback(human);
+
+    const result = await runner.processMessages([new HumanMessage('run it')]);
+
+    expect(human).toHaveBeenCalledTimes(1); // (a) the approval callback fired
+    expect(executed).toEqual(['echo nostream']); // (b) the approved command executed…
+    expect(result).toContain('final answer'); // …and its turn's text reached the caller
   });
 });

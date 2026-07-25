@@ -11,7 +11,7 @@
  * `builtInTools` registry, and that {@link GthDevToolkit} + the shell accessors below consume. This
  * keeps the toolkit/accessor surface stable while the single config surface is `builtInTools`.
  */
-import type { GthCommand } from '#src/core/types.js';
+import { type GthCommand, StatusLevel } from '#src/core/types.js';
 import type { GthConfig, LLMConfig } from '#src/config/types.js';
 
 /**
@@ -485,4 +485,90 @@ export function getEffectiveDevToolsConfig(
   if (command !== 'exec' && command !== 'code' && !askWrite) return undefined;
   const effective = cmdConfig?.builtInTools ?? config.builtInTools;
   return devToolsConfigFromRegistry(normalizeBuiltInTools(effective));
+}
+
+/** A status notice a backend should surface after resolving the shell approval gate. */
+export interface ShellApprovalGateNotice {
+  /** Severity to pass to the agent's `statusUpdate` callback. */
+  level: StatusLevel;
+  /** The user-facing message. */
+  message: string;
+}
+
+/** The resolved shell approval-gate policy: whether to gate, and what to tell the user. */
+export interface ShellApprovalGateDecision {
+  /**
+   * Whether `run_shell_command` must be wired behind the per-command approval interrupt
+   * (langchain's `humanInTheLoopMiddleware` — installed directly on the lean backend, via
+   * deepagents' `interruptOn` on the deep one).
+   */
+  gateShell: boolean;
+  /** The notice to surface, when this configuration warrants one. */
+  notice?: ShellApprovalGateNotice;
+}
+
+/**
+ * EXT-52 — the ONE shell approval-gate policy both agent backends resolve
+ * (`GthLangChainAgent` = lean/default, `GthDeepAgent` = deep). It decides whether the opt-in
+ * `run_shell_command` tool is gated behind the per-command approval interrupt, and which status
+ * notice (if any) the backend should surface. The backends differ only in HOW they install the
+ * interrupt; the policy and its user-facing copy live here so the two can never drift (and so a
+ * later rename of this config surface has one place to change).
+ *
+ * EXT-12 — how auto-approve (`run_shell_command.yolo` → {@link GthDevToolsConfig.shellYolo})
+ * interacts with gating:
+ *   • In interactive `code` mode the tool stays GATED even when yolo pre-enables auto-approval, so
+ *     the runner's session flag governs it and `/auto-approve off` can restore the per-command
+ *     prompt mid-session. `GthAgentRunner.init` seeds that flag ON from yolo, so the user still
+ *     sees no prompt by default; the interactive event/stream path drains the interrupt and
+ *     auto-approves silently.
+ *   • In non-interactive modes (`exec` / `ask --write`) a single-shot run does not drain
+ *     interrupts, so yolo keeps the tool UNGATED (it runs inline without suspending), preserving
+ *     prior behaviour. There is no slash-command surface there to toggle anyway.
+ *   • With the shell tool disabled — or on a non-dev-tools command (chat/api/…) — nothing is gated
+ *     and nothing is announced.
+ *
+ * Shell enablement itself is resolved through {@link getEffectiveDevToolsConfig} +
+ * {@link isShellToolEnabled}, so the gate stays in lockstep with where `GthDevToolkit` actually
+ * emits the tool.
+ */
+export function resolveShellApprovalGate(
+  config: Pick<GthConfig, 'commands' | 'builtInTools' | 'askWriteMode'> | undefined,
+  command: GthCommand | undefined
+): ShellApprovalGateDecision {
+  const devTools = getEffectiveDevToolsConfig(config, command);
+  const shellEnabled = isShellToolEnabled(devTools, command);
+  const isInteractive = command === 'code';
+  const gateShell = shellEnabled && (devTools?.shellYolo !== true || isInteractive);
+
+  if (gateShell && devTools?.shellYolo === true) {
+    return {
+      gateShell,
+      notice: {
+        level: StatusLevel.INFO,
+        message:
+          'Shell tool (run_shell_command) auto-approved by config (shellYolo). Type /auto-approve off to require per-command approval.',
+      },
+    };
+  }
+  if (gateShell) {
+    return {
+      gateShell,
+      notice: {
+        level: StatusLevel.INFO,
+        message: 'Shell tool (run_shell_command) enabled with per-command approval.',
+      },
+    };
+  }
+  if (shellEnabled) {
+    return {
+      gateShell,
+      notice: {
+        level: StatusLevel.WARNING,
+        message:
+          'Shell tool (run_shell_command) enabled in YOLO mode: commands run WITHOUT confirmation.',
+      },
+    };
+  }
+  return { gateShell };
 }

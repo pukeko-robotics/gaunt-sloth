@@ -71,7 +71,9 @@ test.describe('gth code TUI — EXT-52 lean shell approval prompt (real agent, s
     ).toBeVisible();
     await expect(terminal.getByText('[o]nce', { strict: false })).toBeVisible();
     // ...and the graph is SUSPENDED: the command has not produced its output marker yet.
-    await expect(terminal.getByText('approval-out-marker', { full: true })).not.toBeVisible();
+    await expect(
+      terminal.getByText('approval-out-marker', { full: true, strict: false })
+    ).not.toBeVisible();
 
     // Grant once.
     terminal.write('o');
@@ -125,7 +127,9 @@ test.describe('gth code TUI — EXT-52 reject keeps the command from running', (
       terminal.getByText('approval-final-answer-marker', { strict: false })
     ).toBeVisible();
     await expect(terminal.getByText('turns: 1  ·  ready', { strict: false })).toBeVisible();
-    await expect(terminal.getByText('approval-out-marker', { full: true })).not.toBeVisible();
+    await expect(
+      terminal.getByText('approval-out-marker', { full: true, strict: false })
+    ).not.toBeVisible();
   });
 });
 

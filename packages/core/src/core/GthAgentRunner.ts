@@ -285,7 +285,15 @@ export class GthAgentRunner {
       } else {
         // Use non-streaming
         debugLog('Using non-streaming mode');
-        const result = await this.agent.invoke(messages, this.runConfig);
+        let result = await this.agent.invoke(messages, this.runConfig);
+        // EXT-52 — the SAME interrupt drain the streaming branch does above. A gated
+        // `run_shell_command` suspends the graph, so `invoke` returns with the tool-calling
+        // AIMessage (empty content) as the last message and the command not yet run. Draining here
+        // — BEFORE the empty-response check — is what makes the approval prompt fire and the
+        // approved command's output reach the caller on `streamOutput: false`; without it the turn
+        // died with the misleading empty-response error, so the check may only see a genuinely
+        // empty turn.
+        result += await this.resolveToolInterrupts();
         debugLog(`Non-stream response length: ${result.length}`);
         if (result.trim().length === 0) {
           throw new Error(
@@ -329,7 +337,10 @@ export class GthAgentRunner {
    * streamed across all resume turns (empty when nothing was resumed).
    *
    * No-ops (returns '') when the agent does not support interrupts (`getPendingToolInterrupts`/
-   * `streamResume` absent), so the lean agent and non-HITL configs are unaffected.
+   * `streamResume` absent) — that is the only exemption. As of EXT-52 BOTH backends gate
+   * `run_shell_command` and expose the interrupt surface, so the lean (default) agent is now
+   * exactly the agent this loop serves; only an agent implementation without those methods
+   * (e.g. a test double) skips it.
    */
   private async resolveToolInterrupts(): Promise<string> {
     const agent = this.agent;
@@ -550,8 +561,11 @@ export class GthAgentRunner {
    * tool call, this loops until the graph completes with no pending interrupts.
    *
    * No-ops (yields nothing) when the agent does not support interrupts
-   * (`getPendingToolInterrupts`/`streamWithEventsResume` absent), so the lean agent and
-   * non-HITL configs are unaffected. Aborts (`signal`) propagate through the resumed stream.
+   * (`getPendingToolInterrupts`/`streamWithEventsResume` absent) — that is the only exemption.
+   * As of EXT-52 BOTH backends gate `run_shell_command` and expose the interrupt surface, so the
+   * lean (default) agent is now exactly the agent this loop serves; only an agent implementation
+   * without those methods (e.g. a test double) skips it. Aborts (`signal`) propagate through the
+   * resumed stream.
    */
   private async *resolveToolInterruptsWithEvents(
     signal?: AbortSignal
