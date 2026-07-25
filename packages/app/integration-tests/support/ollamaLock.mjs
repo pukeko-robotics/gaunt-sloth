@@ -26,6 +26,31 @@ export function defaultLockPath(ollamaHost) {
   return join(tmpdir(), `gth-it-ollama-${key}.lock`);
 }
 
+// OPS-25 — is the recorded holder still running?
+//
+// `process.kill(pid, 0)` sends no signal; it probes for the process and reports via errno. The
+// time-based staleMs below can only reclaim a crashed holder after the full 30 min, which wedges
+// every subsequent ollama run in the meantime — exactly what happened when a runner was SIGTERMed
+// by a harness timeout mid-run and left its lockfile behind. A holder that provably no longer
+// exists is stale NOW, whatever its age.
+//
+// Every uncertain case answers "alive", so the time-based rule stays the backstop and a LIVE
+// holder is never stolen:
+//   - EPERM       → the process exists, just isn't ours (different uid) → alive.
+//   - malformed / missing / non-integer pid → we know nothing → treat as held.
+//   - pid reuse   → an unrelated process now owns the number → alive → falls back to staleMs.
+// The lock is machine-local (tmpdir), so cross-host pid ambiguity does not arise; a shared tmpdir
+// across pid namespaces would, and staleMs still covers it.
+export function isHolderAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code !== 'ESRCH';
+  }
+}
+
 // staleMs / waitMs are BIG on purpose: a legit `it ollama` run holds the lock for the entire
 // (synchronous, execSync-blocked) vitest run — minutes. staleMs must EXCEED the longest legit
 // hold so a live holder is never stolen; waitMs must let a waiter outlast a legit holder.
@@ -59,9 +84,15 @@ export function createOllamaLock({
         };
       } catch (e) {
         if (e.code !== 'EEXIST') throw e;
-        // Held. Steal only if clearly stale (crashed holder).
+        // Held. Steal only if clearly stale (crashed holder) — either provably gone (OPS-25) or
+        // past the time-based backstop.
         try {
           const info = JSON.parse(readFileSync(lockPath, 'utf8'));
+          if (!isHolderAlive(info.pid)) {
+            log(`==> reclaiming ollama GPU lock from dead pid ${info.pid} (lock ${lockPath})`);
+            unlinkSync(lockPath);
+            continue;
+          }
           if (Date.now() - info.at > staleMs) {
             unlinkSync(lockPath);
             continue;
