@@ -28,6 +28,13 @@ export function codeCommand(
       'Interactively write code with sloth (has full file system access within your project)'
     )
     .argument('[message]', 'Initial message to start the code session')
+    .addHelpText(
+      'after',
+      '\n' +
+        'Examples:\n' +
+        '  $ gth code\n' +
+        '  $ gth code "Help me refactor the authentication module"\n'
+    )
     .action(async (message: string) => {
       await startSession(sessionConfig, commandLineConfigOverrides, message);
     });

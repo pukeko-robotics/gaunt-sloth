@@ -38,7 +38,7 @@ interface HelpExampleCase {
   register: (_program: Command) => void;
   /**
    * A canonical example invocation from this command's COMMANDS.md `### Examples` section — the
-   * bare `gsloth …` form, which is a substring of BOTH the `  $ gsloth …` help line and the docs
+   * bare `gth …` form, which is a substring of BOTH the `  $ gth …` help line and the docs
    * line, so a single string proves rule 6 in both places.
    */
   example: string;
@@ -48,32 +48,32 @@ const cases: HelpExampleCase[] = [
   {
     name: 'batch',
     register: (program) => batchCommand(program, {}),
-    example: 'gsloth batch prompts/triage.md --over data/tickets.csv -j 8',
+    example: 'gth batch prompts/triage.md --over data/tickets.csv -j 8',
   },
   {
     name: 'workflow',
     register: (program) => workflowCommand(program, {}),
-    example: 'gsloth workflow workflows/summarize-prs.mjs',
+    example: 'gth workflow workflows/summarize-prs.mjs',
   },
   {
     name: 'insights',
     register: (program) => insightsCommand(program),
-    example: 'gsloth insights --db ./project-history.db',
+    example: 'gth insights --db ./project-history.db',
   },
   {
     name: 'history',
     register: (program) => historyCommand(program),
-    example: 'gsloth history search vertexai timeout',
+    example: 'gth history search vertexai timeout',
   },
   {
     name: 'exec',
     register: (program) => execCommand(program, {}),
-    example: 'gsloth exec scripts/release-notes.md',
+    example: 'gth exec scripts/release-notes.md',
   },
   {
     name: 'config',
     register: (program) => configCommand(program, {}),
-    example: 'gsloth config validate',
+    example: 'gth config validate',
   },
 ];
 

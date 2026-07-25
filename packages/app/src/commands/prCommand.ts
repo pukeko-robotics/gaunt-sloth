@@ -52,6 +52,14 @@ export function prCommand(
       'Input files. Content of these files will be added BEFORE the diff, but after requirements'
     )
     .option('-m, --message <message>', 'Extra message to provide just before the content')
+    .addHelpText(
+      'after',
+      '\n' +
+        'Examples:\n' +
+        '  $ gth pr\n' +
+        '  $ gth pr 42\n' +
+        '  $ gth pr 42 PROJ-123 -p jira\n'
+    )
     .action(async (prId: string, requirementsId: string | undefined, options: PrCommandOptions) => {
       const { initConfig } = await import('@gaunt-sloth/core/config.js');
       const config = await initConfig(commandLineConfigOverrides); // Initialize and get config

@@ -20,7 +20,7 @@ Every command supports these shared flags:
 Initialize Gaunt Sloth in your project.
 
 ```bash
-gsloth init [type]
+gth init [type]
 ```
 
 ### Arguments
@@ -32,14 +32,14 @@ Creates the project configuration file. By default, a `.gsloth` directory is cre
 
 No prompt template files are planted — the bundled prompt defaults apply until you create your own
 prompt files (e.g. `.gsloth.guidelines.md`) or configure the
-[`prompts` object](CONFIGURATION.md#prompt-files-prompts).
+[`prompts` object](configuration/prompts.md#prompt-files-prompts).
 
 ### Examples
 ```bash
-gsloth init              # Auto-detect API keys and prompt for provider
-gsloth init vertexai
-gsloth init anthropic
-gsloth init groq
+gth init              # Auto-detect API keys and prompt for provider
+gth init vertexai
+gth init anthropic
+gth init groq
 ```
 
 ## get
@@ -47,8 +47,8 @@ gsloth init groq
 Inspect the effective system prompt or provider-backed input used by other commands.
 
 ```bash
-gsloth get <command> prompt
-gsloth get <review|pr> <content|requirements> <id>
+gth get <command> prompt
+gth get <review|pr> <content|requirements> <id>
 ```
 
 ### Arguments
@@ -58,22 +58,22 @@ gsloth get <review|pr> <content|requirements> <id>
 
 ### Description
 Use this command to inspect what Gaunt Sloth would send before running a command:
-- `gsloth get <command> prompt` prints the combined system prompt for that command
-- `gsloth get review ...` and `gsloth get pr ...` print the wrapped provider payload exactly as it would be injected into the LLM input
+- `gth get <command> prompt` prints the combined system prompt for that command
+- `gth get review ...` and `gth get pr ...` print the wrapped provider payload exactly as it would be injected into the LLM input
 
 ### Examples
 ```bash
 # Print the effective system prompt for review
-gsloth get review prompt
+gth get review prompt
 
 # Print the discovery-agent system prompt used by change requirements discovery
-gsloth get pr-discovery prompt
+gth get pr-discovery prompt
 
-# Print the wrapped PR diff that `gsloth pr 42` would use
-gsloth get pr content 42
+# Print the wrapped PR diff that `gth pr 42` would use
+gth get pr content 42
 
 # Print the wrapped Jira requirements payload for a review
-gsloth get review requirements PROJ-123
+gth get review requirements PROJ-123
 ```
 
 ## pr
@@ -81,12 +81,12 @@ gsloth get review requirements PROJ-123
 Review a Pull Request in the current directory.
 
 ```bash
-gsloth pr [prId] [requirementsId]
+gth pr [prId] [requirementsId]
 ```
 
 ### Arguments
 - `[prId]` - Pull request ID to review. Omit both `prId` and `requirementsId` to discover the change requirements from the current branch's PR (see below)
-- `[requirementsId]` - Optional requirements ID to retrieve requirements from provider. This argument is only supported together with `prId`; requirements-only syntax such as `gsloth pr PROJ-123` is not supported.
+- `[requirementsId]` - Optional requirements ID to retrieve requirements from provider. This argument is only supported together with `prId`; requirements-only syntax such as `gth pr PROJ-123` is not supported.
 
 ### Options
 - `-p, --requirements-source <requirementSource>` - Requirement source for this review
@@ -102,8 +102,8 @@ Reviews a pull request using GitHub as the default content source. Can integrate
 
 ### Change Requirements Discovery
 
-Running `gsloth pr` with no positional arguments triggers change requirements discovery. Discovery only runs when neither
-`prId` nor `requirementsId` is provided; `gsloth pr PROJ-123` is not treated as requirements-only
+Running `gth pr` with no positional arguments triggers change requirements discovery. Discovery only runs when neither
+`prId` nor `requirementsId` is provided; `gth pr PROJ-123` is not treated as requirements-only
 discovery and is unsupported. The diff for the current branch's PR is fetched
 deterministically with `gh pr diff`, and the PR description is inspected for an explicit
 requirements reference (a linked GitHub issue or a Jira key, depending on the configured
@@ -114,27 +114,27 @@ a Jira MCP server) to locate the diff and requirements before handing over to th
 The discovery agent's prompt can be customized by placing a `.gsloth.pr-discovery.md` file in the
 project config directory or in an identity profile directory, the same way as other prompts.
 Discovery behaviour is configured via `commands.pr.discovery` — see
-[Change Requirements Discovery Configuration](CONFIGURATION.md#change-requirements-discovery-configuration).
+[Change Requirements Discovery Configuration](configuration/content-sources.md#change-requirements-discovery-configuration).
 
 ### Examples
 ```bash
 # Discover change requirements from the current branch's PR and review it
-gsloth pr
+gth pr
 
 # Review PR #42
-gsloth pr 42
+gth pr 42
 
 # Review PR #42 with GitHub issue #23 as requirements
-gsloth pr 42 23
+gth pr 42 23
 
 # Review PR #42 with JIRA issue PROJ-123
-gsloth pr 42 PROJ-123 -p jira
+gth pr 42 PROJ-123 -p jira
 
 # Unsupported: requirements-only mode is not available; provide a PR ID or use no arguments for change requirements discovery
-# gsloth pr PROJ-123
+# gth pr PROJ-123
 
 # Review PR #42 with additional context from files
-gsloth pr 42 -f architecture.md notes.txt
+gth pr 42 -f architecture.md notes.txt
 ```
 
 ## review
@@ -142,7 +142,7 @@ gsloth pr 42 -f architecture.md notes.txt
 Review any diff or content provided via stdin, files, or content sources.
 
 ```bash
-gsloth review [contentId]
+gth review [contentId]
 ```
 
 ### Arguments
@@ -159,29 +159,29 @@ gsloth review [contentId]
 Flexible review command that can process content from various sources including stdin, files, or configured providers.
 
 The `git` content source runs `git --no-pager diff` itself, so you can review local changes
-without piping: `gsloth review --content-source git` reviews the working tree, and an optional
+without piping: `gth review --content-source git` reviews the working tree, and an optional
 `contentId` selects a ref range. It fails with a clear error outside a git repository or when
 the diff is empty.
 
 ### Examples
 ```bash
 # Review current git changes
-git --no-pager diff | gsloth review
+git --no-pager diff | gth review
 
 # The same without a pipe, via the git content source
-gsloth review --content-source git
+gth review --content-source git
 
 # Review a specific commit range via the git content source
-gsloth review origin/main...feature-branch --content-source git
+gth review origin/main...feature-branch --content-source git
 
 # Review specific commit range
-git --no-pager diff origin/main...feature-branch | gsloth review
+git --no-pager diff origin/main...feature-branch | gth review
 
 # Review with requirements file
-gsloth review -r requirements.md
+gth review -r requirements.md
 
 # Review with custom message
-git diff | gsloth review -m "Please focus on security implications"
+git diff | gth review -m "Please focus on security implications"
 ```
 
 ## ask
@@ -189,7 +189,7 @@ git diff | gsloth review -m "Please focus on security implications"
 Ask questions about code or general programming topics.
 
 ```bash
-gsloth ask [message]
+gth ask [message]
 ```
 
 ### Arguments
@@ -204,16 +204,16 @@ Ask questions with optional file context. At least one input source (message, fi
 ### Examples
 ```bash
 # Ask a general question
-gsloth ask "which types of primitives are available in JavaScript?"
+gth ask "which types of primitives are available in JavaScript?"
 
 # Ask about a specific file
-gsloth ask "Please explain this code" -f index.js
+gth ask "Please explain this code" -f index.js
 
 # Ask about multiple files
-gsloth ask "How do these modules interact?" -f module1.js module2.js
+gth ask "How do these modules interact?" -f module1.js module2.js
 
 # Use with stdin
-cat error.log | gsloth ask "What might be causing these errors?"
+cat error.log | gth ask "What might be causing these errors?"
 ```
 
 ## exec
@@ -221,7 +221,7 @@ cat error.log | gsloth ask "What might be causing these errors?"
 Run a markdown prompt-executable reliably and near-deterministically — the non-interactive, prompt-as-script sibling of `ask`.
 
 ```bash
-gsloth exec [script]
+gth exec [script]
 ```
 
 `exec` streams its result to stdout (so it pipes cleanly) and is **non-interactive** — there is no ESC-to-interrupt and nothing is written to a report file unless you pass `-w`. A non-zero exit code signals failure.
@@ -241,16 +241,16 @@ The script is resolved in precedence order: `-m/--message` inline text, then the
 ### Examples
 ```bash
 # Run a prompt-executable script
-gsloth exec scripts/release-notes.md
+gth exec scripts/release-notes.md
 
 # Inline prompt, most deterministic
-gsloth exec -m "Summarize CHANGELOG.md in three bullets" -t 0
+gth exec -m "Summarize CHANGELOG.md in three bullets" -t 0
 
 # Pipe a script on stdin
-cat scripts/lint-summary.md | gsloth exec
+cat scripts/lint-summary.md | gth exec
 
 # Add context files before the script
-gsloth exec scripts/build-fix.md -f error.log package.json
+gth exec scripts/build-fix.md -f error.log package.json
 ```
 
 ## chat
@@ -258,7 +258,7 @@ gsloth exec scripts/build-fix.md -f error.log package.json
 Start an interactive chat session with Gaunt Sloth.
 
 ```bash
-gsloth chat [message]
+gth chat [message]
 ```
 
 It is possible to press Escape during inference to interrupt it.
@@ -279,10 +279,10 @@ Opens an interactive chat session where you can have a conversation with the AI.
 ### Examples
 ```bash
 # Start a chat session
-gsloth chat
+gth chat
 
 # Start with an initial message
-gsloth chat "Let's discuss the architecture of this project"
+gth chat "Let's discuss the architecture of this project"
 ```
 
 ## code
@@ -290,7 +290,7 @@ gsloth chat "Let's discuss the architecture of this project"
 Write code interactively with full file system access within your project.
 
 ```bash
-gsloth code [message]
+gth code [message]
 ```
 
 It is possible to press Escape during inference to interrupt it.
@@ -313,10 +313,10 @@ Opens an interactive coding session where the AI has full read access to your pr
 ### Examples
 ```bash
 # Start a code session
-gsloth code
+gth code
 
 # Start with specific coding task
-gsloth code "Help me refactor the authentication module"
+gth code "Help me refactor the authentication module"
 ```
 
 ## eval
@@ -324,7 +324,7 @@ gsloth code "Help me refactor the authentication module"
 Grade a suite of YAML-defined cases against the agent — with deterministic checks and/or an LLM judge — and report pass/fail. Think "pytest for prompts": you assert what a good answer must (and must not) contain, call, or match, then `eval` runs every case and tells you which passed.
 
 ```bash
-gsloth eval <suites...>
+gth eval <suites...>
 ```
 
 `eval` is **non-interactive**: it reads the suite(s) from the file/directory arguments, never from stdin, and never prompts for approval. Its exit code is the pass/fail gate, so it drops straight into CI.
@@ -336,9 +336,9 @@ gsloth eval <suites...>
 - `-j, --concurrency <n>` - Maximum cases run in parallel (default: the shared batch runner pool size)
 - `-o, --output <dir>` - Directory to write structured per-case JSON plus a `results.json` summary to (default: a timestamped `gth_<date>_EVAL` directory alongside other reports)
 - `--judge <profile>` - Identity profile whose model grades `judge:` rubrics. Overrides the suite's `judge_profile`; omit both to judge with the SUT's own model.
-- `-r, --reporter <names>` - Reporter(s) to render the run through (repeatable, or comma-separated). Built-in: `text` (the default console summary) and `junit` (writes a JUnit `results.xml`); names from the config [`reporters`](CONFIGURATION.md#custom-eval-reporters-reporters) map work too — including installed reporter packages such as [`@gaunt-sloth/eval-reporter-teamcity`](https://www.npmjs.com/package/@gaunt-sloth/eval-reporter-teamcity) (live `##teamcity[...]` service messages). **Replaces the default set rather than adding to it** — `--reporter junit` drops the console summary, so pass `--reporter text,junit` to keep both. The always-on `results.json` + per-case JSON are written regardless.
+- `-r, --reporter <names>` - Reporter(s) to render the run through (repeatable, or comma-separated). Built-in: `text` (the default console summary) and `junit` (writes a JUnit `results.xml`); names from the config [`reporters`](configuration/output.md#custom-eval-reporters-reporters) map work too — including installed reporter packages such as [`@gaunt-sloth/eval-reporter-teamcity`](https://www.npmjs.com/package/@gaunt-sloth/eval-reporter-teamcity) (live `##teamcity[...]` service messages). **Replaces the default set rather than adding to it** — `--reporter junit` drops the console summary, so pass `--reporter text,junit` to keep both. The always-on `results.json` + per-case JSON are written regardless.
 
-Global options apply too — notably `-i, --identity-profile <name>`, which selects the profile the cases run under (see [identity profiles](CONFIGURATION.md#identity-profiles)).
+Global options apply too — notably `-i, --identity-profile <name>`, which selects the profile the cases run under (see [identity profiles](configuration/profiles.md#identity-profiles)).
 
 ### Description
 
@@ -366,7 +366,7 @@ cases:
 Then run it:
 
 ```bash
-gsloth eval eval/js-basics.yaml
+gth eval eval/js-basics.yaml
 ```
 
 Each case sends its `prompt` to the agent, grades the answer against the case's assertions and (if present) its `judge:` rubric, and prints one `PASS`/`FAIL` line, followed by a closing `EVAL RESULT: <passed>/<total> case(s) passed` line. The process exits `0` when every case passes (see [Exit codes](#exit-codes-eval) below) — which is exactly what a CI step keys off.
@@ -399,7 +399,7 @@ These grade the agent's answer (and its tool trace). Use them at case level, ins
 | `must_contain` | string[] | **Every** listed substring appears in the answer (case-insensitive). |
 | `must_not_contain` | string[] | **None** of the listed substrings appear (case-insensitive). |
 | `should_contain_any` | string[] | **At least one** listed substring appears (case-insensitive). |
-| `must_call` | string[] | For **each** pattern, the agent called at least one matching tool. Patterns are exact names or globs (`*`), e.g. `mcp__*` — the same matcher as [`allowedTools`](CONFIGURATION.md#tool-allow-list-allowedtools). |
+| `must_call` | string[] | For **each** pattern, the agent called at least one matching tool. Patterns are exact names or globs (`*`), e.g. `mcp__*` — the same matcher as [`allowedTools`](configuration/tools.md#allowed-tools). |
 | `must_not_call` | string[] | **No** called tool matches any listed pattern (globs supported). |
 | `must_match` | string[] | **Every** regex matches the answer. Case-sensitive — the pattern owns its own flags (unlike the substring checks). |
 | `must_not_match` | string[] | **No** regex matches the answer. |
@@ -448,11 +448,11 @@ cases:
 
 An `expect:` block's `identities:` scopes which identity it grades; a block with no `identities:` (or a flat case with no `expect:`) applies to all of them. Every `(case × identity)` cell must be covered by at least one applicable block, or the suite is rejected before it runs — there is no silent pass.
 
-Every listed identity must resolve to a real profile before any case runs: each needs its own config directory (`.gsloth/.gsloth-settings/<name>/`, one per [identity profile](CONFIGURATION.md#identity-profiles)). An unresolved name aborts the whole run with **exit 2** rather than silently falling back to the global config and reporting a false green.
+Every listed identity must resolve to a real profile before any case runs: each needs its own config directory (`.gsloth/.gsloth-settings/<name>/`, one per [identity profile](configuration/profiles.md#identity-profiles)). An unresolved name aborts the whole run with **exit 2** rather than silently falling back to the global config and reporting a false green.
 
 A matrix suite runs from its `identities:` list alone — you do **not** need to pass a base `-i` on the CLI (the cases run under the listed profiles, and rubric `judge:` grading falls back to the first identity's model unless a `judge_profile`/`--judge` is set). A project with only per-identity configs (and no base config) still works.
 
-To prove an identity's agent touched no files, set `filesystem: 'none'` in that profile's config — a profile/config setting, not a suite-YAML key; see [CONFIGURATION.md](CONFIGURATION.md).
+To prove an identity's agent touched no files, set `filesystem: 'none'` in that profile's config — a profile/config setting, not a suite-YAML key; see [Configuration](configuration/index.md).
 
 ### Multi-turn cases
 
@@ -474,15 +474,15 @@ Turn 2 (`How many did you just list?`) only makes sense because it shares the co
 
 ### Judging
 
-A `judge:` rubric is scored 0–10 by an LLM. By default that is the SUT's own model. To grade with a different model — e.g. a stricter or independent one that can catch blind spots the SUT shares — point the judge at its own identity profile, either per-suite with `judge_profile:` or per-run with `--judge <profile>` (the flag wins). A judge profile resolves the same way as any [identity profile](CONFIGURATION.md#identity-profiles); a `--judge`/`judge_profile` that doesn't resolve aborts the run with **exit 2**.
+A `judge:` rubric is scored 0–10 by an LLM. By default that is the SUT's own model. To grade with a different model — e.g. a stricter or independent one that can catch blind spots the SUT shares — point the judge at its own identity profile, either per-suite with `judge_profile:` or per-run with `--judge <profile>` (the flag wins). A judge profile resolves the same way as any [identity profile](configuration/profiles.md#identity-profiles); a `--judge`/`judge_profile` that doesn't resolve aborts the run with **exit 2**.
 
 ### Running many suites
 
 Pass several files, a directory, or a mix — `eval` runs them all under **one** aggregate exit code, so a CI step can gate on a whole tree of suites at once. A directory expands to its **direct-child** `*.yaml`/`*.yml` files (non-recursive, sorted); the same file named twice runs once.
 
 ```bash
-gsloth eval eval/js-basics.yaml eval/authz-matrix.yaml   # two files
-gsloth eval eval/ -o eval/out --reporter junit           # every suite in a directory
+gth eval eval/js-basics.yaml eval/authz-matrix.yaml   # two files
+gth eval eval/ -o eval/out --reporter junit           # every suite in a directory
 ```
 
 - **One suite** → output is written directly into the `-o` dir, exactly as before.
@@ -504,17 +504,17 @@ CI should treat `1` and `2` differently: `1` means your agent regressed; `2` mea
 ### Examples
 ```bash
 # Run a suite; exit 0 if every case passes, 1 if any fails, 2 on a harness error
-gsloth eval eval/js-basics.yaml
+gth eval eval/js-basics.yaml
 
 # Grade the judge rubrics with a stricter, independent model instead of the SUT's
-gsloth eval eval/js-basics.yaml --judge strict-judge
+gth eval eval/js-basics.yaml --judge strict-judge
 
 # Run an authorization matrix (each case once per identity), 8 cases in parallel,
 # writing structured results to a named directory
-gsloth eval eval/authz-matrix.yaml -j 8 -o eval/out/authz
+gth eval eval/authz-matrix.yaml -j 8 -o eval/out/authz
 
 # Gate a CI step on the suite result
-gsloth eval eval/js-basics.yaml || echo "eval failed (exit $?)"
+gth eval eval/js-basics.yaml || echo "eval failed (exit $?)"
 ```
 
 ## batch
@@ -522,7 +522,7 @@ gsloth eval eval/js-basics.yaml || echo "eval failed (exit $?)"
 Run one prompt-executable across a matrix of models and/or content-bound inputs — "xargs for prompts", the way `exec` runs a single one.
 
 ```bash
-gsloth batch <script> --over <csv|jsonl> [--models a,b,c] [-j 8] [--retry 2] [-o out/]
+gth batch <script> --over <csv|jsonl> [--models a,b,c] [-j 8] [--retry 2] [-o out/]
 ```
 
 `batch` exits `0` as long as the cells *ran* — a poor-quality answer is **not** a harness failure (grading answers is [`eval`](#eval)'s job). Only a harness-level error (a malformed `--over` file, a missing script) sets a non-zero exit code; each cell's outcome is recorded in that cell's structured JSON output.
@@ -543,13 +543,13 @@ The matrix is the cross-product of the model axis (`--models`) and the input axi
 ### Examples
 ```bash
 # Run one script across three models
-gsloth batch prompts/classify.md --models claude-sonnet-4-5,gpt-4o,gemini-2.5-pro
+gth batch prompts/classify.md --models claude-sonnet-4-5,gpt-4o,gemini-2.5-pro
 
 # Bind CSV rows into the script via {{field}} placeholders, 8 cells in parallel
-gsloth batch prompts/triage.md --over data/tickets.csv -j 8
+gth batch prompts/triage.md --over data/tickets.csv -j 8
 
 # Fan out over models AND rows, retry failed cells, write to a named dir
-gsloth batch prompts/triage.md --over data/tickets.jsonl \
+gth batch prompts/triage.md --over data/tickets.jsonl \
   --models claude-sonnet-4-5,gpt-4o --retry 2 -o out/triage
 ```
 
@@ -558,7 +558,7 @@ gsloth batch prompts/triage.md --over data/tickets.jsonl \
 Run a local JS orchestration script that drives one or more agent calls.
 
 ```bash
-gsloth workflow <script> [--args <json>]
+gth workflow <script> [--args <json>]
 ```
 
 > **Runs with full Node privileges.** The script is arbitrary local ESM — it can read files and spawn processes. Run only scripts you trust, as you would any local script.
@@ -575,10 +575,10 @@ The workflow's return value is its output: a string is printed as-is, anything e
 ### Examples
 ```bash
 # Run a workflow script
-gsloth workflow workflows/summarize-prs.mjs
+gth workflow workflows/summarize-prs.mjs
 
 # Pass a JSON argument the script reads as ctx.args
-gsloth workflow workflows/triage.mjs --args '{"label":"bug","limit":20}'
+gth workflow workflows/triage.mjs --args '{"label":"bug","limit":20}'
 ```
 
 ## api ag-ui
@@ -588,7 +588,7 @@ Start an [AG-UI](https://github.com/ag-ui-protocol/ag-ui) compatible HTTP server
 > **Local use only.** The server has no authentication. Do not expose it to public networks.
 
 ```bash
-gsloth api ag-ui [--port <port>]
+gth api ag-ui [--port <port>]
 ```
 
 ### Options
@@ -638,10 +638,10 @@ Both `threadId` and `runId` are auto-generated (UUID) when omitted.
 
 ```bash
 # Start on default port 3000
-gsloth api ag-ui
+gth api ag-ui
 
 # Start on a custom port
-gsloth api ag-ui --port 4000
+gth api ag-ui --port 4000
 
 # Use a project-specific config
 gth -c ./my-project/.gsloth.config.json api ag-ui --port 3000
@@ -699,9 +699,9 @@ gth models --provider anthropic
 Inspect and validate the resolved Gaunt Sloth configuration, without building the LLM.
 
 ```bash
-gsloth config print [--json]
-gsloth config validate
-gsloth config profile create <name> [--model <id>] [--force]
+gth config print [--json]
+gth config validate
+gth config profile create <name> [--model <id>] [--force]
 ```
 
 `print` / `validate` resolve the config exactly as a real run would — up-tree discovery, the global base, and the defaults merge — and honour the global `--config` / `-i, --identity-profile` (`--profile`) overrides.
@@ -709,7 +709,7 @@ gsloth config profile create <name> [--model <id>] [--force]
 ### Subcommands
 - `config print` - Print the fully-resolved configuration with secrets redacted. By default it prints a source header followed by the JSON; `--json` emits only the JSON object (machine-readable, no header) so it pipes cleanly.
 - `config validate` - Validate the effective configuration against the schema. Unknown keys warn; a schema violation prints a path-scoped message and exits non-zero. Every layer (project + global) is reported, so you fix all offending files at once.
-- `config profile create <name>` - Scaffold a new [named profile](CONFIGURATION.md#identity-profiles) at `.gsloth/.gsloth-settings/<name>/.gsloth.config.json`, seeded from your current config (or a template), schema-validated before it is written. Select it later with `--profile <name>`, or reuse it inside a subagent via the [`subagents`](CONFIGURATION.md#named-profile-subagents-subagents) config.
+- `config profile create <name>` - Scaffold a new [named profile](configuration/profiles.md#identity-profiles) at `.gsloth/.gsloth-settings/<name>/.gsloth.config.json`, seeded from your current config (or a template), schema-validated before it is written. Select it later with `--profile <name>`, or reuse it inside a subagent via the [`subagents`](configuration/profiles.md#named-profile-subagents-subagents) config.
 
 ### Options
 - `--json` - (`config print` only) Emit only the JSON object, no header.
@@ -719,17 +719,17 @@ gsloth config profile create <name> [--model <id>] [--force]
 ### Examples
 ```bash
 # Print the resolved config (secrets redacted)
-gsloth config print
+gth config print
 
 # Emit just the JSON object and pull one field out with jq
-gsloth config print --json | jq '.llm'
+gth config print --json | jq '.llm'
 
 # Validate the config; exits non-zero when invalid
-gsloth config validate
+gth config validate
 
 # Scaffold a cheap flash-lite profile, then run a command under it
-gsloth config profile create cheap --model gemini-2.0-flash-lite
-gsloth --profile cheap ask "summarise the open TODOs in this repo"
+gth config profile create cheap --model gemini-2.0-flash-lite
+gth --profile cheap ask "summarise the open TODOs in this repo"
 ```
 
 ## history
@@ -737,9 +737,9 @@ gsloth --profile cheap ask "summarise the open TODOs in this repo"
 Search and list locally-recorded session history.
 
 ```bash
-gsloth history list [--limit <n>] [--db <path>]
-gsloth history search <query...> [--limit <n>] [--db <path>]
-gsloth history show <id> [--db <path>]
+gth history list [--limit <n>] [--db <path>]
+gth history search <query...> [--limit <n>] [--db <path>]
+gth history show <id> [--db <path>]
 ```
 
 Recording is **opt-in and local only** — nothing here touches the network. Sessions are stored only when `history.enabled: true` is set in your config; with no store present these commands report that there is no history yet rather than creating one. The store defaults to `~/.gsloth/history.db` (overridable via the `history.dbPath` config key or the `--db` flag).
@@ -760,13 +760,13 @@ Recording is **opt-in and local only** — nothing here touches the network. Ses
 ### Examples
 ```bash
 # List recent conversations
-gsloth history list
+gth history list
 
 # Full-text search past sessions
-gsloth history search vertexai timeout
+gth history search vertexai timeout
 
 # Print one conversation thread by id (from `history list`)
-gsloth history show 42
+gth history show 42
 ```
 
 ## insights
@@ -774,7 +774,7 @@ gsloth history show 42
 Show local analytics over recorded session history.
 
 ```bash
-gsloth insights [--db <path>]
+gth insights [--db <path>]
 ```
 
 Read-only analytics over the same opt-in [`history`](#history) store — token and cost totals, a top-tool tally, and a per-command breakdown. Local only: nothing leaves the machine, and with no store present it reports that there is no history yet rather than creating one. Enable recording with `history.enabled: true` in your config.
@@ -785,15 +785,15 @@ Read-only analytics over the same opt-in [`history`](#history) store — token a
 ### Examples
 ```bash
 # Show local usage analytics
-gsloth insights
+gth insights
 
 # Point at a specific history DB
-gsloth insights --db ./project-history.db
+gth insights --db ./project-history.db
 ```
 
 ## Command-Specific Configuration
 
-Commands can be configured individually in your configuration file. See [CONFIGURATION.md](./CONFIGURATION.md) for detailed configuration options.
+Commands can be configured individually in your configuration file. See [Configuration](configuration/index.md) for detailed configuration options.
 
 ### Example Configuration
 ```json

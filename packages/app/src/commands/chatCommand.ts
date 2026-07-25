@@ -20,6 +20,13 @@ export function chatCommand(
     .command('chat')
     .description('Start an interactive chat session with Gaunt Sloth')
     .argument('[message]', 'Initial message to start the chat')
+    .addHelpText(
+      'after',
+      '\n' +
+        'Examples:\n' +
+        '  $ gth chat\n' +
+        '  $ gth chat "Let\'s discuss the architecture of this project"\n'
+    )
     .action(async (message: string) => {
       await startSession(sessionConfig, commandLineConfigOverrides, message);
     });

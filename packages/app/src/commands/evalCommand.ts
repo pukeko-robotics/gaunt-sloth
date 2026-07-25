@@ -367,13 +367,13 @@ export function evalCommand(
         '  is always written, regardless.\n' +
         '\n' +
         'Examples:\n' +
-        '  $ gsloth eval eval/js-basics.yaml\n' +
-        '  $ gsloth eval eval/js-basics.yaml --judge strict-judge\n' +
-        '  $ gsloth eval eval/authz-matrix.yaml -j 8 -o eval/out/authz\n' +
-        '  $ gsloth eval eval/js-basics.yaml eval/authz-matrix.yaml   # many suites, one exit\n' +
-        '  $ gsloth eval eval/ -o eval/out --reporter junit           # a whole directory\n' +
-        '  $ gsloth eval eval/js-basics.yaml --reporter junit\n' +
-        '  $ gsloth eval eval/js-basics.yaml --reporter text,junit\n'
+        '  $ gth eval eval/js-basics.yaml\n' +
+        '  $ gth eval eval/js-basics.yaml --judge strict-judge\n' +
+        '  $ gth eval eval/authz-matrix.yaml -j 8 -o eval/out/authz\n' +
+        '  $ gth eval eval/js-basics.yaml eval/authz-matrix.yaml   # many suites, one exit\n' +
+        '  $ gth eval eval/ -o eval/out --reporter junit           # a whole directory\n' +
+        '  $ gth eval eval/js-basics.yaml --reporter junit\n' +
+        '  $ gth eval eval/js-basics.yaml --reporter text,junit\n'
     )
     .action(async (suitePaths: string[], options: EvalCommandOptions) => {
       try {

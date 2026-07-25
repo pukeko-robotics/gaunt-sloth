@@ -80,9 +80,9 @@ export function askCommand(
       'after',
       '\n' +
         'Examples:\n' +
-        '  $ gsloth ask "which types of primitives are available in JavaScript?"\n' +
-        '  $ gsloth ask "Please explain this code" -f index.js\n' +
-        '  $ cat error.log | gsloth ask "What might be causing these errors?"\n'
+        '  $ gth ask "which types of primitives are available in JavaScript?"\n' +
+        '  $ gth ask "Please explain this code" -f index.js\n' +
+        '  $ cat error.log | gth ask "What might be causing these errors?"\n'
     )
     .action(async (message: string, options: AskCommandOptions) => {
       const config = applyAskWriteMode(await initConfig(commandLineConfigOverrides), options);

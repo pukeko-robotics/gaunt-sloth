@@ -265,7 +265,7 @@ opt in.**
 
 - `false` (new default) — no output file is written
 - `true` — restores the old behaviour (standard `gth_<timestamp>_<COMMAND>.md` name)
-- a string — a custom path, unchanged (see [CONFIGURATION.md](CONFIGURATION.md#controlling-output-files))
+- a string — a custom path, unchanged (see [Configuration → Output files](configuration/output.md#controlling-output-files))
 
 **If you relied on the auto-saved files** (for example, a CI job that reads back the review
 output), set it explicitly:
@@ -361,7 +361,7 @@ The flat `projectGuidelines` and `projectReviewInstructions` keys are removed. P
 config now lives in one `prompts` object whose segments
 (`backstory | guidelines | system | chat | code | exec | review`) each accept a string path or
 an object `{ path?, enabled?, mode? }` — see
-[CONFIGURATION.md → Prompt Files](CONFIGURATION.md#prompt-files-prompts). A leftover flat key is
+[Configuration → Prompts](configuration/prompts.md#prompt-files-prompts). A leftover flat key is
 a hard validation error naming the replacement:
 `Config property "projectGuidelines" was renamed in 2.0. Use "prompts.guidelines" instead.`
 

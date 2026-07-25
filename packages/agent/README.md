@@ -39,7 +39,7 @@ await startAgUiServer(config, config.commands?.api?.port ?? 3000);
 
 The server is intended for **local clients only** (a local web UI talking to a local agent); do
 not expose it to public networks. Port and CORS come from `commands.api.*` in the config — see
-[docs/CONFIGURATION.md](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/docs/CONFIGURATION.md).
+[the configuration guide](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/docs/configuration/index.md).
 
 ## Binaries
 

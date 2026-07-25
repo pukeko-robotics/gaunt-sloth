@@ -103,10 +103,10 @@ export function execCommand(
       'after',
       '\n' +
         'Examples:\n' +
-        '  $ gsloth exec scripts/release-notes.md\n' +
-        '  $ gsloth exec -m "Summarize CHANGELOG.md in three bullets" -t 0\n' +
-        '  $ cat scripts/lint-summary.md | gsloth exec\n' +
-        '  $ gsloth exec scripts/build-fix.md -f error.log package.json\n'
+        '  $ gth exec scripts/release-notes.md\n' +
+        '  $ gth exec -m "Summarize CHANGELOG.md in three bullets" -t 0\n' +
+        '  $ cat scripts/lint-summary.md | gth exec\n' +
+        '  $ gth exec scripts/build-fix.md -f error.log package.json\n'
     )
     .action(async (script: string | undefined, options: ExecCommandOptions) => {
       // -m and a positional script path are mutually exclusive: keep path-vs-text unambiguous.

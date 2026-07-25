@@ -37,7 +37,7 @@ console.log(response.text);
 ```
 
 All config keys (providers, prompts, tools, per-command settings) are documented in
-[docs/CONFIGURATION.md](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/docs/CONFIGURATION.md).
+[the configuration guide](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/docs/configuration/index.md).
 
 ## Exports
 

@@ -59,7 +59,7 @@ the dump to fail partway through; source: `packages/core/src/utils/debugDump.ts`
 
 `/debug-dump` runs a secret-redaction pass over every file above before it is written. It is **on by
 default** — the config toggle is `debugDump.redact` (see
-[Configuration → Debug Dump Redaction](CONFIGURATION.md#debug-dump-redaction-debugdumpredact)).
+[Configuration → Debug Dump Redaction](configuration/output.md#debug-dump-redaction-debugdumpredact)).
 
 **What it removes.** Each match is replaced with the literal marker `<redacted>`:
 

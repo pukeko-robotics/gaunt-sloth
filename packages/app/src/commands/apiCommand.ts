@@ -13,6 +13,13 @@ export function apiCommand(
     .command('ag-ui')
     .description('Start an AG-UI protocol HTTP server')
     .option('--port <port>', 'Port to listen on')
+    .addHelpText(
+      'after',
+      '\n' +
+        'Examples:\n' +
+        '  $ gth api ag-ui\n' +
+        '  $ gth api ag-ui --port 4000\n'
+    )
     .action(async (options: { port?: string }) => {
       try {
         const config = await initConfig(commandLineConfigOverrides);

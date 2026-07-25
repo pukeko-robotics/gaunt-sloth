@@ -30,9 +30,9 @@ export function historyCommand(program: Command): void {
       'after',
       '\n' +
         'Examples:\n' +
-        '  $ gsloth history list\n' +
-        '  $ gsloth history search vertexai timeout\n' +
-        '  $ gsloth history show 42\n'
+        '  $ gth history list\n' +
+        '  $ gth history search vertexai timeout\n' +
+        '  $ gth history show 42\n'
     );
 
   history
