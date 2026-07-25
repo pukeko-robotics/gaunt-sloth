@@ -454,13 +454,26 @@ describe('tui/slashCommands formatConfigSummary (GS2-1)', () => {
     expect(lines).toContain('Filesystem: read');
   });
 
-  it('honours a falsy-but-explicit differing pair (array command value vs string top-level) (CFG-25)', async () => {
+  it('compares formatted renderings, so an array command value vs a string top-level counts as differing (CFG-25)', async () => {
     const { formatConfigSummary } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const lines = formatConfigSummary(
       { filesystem: 'none', commands: { code: { filesystem: ['./src'] } } },
       'code'
     );
     expect(lines).toContain('Filesystem: ["./src"] (code; top-level: none)');
+  });
+
+  // CFG-25 fix round 1 — the live-bug regression vector, with the fixture DERIVED from the real
+  // resolution instead of hand-built: run `resolveConfig({}, {})` (the exact default merge a real
+  // session performs; GS2-60 bakes per-command precedence into `commands.*`) and assert the panel
+  // renders code's effective `all` over the top-level `none`. If the panel ever reads the raw
+  // top-level value again, THIS reproduces the shipped bug.
+  it('renders `all (code; top-level: none)` from the REAL resolveConfig default output (CFG-25)', async () => {
+    const { resolveConfig } = await import('@gaunt-sloth/core/config/loader.js');
+    const { formatConfigSummary } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    const resolved = resolveConfig({} as never, {});
+    const lines = formatConfigSummary(resolved as never, 'code');
+    expect(lines).toContain('Filesystem: all (code; top-level: none)');
   });
 });
 

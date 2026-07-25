@@ -157,6 +157,24 @@ describe('createTuiSession — launch bump (TUI-C13)', () => {
     expect(initConfigArg.output?.header).toBe(true);
   });
 
+  // CFG-25 — call-site wiring: createTuiSession must pass sessionConfig.mode into the (real,
+  // unmocked) formatConfigSummary so the /config panel prop carries the EFFECTIVE per-command
+  // filesystem. If a refactor drops the second argument, the prop reads `Filesystem: none` and
+  // this fails — the original live bug.
+  it('passes the session mode through to the configSummary prop (CFG-25 wiring)', async () => {
+    initConfigMock.mockResolvedValue({
+      filesystem: 'none',
+      commands: { chat: { filesystem: 'read' } },
+    });
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await createTuiSession(sessionConfig, overrides);
+
+    const appElement = renderMock.mock.calls[0][0] as { props: { configSummary: string[] } };
+    expect(appElement.props.configSummary).toContain('Filesystem: read (chat; top-level: none)');
+    expect(appElement.props.configSummary).not.toContain('Filesystem: none');
+  });
+
   it('does NOT write the bump sequence when stdout is not a TTY (piped/redirected/tests)', async () => {
     systemUtilsMock.stdout.isTTY = false;
     const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
