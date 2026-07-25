@@ -47,11 +47,10 @@ export default async (ctx) => {
 };
 ```
 
-Run it, optionally feeding it data through `--args`:
+Run it:
 
 ```bash
 gth workflow workflows/feedback.mjs
-gth workflow workflows/feedback.mjs --args '{"lines":["Export to PDF is broken"]}'
 ```
 
 The script's return value is the command's output: a string prints as-is, anything else as
@@ -79,6 +78,16 @@ The default export must be `async (ctx) => result`. `ctx` provides:
 Workflows respect your project config and global flags — `-i <profile>` selects the identity the
 calls run under, and per-call `model` overrides resolve through the same config machinery as
 `batch --models`.
+
+## Examples
+
+```bash
+# Feed the script data as ctx.args
+gth workflow workflows/feedback.mjs --args '{"lines":["Export to PDF is broken"]}'
+
+# Run the script's agent calls under a named identity profile
+gth -i cheap workflow workflows/feedback.mjs
+```
 
 ## Related
 

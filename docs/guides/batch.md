@@ -31,7 +31,7 @@ Each row becomes one cell — an isolated single-shot run with the row's values 
 prompt. (A placeholder that matches no column is left as-is; a script with no matching
 placeholders at all gets the row appended as a context block instead.) The run ends with
 `Batch complete: <passed>/<total> cell(s) passed` — plus, if cells failed, a warning pointing at
-`results.json` — but the exit code stays `0`; the per-cell files hold each answer.
+`results.json`; the per-cell files hold each answer.
 
 ## The model axis
 
@@ -52,20 +52,25 @@ Omit `--models` and cells run under your configured model, no fan-out.
   alongside other gth reports). It receives one structured JSON file per cell — the answer, token
   counts, and the tools called — plus a `results.json` summary.
 
-```bash
-gth batch prompts/triage.md --over data/tickets.jsonl \
-  --models claude-sonnet-4-5,gpt-4o --retry 2 -o out/triage
-```
-
 `--over` accepts CSV or JSONL; each JSONL record's fields bind the same way as CSV columns.
 
 ## Grading what batch produced
 
-A batch run tells you the cells ran, not that the answers are good. When "good" is checkable —
-must mention X, must have called tool Y, passes a rubric — write the checks as an eval suite and
-gate on `gth eval`'s exit code instead: see [Evaluate your agent](evals.md). And when the shape is
-not "same prompt × many rows" but "call, decide, call again", reach for
+When "good" is checkable — must mention X, must have called tool Y, passes a rubric — write the
+checks as an eval suite and gate on `gth eval`'s exit code: see [Evaluate your agent](evals.md).
+And when the shape is not "same prompt × many rows" but "call, decide, call again", reach for
 [a workflow](workflows.md) rather than scripting around `batch`.
+
+## Examples
+
+```bash
+# Fan out over models AND rows, retry failed cells, write to a named dir
+gth batch prompts/triage.md --over data/tickets.jsonl \
+  --models claude-sonnet-4-5,gpt-4o --retry 2 -o out/triage
+
+# Run a prompt-executable over CSV rows with all defaults
+gth batch prompts/summarize.md --over data/feedback.csv
+```
 
 ## Related
 

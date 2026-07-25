@@ -74,11 +74,23 @@ the JUnit reporter so your CI renders per-case results natively:
 gth eval eval/ --reporter text,junit -o eval-out
 ```
 
-`--reporter` **replaces** the default set rather than adding to it — `--reporter junit` alone
-drops the console summary, so pass `text,junit` to keep both. The JUnit `results.xml` lands beside
-`results.json` (per suite subdirectory in a multi-suite run, so a glob like `eval-out/**/*.xml`
-collects them all). `eval` never reads stdin, so a scripted invocation needs no `</dev/null`
-guard.
+`--reporter text,junit` keeps the console summary and adds the JUnit reporter (see
+[Commands → eval](../COMMANDS.md#eval) for the flag's full semantics). The JUnit `results.xml`
+lands beside `results.json` — per suite subdirectory in a multi-suite run, so a glob like
+`eval-out/**/*.xml` collects them all.
+
+## Examples
+
+```bash
+# Two suites in one run, one aggregate exit code
+gth eval eval/support-smoke.yaml eval/authz-matrix.yaml
+
+# 8 cases in parallel, structured results to a named directory
+gth eval eval/support-smoke.yaml -j 8 -o eval-out/smoke
+
+# Gate a CI step and tell regression (1) from broken harness (2)
+gth eval eval/ || echo "eval failed (exit $?)"
+```
 
 ## Related
 

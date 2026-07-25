@@ -77,10 +77,11 @@ gth --tui code      # force the TUI (e.g. an interactive shell that happens to s
 ## Interrupting a response
 
 Press **Escape** while the agent is working to stop the current response; the session stays open
-and keeps its context. In the readline surface, `Q` also interrupts (a hint box above the response
-says so). **Ctrl+C** during a response requests the same interrupt first, and pressing it again
-force-exits — the escape hatch when a stuck tool call has wedged the run. At an idle prompt,
-Ctrl+C (or typing `exit`) ends the session.
+and keeps its context. **Ctrl+C** (or typing `exit` at the prompt) ends the whole session — in the
+TUI it does so immediately, even mid-response, so Esc is the interrupt there. In the plain
+readline surface, `Q` also interrupts (a hint box above the response says so), a Ctrl+C during a
+response requests the interrupt first, and a second Ctrl+C force-exits — the escape hatch when a
+stuck tool call has wedged the run.
 
 ## Saving a transcript
 
