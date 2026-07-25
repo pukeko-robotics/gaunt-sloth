@@ -37,7 +37,7 @@ reference below gives each one's `type`, its key environment variable, and a wor
 Configuration can be created with the `gth init` command. When called without arguments, it detects
 available API keys in the environment and prompts you to select a provider. You can also specify a
 provider directly: `gth init [vendor]`. Currently, `anthropic`, `groq`, `deepseek`, `openai`,
-`google-genai`, `vertexai`, `openrouter`, `huggingface` and `xai` can be configured with
+`google-genai`, `vertexai`, `openrouter`, `huggingface`, `ollama` and `xai` can be configured with
 `gth init [vendor]`. For providers using OpenAI format (like Inception), use `gth init openai` and
 then modify the configuration.
 
@@ -202,6 +202,29 @@ and point `baseURL` at `http://127.0.0.1:1234/v1` (see the LM Studio section bel
 local models. Prefer tool-tuned models (e.g. Qwen2.5-Coder/-Instruct, gpt-oss)
 for agent work.
 
+### Ollama
+
+Ollama is a first-class provider — no API key, everything local:
+
+```bash
+cd ./your-project
+gth init ollama
+```
+
+```json
+{
+  "llm": {
+    "type": "ollama",
+    "model": "qwen3-coder"
+  }
+}
+```
+
+Gaunt Sloth talks to the Ollama daemon on `http://127.0.0.1:11434`; set `OLLAMA_HOST` (the same
+variable the Ollama CLI uses) if yours runs elsewhere. Raise the context window with `numCtx` in the
+`llm` block (default `16384`). The full walkthrough — model choice, context sizing, and other local
+runtimes — is the [Local & free models](../guides/local-and-free-models.md) guide.
+
 ### LM Studio
 
 LM Studio provides a local OpenAI-compatible server for running models on your machine.
@@ -349,8 +372,7 @@ You can use the `OPENAI_API_KEY` environment variable instead of specifying `api
 }
 ```
 
-LM Studio runs locally and doesn't require a real API key. Use any string for `apiKey`.
-**Note:** The model must support tool calling. Tested models include gpt-oss, granite, nemotron, seed, and qwen3.
+See [LM Studio](#lm-studio) above for the API-key and tool-calling notes.
 
 **Example of .gsloth.config.json for Inception (OpenAI-compatible)**
 
@@ -550,8 +572,6 @@ export async function configure() {
   };
 }
 ```
-
-**Note:** The model must support tool calling. Tested models include gpt-oss, granite, nemotron, seed, and qwen3.
 
 **Example of .gsloth.config.mjs for Inception (OpenAI-compatible)**
 

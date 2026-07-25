@@ -139,8 +139,8 @@ file:
 ```json
 {
   "llm": {
-    "type": "YOUR_PROVIDER",
-    "model": "MODEL_OF_YOUR_CHOICE"
+    "type": "anthropic",
+    "model": "claude-sonnet-4-5"
   },
   "a2aAgents": {
     "myAgent": {

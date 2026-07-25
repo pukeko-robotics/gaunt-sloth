@@ -65,8 +65,8 @@ project root):
 gth -w diagnosis.md ask "Summarise the root cause of this build failure." < build.log
 ```
 
-`exec` is stdout-only by design so its result pipes cleanly — it does **not** write a report file,
-and `-w` has no effect on it. To save an `exec` result, redirect stdout:
+`exec` currently writes no report file — `-w` has no effect on it (a known limitation with a fix
+tracked). Its result streams to stdout, so to save an `exec` result, redirect it:
 
 ```bash
 gth exec scripts/release-notes.md > RELEASE_NOTES.md

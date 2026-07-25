@@ -126,7 +126,7 @@ chooses which files it searches:
 
 Disable it with `{ "gth_grep": { "enabled": false } }` (or `{ "gth_grep": false }`).
 
-**Whatever the `fileSet`, `gth_grep` honors [`.aiignore`](./content-sources.md#ai-ignore-aiignore).**
+**Whatever the `fileSet`, `gth_grep` honors [`.aiignore`](./index.md#ai-ignore-aiignore).**
 It reads file contents through its own search path, so it enforces the same `.aiignore` privacy
 boundary as the filesystem tools: a file hidden by `.aiignore` is never searched or returned, even
 under `fileSet: "all"`. (`.gitignore` decides what stays out of version control; `.aiignore` decides

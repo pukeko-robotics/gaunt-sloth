@@ -23,8 +23,7 @@ configuring each. For the review workflow itself see
 
 ## GitHub Issues
 
-Gaunt Sloth reads a GitHub issue as the requirement source through the GitHub CLI. The integration
-is simple and needs minimal setup.
+Gaunt Sloth reads a GitHub issue as the requirement source through the GitHub CLI.
 
 **Prerequisites:**
 
@@ -80,7 +79,7 @@ confirmed to work with the public Jira MCP.
 
 For the OAuth flow, token storage, and TLS trust details, see [MCP](./mcp.md).
 
-### 1. Modern Jira REST API (Scoped Token)
+### Modern Jira REST API (Scoped Token)
 
 The Jira API is used with the `pr` and `review` commands.
 
@@ -203,7 +202,7 @@ requirements discovery): the Jira key discovered automatically is used for the r
 passed to the worklog path, so no time is logged. Pass the issue id explicitly
 (`gth pr <prId> <requirementsId>`) if you need work logging.
 
-### 2. Legacy Jira REST API (Unscoped Token)
+### Legacy Jira REST API (Unscoped Token)
 
 The Jira API is used with the `pr` and `review` commands.
 
@@ -334,10 +333,6 @@ You can customize rating behavior for `review` and `pr` commands under `commands
 - **`errorOnReviewFail`** (boolean, default: `true`): Exit with error code 1 when review fails (below threshold)
 
 ### Example Configurations
-
-**Default configuration (no config needed):**
-
-Rating works out of the box with no configuration required! The defaults provide sensible CI/CD integration.
 
 **Disable rating:**
 
