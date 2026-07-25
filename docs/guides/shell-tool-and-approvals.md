@@ -147,9 +147,14 @@ the judge at a cheaper model with `judge.model` (see
 
 ## Examples
 
+Outside an interactive session there is nobody to approve a command, so a gated one is refused —
+which is why the one-shot `exec` example below pairs `yolo` with `enabled`.
+
 ```json
 // Enable the shell tool in exec mode too (it is code-mode-only by default)
-{ "commands": { "exec": { "builtInTools": { "run_shell_command": true } } } }
+{ "commands": { "exec": { "builtInTools": {
+  "run_shell_command": { "enabled": true, "yolo": true }
+} } } }
 
 // Fixed dev commands, no arbitrary shell
 { "commands": { "code": { "builtInTools": {
