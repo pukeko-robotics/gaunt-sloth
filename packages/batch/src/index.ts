@@ -13,7 +13,7 @@ export type {
   RunCellFn,
   ToolResultRecord,
 } from '#src/types.js';
-export { DEFAULT_CONCURRENCY } from '#src/types.js';
+export { DEFAULT_CELL_CONCURRENCY } from '#src/types.js';
 
 // BATCH-2 — `gth eval`'s suite parsing, deterministic checks, judge, runner, and output writer.
 export { parseEvalSuite } from '#src/evalSuite.js';
@@ -65,6 +65,7 @@ export type {
 // BATCH-3 — the `gth workflow` host: runs a local JS orchestration script that drives one or more
 // LLM calls through a small WorkflowContext.
 export { runWorkflow } from '#src/workflow/runWorkflow.js';
+export { DEFAULT_WORKFLOW_CONCURRENCY } from '#src/types.js';
 export type {
   WorkflowAgentOptions,
   WorkflowContext,

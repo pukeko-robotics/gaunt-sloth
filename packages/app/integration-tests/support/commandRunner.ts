@@ -3,6 +3,16 @@ import path from 'path';
 import { platform } from 'node:os';
 import type { ChildProcess } from 'node:child_process';
 
+/**
+ * npm 12 prints `npm notice run <pkg> npx` / `npm notice run '<bin>' <args>` to **stderr** on every
+ * `npx` invocation (npm 11 did not). The ITs spawn `npx gth …`, and several of them treat any
+ * stderr byte as a failure, so the default `notice` loglevel turns a clean run red. `warn` drops
+ * the run notices while keeping npm's own warnings and errors — a genuine npx resolution failure
+ * still reaches stderr. Must be applied *after* the `process.env` spread: `it.js` runs under pnpm,
+ * which exports its own `npm_config_*` vars.
+ */
+const NPM_QUIET_ENV = { npm_config_loglevel: 'warn' } as const;
+
 function isVerboseCommandRunnerEnabled(): boolean {
   const value = process.env.GSLOTH_IT_VERBOSE?.trim().toLowerCase();
   return value === '1' || value === 'true' || value === 'yes' || value === 'on';
@@ -42,6 +52,7 @@ export async function runCommandWithArgs(
         // readline path), but force it off explicitly so the interactive ITs can never select
         // the Ink TUI regardless of how they are launched. Same assertions, readline path.
         GTH_NO_TUI: '1',
+        ...NPM_QUIET_ENV,
       },
       shell: platform().includes('win') && !platform().includes('darwin'),
       // Explicitly ignore stdin, otherwise the app switches to pipe mode
@@ -101,6 +112,7 @@ export async function runCommandExpectingExitCode(
         // readline path), but force it off explicitly so the interactive ITs can never select
         // the Ink TUI regardless of how they are launched. Same assertions, readline path.
         GTH_NO_TUI: '1',
+        ...NPM_QUIET_ENV,
       },
       shell: platform().includes('win') && !platform().includes('darwin'),
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -141,6 +153,7 @@ export function startChildProcess(
     cwd: testDir,
     env: {
       ...process.env,
+      ...NPM_QUIET_ENV,
     },
     shell: platform().includes('win') && !platform().includes('darwin'),
     // Explicitly ignore stdin, otherwise the app switches to pipe mode
@@ -156,6 +169,26 @@ export function startChildProcess(
   });
 
   return childProcess;
+}
+
+/**
+ * Accumulates a child's stderr so a test can assert on it *after* the interaction and see the
+ * offending text verbatim in the failure diff.
+ *
+ * Replaces the `child.stderr.on('data', d => { throw new Error(d.toString()) })` these tests used
+ * to do, which was broken two ways: a throw from inside an async 'data' handler can never fail
+ * the test — vitest reports it as an *unhandled error*, so the run exits non-zero while the test
+ * itself still reports "passed" — and the text lands buried in a stack trace instead of the
+ * assertion output. Accumulating also shows *all* the stderr rather than whichever chunk arrived
+ * first, which is what makes the culprit obvious at a glance (an `npm notice`, a node deprecation
+ * warning, a real agent error) rather than something to reconstruct from a repro run.
+ */
+export function collectStderr(child: ChildProcess): () => string {
+  let acc = '';
+  child.stderr.on('data', (data) => {
+    acc += data.toString();
+  });
+  return () => acc;
 }
 
 export function waitForCursor(child: ChildProcess): Promise<string> {

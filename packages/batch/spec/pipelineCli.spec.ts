@@ -163,6 +163,33 @@ describe('runMatrixToStream', () => {
     });
   });
 
+  // BATCH-24: `gth-batch` supplies `concurrency: undefined` when `-j` is absent, so it inherits the
+  // shared serial cell default rather than carrying one of its own. Verified end-to-end here rather
+  // than assumed from the pass-through.
+  it('runs cells ONE at a time when no -j was supplied', async () => {
+    const { runMatrixToStream } = await import('#src/pipelineCli.js');
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const runCell: RunCellFn = async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return { ok: true };
+    };
+
+    const { concurrency } = (await import('#src/pipelineCli.js')).parseArgs(['s.md']);
+    expect(concurrency).toBeUndefined();
+
+    await runMatrixToStream('Do {{x}}', undefined, [{ x: 'a' }, { x: 'b' }, { x: 'c' }], {
+      concurrency,
+      runCell,
+      write: () => {},
+    });
+
+    expect(maxInFlight).toBe(1);
+  });
+
   it('builds the model x input cross-product and preserves matrix order', async () => {
     const { runMatrixToStream } = await import('#src/pipelineCli.js');
     const lines: string[] = [];

@@ -30,7 +30,7 @@ import { askStructured } from '@gaunt-sloth/core/runtime/askStructured.js';
 import { importExternalFile } from '@gaunt-sloth/core/utils/fileUtils.js';
 import { displayInfo, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 
-import { DEFAULT_CONCURRENCY } from '#src/types.js';
+import { DEFAULT_WORKFLOW_CONCURRENCY } from '#src/types.js';
 
 /** Options for a single {@link WorkflowContext.agent} call. */
 export interface WorkflowAgentOptions {
@@ -53,7 +53,7 @@ export interface WorkflowContext {
    */
   agent(prompt: string, opts?: WorkflowAgentOptions): Promise<unknown>;
   /**
-   * Run thunks concurrently (cap = {@link DEFAULT_CONCURRENCY}), results in input order; a throwing
+   * Run thunks concurrently (cap = {@link DEFAULT_WORKFLOW_CONCURRENCY}), results in input order; a throwing
    * thunk yields `null` in its slot and never rejects the whole `parallel`.
    */
   parallel<T>(thunks: Array<() => Promise<T>>): Promise<Array<T | null>>;
@@ -205,7 +205,7 @@ export async function runWorkflow(
         }
       }
     };
-    const workerCount = Math.min(DEFAULT_CONCURRENCY, thunks.length);
+    const workerCount = Math.min(DEFAULT_WORKFLOW_CONCURRENCY, thunks.length);
     await Promise.all(Array.from({ length: workerCount }, () => worker()));
     return results;
   };

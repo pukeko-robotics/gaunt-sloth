@@ -69,9 +69,9 @@ confirmed to work with the public Jira MCP.
   },
   "mcpServers": {
     "jira": {
-      "url": "https://mcp.atlassian.com/v1/sse",
+      "url": "https://mcp.atlassian.com/v1/mcp",
       "authProvider": "OAuth",
-      "transport": "sse"
+      "transport": "http"
     }
   }
 }

@@ -76,7 +76,7 @@ const USAGE =
   '  <script>        path to the .md prompt-executable to run over the matrix\n' +
   '  --over <data>   inline JSON/YAML array of row objects (or pipe it on stdin)\n' +
   '  --models a,b,c  comma-separated model axis (omit to use the configured model)\n' +
-  '  -j, --concurrency <n>  max in-flight cells\n' +
+  '  -j, --concurrency <n>  max in-flight cells (default 1 — cells run one at a time)\n' +
   '  --retry <n>     retry a failed cell up to n times (default 0)';
 
 /** Parse `--models a,b,c` into a trimmed, non-empty list; `undefined` when empty/absent. */

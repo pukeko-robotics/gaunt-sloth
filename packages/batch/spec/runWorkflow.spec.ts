@@ -83,6 +83,22 @@ describe('runWorkflow', () => {
     expect(result).toEqual(['a', null, 'c']);
   });
 
+  // BATCH-24 regression guard. `gth batch`/`gth eval` cells now default to running ONE at a time,
+  // but the workflow thunk pool is a SEPARATE default that must stay at 4 — the two used to share
+  // one `DEFAULT_CONCURRENCY` constant, so flipping that constant would silently serialize every
+  // `ctx.parallel()` fan-out. Asserted against the literal 4, not the constant.
+  it('parallel still fans out to FOUR thunks at a time (separate from the cell default)', async () => {
+    const { runWorkflow } = await import('#src/workflow/runWorkflow.js');
+
+    const result = (await runWorkflow(
+      fixture('parallel-fanout.mjs'),
+      options({} as GthConfig)
+    )) as { maxInFlight: number; resultCount: number };
+
+    expect(result.maxInFlight).toBe(4);
+    expect(result.resultCount).toBe(12);
+  });
+
   it('exposes the parsed --args value as ctx.args', async () => {
     const { runWorkflow } = await import('#src/workflow/runWorkflow.js');
     const args = { topic: 'graph-recall', k: 3 };

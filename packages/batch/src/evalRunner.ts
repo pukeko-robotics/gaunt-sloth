@@ -51,8 +51,8 @@ export interface RunEvalSuiteOptions {
    * reason (the runner degrades safely rather than throwing). The judge is orthogonal to identity:
    * it grades each cell's answer regardless of which identity produced it. */
   judge?: JudgeFn;
-  /** Max in-flight cells — reuses BATCH-1's `runBatchMatrix` pool (`DEFAULT_CONCURRENCY` when
-   * omitted); no second concurrency mechanism is introduced for eval. */
+  /** Max in-flight cells — reuses BATCH-1's `runBatchMatrix` pool (`DEFAULT_CELL_CONCURRENCY`,
+   * i.e. serial, when omitted); no second concurrency mechanism is introduced for eval. */
   concurrency?: number;
 }
 

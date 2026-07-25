@@ -68,9 +68,11 @@ The default export must be `async (ctx) => result`. `ctx` provides:
   `system` (system-message text), `model` (per-call model override, e.g.
   `'google-genai:gemini-3.1-flash-lite'`), and `command` (the agent mode for text calls, default
   `'ask'`). Throws on failure — wrap in try/catch where one bad call shouldn't end the workflow.
-- **`ctx.parallel(thunks)`** — runs an array of `() => Promise` thunks concurrently under the
-  host's concurrency cap, returning results in input order; a thunk that throws yields `null` in
-  its slot instead of rejecting the whole batch (hence the `filter(Boolean)` above).
+- **`ctx.parallel(thunks)`** — runs an array of `() => Promise` thunks concurrently, **four at a
+  time**, returning results in input order; a thunk that throws yields `null` in its slot instead
+  of rejecting the whole batch (hence the `filter(Boolean)` above). This cap is the workflow host's
+  own and is deliberately separate from `batch`/`eval`'s serial `-j` default — workflow thunks are
+  usually cheap orchestration steps rather than N full model calls.
 - **`ctx.args`** — the parsed `--args <json>` value, or `undefined`.
 - **`ctx.log(message)`** — emit a progress line through gth's console (respects its levels).
 - **`ctx.z`** — the host's zod module. Always build `schema` values with it.

@@ -120,5 +120,18 @@ export interface BatchSummary {
   }>;
 }
 
-/** The default concurrency cap when `-j/--concurrency` is not supplied. */
-export const DEFAULT_CONCURRENCY = 4;
+/**
+ * BATCH-24 — the default **cell** concurrency cap for `gth batch` / `gth eval` when
+ * `-j/--concurrency` is not supplied. Serial by default, for every provider (deliberately NOT
+ * provider-aware): a parallel default melts a local single-GPU backend (four concurrent
+ * generations thrash VRAM and time out) and burns cloud rate limit / spend velocity four times
+ * faster on a misbehaving prompt. Throughput is opt-in via an explicit `-j <n>`, which always wins.
+ */
+export const DEFAULT_CELL_CONCURRENCY = 1;
+
+/**
+ * BATCH-24 — the default cap for a workflow's `ctx.parallel(thunks)` fan-out (`gth workflow`).
+ * Independent of {@link DEFAULT_CELL_CONCURRENCY} on purpose: workflow thunks are usually cheap,
+ * often non-LLM orchestration steps, so serializing them would be a pointless slowdown.
+ */
+export const DEFAULT_WORKFLOW_CONCURRENCY = 4;

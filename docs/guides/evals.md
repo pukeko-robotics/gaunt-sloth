@@ -42,6 +42,12 @@ Each case prints one `PASS`/`FAIL` line (with the failing reason), followed by a
 `EVAL RESULT: <passed>/<total> case(s) passed`. Structured output — one JSON file per case plus a
 `results.json` summary — is always written (to a timestamped directory, or wherever `-o` points).
 
+Cases run **one at a time** by default, so a multi-case suite also prints a closing reminder that
+`-j` exists. Serial is the safe default rather than the fast one: a local single-GPU backend
+(Ollama) melts down under concurrent generations, and a low-tier cloud key hits rate limits and
+burns spend faster. Parallelism is opt-in — see the [`-j` example](#examples) once you know your
+backend has the headroom.
+
 The exit code is three-way, and CI should treat the values differently:
 
 - `0` — every case passed;
@@ -85,7 +91,7 @@ lands beside `results.json` — per suite subdirectory in a multi-suite run, so 
 # Two suites in one run, one aggregate exit code
 gth eval eval/support-smoke.yaml eval/authz-matrix.yaml
 
-# 8 cases in parallel, structured results to a named directory
+# Opt into 8 cases in parallel, structured results to a named directory
 gth eval eval/support-smoke.yaml -j 8 -o eval-out/smoke
 
 # Gate a CI step and tell regression (1) from broken harness (2)

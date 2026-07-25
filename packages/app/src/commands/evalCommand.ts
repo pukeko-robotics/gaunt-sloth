@@ -17,6 +17,7 @@ import {
 import { parseIntOption } from '#src/commands/cliOptionParsers.js';
 import {
   displayError,
+  displayInfo,
   displaySuccess,
   displayWarning,
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
@@ -335,7 +336,11 @@ export function evalCommand(
         'suites (non-recursive, sorted). Multiple suites report ONE aggregate exit code; each ' +
         'writes into its own <output>/<suite-name>/ subdir (a single suite writes into <output> directly).'
     )
-    .option('-j, --concurrency <n>', 'Max in-flight cases', parseIntOption)
+    .option(
+      '-j, --concurrency <n>',
+      'Max in-flight cases (default: 1, one case at a time — raise it to fan out)',
+      parseIntOption
+    )
     .option(
       '-o, --output <dir>',
       'Directory to write structured per-case JSON + results.json summary to ' +
@@ -383,6 +388,7 @@ export function evalCommand(
         const { parseEvalSuite } = await import('@gaunt-sloth/batch/evalSuite.js');
         const { runEvalSuite, classifyEvalExit } = await import('@gaunt-sloth/batch/evalRunner.js');
         const { writeEvalOutput } = await import('@gaunt-sloth/batch/evalOutput.js');
+        const { concurrencyHint } = await import('@gaunt-sloth/batch/BatchRunner.js');
         const { resolveReporters } = await import('@gaunt-sloth/batch/reporters/registry.js');
         const { driveReporters } = await import('@gaunt-sloth/batch/reporters/drive.js');
 
@@ -652,8 +658,10 @@ export function evalCommand(
         };
 
         // Multi-suite only: one aggregate total line AFTER every suite's own per-suite output. For
-        // N=1 print NOTHING extra — the single suite's text reporter already printed its verdict, so
-        // the output stays byte-for-byte identical to the single-suite contract.
+        // N=1 no aggregate line is printed — the single suite's text reporter already printed its
+        // verdict, so the per-suite output stays exactly as it was. (BATCH-24 added one further
+        // end-of-run line below, common to both cases; it is the only thing a single-suite run now
+        // prints beyond its reporter output.)
         if (suites.length > 1) {
           const totalLine =
             `EVAL TOTAL: ${combined.passed}/${combined.total} across ${suites.length} suites, ` +
@@ -663,6 +671,29 @@ export function evalCommand(
           } else {
             displayWarning(totalLine);
           }
+        }
+
+        // BATCH-24: cases run one at a time unless the user asks for more, so say so once at the
+        // very end of the whole invocation (not per suite) — otherwise a slow multi-case run looks
+        // like the tool being slow rather than a default the user can change (DL-1: no surprising
+        // behaviour is silent; DL-8: dim = contextual aside).
+        //
+        // Deliberately NOT part of the reporter layer: like `EVAL TOTAL`, the stem-collision
+        // warning and the harness-error lines, this describes how the HARNESS ran, not how the
+        // results render, so it prints for any `--reporter` selection (a `--reporter junit` CI run
+        // is if anything the one that most wants to know its cases were serialized).
+        //
+        // Noun follows the same M1 rule as the text reporter (`reporters/textReporter.ts`): once
+        // any cell carries an identity the run is counted in CELLS (one per case × identity), so
+        // saying "Cases" would contradict the verdict line's own denominator.
+        const isMatrix = combinedCases.some((caseResult) => caseResult.identity !== undefined);
+        const hint = concurrencyHint(
+          combined.total,
+          options.concurrency,
+          isMatrix ? 'Cells' : 'Cases'
+        );
+        if (hint) {
+          displayInfo(hint);
         }
 
         const exitCode = anyHarnessError ? 2 : classifyEvalExit(combined);
