@@ -61,6 +61,7 @@ const fileUtilsMock = {
 vi.mock('@gaunt-sloth/core/utils/fileUtils.js', () => fileUtilsMock);
 
 const consoleUtilsMock = {
+  displayInfo: vi.fn(),
   displaySuccess: vi.fn(),
   displayWarning: vi.fn(),
   displayError: vi.fn(),
@@ -422,6 +423,91 @@ describe('batchCommand', () => {
     expect(calls).toBe(2); // 1 failed attempt + 1 retry
     const resultsJson = JSON.parse(readFileSync(join(outputDir, 'results.json'), 'utf8'));
     expect(resultsJson.passed).toBe(1);
+  });
+
+  // BATCH-24 — cells default to running one at a time; the end-of-run hint is what makes that
+  // discoverable without the user having to guess why a big matrix took its time.
+  describe('serial-by-default hint', () => {
+    const HINT = 'Cells ran one at a time. Pass -j <n> to run them in parallel.';
+
+    it('runs cells ONE at a time when -j is omitted', async () => {
+      let inFlight = 0;
+      let maxInFlight = 0;
+      runSingleShot.mockImplementation(async () => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight--;
+        return { ok: true, answer: '', tools: [] };
+      });
+      const { batchCommand } = await import('#src/commands/batchCommand.js');
+      const program = new Command();
+      batchCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'batch',
+        'script.md',
+        '--models',
+        'model-a,model-b,model-c',
+        '-o',
+        outputDir,
+      ]);
+
+      expect(maxInFlight).toBe(1);
+    });
+
+    it('prints the hint after the completion line when >1 cell ran and no -j was passed', async () => {
+      const { batchCommand } = await import('#src/commands/batchCommand.js');
+      const program = new Command();
+      batchCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'batch',
+        'script.md',
+        '--over',
+        'cases.csv',
+        '-o',
+        outputDir,
+      ]);
+
+      expect(consoleUtilsMock.displaySuccess).toHaveBeenCalledWith(
+        expect.stringContaining('Batch complete: 2/2 cell(s) passed')
+      );
+      expect(consoleUtilsMock.displayInfo).toHaveBeenCalledWith(HINT);
+      // Hard requirement: never suggest a specific -j value — the right number is backend-specific.
+      expect(HINT).not.toMatch(/-j\s*\d/);
+    });
+
+    it('does not print the hint when -j was passed explicitly', async () => {
+      const { batchCommand } = await import('#src/commands/batchCommand.js');
+      const program = new Command();
+      batchCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'batch',
+        'script.md',
+        '--over',
+        'cases.csv',
+        '-j',
+        '2',
+        '-o',
+        outputDir,
+      ]);
+
+      expect(consoleUtilsMock.displayInfo).not.toHaveBeenCalled();
+    });
+
+    it('does not print the hint for a single-cell run', async () => {
+      const { batchCommand } = await import('#src/commands/batchCommand.js');
+      const program = new Command();
+      batchCommand(program, {});
+      await program.parseAsync(['na', 'na', 'batch', 'script.md', '-o', outputDir]);
+
+      expect(consoleUtilsMock.displayInfo).not.toHaveBeenCalled();
+    });
   });
 
   it('uses the default timestamped output dir when -o is omitted', async () => {

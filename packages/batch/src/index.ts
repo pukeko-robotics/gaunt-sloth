@@ -1,7 +1,7 @@
 export { buildMatrix } from '#src/matrix.js';
 export { bindCellContent } from '#src/interpolate.js';
 export { parseOverFile } from '#src/parseOver.js';
-export { runBatchMatrix, buildBatchSummary } from '#src/BatchRunner.js';
+export { runBatchMatrix, buildBatchSummary, concurrencyHint } from '#src/BatchRunner.js';
 export { writeBatchOutput } from '#src/output.js';
 export type {
   BatchRunnerOptions,
@@ -13,7 +13,7 @@ export type {
   RunCellFn,
   ToolResultRecord,
 } from '#src/types.js';
-export { DEFAULT_CONCURRENCY } from '#src/types.js';
+export { DEFAULT_CELL_CONCURRENCY, DEFAULT_WORKFLOW_CONCURRENCY } from '#src/types.js';
 
 // BATCH-2 — `gth eval`'s suite parsing, deterministic checks, judge, runner, and output writer.
 export { parseEvalSuite } from '#src/evalSuite.js';

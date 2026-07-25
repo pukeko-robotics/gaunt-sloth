@@ -85,6 +85,7 @@ vi.mock('@gaunt-sloth/core/utils/fileUtils.js', () => fileUtilsMock);
 
 const consoleUtilsMock = {
   display: vi.fn(),
+  displayInfo: vi.fn(),
   displaySuccess: vi.fn(),
   displayWarning: vi.fn(),
   displayError: vi.fn(),
@@ -135,6 +136,18 @@ cases:
   - id: judged-case
     prompt: "explain the thing"
     judge: "Explains clearly."
+`;
+
+// BATCH-24: two checks-only cases — the smallest suite where "more than one case ran" is true.
+const TWO_CASE_SUITE = `
+target: { type: gth-agent }
+cases:
+  - id: greets-politely
+    prompt: "greet the user"
+    must_contain: ["hello"]
+  - id: greets-again
+    prompt: "greet the user again"
+    must_contain: ["hello"]
 `;
 
 // BATCH-10 Task 2: a judged suite that also declares a suite-level judge_profile.
@@ -199,6 +212,7 @@ describe('evalCommand', () => {
 
     fileUtilsMock.readFileFromProjectDir.mockImplementation((file: string) => {
       if (file === 'suite.yaml') return SIMPLE_SUITE;
+      if (file === 'two-case-suite.yaml') return TWO_CASE_SUITE;
       if (file === 'judge-suite.yaml') return JUDGE_SUITE;
       if (file === 'judge-profile-suite.yaml') return JUDGE_PROFILE_SUITE;
       throw new Error(`unexpected file read: ${file}`);
@@ -1611,6 +1625,71 @@ cases:
         expect.not.objectContaining({ identityProfile: expect.anything() })
       );
       expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+    });
+  });
+
+  // BATCH-24 — cases default to running one at a time; the end-of-run hint is what makes that
+  // discoverable. Printed ONCE per invocation (after every suite), never per suite.
+  describe('serial-by-default hint', () => {
+    const HINT = 'Cases ran one at a time. Pass -j <n> to run them in parallel.';
+
+    it('runs cases ONE at a time when -j is omitted', async () => {
+      let inFlight = 0;
+      let maxInFlight = 0;
+      runSingleShot.mockImplementation(async () => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight--;
+        return { ok: true, answer: 'hello there', tools: [] };
+      });
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'two-case-suite.yaml', '-o', outputDir]);
+
+      expect(maxInFlight).toBe(1);
+    });
+
+    it('prints the hint after the run when >1 case ran and no -j was passed', async () => {
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'two-case-suite.yaml', '-o', outputDir]);
+
+      expect(consoleUtilsMock.displaySuccess).toHaveBeenCalledWith(
+        expect.stringContaining('EVAL RESULT: 2/2 case(s) passed')
+      );
+      expect(consoleUtilsMock.displayInfo).toHaveBeenCalledExactlyOnceWith(HINT);
+      // Hard requirement: never suggest a specific -j value — the right number is backend-specific.
+      expect(HINT).not.toMatch(/-j\s*\d/);
+    });
+
+    it('does not print the hint when -j was passed explicitly', async () => {
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'eval',
+        'two-case-suite.yaml',
+        '-j',
+        '2',
+        '-o',
+        outputDir,
+      ]);
+
+      expect(consoleUtilsMock.displayInfo).not.toHaveBeenCalled();
+    });
+
+    it('does not print the hint for a single-case run', async () => {
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-o', outputDir]);
+
+      expect(consoleUtilsMock.displayInfo).not.toHaveBeenCalled();
     });
   });
 });

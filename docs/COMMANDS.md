@@ -339,7 +339,7 @@ Guide-shaped walkthrough: [Evaluate your agent](guides/evals.md) — and for tes
 - `<suites...>` - One or more eval suite YAML **files** and/or **directories** (required). A directory runs its direct-child `*.yaml`/`*.yml` suites (non-recursive, sorted). See [Running many suites](#running-many-suites).
 
 ### Options
-- `-j, --concurrency <n>` - Maximum cases run in parallel (default: the shared batch runner pool size)
+- `-j, --concurrency <n>` - Maximum cases run in parallel (default: `1` — cases run one at a time). Parallelism is opt-in: concurrent generations thrash a local single-GPU backend and burn a cloud key's rate limit, so raise `-j` only when you know the backend has the headroom. A multi-case run with no `-j` says so at the end.
 - `-o, --output <dir>` - Directory to write structured per-case JSON plus a `results.json` summary to (default: a timestamped `gth_<date>_EVAL` directory alongside other reports)
 - `--judge <profile>` - Identity profile whose model grades `judge:` rubrics. Overrides the suite's `judge_profile`; omit both to judge with the SUT's own model.
 - `-r, --reporter <names>` - Reporter(s) to render the run through (repeatable, or comma-separated). Built-in: `text` (the default console summary) and `junit` (writes a JUnit `results.xml`); names from the config [`reporters`](configuration/output.md#custom-eval-reporters-reporters) map work too — including installed reporter packages such as [`@gaunt-sloth/eval-reporter-teamcity`](https://www.npmjs.com/package/@gaunt-sloth/eval-reporter-teamcity) (live `##teamcity[...]` service messages). **Replaces the default set rather than adding to it** — `--reporter junit` drops the console summary, so pass `--reporter text,junit` to keep both. The always-on `results.json` + per-case JSON are written regardless.
@@ -541,7 +541,7 @@ Guide-shaped walkthrough: [Fan out one prompt over inputs and models](guides/bat
 ### Options
 - `--over <path>` - CSV or JSONL file whose rows/records bind into the script via `{{field}}` placeholders — one matrix cell per row (content binding only; a glob-of-files path binding is not supported by this command).
 - `--models <list>` - Comma-separated list of models to fan out over. Omit to use the configured model (no fan-out).
-- `-j, --concurrency <n>` - Maximum in-flight cells.
+- `-j, --concurrency <n>` - Maximum in-flight cells (default: `1` — cells run one at a time). Parallelism is opt-in: concurrent generations thrash a local single-GPU backend and burn a cloud key's rate limit, so raise `-j` only when you know the backend has the headroom. A multi-cell run with no `-j` says so at the end.
 - `--retry <n>` - Retry a failed cell up to `n` times (default: `0`, no retry).
 - `-o, --output <dir>` - Directory to write structured per-cell JSON plus a `results.json` summary to (default: a timestamped dir alongside other gth reports).
 

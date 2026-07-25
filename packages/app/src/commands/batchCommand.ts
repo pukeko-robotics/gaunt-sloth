@@ -4,7 +4,11 @@ import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import type { GthCommand } from '@gaunt-sloth/core/core/types.js';
 import { getExecSystemPrompt } from '#src/commands/commandIntrospection.js';
 import { parseIntOption } from '#src/commands/cliOptionParsers.js';
-import { displaySuccess, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import {
+  displayInfo,
+  displaySuccess,
+  displayWarning,
+} from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { wrapContent } from '@gaunt-sloth/core/utils/llmUtils.js';
 import {
   fileSafeLocalDate,
@@ -290,7 +294,11 @@ export function batchCommand(
       '--models <list>',
       'Comma-separated list of models to fan out over (omit to use the configured model, no fan-out)'
     )
-    .option('-j, --concurrency <n>', 'Max in-flight cells', parseIntOption)
+    .option(
+      '-j, --concurrency <n>',
+      'Max in-flight cells (default: 1, one cell at a time — raise it to fan out)',
+      parseIntOption
+    )
     .option(
       '--retry <n>',
       'Retry a failed cell up to n times (default: 0, no retry)',
@@ -319,7 +327,7 @@ export function batchCommand(
       // build that could go stale between an edit and a test run.
       const { buildMatrix } = await import('@gaunt-sloth/batch/matrix.js');
       const { parseOverFile } = await import('@gaunt-sloth/batch/parseOver.js');
-      const { runBatchMatrix } = await import('@gaunt-sloth/batch/BatchRunner.js');
+      const { runBatchMatrix, concurrencyHint } = await import('@gaunt-sloth/batch/BatchRunner.js');
       const { writeBatchOutput } = await import('@gaunt-sloth/batch/output.js');
 
       const scriptContent = readMultipleFilesFromProjectDir([script]);
@@ -351,6 +359,13 @@ export function batchCommand(
         `Batch complete: ${summary.passed}/${summary.total} cell(s) passed. ` +
           `Results written to ${outputDir}`
       );
+      // BATCH-24: cells run one at a time unless the user asks for more, so say so once at the end
+      // — otherwise a slow multi-cell run looks like the tool being slow rather than a default the
+      // user can change (DL-1: no surprising behaviour is silent; DL-8: dim = contextual aside).
+      const hint = concurrencyHint(summary.total, options.concurrency);
+      if (hint) {
+        displayInfo(hint);
+      }
       if (summary.failed > 0) {
         // Visible, but deliberately does NOT set a non-zero exit code — see the exit-code
         // contract above. A poor/failed cell is `eval`'s business, not batch's.

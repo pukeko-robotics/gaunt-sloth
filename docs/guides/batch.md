@@ -8,8 +8,8 @@ error (a malformed input file, a missing script) sets a non-zero exit.
 
 ## The main use case: triage a CSV of tickets
 
-Goal: run every row of a support-ticket export through the same triage prompt, in parallel, and
-get one structured result per ticket.
+Goal: run every row of a support-ticket export through the same triage prompt and get one
+structured result per ticket.
 
 Write the prompt as `prompts/triage.md`, with `{{field}}` placeholders for the CSV columns:
 
@@ -21,7 +21,8 @@ Ticket {{id}} from {{customer}}:
 {{description}}
 ```
 
-With `data/tickets.csv` having `id,customer,description` columns, run eight cells at a time:
+With `data/tickets.csv` having `id,customer,description` columns, run eight cells at a time
+(cells run one at a time unless you ask for more — see below):
 
 ```bash
 gth batch prompts/triage.md --over data/tickets.csv -j 8
@@ -29,11 +30,20 @@ gth batch prompts/triage.md --over data/tickets.csv -j 8
 
 Each row becomes one cell — an isolated single-shot run with the row's values spliced into the
 prompt. (A placeholder that matches no column is left as-is; a script with no matching
-placeholders at all gets the row appended as a context block instead.) `-j`/`--concurrency` caps
-how many cells run at once (default 4); raise it to push through a large matrix faster, or lower
-it to stay under a provider's rate limit. The run ends with
-`Batch complete: <passed>/<total> cell(s) passed` — plus, if cells failed, a warning pointing at
-`results.json`; the per-cell files hold each answer.
+placeholders at all gets the row appended as a context block instead.)
+
+`-j`/`--concurrency` caps how many cells run at once. **The default is `1` — one cell at a time.**
+Parallelism is opt-in because the right number depends entirely on what is answering: a local
+single-GPU backend (Ollama, LM Studio) has one GPU, so concurrent generations fight over VRAM and
+time out rather than finishing faster, and a low-tier cloud key answers a burst with `429`s while
+spending four times as fast on a prompt that has gone wrong. Raise `-j` once you know the backend
+has the headroom — a hosted model on a paid tier will happily chew through a large matrix eight
+cells at a time; leave it alone (or keep it low) for anything running on your own hardware.
+
+The run ends with `Batch complete: <passed>/<total> cell(s) passed` — plus, if cells failed, a
+warning pointing at `results.json`; the per-cell files hold each answer. A multi-cell run you
+didn't pass `-j` to also prints `Cells ran one at a time. Pass -j <n> to run them in parallel.`, so
+a slow matrix never leaves you guessing whether the tool or the default was the reason.
 
 ## The model axis
 

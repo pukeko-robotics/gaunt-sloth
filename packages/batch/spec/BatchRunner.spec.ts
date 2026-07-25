@@ -67,10 +67,10 @@ describe('runBatchMatrix', () => {
     expect(maxInFlight).toBe(2);
   });
 
-  it('defaults concurrency to DEFAULT_CONCURRENCY and normalizes invalid values', async () => {
+  /** Run `n` cells and report the highest number that were ever in flight at the same time. */
+  async function observeMaxInFlight(n: number, concurrency?: number): Promise<number> {
     const { runBatchMatrix } = await import('#src/BatchRunner.js');
-    const { DEFAULT_CONCURRENCY } = await import('#src/types.js');
-    const cells = makeCells(DEFAULT_CONCURRENCY + 3);
+    const cells = makeCells(n);
     let maxInFlight = 0;
     let inFlight = 0;
     const runCell: RunCellFn = async () => {
@@ -81,9 +81,29 @@ describe('runBatchMatrix', () => {
       return { ok: true };
     };
 
-    // concurrency: 0 is invalid (< 1) and must fall back to the default rather than deadlocking.
-    await runBatchMatrix(cells, { runCell, concurrency: 0 });
-    expect(maxInFlight).toBe(DEFAULT_CONCURRENCY);
+    await runBatchMatrix(cells, { runCell, concurrency });
+    return maxInFlight;
+  }
+
+  // BATCH-24: asserted against the LITERAL 1, not against DEFAULT_CELL_CONCURRENCY. A test written
+  // relative to the constant passes at any value and so proves nothing about the number — and the
+  // number is the whole point here: a parallel default melts a local single-GPU backend.
+  it('defaults to running exactly ONE cell at a time when `-j` is omitted', async () => {
+    expect(await observeMaxInFlight(5)).toBe(1);
+  });
+
+  it('honours an explicit concurrency of 4 (opt-in throughput still fans out)', async () => {
+    expect(await observeMaxInFlight(8, 4)).toBe(4);
+  });
+
+  it('normalizes an invalid concurrency to the default rather than deadlocking', async () => {
+    // concurrency: 0 is invalid (< 1) and must fall back to the serial default, not to 0 workers.
+    expect(await observeMaxInFlight(5, 0)).toBe(1);
+  });
+
+  it('exposes the cell default as DEFAULT_CELL_CONCURRENCY = 1', async () => {
+    const { DEFAULT_CELL_CONCURRENCY } = await import('#src/types.js');
+    expect(DEFAULT_CELL_CONCURRENCY).toBe(1);
   });
 
   it('retries a failing cell up to `retry` times, then records failure', async () => {
@@ -189,6 +209,43 @@ describe('runBatchMatrix', () => {
 
     expect(results[0].model).toEqual('gpt-x');
     expect(results[0].inputRow).toEqual({ a: '1' });
+  });
+});
+
+describe('concurrencyHint', () => {
+  it('nudges when more than one unit ran and no `-j` was supplied', async () => {
+    const { concurrencyHint } = await import('#src/BatchRunner.js');
+    expect(concurrencyHint(5, undefined)).toBe(
+      'Cells ran one at a time. Pass -j <n> to run them in parallel.'
+    );
+  });
+
+  it("uses the surface's own noun for eval", async () => {
+    const { concurrencyHint } = await import('#src/BatchRunner.js');
+    expect(concurrencyHint(3, undefined, 'Cases')).toBe(
+      'Cases ran one at a time. Pass -j <n> to run them in parallel.'
+    );
+  });
+
+  it('stays silent when the user passed an explicit -j', async () => {
+    const { concurrencyHint } = await import('#src/BatchRunner.js');
+    expect(concurrencyHint(5, 4)).toBeUndefined();
+    // Even an explicit -j 1: the user already chose serial, so there is nothing to tell them.
+    expect(concurrencyHint(5, 1)).toBeUndefined();
+  });
+
+  it('stays silent for a single-unit run (nothing to parallelize)', async () => {
+    const { concurrencyHint } = await import('#src/BatchRunner.js');
+    expect(concurrencyHint(1, undefined)).toBeUndefined();
+    expect(concurrencyHint(0, undefined)).toBeUndefined();
+  });
+
+  // BATCH-24 hard requirement: suggesting a number would hand the wrong advice to the local
+  // single-GPU backend this default exists to protect.
+  it('never names a concurrency number', async () => {
+    const { concurrencyHint } = await import('#src/BatchRunner.js');
+    expect(concurrencyHint(9, undefined)).not.toMatch(/-j\s*\d/);
+    expect(concurrencyHint(9, undefined, 'Cases')).not.toMatch(/-j\s*\d/);
   });
 });
 

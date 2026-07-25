@@ -59,8 +59,9 @@ gth workflow rank-models.mjs --args '{"topic":"robotics"}'
 comma-separated; omit to use the configured model) and/or content-bound input rows (`--over
 <file.csv|file.jsonl>` — one cell per row, with `{{field}}` placeholders bound from the row). It
 writes the same structured per-cell output as `eval` but — unlike `eval` — exits `0` as long as the
-cells *ran*: a poor answer is not a harness failure. `-j <n>` caps concurrency, `--retry <n>` retries
-a failed cell (default `0`), `-o <dir>` sets the output dir.
+cells *ran*: a poor answer is not a harness failure. `-j <n>` caps concurrency (default `1` — cells
+run one at a time until you ask for more), `--retry <n>` retries a failed cell (default `0`), `-o
+<dir>` sets the output dir.
 
 `gth workflow <script.mjs>` runs a local ESM script whose default export is `async (ctx) => result`;
 the return value is printed (a string as-is, anything else as pretty JSON), and `--args <json>` is
@@ -108,10 +109,11 @@ import { runEvalSuite } from '@gaunt-sloth/batch/evalRunner.js';
 The public API (see the package's `index.ts`) groups by command:
 
 - **Matrix** (`gth batch`): `buildMatrix`, `bindCellContent`, `parseOverFile`, `runBatchMatrix`,
-  `buildBatchSummary`, `writeBatchOutput`, `DEFAULT_CONCURRENCY`.
+  `buildBatchSummary`, `writeBatchOutput`, `concurrencyHint`, `DEFAULT_CELL_CONCURRENCY`.
 - **Eval** (`gth eval`): `parseEvalSuite`, `runDeterministicChecks`, `judgeEvalCase`, `runEvalSuite`,
   `writeEvalOutput`, `EvalVerdictSchema`, `DEFAULT_EVAL_PASS_THRESHOLD`.
-- **Workflow** (`gth workflow`): `runWorkflow`.
+- **Workflow** (`gth workflow`): `runWorkflow`, `DEFAULT_WORKFLOW_CONCURRENCY` (the
+  `ctx.parallel()` fan-out cap, independent of the cell default).
 
 The corresponding TypeScript types (`MatrixCell`, `BatchSummary`, `CellResult`, `EvalSuite`,
 `EvalCaseResult`, `WorkflowContext`, …) are exported alongside them.

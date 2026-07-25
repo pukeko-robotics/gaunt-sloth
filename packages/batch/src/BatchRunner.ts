@@ -1,5 +1,5 @@
 import {
-  DEFAULT_CONCURRENCY,
+  DEFAULT_CELL_CONCURRENCY,
   type BatchRunnerOptions,
   type BatchSummary,
   type CellResult,
@@ -88,9 +88,33 @@ async function runCellWithRetry(
 
 function normalizeConcurrency(concurrency: number | undefined): number {
   if (concurrency === undefined || !Number.isFinite(concurrency) || concurrency < 1) {
-    return DEFAULT_CONCURRENCY;
+    return DEFAULT_CELL_CONCURRENCY;
   }
   return Math.floor(concurrency);
+}
+
+/**
+ * BATCH-24 — build the end-of-run nudge that makes the serial default discoverable (DL-1: the
+ * user should never have to guess why a big matrix took its time). Returns `undefined` when there
+ * is nothing worth saying: the user already chose a `-j`, or only one unit ran (nothing to
+ * parallelize).
+ *
+ * Deliberately names **no number**. The right `-j` depends entirely on the backend — a local
+ * single-GPU ollama wants exactly this serial default, a cloud key with headroom can take many —
+ * so printing "try -j 4" would hand the wrong advice to the very setup this default protects.
+ *
+ * @param unitCount - how many cells/cases the run actually processed
+ * @param explicitConcurrency - the user's `-j/--concurrency` value, `undefined` when not supplied
+ * @param noun - what the units are called on this surface (`batch` cells vs `eval` cases)
+ */
+export function concurrencyHint(
+  unitCount: number,
+  explicitConcurrency: number | undefined,
+  noun: 'Cells' | 'Cases' = 'Cells'
+): string | undefined {
+  if (explicitConcurrency !== undefined) return undefined;
+  if (unitCount <= 1) return undefined;
+  return `${noun} ran one at a time. Pass -j <n> to run them in parallel.`;
 }
 
 function normalizeRetry(retry: number | undefined): number {
