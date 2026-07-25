@@ -85,95 +85,106 @@ export async function runConversation(
   agentFactory?: GthAgentFactory
 ): Promise<ConversationTurnResult[]> {
   const progressIndicator = config.streamOutput ? undefined : new ProgressIndicator('Thinking.');
-
-  // Resolve output path and initialize session logging if enabled (same discipline as runSingleShot;
-  // a no-op when `writeOutputToFile` is off, as `gth eval` forces it — getCommandOutputFilePath null).
-  const filePath = getCommandOutputFilePath(config, source);
-  if (filePath) {
-    initSessionLogging(filePath, config.streamSessionInferenceLog);
-  }
-
-  // Build the agent + resolve tools ONCE for the whole conversation (the MCP connection / any OAuth /
-  // the toolset must persist across turns so cross-turn memory is real). Cleaned up once, in finally.
-  const runner = new GthAgentRunner(defaultStatusCallback, resolvers, agentFactory);
-  const results: ConversationTurnResult[] = [];
-  // The accumulated conversation: [user1, ai1, user2, ai2, …]. Each turn replays the whole array
-  // against a freshly-rotated thread (see the doc block). BATCH-13: NO leading SystemMessage — the
-  // agent composes the system prompt via `createAgent({ systemPrompt })` (same as runSingleShot);
-  // seeding a preamble SystemMessage here too made two system messages, which Anthropic rejects.
-  const messages: Message[] = [];
-
   try {
-    await runner.init(command, config, new MemorySaver());
-
-    for (const userMessage of userMessages) {
-      // Rotate to a fresh (empty) checkpointer thread so this turn's replay of the full `messages`
-      // array is the sole history the agent sees — no double-append from a prior turn's checkpoint.
-      runner.resetThread();
-      messages.push(new HumanMessage(userMessage));
-
-      const startedAt = Date.now();
-      let answer = '';
-      let ok = true;
-      let error: string | undefined;
-      try {
-        answer = await runner.processMessages(messages);
-        // Append this turn's answer so the NEXT turn's replay includes it (cross-turn memory).
-        messages.push(new AIMessage(answer));
-      } catch (err) {
-        ok = false;
-        error = err instanceof Error ? err.message : String(err);
-        displayError(`Failed to get answer: ${error}`);
-      }
-
-      // GS2-16: read this turn's token/tool delta from the live agent (before cleanup). Fail-soft —
-      // analytics must never affect the run. `processMessages` reset the tally at its top, so this is
-      // THIS turn's usage, not the conversation's cumulative total.
-      let runStats: GthRunStats = { tools: [] };
-      try {
-        const s = runner.getRunStats?.();
-        if (s) runStats = s;
-      } catch {
-        /* fail-soft */
-      }
-
-      // GS2-7 (B20): opt-in, fail-soft per-turn session history. A no-op unless `history.enabled`.
-      recordSessionSafe(config, {
-        command,
-        project: getProjectDir(),
-        model: config.modelDisplayName,
-        prompt: userMessage,
-        response: answer,
-        tokensInput: runStats.tokensInput,
-        tokensOutput: runStats.tokensOutput,
-        tools: runStats.tools.length > 0 ? runStats.tools : undefined,
-        durationMs: Date.now() - startedAt,
-      });
-
-      results.push({ ok, answer, error, ...runStats });
-
-      // A failed turn breaks the conversation's context — stop rather than run later turns on it.
-      if (!ok) break;
+    // Resolve output path and initialize session logging if enabled (same discipline as
+    // runSingleShot; a no-op when `writeOutputToFile` is off, as `gth eval` forces it —
+    // getCommandOutputFilePath null).
+    const filePath = getCommandOutputFilePath(config, source);
+    if (filePath) {
+      initSessionLogging(filePath, config.streamSessionInferenceLog);
     }
-  } finally {
-    await runner.cleanup();
-  }
 
-  progressIndicator?.stop();
+    // Build the agent + resolve tools ONCE for the whole conversation (the MCP connection / any
+    // OAuth / the toolset must persist across turns so cross-turn memory is real). Cleaned up once,
+    // in finally.
+    const runner = new GthAgentRunner(defaultStatusCallback, resolvers, agentFactory);
+    const results: ConversationTurnResult[] = [];
+    // The accumulated conversation: [user1, ai1, user2, ai2, …]. Each turn replays the whole array
+    // against a freshly-rotated thread (see the doc block). BATCH-13: NO leading SystemMessage — the
+    // agent composes the system prompt via `createAgent({ systemPrompt })` (same as runSingleShot);
+    // seeding a preamble SystemMessage here too made two system messages, which Anthropic rejects.
+    const messages: Message[] = [];
 
-  if (config.writeOutputToFile === false) {
-    display('\n'); // something going on in some terminals, they swallow last line of output
-  }
-  if (filePath) {
     try {
-      flushSessionLog();
-      stopSessionLogging();
-      displaySuccess(`\n\nThis report can be found in ${filePath}`);
-    } catch (err) {
-      displayError(`Failed to write answer to file: ${filePath}`);
-      displayError(err instanceof Error ? err.message : String(err));
-    }
-  }
+      await runner.init(command, config, new MemorySaver());
 
-  return results;
+      for (const userMessage of userMessages) {
+        // Rotate to a fresh (empty) checkpointer thread so this turn's replay of the full `messages`
+        // array is the sole history the agent sees — no double-append from a prior checkpoint.
+        runner.resetThread();
+        messages.push(new HumanMessage(userMessage));
+
+        const startedAt = Date.now();
+        let answer = '';
+        let ok = true;
+        let error: string | undefined;
+        try {
+          answer = await runner.processMessages(messages);
+          // Append this turn's answer so the NEXT turn's replay includes it (cross-turn memory).
+          messages.push(new AIMessage(answer));
+        } catch (err) {
+          ok = false;
+          error = err instanceof Error ? err.message : String(err);
+          displayError(`Failed to get answer: ${error}`);
+        }
+
+        // GS2-16: read this turn's token/tool delta from the live agent (before cleanup). Fail-soft
+        // — analytics must never affect the run. `processMessages` reset the tally at its top, so
+        // this is THIS turn's usage, not the conversation's cumulative total.
+        let runStats: GthRunStats = { tools: [] };
+        try {
+          const s = runner.getRunStats?.();
+          if (s) runStats = s;
+        } catch {
+          /* fail-soft */
+        }
+
+        // GS2-7 (B20): opt-in, fail-soft per-turn session history. A no-op unless `history.enabled`.
+        recordSessionSafe(config, {
+          command,
+          project: getProjectDir(),
+          model: config.modelDisplayName,
+          prompt: userMessage,
+          response: answer,
+          tokensInput: runStats.tokensInput,
+          tokensOutput: runStats.tokensOutput,
+          tools: runStats.tools.length > 0 ? runStats.tools : undefined,
+          durationMs: Date.now() - startedAt,
+        });
+
+        results.push({ ok, answer, error, ...runStats });
+
+        // A failed turn breaks the conversation's context — stop rather than run later turns on it.
+        if (!ok) break;
+      }
+    } finally {
+      await runner.cleanup();
+    }
+
+    progressIndicator?.stop();
+
+    if (config.writeOutputToFile === false) {
+      display('\n'); // something going on in some terminals, they swallow last line of output
+    }
+    if (filePath) {
+      try {
+        flushSessionLog();
+        stopSessionLogging();
+        displaySuccess(`\n\nThis report can be found in ${filePath}`);
+      } catch (err) {
+        displayError(`Failed to write answer to file: ${filePath}`);
+        displayError(err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    return results;
+  } finally {
+    // EXT-53: the indicator owns a 1s setInterval — an active libuv handle that keeps Node's event
+    // loop from ever draining, so leaking it hangs the CLI forever after the work is done. The
+    // `stop()` above sits where it does for output ordering (before the trailing newline / the
+    // "report can be found in …" line); this `finally` guarantees the handle is also released when
+    // anything above throws — notably `runner.init()`, which has no catch, and `runner.cleanup()`.
+    // `stop()` is idempotent, so the normal path's second call is a no-op.
+    progressIndicator?.stop();
+  }
 }

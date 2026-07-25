@@ -42,74 +42,87 @@ export async function review(
   reviewContext?: ReviewContext
 ): Promise<void> {
   const progressIndicator = config.streamOutput ? undefined : new ProgressIndicator('Reviewing.');
-  const messages = [new SystemMessage(preamble), new HumanMessage(diff)];
-
-  // REL-2: optionally give the review agent a `gh api` file-read tool so it can fetch the FULL
-  // contents of a file when the PR diff truncates large changes. Only added in a GitHub PR
-  // context (the content source resolves to GitHub); a graceful no-op otherwise. Reads through
-  // the GitHub API rather than the workspace filesystem, so it is safe under pull_request_target.
-  maybeAddGhReadFileTool(config, command, reviewContext?.prId);
-
-  // Prepare logging path (if enabled by config)
-  const filePath = getCommandOutputFilePath(config, source);
-  if (filePath) {
-    initSessionLogging(filePath, config.streamSessionInferenceLog);
-  }
-
-  const rateConfig = config.commands?.[command]?.rating;
-  if (rateConfig && rateConfig.enabled !== false) {
-    const confMiddleware = config.middleware || [];
-    const middlewareWithoutReviewRate = confMiddleware.filter((mw) => {
-      return !(
-        typeof mw === 'object' &&
-        mw !== null &&
-        'name' in mw &&
-        (mw as { name?: string }).name === 'review-rate'
-      );
-    });
-
-    // Resolve review-rate middleware directly rather than going through the registry
-    const reviewRateMiddleware = await createReviewRateMiddleware(rateConfig, config);
-    config.middleware = [...middlewareWithoutReviewRate, reviewRateMiddleware];
-  }
-
-  // When no resolvers are provided (e.g. standalone review CLI, without @gaunt-sloth/agent's
-  // resolvers), supply a minimal middleware resolver that passes through already-resolved
-  // middleware. The full `gaunt-sloth` CLI injects @gaunt-sloth/agent's resolvers instead.
-  const effectiveResolvers: AgentResolvers = resolvers ?? {
-    resolveMiddleware: async (middleware) => middleware ?? [],
-  };
-  const runner = new GthAgentRunner(defaultStatusCallback, effectiveResolvers);
   try {
-    await runner.init(command, config, new MemorySaver());
-    await runner.processMessages(messages);
-  } catch (error) {
-    displayDebug(error instanceof Error ? error : String(error));
-    const reason = error instanceof Error ? error.message : String(error);
-    displayError(
-      reason ? `Failed to run review with agent.\n\n${reason}` : 'Failed to run review with agent.'
-    );
-  } finally {
-    await runner.cleanup();
-  }
+    const messages = [new SystemMessage(preamble), new HumanMessage(diff)];
 
-  progressIndicator?.stop();
+    // REL-2: optionally give the review agent a `gh api` file-read tool so it can fetch the FULL
+    // contents of a file when the PR diff truncates large changes. Only added in a GitHub PR
+    // context (the content source resolves to GitHub); a graceful no-op otherwise. Reads through
+    // the GitHub API rather than the workspace filesystem, so it is safe under pull_request_target.
+    maybeAddGhReadFileTool(config, command, reviewContext?.prId);
 
-  handleRatingResult(rateConfig, command);
+    // Prepare logging path (if enabled by config)
+    const filePath = getCommandOutputFilePath(config, source);
+    if (filePath) {
+      initSessionLogging(filePath, config.streamSessionInferenceLog);
+    }
 
-  // Close the file AFTER rating is written
-  if (filePath) {
+    const rateConfig = config.commands?.[command]?.rating;
+    if (rateConfig && rateConfig.enabled !== false) {
+      const confMiddleware = config.middleware || [];
+      const middlewareWithoutReviewRate = confMiddleware.filter((mw) => {
+        return !(
+          typeof mw === 'object' &&
+          mw !== null &&
+          'name' in mw &&
+          (mw as { name?: string }).name === 'review-rate'
+        );
+      });
+
+      // Resolve review-rate middleware directly rather than going through the registry
+      const reviewRateMiddleware = await createReviewRateMiddleware(rateConfig, config);
+      config.middleware = [...middlewareWithoutReviewRate, reviewRateMiddleware];
+    }
+
+    // When no resolvers are provided (e.g. standalone review CLI, without @gaunt-sloth/agent's
+    // resolvers), supply a minimal middleware resolver that passes through already-resolved
+    // middleware. The full `gaunt-sloth` CLI injects @gaunt-sloth/agent's resolvers instead.
+    const effectiveResolvers: AgentResolvers = resolvers ?? {
+      resolveMiddleware: async (middleware) => middleware ?? [],
+    };
+    const runner = new GthAgentRunner(defaultStatusCallback, effectiveResolvers);
     try {
-      flushSessionLog();
-      stopSessionLogging();
-      displaySuccess(`\n\nThis report can be found in ${filePath}`);
+      await runner.init(command, config, new MemorySaver());
+      await runner.processMessages(messages);
     } catch (error) {
       displayDebug(error instanceof Error ? error : String(error));
-      displayError(`Failed to write review to file: ${filePath}`);
+      const reason = error instanceof Error ? error.message : String(error);
+      displayError(
+        reason
+          ? `Failed to run review with agent.\n\n${reason}`
+          : 'Failed to run review with agent.'
+      );
+    } finally {
+      await runner.cleanup();
     }
-  }
 
-  deleteArtifact(REVIEW_RATE_ARTIFACT_KEY);
+    progressIndicator?.stop();
+
+    handleRatingResult(rateConfig, command);
+
+    // Close the file AFTER rating is written
+    if (filePath) {
+      try {
+        flushSessionLog();
+        stopSessionLogging();
+        displaySuccess(`\n\nThis report can be found in ${filePath}`);
+      } catch (error) {
+        displayDebug(error instanceof Error ? error : String(error));
+        displayError(`Failed to write review to file: ${filePath}`);
+      }
+    }
+
+    deleteArtifact(REVIEW_RATE_ARTIFACT_KEY);
+  } finally {
+    // EXT-53: the indicator owns a 1s setInterval — an active libuv handle that keeps Node's event
+    // loop from ever draining, so leaking it hangs the CLI forever after the work is done. The
+    // `stop()` above sits where it does for output ordering (before the rating result / the
+    // "report can be found in …" line); this `finally` guarantees the handle is also released when
+    // anything above throws — notably `createReviewRateMiddleware()`, which is awaited outside any
+    // catch, and `runner.cleanup()`, whose own `finally` rethrows straight past the `stop()`.
+    // `stop()` is idempotent, so the normal path's second call is a no-op.
+    progressIndicator?.stop();
+  }
 }
 
 /**

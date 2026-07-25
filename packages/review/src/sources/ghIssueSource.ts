@@ -32,23 +32,30 @@ export async function get(
 
   const issueLabel = /^\d+$/.test(issueId) ? `#${issueId}` : issueId;
 
+  // EXT-53: the indicator is constructed OUTSIDE the try and cleared in a `finally`. It owns a 1s
+  // setInterval — an active libuv handle — so a `stop()` reachable only on the success path leaves
+  // the event loop un-drainable and the process never exits. This is especially nasty here because
+  // a failed issue fetch is a SOFT failure (returns null, the review proceeds), so the hang is
+  // invisible: the command succeeds and then simply never returns.
+  const progress = new ProgressIndicator(`Fetching GitHub issue ${issueLabel}`);
+  let issueContent: string;
   try {
     // Use the GitHub CLI to fetch issue details
-    const progress = new ProgressIndicator(`Fetching GitHub issue ${issueLabel}`);
-    const issueContent = await execAsync(`gh issue view ${issueId}`);
-    progress.stop();
-
-    if (!issueContent) {
-      displayWarning(`No content found for GitHub issue ${issueLabel}`);
-      return null;
-    }
-
-    return `GitHub Issue: ${issueLabel}\n\n${issueContent}`;
+    issueContent = await execAsync(`gh issue view ${issueId}`);
   } catch (error) {
     displayWarning(`
 Failed to get GitHub issue ${issueLabel}: ${error instanceof Error ? error.message : String(error)}
 Consider checking if gh cli (https://cli.github.com/) is installed and authenticated.
     `);
     return null;
+  } finally {
+    progress.stop();
   }
+
+  if (!issueContent) {
+    displayWarning(`No content found for GitHub issue ${issueLabel}`);
+    return null;
+  }
+
+  return `GitHub Issue: ${issueLabel}\n\n${issueContent}`;
 }

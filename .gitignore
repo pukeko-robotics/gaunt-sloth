@@ -10,6 +10,10 @@
 /packages/app/integration-tests/workdir/gth_*
 /packages/app/integration-tests/workdir/testreview.md
 /packages/app/integration-tests/workdir/.gsloth.config.json
+# Per-run scratch dirs created by the `it ollama xx-small` tier (marker/synthesis cases).
+# Scoped to the xxs-* prefix so the tracked fixtures alongside them (.aiignore,
+# filewithbadcode.js, image.png, …) are unaffected.
+/packages/app/integration-tests/workdir/xxs-*/
 /packages/app/integration-tests/workdir-with-profiles/.gsloth/gth_*
 /packages/app/integration-tests/workdir-with-profiles/testreview.md
 /packages/app/integration-tests/workdir-with-profiles/.gsloth.config.json
