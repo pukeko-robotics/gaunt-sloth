@@ -403,6 +403,78 @@ describe('tui/slashCommands formatConfigSummary (GS2-1)', () => {
     const lines = formatConfigSummary({ filesystem: ['./src', './docs'] });
     expect(lines.join('\n')).toContain('Filesystem: ["./src","./docs"]');
   });
+
+  // CFG-25 — the panel must print the EFFECTIVE per-command filesystem (GS2-60 bakes it into
+  // config.commands[command]), never the top-level default alone: `Filesystem: none` in a default
+  // `code` session understated the session's actual `all` access.
+  it('shows the effective per-command filesystem (all, not none) in a default-config code session (CFG-25)', async () => {
+    const { formatConfigSummary } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    // Shape of the resolved default config: top-level 'none', per-command values baked by GS2-60.
+    const lines = formatConfigSummary(
+      {
+        filesystem: 'none',
+        commands: { code: { filesystem: 'all' }, chat: { filesystem: 'read' } },
+      },
+      'code'
+    );
+    const fsLine = lines.find((l) => l.startsWith('Filesystem:'));
+    expect(fsLine).toBeDefined();
+    expect(fsLine).toContain('all');
+    expect(fsLine).not.toMatch(/^Filesystem: none/);
+  });
+
+  it('renders both values as `effective (command; top-level: X)` when they differ (CFG-25)', async () => {
+    const { formatConfigSummary } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    const lines = formatConfigSummary(
+      {
+        filesystem: 'none',
+        commands: { code: { filesystem: 'all' } },
+      },
+      'code'
+    );
+    expect(lines).toContain('Filesystem: all (code; top-level: none)');
+  });
+
+  it('renders a single plain value when the effective and top-level values agree (CFG-25)', async () => {
+    const { formatConfigSummary } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    const lines = formatConfigSummary(
+      {
+        filesystem: 'read',
+        commands: { chat: { filesystem: 'read' } },
+      },
+      'chat'
+    );
+    expect(lines).toContain('Filesystem: read');
+    expect(lines.join('\n')).not.toContain('top-level');
+  });
+
+  it('falls back to the top-level value when the command has no filesystem entry (CFG-25)', async () => {
+    const { formatConfigSummary } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    const lines = formatConfigSummary({ filesystem: 'read', commands: { chat: {} } }, 'chat');
+    expect(lines).toContain('Filesystem: read');
+  });
+
+  it('compares formatted renderings, so an array command value vs a string top-level counts as differing (CFG-25)', async () => {
+    const { formatConfigSummary } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    const lines = formatConfigSummary(
+      { filesystem: 'none', commands: { code: { filesystem: ['./src'] } } },
+      'code'
+    );
+    expect(lines).toContain('Filesystem: ["./src"] (code; top-level: none)');
+  });
+
+  // CFG-25 fix round 1 — the live-bug regression vector, with the fixture DERIVED from the real
+  // resolution instead of hand-built: run `resolveConfig({}, {})` (the exact default merge a real
+  // session performs; GS2-60 bakes per-command precedence into `commands.*`) and assert the panel
+  // renders code's effective `all` over the top-level `none`. If the panel ever reads the raw
+  // top-level value again, THIS reproduces the shipped bug.
+  it('renders `all (code; top-level: none)` from the REAL resolveConfig default output (CFG-25)', async () => {
+    const { resolveConfig } = await import('@gaunt-sloth/core/config/loader.js');
+    const { formatConfigSummary } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    const resolved = resolveConfig({} as never, {});
+    const lines = formatConfigSummary(resolved as never, 'code');
+    expect(lines).toContain('Filesystem: all (code; top-level: none)');
+  });
 });
 
 describe('tui/slashCommands /reasoning (TUI-C18 recall a turn’s thinking)', () => {

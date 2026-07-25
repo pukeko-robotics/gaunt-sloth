@@ -267,7 +267,9 @@ export async function createInteractiveSession(
             // below rather than vanishing from the catalog.
             toolsExpanded: false,
             debugVisible: false,
-            configSummary: formatConfigSummary(config),
+            // CFG-25 — pass the session command so the panel prints the EFFECTIVE per-command
+            // filesystem value (e.g. `all` for `code`), not the top-level default.
+            configSummary: formatConfigSummary(config, sessionConfig.mode),
             // GS2-56 — `/debug-dump` is now available here. This surface keeps no on-screen
             // transcript array, so `transcript` is empty; the real as-sent history lands in the
             // archive's model-messages.json from the always-on snapshot (that is the point).

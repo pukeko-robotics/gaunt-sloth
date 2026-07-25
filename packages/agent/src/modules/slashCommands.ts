@@ -121,14 +121,39 @@ export interface ConfigSummaryInput {
  * resolved-config fields, one per line, with a pointer to `gth config print` for the full view.
  * Pure and secret-free — it only reads non-sensitive scalar fields (never API keys / the live
  * llm instance). Used by the App to fill {@link SlashCommandContext.configSummary}.
+ *
+ * CFG-25 — `filesystem` is a precedence-picked per-command field (GS2-60), so the panel prints the
+ * EFFECTIVE value for the running `command`, read from `config.commands[command].filesystem` —
+ * where the GS2-60 resolution already baked the correct 4-layer precedence — falling back to the
+ * top-level value, exactly the read `getEffectiveConfig` performs (no precedence re-derived here).
+ * When the effective and top-level values differ, both are shown
+ * (`Filesystem: all (code; top-level: none)`) so the top-level default can never understate what
+ * the session can actually do. Of the other precedence-picked fields
+ * (`builtInTools`/`allowedTools`/`binaryFormats`), none are printed by this panel, so none can
+ * misreport the same way.
  */
-export function formatConfigSummary(config: ConfigSummaryInput): string[] {
+export function formatConfigSummary(config: ConfigSummaryInput, command?: string): string[] {
   const fmt = (v: unknown): string =>
     typeof v === 'string' ? v : Array.isArray(v) ? JSON.stringify(v) : String(v);
   const lines: string[] = [];
   lines.push(`Model: ${config.modelDisplayName || 'unknown'}`);
   lines.push(`Agent backend: ${config.agent?.backend ?? 'lean'}`);
-  if (config.filesystem !== undefined) lines.push(`Filesystem: ${fmt(config.filesystem)}`);
+  const commandFilesystem = command
+    ? (config.commands?.[command] as { filesystem?: unknown } | undefined)?.filesystem
+    : undefined;
+  const effectiveFilesystem =
+    commandFilesystem !== undefined ? commandFilesystem : config.filesystem;
+  if (effectiveFilesystem !== undefined) {
+    const differs =
+      commandFilesystem !== undefined &&
+      config.filesystem !== undefined &&
+      fmt(commandFilesystem) !== fmt(config.filesystem);
+    lines.push(
+      differs
+        ? `Filesystem: ${fmt(commandFilesystem)} (${command}; top-level: ${fmt(config.filesystem)})`
+        : `Filesystem: ${fmt(effectiveFilesystem)}`
+    );
+  }
   if (config.streamOutput !== undefined) lines.push(`Stream output: ${config.streamOutput}`);
   if (config.useColour !== undefined) lines.push(`Colour: ${config.useColour}`);
   const commandNames = config.commands ? Object.keys(config.commands) : [];

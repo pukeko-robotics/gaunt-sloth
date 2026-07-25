@@ -210,6 +210,22 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
     expect(out).toContain('Model: test-model');
   });
 
+  // CFG-25 — call-site wiring: the session module must pass its mode into formatConfigSummary so
+  // /config prints the EFFECTIVE per-command filesystem. If a refactor drops the second argument,
+  // this renders the raw top-level `none` and fails — the original live bug.
+  it('/config prints the EFFECTIVE per-command filesystem for the session mode (CFG-25 wiring)', async () => {
+    initConfigMock.mockResolvedValue({
+      streamSessionInferenceLog: false,
+      modelDisplayName: 'test-model',
+      filesystem: 'none',
+      commands: { chat: { filesystem: 'read' } },
+    });
+    await runSession('/config', 'exit');
+    const out = allOutput();
+    expect(out).toContain('Filesystem: read (chat; top-level: none)');
+    expect(out).not.toContain('Filesystem: none');
+  });
+
   it('/debug-dump on the readline (non-TUI) surface writes an archive threading the always-on model-request snapshot (GS2-56)', async () => {
     const { GthAbstractAgent } = await import('@gaunt-sloth/core/core/GthAbstractAgent.js');
     const agent = new (GthAbstractAgent as unknown as typeof FakeAbstractAgent)();
