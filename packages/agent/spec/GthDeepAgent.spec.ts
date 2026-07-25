@@ -704,7 +704,7 @@ describe('GthDeepAgent', () => {
     await agent.init('code', makeConfig());
 
     // Absent devTools.shell in `code` mode now resolves to enabled — and still GATED (interruptOn
-    // set), never yolo-by-default.
+    // set), never bypass-by-default.
     expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toEqual({
       run_shell_command: { allowedDecisions: ['approve', 'reject'] },
     });
@@ -722,7 +722,7 @@ describe('GthDeepAgent', () => {
     expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toBeUndefined();
   });
 
-  it('sets interruptOn for run_shell_command when shell is enabled and yolo is off', async () => {
+  it('sets interruptOn for run_shell_command when shell is enabled and bypass is off', async () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
     const config = makeConfig({

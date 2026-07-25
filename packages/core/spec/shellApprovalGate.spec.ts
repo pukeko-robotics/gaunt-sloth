@@ -80,7 +80,7 @@ describe('resolveShellApprovalGate (EXT-52 shared gate policy)', () => {
       });
     });
 
-    it('exec mode when the shell tool is explicitly enabled without yolo', () => {
+    it('exec mode when the shell tool is explicitly enabled without bypass', () => {
       expect(
         resolveShellApprovalGate(config({ builtInTools: { run_shell_command: true } }), 'exec')
       ).toEqual({

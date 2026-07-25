@@ -49,6 +49,7 @@ describe('tui <ApprovalPrompt>', () => {
     const { lastFrame, unmount } = render(
       <ApprovalPrompt
         pending={{ name: 'run_shell_command', args: { command: 'ls -la /tmp' } }}
+        raterEnabled
       />
     );
     const f = lastFrame() ?? '';
@@ -57,8 +58,27 @@ describe('tui <ApprovalPrompt>', () => {
     expect(f).toContain('[o]nce');
     expect(f).toContain('[s]ession');
     expect(f).toContain('[a]lways');
-    expect(f).toContain('[y] auto-approve all'); // EXT-12 — turn on session auto-approve
+    // CFG-26 — `y` now switches to rater-mediated auto, and says so. The old "auto-approve all"
+    // promised unconditional execution, which is bypass, not auto.
+    expect(f).toContain('[y] switch to auto-approve (AI rater)');
+    expect(f).not.toContain('auto-approve all');
     expect(f).toContain('[N]o');
+    unmount();
+  });
+
+  // CFG-26 acceptance #6 — offering a rater-mediated mode in a session that cannot rate is the
+  // same class of lie as a status badge that under-reports, so the affordance is withheld.
+  it('omits the [y] affordance entirely when the session has no rater', () => {
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt
+        pending={{ name: 'run_shell_command', args: { command: 'ls -la /tmp' } }}
+        raterEnabled={false}
+      />
+    );
+    const f = lastFrame() ?? '';
+    expect(f).toContain('[o]nce');
+    expect(f).toContain('[N]o');
+    expect(f).not.toContain('[y]');
     unmount();
   });
 

@@ -36,6 +36,10 @@
  */
 import { z } from 'zod';
 
+// `constants.ts` is a plain, import-free string module, so this does NOT compromise the purity
+// this file depends on (it feeds `z.toJSONSchema` and must stay cwd/fs-independent).
+import { GSLOTH_DIR, GSLOTH_SETTINGS_DIR } from '#src/constants.js';
+
 const filesystemSchema = z.union([z.array(z.string()), z.enum(['all', 'read', 'none'])]);
 
 /**
@@ -804,6 +808,20 @@ export function findApprovalsRaterProfiles(raw: Record<string, unknown>): RaterP
 }
 
 /**
+ * CFG-26 — the ONE message for an `approvals.rater.profile` that does not resolve. Shared by the
+ * loader (which hard-exits a real run) and {@link validateRawGthConfig} (which backs
+ * `gth config validate`), so the validator can never green-light a config the runtime refuses.
+ */
+export function unresolvedRaterProfileMessage(ref: RaterProfileRef): string {
+  return (
+    `identity profile "${ref.profile}" not found ` +
+    `(checked ${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${ref.profile}/). ` +
+    'Create it with `gth config profile create`, or omit approvals.rater.profile to rate ' +
+    'with the main model.'
+  );
+}
+
+/**
  * Render {@link DeprecatedConfigIssue}s as the same `  - <path>: <message>` block used for
  * Zod validation errors, so a deprecated-shape rejection reads identically to a type-mismatch
  * rejection (loader wraps it with `Invalid configuration in <source>:`).
@@ -827,6 +845,15 @@ export function generateConfigJsonSchema(): Record<string, unknown> {
  * loader's `validateRawConfigLayer` (which warns + `exit`s inline): `gth config validate`
  * uses it to render its own output and choose its own exit code.
  */
+export interface RawConfigValidationOptions {
+  /**
+   * CFG-26 — resolves an identity profile NAME to "does it exist?". Supplied by the loader
+   * (`resolveIdentityProfileConfigPath`); omitted by pure/in-memory callers, which then skip the
+   * `approvals.rater.profile` existence check.
+   */
+  resolveProfile?: (profile: string) => boolean;
+}
+
 export interface RawConfigValidationResult {
   /** True when the config parses against the schema (unknown keys do NOT make it false). */
   ok: boolean;
@@ -846,7 +873,10 @@ export interface RawConfigValidationResult {
  * Read-only: `findDeprecatedConfigIssues`, `findUnknownTopLevelKeys` and `safeParse` never
  * mutate `raw`, so no defensive copy is needed.
  */
-export function validateRawGthConfig(raw: Record<string, unknown>): RawConfigValidationResult {
+export function validateRawGthConfig(
+  raw: Record<string, unknown>,
+  options?: RawConfigValidationOptions
+): RawConfigValidationResult {
   const warnings: string[] = [];
 
   // Only an object config can carry deprecated/unknown keys. A null/array/primitive config is
@@ -877,5 +907,27 @@ export function validateRawGthConfig(raw: Record<string, unknown>): RawConfigVal
   if (!result.success) {
     return { ok: false, warnings, errorMessage: formatConfigValidationError(result.error) };
   }
+
+  // CFG-26 — `approvals.rater.profile` strict resolution, when the caller supplies a resolver.
+  // The predicate is INJECTED rather than imported so this module stays pure (it feeds
+  // `z.toJSONSchema`, and every spec that validates a config object must stay cwd-independent),
+  // while `gth config validate` still agrees with the loader instead of green-lighting a config
+  // the next real run hard-exits on. Without a resolver the check is skipped, preserving the
+  // in-memory callers (e.g. the profile scaffolder).
+  if (options?.resolveProfile && isRecordConfig(raw)) {
+    const unresolved = findApprovalsRaterProfiles(raw).filter(
+      (ref) => !options.resolveProfile!(ref.profile)
+    );
+    if (unresolved.length > 0) {
+      return {
+        ok: false,
+        warnings,
+        errorMessage: formatIssueLines(
+          unresolved.map((ref) => ({ path: ref.path, message: unresolvedRaterProfileMessage(ref) }))
+        ),
+      };
+    }
+  }
+
   return { ok: true, warnings };
 }

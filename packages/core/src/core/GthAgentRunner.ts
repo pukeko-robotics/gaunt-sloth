@@ -1,4 +1,5 @@
 import {
+  type AllowlistCounts,
   type ApprovalMode,
   GthConfig,
   type ResolvedApprovals,
@@ -169,29 +170,21 @@ export class GthAgentRunner {
   }
 
   /**
-   * EXT-12 — flip the session-scoped auto-approve flag (the `/auto-approve` / `/yolo` slash
-   * command with no argument). Returns the NEW state so the caller can render a notice.
+   * CFG-26 — the allow-list sizes for the `/approvals` display: how many command prefixes the
+   * human has trusted this session, and how many are persisted in the project file.
    *
-   * CFG-26 — a thin adapter over {@link setSessionApprovalMode} (`true` ⇒ `bypass`, `false` ⇒
-   * `ask`) kept so the slash/TUI surface keeps compiling; CFG-26 Task 2 owns replacing these
-   * call sites with the `/approvals` family and then deleting this trio.
+   * READ-ONLY BY CONSTRUCTION: it reports the persisted count only when the store has ALREADY
+   * been loaded (or persistence is on and it can be read), and never through a path that would
+   * CREATE the store as a side effect of showing a display — a status command must not mutate
+   * session state. `always: undefined` therefore means "not loaded / persistence off", which the
+   * caller renders as `—` rather than a misleading `0`.
    */
-  public toggleSessionYolo(): boolean {
-    return this.setSessionYolo(!this.isSessionYolo());
-  }
-
-  /**
-   * EXT-12 — set the session-scoped auto-approve flag explicitly (`/auto-approve on|off`).
-   * See {@link toggleSessionYolo} for the CFG-26 adapter note.
-   */
-  public setSessionYolo(on: boolean): boolean {
-    this.setSessionApprovalMode(on ? 'bypass' : 'ask');
-    return this.isSessionYolo();
-  }
-
-  /** EXT-12 — current state of the session auto-approve flag (see {@link toggleSessionYolo}). */
-  public isSessionYolo(): boolean {
-    return this.sessionApprovals.mode === 'bypass';
+  public getAllowlistCounts(): AllowlistCounts {
+    const always =
+      this.sessionApprovals.persistAllowlist && this.persistedAllowlistLoaded
+        ? (this.persistedAllowlist?.list().length ?? undefined)
+        : undefined;
+    return { session: this.sessionAllowlist.list().length, always };
   }
 
   /**

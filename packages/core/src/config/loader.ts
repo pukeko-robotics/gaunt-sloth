@@ -29,6 +29,7 @@ import {
   formatDeprecatedConfigIssues,
   isRecordConfig,
   rawGthConfigSchema,
+  unresolvedRaterProfileMessage,
   validateRawGthConfig,
   type RawConfigValidationResult,
 } from '#src/config/schema.js';
@@ -123,10 +124,7 @@ function validateRawConfigLayer<T extends Record<string, unknown>>(raw: T, sourc
       if (!resolveIdentityProfileConfigPath(ref.profile)) {
         displayError(
           `Invalid configuration in ${sourceLabel}:\n` +
-            `  - ${ref.path}: identity profile "${ref.profile}" not found ` +
-            `(checked ${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${ref.profile}/). ` +
-            'Create it with `gth config profile create`, or omit approvals.rater.profile to rate ' +
-            'with the main model.'
+            `  - ${ref.path}: ${unresolvedRaterProfileMessage(ref)}`
         );
         exit(1);
         return raw;
@@ -279,6 +277,16 @@ export function findProjectConfigPath(
   }
   return undefined;
 }
+
+/**
+ * CFG-26 — the read-side validator's fs-backed hook, so `gth config validate`
+ * ({@link collectConfigValidationLayers}) enforces the SAME `approvals.rater.profile` existence
+ * rule the loader hard-exits on. `schema.ts` stays pure; the filesystem knowledge lives here.
+ */
+const RAW_CONFIG_VALIDATION_OPTIONS = {
+  resolveProfile: (profile: string): boolean =>
+    resolveIdentityProfileConfigPath(profile) !== undefined,
+};
 
 /**
  * STRICT existence check for an EXPLICITLY-named identity profile: does
@@ -1326,7 +1334,7 @@ export async function validateConfig(
     const raw = await readRawConfigAtPath(discovered.path);
     const layer: ConfigLayerValidationReport = {
       sourceLabel: discovered.path,
-      ...validateRawGthConfig(raw),
+      ...validateRawGthConfig(raw, RAW_CONFIG_VALIDATION_OPTIONS),
     };
 
     // GS2-73 — mirror the run's `extends` resolution. GS2-41's `resolveConfigExtends` walks the
@@ -1358,7 +1366,10 @@ export async function validateConfig(
   // the layer the previous single-layer validateConfig skipped whenever a project config existed.
   const globalRaw = await loadGlobalRawConfigUnvalidated();
   if (globalRaw) {
-    layers.push({ sourceLabel: globalRaw.label, ...validateRawGthConfig(globalRaw.raw) });
+    layers.push({
+      sourceLabel: globalRaw.label,
+      ...validateRawGthConfig(globalRaw.raw, RAW_CONFIG_VALIDATION_OPTIONS),
+    });
   }
 
   // Vacuous-truth guard: `every` is true on an empty array, so gate `ok` on a config existing.

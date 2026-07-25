@@ -33,6 +33,8 @@ import { MemorySaver } from '@langchain/langgraph';
 import { createResolvers } from '#src/resolvers.js';
 import { resolveAgentFactory } from '#src/core/resolveAgentFactory.js';
 import {
+  approvalsModeNotice,
+  approvalsStatusNotice,
   createCommandRegistry,
   dispatchSlashCommand,
   formatConfigSummary,
@@ -281,24 +283,20 @@ export async function createInteractiveSession(
             await endSession();
             break;
           }
-          if (result.autoApprove) {
-            // EXT-12 — `/auto-approve` (with the `/yolo` alias) sets session-wide shell
-            // auto-approval at the approval-decision layer (the runner flag). Session-scoped,
-            // reversible, never persisted; the hardline floor still blocks catastrophic commands.
-            // The runner seeds its session mode from `approvals.mode`, so `/auto-approve off`
-            // also turns off a config-selected bypass. CFG-26 Task 2 re-points this surface at
-            // the `/approvals` family.
-            const enabled =
-              result.autoApprove === 'toggle'
-                ? runner.toggleSessionYolo()
-                : runner.setSessionYolo(result.autoApprove === 'on');
-            if (enabled) {
-              displayWarning(
-                'Auto-approve ON — shell commands run this session without the per-command prompt. ' +
-                  'The hardline safety floor still blocks catastrophic commands. Run /auto-approve off to require approvals.'
+          if (result.approvals) {
+            // CFG-26 — the `/approvals` family sets the session approval MODE at the
+            // approval-decision layer (the runner posture). Session-scoped, reversible, never
+            // persisted; the hardline floor still blocks catastrophic commands under every mode.
+            // With no argument the command DISPLAYS the posture instead of changing it.
+            if ('show' in result.approvals) {
+              printNotice(
+                approvalsStatusNotice(runner.getSessionApprovals(), runner.getAllowlistCounts())
               );
             } else {
-              displayInfo('Auto-approve OFF — approvals required before each shell command.');
+              runner.setSessionApprovalMode(result.approvals.mode);
+              // Report the posture the runner actually LANDED on, not the one requested — the
+              // runner turns the rater on when switching to `auto`, and the notice names it.
+              printNotice(approvalsModeNotice(runner.getSessionApprovals()));
             }
           } else if (
             result.clearTranscript ||

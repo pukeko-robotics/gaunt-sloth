@@ -11,6 +11,7 @@ import {
   formatDeprecatedConfigIssues,
   generateConfigJsonSchema,
   rawGthConfigSchema,
+  unresolvedRaterProfileMessage,
   validateRawGthConfig,
 } from '#src/config/schema.js';
 import { DEFAULT_CONFIG } from '#src/config.js';
@@ -488,6 +489,58 @@ describe('config schema (GS2-1 B1)', () => {
      * CFG-26 — `approvals.rater.profile` references, collected purely so the LOADER can enforce
      * GS2-62 strict resolution against the filesystem.
      */
+    /**
+     * CFG-26 Task 2 — `gth config validate` must agree with the loader. Before this, the read-side
+     * validator had no profile check at all, so it green-lit a config the very next real run
+     * hard-exits on: a validator that passes what the runtime refuses is worse than none. The
+     * resolver is INJECTED so `schema.ts` stays pure.
+     */
+    describe('validateRawGthConfig + rater.profile resolution (CFG-26)', () => {
+      const config = {
+        llm: { type: 'openai' },
+        approvals: { mode: 'auto', rater: { profile: 'safety-rater' } },
+      };
+
+      it('rejects an unresolvable rater.profile, naming the path and the profile', () => {
+        const result = validateRawGthConfig(config, { resolveProfile: () => false });
+        expect(result.ok).toBe(false);
+        expect(result.errorMessage).toContain('approvals.rater.profile');
+        expect(result.errorMessage).toContain('identity profile "safety-rater" not found');
+      });
+
+      it('accepts it when the profile resolves', () => {
+        expect(validateRawGthConfig(config, { resolveProfile: () => true }).ok).toBe(true);
+      });
+
+      it('checks per-command profiles too', () => {
+        const result = validateRawGthConfig(
+          {
+            llm: { type: 'openai' },
+            commands: { code: { approvals: { rater: { profile: 'nope' } } } },
+          },
+          { resolveProfile: () => false }
+        );
+        expect(result.ok).toBe(false);
+        expect(result.errorMessage).toContain('commands.code.approvals.rater.profile');
+      });
+
+      it('skips the check entirely with no resolver, so pure/in-memory callers are unaffected', () => {
+        // The profile scaffolder validates a config it is about to WRITE; it has no business
+        // touching the filesystem to do it.
+        expect(validateRawGthConfig(config).ok).toBe(true);
+      });
+
+      it('shares ONE message with the loader, so the two surfaces cannot drift', () => {
+        const result = validateRawGthConfig(config, { resolveProfile: () => false });
+        expect(result.errorMessage).toContain(
+          unresolvedRaterProfileMessage({
+            path: 'approvals.rater.profile',
+            profile: 'safety-rater',
+          })
+        );
+      });
+    });
+
     describe('findApprovalsRaterProfiles (CFG-26)', () => {
       it('collects root and per-command profile references with their config paths', () => {
         expect(

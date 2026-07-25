@@ -50,7 +50,6 @@ const runnerInstanceMock = {
   init: vi.fn().mockResolvedValue(undefined),
   processMessages: vi.fn().mockResolvedValue(undefined),
   setToolApprovalCallback: vi.fn(),
-  toggleSessionYolo: vi.fn(),
   cleanup: vi.fn().mockResolvedValue(undefined),
 };
 vi.mock('@gaunt-sloth/core/core/GthAgentRunner.js', () => ({

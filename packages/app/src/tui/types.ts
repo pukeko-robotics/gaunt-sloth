@@ -5,6 +5,7 @@ import type {
   McpConnectionFailure,
 } from '@gaunt-sloth/core/core/types.js';
 import type { TurnViewModel } from '#src/tui/viewModel.js';
+import type { AllowlistCounts, ApprovalMode, ResolvedApprovals } from '@gaunt-sloth/core/config.js';
 import type { CommandNoticeTone } from '#src/tui/components/CommandNotice.js';
 import type { DebugDumpInput } from '@gaunt-sloth/agent/modules/slashCommands.js';
 
@@ -34,12 +35,19 @@ export interface TuiAgent {
    */
   resetThread?(): void;
   /**
-   * EXT-12 — apply a change to the runner's session-scoped auto-approve flag (shell auto-approval)
-   * and return the NEW state, so the App can render a state-aware notice and status indicator.
-   * `'on'`/`'off'` set it explicitly, `'toggle'` flips it. Wired to the `/auto-approve` slash
-   * command. Optional so the fixture agent (no runner) may omit it.
+   * CFG-26 — switch the session approval MODE and return the posture the runner LANDED on, so the
+   * App can render a state-aware notice and the status-bar mode badge. Wired to the `/approvals`
+   * family. Optional so the fixture agent (no runner) may omit it.
+   *
+   * It returns the landed {@link ResolvedApprovals} rather than the requested mode because the
+   * runner may adjust more than `mode` (switching to `auto` turns the rater on).
    */
-  setAutoApprove?(action: 'on' | 'off' | 'toggle'): boolean;
+  setApprovalMode?(mode: ApprovalMode): ResolvedApprovals;
+  /**
+   * CFG-26 — read the current posture + allow-list counts for the `/approvals` display. Separate
+   * from {@link setApprovalMode} so showing status never mutates session state.
+   */
+  getApprovals?(): { approvals: ResolvedApprovals; allowlist: AllowlistCounts };
 }
 
 /**
@@ -74,12 +82,20 @@ export interface TuiAppProps {
   /** Model/provider display name for the status bar and `/model` (from `config.modelDisplayName`). */
   modelDisplayName?: string;
   /**
-   * EXT-12 — initial state of the session auto-approve flag, so the status bar shows the
-   * indicator from the first frame when `run_shell_command.yolo` pre-enabled it in config. The App
-   * keeps its own state after this; the session module seeds it from `runner.isSessionYolo()`.
-   * Defaults to off (undefined) — the fixture / non-shell sessions omit it.
+   * CFG-26 — the RESOLVED approvals posture at session start, so the status bar names the real
+   * mode from the very first frame. The session module seeds it from
+   * `runner.getSessionApprovals()`; the App keeps its own state after that.
+   *
+   * This replaces the old `initialAutoApprove?: boolean`, which was seeded from
+   * `runner.isSessionYolo()` and therefore read "off" whenever the (now default) rater-mediated
+   * `auto` mode was in force — the status bar said nothing was being auto-approved while the
+   * rater was approving safe commands. A mode, not a boolean, is the only shape that can tell the
+   * truth about three modes.
+   *
+   * Undefined = no approvals surface in this session (the fixture agent / non-shell sessions),
+   * and the badge is then omitted entirely rather than guessing.
    */
-  initialAutoApprove?: boolean;
+  initialApprovals?: ResolvedApprovals;
   /**
    * Pre-rendered, secret-free summary lines of the resolved config for the read-only `/config`
    * slash command (GS2-1). Built once by the session module via `formatConfigSummary`; omitted by

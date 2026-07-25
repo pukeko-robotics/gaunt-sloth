@@ -419,6 +419,16 @@ export interface ResolvedApprovals {
   persistAllowlist: boolean;
 }
 
+/**
+ * CFG-26 — how many command prefixes the allow-list holds, for the `/approvals` display.
+ * `always: undefined` means the persisted store has not been loaded (or persistence is off) —
+ * rendered `—` rather than a misleading `0`, since a display must never create the store.
+ */
+export interface AllowlistCounts {
+  session: number;
+  always: number | undefined;
+}
+
 /** Default rating-prompt strictness when `approvals.rater.strictness` is absent. */
 export const DEFAULT_RATER_STRICTNESS: RaterStrictness = 'standard';
 

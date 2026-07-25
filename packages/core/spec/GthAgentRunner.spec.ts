@@ -510,11 +510,10 @@ describe('GthAgentRunner', () => {
     });
   });
 
-  // CFG-26 — the session-scoped approval mode (config + the `/approvals` family; the legacy
-  // `/yolo` trio are thin adapters over it). Under `bypass`, gated run_shell_command calls are
-  // approved WITHOUT prompting; the hardline floor still applies at exec time (enforced in
-  // GthDevToolkit, not here, so a catastrophic command is still refused).
-  describe('session-scoped approval mode (/approvals, /yolo adapters)', () => {
+  // CFG-26 — the session-scoped approval mode (config + the `/approvals` family). Under `bypass`,
+  // gated run_shell_command calls are approved WITHOUT prompting; the hardline floor still applies
+  // at exec time (enforced in GthDevToolkit, not here, so a catastrophic command is still refused).
+  describe('session-scoped approval mode (/approvals)', () => {
     function streamOf(...chunks: string[]) {
       return {
         async *[Symbol.asyncIterator]() {
@@ -523,24 +522,22 @@ describe('GthAgentRunner', () => {
       };
     }
 
-    it('toggleSessionYolo flips the flag and isSessionYolo reflects it (defaults OFF)', async () => {
+    it('setSessionApprovalMode switches the mode explicitly and is idempotent', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       await runner.init('code', mockConfig);
-      expect(runner.isSessionYolo()).toBe(false);
-      expect(runner.toggleSessionYolo()).toBe(true);
-      expect(runner.isSessionYolo()).toBe(true);
-      expect(runner.toggleSessionYolo()).toBe(false);
-      expect(runner.isSessionYolo()).toBe(false);
+      expect(runner.setSessionApprovalMode('bypass')).toBe('bypass');
+      expect(runner.setSessionApprovalMode('bypass')).toBe('bypass'); // idempotent
+      expect(runner.getSessionApprovals().mode).toBe('bypass');
+      expect(runner.setSessionApprovalMode('ask')).toBe('ask');
+      expect(runner.getSessionApprovals().mode).toBe('ask');
     });
 
-    it('setSessionYolo sets the flag explicitly (idempotent) and returns the new state (EXT-12)', async () => {
+    it('getAllowlistCounts reports the session size and does NOT create the persisted store', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       await runner.init('code', mockConfig);
-      expect(runner.setSessionYolo(true)).toBe(true);
-      expect(runner.setSessionYolo(true)).toBe(true); // idempotent
-      expect(runner.isSessionYolo()).toBe(true);
-      expect(runner.setSessionYolo(false)).toBe(false);
-      expect(runner.isSessionYolo()).toBe(false);
+      // Nothing granted yet, and the persisted store has not been loaded: `always` is undefined
+      // (rendered `—`), NOT a misleading 0 — a display command must never create the store.
+      expect(runner.getAllowlistCounts()).toEqual({ session: 0, always: undefined });
     });
 
     it('init seeds the session mode from approvals.mode: bypass config (CFG-26)', async () => {
@@ -551,9 +548,8 @@ describe('GthAgentRunner', () => {
       } as typeof mockConfig);
       // Config pre-selected bypass, but the mode remains switchable (/approvals ask).
       expect(runner.getSessionApprovals().mode).toBe('bypass');
-      expect(runner.isSessionYolo()).toBe(true);
       expect(runner.setSessionApprovalMode('ask')).toBe('ask');
-      expect(runner.isSessionYolo()).toBe(false);
+      expect(runner.getSessionApprovals().mode).toBe('ask');
     });
 
     it('init seeds the whole posture (rater + allow-list knobs) from config (CFG-26)', async () => {
@@ -602,7 +598,7 @@ describe('GthAgentRunner', () => {
       await runner.init('code', { ...mockConfig, streamOutput: true });
       const human = vi.fn();
       runner.setToolApprovalCallback(human);
-      runner.toggleSessionYolo(); // ON
+      runner.setSessionApprovalMode('bypass');
 
       await runner.processMessages([new HumanMessage('clean')]);
 
