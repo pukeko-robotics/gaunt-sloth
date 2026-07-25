@@ -443,7 +443,7 @@ export async function createTuiSession(
         mode={sessionConfig.mode}
         modelDisplayName={config.modelDisplayName}
         initialAutoApprove={runner.isSessionYolo()}
-        configSummary={formatConfigSummary(config)}
+        configSummary={formatConfigSummary(config, sessionConfig.mode)}
         resolvedConfig={config}
         dumpDebugSession={dumpDebugSessionWithModelRequest}
         advisories={startupAdvisories}
