@@ -16,10 +16,7 @@ export function insightsCommand(program: Command): void {
     .option('--db <path>', 'path to the history DB (defaults to ~/.gsloth/history.db)')
     .addHelpText(
       'after',
-      '\n' +
-        'Examples:\n' +
-        '  $ gth insights\n' +
-        '  $ gth insights --db ./project-history.db\n'
+      '\n' + 'Examples:\n' + '  $ gth insights\n' + '  $ gth insights --db ./project-history.db\n'
     )
     .action((options: { db?: string }) => {
       const store = openHistoryStore(resolveHistoryDbPath(options.db), { create: false });

@@ -15,10 +15,7 @@ export function apiCommand(
     .option('--port <port>', 'Port to listen on')
     .addHelpText(
       'after',
-      '\n' +
-        'Examples:\n' +
-        '  $ gth api ag-ui\n' +
-        '  $ gth api ag-ui --port 4000\n'
+      '\n' + 'Examples:\n' + '  $ gth api ag-ui\n' + '  $ gth api ag-ui --port 4000\n'
     )
     .action(async (options: { port?: string }) => {
       try {
