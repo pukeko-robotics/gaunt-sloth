@@ -7,7 +7,7 @@
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import type { BaseToolkit, StructuredToolInterface } from '@langchain/core/tools';
 import type { StatusLevel } from '#src/core/types.js';
-import type { BuiltInToolsSetting } from '#src/config/shell-policy.js';
+import type { ApprovalsConfig, BuiltInToolsSetting } from '#src/config/shell-policy.js';
 
 /**
  * GS2-43 — the seven configurable prompt segments. Each maps to a prompt file with a
@@ -65,6 +65,8 @@ export type PromptsConfig = Partial<Record<PromptSegmentName, PromptSegmentSetti
 export interface CommandToolingConfig {
   filesystem?: string[] | 'all' | 'read' | 'none';
   builtInTools?: BuiltInToolsSetting;
+  /** CFG-26 — per-command approvals posture; REPLACES the root block wholesale when set. */
+  approvals?: ApprovalsConfig;
   customTools?: CustomToolsConfig | false;
   /** See {@link GthConfig.allowedTools}. */
   allowedTools?: string[];
@@ -188,6 +190,15 @@ export interface GthConfig {
    * a per-command value replaces the top-level one.
    */
   builtInTools?: BuiltInToolsSetting;
+  /**
+   * CFG-26 — the tool-approval gate: `mode` (`auto`/`ask`/`bypass`), the AI `rater`, and the
+   * allow-list knobs. Replaces the retired per-tool
+   * `builtInTools.run_shell_command.{yolo,judge,allowlist,persistAllowlist}` knobs, which sat on
+   * the object shared by EVERY built-in tool. Settable at the root or per command
+   * (`commands.<command>.approvals`); a per-command value replaces the top-level one. Absent =
+   * the context defaults resolved by `resolveApprovals`.
+   */
+  approvals?: ApprovalsConfig;
   tools?: StructuredToolInterface[] | BaseToolkit[] | ServerTool[];
   /**
    * Restrict the agent to this allow-list of tool names, applied after every tool source
@@ -352,6 +363,8 @@ export interface GthConfig {
     api?: {
       filesystem?: string[] | 'all' | 'read' | 'none';
       builtInTools?: BuiltInToolsSetting;
+      /** CFG-26 — per-command approvals posture; REPLACES the root block wholesale when set. */
+      approvals?: ApprovalsConfig;
       port?: number;
       cors?: {
         allowOrigin?: string;

@@ -25,8 +25,8 @@ export function ApprovalPrompt({
     typeof pending.args.command === 'string'
       ? (pending.args.command as string)
       : JSON.stringify(pending.args);
-  // EXT-10: when the LLM-as-judge gate escalated this command (rather than auto-approving), show
-  // its flag + reason so the human has the judge's read before deciding.
+  // CFG-26: when the AI rater escalated this command (rather than approving it or bouncing it
+  // back to the model), show its tier + reason so the human has the rater's read before deciding.
   const verdict = pending.safetyVerdict;
   return (
     <Box flexDirection="column">
@@ -36,7 +36,7 @@ export function ApprovalPrompt({
       </Text>
       <Text dimColor>{`    ${commandText}`}</Text>
       {verdict ? (
-        <Text color="yellow">{`⚠ safety judge (${verdict.risk}): ${verdict.reason}`}</Text>
+        <Text color="yellow">{`⚠ AI rater (${verdict.tier}): ${verdict.reason}`}</Text>
       ) : null}
       <Text dimColor>
         {'Approve?  [o]nce   [s]ession   [a]lways   [y] auto-approve all   [N]o'}

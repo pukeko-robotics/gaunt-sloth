@@ -5,7 +5,7 @@ import { askStructured, ASK_STRUCTURED_DEFAULT_TIMEOUT_MS } from '#src/runtime/a
 
 /**
  * Build a fake {@link GthConfig} whose `llm.withStructuredOutput(schema).invoke()` returns (or
- * throws) what the test supplies. Deterministic — no live LLM. Mirrors `shellJudge.spec.ts`'s
+ * throws) what the test supplies. Deterministic — no live LLM. Mirrors `shellRater.spec.ts`'s
  * `fakeModel` helper, since `askStructured` uses the exact same `withStructuredOutput` mechanism;
  * wrapped in a config because `askStructured` reads the model from `config.llm`.
  */

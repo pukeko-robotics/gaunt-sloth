@@ -1,5 +1,5 @@
 import type { GthConfig } from '#src/config.js';
-import type { ShellSafetyVerdict } from '#src/core/shell/judge.js';
+import type { ShellSafetyVerdict } from '#src/core/shell/rater.js';
 import type { BaseMessage } from '@langchain/core/messages';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import type { StructuredToolInterface } from '@langchain/core/tools';
@@ -155,10 +155,10 @@ export interface PendingToolInterrupt {
   name: string;
   args: Record<string, unknown>;
   /**
-   * EXT-10 — when the LLM-as-judge safety gate escalated this `run_shell_command` to the human
-   * (rather than auto-approving it), the judge's verdict is attached here so the approval surface
-   * can show a "safety judge flagged: <reason>" notice. Absent when the judge is disabled (the
-   * default) or when the command reached the human without going through the judge.
+   * CFG-26 — when the AI rater escalated this `run_shell_command` to the human (rather than
+   * approving it or bouncing it back to the model), the rater's verdict is attached here so the
+   * approval surface can show an "AI rater (<tier>): <reason>" notice. Absent when the rater is
+   * off, or when the command reached the human without being rated.
    */
   safetyVerdict?: ShellSafetyVerdict;
 }

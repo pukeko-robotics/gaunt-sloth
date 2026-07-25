@@ -27,7 +27,7 @@ import { App } from '#src/tui/components/App.js';
  * production approval bridge (`setToolApprovalCallback` ⇄ `subscribeApproval`), and the real
  * `<App>` with its approval queue + `useInput` resolution. We assert: interrupt → `ApprovalPrompt`
  * renders → approve → `streamWithEventsResume` → command output renders; reject → graceful continue
- * (no execution); allow-list auto-approve → no prompt; judge escalation → verdict line in the TUI.
+ * (no execution); allow-list auto-approve → no prompt; AI-rater escalation → verdict line in the TUI.
  *
  * On the OLD code (`processMessagesWithEvents` = bare `yield*`) these all fail: the runner never
  * detects the interrupt, so no approval is ever bridged to the App and no resume stream runs.
@@ -160,10 +160,11 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       approvedAnswer: 'The directory has 4 entries.',
       rejectedAnswer: 'Okay, I will not run it.',
     });
-    // Shell gate enabled, allow-list + judge OFF → the command escalates straight to the human.
+    // Shell gate enabled, allow-list + rater OFF → the command escalates straight to the human.
     const { runner, bridge, tuiAgent, command } = wireRunner(agent, {
       ...FULL_CONFIG,
-      commands: { code: { builtInTools: { run_shell_command: { enabled: true, allowlist: false } } } },
+      approvals: { mode: 'ask', allowlist: false },
+      commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
     } as Partial<GthConfig>);
     await runner.init(command as never, { ...FULL_CONFIG } as GthConfig);
     runner.setToolApprovalCallback((pending) => bridge.request(pending));
@@ -346,30 +347,27 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     unmount();
   });
 
-  it('judge escalation surfaces the verdict line in the ApprovalPrompt', async () => {
+  it('AI-rater escalation surfaces the verdict line in the ApprovalPrompt', async () => {
     const agent = fakeInterruptingAgent({
       command: 'cat /etc/passwd',
       toolResult: 'root:x:0:0',
       approvedAnswer: 'read it',
       rejectedAnswer: 'skipped',
     });
-    // Judge ON returning a medium/out-of-scope verdict → escalate to the human with the verdict.
+    // Rater ON returning a `danger` verdict → escalate to the human with the verdict attached.
     const invoke = vi.fn().mockResolvedValue({
-      risk: 'medium',
-      destructive: false,
-      outOfScope: true,
+      tier: 'danger',
       reason: 'accesses a system-wide sensitive file outside the project directory',
     });
-    const judgeLlm = {
+    const raterLlm = {
       withStructuredOutput: vi.fn().mockReturnValue({ invoke }),
     } as unknown as GthConfig['llm'];
     const { runner, bridge, tuiAgent } = wireRunner(agent, {}, 'code');
     await runner.init('code' as never, {
       ...FULL_CONFIG,
-      llm: judgeLlm,
-      commands: {
-        code: { builtInTools: { run_shell_command: { enabled: true, allowlist: false, judge: true } } },
-      },
+      llm: raterLlm,
+      approvals: { mode: 'auto', allowlist: false },
+      commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
     } as GthConfig);
     runner.setToolApprovalCallback((pending) => bridge.request(pending));
 
@@ -385,10 +383,11 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     await vi.waitFor(() => {
       const f = lastFrame() ?? '';
       expect(f).toContain('cat /etc/passwd'); // escalated command shown
-      // The judge's verdict reason is surfaced in the prompt (the safety-judge line).
+      // The rater's verdict reason is surfaced in the prompt (the AI-rater line).
       expect(f).toContain('system-wide sensitive file');
+      expect(f).toContain('AI rater (danger)');
     });
-    expect(invoke).toHaveBeenCalled(); // the judge actually ran
+    expect(invoke).toHaveBeenCalled(); // the rater actually ran
 
     unmount();
   });

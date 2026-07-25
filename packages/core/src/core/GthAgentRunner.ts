@@ -1,10 +1,8 @@
 import {
+  type ApprovalMode,
   GthConfig,
-  getEffectiveDevToolsConfig,
-  getShellJudgeSettings,
-  isShellAllowlistEnabled,
-  isShellAllowlistPersisted,
-  isShellJudgeEnabled,
+  type ResolvedApprovals,
+  resolveApprovals,
 } from '#src/config.js';
 import { BaseCheckpointSaver } from '@langchain/langgraph';
 import {
@@ -30,10 +28,10 @@ import {
 import { classifyCommand } from '#src/core/shell/arity.js';
 import { normalizeCommand } from '#src/core/shell/normalize.js';
 import {
-  judgeShellCommand,
   mapVerdictToAction,
+  rateShellCommand,
   type ShellSafetyVerdict,
-} from '#src/core/shell/judge.js';
+} from '#src/core/shell/rater.js';
 import { env } from '#src/utils/systemUtils.js';
 import { getGslothConfigWritePath } from '#src/utils/fileUtils.js';
 import { SHELL_ALLOWLIST_FILE } from '#src/constants.js';
@@ -87,17 +85,22 @@ export class GthAgentRunner {
   private lastRunStats: GthRunStats = { tools: [] };
 
   /**
-   * EXT-12 — runtime, session-scoped auto-approve flag driven by the `/auto-approve` (a.k.a.
-   * `/yolo`) slash command. Because the shell tool stays gated (in `interruptOn`) in the
-   * interactive `code` mode, this flag is consulted at the TOP of {@link decideToolApproval}:
-   * when ON, a gated `run_shell_command` is auto-approved WITHOUT prompting for the rest of this
-   * runner's life. Never persisted, but INITIALIZED at {@link init} from the static
-   * `run_shell_command.yolo` config knob — so a config that pre-enables auto-approval still keeps the
-   * tool gated and therefore toggleable (`/auto-approve off` restores the per-command prompt).
+   * CFG-26 — the runtime, session-scoped approval posture, seeded at {@link init} from
+   * {@link resolveApprovals} (config + the context defaults matrix) and thereafter switchable for
+   * the session by the `/approvals` command family. Because the shell tool stays gated (in
+   * `interruptOn`) in interactive `code` mode, this is consulted at the TOP of
+   * {@link decideToolApproval}, so a config that pre-selects `bypass` still keeps the tool gated
+   * and therefore switchable back mid-session. Never persisted.
+   *
    * It does NOT disable the hardline floor — catastrophic commands are still refused at exec time
-   * in `GthDevToolkit.executeCommand`.
+   * in `GthDevToolkit.executeCommand` under every mode.
    */
-  private sessionYolo = false;
+  private sessionApprovals: ResolvedApprovals = {
+    mode: 'ask',
+    rater: { enabled: false, strictness: 'standard', escalate: 'danger' },
+    allowlist: true,
+    persistAllowlist: true,
+  };
 
   /**
    * EXT-9 Tier-2 session allow-list — approved command prefixes that auto-approve for the
@@ -141,30 +144,54 @@ export class GthAgentRunner {
   }
 
   /**
-   * EXT-12 — flip the runtime, session-scoped auto-approve flag (the `/auto-approve` /
-   * `/yolo` slash command with no argument). When ON, gated `run_shell_command` calls
-   * auto-approve without prompting for the rest of this session; the hardline floor still applies
-   * at exec time. Returns the NEW state so the caller can render a notice. Session-scoped only —
+   * CFG-26 — switch the session-scoped approval mode (the `/approvals auto|ask|bypass` family).
+   * Idempotent; returns the NEW mode so the caller can render a notice. Session-scoped only —
    * nothing is written to config.
+   *
+   * Switching TO `auto` when no rater is configured would be a lie (auto-mode exists only where
+   * the rater does), so it turns the rater on with the resolved defaults.
    */
-  public toggleSessionYolo(): boolean {
-    this.sessionYolo = !this.sessionYolo;
-    return this.sessionYolo;
+  public setSessionApprovalMode(mode: ApprovalMode): ApprovalMode {
+    this.sessionApprovals = {
+      ...this.sessionApprovals,
+      mode,
+      rater:
+        mode === 'auto'
+          ? { ...this.sessionApprovals.rater, enabled: true }
+          : this.sessionApprovals.rater,
+    };
+    return this.sessionApprovals.mode;
+  }
+
+  /** CFG-26 — the session's current approval posture (mode + rater + allow-list knobs). */
+  public getSessionApprovals(): ResolvedApprovals {
+    return this.sessionApprovals;
   }
 
   /**
-   * EXT-12 — set the session-scoped auto-approve flag explicitly (the `/auto-approve on|off`
-   * slash command). Idempotent; returns the NEW state so the caller can render a notice.
-   * Session-scoped only — nothing is written to config.
+   * EXT-12 — flip the session-scoped auto-approve flag (the `/auto-approve` / `/yolo` slash
+   * command with no argument). Returns the NEW state so the caller can render a notice.
+   *
+   * CFG-26 — a thin adapter over {@link setSessionApprovalMode} (`true` ⇒ `bypass`, `false` ⇒
+   * `ask`) kept so the slash/TUI surface keeps compiling; CFG-26 Task 2 owns replacing these
+   * call sites with the `/approvals` family and then deleting this trio.
    */
-  public setSessionYolo(on: boolean): boolean {
-    this.sessionYolo = on;
-    return this.sessionYolo;
+  public toggleSessionYolo(): boolean {
+    return this.setSessionYolo(!this.isSessionYolo());
   }
 
-  /** EXT-12 — current state of the runtime session-scoped auto-approve flag (see {@link toggleSessionYolo}). */
+  /**
+   * EXT-12 — set the session-scoped auto-approve flag explicitly (`/auto-approve on|off`).
+   * See {@link toggleSessionYolo} for the CFG-26 adapter note.
+   */
+  public setSessionYolo(on: boolean): boolean {
+    this.setSessionApprovalMode(on ? 'bypass' : 'ask');
+    return this.isSessionYolo();
+  }
+
+  /** EXT-12 — current state of the session auto-approve flag (see {@link toggleSessionYolo}). */
   public isSessionYolo(): boolean {
-    return this.sessionYolo;
+    return this.sessionApprovals.mode === 'bypass';
   }
 
   /**
@@ -190,11 +217,11 @@ export class GthAgentRunner {
     // only env-derived ones. Both surfaces (plain observer + Ink TUI) render through this module.
     setToolDisplayConfig(configIn);
 
-    // EXT-12 — seed the runtime auto-approve flag from the static `run_shell_command.yolo` config so a
-    // config that pre-enables auto-approval starts ON, while the shell tool stays gated (see
-    // GthDeepAgent) and therefore remains toggleable (`/auto-approve off`). Resolved per-command,
+    // CFG-26 — seed the session approval posture from config + the context defaults matrix, so a
+    // config that pre-selects `bypass` starts there while the shell tool stays gated (see
+    // GthDeepAgent) and therefore remains switchable (`/approvals ask`). Resolved per-command,
     // mirroring where the shell tool is actually emitted; no effect where the tool is ungated.
-    this.sessionYolo = getEffectiveDevToolsConfig(configIn, command)?.shellYolo === true;
+    this.sessionApprovals = resolveApprovals(configIn, command);
 
     // Initialize debug logging
     initDebugLogging(configIn.debugLog ?? false);
@@ -366,16 +393,23 @@ export class GthAgentRunner {
   }
 
   /**
-   * Decide a single pending tool call (EXT-9 Tier-2). For the opt-in `run_shell_command`,
-   * consult the scoped allow-list FIRST: if the command's classified prefix is already
-   * approved (session or persisted `always`) and survives the safe-bin anti-widening
-   * re-validation, auto-approve SILENTLY (no human prompt). Otherwise fall through to the
-   * human callback; when the human grants `session`/`always` scope, record the command's
-   * classified prefix into the matching store so future flag-variants stop re-prompting.
+   * Decide a single pending tool call. CFG-26 order — `bypass → allow-list → rater → human
+   * prompt`, with the hardline floor at exec time regardless:
    *
-   * When no human callback is wired (non-TTY exec run) and nothing is allow-listed, reject —
-   * never auto-approve. Non-shell tools (or any tool when the allow-list is disabled) skip the
-   * allow-list and go straight to the human callback / default-reject, preserving prior behaviour.
+   * 1. **bypass** — the gate is off for this session; approve at scope `once`.
+   * 2. **allow-list** (EXT-9 Tier-2) — if the command's classified prefix is already approved
+   *    (session or persisted `always`) and survives the safe-bin anti-widening re-validation,
+   *    approve SILENTLY. A human-trusted prefix never pays for a rater call.
+   * 3. **AI rater** (under `auto`) — `safe` approves; below the escalate threshold the reason
+   *    goes back to the MODEL; at/above it we fall through to the human with the verdict
+   *    attached; `critical` is refused outright.
+   * 4. **human prompt** — the approval callback; when the human grants `session`/`always` scope,
+   *    the command's classified prefix is recorded so future flag-variants stop re-prompting.
+   *
+   * When no human callback is wired (non-TTY `exec` run, a server) and nothing approved the call
+   * earlier, REJECT — never auto-approve. That fail-closed default is what makes the one-shot /
+   * server row of the defaults matrix safe, and it deliberately sits ahead of every path that
+   * would otherwise reach a prompt that cannot be answered.
    *
    * Hardline catastrophic commands remain refused at exec time regardless of any approval here
    * (defense in depth in `GthDevToolkit.executeCommand`), so an allow-listed `rm -rf /` still
@@ -384,51 +418,61 @@ export class GthAgentRunner {
   private async decideToolApproval(tool: PendingToolInterrupt): Promise<ToolApprovalDecision> {
     const command = typeof tool.args?.command === 'string' ? (tool.args.command as string) : null;
     const isShellCommand = tool.name === 'run_shell_command' && command !== null;
-    const allowlistApplies = isShellCommand && this.isShellAllowlistOn();
+    const approvals = this.sessionApprovals;
+    const allowlistApplies = isShellCommand && approvals.allowlist;
 
-    // EXT-12 — runtime session yolo (`/yolo`): when ON, auto-approve a gated shell command WITHOUT
-    // prompting, judging, or persisting. Scope `once` so nothing is written to the allow-list (the
-    // bypass is intentionally ephemeral and reversible). The hardline floor is NOT bypassed here —
-    // it is enforced at exec time in GthDevToolkit.executeCommand regardless of this decision, so a
-    // catastrophic command is still refused even under yolo.
-    if (isShellCommand && this.sessionYolo) {
+    // CFG-26 — `approvals.mode: bypass` (config or `/approvals bypass`): approve a gated shell
+    // command WITHOUT prompting, rating, or persisting. Scope `once` so nothing is written to the
+    // allow-list (the bypass is intentionally ephemeral and reversible). The hardline floor is NOT
+    // bypassed here — it is enforced at exec time in GthDevToolkit.executeCommand regardless of
+    // this decision, so a catastrophic command is still refused even under bypass.
+    if (isShellCommand && approvals.mode === 'bypass') {
       return { type: 'approve', scope: 'once' };
     }
 
-    // Auto-approve from the allow-list without prompting. The allow-list ALWAYS wins over the
-    // judge: a human-trusted prefix shouldn't pay for an LLM call on every variant.
+    // Approve from the allow-list without prompting. The allow-list ALWAYS wins over the rater:
+    // a human-trusted prefix shouldn't pay for an LLM call on every variant.
     if (allowlistApplies && this.isApprovedByAllowlist(command)) {
       return { type: 'approve', scope: 'session' };
     }
 
-    // EXT-10 — LLM-as-judge safety gate (default OFF). Runs BEFORE the human callback for a
-    // `run_shell_command` not already allow-listed: auto-approve clearly-safe (fatigue reducer),
-    // reject clearly-catastrophic (only when blockHigh), otherwise fall through to the human with
-    // the verdict attached. When disabled this is a no-op and behaviour is exactly EXT-9.
+    // CFG-26 — the AI rater. Under `auto` it runs BEFORE the human callback for a
+    // `run_shell_command` not already allow-listed: `safe` is approved (fatigue reducer), a tier
+    // below the escalate threshold is REJECTED WITH THE REASON HANDED BACK TO THE MODEL so it can
+    // self-correct, at/above the threshold falls through to the human with the verdict attached,
+    // and `critical` is refused outright. With the rater off this is a no-op (pure EXT-9).
     let safetyVerdict: ShellSafetyVerdict | undefined;
-    if (isShellCommand && command !== null && this.isShellJudgeOn()) {
-      const settings = getShellJudgeSettings(
-        getEffectiveDevToolsConfig(this.config ?? undefined, this.command)
-      );
-      const verdict = await judgeShellCommand(command, this.config as GthConfig, {
+    if (isShellCommand && command !== null && approvals.rater.enabled) {
+      const verdict = await rateShellCommand(command, this.config as GthConfig, {
         home: env?.HOME,
+        strictness: approvals.rater.strictness,
       });
-      const action = mapVerdictToAction(command, verdict, {
-        autoApproveLow: settings.autoApproveLow,
-        blockHigh: settings.blockHigh,
+      const decision = mapVerdictToAction(command, verdict, {
+        mode: approvals.mode,
+        escalate: approvals.rater.escalate,
       });
-      if (action === 'auto-approve') {
-        // Scope `once`: judge approvals are NEVER persisted to the allow-list.
+      if (decision.action === 'approve') {
+        // Scope `once`: rater approvals are NEVER persisted to the allow-list.
         return { type: 'approve', scope: 'once' };
       }
-      if (action === 'reject') {
+      if (decision.action === 'reject') {
         return {
           type: 'reject',
-          message: `Safety judge blocked the command: ${verdict.reason}`,
+          message: `AI rater blocked the command (critical): ${decision.verdict.reason}`,
         };
       }
-      // Escalate: carry the verdict to the human approval surface.
-      safetyVerdict = verdict;
+      if (decision.action === 'reject-with-reason') {
+        // The EXT-20/21 isError path returns this to the MODEL as the tool result, so it can
+        // adjust and retry rather than interrupting the human.
+        return {
+          type: 'reject',
+          message:
+            `AI rater declined the command (${decision.verdict.tier}): ` +
+            `${decision.verdict.reason} Adjust the command or explain why it is needed.`,
+        };
+      }
+      // Escalate: carry the verdict (the honest one — see mapVerdictToAction) to the human.
+      safetyVerdict = decision.verdict;
     }
 
     if (!this.toolApprovalCallback) {
@@ -439,7 +483,7 @@ export class GthAgentRunner {
       };
     }
 
-    // Surface the judge's verdict to the human prompt (if the judge escalated) without mutating
+    // Surface the rater's verdict to the human prompt (if the rater escalated) without mutating
     // the original interrupt object the caller holds.
     const pending: PendingToolInterrupt = safetyVerdict ? { ...tool, safetyVerdict } : tool;
     const decision = await this.toolApprovalCallback(pending);
@@ -451,19 +495,6 @@ export class GthAgentRunner {
     return decision;
   }
 
-  /** Whether the EXT-10 LLM-as-judge safety gate is enabled for the active command's config. */
-  private isShellJudgeOn(): boolean {
-    if (!this.config) return false;
-    const devTools = getEffectiveDevToolsConfig(this.config, this.command);
-    return isShellJudgeEnabled(devTools);
-  }
-
-  /** Whether the EXT-9 Tier-2 allow-list is enabled for the active command's devTools config. */
-  private isShellAllowlistOn(): boolean {
-    const devTools = getEffectiveDevToolsConfig(this.config ?? undefined, this.command);
-    return isShellAllowlistEnabled(devTools);
-  }
-
   /**
    * Lazily load (once per instance) the persisted `always` allow-list, unless persistence is
    * disabled by config. Returns null when persistence is off so `always` grants behave as
@@ -472,8 +503,7 @@ export class GthAgentRunner {
   private getPersistedAllowlist(): PersistedAllowlist | null {
     if (this.persistedAllowlistLoaded) return this.persistedAllowlist;
     this.persistedAllowlistLoaded = true;
-    const devTools = getEffectiveDevToolsConfig(this.config ?? undefined, this.command);
-    if (!isShellAllowlistPersisted(devTools)) {
+    if (!this.sessionApprovals.persistAllowlist) {
       this.persistedAllowlist = null;
       return null;
     }
@@ -526,7 +556,7 @@ export class GthAgentRunner {
    * leaves the graph suspended on a `humanInTheLoopMiddleware` interrupt rather than
    * completing. This is the event-stream counterpart to the readline path's
    * {@link resolveToolInterrupts}: it drains any pending interrupts through
-   * {@link decideToolApproval} (allow-list → judge → bridged human prompt), resumes via
+   * {@link decideToolApproval} (bypass → allow-list → rater → bridged human prompt), resumes via
    * `streamWithEventsResume({ decisions })`, and loops until the graph completes with no
    * pending interrupts — so the executed command's output renders into the TUI. Without
    * this the TUI silently finalized an empty turn (approval gate was dead code on the
@@ -554,7 +584,7 @@ export class GthAgentRunner {
    * resolve any tool-approval interrupts it suspended on, yielding the resumed run's typed
    * {@link AgentStreamEvent}s so the renderer (the Ink TUI) shows the executed command's
    * output. Each pending tool call is consulted via {@link decideToolApproval} — the SAME
-   * three-layer gate the readline path uses (allow-list auto-approve → EXT-10 judge →
+   * gate the readline path uses (bypass → allow-list approve → CFG-26 AI rater →
    * bridged human callback, defaulting to REJECT when no handler is wired) — and the
    * collected decisions are sent back via `streamWithEventsResume` as a LangChain HITL
    * resume (`{ decisions }`). Because a resumed run can suspend again on the next gated

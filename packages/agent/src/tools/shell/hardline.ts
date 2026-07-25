@@ -5,12 +5,12 @@
  * non-recoverable commands (wipe the root filesystem, format a disk, overwrite a
  * raw block device, fork-bomb, take the host down). They are refused inside
  * `executeCommand` itself — BEFORE spawn — so the refusal fires regardless of
- * yolo (`shellYolo`), any allow-list, or the confirmation path. yolo deliberately
+ * `approvals.mode: "bypass"`, any allow-list, or the confirmation path. bypass deliberately
  * bypasses the *confirmation*; it does NOT bypass this floor.
  *
  * Recoverable-but-costly operations (e.g. `git reset --hard`, `rm -rf ./build`,
  * `chmod -R 777 ./dir`, `curl | sh`) are intentionally NOT here — those are what
- * the confirmation dialog / yolo are for.
+ * the confirmation dialog / bypass mode are for.
  *
  * Patterns match the NORMALIZED command (`@gaunt-sloth/core` `core/shell/normalize`) so
  * obfuscation (ANSI/fullwidth/backslash splits/whitespace padding) cannot bypass them.

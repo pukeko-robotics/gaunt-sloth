@@ -109,10 +109,10 @@ export interface GthDeepAgentParams {
    * resume with `new Command({ resume: { decisions: [...] } })` on the same `thread_id`.
    *
    * gsloth sets this for the opt-in `run_shell_command` tool whenever the shell tool is
-   * enabled — including under `run_shell_command.yolo` in interactive `code` mode, where the tool
+   * enabled — including under `approvals.mode: "bypass"` in interactive `code` mode, where the tool
    * stays gated so the runtime `/auto-approve` flag governs it (the runner seeds that flag ON
-   * from shellYolo and auto-approves silently). It is left `undefined` only for a non-interactive
-   * yolo run (exec / ask --write), whose single-shot path does not drain interrupts, so the tool
+   * from approvals.mode and approves silently). It is left `undefined` only for a non-interactive
+   * bypass run (exec / ask --write), whose single-shot path does not drain interrupts, so the tool
    * there runs inline without suspending. See `getAgentBuildParams`.
    */
   interruptOn?: Record<string, boolean | InterruptOnConfig>;
@@ -380,7 +380,7 @@ export class GthDeepAgent extends GthAbstractAgent {
       permissions: params.permissions,
       // Per-tool human-in-the-loop gating (e.g. run_shell_command confirmation). When set,
       // deepagents installs humanInTheLoopMiddleware so a matching tool call suspends the graph
-      // for approval; `undefined` (the default, and under yolo) leaves every tool ungated.
+      // for approval; `undefined` (the default, and under bypass) leaves every tool ungated.
       interruptOn: params.interruptOn,
       checkpointer,
     });

@@ -139,11 +139,11 @@ export async function createInteractiveSession(
           : JSON.stringify(pending.args);
       displayWarning(`\nThe agent wants to run a shell command via ${pending.name}:`);
       display(`\n    ${commandText}\n`);
-      // EXT-10: if the LLM-as-judge gate escalated (rather than auto-approving) this command, show
-      // its flag + reason before the human decides.
+      // CFG-26: if the AI rater escalated (rather than approving or bouncing it back to the
+      // model) this command, show its tier + reason before the human decides.
       if (pending.safetyVerdict) {
         displayWarning(
-          `⚠ safety judge (${pending.safetyVerdict.risk}): ${pending.safetyVerdict.reason}`
+          `⚠ AI rater (${pending.safetyVerdict.tier}): ${pending.safetyVerdict.reason}`
         );
       }
       setRawMode(false); // ensure typed input is echoed for this confirm
@@ -285,8 +285,9 @@ export async function createInteractiveSession(
             // EXT-12 — `/auto-approve` (with the `/yolo` alias) sets session-wide shell
             // auto-approval at the approval-decision layer (the runner flag). Session-scoped,
             // reversible, never persisted; the hardline floor still blocks catastrophic commands.
-            // The runner seeds this from the static `shellYolo` config, so `/auto-approve off`
-            // also turns off a config-enabled auto-approval.
+            // The runner seeds its session mode from `approvals.mode`, so `/auto-approve off`
+            // also turns off a config-selected bypass. CFG-26 Task 2 re-points this surface at
+            // the `/approvals` family.
             const enabled =
               result.autoApprove === 'toggle'
                 ? runner.toggleSessionYolo()

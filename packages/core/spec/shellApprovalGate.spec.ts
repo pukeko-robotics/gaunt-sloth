@@ -8,15 +8,19 @@ import { StatusLevel } from '#src/core/types.js';
  * an `interruptOn` from it). These pin the decision AND the exact user-facing notice copy, so the
  * two backends cannot drift apart again.
  */
-type PolicyConfig = Pick<GthConfig, 'commands' | 'builtInTools' | 'askWriteMode'>;
+type PolicyConfig = Pick<GthConfig, 'commands' | 'builtInTools' | 'askWriteMode' | 'approvals'>;
 
 const config = (partial: Partial<PolicyConfig>): PolicyConfig => partial as PolicyConfig;
 
 const GATED_NOTICE = 'Shell tool (run_shell_command) enabled with per-command approval.';
-const AUTO_APPROVED_NOTICE =
-  'Shell tool (run_shell_command) auto-approved by config (shellYolo). Type /auto-approve off to require per-command approval.';
-const YOLO_NOTICE =
-  'Shell tool (run_shell_command) enabled in YOLO mode: commands run WITHOUT confirmation.';
+const RATER_NOTICE =
+  'Shell tool (run_shell_command) gated by the AI rater (approvals.mode: auto); ' +
+  'risky commands are still escalated to you.';
+const BYPASS_GATED_NOTICE =
+  'Shell tool (run_shell_command) auto-approved by config (approvals.mode: bypass). ' +
+  'Type /approvals ask to require per-command approval.';
+const BYPASS_UNGATED_NOTICE =
+  'Shell tool (run_shell_command) enabled in bypass mode: commands run WITHOUT confirmation.';
 
 describe('resolveShellApprovalGate (EXT-52 shared gate policy)', () => {
   describe('shell tool disabled — nothing gated, nothing announced', () => {
@@ -40,13 +44,37 @@ describe('resolveShellApprovalGate (EXT-52 shared gate policy)', () => {
   });
 
   describe('gated — the per-command approval interrupt is wired', () => {
-    it('code mode by default (shell ON in code, and never yolo-by-default)', () => {
+    it('code mode by default (shell ON in code, never bypass-by-default) — CFG-26 mode auto', () => {
+      // CFG-26 defaults matrix: interactive `code` defaults to `mode: auto`, so the notice names
+      // the rater rather than claiming every command will be confirmed.
       expect(resolveShellApprovalGate(config({}), 'code')).toEqual({
         gateShell: true,
-        notice: { level: StatusLevel.INFO, message: GATED_NOTICE },
+        notice: { level: StatusLevel.INFO, message: RATER_NOTICE },
       });
       // Same for an absent config: the code-mode default is resolved downstream of it.
       expect(resolveShellApprovalGate(undefined, 'code')).toEqual({
+        gateShell: true,
+        notice: { level: StatusLevel.INFO, message: RATER_NOTICE },
+      });
+    });
+
+    it('an explicit approvals.mode: ask in code mode gates with the per-command prompt notice', () => {
+      expect(resolveShellApprovalGate(config({ approvals: { mode: 'ask' } }), 'code')).toEqual({
+        gateShell: true,
+        notice: { level: StatusLevel.INFO, message: GATED_NOTICE },
+      });
+    });
+
+    it('a per-command approvals block replaces the root one', () => {
+      expect(
+        resolveShellApprovalGate(
+          config({
+            approvals: { mode: 'bypass' },
+            commands: { code: { approvals: { mode: 'ask' } } },
+          }),
+          'code'
+        )
+      ).toEqual({
         gateShell: true,
         notice: { level: StatusLevel.INFO, message: GATED_NOTICE },
       });
@@ -77,30 +105,28 @@ describe('resolveShellApprovalGate (EXT-52 shared gate policy)', () => {
     });
   });
 
-  describe('yolo in INTERACTIVE code mode — still gated, so /auto-approve off can restore prompting', () => {
-    it('keeps the gate and announces that config pre-enabled auto-approval', () => {
-      expect(
-        resolveShellApprovalGate(
-          config({ builtInTools: { run_shell_command: { yolo: true } } }),
-          'code'
-        )
-      ).toEqual({
+  describe('bypass in INTERACTIVE code mode — still gated, so /approvals ask can restore prompting', () => {
+    it('keeps the gate and announces that config pre-selected bypass', () => {
+      expect(resolveShellApprovalGate(config({ approvals: { mode: 'bypass' } }), 'code')).toEqual({
         gateShell: true,
-        notice: { level: StatusLevel.INFO, message: AUTO_APPROVED_NOTICE },
+        notice: { level: StatusLevel.INFO, message: BYPASS_GATED_NOTICE },
       });
     });
   });
 
-  describe('yolo in a NON-INTERACTIVE mode — ungated, since a single-shot run drains no interrupts', () => {
+  describe('bypass in a NON-INTERACTIVE mode — ungated, since a single-shot run drains no interrupts', () => {
     it('exec runs the command inline and warns that nothing will be confirmed', () => {
       expect(
         resolveShellApprovalGate(
-          config({ builtInTools: { run_shell_command: { enabled: true, yolo: true } } }),
+          config({
+            approvals: { mode: 'bypass' },
+            builtInTools: { run_shell_command: { enabled: true } },
+          }),
           'exec'
         )
       ).toEqual({
         gateShell: false,
-        notice: { level: StatusLevel.WARNING, message: YOLO_NOTICE },
+        notice: { level: StatusLevel.WARNING, message: BYPASS_UNGATED_NOTICE },
       });
     });
 
@@ -109,13 +135,14 @@ describe('resolveShellApprovalGate (EXT-52 shared gate policy)', () => {
         resolveShellApprovalGate(
           config({
             askWriteMode: true,
-            builtInTools: { run_shell_command: { enabled: true, yolo: true } },
+            approvals: { mode: 'bypass' },
+            builtInTools: { run_shell_command: { enabled: true } },
           }),
           'ask'
         )
       ).toEqual({
         gateShell: false,
-        notice: { level: StatusLevel.WARNING, message: YOLO_NOTICE },
+        notice: { level: StatusLevel.WARNING, message: BYPASS_UNGATED_NOTICE },
       });
     });
   });

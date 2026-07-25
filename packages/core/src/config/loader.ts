@@ -22,6 +22,7 @@ import {
   setConsoleLevel,
 } from '#src/utils/consoleUtils.js';
 import {
+  findApprovalsRaterProfiles,
   findDeprecatedConfigIssues,
   findUnknownTopLevelKeys,
   formatConfigValidationError,
@@ -108,6 +109,29 @@ function validateRawConfigLayer<T extends Record<string, unknown>>(raw: T, sourc
       `Invalid configuration in ${sourceLabel}:\n${formatConfigValidationError(result.error)}`
     );
     exit(1);
+    // Unreachable past exit(1) in production; in specs exit() is mocked, so returning here keeps
+    // a shape-invalid config from falling through into the profile check below.
+    return raw;
+  }
+
+  // CFG-26 — `approvals.rater.profile` STRICT resolution (GS2-62): a named profile that does not
+  // resolve to a real profile config is a hard error, never a silent fallback to the main model.
+  // Checked HERE rather than in the zod schema on purpose — resolution needs the filesystem and
+  // `schema.ts` must stay pure (it also feeds `z.toJSONSchema`).
+  if (isRecordConfig(raw)) {
+    for (const ref of findApprovalsRaterProfiles(raw)) {
+      if (!resolveIdentityProfileConfigPath(ref.profile)) {
+        displayError(
+          `Invalid configuration in ${sourceLabel}:\n` +
+            `  - ${ref.path}: identity profile "${ref.profile}" not found ` +
+            `(checked ${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${ref.profile}/). ` +
+            'Create it with `gth config profile create`, or omit approvals.rater.profile to rate ' +
+            'with the main model.'
+        );
+        exit(1);
+        return raw;
+      }
+    }
   }
 
   return raw;

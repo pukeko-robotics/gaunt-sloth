@@ -2,7 +2,7 @@
  * @module tools/shell/env
  *
  * Credential scrubbing for the shell tool's child environment. By default a
- * spawned child inherits `process.env` verbatim, so an approved (or yolo'd)
+ * spawned child inherits `process.env` verbatim, so an approved (or bypassed)
  * command can `echo $ANTHROPIC_API_KEY` and exfiltrate the operator's LLM/cloud
  * credentials. {@link buildScrubbedEnv} returns a copy of the parent env with
  * those credentials removed before spawn.
