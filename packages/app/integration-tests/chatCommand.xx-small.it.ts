@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { runCommandWithArgs, startChildProcess, waitForCursor } from './support/commandRunner';
+import {
+  collectStderr,
+  runCommandWithArgs,
+  startChildProcess,
+  waitForCursor,
+} from './support/commandRunner';
 import { checkOutputForExpectedContent } from './support/outputChecker';
 
 describe('Chat Command Integration Tests', () => {
@@ -43,42 +48,38 @@ describe('Chat Command Integration Tests', () => {
 
   it('should answer to users questions, should have memory', async () => {
     const child = startChildProcess('npx', ['gth', '--nopipe', 'chat'], 'pipe');
+    const stderr = collectStderr(child);
 
-    child.stderr.on('data', (data) => {
-      throw new Error(data.toString());
-    });
+    try {
+      await waitForCursor(child);
+      child.stdin.write('Hi! I want to talk about JavaScript.\n');
+      await waitForCursor(child);
+      child.stdin.write('What was that we were talking about?\n');
+      const output = await waitForCursor(child);
+      expect(output.toLowerCase()).toContain('javascript');
+    } finally {
+      child.kill();
+    }
 
-    child.on('close', (code) => {
-      if (code !== 0) {
-        new Error(`Command failed with code ${code}`);
-      }
-    });
-
-    await waitForCursor(child);
-    child.stdin.write('Hi! I want to talk about JavaScript.\n');
-    await waitForCursor(child);
-    child.stdin.write('What was that we were talking about?\n');
-    const output = await waitForCursor(child);
-    expect(output.toLowerCase()).toContain('javascript');
+    // A clean chat session writes nothing to stderr. Asserted last and on the accumulated text so
+    // a failure prints exactly what was written and by whom.
+    expect(stderr(), 'gth wrote to stderr during a clean chat session').toBe('');
   });
 
   it('--verbose should set LangChain to verbose mode in interactiveSessionModule', async () => {
     const child = startChildProcess('npx', ['gth', '--verbose', '--nopipe', 'chat'], 'pipe');
+    const stderr = collectStderr(child);
 
-    child.stderr.on('data', (data) => {
-      throw new Error(data.toString());
-    });
+    try {
+      await waitForCursor(child);
+      child.stdin.write('ping.\n');
+      const output = await waitForCursor(child);
+      expect(output).toContain('Entering LLM run with input: {');
+    } finally {
+      child.kill();
+    }
 
-    child.on('close', (code) => {
-      if (code !== 0) {
-        new Error(`Command failed with code ${code}`);
-      }
-    });
-
-    await waitForCursor(child);
-    child.stdin.write('ping.\n');
-    const output = await waitForCursor(child);
-    child.stdin.write('What was that we were talking about?\n');
-    expect(output).toContain('Entering LLM run with input: {');
+    // --verbose routes LangChain's tracing to stdout, so even a verbose session leaves stderr clean.
+    expect(stderr(), 'gth wrote to stderr during a --verbose chat session').toBe('');
   });
 });

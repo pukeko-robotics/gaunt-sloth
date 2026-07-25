@@ -171,6 +171,26 @@ export function startChildProcess(
   return childProcess;
 }
 
+/**
+ * Accumulates a child's stderr so a test can assert on it *after* the interaction and see the
+ * offending text verbatim in the failure diff.
+ *
+ * Replaces the `child.stderr.on('data', d => { throw new Error(d.toString()) })` these tests used
+ * to do, which was broken two ways: a throw from inside an async 'data' handler can never fail
+ * the test — vitest reports it as an *unhandled error*, so the run exits non-zero while the test
+ * itself still reports "passed" — and the text lands buried in a stack trace instead of the
+ * assertion output. Accumulating also shows *all* the stderr rather than whichever chunk arrived
+ * first, which is what makes the culprit obvious at a glance (an `npm notice`, a node deprecation
+ * warning, a real agent error) rather than something to reconstruct from a repro run.
+ */
+export function collectStderr(child: ChildProcess): () => string {
+  let acc = '';
+  child.stderr.on('data', (data) => {
+    acc += data.toString();
+  });
+  return () => acc;
+}
+
 export function waitForCursor(child: ChildProcess): Promise<string> {
   return new Promise((resolve, _reject) => {
     let inputPromptListener = getInputPromptListener(child, resolve);
