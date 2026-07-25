@@ -1,1 +1,0 @@
-The secret marker string is MARKER-ASK-31bb7512. Do not lose it.
