@@ -1,4 +1,4 @@
-import { GthConfig } from '#src/config.js';
+import { getEffectiveDevToolsConfig, GthConfig, isShellToolEnabled } from '#src/config.js';
 import { GthCommand, StatusLevel } from '#src/core/types.js';
 import { GthAbstractAgent } from '#src/core/GthAbstractAgent.js';
 import { debugLog, debugLogObject } from '#src/utils/debugUtils.js';
@@ -24,7 +24,12 @@ import { extractDebugRequestExtras, type DebugRequestExtras } from '#src/core/de
 import { promoteTextEmittedToolCallMessage } from '#src/core/toolCallRepair/index.js';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import { BaseCheckpointSaver } from '@langchain/langgraph';
-import { createAgent, createMiddleware } from 'langchain';
+import {
+  createAgent,
+  createMiddleware,
+  humanInTheLoopMiddleware,
+  type InterruptOnConfig,
+} from 'langchain';
 
 // AgentStreamEvent moved to #src/core/types.js (it is the shared renderer contract).
 // Re-exported here for backwards compatibility with importers of this module.
@@ -604,11 +609,70 @@ export class GthLangChainAgent extends GthAbstractAgent {
       (message) => statusUpdate(StatusLevel.WARNING, message)
     );
 
+    // EXT-52: gate the opt-in run_shell_command tool behind the SAME per-command approval
+    // interrupt the deep backend has always wired (deepagents' `interruptOn` installs this very
+    // langchain `humanInTheLoopMiddleware` — see GthDeepAgent.buildDeepAgentParams). Without it,
+    // no interrupt ever fired on the lean (default) backend, so the runner's whole approval stack
+    // (`GthAgentRunner.decideToolApproval`: sessionYolo → allow-list → judge → human callback,
+    // fail-closed reject) was DEAD CODE on lean and shell commands ran unprompted. A matching tool
+    // call now suspends the graph with a HITLRequest interrupt; the runner drains it via
+    // getPendingToolInterrupts/streamResume (both backend-agnostic in GthAbstractAgent), so ONE
+    // gating code path drives both backends and the existing TUI + readline approval prompts fire
+    // identically on lean.
+    //
+    // Gate condition mirrors GthDeepAgent verbatim (EXT-12 semantics):
+    //   • interactive `code` keeps the tool GATED even when `run_shell_command.yolo` pre-enables
+    //     auto-approval, so the runner's session flag governs it and `/auto-approve off` can
+    //     restore the per-command prompt mid-session (the runner seeds the flag ON from yolo and
+    //     auto-approves the drained interrupt silently — the user still sees no prompt by default);
+    //   • non-interactive modes (exec / ask --write) with yolo keep the tool UNGATED (runs inline
+    //     without suspending), preserving prior single-shot behaviour;
+    //   • the shell tool disabled (or a non-dev-tools command: chat/api/…) wires nothing.
+    const devTools = getEffectiveDevToolsConfig(this.config ?? undefined, this.command);
+    const shellEnabled = isShellToolEnabled(devTools, this.command);
+    const isInteractive = this.command === 'code';
+    const gateShell = shellEnabled && (devTools?.shellYolo !== true || isInteractive);
+    const shellApprovalMiddleware = gateShell
+      ? [
+          humanInTheLoopMiddleware({
+            interruptOn: {
+              run_shell_command: {
+                allowedDecisions: ['approve', 'reject'],
+              } satisfies InterruptOnConfig,
+            },
+          }),
+        ]
+      : [];
+    if (gateShell && devTools?.shellYolo === true) {
+      this.statusUpdate(
+        StatusLevel.INFO,
+        'Shell tool (run_shell_command) auto-approved by config (shellYolo). Type /auto-approve off to require per-command approval.'
+      );
+    } else if (gateShell) {
+      this.statusUpdate(
+        StatusLevel.INFO,
+        'Shell tool (run_shell_command) enabled with per-command approval (interruptOn).'
+      );
+    } else if (shellEnabled) {
+      this.statusUpdate(
+        StatusLevel.WARNING,
+        'Shell tool (run_shell_command) enabled in YOLO mode: commands run WITHOUT confirmation.'
+      );
+    }
+
+    // EXT-52 placement note: the HITL gate sits EARLY in the array — before user-configured
+    // middleware and, crucially, before toolCallRepairMiddleware — because afterModel hooks run in
+    // REVERSE array order (the EXT-35 rule above). The gate's afterModel therefore executes LAST,
+    // after EXT-35's repair has promoted a text-emitted `run_shell_command` into a native
+    // tool_call, so a small local model that serialises the call as text is gated too (were the
+    // gate appended last, like deepagents does on the deep path, it would run FIRST and a promoted
+    // shell call would bypass approval entirely).
     const middleware = [
       shellExitSoftening,
       mcpToolErrorSoftening,
       toolErrorBudget,
       toolLoopGuard,
+      ...shellApprovalMiddleware,
       ...configuredMiddleware,
       toolCallStatusMiddleware,
       toolCallRepairMiddleware,

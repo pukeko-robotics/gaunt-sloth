@@ -562,6 +562,92 @@ describe('GthLangChainAgent', () => {
       });
     });
 
+    // EXT-52: the lean backend must wire the SAME humanInTheLoopMiddleware approval interrupt the
+    // deep backend gets via deepagents' interruptOn — otherwise the runner's approval stack
+    // (decideToolApproval) is dead code on lean and gated shell commands run unprompted. These
+    // assert the WIRING (gate present/absent per EXT-12 semantics, and its position relative to the
+    // EXT-35 repair middleware); the end-to-end suspend/route behaviour is proven in a real
+    // createAgent graph by GthLeanShellApprovalGate.spec.ts.
+    describe('EXT-52: run_shell_command approval gate (humanInTheLoopMiddleware)', () => {
+      const middlewareNames = (): string[] =>
+        (createAgentMock.mock.calls.at(-1)?.[0].middleware as { name: string }[]).map(
+          (m) => m.name
+        );
+
+      const initAgent = async (command: 'code' | 'exec' | undefined, config: GthConfig) => {
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([]),
+          resolveMiddleware: async (m) => m ?? [],
+        });
+        await agent.init(command, config);
+      };
+
+      it('gates code mode by default (shell defaults ON in code) and announces the gate', async () => {
+        await initAgent('code', mockConfig);
+        expect(middlewareNames()).toContain('HumanInTheLoopMiddleware');
+        expect(statusUpdateCallback).toHaveBeenCalledWith(
+          StatusLevel.INFO,
+          'Shell tool (run_shell_command) enabled with per-command approval (interruptOn).'
+        );
+      });
+
+      it('sits before the EXT-35 repair middleware in the array, so its afterModel runs LAST (a promoted text-emitted shell call is gated too)', async () => {
+        await initAgent('code', mockConfig);
+        const names = middlewareNames();
+        const gate = names.indexOf('HumanInTheLoopMiddleware');
+        const repair = names.indexOf('GthMiddlewareToolCallRepair');
+        // afterModel hooks execute in REVERSE array order — earlier in the array = runs later.
+        expect(gate).toBeGreaterThan(names.indexOf('GthLeanToolLoopGuard'));
+        expect(gate).toBeLessThan(repair);
+      });
+
+      it('wires NO gate for a non-dev-tools command (chat/default: shell tool not emitted)', async () => {
+        await initAgent(undefined, mockConfig);
+        expect(middlewareNames()).not.toContain('HumanInTheLoopMiddleware');
+      });
+
+      it('wires NO gate when the shell tool is force-disabled in code mode', async () => {
+        await initAgent('code', {
+          ...mockConfig,
+          builtInTools: { run_shell_command: false },
+        } as GthConfig);
+        expect(middlewareNames()).not.toContain('HumanInTheLoopMiddleware');
+      });
+
+      it('gates exec when the shell tool is enabled without yolo (fail-closed on non-interactive)', async () => {
+        await initAgent('exec', {
+          ...mockConfig,
+          builtInTools: { run_shell_command: true },
+        } as GthConfig);
+        expect(middlewareNames()).toContain('HumanInTheLoopMiddleware');
+      });
+
+      it('leaves exec UNGATED under config yolo (single-shot runs inline, prior behaviour) with the YOLO warning', async () => {
+        await initAgent('exec', {
+          ...mockConfig,
+          // enabled must be explicit: outside `code` the absent-enabled default is OFF.
+          builtInTools: { run_shell_command: { enabled: true, yolo: true } },
+        } as GthConfig);
+        expect(middlewareNames()).not.toContain('HumanInTheLoopMiddleware');
+        expect(statusUpdateCallback).toHaveBeenCalledWith(
+          StatusLevel.WARNING,
+          'Shell tool (run_shell_command) enabled in YOLO mode: commands run WITHOUT confirmation.'
+        );
+      });
+
+      it('keeps interactive code GATED under config yolo (so /auto-approve off can restore the prompt) and says so', async () => {
+        await initAgent('code', {
+          ...mockConfig,
+          builtInTools: { run_shell_command: { yolo: true } },
+        } as GthConfig);
+        expect(middlewareNames()).toContain('HumanInTheLoopMiddleware');
+        expect(statusUpdateCallback).toHaveBeenCalledWith(
+          StatusLevel.INFO,
+          'Shell tool (run_shell_command) auto-approved by config (shellYolo). Type /auto-approve off to require per-command approval.'
+        );
+      });
+    });
+
     // GS2-36: the retry budget caps a self-inflicted tool-error loop. A beforeModel guard walks the
     // trailing messages, counts CONSECUTIVE status:'error' tool results (reset by a successful tool
     // result or a fresh user turn), and once the cap is hit ends the run via jumpTo:'end' with an
