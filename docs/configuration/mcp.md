@@ -21,9 +21,9 @@ Add the server under `mcpServers` in your `.gsloth.config.json`:
   },
   "mcpServers": {
     "jira": {
-      "url": "https://mcp.atlassian.com/v1/sse",
+      "url": "https://mcp.atlassian.com/v1/mcp",
       "authProvider": "OAuth",
-      "transport": "sse"
+      "transport": "http"
     }
   }
 }
