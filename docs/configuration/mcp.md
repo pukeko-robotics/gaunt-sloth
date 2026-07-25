@@ -36,6 +36,29 @@ skip the browser step.
 
 For a complete working example, see [examples/jira-mcp](../../examples/jira-mcp).
 
+## Static auth headers (bearer tokens)
+
+When the server just needs a token — an API key, a JWT — you don't need OAuth: give the server
+entry a `headers` map, and every request to it carries those headers verbatim.
+
+```json
+{
+  "mcpServers": {
+    "unimarket": {
+      "transport": "http",
+      "url": "https://dev-mcp/mcp",
+      "headers": {
+        "Authorization": "Bearer eyAbra.Cadabra"
+      }
+    }
+  }
+}
+```
+
+To call the same server as different users (different tokens), put one such entry in each
+[identity profile](profiles.md#identity-profiles)'s config — that per-identity pattern is the
+backbone of [authorization evals for MCP servers](../guides/evals-for-mcp-servers.md).
+
 ## OAuth-enabled MCP Servers
 
 Gaunt Sloth has an OAuth client for MCP, confirmed to work with the public Atlassian Jira MCP

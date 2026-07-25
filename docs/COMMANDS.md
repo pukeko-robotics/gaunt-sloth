@@ -4,7 +4,7 @@ This document provides detailed information about all available commands in Gaun
 
 ## Overview
 
-Gaunt Sloth provides several commands to help with code review, analysis, and interaction. All commands can be executed using either `gsloth` or `gth`.
+Gaunt Sloth provides several commands to help with code review, analysis, and interaction. All commands can be executed using any of the three equivalent binaries: `gth`, `gsloth`, or `gaunt-sloth` (in CI scripts, prefer the long form — see [Scripting & CI](guides/scripting-and-ci.md#which-binary-name-in-scripts)).
 
 ## Global Options
 
@@ -267,7 +267,9 @@ It is possible to press Escape during inference to interrupt it.
 - `[message]` - Initial message to start the chat
 
 ### Description
-Opens an interactive chat session where you can have a conversation with the AI. The session maintains context throughout the conversation. Running `gsloth` with no subcommand starts this chat mode automatically. Writing the session to disk is off by default; enable it with `writeOutputToFile` (or `-w`) to save the history as `gth_<timestamp>_CHAT.md` (in `.gsloth/` when present, otherwise the project root).
+Opens an interactive chat session where you can have a conversation with the AI. The session maintains context throughout the conversation. (Running `gth` with no subcommand starts a [`code`](#code) session, not chat.) Writing the session to disk is off by default; enable it with `writeOutputToFile` (or `-w`) to save the history as `gth_<timestamp>_CHAT.md` (in `.gsloth/` when present, otherwise the project root).
+
+Guide-shaped walkthrough: [Work interactively](guides/interactive-sessions.md).
 
 ### Features
 - Interactive conversation with context memory
@@ -299,7 +301,9 @@ It is possible to press Escape during inference to interrupt it.
 - `[message]` - Initial message to start the code session
 
 ### Description
-Opens an interactive coding session where the AI has full read access to your project files. This command is specifically designed for code writing tasks with enhanced context awareness. Writing the session to disk is off by default; enable it with `writeOutputToFile` (or `-w`) to save the history to `gth_<timestamp>_CODE.md`.
+Opens an interactive coding session where the AI has full read access to your project files. This command is specifically designed for code writing tasks with enhanced context awareness. Running `gth` with no subcommand starts this code session automatically. Writing the session to disk is off by default; enable it with `writeOutputToFile` (or `-w`) to save the history to `gth_<timestamp>_CODE.md`.
+
+Guide-shaped walkthrough: [Work interactively](guides/interactive-sessions.md).
 
 ### Features
 - Full file system read access within project
@@ -328,6 +332,8 @@ gth eval <suites...>
 ```
 
 `eval` is **non-interactive**: it reads the suite(s) from the file/directory arguments, never from stdin, and never prompts for approval. Its exit code is the pass/fail gate, so it drops straight into CI.
+
+Guide-shaped walkthrough: [Evaluate your agent](guides/evals.md) — and for testing a live MCP server, [Evals for MCP servers](guides/evals-for-mcp-servers.md).
 
 ### Arguments
 - `<suites...>` - One or more eval suite YAML **files** and/or **directories** (required). A directory runs its direct-child `*.yaml`/`*.yml` suites (non-recursive, sorted). See [Running many suites](#running-many-suites).
@@ -527,6 +533,8 @@ gth batch <script> --over <csv|jsonl> [--models a,b,c] [-j 8] [--retry 2] [-o ou
 
 `batch` exits `0` as long as the cells *ran* — a poor-quality answer is **not** a harness failure (grading answers is [`eval`](#eval)'s job). Only a harness-level error (a malformed `--over` file, a missing script) sets a non-zero exit code; each cell's outcome is recorded in that cell's structured JSON output.
 
+Guide-shaped walkthrough: [Fan out one prompt over inputs and models](guides/batch.md).
+
 ### Arguments
 - `<script>` - Path to the `.md` prompt-executable script to run over the matrix (required).
 
@@ -562,6 +570,8 @@ gth workflow <script> [--args <json>]
 ```
 
 > **Runs with full Node privileges.** The script is arbitrary local ESM — it can read files and spawn processes. Run only scripts you trust, as you would any local script.
+
+Guide-shaped walkthrough: [Orchestrate agent calls from a script](guides/workflows.md).
 
 ### Arguments
 - `<script>` - Path to the `.mjs`/`.js` workflow script. Its default export is `async (ctx) => result`.

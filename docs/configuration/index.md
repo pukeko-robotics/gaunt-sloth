@@ -5,16 +5,27 @@
 > check your migrated config.
 
 Gaunt Sloth runs from a directory tree that contains a config file. The fastest way to create one is
-`gth init` — with a provider name it writes a ready config, and with no argument it detects which
-providers have a key set and walks you through the choice:
+the interactive walkthrough:
+
+```bash
+gth init
+```
+
+It detects which providers are already usable (an API key set, or a local Ollama running) and lists
+those first, asks you to pick a provider and then a model from that provider's live catalog
+(preferred models are starred), and asks whether to store the config for this project
+(`.gsloth/.gsloth-settings/`) or globally for all projects (`~/.gsloth/`). If a config already
+exists at the chosen location, it asks before overwriting.
+
+Already know the provider? Pass it directly and skip the dialog:
 
 ```bash
 gth init anthropic
 ```
 
-That writes a `.gsloth.config.json` (under `.gsloth/.gsloth-settings/` if a `.gsloth` directory
-exists, otherwise in the project root) that you can commit and tune. From there, follow the page for
-whatever you want to set up:
+Either way you get a `.gsloth.config.json` — the project-scoped one lands in
+`.gsloth/.gsloth-settings/` (the `.gsloth` directory is created if needed) — that you can commit
+and tune. From there, follow the page for whatever you want to set up:
 
 | Page | What it covers |
 |---|---|

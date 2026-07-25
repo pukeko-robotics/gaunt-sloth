@@ -69,6 +69,8 @@ requirements to check against.
 
 ## Where to go next
 
+- **Work interactively** — [Interactive sessions](guides/interactive-sessions.md): bare `gth`
+  opens a coding session in your project; chat mode, slash commands, the TUI.
 - **Do a specific job** — [Guides & Recipes](guides/review-code-and-prs.md): review PRs in CI, code
   against your own project rules, run a local model, script it non-interactively.
 - **Tune the setup** — [Configuration](configuration/index.md): providers, tools, MCP servers,

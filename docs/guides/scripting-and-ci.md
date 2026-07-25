@@ -5,6 +5,28 @@ a pipe, stream the result to stdout, and set the process exit code (`0` on succe
 That makes them safe to call from a shell script or CI step — capture the output, branch on `$?`,
 and nothing waits for a human.
 
+## Pick the right command
+
+`ask`/`exec` are the one-shot verbs this page covers, but they are not the only non-interactive
+ones — and a shell loop around them is usually the wrong tool:
+
+- **`ask` / `exec`** — one prompt, one answer, exit `0`/`1`: the rest of this page.
+- **`batch`** — the same prompt over many rows or models; don't write the fan-out loop yourself:
+  [Fan out one prompt over inputs and models](batch.md).
+- **`eval`** — grade the answers and gate CI on the result (three-way exit code):
+  [Evaluate your agent](evals.md).
+- **`workflow`** — several agent calls with logic between them, in JS; don't pipe `gth` into
+  `gth` from bash: [Orchestrate agent calls from a script](workflows.md).
+- **`review` / `pr`** — content-gate a diff or pull request:
+  [Review code and pull requests](review-code-and-prs.md).
+
+## Which binary name in scripts
+
+`gth`, `gsloth`, and `gaunt-sloth` are the same binary. Interactively, type the short one — but in
+CI and checked-in scripts, prefer the long `gaunt-sloth` form: it self-documents in CI logs
+(nobody has to ask what `gth` is), and an AI agent later editing the script won't "auto-correct"
+the unfamiliar `gth` to `gh` — a real, observed failure mode with the short name.
+
 ## The main use case: diagnose a build log from a script
 
 Goal: a CI step pipes a failing build log into `gth`, captures the diagnosis, and stops the script
@@ -101,5 +123,5 @@ cat scripts/triage.md | gth exec
   [Review code and pull requests](review-code-and-prs.md).
 - Every `ask` / `exec` flag, the exit-code table, and output-file naming:
   [Commands](../COMMANDS.md#exec).
-- Grade prompts with pass/fail assertions and a three-way exit code in CI:
-  [`eval`](../COMMANDS.md#eval).
+- Grade your whole agent with pass/fail assertions and a three-way exit code in CI:
+  [Evaluate your agent](evals.md).
