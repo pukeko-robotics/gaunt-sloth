@@ -12,21 +12,30 @@ import type { PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
  * suspends the normal prompt, so the command can't be typed into the chat box.
  *
  * Pure/presentational: it only renders the pending command + the choices. The key handling
- * (o/s/a → approve, y → auto-approve the rest of the session, anything else → reject) lives in
+ * (o/s/a → approve, y → switch to rater-mediated auto, anything else → reject) lives in
  * `<App>`'s `useInput`, mirroring the way the debug panel's scroll keys are owned by the root
  * component.
  */
 export function ApprovalPrompt({
   pending,
+  raterEnabled,
 }: {
   pending: PendingToolInterrupt;
+  /**
+   * CFG-26 — whether this session can rate at all (`approvals.rater.enabled`, the SAME signal the
+   * runner's `decideToolApproval` uses, so the offer and the gate can never disagree). When false
+   * the `[y]` affordance is omitted: offering "switch to auto-approve (AI rater)" in a session
+   * with no rater would promise a mode that cannot exist here — the same class of lie as a status
+   * badge that under-reports.
+   */
+  raterEnabled?: boolean;
 }): React.ReactElement {
   const commandText =
     typeof pending.args.command === 'string'
       ? (pending.args.command as string)
       : JSON.stringify(pending.args);
-  // EXT-10: when the LLM-as-judge gate escalated this command (rather than auto-approving), show
-  // its flag + reason so the human has the judge's read before deciding.
+  // CFG-26: when the AI rater escalated this command (rather than approving it or bouncing it
+  // back to the model), show its tier + reason so the human has the rater's read before deciding.
   const verdict = pending.safetyVerdict;
   return (
     <Box flexDirection="column">
@@ -36,10 +45,12 @@ export function ApprovalPrompt({
       </Text>
       <Text dimColor>{`    ${commandText}`}</Text>
       {verdict ? (
-        <Text color="yellow">{`⚠ safety judge (${verdict.risk}): ${verdict.reason}`}</Text>
+        <Text color="yellow">{`⚠ AI rater (${verdict.tier}): ${verdict.reason}`}</Text>
       ) : null}
       <Text dimColor>
-        {'Approve?  [o]nce   [s]ession   [a]lways   [y] auto-approve all   [N]o'}
+        {raterEnabled
+          ? 'Approve?  [o]nce   [s]ession   [a]lways   [y] switch to auto-approve (AI rater)   [N]o'
+          : 'Approve?  [o]nce   [s]ession   [a]lways   [N]o'}
       </Text>
     </Box>
   );

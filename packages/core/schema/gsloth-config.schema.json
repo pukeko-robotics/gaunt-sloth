@@ -383,58 +383,6 @@
                   "maxOutputBytes": {
                     "type": "number"
                   },
-                  "allowlist": {
-                    "type": "boolean"
-                  },
-                  "persistAllowlist": {
-                    "type": "boolean"
-                  },
-                  "judge": {
-                    "anyOf": [
-                      {
-                        "type": "boolean"
-                      },
-                      {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "autoApproveLow": {
-                            "type": "boolean"
-                          },
-                          "blockHigh": {
-                            "type": "boolean"
-                          },
-                          "model": {
-                            "type": "object",
-                            "properties": {
-                              "type": {
-                                "type": "string"
-                              },
-                              "model": {
-                                "type": "string"
-                              },
-                              "configuration": {
-                                "type": "object",
-                                "propertyNames": {
-                                  "type": "string"
-                                },
-                                "additionalProperties": {}
-                              },
-                              "apiKeyEnvironmentVariable": {
-                                "type": "string"
-                              }
-                            },
-                            "additionalProperties": {}
-                          }
-                        }
-                      }
-                    ]
-                  },
-                  "yolo": {
-                    "type": "boolean"
-                  },
                   "fileSet": {
                     "type": "string",
                     "enum": [
@@ -448,6 +396,56 @@
           }
         }
       ]
+    },
+    "approvals": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "ask",
+            "bypass"
+          ]
+        },
+        "rater": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "profile": {
+                  "type": "string"
+                },
+                "strictness": {
+                  "type": "string",
+                  "enum": [
+                    "lenient",
+                    "standard",
+                    "strict"
+                  ]
+                },
+                "escalate": {
+                  "type": "string",
+                  "enum": [
+                    "caution",
+                    "danger",
+                    "never"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "allowlist": {
+          "type": "boolean"
+        },
+        "persistAllowlist": {
+          "type": "boolean"
+        }
+      }
     },
     "tools": {
       "type": "array",
@@ -669,58 +667,6 @@
                           "maxOutputBytes": {
                             "type": "number"
                           },
-                          "allowlist": {
-                            "type": "boolean"
-                          },
-                          "persistAllowlist": {
-                            "type": "boolean"
-                          },
-                          "judge": {
-                            "anyOf": [
-                              {
-                                "type": "boolean"
-                              },
-                              {
-                                "type": "object",
-                                "properties": {
-                                  "enabled": {
-                                    "type": "boolean"
-                                  },
-                                  "autoApproveLow": {
-                                    "type": "boolean"
-                                  },
-                                  "blockHigh": {
-                                    "type": "boolean"
-                                  },
-                                  "model": {
-                                    "type": "object",
-                                    "properties": {
-                                      "type": {
-                                        "type": "string"
-                                      },
-                                      "model": {
-                                        "type": "string"
-                                      },
-                                      "configuration": {
-                                        "type": "object",
-                                        "propertyNames": {
-                                          "type": "string"
-                                        },
-                                        "additionalProperties": {}
-                                      },
-                                      "apiKeyEnvironmentVariable": {
-                                        "type": "string"
-                                      }
-                                    },
-                                    "additionalProperties": {}
-                                  }
-                                }
-                              }
-                            ]
-                          },
-                          "yolo": {
-                            "type": "boolean"
-                          },
                           "fileSet": {
                             "type": "string",
                             "enum": [
@@ -734,6 +680,56 @@
                   }
                 }
               ]
+            },
+            "approvals": {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "ask",
+                    "bypass"
+                  ]
+                },
+                "rater": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "profile": {
+                          "type": "string"
+                        },
+                        "strictness": {
+                          "type": "string",
+                          "enum": [
+                            "lenient",
+                            "standard",
+                            "strict"
+                          ]
+                        },
+                        "escalate": {
+                          "type": "string",
+                          "enum": [
+                            "caution",
+                            "danger",
+                            "never"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                },
+                "allowlist": {
+                  "type": "boolean"
+                },
+                "persistAllowlist": {
+                  "type": "boolean"
+                }
+              }
             },
             "customTools": {
               "anyOf": [
@@ -935,58 +931,6 @@
                           "maxOutputBytes": {
                             "type": "number"
                           },
-                          "allowlist": {
-                            "type": "boolean"
-                          },
-                          "persistAllowlist": {
-                            "type": "boolean"
-                          },
-                          "judge": {
-                            "anyOf": [
-                              {
-                                "type": "boolean"
-                              },
-                              {
-                                "type": "object",
-                                "properties": {
-                                  "enabled": {
-                                    "type": "boolean"
-                                  },
-                                  "autoApproveLow": {
-                                    "type": "boolean"
-                                  },
-                                  "blockHigh": {
-                                    "type": "boolean"
-                                  },
-                                  "model": {
-                                    "type": "object",
-                                    "properties": {
-                                      "type": {
-                                        "type": "string"
-                                      },
-                                      "model": {
-                                        "type": "string"
-                                      },
-                                      "configuration": {
-                                        "type": "object",
-                                        "propertyNames": {
-                                          "type": "string"
-                                        },
-                                        "additionalProperties": {}
-                                      },
-                                      "apiKeyEnvironmentVariable": {
-                                        "type": "string"
-                                      }
-                                    },
-                                    "additionalProperties": {}
-                                  }
-                                }
-                              }
-                            ]
-                          },
-                          "yolo": {
-                            "type": "boolean"
-                          },
                           "fileSet": {
                             "type": "string",
                             "enum": [
@@ -1000,6 +944,56 @@
                   }
                 }
               ]
+            },
+            "approvals": {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "ask",
+                    "bypass"
+                  ]
+                },
+                "rater": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "profile": {
+                          "type": "string"
+                        },
+                        "strictness": {
+                          "type": "string",
+                          "enum": [
+                            "lenient",
+                            "standard",
+                            "strict"
+                          ]
+                        },
+                        "escalate": {
+                          "type": "string",
+                          "enum": [
+                            "caution",
+                            "danger",
+                            "never"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                },
+                "allowlist": {
+                  "type": "boolean"
+                },
+                "persistAllowlist": {
+                  "type": "boolean"
+                }
+              }
             },
             "customTools": {
               "anyOf": [
@@ -1192,58 +1186,6 @@
                           "maxOutputBytes": {
                             "type": "number"
                           },
-                          "allowlist": {
-                            "type": "boolean"
-                          },
-                          "persistAllowlist": {
-                            "type": "boolean"
-                          },
-                          "judge": {
-                            "anyOf": [
-                              {
-                                "type": "boolean"
-                              },
-                              {
-                                "type": "object",
-                                "properties": {
-                                  "enabled": {
-                                    "type": "boolean"
-                                  },
-                                  "autoApproveLow": {
-                                    "type": "boolean"
-                                  },
-                                  "blockHigh": {
-                                    "type": "boolean"
-                                  },
-                                  "model": {
-                                    "type": "object",
-                                    "properties": {
-                                      "type": {
-                                        "type": "string"
-                                      },
-                                      "model": {
-                                        "type": "string"
-                                      },
-                                      "configuration": {
-                                        "type": "object",
-                                        "propertyNames": {
-                                          "type": "string"
-                                        },
-                                        "additionalProperties": {}
-                                      },
-                                      "apiKeyEnvironmentVariable": {
-                                        "type": "string"
-                                      }
-                                    },
-                                    "additionalProperties": {}
-                                  }
-                                }
-                              }
-                            ]
-                          },
-                          "yolo": {
-                            "type": "boolean"
-                          },
                           "fileSet": {
                             "type": "string",
                             "enum": [
@@ -1257,6 +1199,56 @@
                   }
                 }
               ]
+            },
+            "approvals": {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "ask",
+                    "bypass"
+                  ]
+                },
+                "rater": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "profile": {
+                          "type": "string"
+                        },
+                        "strictness": {
+                          "type": "string",
+                          "enum": [
+                            "lenient",
+                            "standard",
+                            "strict"
+                          ]
+                        },
+                        "escalate": {
+                          "type": "string",
+                          "enum": [
+                            "caution",
+                            "danger",
+                            "never"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                },
+                "allowlist": {
+                  "type": "boolean"
+                },
+                "persistAllowlist": {
+                  "type": "boolean"
+                }
+              }
             },
             "customTools": {
               "anyOf": [
@@ -1429,58 +1421,6 @@
                           "maxOutputBytes": {
                             "type": "number"
                           },
-                          "allowlist": {
-                            "type": "boolean"
-                          },
-                          "persistAllowlist": {
-                            "type": "boolean"
-                          },
-                          "judge": {
-                            "anyOf": [
-                              {
-                                "type": "boolean"
-                              },
-                              {
-                                "type": "object",
-                                "properties": {
-                                  "enabled": {
-                                    "type": "boolean"
-                                  },
-                                  "autoApproveLow": {
-                                    "type": "boolean"
-                                  },
-                                  "blockHigh": {
-                                    "type": "boolean"
-                                  },
-                                  "model": {
-                                    "type": "object",
-                                    "properties": {
-                                      "type": {
-                                        "type": "string"
-                                      },
-                                      "model": {
-                                        "type": "string"
-                                      },
-                                      "configuration": {
-                                        "type": "object",
-                                        "propertyNames": {
-                                          "type": "string"
-                                        },
-                                        "additionalProperties": {}
-                                      },
-                                      "apiKeyEnvironmentVariable": {
-                                        "type": "string"
-                                      }
-                                    },
-                                    "additionalProperties": {}
-                                  }
-                                }
-                              }
-                            ]
-                          },
-                          "yolo": {
-                            "type": "boolean"
-                          },
                           "fileSet": {
                             "type": "string",
                             "enum": [
@@ -1494,6 +1434,56 @@
                   }
                 }
               ]
+            },
+            "approvals": {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "ask",
+                    "bypass"
+                  ]
+                },
+                "rater": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "profile": {
+                          "type": "string"
+                        },
+                        "strictness": {
+                          "type": "string",
+                          "enum": [
+                            "lenient",
+                            "standard",
+                            "strict"
+                          ]
+                        },
+                        "escalate": {
+                          "type": "string",
+                          "enum": [
+                            "caution",
+                            "danger",
+                            "never"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                },
+                "allowlist": {
+                  "type": "boolean"
+                },
+                "persistAllowlist": {
+                  "type": "boolean"
+                }
+              }
             },
             "customTools": {
               "anyOf": [
@@ -1666,58 +1656,6 @@
                           "maxOutputBytes": {
                             "type": "number"
                           },
-                          "allowlist": {
-                            "type": "boolean"
-                          },
-                          "persistAllowlist": {
-                            "type": "boolean"
-                          },
-                          "judge": {
-                            "anyOf": [
-                              {
-                                "type": "boolean"
-                              },
-                              {
-                                "type": "object",
-                                "properties": {
-                                  "enabled": {
-                                    "type": "boolean"
-                                  },
-                                  "autoApproveLow": {
-                                    "type": "boolean"
-                                  },
-                                  "blockHigh": {
-                                    "type": "boolean"
-                                  },
-                                  "model": {
-                                    "type": "object",
-                                    "properties": {
-                                      "type": {
-                                        "type": "string"
-                                      },
-                                      "model": {
-                                        "type": "string"
-                                      },
-                                      "configuration": {
-                                        "type": "object",
-                                        "propertyNames": {
-                                          "type": "string"
-                                        },
-                                        "additionalProperties": {}
-                                      },
-                                      "apiKeyEnvironmentVariable": {
-                                        "type": "string"
-                                      }
-                                    },
-                                    "additionalProperties": {}
-                                  }
-                                }
-                              }
-                            ]
-                          },
-                          "yolo": {
-                            "type": "boolean"
-                          },
                           "fileSet": {
                             "type": "string",
                             "enum": [
@@ -1731,6 +1669,56 @@
                   }
                 }
               ]
+            },
+            "approvals": {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "ask",
+                    "bypass"
+                  ]
+                },
+                "rater": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "profile": {
+                          "type": "string"
+                        },
+                        "strictness": {
+                          "type": "string",
+                          "enum": [
+                            "lenient",
+                            "standard",
+                            "strict"
+                          ]
+                        },
+                        "escalate": {
+                          "type": "string",
+                          "enum": [
+                            "caution",
+                            "danger",
+                            "never"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                },
+                "allowlist": {
+                  "type": "boolean"
+                },
+                "persistAllowlist": {
+                  "type": "boolean"
+                }
+              }
             },
             "customTools": {
               "anyOf": [
@@ -1903,58 +1891,6 @@
                           "maxOutputBytes": {
                             "type": "number"
                           },
-                          "allowlist": {
-                            "type": "boolean"
-                          },
-                          "persistAllowlist": {
-                            "type": "boolean"
-                          },
-                          "judge": {
-                            "anyOf": [
-                              {
-                                "type": "boolean"
-                              },
-                              {
-                                "type": "object",
-                                "properties": {
-                                  "enabled": {
-                                    "type": "boolean"
-                                  },
-                                  "autoApproveLow": {
-                                    "type": "boolean"
-                                  },
-                                  "blockHigh": {
-                                    "type": "boolean"
-                                  },
-                                  "model": {
-                                    "type": "object",
-                                    "properties": {
-                                      "type": {
-                                        "type": "string"
-                                      },
-                                      "model": {
-                                        "type": "string"
-                                      },
-                                      "configuration": {
-                                        "type": "object",
-                                        "propertyNames": {
-                                          "type": "string"
-                                        },
-                                        "additionalProperties": {}
-                                      },
-                                      "apiKeyEnvironmentVariable": {
-                                        "type": "string"
-                                      }
-                                    },
-                                    "additionalProperties": {}
-                                  }
-                                }
-                              }
-                            ]
-                          },
-                          "yolo": {
-                            "type": "boolean"
-                          },
                           "fileSet": {
                             "type": "string",
                             "enum": [
@@ -1968,6 +1904,56 @@
                   }
                 }
               ]
+            },
+            "approvals": {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "ask",
+                    "bypass"
+                  ]
+                },
+                "rater": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "profile": {
+                          "type": "string"
+                        },
+                        "strictness": {
+                          "type": "string",
+                          "enum": [
+                            "lenient",
+                            "standard",
+                            "strict"
+                          ]
+                        },
+                        "escalate": {
+                          "type": "string",
+                          "enum": [
+                            "caution",
+                            "danger",
+                            "never"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                },
+                "allowlist": {
+                  "type": "boolean"
+                },
+                "persistAllowlist": {
+                  "type": "boolean"
+                }
+              }
             },
             "customTools": {
               "anyOf": [
@@ -2140,58 +2126,6 @@
                           "maxOutputBytes": {
                             "type": "number"
                           },
-                          "allowlist": {
-                            "type": "boolean"
-                          },
-                          "persistAllowlist": {
-                            "type": "boolean"
-                          },
-                          "judge": {
-                            "anyOf": [
-                              {
-                                "type": "boolean"
-                              },
-                              {
-                                "type": "object",
-                                "properties": {
-                                  "enabled": {
-                                    "type": "boolean"
-                                  },
-                                  "autoApproveLow": {
-                                    "type": "boolean"
-                                  },
-                                  "blockHigh": {
-                                    "type": "boolean"
-                                  },
-                                  "model": {
-                                    "type": "object",
-                                    "properties": {
-                                      "type": {
-                                        "type": "string"
-                                      },
-                                      "model": {
-                                        "type": "string"
-                                      },
-                                      "configuration": {
-                                        "type": "object",
-                                        "propertyNames": {
-                                          "type": "string"
-                                        },
-                                        "additionalProperties": {}
-                                      },
-                                      "apiKeyEnvironmentVariable": {
-                                        "type": "string"
-                                      }
-                                    },
-                                    "additionalProperties": {}
-                                  }
-                                }
-                              }
-                            ]
-                          },
-                          "yolo": {
-                            "type": "boolean"
-                          },
                           "fileSet": {
                             "type": "string",
                             "enum": [
@@ -2205,6 +2139,56 @@
                   }
                 }
               ]
+            },
+            "approvals": {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "ask",
+                    "bypass"
+                  ]
+                },
+                "rater": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "profile": {
+                          "type": "string"
+                        },
+                        "strictness": {
+                          "type": "string",
+                          "enum": [
+                            "lenient",
+                            "standard",
+                            "strict"
+                          ]
+                        },
+                        "escalate": {
+                          "type": "string",
+                          "enum": [
+                            "caution",
+                            "danger",
+                            "never"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                },
+                "allowlist": {
+                  "type": "boolean"
+                },
+                "persistAllowlist": {
+                  "type": "boolean"
+                }
+              }
             },
             "port": {
               "type": "number"

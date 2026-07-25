@@ -52,8 +52,17 @@ export async function configure() {
     modelDisplayName: 'scripted-e2e',
     // Hermetic and quiet: no per-run md log in the fixtures dir, no history store writes, and the
     // shell approval allow-list is never persisted to disk (an `always` grant would otherwise
-    // write into this tracked fixtures dir).
+    // write into this tracked fixtures dir — CFG-26 moved that knob to `approvals`).
     writeOutputToFile: false,
-    builtInTools: { run_shell_command: { persistAllowlist: false } },
+    // CFG-26 — `mode: "ask"` is set EXPLICITLY, not inherited. This suite exercises the EXT-52
+    // HUMAN approval seam (interrupt → <ApprovalPrompt> → resume), and interactive `code` on a TTY
+    // now defaults to `mode: "auto"` with the AI rater ON. Under that default the prompt still
+    // appeared, but only by accident: the rater ran against the scripted model above, which cannot
+    // produce a structured verdict, so it fail-closed to `danger` — which happens to sit exactly on
+    // the default `escalate: "danger"` threshold and therefore escalated to the human. Pinning
+    // `ask` removes a pointless rater round-trip through the scripted model AND stops the suite
+    // silently ceasing to test the human seam if the default threshold ever moves. Rater behaviour
+    // belongs in its own coverage, not smuggled into the EXT-52 regression guard.
+    approvals: { mode: 'ask', persistAllowlist: false },
   };
 }

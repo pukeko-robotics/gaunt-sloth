@@ -408,11 +408,17 @@ export async function createTuiSession(
       resetThread() {
         runner.resetThread();
       },
-      // `/auto-approve` applies the runner's session-scoped shell auto-approval flag (EXT-12):
-      // 'on'/'off' set it explicitly, 'toggle' flips it. Returns the landed state for the notice.
-      setAutoApprove(action) {
-        if (action === 'toggle') return runner.toggleSessionYolo();
-        return runner.setSessionYolo(action === 'on');
+      // CFG-26 — the `/approvals` family switches the runner's session approval MODE. Returns the
+      // posture the runner LANDED on (it turns the rater on when switching to `auto`), so the
+      // notice and the status badge describe the real state rather than the requested one.
+      setApprovalMode(mode) {
+        runner.setSessionApprovalMode(mode);
+        return runner.getSessionApprovals();
+      },
+      // CFG-26 — the read-only `/approvals` display. Kept separate from the setter so showing
+      // status can never mutate session state.
+      getApprovals() {
+        return { approvals: runner.getSessionApprovals(), allowlist: runner.getAllowlistCounts() };
       },
     };
 
@@ -442,7 +448,7 @@ export async function createTuiSession(
         agent={tuiAgent}
         mode={sessionConfig.mode}
         modelDisplayName={config.modelDisplayName}
-        initialAutoApprove={runner.isSessionYolo()}
+        initialApprovals={runner.getSessionApprovals()}
         configSummary={formatConfigSummary(config, sessionConfig.mode)}
         resolvedConfig={config}
         dumpDebugSession={dumpDebugSessionWithModelRequest}

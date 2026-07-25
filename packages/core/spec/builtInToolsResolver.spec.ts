@@ -1,13 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   getEffectiveDevToolsConfig,
-  getShellJudgeSettings,
   getShellMaxOutputBytes,
   getShellTimeoutMs,
   isBuiltInToolEntryEnabled,
-  isShellAllowlistEnabled,
-  isShellAllowlistPersisted,
-  isShellJudgeEnabled,
   isShellToolEnabled,
   normalizeBuiltInTools,
   SHELL_DEFAULT_MAX_OUTPUT_BYTES,
@@ -82,17 +78,16 @@ describe('getEffectiveDevToolsConfig (builtInTools → resolved GthDevToolsConfi
     expect(getShellTimeoutMs(resolved)).toBe(5000);
   });
 
-  it('round-trips the full shell config (timeout/allowlist/judge/yolo) through the accessors', () => {
+  it('round-trips the full shell EXECUTION config (timeout/maxOutputBytes) through the accessors', () => {
+    // CFG-26 — the approval knobs (allowlist/persistAllowlist/judge/yolo) no longer live on this
+    // entry; they moved to the top-level `approvals` block (see approvalsConfig.spec.ts). What is
+    // left here is execution-only, and that is the whole point of the split.
     const config: Cfg = {
       builtInTools: {
         run_shell_command: {
           enabled: true,
           timeout: 300000,
           maxOutputBytes: 200000,
-          allowlist: false,
-          persistAllowlist: false,
-          judge: { enabled: true, autoApproveLow: false, blockHigh: true },
-          yolo: true,
         },
       },
     };
@@ -100,16 +95,11 @@ describe('getEffectiveDevToolsConfig (builtInTools → resolved GthDevToolsConfi
     expect(isShellToolEnabled(resolved, 'code')).toBe(true);
     expect(getShellTimeoutMs(resolved)).toBe(300000);
     expect(getShellMaxOutputBytes(resolved)).toBe(200000);
-    expect(isShellAllowlistEnabled(resolved)).toBe(false);
-    expect(isShellAllowlistPersisted(resolved)).toBe(false);
-    expect(isShellJudgeEnabled(resolved)).toBe(true);
-    expect(getShellJudgeSettings(resolved)).toMatchObject({
+    expect(resolved?.shell).toEqual({
       enabled: true,
-      autoApproveLow: false,
-      blockHigh: true,
+      timeout: 300000,
+      maxOutputBytes: 200000,
     });
-    // shellYolo folded into the run_shell_command entry's `yolo` knob.
-    expect(resolved?.shellYolo).toBe(true);
   });
 
   it('resolves the fixed run_* dev-command tools from their `command`', () => {

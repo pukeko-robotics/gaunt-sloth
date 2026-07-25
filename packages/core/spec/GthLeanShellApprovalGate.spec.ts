@@ -4,16 +4,16 @@
  * `run_shell_command` SUSPENDS on the humanInTheLoopMiddleware interrupt and routes through the
  * runner's `decideToolApproval` seam, with each layer observable:
  *   approve / reject (human callback) · fail-closed default reject (no callback) ·
- *   session allow-list · EXT-10 judge · EXT-12 sessionYolo (and the `/auto-approve off`
- *   regression guard: turning the session flag OFF restores prompting mid-session).
+ *   session allow-list · the CFG-26 AI rater · the session approval mode (and the `/approvals ask`
+ *   regression guard: switching the mode back OFF restores prompting mid-session).
  *
  * Before EXT-52 the lean middleware array had no HITL middleware, so no interrupt ever fired and
  * this entire stack was dead code on the default backend: `run_shell_command` executed with no
  * prompt and `/auto-approve` was a placebo. Unlike GthLangChainAgent.spec.ts (which mocks
  * `createAgent` and asserts the WIRING), this drives the real middleware/router/interrupt stack
  * with a scripted chat model (no API key) and a real recording tool, mirroring
- * GthLeanToolErrorRecovery.spec's "prove the MECHANISM end-to-end" approach. Only the EXT-10
- * judge module is mocked (its verdicts are scripted per test); prompt composition is stubbed so
+ * GthLeanToolErrorRecovery.spec's "prove the MECHANISM end-to-end" approach. Only the CFG-26
+ * rater module is mocked (its verdicts are scripted per test); prompt composition is stubbed so
  * nothing reads the on-disk gsloth config.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -29,11 +29,11 @@ import type {
   ToolApprovalDecision,
 } from '#src/core/types.js';
 
-// EXT-10 judge — scripted per test so the judge layer is observable without an LLM call.
-const judgeShellCommandMock = vi.fn();
+// CFG-26 rater — scripted per test so the rater layer is observable without an LLM call.
+const rateShellCommandMock = vi.fn();
 const mapVerdictToActionMock = vi.fn();
-vi.mock('#src/core/shell/judge.js', () => ({
-  judgeShellCommand: judgeShellCommandMock,
+vi.mock('#src/core/shell/rater.js', () => ({
+  rateShellCommand: rateShellCommandMock,
   mapVerdictToAction: mapVerdictToActionMock,
 }));
 
@@ -164,8 +164,10 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
       ...BASE_CONFIG,
       llm: new ScriptedShellCallingModel(commands),
       // persistAllowlist OFF so no test touches the on-disk allow-list file; enabled defaults ON
-      // in code mode (EXT-12).
-      builtInTools: { run_shell_command: { persistAllowlist: false } },
+      // in code mode (EXT-12). CFG-26 — the knob lives on `approvals` now; left on the retired
+      // per-tool entry it would be a silent no-op and these tests WOULD write to disk. `ask` is
+      // explicit so the default rater does not run on the tests that are not about the rater.
+      approvals: { mode: 'ask', persistAllowlist: false },
       ...configExtra,
     } as unknown as GthConfig;
     await runner.init('code', config, new MemorySaver());
@@ -244,18 +246,19 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
     expect(executed).toEqual(['git checkout main', 'git checkout -b feature']);
   });
 
-  it('judge: an enabled judge auto-approves a low-risk command with NO human prompt (and is consulted with the command)', async () => {
-    judgeShellCommandMock.mockResolvedValue({ risk: 'low', reason: 'read-only' });
-    mapVerdictToActionMock.mockReturnValue('auto-approve');
+  it('rater: a SAFE verdict approves with NO human prompt (and the rater is consulted with the command)', async () => {
+    const verdict = { tier: 'safe', reason: 'read-only' };
+    rateShellCommandMock.mockResolvedValue(verdict);
+    mapVerdictToActionMock.mockReturnValue({ action: 'approve', verdict });
     const runner = await makeRunner(['ls -la'], {
-      builtInTools: { run_shell_command: { persistAllowlist: false, judge: true } },
+      approvals: { mode: 'auto', persistAllowlist: false },
     } as Partial<GthConfig>);
     const human = vi.fn();
     runner.setToolApprovalCallback(human);
 
     await runTurn(runner, 'list');
 
-    expect(judgeShellCommandMock).toHaveBeenCalledWith(
+    expect(rateShellCommandMock).toHaveBeenCalledWith(
       'ls -la',
       expect.anything(),
       expect.anything()
@@ -264,13 +267,12 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
     expect(executed).toEqual(['ls -la']);
   });
 
-  it('judge: a blocked verdict REJECTS without prompting and the tool never executes', async () => {
-    judgeShellCommandMock.mockResolvedValue({ risk: 'high', reason: 'destructive' });
-    mapVerdictToActionMock.mockReturnValue('reject');
+  it('rater: a CRITICAL verdict REJECTS without prompting and the tool never executes', async () => {
+    const verdict = { tier: 'critical', reason: 'wipes the disk' };
+    rateShellCommandMock.mockResolvedValue(verdict);
+    mapVerdictToActionMock.mockReturnValue({ action: 'reject', verdict });
     const runner = await makeRunner(['dd if=/dev/zero of=/dev/disk0'], {
-      builtInTools: {
-        run_shell_command: { persistAllowlist: false, judge: { enabled: true, blockHigh: true } },
-      },
+      approvals: { mode: 'auto', persistAllowlist: false },
     } as Partial<GthConfig>);
     const human = vi.fn();
     runner.setToolApprovalCallback(human);
@@ -281,35 +283,54 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
     expect(executed).toEqual([]);
   });
 
-  it('sessionYolo ON auto-approves silently; /auto-approve off RESTORES the prompt on lean (regression guard)', async () => {
+  it('rater: reject-with-reason returns the reason to the MODEL and never reaches the human', async () => {
+    const verdict = { tier: 'caution', reason: 'writes outside the project' };
+    rateShellCommandMock.mockResolvedValue(verdict);
+    mapVerdictToActionMock.mockReturnValue({ action: 'reject-with-reason', verdict });
+    const runner = await makeRunner(['touch /tmp/x'], {
+      approvals: { mode: 'auto', persistAllowlist: false },
+    } as Partial<GthConfig>);
+    const human = vi.fn();
+    runner.setToolApprovalCallback(human);
+
+    await runTurn(runner, 'touch');
+
+    expect(human).not.toHaveBeenCalled();
+    expect(executed).toEqual([]);
+    // The rejection round-tripped to the model as a ToolMessage, which it answered.
+    const model = (runner as unknown as { config: { llm: ScriptedShellCallingModel } }).config.llm;
+    expect(model.callCount).toBe(2);
+  });
+
+  it('session bypass approves silently; /approvals ask RESTORES the prompt on lean (regression guard)', async () => {
     const runner = await makeRunner(['echo one', 'echo two']);
     const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
     runner.setToolApprovalCallback(human);
 
-    runner.setSessionYolo(true); // the `/auto-approve on` (`/yolo`) surface
+    runner.setSessionApprovalMode('bypass'); // the `/approvals bypass` surface
     await runTurn(runner, 'first');
-    expect(human).not.toHaveBeenCalled(); // yolo: no prompt…
-    expect(executed).toEqual(['echo one']); // …but the tool still ran (auto-approved)
+    expect(human).not.toHaveBeenCalled(); // bypass: no prompt…
+    expect(executed).toEqual(['echo one']); // …but the tool still ran (approved)
 
-    runner.setSessionYolo(false); // `/auto-approve off`
+    runner.setSessionApprovalMode('ask'); // `/approvals ask`
     await runTurn(runner, 'second');
     expect(human).toHaveBeenCalledTimes(1); // the prompt is BACK — not a placebo
     expect(executed).toEqual(['echo one', 'echo two']);
   });
 
-  it('config yolo seeds auto-approval but keeps the tool GATED, so /auto-approve off still restores prompting', async () => {
+  it('config bypass seeds the session mode but keeps the tool GATED, so /approvals ask still restores prompting', async () => {
     const runner = await makeRunner(['echo pre', 'echo post'], {
-      builtInTools: { run_shell_command: { persistAllowlist: false, yolo: true } },
+      approvals: { mode: 'bypass', persistAllowlist: false },
     } as Partial<GthConfig>);
     const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
     runner.setToolApprovalCallback(human);
 
-    expect(runner.isSessionYolo()).toBe(true); // seeded from run_shell_command.yolo (EXT-12)
+    expect(runner.getSessionApprovals().mode).toBe('bypass'); // seeded from approvals.mode
     await runTurn(runner, 'first');
     expect(human).not.toHaveBeenCalled();
     expect(executed).toEqual(['echo pre']);
 
-    runner.setSessionYolo(false);
+    runner.setSessionApprovalMode('ask');
     await runTurn(runner, 'second');
     expect(human).toHaveBeenCalledTimes(1);
     expect(executed).toEqual(['echo pre', 'echo post']);

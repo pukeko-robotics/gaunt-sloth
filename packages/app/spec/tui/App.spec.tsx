@@ -178,58 +178,161 @@ describe('tui <App>', () => {
     unmount();
   });
 
-  it('/auto-approve on|off calls agent.setAutoApprove, shows the status badge + notices (EXT-12)', async () => {
-    let yolo = false;
-    let turnsRun = 0;
-    const agent: TuiAgent = {
-      async *runTurn() {
-        turnsRun += 1;
-        yield { type: 'text', delta: 'should not run' };
+  // CFG-26 — a posture stub standing in for the runner: it lands the requested mode and turns the
+  // rater on for `auto`, exactly as GthAgentRunner.setSessionApprovalMode does.
+  const approvalsAgent = (
+    initial: 'auto' | 'ask' | 'bypass' = 'ask',
+    extra?: Partial<TuiAgent>
+  ): { agent: TuiAgent; mode: () => string } => {
+    let mode = initial;
+    const posture = () => ({
+      mode,
+      rater: {
+        enabled: mode === 'auto',
+        profile: undefined,
+        strictness: 'standard' as const,
+        escalate: 'danger' as const,
       },
-      setAutoApprove(action) {
-        yolo = action === 'toggle' ? !yolo : action === 'on';
-        return yolo;
-      },
+      allowlist: true,
+      persistAllowlist: true,
+    });
+    return {
+      mode: () => mode,
+      agent: {
+        async *runTurn() {
+          yield { type: 'text', delta: 'should not run' };
+        },
+        setApprovalMode(next) {
+          mode = next;
+          return posture();
+        },
+        getApprovals() {
+          return { approvals: posture(), allowlist: { session: 2, always: undefined } };
+        },
+        ...extra,
+      } as TuiAgent,
     };
+  };
+
+  it('/auto-approve switches to rater-mediated AUTO (never bypass) and the badge names the mode', async () => {
+    const { agent, mode } = approvalsAgent('ask');
     const { stdin, frames, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
 
     await vi.waitFor(() => expect(lastFrame()).toContain('>'));
-    stdin.write('/auto-approve on');
-    await vi.waitFor(() => expect(lastFrame()).toContain('/auto-approve on'));
+    stdin.write('/auto-approve');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/auto-approve'));
     stdin.write('\r');
 
-    // ON notice + persistent status-bar indicator.
     await vi.waitFor(() => {
-      expect(frames.join('\n')).toContain('Auto-approve ON');
-      expect(lastFrame()).toContain('auto-approve ON'); // status-bar badge
+      expect(frames.join('\n')).toContain('Approvals: auto');
+      // The status badge names the MODE, not a boolean.
+      expect(lastFrame()).toContain('approvals: auto');
     });
-    expect(yolo).toBe(true);
+    // The regression this task exists for: the user asked to auto-approve and got the
+    // rater-mediated mode, NOT the unchecked bypass.
+    expect(mode()).toBe('auto');
+    expect(lastFrame()).not.toContain('bypass');
 
-    // /auto-approve off → OFF notice, badge cleared.
+    // /auto-approve off → ask.
     stdin.write('/auto-approve off');
     await vi.waitFor(() => expect(lastFrame()).toContain('/auto-approve off'));
     stdin.write('\r');
     await vi.waitFor(() => {
-      expect(frames.join('\n')).toContain('Auto-approve OFF');
-      expect(lastFrame()).not.toContain('auto-approve ON');
+      expect(frames.join('\n')).toContain('Approvals: ask');
+      expect(lastFrame()).toContain('approvals: ask');
     });
-    expect(yolo).toBe(false);
-
-    // The command never reaches the model.
-    expect(turnsRun).toBe(0);
+    expect(mode()).toBe('ask');
 
     unmount();
   });
 
-  it('initialAutoApprove seeds the status-bar indicator (config-enabled auto-approve)', async () => {
+  it('/bypass-approve switches to bypass and the badge shows the warn-styled ⚡ bypass', async () => {
+    const { agent, mode } = approvalsAgent('ask');
+    const { stdin, frames, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    stdin.write('/bypass-approve');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/bypass-approve'));
+    stdin.write('\r');
+
+    await vi.waitFor(() => {
+      expect(frames.join('\n')).toContain('WITHOUT the AI rater');
+      expect(lastFrame()).toContain('⚡ bypass');
+    });
+    expect(mode()).toBe('bypass');
+    unmount();
+  });
+
+  it('/approvals with no arg SHOWS the posture (counts included) without changing it', async () => {
+    const { agent, mode } = approvalsAgent('ask');
+    const { stdin, frames, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    stdin.write('/approvals');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/approvals'));
+    stdin.write('\r');
+
+    await vi.waitFor(() => {
+      const out = frames.join('\n');
+      expect(out).toContain('Approvals: ask');
+      expect(out).toContain('session: 2');
+    });
+    expect(mode()).toBe('ask'); // display only — nothing switched
+    unmount();
+  });
+
+  /**
+   * CFG-26 acceptance #5 — the test that would have caught the original bug. Task 1 made
+   * interactive `code`/`chat` default to rater-mediated `auto`, but the badge was seeded from the
+   * session BYPASS flag, so it read "off" while the rater was approving safe commands with no
+   * prompt. It asserts the rendered MODE, not the absence of a word, so a future boolean-shaped
+   * regression cannot slip past it.
+   */
+  it('seeds the badge from the RESOLVED posture: the interactive auto default is visible from frame 1', async () => {
     const agent = scriptedAgent([]);
-    const { lastFrame, unmount } = render(<App {...baseProps} agent={agent} initialAutoApprove />);
-    await vi.waitFor(() => expect(lastFrame()).toContain('auto-approve ON'));
+    const { lastFrame, unmount } = render(
+      <App
+        {...baseProps}
+        agent={agent}
+        initialApprovals={{
+          mode: 'auto',
+          rater: { enabled: true, strictness: 'standard', escalate: 'danger' },
+          allowlist: true,
+          persistAllowlist: true,
+        }}
+      />
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('approvals: auto'));
+    // ...and it says WHO is rating, so "auto" is never an unexplained word.
+    expect(lastFrame()).toContain('AI rater');
     unmount();
   });
 
-  it('/auto-approve is dispatchable mid-turn; a plain message mid-turn is refused (EXT-12)', async () => {
-    let yolo = false;
+  it('names the configured rater profile in the badge', async () => {
+    const agent = scriptedAgent([]);
+    const { lastFrame, unmount } = render(
+      <App
+        {...baseProps}
+        agent={agent}
+        initialApprovals={{
+          mode: 'auto',
+          rater: {
+            enabled: true,
+            profile: 'safety-rater',
+            strictness: 'standard',
+            escalate: 'danger',
+          },
+          allowlist: true,
+          persistAllowlist: true,
+        }}
+      />
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('approvals: auto (safety-rater)'));
+    unmount();
+  });
+
+  it('/approvals is dispatchable mid-turn; a plain message mid-turn is refused (EXT-12)', async () => {
+    let mode = 'ask';
     // A turn that streams then blocks until aborted, so the prompt stays mounted (running) while
     // we exercise mid-turn input.
     const agent: TuiAgent = {
@@ -240,9 +343,19 @@ describe('tui <App>', () => {
           signal.addEventListener('abort', () => resolve());
         });
       },
-      setAutoApprove(action) {
-        yolo = action === 'toggle' ? !yolo : action === 'on';
-        return yolo;
+      setApprovalMode(next) {
+        mode = next;
+        return {
+          mode: next,
+          rater: {
+            enabled: next === 'auto',
+            profile: undefined,
+            strictness: 'standard',
+            escalate: 'danger',
+          },
+          allowlist: true,
+          persistAllowlist: true,
+        };
       },
     };
     const { stdin, frames, lastFrame, unmount } = render(
@@ -256,12 +369,12 @@ describe('tui <App>', () => {
     stdin.write('\r');
     await vi.waitFor(() => expect(frames.join('\n')).toContain('only slash commands'));
 
-    // While running, /auto-approve on IS honoured (flag flips, badge appears next to the spinner).
-    stdin.write('/auto-approve on');
-    await vi.waitFor(() => expect(lastFrame()).toContain('> /auto-approve on'));
+    // While running, /auto-approve IS honoured (mode switches, badge appears next to the spinner).
+    stdin.write('/auto-approve');
+    await vi.waitFor(() => expect(lastFrame()).toContain('> /auto-approve'));
     stdin.write('\r');
-    await vi.waitFor(() => expect(yolo).toBe(true));
-    await vi.waitFor(() => expect(lastFrame()).toContain('auto-approve ON'));
+    await vi.waitFor(() => expect(mode).toBe('auto'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('approvals: auto'));
 
     stdin.write(String.fromCharCode(27)); // Esc to end the run cleanly
     unmount();

@@ -1,8 +1,9 @@
 /**
  * @packageDocumentation
  * Shell / dev-tools policy: the {@link GthDevToolsConfig} type plus all the resolvers
- * that interpret it (shell enablement, timeouts, output budget, allow-list, the EXT-10
- * LLM-as-judge gate, and per-command dev-tools selection).
+ * that interpret it (shell enablement, timeouts, output budget, per-command dev-tools
+ * selection), and — since CFG-26 — the {@link ApprovalsConfig} block and its context-aware
+ * resolver {@link resolveApprovals} (approval mode, the AI rater, the allow-list knobs).
  *
  * CFG-18 — the dev/shell tools are now configured through the unified {@link GthConfig.builtInTools}
  * registry (`string[] | Record<string, boolean | BuiltInToolConfig>`), NOT the removed per-command
@@ -12,7 +13,8 @@
  * keeps the toolkit/accessor surface stable while the single config surface is `builtInTools`.
  */
 import { type GthCommand, StatusLevel } from '#src/core/types.js';
-import type { GthConfig, LLMConfig } from '#src/config/types.js';
+import type { GthConfig } from '#src/config/types.js';
+import { isTTY } from '#src/utils/systemUtils.js';
 
 /**
  * CFG-18 — the per-tool config object carried as a value in the {@link GthConfig.builtInTools}
@@ -21,12 +23,16 @@ import type { GthConfig, LLMConfig } from '#src/config/types.js';
  * discriminated union so the registry can carry every tool's shape:
  * - the fixed dev-command tools (`run_tests`/`run_lint`/`run_build`/`run_single_test`) read
  *   {@link command} — the shell command to run; its presence enables the tool;
- * - `run_shell_command` reads the EXT-9/10/12 knobs ({@link enabled}/{@link timeout}/
- *   {@link maxOutputBytes}/{@link allowlist}/{@link persistAllowlist}/{@link judge}/{@link yolo} —
- *   `yolo` is the folded former `shellYolo`);
+ * - `run_shell_command` reads the EXT-9/12 execution knobs ({@link enabled}/{@link timeout}/
+ *   {@link maxOutputBytes});
  * - `gth_grep` reads {@link fileSet} (GS2-51) — which corpus to search;
  * - a plain built-in tool (`gth_checklist`, `gth_web_fetch`, …) reads {@link enabled} (or is
  *   toggled with a bare boolean in the registry).
+ *
+ * CFG-26 — the APPROVAL knobs (`allowlist`, `persistAllowlist`, `judge`, `yolo`) are gone from
+ * here and live in the top-level {@link ApprovalsConfig}. They were fields of the object shared by
+ * EVERY built-in tool, so `gth_grep: { yolo: true }` used to validate; approvals are a property of
+ * the session, not of one tool's registry entry.
  */
 export interface BuiltInToolConfig {
   /**
@@ -42,25 +48,6 @@ export interface BuiltInToolConfig {
   timeout?: number;
   /** `run_shell_command`: captured-output byte budget. See {@link SHELL_DEFAULT_MAX_OUTPUT_BYTES}. */
   maxOutputBytes?: number;
-  /** `run_shell_command`: EXT-9 Tier-2 scoped allow-list master switch (default `true`). */
-  allowlist?: boolean;
-  /** `run_shell_command`: persist `always`-scoped approvals to the project file (default `true`). */
-  persistAllowlist?: boolean;
-  /** `run_shell_command`: EXT-10 LLM-as-judge safety gate (default OFF). */
-  judge?:
-    | boolean
-    | {
-        enabled?: boolean;
-        autoApproveLow?: boolean;
-        blockHigh?: boolean;
-        model?: LLMConfig;
-      };
-  /**
-   * `run_shell_command`: opt out of the per-command approval prompt — the explicit "yolo" bypass
-   * (folded former top-level `shellYolo`). Dangerous by design; off by default. Example:
-   * `{ "run_shell_command": { "yolo": true } }`.
-   */
-  yolo?: boolean;
   /**
    * `gth_grep` (GS2-51): which corpus the content-search tool scans, applied consistently to BOTH
    * execution engines (native ripgrep and the in-process JS fallback):
@@ -91,7 +78,7 @@ export interface BuiltInToolConfig {
  * { "builtInTools": {
  *     "gth_checklist": true,
  *     "gth_web_fetch": true,
- *     "run_shell_command": { "timeout": 300000, "judge": { "enabled": true } }
+ *     "run_shell_command": { "timeout": 300000 }
  * } }
  * ```
  * Turn the (code-mode default-on) shell OFF: `{ "builtInTools": { "run_shell_command": false } }`.
@@ -185,17 +172,16 @@ export interface GthDevToolsConfig {
    * lacks (it can read/write files but not run commands).
    *
    * EXT-12 — default: ON in `code` mode, OFF elsewhere. When this is ABSENT/undefined,
-   * `code` mode emits the tool (still GATED behind the per-command approval prompt — the
-   * absent-config default NEVER implies yolo); `exec` / `ask --write` keep it OFF. An
-   * EXPLICIT value always wins: `shell: false` (or `{ enabled: false }`) is a hard escape
-   * hatch that fully disables it even in `code`. Accepts a bare boolean or an
-   * `{ enabled }` object for symmetry with future per-tool options.
+   * `code` mode emits the tool (still GATED behind the approval gate — the absent-config
+   * default NEVER implies bypass); `exec` / `ask --write` keep it OFF. An EXPLICIT value
+   * always wins: `shell: false` (or `{ enabled: false }`) is a hard escape hatch that fully
+   * disables it even in `code`. Accepts a bare boolean or an `{ enabled }` object.
    *
-   * Because the model chooses the command, every invocation is gated behind a
-   * per-command human confirmation dialog (LangChain `humanInTheLoopMiddleware`,
-   * wired via deepagents' `interruptOn`) UNLESS {@link shellYolo} bypasses it.
-   * The confirmation — not string-filtering — is the guardrail, so the command
-   * is passed through verbatim (pipes / `$` / `;` are all legitimate).
+   * Because the model chooses the command, every invocation is gated behind the CFG-26
+   * approvals gate (LangChain `humanInTheLoopMiddleware`, wired via deepagents' `interruptOn`)
+   * UNLESS `approvals.mode: "bypass"` turns the gate off. The gate — not string-filtering — is
+   * the guardrail, so the command is passed through verbatim (pipes / `$` / `;` are all
+   * legitimate).
    *
    * The object form also tunes the EXT-9 Tier-1 hardening applied to every run
    * (these have safe defaults so bare `shell: true` is already hardened):
@@ -208,39 +194,15 @@ export interface GthDevToolsConfig {
    *
    * A hardcoded hardline blocklist of catastrophic commands (rm -rf /, mkfs, dd
    * to a block device, fork bomb, shutdown/reboot, …) is refused even under
-   * {@link shellYolo}; that floor is not configurable.
+   * `approvals.mode: "bypass"`; that floor is not configurable.
    *
    * On-disk (CFG-18) these live on the `run_shell_command` entry of `builtInTools`, e.g.
    * `{ "builtInTools": { "run_shell_command": true } }` or
    * `{ "builtInTools": { "run_shell_command": { "timeout": 300000, "maxOutputBytes": 200000 } } }`.
    *
-   * The object form additionally accepts EXT-9 Tier-2 allow-list knobs:
-   * - `allowlist`: master switch for the scoped approval allow-list (session +
-   *   persisted `always`). Default `true` — once a command is approved at `session`/
-   *   `always` scope, flag-variants of the same classified operation auto-approve
-   *   without re-prompting. Set `false` to require fresh approval for every command.
-   * - `persistAllowlist`: whether `always`-scoped approvals are written to the project
-   *   allow-list file (`.gsloth/.gsloth-settings/shell-allowlist.json`). Default `true`.
-   *   When `false`, an `always` decision behaves like `session` (in-memory only).
-   *
-   * The object form also accepts the EXT-10 LLM-as-judge safety gate (default OFF):
-   * - `judge`: an opt-in, tiered auto-approve pre-filter that vets each `run_shell_command`
-   *   with a lightweight judge model BEFORE the human prompt. It auto-approves clearly-safe
-   *   commands (fatigue reducer), escalates the rest to the existing human prompt, and may
-   *   reject clearly-catastrophic ones. Default OFF because it costs one LLM call per command.
-   *   Accepts a bare boolean (`judge: true` → defaults: auto-approve low, escalate medium/high,
-   *   judge model = `config.llm`) or an object:
-   *     - `enabled`: turn the gate on.
-   *     - `autoApproveLow`: auto-approve `low`-risk, statically-resolvable commands. Default true.
-   *     - `blockHigh`: reject clearly-catastrophic (`high` + destructive) verdicts WITHOUT
-   *       prompting. Default false (conservative; EXT-9's hardline floor already refuses truly
-   *       catastrophic commands at exec time).
-   *     - `model`: an optional separate (e.g. cheaper) judge model config. Defaults to `config.llm`.
-   *   Hardening (always on when the judge runs): the command is normalized + XML-tagged as
-   *   UNTRUSTED input in the judge prompt; a judge throw/timeout/parse-failure fails CLOSED
-   *   (escalate, never auto-approve); commands whose target can't be statically resolved
-   *   (shell composition / substitution / redirection) and interpreter+script invocations that
-   *   leak ALL_CAPS env vars are NEVER auto-approved.
+   * CFG-26 — the approval knobs that used to live here (`allowlist`, `persistAllowlist`,
+   * `judge`, `yolo`) moved to the top-level `approvals` block ({@link ApprovalsConfig}); read
+   * them through {@link resolveApprovals}, never from this object.
    */
   shell?:
     | boolean
@@ -248,27 +210,7 @@ export interface GthDevToolsConfig {
         enabled?: boolean;
         timeout?: number;
         maxOutputBytes?: number;
-        allowlist?: boolean;
-        persistAllowlist?: boolean;
-        judge?:
-          | boolean
-          | {
-              enabled?: boolean;
-              autoApproveLow?: boolean;
-              blockHigh?: boolean;
-              model?: LLMConfig;
-            };
       };
-  /**
-   * Opt-out of the per-command confirmation dialog for {@link shell}
-   * (`run_shell_command`) — the explicit "yolo" bypass. When `true` AND `shell`
-   * is enabled, the shell tool runs without any approval interrupt: the model's
-   * commands execute immediately. Dangerous by design; off by default.
-   *
-   * On-disk (CFG-18) this is the `yolo` knob of the `run_shell_command` entry, e.g.
-   * `{ "builtInTools": { "run_shell_command": { "yolo": true } } }`.
-   */
-  shellYolo?: boolean;
 }
 
 /**
@@ -345,79 +287,10 @@ export function getShellMaxOutputBytes(devTools: GthDevToolsConfig | undefined):
 }
 
 /**
- * Whether the EXT-9 Tier-2 scoped allow-list is active. Default `true`; only the object
- * form's `allowlist: false` disables it (a bare `shell: true` keeps it on). When off, the
- * runner prompts for every `run_shell_command` regardless of prior approvals.
- */
-export function isShellAllowlistEnabled(devTools: GthDevToolsConfig | undefined): boolean {
-  const shell = devTools?.shell;
-  if (shell && typeof shell === 'object' && shell.allowlist === false) return false;
-  return true;
-}
-
-/**
- * Whether `always`-scoped approvals are persisted to the project allow-list file. Default
- * `true`; only the object form's `persistAllowlist: false` disables persistence (an
- * `always` decision then behaves as `session`).
- */
-export function isShellAllowlistPersisted(devTools: GthDevToolsConfig | undefined): boolean {
-  const shell = devTools?.shell;
-  if (shell && typeof shell === 'object' && shell.persistAllowlist === false) return false;
-  return true;
-}
-
-/**
- * Resolved settings for the EXT-10 LLM-as-judge safety gate.
- */
-export interface ShellJudgeSettings {
-  /** Whether the judge gate runs at all. */
-  enabled: boolean;
-  /** Auto-approve `low`-risk, statically-resolvable commands (the fatigue reducer). */
-  autoApproveLow: boolean;
-  /** Reject clearly-catastrophic (`high` + destructive) verdicts without prompting. */
-  blockHigh: boolean;
-  /** Optional separate judge model config; when absent the runner uses `config.llm`. */
-  model?: LLMConfig;
-}
-
-/**
- * Whether the EXT-10 LLM-as-judge safety gate is enabled for the given dev-tools config.
- * Default OFF (only the object form's `judge` truthy enables it), mirroring
- * {@link isShellToolEnabled}. A bare `shell: true` keeps the judge OFF — it costs an LLM call
- * per command and must be opted into explicitly.
- */
-export function isShellJudgeEnabled(devTools: GthDevToolsConfig | undefined): boolean {
-  const shell = devTools?.shell;
-  if (!shell || typeof shell !== 'object') return false;
-  const judge = shell.judge;
-  if (typeof judge === 'boolean') return judge;
-  if (judge && typeof judge === 'object') return judge.enabled === true;
-  return false;
-}
-
-/**
- * Resolve the EXT-10 judge gate settings from a dev-tools config, applying safe defaults
- * (auto-approve low, do NOT block high). `enabled` reflects {@link isShellJudgeEnabled}.
- */
-export function getShellJudgeSettings(devTools: GthDevToolsConfig | undefined): ShellJudgeSettings {
-  const enabled = isShellJudgeEnabled(devTools);
-  const shell = devTools?.shell;
-  const judge =
-    shell && typeof shell === 'object' && shell.judge && typeof shell.judge === 'object'
-      ? shell.judge
-      : undefined;
-  return {
-    enabled,
-    autoApproveLow: judge?.autoApproveLow ?? true,
-    blockHigh: judge?.blockHigh ?? false,
-    model: judge?.model,
-  };
-}
-
-/**
  * Build the internal, resolved {@link GthDevToolsConfig} from a normalized `builtInTools` registry:
  * the fixed dev-command tools read their `command` string, and `run_shell_command` maps to the
- * `shell` (+ `shellYolo`) view the accessors below consume. Returns `undefined` when the registry
+ * `shell` view the accessors below consume (CFG-26: the approval knobs are no longer here — they
+ * live in the top-level `approvals` block, resolved by {@link resolveApprovals}). Returns `undefined` when the registry
  * carries no dev/shell entry at all, so callers treat it exactly like an unset `devTools` (the
  * `code`-mode shell default still applies downstream via {@link isShellToolEnabled}).
  */
@@ -445,11 +318,7 @@ function devToolsConfigFromRegistry(
         enabled: entry.enabled,
         timeout: entry.timeout,
         maxOutputBytes: entry.maxOutputBytes,
-        allowlist: entry.allowlist,
-        persistAllowlist: entry.persistAllowlist,
-        judge: entry.judge,
       };
-      if (entry.yolo !== undefined) resolved.shellYolo = entry.yolo;
     }
     hasAny = true;
   }
@@ -487,6 +356,157 @@ export function getEffectiveDevToolsConfig(
   return devToolsConfigFromRegistry(normalizeBuiltInTools(effective));
 }
 
+/* -------------------------------------------------------------------------------------------- *
+ * CFG-26 — the `approvals` block: mode + AI rater + allow-list.
+ * -------------------------------------------------------------------------------------------- */
+
+/**
+ * The user-facing approval posture.
+ * - `auto` — the AI rater rates every gated call; `safe` runs, below the escalate threshold the
+ *   rejection reason goes back to the model, at/above it the human is asked, `critical` is refused.
+ * - `ask` — every gated call prompts the human (a configured rater acts as an advisor only).
+ * - `bypass` — no gate (the honest name for the retired `yolo`). The exec-time hardline floor
+ *   still refuses catastrophic commands.
+ */
+export type ApprovalMode = 'auto' | 'ask' | 'bypass';
+
+/** How strict the RATING PROMPT's tier definitions are. Never changes the action mapping. */
+export type RaterStrictness = 'lenient' | 'standard' | 'strict';
+
+/**
+ * The only model-vs-human routing knob: a verdict at/above this tier asks the human, below it the
+ * reason is returned to the model. `critical` is deliberately absent — it always rejects.
+ */
+export type RaterEscalateThreshold = 'caution' | 'danger' | 'never';
+
+/** On-disk `approvals.rater` object form. `false`/`true` are handled by {@link ApprovalsConfig}. */
+export interface RaterConfig {
+  /** Identity profile the rater runs under (strict resolution, GS2-62). Omitted = the main model. */
+  profile?: string;
+  /** Rating-prompt strictness. Default {@link DEFAULT_RATER_STRICTNESS}. */
+  strictness?: RaterStrictness;
+  /** Escalate-to-human threshold. Default {@link DEFAULT_RATER_ESCALATE}. */
+  escalate?: RaterEscalateThreshold;
+}
+
+/**
+ * On-disk `approvals` block (root or per command). Replaces the retired
+ * `builtInTools.run_shell_command.{yolo,judge,allowlist,persistAllowlist}` knobs.
+ */
+export interface ApprovalsConfig {
+  mode?: ApprovalMode;
+  /** `false` disables the rater; `true`/an object enables it. Absent = on iff `mode` is `auto`. */
+  rater?: boolean | RaterConfig;
+  /** EXT-9 Tier-2 scoped allow-list master switch. Default `true`. */
+  allowlist?: boolean;
+  /** Persist `always`-scoped grants to the project file. Default `true`. */
+  persistAllowlist?: boolean;
+}
+
+/** The rater half of {@link ResolvedApprovals}, with every default already applied. */
+export interface ResolvedRater {
+  enabled: boolean;
+  profile?: string;
+  strictness: RaterStrictness;
+  escalate: RaterEscalateThreshold;
+}
+
+/** The fully-defaulted approvals posture for one command in one context. */
+export interface ResolvedApprovals {
+  mode: ApprovalMode;
+  rater: ResolvedRater;
+  allowlist: boolean;
+  persistAllowlist: boolean;
+}
+
+/**
+ * CFG-26 — how many command prefixes the allow-list holds, for the `/approvals` display.
+ * `always: undefined` means the persisted store has not been loaded (or persistence is off) —
+ * rendered `—` rather than a misleading `0`, since a display must never create the store.
+ */
+export interface AllowlistCounts {
+  session: number;
+  always: number | undefined;
+}
+
+/** Default rating-prompt strictness when `approvals.rater.strictness` is absent. */
+export const DEFAULT_RATER_STRICTNESS: RaterStrictness = 'standard';
+
+/** Default escalate-to-human threshold when `approvals.rater.escalate` is absent. */
+export const DEFAULT_RATER_ESCALATE: RaterEscalateThreshold = 'danger';
+
+/**
+ * The commands whose default posture is the INTERACTIVE row of the defaults matrix — the surfaces
+ * where a human is present at a terminal to answer a prompt. Everything else (`exec`/`ask`/
+ * `review`/`pr` one-shots and the `api` AG-UI/ACP servers) takes the fail-closed row.
+ */
+const INTERACTIVE_APPROVAL_COMMANDS: ReadonlySet<string> = new Set(['code', 'chat']);
+
+/**
+ * CFG-26 — resolve the effective {@link ResolvedApprovals} for the active command, applying the
+ * spec's defaults matrix when no `approvals` key exists:
+ *
+ * | Context | Effective default |
+ * |---|---|
+ * | Interactive `code`/`chat` (TTY) | `mode: auto`, rater on (main model), `standard`, `danger` |
+ * | One-shot `exec`/`ask`/`review`/`pr` | rater off, `ask` semantics — non-TTY stays fail-closed |
+ * | AG-UI / ACP servers (`api`) | same as one-shot: rater off, fail-closed |
+ *
+ * "Fail-closed" is not implemented here: it is the runner's existing rule that a pending tool call
+ * with NO approval handler is REJECTED (never auto-approved). This resolver only says the posture
+ * is `ask`; with no TTY handler wired, `ask` therefore rejects.
+ *
+ * Precedence: a per-command `approvals` block REPLACES the root one wholesale (no deep merge),
+ * mirroring `builtInTools` in {@link getEffectiveDevToolsConfig}. Defaults are applied HERE, at
+ * the read site, rather than in `DEFAULT_CONFIG` — so the effective-config snapshot the `/config`
+ * panel renders never churns (à la GS2-34 `injectModelContext` / GS2-63 `output.header`).
+ *
+ * The rater is on when `approvals.rater` is explicitly set to anything but `false`, and otherwise
+ * exactly when the effective mode is `auto` — Mari's rule that **auto-mode exists only where the
+ * rater does**. (`mode: "auto"` + `rater: false` is rejected by the schema refinement, so the two
+ * can never disagree.)
+ *
+ * @param command The active command; selects the matrix row and the per-command block.
+ * @param options.interactive Override the context detection. Omitted = the command is an
+ *   interactive one AND we are on a TTY. Pass it explicitly in tests and from callers that already
+ *   know (a TUI session, a server).
+ */
+export function resolveApprovals(
+  config: Pick<GthConfig, 'commands' | 'approvals'> | undefined,
+  command: GthCommand | undefined,
+  options?: { interactive?: boolean }
+): ResolvedApprovals {
+  const interactive =
+    options?.interactive ??
+    (command !== undefined && INTERACTIVE_APPROVAL_COMMANDS.has(command) && isTTY());
+
+  const perCommand = command
+    ? (config?.commands as Record<string, { approvals?: ApprovalsConfig }> | undefined)?.[command]
+        ?.approvals
+    : undefined;
+  const raw = perCommand ?? config?.approvals;
+
+  const mode: ApprovalMode = raw?.mode ?? (interactive ? 'auto' : 'ask');
+
+  const raterSetting = raw?.rater;
+  const raterObject: RaterConfig | undefined =
+    raterSetting && typeof raterSetting === 'object' ? raterSetting : undefined;
+  const raterEnabled =
+    raterSetting === false ? false : raterSetting !== undefined ? true : mode === 'auto';
+
+  return {
+    mode,
+    rater: {
+      enabled: raterEnabled,
+      profile: raterObject?.profile,
+      strictness: raterObject?.strictness ?? DEFAULT_RATER_STRICTNESS,
+      escalate: raterObject?.escalate ?? DEFAULT_RATER_ESCALATE,
+    },
+    allowlist: raw?.allowlist ?? true,
+    persistAllowlist: raw?.persistAllowlist ?? true,
+  };
+}
+
 /** A status notice a backend should surface after resolving the shell approval gate. */
 export interface ShellApprovalGateNotice {
   /** Severity to pass to the agent's `statusUpdate` callback. */
@@ -515,39 +535,63 @@ export interface ShellApprovalGateDecision {
  * interrupt; the policy and its user-facing copy live here so the two can never drift (and so a
  * later rename of this config surface has one place to change).
  *
- * EXT-12 — how auto-approve (`run_shell_command.yolo` → {@link GthDevToolsConfig.shellYolo})
+ * CFG-26 — how `approvals.mode` (the retired `run_shell_command.yolo` is now `mode: "bypass"`)
  * interacts with gating:
- *   • In interactive `code` mode the tool stays GATED even when yolo pre-enables auto-approval, so
- *     the runner's session flag governs it and `/auto-approve off` can restore the per-command
- *     prompt mid-session. `GthAgentRunner.init` seeds that flag ON from yolo, so the user still
- *     sees no prompt by default; the interactive event/stream path drains the interrupt and
- *     auto-approves silently.
+ *   • In interactive `code` mode the tool stays GATED even under `bypass`, so the runner's session
+ *     mode governs it and `/approvals ask` can restore the per-command prompt mid-session.
+ *     `GthAgentRunner.init` seeds that session mode from config, so the user still sees no prompt
+ *     by default; the interactive event/stream path drains the interrupt and approves silently.
  *   • In non-interactive modes (`exec` / `ask --write`) a single-shot run does not drain
- *     interrupts, so yolo keeps the tool UNGATED (it runs inline without suspending), preserving
- *     prior behaviour. There is no slash-command surface there to toggle anyway.
+ *     interrupts, so `bypass` keeps the tool UNGATED (it runs inline without suspending),
+ *     preserving prior behaviour. There is no slash-command surface there to toggle anyway.
+ *   • Under `auto` and `ask` the tool is gated; the difference (rater-mediated vs always-prompt)
+ *     is decided later, in `GthAgentRunner.decideToolApproval`.
  *   • With the shell tool disabled — or on a non-dev-tools command (chat/api/…) — nothing is gated
  *     and nothing is announced.
  *
  * Shell enablement itself is resolved through {@link getEffectiveDevToolsConfig} +
  * {@link isShellToolEnabled}, so the gate stays in lockstep with where `GthDevToolkit` actually
- * emits the tool.
+ * emits the tool; the posture comes from {@link resolveApprovals}, so this and the runner can
+ * never disagree about what mode is in force.
  */
 export function resolveShellApprovalGate(
-  config: Pick<GthConfig, 'commands' | 'builtInTools' | 'askWriteMode'> | undefined,
+  config: Pick<GthConfig, 'commands' | 'builtInTools' | 'askWriteMode' | 'approvals'> | undefined,
   command: GthCommand | undefined
 ): ShellApprovalGateDecision {
   const devTools = getEffectiveDevToolsConfig(config, command);
   const shellEnabled = isShellToolEnabled(devTools, command);
   const isInteractive = command === 'code';
-  const gateShell = shellEnabled && (devTools?.shellYolo !== true || isInteractive);
+  // The gate question is only about `bypass`; resolve the mode in the command's own context so an
+  // explicit config value wins and the context default applies otherwise.
+  //
+  // NOTE: `interactive` is pinned to "is this the `code` command", NOT to the TTY, so the gate (and
+  // its notice) is deterministic and a piped `gth code` under `bypass` stays GATED exactly as
+  // before. `GthAgentRunner.init` resolves the SESSION posture with the TTY-aware default, so on a
+  // NON-TTY `code` run with no `approvals` config this notice can say `auto` while the session
+  // resolves to `ask` (fail-closed, since no approval handler is wired there anyway). CFG-26 Task 2
+  // should render the status bar from the runner's live posture, not from this notice.
+  const { mode } = resolveApprovals(config, command, { interactive: isInteractive });
+  const gateShell = shellEnabled && (mode !== 'bypass' || isInteractive);
 
-  if (gateShell && devTools?.shellYolo === true) {
+  if (gateShell && mode === 'bypass') {
     return {
       gateShell,
       notice: {
         level: StatusLevel.INFO,
         message:
-          'Shell tool (run_shell_command) auto-approved by config (shellYolo). Type /auto-approve off to require per-command approval.',
+          'Shell tool (run_shell_command) auto-approved by config (approvals.mode: bypass). ' +
+          'Type /approvals ask to require per-command approval.',
+      },
+    };
+  }
+  if (gateShell && mode === 'auto') {
+    return {
+      gateShell,
+      notice: {
+        level: StatusLevel.INFO,
+        message:
+          'Shell tool (run_shell_command) gated by the AI rater (approvals.mode: auto); ' +
+          'risky commands are still escalated to you.',
       },
     };
   }
@@ -566,7 +610,7 @@ export function resolveShellApprovalGate(
       notice: {
         level: StatusLevel.WARNING,
         message:
-          'Shell tool (run_shell_command) enabled in YOLO mode: commands run WITHOUT confirmation.',
+          'Shell tool (run_shell_command) enabled in bypass mode: commands run WITHOUT confirmation.',
       },
     };
   }

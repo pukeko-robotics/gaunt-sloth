@@ -704,7 +704,7 @@ describe('GthDeepAgent', () => {
     await agent.init('code', makeConfig());
 
     // Absent devTools.shell in `code` mode now resolves to enabled — and still GATED (interruptOn
-    // set), never yolo-by-default.
+    // set), never bypass-by-default.
     expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toEqual({
       run_shell_command: { allowedDecisions: ['approve', 'reject'] },
     });
@@ -722,7 +722,7 @@ describe('GthDeepAgent', () => {
     expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toBeUndefined();
   });
 
-  it('sets interruptOn for run_shell_command when shell is enabled and yolo is off', async () => {
+  it('sets interruptOn for run_shell_command when shell is enabled and bypass is off', async () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
     const config = makeConfig({
@@ -736,45 +736,51 @@ describe('GthDeepAgent', () => {
     });
   });
 
-  it('KEEPS interruptOn under yolo in interactive code mode so /auto-approve off can toggle it (EXT-12)', async () => {
+  it('KEEPS interruptOn under approvals.mode: bypass in interactive code mode so /approvals ask can switch it (CFG-26)', async () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
     const config = makeConfig({
       commands: {
-        code: { builtInTools: { run_shell_command: { enabled: true, yolo: true } } },
+        code: {
+          approvals: { mode: 'bypass' },
+          builtInTools: { run_shell_command: { enabled: true } },
+        },
       } as any,
     });
 
     await agent.init('code', config);
 
-    // The tool stays gated; the runner seeds its session auto-approve flag ON from shellYolo, so
-    // the user still sees no prompt by default but can restore it mid-session with /auto-approve off.
+    // The tool stays gated; the runner seeds its session mode from approvals.mode, so the user
+    // still sees no prompt by default but can restore it mid-session with /approvals ask.
     expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toEqual({
       run_shell_command: { allowedDecisions: ['approve', 'reject'] },
     });
-    // It reports that config pre-enabled auto-approval (not the old "YOLO mode" ungated warning).
+    // It reports that config pre-selected bypass (not the ungated bypass-mode warning).
     expect(statusUpdate).toHaveBeenCalledWith(
       expect.anything(),
-      expect.stringContaining('auto-approved by config')
+      expect.stringContaining('auto-approved by config (approvals.mode: bypass)')
     );
   });
 
-  it('omits interruptOn under yolo in non-interactive exec mode so the tool runs inline (single-shot)', async () => {
+  it('omits interruptOn under bypass in non-interactive exec mode so the tool runs inline (single-shot)', async () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
     const config = makeConfig({
       commands: {
-        exec: { builtInTools: { run_shell_command: { enabled: true, yolo: true } } },
+        exec: {
+          approvals: { mode: 'bypass' },
+          builtInTools: { run_shell_command: { enabled: true } },
+        },
       } as any,
     });
 
     await agent.init('exec', config);
 
-    // exec's single-shot path does not drain interrupts, so shellYolo keeps the tool ungated.
+    // exec's single-shot path does not drain interrupts, so bypass keeps the tool ungated.
     expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toBeUndefined();
     expect(statusUpdate).toHaveBeenCalledWith(
       expect.anything(),
-      expect.stringContaining('YOLO mode')
+      expect.stringContaining('bypass mode')
     );
   });
 

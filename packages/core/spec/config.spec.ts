@@ -895,6 +895,103 @@ describe('config', async () => {
       expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });
 
+    // CFG-26 — `approvals.rater.profile` gets the SAME strict resolution as an explicitly-named
+    // identity profile (GS2-62): a name that does not resolve is a hard config error, never a
+    // silent fallback to the main model. Checked in the loader (not the zod schema) because
+    // resolution needs the filesystem and `schema.ts` must stay pure.
+    it('CFG-26: an unresolvable approvals.rater.profile ERRORS instead of silently using the main model', async () => {
+      fileUtilsMock.getGslothConfigReadPath.mockImplementation(
+        (filename: string) => `/mock/read/${filename}`
+      );
+      // ONLY the project config exists — no `.gsloth-settings/missing-rater/` profile dir.
+      fsMock.existsSync.mockImplementation(
+        (path: string) => path === `/mock/read/${PROJECT_JSON_MARKER}`
+      );
+      fsMock.readFileSync.mockImplementation((path: string) =>
+        path === `/mock/read/${PROJECT_JSON_MARKER}`
+          ? JSON.stringify({
+              llm: { type: 'vertexai' },
+              approvals: { mode: 'auto', rater: { profile: 'missing-rater' } },
+            })
+          : ''
+      );
+
+      const { initConfig } = await import('#src/config.js');
+      try {
+        await initConfig({});
+      } catch {
+        // Mocked exit() is a no-op, so the load-bearing sentinel throw lands here.
+      }
+
+      const errorOutput = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
+      expect(errorOutput).toContain('approvals.rater.profile');
+      expect(errorOutput).toContain('identity profile "missing-rater" not found');
+      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('CFG-26: a per-command approvals.rater.profile is checked too', async () => {
+      fileUtilsMock.getGslothConfigReadPath.mockImplementation(
+        (filename: string) => `/mock/read/${filename}`
+      );
+      fsMock.existsSync.mockImplementation(
+        (path: string) => path === `/mock/read/${PROJECT_JSON_MARKER}`
+      );
+      fsMock.readFileSync.mockImplementation((path: string) =>
+        path === `/mock/read/${PROJECT_JSON_MARKER}`
+          ? JSON.stringify({
+              llm: { type: 'vertexai' },
+              commands: { code: { approvals: { rater: { profile: 'nope' } } } },
+            })
+          : ''
+      );
+
+      const { initConfig } = await import('#src/config.js');
+      try {
+        await initConfig({});
+      } catch {
+        // exit() is mocked to a no-op; the sentinel throw lands here.
+      }
+
+      const errorOutput = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
+      expect(errorOutput).toContain('commands.code.approvals.rater.profile');
+      expect(errorOutput).toContain('identity profile "nope" not found');
+      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('CFG-26: an approvals.rater.profile that DOES resolve loads without erroring', async () => {
+      const RATER_PROFILE_CONFIG =
+        '/mock/current/dir/.gsloth/.gsloth-settings/safety-rater/.gsloth.config.json';
+      fileUtilsMock.getGslothConfigReadPath.mockImplementation(
+        (filename: string) => `/mock/read/${filename}`
+      );
+      fsMock.existsSync.mockImplementation(
+        (path: string) =>
+          path === `/mock/read/${PROJECT_JSON_MARKER}` || path === RATER_PROFILE_CONFIG
+      );
+      fsMock.readFileSync.mockImplementation((path: string) =>
+        path === `/mock/read/${PROJECT_JSON_MARKER}`
+          ? JSON.stringify({
+              llm: { type: 'vertexai' },
+              approvals: { mode: 'auto', rater: { profile: 'safety-rater' } },
+            })
+          : ''
+      );
+      vi.doMock('#src/providers/vertexai.js', () => ({
+        processJsonConfig: vi.fn().mockResolvedValue({ type: 'vertexai' }),
+        postProcessJsonConfig: undefined,
+      }));
+
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({});
+
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+      expect(config.approvals).toEqual({
+        mode: 'auto',
+        rater: { profile: 'safety-rater' },
+      });
+    });
+
     it('GS2-62: an explicit identity profile that resolves to a config loads without erroring', async () => {
       // A project config IS discovered (existsSync true for the project path). The mocked resolver
       // ignores the profile name, so this stands in for "a config was found for the profile" — the

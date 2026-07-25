@@ -14,6 +14,8 @@
  * can append more entries via {@link createCommandRegistry} without this module changing.
  */
 
+import type { ApprovalMode, ResolvedApprovals } from '@gaunt-sloth/core/config.js';
+
 /** Read-only session context a command may surface (e.g. `/status`, `/model`). */
 export interface SlashCommandContext {
   mode: string;
@@ -271,13 +273,16 @@ export interface SlashCommandResult {
   /** When true, the component toggles tool-call panels between collapsed and expanded. */
   toggleTools?: boolean;
   /**
-   * EXT-12 — a requested change to the runner's session-scoped auto-approve flag (shell commands
-   * auto-approved this session), from the `/auto-approve` command: `'on'` / `'off'` set it
-   * explicitly, `'toggle'` flips it. The command itself stays pure — it cannot read the runner's
-   * flag — so the App owns the actual apply + the resulting-state notice (mirroring how `/verbose`
-   * / `/debug` defer their state-aware copy to the App).
+   * CFG-26 — a requested approvals action from the `/approvals` family (`/approvals`,
+   * `/auto-approve`, `/bypass-approve`). `{ show: true }` asks the surface to DISPLAY the current
+   * posture; `{ mode }` asks it to switch the session to that mode. The command itself stays pure
+   * — it cannot read the runner's posture — so the surface owns the apply + the resulting-state
+   * notice (mirroring how `/verbose` / `/debug` defer their state-aware copy to the App).
+   *
+   * There is deliberately NO `toggle` action: with three modes a flip has no honest meaning, and
+   * the spec defines `/auto-approve` as a straight shortcut for `/approvals auto`.
    */
-  autoApprove?: 'on' | 'off' | 'toggle';
+  approvals?: { show: true } | { mode: ApprovalMode };
   /**
    * TUI-C18 — a committed turn's thinking to REPRINT into the transcript (the `/reasoning` command).
    * Committed reasoning is frozen in Ink's `<Static>` and can never re-expand in place, so instead of
@@ -300,8 +305,8 @@ export interface SlashCommand {
   /**
    * EXT-12 — whether this command may be dispatched WHILE a turn is streaming ("during
    * inference"). Defaults to false: most commands are idle-only. The read-only / session-toggle
-   * commands (e.g. `/auto-approve`, `/verbose`, `/debug`, `/help`, `/model`) set this so the user
-   * can flip auto-approval or inspect state mid-turn without interrupting the run. Commands that
+   * commands (e.g. `/approvals`, `/verbose`, `/debug`, `/help`, `/model`) set this so the user
+   * can change the approval mode or inspect state mid-turn without interrupting the run. Commands that
    * mutate the transcript or thread (`/clear`) or end the session (`/exit`) stay idle-only.
    */
   availableDuringRun?: boolean;
@@ -416,41 +421,105 @@ export function debugToggleNotice(visible: boolean): SlashCommandNotice {
 }
 
 /**
- * The notice for the `/auto-approve` toggle (EXT-12), given the RESULTING (post-apply) state.
- * Shared so the command reports exactly the state the App applies. ON is rendered 'warn' (yellow)
- * because it disables the approval gate for the session; OFF is 'info'.
+ * CFG-26 — the notice for a landed approvals MODE, given the RESULTING (post-apply) posture.
+ * Shared so every surface reports exactly the state that was applied, and so the copy can never
+ * drift from what the gate actually does.
+ *
+ * `bypass` is the only warn-toned one: it is the single mode with NO gate at all, and the spec
+ * requires it to say so — "without asking AND without the AI rater". `auto` is deliberately NOT
+ * described as "runs without asking": it is rater-mediated, and risky commands still reach the
+ * human. Naming the rater profile (when one is set) is the spec's status-line requirement.
  */
-export function autoApproveNotice(on: boolean): SlashCommandNotice {
-  return on
-    ? {
-        title: 'Auto-approve ON — shell commands run without asking',
+export function approvalsModeNotice(approvals: ResolvedApprovals): SlashCommandNotice {
+  const raterName = approvals.rater.profile
+    ? `the ${approvals.rater.profile} rater`
+    : 'the AI rater';
+  switch (approvals.mode) {
+    case 'auto':
+      return {
+        title: 'Approvals: auto — the AI rater reviews each command',
         lines: [
-          'run_shell_command will now execute WITHOUT the per-command approval prompt.',
-          'Session-scoped only (not saved); run /auto-approve off to require approvals.',
-          'The hardline safety floor still blocks catastrophic commands.',
-        ],
-        tone: 'warn',
-      }
-    : {
-        title: 'Auto-approve OFF — approvals required',
-        lines: [
-          'run_shell_command will prompt for approval again before each command.',
-          'Run /auto-approve (or /auto-approve on) to re-enable session-wide auto-approval.',
+          `${raterName} rates every shell command: clearly-safe ones run, risky ones still ask you.`,
+          `Anything rated ${approvals.rater.escalate === 'never' ? 'below critical' : approvals.rater.escalate} or worse is escalated to you; critical is always refused.`,
+          'Session-scoped only (not saved); run /approvals ask to confirm every command yourself.',
         ],
       };
+    case 'bypass':
+      return {
+        title: 'Approvals: bypass — commands run without asking',
+        lines: [
+          'run_shell_command runs WITHOUT asking and WITHOUT the AI rater.',
+          'The hardline safety floor still blocks catastrophic commands.',
+          'Session-scoped only (not saved); run /approvals ask to require approvals again.',
+        ],
+        tone: 'warn',
+      };
+    case 'ask':
+    default:
+      return {
+        title: 'Approvals: ask — you confirm every command',
+        lines: [
+          'run_shell_command will prompt for approval before each command.',
+          'Run /auto-approve to let the AI rater handle the clearly-safe ones.',
+        ],
+      };
+  }
 }
 
 /**
- * EXT-12 — parse the `/auto-approve` argument: no arg (or `toggle`) flips; `on`/`off` (and the
- * friendly synonyms `enable`/`disable`, `true`/`false`) set explicitly. Returns `null` for an
- * unrecognized argument so the command can render a usage hint instead of guessing.
+ * CFG-26 — the `/approvals` DISPLAY: mode, rater (profile / strictness / escalate) and the
+ * allow-list counts. Pure: the surface reads the live posture from the runner and hands it in.
+ *
+ * `always: undefined` means the persisted store has not been loaded (or persistence is off), and
+ * is rendered `—` rather than a misleading `0` — a display must not create the store to count it.
  */
-export function parseAutoApproveArg(args: string[]): 'on' | 'off' | 'toggle' | null {
-  if (args.length === 0) return 'toggle';
+export function approvalsStatusNotice(
+  approvals: ResolvedApprovals,
+  allowlist: { session: number; always: number | undefined }
+): SlashCommandNotice {
+  const rater = approvals.rater.enabled
+    ? `${approvals.rater.profile ?? 'main model'} · strictness: ${approvals.rater.strictness} · escalate: ${approvals.rater.escalate}`
+    : 'off';
+  return {
+    title: `Approvals: ${approvals.mode}`,
+    lines: [
+      `AI rater: ${rater}`,
+      `Allow-list: ${approvals.allowlist ? 'on' : 'off'} · session: ${allowlist.session} · persisted: ${allowlist.always ?? '—'}`,
+      'Switch with /approvals auto | /approvals ask | /approvals bypass.',
+    ],
+    tone: approvals.mode === 'bypass' ? 'warn' : 'info',
+  };
+}
+
+/** The modes `/approvals <mode>` accepts. */
+const APPROVAL_MODES: readonly ApprovalMode[] = ['auto', 'ask', 'bypass'];
+
+/**
+ * CFG-26 — parse the `/approvals` argument: no arg SHOWS the current posture; `auto`/`ask`/
+ * `bypass` switch. Returns `null` for an unrecognized argument so the command renders a usage
+ * hint instead of guessing.
+ */
+export function parseApprovalsArg(args: string[]): { show: true } | { mode: ApprovalMode } | null {
+  if (args.length === 0) return { show: true };
   const arg = args[0].toLowerCase();
-  if (arg === 'toggle') return 'toggle';
-  if (arg === 'on' || arg === 'enable' || arg === 'true') return 'on';
-  if (arg === 'off' || arg === 'disable' || arg === 'false') return 'off';
+  const mode = APPROVAL_MODES.find((m) => m === arg);
+  return mode ? { mode } : null;
+}
+
+/**
+ * CFG-26 — parse the `/auto-approve` argument. The spec defines this command as a straight
+ * shortcut for `/approvals auto`, so: no arg / `on` → `auto`, `off` → `ask` (the resolved spec
+ * gap — "off" means confirm every command yourself, which is `ask`, not `bypass`).
+ *
+ * There is no `toggle`: the pre-CFG-26 command flipped a boolean, but with three modes a flip has
+ * no honest meaning, and a command that cannot say what it will do is exactly the class of lie
+ * this node removes.
+ */
+export function parseAutoApproveArg(args: string[]): ApprovalMode | null {
+  if (args.length === 0) return 'auto';
+  const arg = args[0].toLowerCase();
+  if (arg === 'on' || arg === 'enable' || arg === 'true') return 'auto';
+  if (arg === 'off' || arg === 'disable' || arg === 'false') return 'ask';
   return null;
 }
 
@@ -558,7 +627,7 @@ export function resolveDebugDumpRedact(resolvedConfig: unknown, args: string[]):
  * opted OUT (raw archive) it is the loud, impossible-to-miss UNSANITIZED warning. Colour follows
  * DL-8 / the tone rule in maintenance/ux-guidelines.md: the safe, redacted default is normal
  * feedback (no `tone` ⇒ info), while the raw opt-out is caution and so `tone: 'warn'` (yellow) —
- * mirroring how `autoApproveNotice` reserves yellow for the dangerous (gate-off) state. Redaction is
+ * mirroring how `approvalsModeNotice` reserves yellow for the dangerous (gate-off) state. Redaction is
  * best-effort pattern-based, so even the softened note still says review-before-sharing.
  */
 export function debugDumpNotice(archiveDir: string, redacted: boolean): SlashCommandNotice {
@@ -624,36 +693,59 @@ export function createCommandRegistry(): SlashCommand[] {
       run: (ctx) => ({ toggleTools: true, notice: toolsToggleNotice(!ctx.toolsExpanded) }),
     },
     {
-      name: 'auto-approve',
+      name: 'approvals',
       description:
-        'Auto-approve shell commands this session (/auto-approve on|off; no arg toggles)',
-      // Available mid-turn so the user can stop being prompted for the run's remaining tool calls
-      // (EXT-12). The App owns the runner flag, so it applies the change and commits the notice for
-      // the landed state (the command can't read the flag here).
+        'Show or switch the tool-approval mode (/approvals auto|ask|bypass; no arg shows it)',
+      // Available mid-turn so the user can change how the run's REMAINING tool calls are handled
+      // (EXT-12's reason, generalized to the mode). The surface owns the runner posture, so it
+      // applies the change and commits the notice for the landed state.
       availableDuringRun: true,
       run: (_ctx, args) => {
-        const action = parseAutoApproveArg(args);
+        const action = parseApprovalsArg(args);
         if (action === null) {
           return {
             notice: {
               title: `Unknown option: ${args[0]}`,
               lines: [
-                'Usage: /auto-approve [on|off] — with no argument it toggles.',
-                'When ON, shell commands run this session without the per-command prompt.',
+                'Usage: /approvals [auto|ask|bypass] — with no argument it shows the current mode.',
+                'auto = the AI rater reviews each command; ask = you confirm every one;',
+                'bypass = no gate at all (the hardline floor still blocks catastrophic commands).',
               ],
               tone: 'warn',
             },
           };
         }
-        return { autoApprove: action };
+        return { approvals: action };
       },
     },
     {
-      name: 'yolo',
-      description: 'Alias for /auto-approve (toggles session-wide shell auto-approval)',
+      name: 'auto-approve',
+      description:
+        'Shortcut for /approvals auto — the AI rater reviews each command (/auto-approve off = ask)',
       availableDuringRun: true,
-      // Back-compat alias: a bare toggle, routed through the same auto-approve apply path. EXT-12.
-      run: () => ({ autoApprove: 'toggle' }),
+      run: (_ctx, args) => {
+        const mode = parseAutoApproveArg(args);
+        if (mode === null) {
+          return {
+            notice: {
+              title: `Unknown option: ${args[0]}`,
+              lines: [
+                'Usage: /auto-approve [on|off] — no argument means on.',
+                'on = the AI rater reviews each command (/approvals auto);',
+                'off = you confirm every command yourself (/approvals ask).',
+              ],
+              tone: 'warn',
+            },
+          };
+        }
+        return { approvals: { mode } };
+      },
+    },
+    {
+      name: 'bypass-approve',
+      description: 'Shortcut for /approvals bypass — run without asking AND without the AI rater',
+      availableDuringRun: true,
+      run: () => ({ approvals: { mode: 'bypass' } }),
     },
     {
       name: 'exit',
@@ -786,7 +878,7 @@ export function formatHelp(registry: SlashCommand[]): SlashCommandNotice {
  *
  * EXT-12 — when `options.duringRun` is set (a turn is streaming), commands that are not marked
  * {@link SlashCommand.availableDuringRun} are refused with a friendly notice rather than run,
- * so mid-turn input can only reach the safe, non-mutating commands (`/auto-approve`, `/verbose`,
+ * so mid-turn input can only reach the safe, non-mutating commands (`/approvals`, `/verbose`,
  * `/debug`, …). `/help` is always allowed.
  */
 export function dispatchSlashCommand(
@@ -814,7 +906,7 @@ export function dispatchSlashCommand(
         title: `/${command.name} is not available while the agent is working`,
         lines: [
           'Wait for the current turn to finish, then run it again.',
-          'Commands like /auto-approve, /verbose and /debug do work mid-turn.',
+          'Commands like /approvals, /verbose and /debug do work mid-turn.',
         ],
         tone: 'warn',
       },

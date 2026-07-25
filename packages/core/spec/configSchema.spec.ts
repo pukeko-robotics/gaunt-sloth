@@ -3,12 +3,15 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  APPROVALS_AUTO_REQUIRES_RATER,
+  findApprovalsRaterProfiles,
   findDeprecatedConfigIssues,
   findUnknownTopLevelKeys,
   formatConfigValidationError,
   formatDeprecatedConfigIssues,
   generateConfigJsonSchema,
   rawGthConfigSchema,
+  unresolvedRaterProfileMessage,
   validateRawGthConfig,
 } from '#src/config/schema.js';
 import { DEFAULT_CONFIG } from '#src/config.js';
@@ -199,6 +202,8 @@ describe('config schema (GS2-1 B1)', () => {
   // the hand-built resolver object).
   describe('builtInTools registry round-trip (CFG-18)', () => {
     it('parses a full run_shell_command config and preserves every field', () => {
+      // CFG-26 — the run_shell_command entry now carries EXECUTION knobs only; the approval knobs
+      // moved to the top-level `approvals` block (see the CFG-26 describe below).
       const builtInTools = {
         gth_checklist: true,
         run_tests: { command: 'npm test' },
@@ -206,10 +211,6 @@ describe('config schema (GS2-1 B1)', () => {
           enabled: true,
           timeout: 300000,
           maxOutputBytes: 200000,
-          allowlist: false,
-          persistAllowlist: false,
-          judge: { enabled: true, autoApproveLow: false, blockHigh: true },
-          yolo: true,
         },
       };
       const result = rawGthConfigSchema.safeParse({ llm: { type: 'openai' }, builtInTools });
@@ -292,6 +293,276 @@ describe('config schema (GS2-1 B1)', () => {
       expect(result.errorMessage).toContain('builtInTools');
       // The removed shape is rejected, not doubled as an unknown-key warning.
       expect(result.warnings).toEqual([]);
+    });
+
+    /**
+     * CFG-26 — the four retired approval knobs moved off the SHARED per-tool object onto the
+     * top-level `approvals` block. They must be hard errors that NAME the new key at BOTH
+     * locations they could be written (root and per-command), because `builtInToolConfigSchema`
+     * is a strict `z.object`: once the field is gone zod silently STRIPS it, and a config would
+     * run with its approval posture quietly ignored.
+     */
+    describe('retired run_shell_command approval knobs (CFG-26)', () => {
+      const RETIRED = {
+        yolo: 'approvals.mode',
+        judge: 'approvals.rater',
+        allowlist: 'approvals.allowlist',
+        persistAllowlist: 'approvals.persistAllowlist',
+      } as const;
+
+      for (const [key, replacement] of Object.entries(RETIRED)) {
+        it(`flags ${key} at the ROOT builtInTools registry, naming ${replacement}`, () => {
+          const issues = findDeprecatedConfigIssues({
+            llm: { type: 'openai' },
+            builtInTools: { run_shell_command: { enabled: true, [key]: true } },
+          });
+          expect(issues).toHaveLength(1);
+          expect(issues[0].path).toBe(`builtInTools.run_shell_command.${key}`);
+          expect(issues[0].message).toContain('no longer supported in 2.0');
+          expect(issues[0].message).toContain(replacement);
+          expect(issues[0].message).toContain(MIGRATION_DOC_URL);
+        });
+
+        it(`flags ${key} at commands.<cmd>.builtInTools, naming ${replacement}`, () => {
+          const issues = findDeprecatedConfigIssues({
+            llm: { type: 'openai' },
+            commands: { code: { builtInTools: { run_shell_command: { [key]: true } } } },
+          });
+          expect(issues).toHaveLength(1);
+          expect(issues[0].path).toBe(`commands.code.builtInTools.run_shell_command.${key}`);
+          expect(issues[0].message).toContain(replacement);
+        });
+
+        it(`validateRawGthConfig HARD-rejects ${key} (never a silent strip)`, () => {
+          const result = validateRawGthConfig({
+            llm: { type: 'openai' },
+            builtInTools: { run_shell_command: { [key]: true } },
+          });
+          expect(result.ok).toBe(false);
+          expect(result.errorMessage).toContain(`builtInTools.run_shell_command.${key}`);
+          expect(result.errorMessage).toContain(replacement);
+          expect(result.warnings).toEqual([]);
+        });
+      }
+
+      it('the retired judge message also points at the 4-tier escalate replacement', () => {
+        const issues = findDeprecatedConfigIssues({
+          builtInTools: {
+            run_shell_command: { judge: { autoApproveLow: false, blockHigh: true } },
+          },
+        });
+        expect(issues[0].message).toContain('approvals.rater.escalate');
+        expect(issues[0].message).toContain('critical now always rejects');
+      });
+
+      it('reports EVERY retired knob present, not just the first', () => {
+        const issues = findDeprecatedConfigIssues({
+          builtInTools: {
+            run_shell_command: {
+              yolo: true,
+              judge: true,
+              allowlist: false,
+              persistAllowlist: false,
+            },
+          },
+        });
+        expect(issues.map((i) => i.path).sort()).toEqual([
+          'builtInTools.run_shell_command.allowlist',
+          'builtInTools.run_shell_command.judge',
+          'builtInTools.run_shell_command.persistAllowlist',
+          'builtInTools.run_shell_command.yolo',
+        ]);
+      });
+
+      it('does not fire on the legacy string[] builtInTools form, or on another tool', () => {
+        expect(
+          findDeprecatedConfigIssues({
+            builtInTools: ['run_shell_command', 'gth_grep'],
+          })
+        ).toEqual([]);
+        // `gth_grep: { yolo: true }` used to VALIDATE — the knob was on the shared object. It is
+        // now simply an unknown key on that tool's entry (stripped), not a run_shell_command knob.
+        expect(findDeprecatedConfigIssues({ builtInTools: { gth_grep: { yolo: true } } })).toEqual(
+          []
+        );
+      });
+    });
+
+    /**
+     * CFG-26 — the `approvals` block itself: what parses, what the enum refuses, and the
+     * mode/rater coupling refinement.
+     */
+    describe('approvals block (CFG-26)', () => {
+      const parse = (approvals: unknown) =>
+        rawGthConfigSchema.safeParse({ llm: { type: 'openai' }, approvals });
+
+      it('parses a full valid block and preserves every field', () => {
+        const approvals = {
+          mode: 'auto',
+          rater: { profile: 'safety-rater', strictness: 'standard', escalate: 'danger' },
+          allowlist: true,
+          persistAllowlist: true,
+        };
+        const result = parse(approvals);
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect((result.data as Record<string, unknown>).approvals).toEqual(approvals);
+        }
+      });
+
+      it('accepts the boolean rater arms (`rater: true` / `rater: false`)', () => {
+        expect(parse({ mode: 'ask', rater: true }).success).toBe(true);
+        expect(parse({ mode: 'ask', rater: false }).success).toBe(true);
+      });
+
+      it('REJECTS escalate: "critical" — critical always rejects, it is not a threshold', () => {
+        const result = parse({ mode: 'auto', rater: { escalate: 'critical' } });
+        expect(result.success).toBe(false);
+      });
+
+      it('rejects an unknown mode', () => {
+        expect(parse({ mode: 'yolo' }).success).toBe(false);
+      });
+
+      it('parses per-command approvals on every command', () => {
+        const result = rawGthConfigSchema.safeParse({
+          llm: { type: 'openai' },
+          commands: {
+            pr: { approvals: { mode: 'ask' } },
+            review: { approvals: { mode: 'ask' } },
+            ask: { approvals: { mode: 'ask' } },
+            chat: { approvals: { mode: 'auto' } },
+            code: { approvals: { mode: 'auto' } },
+            exec: { approvals: { mode: 'bypass' } },
+            api: { approvals: { mode: 'ask' } },
+          },
+        });
+        expect(result.success).toBe(true);
+      });
+
+      describe('mode/rater coupling refinement', () => {
+        it('rejects mode:"auto" with the rater explicitly disabled, with the spec wording', () => {
+          const result = parse({ mode: 'auto', rater: false });
+          expect(result.success).toBe(false);
+          if (!result.success) {
+            const rendered = formatConfigValidationError(result.error);
+            expect(rendered).toContain(APPROVALS_AUTO_REQUIRES_RATER);
+            expect(rendered).toContain('approvals.rater');
+          }
+        });
+
+        it('applies per-command too', () => {
+          const result = rawGthConfigSchema.safeParse({
+            llm: { type: 'openai' },
+            commands: { code: { approvals: { mode: 'auto', rater: false } } },
+          });
+          expect(result.success).toBe(false);
+          if (!result.success) {
+            expect(formatConfigValidationError(result.error)).toContain(
+              APPROVALS_AUTO_REQUIRES_RATER
+            );
+          }
+        });
+
+        it('allows the same rater:false under ask / bypass', () => {
+          expect(parse({ mode: 'ask', rater: false }).success).toBe(true);
+          expect(parse({ mode: 'bypass', rater: false }).success).toBe(true);
+        });
+
+        it('allows mode:"auto" with no rater key (the rater defaults ON)', () => {
+          expect(parse({ mode: 'auto' }).success).toBe(true);
+        });
+
+        it('does NOT leak the refinement into the generated JSON Schema (the /v2/ channel stays complete)', () => {
+          const generated = generateConfigJsonSchema();
+          const approvals = (generated.properties as Record<string, Record<string, unknown>>)
+            .approvals;
+          // A refinement has no JSON Schema representation; the published channel must therefore
+          // describe the full shape (both rater arms) with no `not`/`allOf` constraint bolted on.
+          expect(Object.keys(approvals)).toEqual(['type', 'properties']);
+          expect(JSON.stringify(approvals)).not.toContain('auto-approve requires');
+        });
+      });
+    });
+
+    /**
+     * CFG-26 — `approvals.rater.profile` references, collected purely so the LOADER can enforce
+     * GS2-62 strict resolution against the filesystem.
+     */
+    /**
+     * CFG-26 Task 2 — `gth config validate` must agree with the loader. Before this, the read-side
+     * validator had no profile check at all, so it green-lit a config the very next real run
+     * hard-exits on: a validator that passes what the runtime refuses is worse than none. The
+     * resolver is INJECTED so `schema.ts` stays pure.
+     */
+    describe('validateRawGthConfig + rater.profile resolution (CFG-26)', () => {
+      const config = {
+        llm: { type: 'openai' },
+        approvals: { mode: 'auto', rater: { profile: 'safety-rater' } },
+      };
+
+      it('rejects an unresolvable rater.profile, naming the path and the profile', () => {
+        const result = validateRawGthConfig(config, { resolveProfile: () => false });
+        expect(result.ok).toBe(false);
+        expect(result.errorMessage).toContain('approvals.rater.profile');
+        expect(result.errorMessage).toContain('identity profile "safety-rater" not found');
+      });
+
+      it('accepts it when the profile resolves', () => {
+        expect(validateRawGthConfig(config, { resolveProfile: () => true }).ok).toBe(true);
+      });
+
+      it('checks per-command profiles too', () => {
+        const result = validateRawGthConfig(
+          {
+            llm: { type: 'openai' },
+            commands: { code: { approvals: { rater: { profile: 'nope' } } } },
+          },
+          { resolveProfile: () => false }
+        );
+        expect(result.ok).toBe(false);
+        expect(result.errorMessage).toContain('commands.code.approvals.rater.profile');
+      });
+
+      it('skips the check entirely with no resolver, so pure/in-memory callers are unaffected', () => {
+        // The profile scaffolder validates a config it is about to WRITE; it has no business
+        // touching the filesystem to do it.
+        expect(validateRawGthConfig(config).ok).toBe(true);
+      });
+
+      it('shares ONE message with the loader, so the two surfaces cannot drift', () => {
+        const result = validateRawGthConfig(config, { resolveProfile: () => false });
+        expect(result.errorMessage).toContain(
+          unresolvedRaterProfileMessage({
+            path: 'approvals.rater.profile',
+            profile: 'safety-rater',
+          })
+        );
+      });
+    });
+
+    describe('findApprovalsRaterProfiles (CFG-26)', () => {
+      it('collects root and per-command profile references with their config paths', () => {
+        expect(
+          findApprovalsRaterProfiles({
+            approvals: { rater: { profile: 'root-rater' } },
+            commands: {
+              code: { approvals: { rater: { profile: 'code-rater' } } },
+              exec: { approvals: { mode: 'ask' } },
+            },
+          })
+        ).toEqual([
+          { path: 'approvals.rater.profile', profile: 'root-rater' },
+          { path: 'commands.code.approvals.rater.profile', profile: 'code-rater' },
+        ]);
+      });
+
+      it('ignores an absent / blank / non-object rater', () => {
+        expect(findApprovalsRaterProfiles({ approvals: { mode: 'auto' } })).toEqual([]);
+        expect(findApprovalsRaterProfiles({ approvals: { rater: true } })).toEqual([]);
+        expect(findApprovalsRaterProfiles({ approvals: { rater: { profile: '  ' } } })).toEqual([]);
+        expect(findApprovalsRaterProfiles({})).toEqual([]);
+      });
     });
 
     it('does NOT flag a genuinely-unknown key or the canonical shapes', () => {

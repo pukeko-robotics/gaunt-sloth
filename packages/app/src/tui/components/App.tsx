@@ -10,6 +10,7 @@ import {
 } from '#src/tui/viewModel.js';
 import type { PendingApproval, TranscriptItem, TuiAppProps } from '#src/tui/types.js';
 import type { ToolApprovalScope } from '@gaunt-sloth/core/core/types.js';
+import type { ApprovalMode } from '@gaunt-sloth/core/config.js';
 import { Transcript } from '#src/tui/components/Transcript.js';
 import { ApprovalPrompt } from '#src/tui/components/ApprovalPrompt.js';
 import { LiveTurn } from '#src/tui/components/LiveTurn.js';
@@ -25,7 +26,8 @@ import {
   type DebugTab,
 } from '#src/tui/components/DebugPanel.js';
 import {
-  autoApproveNotice,
+  approvalsModeNotice,
+  approvalsStatusNotice,
   createCommandRegistry,
   dispatchSlashCommand,
   parseSlashCommand,
@@ -98,13 +100,13 @@ export function App(props: TuiAppProps): React.ReactElement {
   // summary lines) so the transcript stays readable; Ctrl+T flips the whole turn's detail,
   // mirroring the docked debug panel's single-key detail toggle.
   const [toolsExpanded, setToolsExpanded] = useState(false);
-  // EXT-12 — session auto-approve (shell commands run without the per-command prompt). Seeded from
-  // props (config may pre-enable it via run_shell_command.yolo); the runner owns the authoritative
-  // flag, this mirror drives the persistent status-bar indicator and the state-aware notice.
-  const [autoApprove, setAutoApprove] = useState(!!props.initialAutoApprove);
-  // Mirror for the synchronous approval useInput handler, so `y` (auto-approve all) can read the
-  // current flag without a stale closure.
-  const autoApproveRef = useRef(!!props.initialAutoApprove);
+  // CFG-26 — the session approvals posture. Seeded from props (the resolved config posture); the
+  // runner owns the authoritative state, this mirror drives the status-bar mode badge and the
+  // state-aware notices.
+  const [approvals, setApprovals] = useState(props.initialApprovals);
+  // Mirror for the synchronous approval useInput handler, so `y` can read the current posture
+  // without a stale closure.
+  const approvalsRef = useRef(props.initialApprovals);
   // Whether to show the post-`/clear` "history cleared" banner. Lives in the live (non-Static)
   // frame so it is reliably visible — pushing a system line right after setTranscript([]) is
   // swallowed because clearing <Static>'s items resets its internal index (TUI-C12). Hidden
@@ -292,31 +294,51 @@ export function App(props: TuiAppProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // EXT-12 — apply an auto-approve change (from `/auto-approve on|off`, the `/yolo` alias, or the
-  // approval prompt's `y` key). The runner owns the flag, so ask it to apply the action, mirror the
-  // landed state into local state + ref (drives the status indicator), and commit the state-aware
-  // notice. Falls back to a clear system line when the agent has no runner (fixture). Returns the
-  // landed state so the approval handler can also approve the pending command in the same keystroke.
-  const applyAutoApprove = useCallback(
-    (action: 'on' | 'off' | 'toggle'): boolean => {
-      if (!agent.setAutoApprove) {
+  // CFG-26 — apply an approvals MODE change (from `/approvals <mode>`, `/auto-approve`,
+  // `/bypass-approve`, or the approval prompt's `y` key). The runner owns the posture, so ask it
+  // to apply the mode, mirror the LANDED posture into local state + ref (drives the status badge),
+  // and commit the state-aware notice. Falls back to a clear system line when the agent has no
+  // runner (the fixture agent omits the method).
+  const applyApprovalMode = useCallback(
+    (mode: ApprovalMode): void => {
+      if (!agent.setApprovalMode) {
         push({
           kind: 'system',
           level: 'warning',
-          text: 'Auto-approve is unavailable in this session.',
+          text: 'Approvals are unavailable in this session.',
         });
-        return autoApproveRef.current;
+        return;
       }
-      const next = agent.setAutoApprove(action);
-      autoApproveRef.current = next;
-      setAutoApprove(next);
-      const { title, lines, tone } = autoApproveNotice(next);
+      // The runner may land on more than the requested mode (switching to `auto` turns the rater
+      // on), so the notice is built from what it RETURNS, never from what we asked for.
+      const landed = agent.setApprovalMode(mode);
+      approvalsRef.current = landed;
+      setApprovals(landed);
+      const { title, lines, tone } = approvalsModeNotice(landed);
       push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
-      return next;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [agent]
   );
+
+  // CFG-26 — `/approvals` with no argument: DISPLAY the posture. Read-only by construction; it
+  // never touches the runner's state.
+  const showApprovals = useCallback((): void => {
+    if (!agent.getApprovals) {
+      push({
+        kind: 'system',
+        level: 'warning',
+        text: 'Approvals are unavailable in this session.',
+      });
+      return;
+    }
+    const { approvals: current, allowlist } = agent.getApprovals();
+    approvalsRef.current = current;
+    setApprovals(current);
+    const { title, lines, tone } = approvalsStatusNotice(current, allowlist);
+    push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent]);
 
   // Resolve the currently-shown approval (the queue head) and commit a brief notice so the
   // decision reads in the transcript (TUI-C14 notice conventions). Dequeues the head so the next
@@ -367,7 +389,7 @@ export function App(props: TuiAppProps): React.ReactElement {
         push({
           kind: 'system',
           level: 'warning',
-          text: 'The agent is working — only slash commands (e.g. /auto-approve) are available right now.',
+          text: 'The agent is working — only slash commands (e.g. /approvals) are available right now.',
         });
         return;
       }
@@ -445,11 +467,12 @@ export function App(props: TuiAppProps): React.ReactElement {
           // toggleTools owns the notice so the copy matches the state actually applied.
           toggleTools();
         }
-        if (result.autoApprove) {
-          // The runner owns the flag; apply the requested action and commit the notice for the
-          // landed state via the shared helper (single-sourced with the approval prompt's y key).
-          // EXT-12.
-          applyAutoApprove(result.autoApprove);
+        if (result.approvals) {
+          // The runner owns the posture; show it, or apply the requested mode and commit the
+          // notice for the LANDED state via the shared helper (single-sourced with the approval
+          // prompt's y key). CFG-26.
+          if ('show' in result.approvals) showApprovals();
+          else applyApprovalMode(result.approvals.mode);
         }
         if (result.toggleDebug) {
           setDebugVisible((v) => {
@@ -474,9 +497,10 @@ export function App(props: TuiAppProps): React.ReactElement {
         if (result.reprintReasoning) {
           push({ kind: 'reasoning', ...result.reprintReasoning });
         }
-        // Commit a structured notice (TUI-C14). /verbose and /auto-approve own their notices above
-        // (the state-aware copy is committed there), so skip result.notice in those cases.
-        if (result.notice && !result.toggleTools && !result.autoApprove) {
+        // Commit a structured notice (TUI-C14). /verbose and the /approvals family own their
+        // notices above (the state-aware copy is committed there), so skip result.notice in those
+        // cases — otherwise every approvals command double-prints.
+        if (result.notice && !result.toggleTools && !result.approvals) {
           const { title, lines, tone } = result.notice;
           push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
         }
@@ -490,7 +514,7 @@ export function App(props: TuiAppProps): React.ReactElement {
       void runTurn(value);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [runTurn, quit, registry, mode, modelDisplayName, toggleTools, applyAutoApprove]
+    [runTurn, quit, registry, mode, modelDisplayName, toggleTools, applyApprovalMode, showApprovals]
   );
 
   // Keyboard handling, in priority order:
@@ -511,10 +535,19 @@ export function App(props: TuiAppProps): React.ReactElement {
       else if (ch === 's') resolveApproval('session');
       else if (ch === 'a') resolveApproval('always');
       else if (ch === 'y') {
-        // Enable auto-approval for the rest of the session, then approve this pending command
-        // once so the run continues; every later gated command auto-approves silently.
-        if (!autoApproveRef.current) applyAutoApprove('on');
-        resolveApproval('once');
+        // CFG-26 — `y` switches the session to rater-mediated `auto` (NOT `bypass`: a user
+        // reaching for "approve automatically" must not silently get "approve everything,
+        // unchecked"), then approves this pending command once so the run continues. Later gated
+        // commands are then rated, and risky ones still come back to this prompt.
+        //
+        // It is INERT when the session cannot rate at all — `rater.enabled` false, which is the
+        // same signal `decideToolApproval` uses, so the key and the gate can never disagree. The
+        // prompt hides the affordance in that case; swallowing the key here keeps a stray `y`
+        // from silently rejecting.
+        if (approvalsRef.current?.rater.enabled) {
+          if (approvalsRef.current.mode !== 'auto') applyApprovalMode('auto');
+          resolveApproval('once');
+        }
       } else resolveApproval('reject');
       return;
     }
@@ -738,7 +771,10 @@ export function App(props: TuiAppProps): React.ReactElement {
           read as a distinct control zone rather than blending into the scrollback. */}
       {/* Tool-approval affordance (EXT-9 Phase B2): when an approval is pending it sits just above
           the input dock, owns the keyboard, and suspends the normal prompt below. */}
-      {pendingApproval ? <ApprovalPrompt pending={pendingApproval.pending} /> : null}
+      {pendingApproval ? <ApprovalPrompt
+          pending={pendingApproval.pending}
+          raterEnabled={approvals?.rater.enabled}
+        /> : null}
       <Rule />
       {/* TUI-C19 — persistent startup-advisory line. Lives here in the live (non-<Static>) chrome,
           right by the status bar, so a config-validation warning stays pinned and survives
@@ -755,10 +791,18 @@ export function App(props: TuiAppProps): React.ReactElement {
         modelDisplayName={modelDisplayName}
         turnCount={turnCount}
         debugHint={debugVisible && !debugFocused}
-        autoApprove={autoApprove}
+        approvals={
+          approvals
+            ? {
+                mode: approvals.mode,
+                raterEnabled: approvals.rater.enabled,
+                raterProfile: approvals.rater.profile,
+              }
+            : undefined
+        }
       />
       {/* The prompt stays mounted while a turn streams (EXT-12), so the user can run mid-turn
-          slash commands like /auto-approve; handleSubmit + dispatch gate what's allowed then. It
+          slash commands like /approvals; handleSubmit + dispatch gate what's allowed then. It
           is suspended only when the debug panel is focused or a tool approval owns the keyboard. */}
       {!debugFocused && !pendingApproval ? (
         <PromptInput

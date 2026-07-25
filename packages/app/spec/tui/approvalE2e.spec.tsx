@@ -27,7 +27,7 @@ import { App } from '#src/tui/components/App.js';
  * production approval bridge (`setToolApprovalCallback` ⇄ `subscribeApproval`), and the real
  * `<App>` with its approval queue + `useInput` resolution. We assert: interrupt → `ApprovalPrompt`
  * renders → approve → `streamWithEventsResume` → command output renders; reject → graceful continue
- * (no execution); allow-list auto-approve → no prompt; judge escalation → verdict line in the TUI.
+ * (no execution); allow-list auto-approve → no prompt; AI-rater escalation → verdict line in the TUI.
  *
  * On the OLD code (`processMessagesWithEvents` = bare `yield*`) these all fail: the runner never
  * detects the interrupt, so no approval is ever bridged to the App and no resume stream runs.
@@ -135,9 +135,12 @@ function wireRunner(agent: GthAgentInterface, config: Partial<GthConfig>, comman
     async *runTurn(userInput, signal) {
       yield* runner.processMessagesWithEvents([new HumanMessage(userInput) as Message], signal);
     },
-    setAutoApprove(action) {
-      if (action === 'toggle') return runner.toggleSessionYolo();
-      return runner.setSessionYolo(action === 'on');
+    setApprovalMode(mode) {
+      runner.setSessionApprovalMode(mode);
+      return runner.getSessionApprovals();
+    },
+    getApprovals() {
+      return { approvals: runner.getSessionApprovals(), allowlist: runner.getAllowlistCounts() };
     },
   };
   return { bridge, runner, tuiAgent, command, config };
@@ -160,10 +163,11 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       approvedAnswer: 'The directory has 4 entries.',
       rejectedAnswer: 'Okay, I will not run it.',
     });
-    // Shell gate enabled, allow-list + judge OFF → the command escalates straight to the human.
+    // Shell gate enabled, allow-list + rater OFF → the command escalates straight to the human.
     const { runner, bridge, tuiAgent, command } = wireRunner(agent, {
       ...FULL_CONFIG,
-      commands: { code: { builtInTools: { run_shell_command: { enabled: true, allowlist: false } } } },
+      approvals: { mode: 'ask', allowlist: false },
+      commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
     } as Partial<GthConfig>);
     await runner.init(command as never, { ...FULL_CONFIG } as GthConfig);
     runner.setToolApprovalCallback((pending) => bridge.request(pending));
@@ -260,7 +264,10 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     const { runner, bridge, tuiAgent } = wireRunner(agent, {}, 'code');
     await runner.init('code' as never, {
       ...FULL_CONFIG,
-      commands: { code: { builtInTools: { run_shell_command: { enabled: true, persistAllowlist: false } } } },
+      // CFG-26 — persistAllowlist moved to `approvals`; on the retired per-tool entry it is a
+      // silent no-op, which would let this test write the real allow-list file.
+      approvals: { mode: 'ask', persistAllowlist: false },
+      commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
     } as GthConfig);
 
     let promptCount = 0;
@@ -285,9 +292,13 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     unmount();
   });
 
-  it('pressing y at the approval turns on session auto-approve: this command runs and later ones skip the prompt (EXT-12)', async () => {
-    // Two suspends in one turn: the first is answered with `y` (auto-approve all), the second must
-    // then auto-approve with NO prompt because the session flag is now ON.
+  /**
+   * CFG-26 — `y` no longer means "never ask again". It switches the session to rater-mediated
+   * `auto` and approves the pending call; LATER commands are then RATED, not blindly approved.
+   * Here the rater returns `safe`, so the second command runs with no prompt — the fatigue-
+   * reducing outcome the user asked for, with a check in the loop rather than none.
+   */
+  it('pressing y switches to rater-mediated auto: this command runs and the rater clears the next', async () => {
     let phase = 0;
     const agent: GthAgentInterface = {
       async init() {},
@@ -311,10 +322,19 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       },
       async cleanup() {},
     };
+    // A rater that rates everything `safe`, so the post-switch behaviour is deterministic.
+    const rate = vi.fn().mockResolvedValue({ tier: 'safe', reason: 'routine dev command' });
+    const raterLlm = {
+      withStructuredOutput: vi.fn().mockReturnValue({ invoke: rate }),
+    } as unknown as GthConfig['llm'];
     const { runner, bridge, tuiAgent } = wireRunner(agent, {}, 'code');
     await runner.init('code' as never, {
       ...FULL_CONFIG,
-      commands: { code: { builtInTools: { run_shell_command: { enabled: true, allowlist: false } } } },
+      llm: raterLlm,
+      // Start in `ask` WITH a rater configured, so the `[y]` affordance is offered (it is withheld
+      // when the session cannot rate at all) and the switch is observable.
+      approvals: { mode: 'ask', rater: true, allowlist: false },
+      commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
     } as GthConfig);
 
     let promptCount = 0;
@@ -324,52 +344,60 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     runner.setToolApprovalCallback((pending) => bridge.request(pending));
 
     const { stdin, lastFrame, frames, unmount } = render(
-      <App {...baseProps} agent={tuiAgent} subscribeApproval={bridge.subscribe} initialMessage="go" />
+      <App
+        {...baseProps}
+        agent={tuiAgent}
+        subscribeApproval={bridge.subscribe}
+        initialApprovals={runner.getSessionApprovals()}
+        initialMessage="go"
+      />
     );
 
-    // First command prompts; the `y` chooser is advertised and answering it enables auto-approve.
+    // First command prompts, and the `y` chooser advertises what it actually does.
     await vi.waitFor(() => {
       const f = lastFrame() ?? '';
       expect(f).toContain('npm run build');
-      expect(f).toContain('auto-approve all');
+      expect(f).toContain('[y] switch to auto-approve (AI rater)');
     });
     stdin.write('y');
 
-    // The ON notice + persistent status badge appear, and the second command NEVER prompts.
+    // The landed mode is AUTO — the regression this task fixes: `y` must not silently select the
+    // unchecked bypass.
     await vi.waitFor(() => {
-      expect(frames.join('\n')).toContain('Auto-approve ON');
+      expect(frames.join('\n')).toContain('Approvals: auto');
       expect(lastFrame()).toContain('turns: 1');
     });
-    expect(promptCount).toBe(1); // only the first command reached the human prompt
-    expect(runner.isSessionYolo()).toBe(true);
+    expect(runner.getSessionApprovals().mode).toBe('auto');
+    expect(lastFrame()).toContain('approvals: auto');
+
+    // The second command never reached the human — but it was RATED rather than waved through.
+    expect(promptCount).toBe(1);
+    expect(rate).toHaveBeenCalled();
 
     unmount();
   });
 
-  it('judge escalation surfaces the verdict line in the ApprovalPrompt', async () => {
+  it('AI-rater escalation surfaces the verdict line in the ApprovalPrompt', async () => {
     const agent = fakeInterruptingAgent({
       command: 'cat /etc/passwd',
       toolResult: 'root:x:0:0',
       approvedAnswer: 'read it',
       rejectedAnswer: 'skipped',
     });
-    // Judge ON returning a medium/out-of-scope verdict → escalate to the human with the verdict.
+    // Rater ON returning a `danger` verdict → escalate to the human with the verdict attached.
     const invoke = vi.fn().mockResolvedValue({
-      risk: 'medium',
-      destructive: false,
-      outOfScope: true,
+      tier: 'danger',
       reason: 'accesses a system-wide sensitive file outside the project directory',
     });
-    const judgeLlm = {
+    const raterLlm = {
       withStructuredOutput: vi.fn().mockReturnValue({ invoke }),
     } as unknown as GthConfig['llm'];
     const { runner, bridge, tuiAgent } = wireRunner(agent, {}, 'code');
     await runner.init('code' as never, {
       ...FULL_CONFIG,
-      llm: judgeLlm,
-      commands: {
-        code: { builtInTools: { run_shell_command: { enabled: true, allowlist: false, judge: true } } },
-      },
+      llm: raterLlm,
+      approvals: { mode: 'auto', allowlist: false },
+      commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
     } as GthConfig);
     runner.setToolApprovalCallback((pending) => bridge.request(pending));
 
@@ -385,10 +413,11 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     await vi.waitFor(() => {
       const f = lastFrame() ?? '';
       expect(f).toContain('cat /etc/passwd'); // escalated command shown
-      // The judge's verdict reason is surfaced in the prompt (the safety-judge line).
+      // The rater's verdict reason is surfaced in the prompt (the AI-rater line).
       expect(f).toContain('system-wide sensitive file');
+      expect(f).toContain('AI rater (danger)');
     });
-    expect(invoke).toHaveBeenCalled(); // the judge actually ran
+    expect(invoke).toHaveBeenCalled(); // the rater actually ran
 
     unmount();
   });

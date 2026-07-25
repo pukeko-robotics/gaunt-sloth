@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type { SessionConfig } from '#src/modules/interactiveSessionModule.js';
 
 // GS2-8 — the readline (`--no-tui`) surface routes EVERY `/command` through the SAME registry as
-// the Ink TUI (single source of truth) instead of its old hardcoded `exit`/`/yolo` handling.
+// the Ink TUI (single source of truth) instead of its old hardcoded `exit`/`/yolo` handling
+// (`/yolo` itself was deleted outright in CFG-26 — see the unknown-command test below).
 // These tests drive the real dispatch path (the slashCommands module is deliberately NOT mocked)
 // with a scripted readline, asserting: shared commands answer, `/quit`/`/exit` end the session,
 // TUI-only commands degrade with a clear message, removed commands (`/mode`, `/tools`) read
@@ -48,8 +49,9 @@ const runnerInstanceMock = {
   init: vi.fn(),
   processMessages: vi.fn(),
   setToolApprovalCallback: vi.fn(),
-  setSessionYolo: vi.fn(),
-  toggleSessionYolo: vi.fn(),
+  setSessionApprovalMode: vi.fn(),
+  getSessionApprovals: vi.fn(),
+  getAllowlistCounts: vi.fn(),
   getAgent: vi.fn(),
   cleanup: vi.fn(),
 };
@@ -111,8 +113,20 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
     runnerInstanceMock.init.mockResolvedValue(undefined);
     runnerInstanceMock.processMessages.mockResolvedValue('answer');
     runnerInstanceMock.cleanup.mockResolvedValue(undefined);
-    runnerInstanceMock.setSessionYolo.mockImplementation((v: boolean) => v);
-    runnerInstanceMock.toggleSessionYolo.mockReturnValue(true);
+    // CFG-26 — the runner owns the posture; the module reads back what it LANDED on, so the mock
+    // mirrors that contract (set → the module then re-reads getSessionApprovals).
+    let mode: 'auto' | 'ask' | 'bypass' = 'ask';
+    runnerInstanceMock.setSessionApprovalMode.mockImplementation((m: typeof mode) => {
+      mode = m;
+      return m;
+    });
+    runnerInstanceMock.getSessionApprovals.mockImplementation(() => ({
+      mode,
+      rater: { enabled: mode === 'auto', strictness: 'standard', escalate: 'danger' },
+      allowlist: true,
+      persistAllowlist: true,
+    }));
+    runnerInstanceMock.getAllowlistCounts.mockReturnValue({ session: 0, always: undefined });
   });
 
   it('/status answers with the session status (mode folded in from the old /mode) — never sent to the model', async () => {
@@ -186,16 +200,51 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
     expect(runnerInstanceMock.processMessages).not.toHaveBeenCalled();
   });
 
-  it('/auto-approve on|off applies the runner flag with the state-aware warning (EXT-12 kept)', async () => {
-    await runSession('/auto-approve on', 'exit');
-    expect(runnerInstanceMock.setSessionYolo).toHaveBeenCalledWith(true);
-    expect(allOutput()).toContain('Auto-approve ON');
+  // CFG-26 — `/auto-approve` is now a shortcut for `/approvals auto` (rater-mediated), NOT the
+  // old unconditional bypass. `off` means `ask`, the resolved spec gap.
+  it('/auto-approve switches the session to rater-mediated auto', async () => {
+    await runSession('/auto-approve', 'exit');
+    expect(runnerInstanceMock.setSessionApprovalMode).toHaveBeenCalledWith('auto');
+    const out = allOutput();
+    expect(out).toContain('Approvals: auto');
+    expect(out).toContain('AI rater');
+    // It must NOT claim commands run unchecked — that was the old bypass copy.
+    expect(out).not.toContain('without asking');
   });
 
-  it('/yolo still toggles session auto-approval through the shared registry', async () => {
+  it('/auto-approve off switches to ask (not bypass)', async () => {
+    await runSession('/auto-approve off', 'exit');
+    expect(runnerInstanceMock.setSessionApprovalMode).toHaveBeenCalledWith('ask');
+    expect(allOutput()).toContain('Approvals: ask');
+  });
+
+  it('/bypass-approve switches to bypass and says the AI rater is skipped too', async () => {
+    await runSession('/bypass-approve', 'exit');
+    expect(runnerInstanceMock.setSessionApprovalMode).toHaveBeenCalledWith('bypass');
+    const out = allOutput();
+    expect(out).toContain('Approvals: bypass');
+    expect(out).toContain('WITHOUT the AI rater');
+    expect(out).toContain('hardline safety floor');
+  });
+
+  it('/approvals with no argument SHOWS the posture without changing it', async () => {
+    await runSession('/approvals', 'exit');
+    expect(runnerInstanceMock.setSessionApprovalMode).not.toHaveBeenCalled();
+    const out = allOutput();
+    expect(out).toContain('Approvals: ask');
+    expect(out).toContain('Allow-list:');
+  });
+
+  it('/approvals bypass switches the session mode', async () => {
+    await runSession('/approvals bypass', 'exit');
+    expect(runnerInstanceMock.setSessionApprovalMode).toHaveBeenCalledWith('bypass');
+  });
+
+  // CFG-26 — deleted pre-beta with NO deprecation alias.
+  it('/yolo is gone (2.0 hard removal): it reads as an unknown command', async () => {
     await runSession('/yolo', 'exit');
-    expect(runnerInstanceMock.toggleSessionYolo).toHaveBeenCalledTimes(1);
-    expect(allOutput()).toContain('Auto-approve ON');
+    expect(allOutput()).toContain('Unknown command: /yolo');
+    expect(runnerInstanceMock.setSessionApprovalMode).not.toHaveBeenCalled();
   });
 
   it('/mode is gone (2.0 hard removal): it reads as an unknown command here too', async () => {

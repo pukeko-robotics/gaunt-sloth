@@ -95,30 +95,30 @@ d('GthDevToolkit shell hardening (real spawn)', () => {
     expect(result).toContain('HAVE_PATH');
   }, 10_000);
 
-  it('refuses a hardline command WITHOUT executing, even under yolo', async () => {
-    // shellYolo bypasses confirmation but must NOT bypass the hardline floor.
-    // Use a sentinel file path that the command would touch if it actually ran.
+  it('refuses a hardline command WITHOUT executing, even under approvals bypass', async () => {
+    // CFG-26 — `approvals.mode: "bypass"` skips confirmation but must NOT bypass the hardline
+    // floor. The floor lives in executeCommand, so no approval config can reach past it: the
+    // toolkit is not even told which mode is in force.
     const result = await run('rm -rf /', {
       shell: { enabled: true },
-      shellYolo: true,
     });
     expect(result).toContain('blocked by hardline safety policy');
     expect(result).toContain('even when command confirmation is disabled');
     expect(result).not.toContain('<COMMAND_OUTPUT>');
   });
 
-  it('refuses a hardline command at exec time regardless of HOW it was approved (EXT-12 /yolo)', async () => {
-    // EXT-12's runtime `/yolo` flag only changes the APPROVAL decision (auto-approve without
-    // prompting) in GthAgentRunner; the tool body is unchanged, so the unbypassable hardline
-    // floor still fires at exec time exactly as it does under the static shellYolo. This asserts
-    // the floor is a property of executeCommand itself, not of any particular approval path.
+  it('refuses a hardline command at exec time regardless of HOW it was approved (CFG-26 modes)', async () => {
+    // The session approval mode only changes the APPROVAL decision (approve without prompting) in
+    // GthAgentRunner; the tool body is unchanged, so the unbypassable hardline floor still fires
+    // at exec time exactly as it does under a config-set bypass. This asserts the floor is a
+    // property of executeCommand itself, not of any particular approval path.
     const result = await run('mkfs.ext4 /dev/sda', { shell: { enabled: true } });
     expect(result).toContain('blocked by hardline safety policy');
     expect(result).not.toContain('<COMMAND_OUTPUT>');
   });
 
   it('refuses an OBFUSCATED hardline command (normalization works)', async () => {
-    const result = await run('r\\m -rf /', { shell: { enabled: true }, shellYolo: true });
+    const result = await run('r\\m -rf /', { shell: { enabled: true } });
     expect(result).toContain('blocked by hardline safety policy');
     expect(result).not.toContain('<COMMAND_OUTPUT>');
   });

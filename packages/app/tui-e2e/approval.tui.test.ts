@@ -133,7 +133,7 @@ test.describe('gth code TUI — EXT-52 reject keeps the command from running', (
   });
 });
 
-test.describe('gth code TUI — EXT-52 /auto-approve off restores prompting (regression guard)', () => {
+test.describe('gth code TUI — EXT-52/CFG-26 approval-mode switching restores prompting (regression guard)', () => {
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gth-e2e-approval-home-'));
 
   test.use({
@@ -147,19 +147,28 @@ test.describe('gth code TUI — EXT-52 /auto-approve off restores prompting (reg
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
-  // The exact live finding EXT-52 fixes: `/auto-approve on|off` used to be a placebo on lean.
-  // ON must silence the prompt (command runs immediately); OFF must bring the prompt BACK.
-  test('/auto-approve on silences the prompt; /auto-approve off brings it back', async ({
+  // The exact live finding EXT-52 fixes: the session approval switch used to be a placebo on lean.
+  // Switching the mode must silence the prompt; switching back must bring it BACK.
+  //
+  // CFG-26 re-point: the silencing half is now `/bypass-approve`, NOT `/auto-approve`. That is the
+  // whole point of this node — `/auto-approve` means rater-mediated `auto`, so it does NOT promise
+  // unconditional execution, and the assertions below say so rather than being softened into
+  // something that would pass either way.
+  test('/bypass-approve silences the prompt; /auto-approve off brings it back', async ({
     terminal,
   }) => {
     await expect(terminal.getByText('ready to code')).toBeVisible();
 
-    terminal.write('/auto-approve on');
-    await expect(terminal.getByText('> /auto-approve on')).toBeVisible();
+    terminal.write('/bypass-approve');
+    await expect(terminal.getByText('> /bypass-approve')).toBeVisible();
     terminal.submit();
     await expect(
-      terminal.getByText('Auto-approve ON — shell commands run without asking')
+      terminal.getByText('Approvals: bypass — commands run without asking')
     ).toBeVisible();
+    // The notice must state that the AI rater is skipped too, not just the prompt.
+    await expect(terminal.getByText('WITHOUT the AI rater', { strict: false })).toBeVisible();
+    // ...and the status bar carries the warn-styled mode badge.
+    await expect(terminal.getByText('⚡ bypass', { strict: false })).toBeVisible();
 
     // Turn 1: NO approval prompt — the command executes straight away.
     terminal.write('run it');
@@ -173,11 +182,12 @@ test.describe('gth code TUI — EXT-52 /auto-approve off restores prompting (reg
       terminal.getByText('The agent wants to run a shell command via run_shell_command')
     ).not.toBeVisible();
 
-    // Flip it back OFF.
+    // Flip it back to ask. `/auto-approve off` is the resolved spec gap: "off" means confirm
+    // every command yourself, i.e. `/approvals ask` — NOT bypass.
     terminal.write('/auto-approve off');
     await expect(terminal.getByText('> /auto-approve off')).toBeVisible();
     terminal.submit();
-    await expect(terminal.getByText('Auto-approve OFF — approvals required')).toBeVisible();
+    await expect(terminal.getByText('Approvals: ask — you confirm every command')).toBeVisible();
 
     // Turn 2: the per-command prompt is BACK (not a placebo). Reject to finish cleanly.
     terminal.write('run it again');

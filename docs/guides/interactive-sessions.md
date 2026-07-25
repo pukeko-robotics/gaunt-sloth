@@ -21,9 +21,9 @@ Type the task at the prompt:
 Rename the `timeoutMs` option to `requestTimeoutMs` everywhere, including the README.
 ```
 
-The agent reads the relevant files, edits them in place, and asks for approval before each shell
-command it wants to run (answer the prompt, or run `/auto-approve` to stop being asked for the rest
-of the session). Follow up in the same conversation — "now add a CHANGELOG entry" — context carries
+The agent reads the relevant files, edits them in place, and runs shell commands through the
+approvals gate — by default an AI rater lets clearly-safe ones through and asks you about the rest
+(`/approvals ask` to confirm every one yourself). Follow up in the same conversation — "now add a CHANGELOG entry" — context carries
 across turns. Type `exit` or press Ctrl+C to leave.
 
 ## `gth` vs `gth code` vs `gth chat`
@@ -54,7 +54,10 @@ them; in the TUI, typing `/` alone opens a searchable command menu. A few worth 
 - `/model` — show the current model / provider
 - `/verbose` — expand or collapse tool-call detail (Ctrl+T does the same mid-response)
 - `/reasoning` — reprint a turn's thinking (`/reasoning 2` for turn 2)
-- `/auto-approve` — auto-approve shell commands for this session (`/auto-approve off` to revert)
+- `/approvals` — show the approval mode, rater and allow-list counts; `/approvals auto|ask|bypass`
+  switches for this session
+- `/auto-approve` — shortcut for `/approvals auto` (`/auto-approve off` = `/approvals ask`)
+- `/bypass-approve` — shortcut for `/approvals bypass`: no prompt **and no rater**
 - `/debug-dump` — write a diagnostic archive for a bug report (see [debug-dump](../debug-dump.md))
 - `/exit` (or `/quit`) — leave the session
 

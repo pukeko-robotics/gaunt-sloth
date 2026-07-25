@@ -3,16 +3,17 @@
  *
  * A reusable, non-agentic "ask the LLM and get a schema-validated object back" primitive — the
  * structured-output half the (later) `gth workflow` host calls. Deliberately mirrors the
- * *mechanism* of the LLM-as-judge calls ({@link judgeEvalCase} in `@gaunt-sloth/batch`'s
- * `judge.ts`, and its in-core ancestor {@link judgeShellCommand} in `core/shell/judge.ts`):
+ * *mechanism* of the structured-evaluation calls ({@link judgeEvalCase} — the EVAL GRADER in
+ * `@gaunt-sloth/batch`'s `judge.ts` — and its in-core sibling {@link rateShellCommand}, the
+ * approvals AI rater in `core/shell/rater.ts`):
  * `model.withStructuredOutput(schema)` for a single structured call, `.invoke([SystemMessage,
  * HumanMessage])` raced against a wall-clock timeout via `Promise.race`, a defensive `safeParse`
  * re-validation, `clearTimeout` in `finally`, and — crucially — it **never throws**, returning a
  * failure object instead.
  *
- * Differences from the judges: this one is **generic** over the Zod schema and takes the
- * system/user strings from the caller (the judges hard-code a schema and build a rubric/safety
- * prompt), and it reads the model from `config.llm` (like `runSingleShot`/`judgeShellCommand`),
+ * Differences from those two: this one is **generic** over the Zod schema and takes the
+ * system/user strings from the caller (they hard-code a schema and build a rubric/safety
+ * prompt), and it reads the model from `config.llm` (like `runSingleShot`/`rateShellCommand`),
  * so the workflow host can hand it the resolved {@link GthConfig} directly. `judgeEvalCase` could
  * later be refactored to delegate to this primitive — out of scope here.
  */
@@ -23,7 +24,7 @@ import * as z from 'zod';
 import type { GthConfig } from '#src/config.js';
 
 /**
- * Default wall-clock budget (ms) for the structured LLM call — same value as the judges'
+ * Default wall-clock budget (ms) for the structured LLM call — same value as their
  * `EVAL_JUDGE_DEFAULT_TIMEOUT_MS` / `JUDGE_DEFAULT_TIMEOUT_MS`, kept as this module's own constant
  * since the primitive is conceptually independent of them.
  */
@@ -48,7 +49,7 @@ export type AskStructuredResult<T> = { ok: true; value: T } | { ok: false; error
 
 /**
  * Ask the configured model for a single schema-validated object — a non-agentic structured-output
- * call that mirrors the judges' mechanism (see the module doc) and never throws.
+ * call that mirrors their mechanism (see the module doc) and never throws.
  *
  * - No usable model (`config.llm` missing or lacking `withStructuredOutput`) →
  *   `{ ok: false, error: 'No usable model configured.' }`.

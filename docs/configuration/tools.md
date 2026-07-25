@@ -182,18 +182,16 @@ Security validations are in place to prevent path traversal or injection.
 ### General-purpose shell tool (`run_shell_command`)
 
 `run_shell_command` lets the agent run arbitrary shell commands it composes itself. It is **ON by
-default in `code` mode** (each invocation still gated behind a per-command human-approval prompt),
-and OFF in `exec` / `ask --write` unless enabled. Configure it via its `builtInTools` entry:
+default in `code` mode** (each invocation still goes through the approvals gate), and OFF in
+`exec` / `ask --write` unless enabled. Its `builtInTools` entry carries **execution** settings only:
 
 - `true` / `false` — enable / force-disable (an object without `enabled` also defaults ON in `code`).
 - `timeout` — per-command wall-clock limit in **milliseconds** (default `120000`).
 - `maxOutputBytes` — byte budget for the captured output returned to the model (default `100000`).
-- `allowlist` — master switch for the scoped approval allow-list (default `true`).
-- `persistAllowlist` — persist `always`-scoped approvals to `.gsloth/.gsloth-settings/shell-allowlist.json` (default `true`).
-- `judge` — the LLM-as-judge safety gate (default OFF): `true`, or `{ "enabled": true, "autoApproveLow": true, "blockHigh": false, "model": { … } }`.
-- `yolo` — opt out of the per-command approval prompt (dangerous; off by default).
 
-A hardcoded blocklist of catastrophic commands is always refused, even under `yolo`.
+**Who may run a command is configured separately**, in the top-level [`approvals`](#approvals)
+block — not here. A hardcoded blocklist of catastrophic commands is always refused, under every
+approvals mode.
 
 ```json
 {
@@ -204,14 +202,44 @@ A hardcoded blocklist of catastrophic commands is always refused, even under `yo
         "gth_checklist": true,
         "run_shell_command": {
           "timeout": 300000,
-          "maxOutputBytes": 200000,
-          "judge": { "enabled": true, "blockHigh": true }
+          "maxOutputBytes": 200000
         }
       }
     }
   }
 }
 ```
+
+### `approvals`
+
+The approvals gate is a **top-level** key (settable per command as `commands.<cmd>.approvals`,
+which replaces the root block wholesale). In 2.0 it replaces the retired
+`run_shell_command.yolo` / `.judge` / `.allowlist` / `.persistAllowlist` knobs, which used to sit on
+the object shared by every built-in tool — see
+[Migration](../MIGRATION.md#i-approvals-and-the-ai-rater-hard).
+
+- `mode` — `auto` (the AI rater rates each command), `ask` (you confirm every one), or `bypass`
+  (no gate at all). Defaults to `auto` in an interactive `code`/`chat` session on a TTY, and to
+  `ask` for one-shot commands and servers, where there is nobody to prompt and a gated call is
+  refused.
+- `rater` — `false` to disable, or `{ profile, strictness, escalate }`. `profile` names an identity
+  profile whose model rates (a name that does not resolve is a config error); `strictness` is
+  `lenient` / `standard` (default) / `strict`; `escalate` is `caution` / `danger` (default) /
+  `never`. `escalate` does not accept `critical` — a catastrophic command is always refused.
+- `allowlist` — master switch for the scoped approval allow-list (default `true`).
+- `persistAllowlist` — persist `always`-scoped approvals to
+  `.gsloth/.gsloth-settings/shell-allowlist.json` (default `true`).
+
+```json
+{
+  "approvals": {
+    "mode": "auto",
+    "rater": { "profile": "safety-rater", "escalate": "caution" }
+  }
+}
+```
+
+Full walkthrough: [Shell tool & approvals](../guides/shell-tool-and-approvals.md).
 
 For how the approval prompt, scoped allow-list, and judge gate behave at runtime, see the
 [shell tool and approvals guide](../guides/shell-tool-and-approvals.md).

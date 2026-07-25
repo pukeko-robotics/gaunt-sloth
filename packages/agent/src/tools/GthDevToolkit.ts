@@ -221,7 +221,7 @@ export default class GthDevToolkit extends BaseToolkit {
    *  2. output capped with a head/tail window + temp-file spillover,
    *  3. provider/LLM credentials scrubbed from the child env,
    *  4. an unbypassable hardline blocklist (refuses catastrophic commands BEFORE
-   *     spawn — fires even when confirmation is bypassed by yolo).
+   *     spawn — fires even when confirmation is bypassed by approvals.mode: bypass).
    *
    * Resolves with a model-facing string on a CLEAN exit (`code === 0`). EXT-20: a non-zero exit
    * and a timeout-kill instead REJECT with a {@link ShellCommandFailedError} that carries the FULL
@@ -249,7 +249,7 @@ export default class GthDevToolkit extends BaseToolkit {
       text: `🔧 Executing ${toolName}: ${command}`,
     });
 
-    // (4) Hardline blocklist — checked here so it fires regardless of yolo,
+    // (4) Hardline blocklist — checked here so it fires regardless of the approval mode,
     // allow-lists, or any confirmation path. Refuse WITHOUT executing.
     const hardline = checkHardline(command);
     if (hardline) {

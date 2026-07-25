@@ -583,7 +583,19 @@ describe('GthLangChainAgent', () => {
       };
 
       it('gates code mode by default (shell defaults ON in code) and announces the gate', async () => {
+        // CFG-26 — interactive `code` defaults to `approvals.mode: auto`, so the notice names the
+        // rater. `mode: ask` is asserted separately below.
         await initAgent('code', mockConfig);
+        expect(middlewareNames()).toContain('HumanInTheLoopMiddleware');
+        expect(statusUpdateCallback).toHaveBeenCalledWith(
+          StatusLevel.INFO,
+          'Shell tool (run_shell_command) gated by the AI rater (approvals.mode: auto); ' +
+            'risky commands are still escalated to you.'
+        );
+      });
+
+      it('announces the per-command prompt under an explicit approvals.mode: ask', async () => {
+        await initAgent('code', { ...mockConfig, approvals: { mode: 'ask' } } as GthConfig);
         expect(middlewareNames()).toContain('HumanInTheLoopMiddleware');
         expect(statusUpdateCallback).toHaveBeenCalledWith(
           StatusLevel.INFO,
@@ -614,7 +626,7 @@ describe('GthLangChainAgent', () => {
         expect(middlewareNames()).not.toContain('HumanInTheLoopMiddleware');
       });
 
-      it('gates exec when the shell tool is enabled without yolo (fail-closed on non-interactive)', async () => {
+      it('gates exec when the shell tool is enabled without bypass (fail-closed on non-interactive)', async () => {
         await initAgent('exec', {
           ...mockConfig,
           builtInTools: { run_shell_command: true },
@@ -622,28 +634,30 @@ describe('GthLangChainAgent', () => {
         expect(middlewareNames()).toContain('HumanInTheLoopMiddleware');
       });
 
-      it('leaves exec UNGATED under config yolo (single-shot runs inline, prior behaviour) with the YOLO warning', async () => {
+      it('leaves exec UNGATED under approvals.mode: bypass (single-shot runs inline) with the bypass warning', async () => {
         await initAgent('exec', {
           ...mockConfig,
+          approvals: { mode: 'bypass' },
           // enabled must be explicit: outside `code` the absent-enabled default is OFF.
-          builtInTools: { run_shell_command: { enabled: true, yolo: true } },
+          builtInTools: { run_shell_command: { enabled: true } },
         } as GthConfig);
         expect(middlewareNames()).not.toContain('HumanInTheLoopMiddleware');
         expect(statusUpdateCallback).toHaveBeenCalledWith(
           StatusLevel.WARNING,
-          'Shell tool (run_shell_command) enabled in YOLO mode: commands run WITHOUT confirmation.'
+          'Shell tool (run_shell_command) enabled in bypass mode: commands run WITHOUT confirmation.'
         );
       });
 
-      it('keeps interactive code GATED under config yolo (so /auto-approve off can restore the prompt) and says so', async () => {
+      it('keeps interactive code GATED under approvals.mode: bypass (so /approvals ask can restore the prompt) and says so', async () => {
         await initAgent('code', {
           ...mockConfig,
-          builtInTools: { run_shell_command: { yolo: true } },
+          approvals: { mode: 'bypass' },
         } as GthConfig);
         expect(middlewareNames()).toContain('HumanInTheLoopMiddleware');
         expect(statusUpdateCallback).toHaveBeenCalledWith(
           StatusLevel.INFO,
-          'Shell tool (run_shell_command) auto-approved by config (shellYolo). Type /auto-approve off to require per-command approval.'
+          'Shell tool (run_shell_command) auto-approved by config (approvals.mode: bypass). ' +
+            'Type /approvals ask to require per-command approval.'
         );
       });
     });
