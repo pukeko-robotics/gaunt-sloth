@@ -14,6 +14,13 @@ const mockAgent = {
   cleanup: vi.fn(),
 };
 
+// CFG-26 — the rater-profile seam. Mocked HERE (its own module) rather than the whole
+// `#src/config.js` barrel, so the rest of the runner's config resolution stays real.
+const resolveRaterModelMock = vi.fn();
+vi.mock('#src/core/shell/raterModel.js', () => ({
+  resolveRaterModel: resolveRaterModelMock,
+}));
+
 vi.mock('#src/core/GthLangChainAgent.js', () => ({
   GthLangChainAgent: class MockGthLangChainAgent {
     constructor() {
@@ -633,6 +640,131 @@ describe('GthAgentRunner', () => {
 
       expect(human).toHaveBeenCalledTimes(1);
     });
+  });
+
+  /**
+   * CFG-26 Part A — `approvals.rater.profile` must actually CHANGE WHO RATES. Before this it was
+   * validated and then ignored: the config parsed, `gth config validate` passed, CFG-24's dialog
+   * promised "set a stronger model as the rater later", and the runtime rated with the session
+   * model anyway. That combination is unshippable, because pointing the rater at a competent model
+   * is the entire documented mitigation for a weak one (QA-5 baseline: 61.7% tier accuracy on
+   * gemma4:12b vs 25.5% on llama3.2:1b, which rated EVERY safe command `danger`).
+   */
+  describe('rater.profile is consumed (not just validated)', () => {
+    function streamOf(...chunks: string[]) {
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const c of chunks) yield c;
+        },
+      };
+    }
+
+    /** A distinguishable fake model, so the test can tell WHICH one rated. */
+    function fakeModel(tier: string) {
+      const invoke = vi.fn().mockResolvedValue({ tier, reason: `${tier} from this model` });
+      const withStructuredOutput = vi.fn().mockReturnValue({ invoke });
+      return { model: { withStructuredOutput } as any, withStructuredOutput, invoke };
+    }
+
+    function pendingOnce(command: string) {
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command } }])
+        .mockResolvedValueOnce([]);
+      const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+      (mockAgent as any).streamResume = streamResume;
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      return streamResume;
+    }
+
+    it('rates with the PROFILE model, and never touches the session model', async () => {
+      const session = fakeModel('safe');
+      const profile = fakeModel('danger');
+      resolveRaterModelMock.mockResolvedValue(profile.model);
+
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      pendingOnce('ls -la');
+      await runner.init('code', {
+        ...mockConfig,
+        llm: session.model,
+        streamOutput: true,
+        approvals: { mode: 'auto', allowlist: false, rater: { profile: 'safety-rater' } },
+        commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+      } as any);
+      const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('go')]);
+
+      expect(resolveRaterModelMock).toHaveBeenCalledWith('safety-rater');
+      // The profile's model rated...
+      expect(profile.withStructuredOutput).toHaveBeenCalled();
+      // ...and the SESSION model was never consulted for rating. This negative is the assertion
+      // that separates "the profile is wired" from "the profile is ignored" — without it the test
+      // would pass on the old, silently-ignoring behaviour.
+      expect(session.withStructuredOutput).not.toHaveBeenCalled();
+      // The profile's verdict (danger) is what drove the decision: it escalated to the human,
+      // rather than the session model's `safe` auto-approving.
+      expect(human).toHaveBeenCalledTimes(1);
+      expect(human.mock.calls[0][0].safetyVerdict.tier).toBe('danger');
+    });
+
+    it('rates with the SESSION model when no profile is configured', async () => {
+      const session = fakeModel('safe');
+
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      const streamResume = pendingOnce('ls -la');
+      await runner.init('code', {
+        ...mockConfig,
+        llm: session.model,
+        streamOutput: true,
+        approvals: { mode: 'auto', allowlist: false },
+        commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+      } as any);
+      runner.setToolApprovalCallback(vi.fn());
+
+      await runner.processMessages([new HumanMessage('go')]);
+
+      expect(resolveRaterModelMock).not.toHaveBeenCalled();
+      expect(session.withStructuredOutput).toHaveBeenCalled();
+      expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
+    });
+
+    it('a named profile that cannot be resolved FAILS INIT — never a silent fallback', async () => {
+      const session = fakeModel('safe');
+      resolveRaterModelMock.mockRejectedValue(new Error('profile "typo" has no usable model'));
+
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      await expect(
+        runner.init('code', {
+          ...mockConfig,
+          llm: session.model,
+          approvals: { mode: 'auto', rater: { profile: 'typo' } },
+        } as any)
+      ).rejects.toThrow('no usable model');
+      // The session model must NOT have been quietly promoted into the rater's place.
+      expect(session.withStructuredOutput).not.toHaveBeenCalled();
+    });
+
+    // Naming a profile is itself what ENABLES the rater, so there is no "profile set but rater
+    // off" state to guard against — on any command, including a one-shot. The defaults matrix is
+    // defaults-only; explicit config beats it everywhere, so an `exec` run with a configured rater
+    // really does rate and really does need the profile's model.
+    it.each(['code', 'exec'] as const)(
+      'resolves the profile on %s, because naming one enables the rater',
+      async (command) => {
+        resolveRaterModelMock.mockResolvedValue(fakeModel('safe').model);
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        const config = {
+          ...mockConfig,
+          approvals: { rater: { profile: 'safety-rater' } },
+        } as any;
+        await runner.init(command, config);
+        expect(resolveRaterModelMock).toHaveBeenCalledWith('safety-rater');
+        // ...and the posture agrees that the rater is on, which is what makes the load worth it.
+        expect(runner.getSessionApprovals().rater.enabled).toBe(true);
+      }
+    );
   });
 
   // CFG-26 — the AI rater. Uses a FAKE model (config.llm with a stubbed withStructuredOutput) so

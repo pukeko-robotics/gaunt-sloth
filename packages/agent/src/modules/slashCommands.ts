@@ -720,7 +720,8 @@ export function createCommandRegistry(): SlashCommand[] {
     },
     {
       name: 'auto-approve',
-      description: 'Shortcut for /approvals auto — the AI rater reviews each command',
+      description:
+        'Shortcut for /approvals auto — the AI rater reviews each command (/auto-approve off = ask)',
       availableDuringRun: true,
       run: (_ctx, args) => {
         const mode = parseAutoApproveArg(args);

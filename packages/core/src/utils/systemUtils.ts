@@ -239,6 +239,14 @@ export const setProjectDir = (dir: string | undefined): void => {
  * Config DISCOVERY and DETECTION must NOT use this; they stay cwd-bound.
  */
 export const getProjectDir = (): string => innerState.projectDir ?? getCurrentWorkDir();
+/**
+ * CFG-26 — the RAW project dir, WITHOUT {@link getProjectDir}'s cwd fallback, so a caller that
+ * must temporarily run a subsidiary `initConfig` (which re-runs discovery and calls
+ * `setProjectDir` as a side effect) can snapshot and restore the exact prior state — including the
+ * "unset, fall back to cwd dynamically" state, which `getProjectDir()` would otherwise collapse
+ * into an explicit cwd. See `resolveRaterModel`.
+ */
+export const peekProjectDir = (): string | undefined => innerState.projectDir;
 export const getInstallDir = (): string => {
   if (innerState.installDir) {
     return innerState.installDir;

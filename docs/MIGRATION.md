@@ -60,6 +60,7 @@ these before you upgrade.
 | `rating` is now an object | `rating: false` (or any boolean) is a validation abort: `expected object, received boolean` | `rating: { enabled: false }` |
 | Command configs must nest under `commands.*` | A top-level command key (e.g. `pr`) is a validation abort: `Top-level command config "pr" is no longer supported in 2.0. Move it under "commands.pr".` | Move it under `commands.<cmd>` |
 | Per-command `devTools` folded into `builtInTools` | `commands.<cmd>.devTools` is a validation abort: `Config property "devTools" in commands.code is no longer supported in 2.0. Configure tools under "builtInTools" instead.` | Move the dev/shell tools into the `builtInTools` registry (see section G) |
+| Approval knobs moved off `run_shell_command` | `yolo` / `judge` / `allowlist` / `persistAllowlist` on that entry are a validation abort: `Config property "yolo" in builtInTools.run_shell_command is no longer supported in 2.0. Use "approvals.mode": "bypass" instead.` | Move them into the top-level `approvals` block (see section I) |
 | `projectGuidelines` / `projectReviewInstructions` folded into `prompts` | Either key is a validation abort: `Config property "projectGuidelines" was renamed in 2.0. Use "prompts.guidelines" instead.` | `prompts.guidelines` / `prompts.review` (see section H) |
 | Deprecated `*Provider*` config keys | `contentProvider` / `requirementsProvider` (and the `*ProviderConfig` variants) are rejected: `Config property "contentProvider" was renamed in 2.0. Use "contentSource" instead.` | Rename to `contentSource` / `requirementSource` (and `*SourceConfig`) |
 | `--content-provider` / `--requirements-provider` CLI flags removed | Scripts passing those flags error out | `--content-source` / `--requirements-source` (`-p` still aliases `--requirements-source`) |
@@ -309,8 +310,9 @@ registry**. A leftover `commands.<cmd>.devTools` is now a hard validation error:
 
 `builtInTools` now accepts an **object** (keyed by tool name) in addition to the string array. The
 object's values enable (`true`), force-disable (`false`), or configure (an object) each tool. The
-`run_*` dev-command tools take `{ "command": "…" }`; the shell tool takes the EXT-9/10/12 knobs, and
-the former top-level `shellYolo` is now the shell entry's `yolo` knob.
+`run_*` dev-command tools take `{ "command": "…" }`; the shell tool takes its execution knobs
+(`enabled` / `timeout` / `maxOutputBytes`). Approval settings — including the former top-level
+`shellYolo` — moved to the top-level `approvals` block instead (section I).
 
 Before:
 
@@ -340,10 +342,11 @@ After:
         "gth_checklist": true,
         "run_tests": { "command": "npm test" },
         "run_lint": { "command": "npm run lint-n-fix" },
-        "run_shell_command": { "enabled": true, "timeout": 300000, "yolo": true }
+        "run_shell_command": { "enabled": true, "timeout": 300000 }
       }
     }
-  }
+  },
+  "approvals": { "mode": "bypass" }
 }
 ```
 
@@ -393,6 +396,62 @@ real prompt), and guidelines default to empty until you create the file — or p
 `prompts.guidelines` at one you already have (e.g. `AGENTS.md`). Existing planted files keep
 working; they are simply no longer created for you.
 
+## I. Approvals and the AI rater (HARD)
+
+The approval settings used to hang off the `run_shell_command` entry of `builtInTools`. That entry
+is the object shared by **every** built-in tool, so a nonsensical `"gth_grep": { "yolo": true }`
+validated happily. 2.0 moves them to a single top-level `approvals` block, and each retired key is
+a hard validation error naming its replacement.
+
+| Old (`builtInTools.run_shell_command.*`) | New |
+| --- | --- |
+| `yolo: true` | `approvals.mode: "bypass"` |
+| `judge: true` / `judge.enabled` | `approvals.mode: "auto"` (the rater is on in `auto`) |
+| `judge.model` | `approvals.rater.profile` — an **identity profile name**, not a raw model block |
+| `judge.autoApproveLow: false` | `approvals.rater.escalate: "caution"` (nearest equivalent) |
+| `judge.blockHigh` | gone — a `critical` command is always refused, with no knob |
+| `allowlist` / `persistAllowlist` | `approvals.allowlist` / `approvals.persistAllowlist` |
+| `run_shell_command` keeps | `enabled`, `timeout`, `maxOutputBytes` |
+
+The `low` / `medium` / `high` risk scale became **`safe` / `caution` / `danger` / `critical`**, and
+one knob (`escalate`) decides what reaches you instead of two half-overlapping booleans.
+
+Before:
+
+```json
+{
+  "commands": {
+    "code": {
+      "builtInTools": {
+        "run_shell_command": {
+          "allowlist": false,
+          "judge": { "enabled": true, "autoApproveLow": false, "blockHigh": true }
+        }
+      }
+    }
+  }
+}
+```
+
+After:
+
+```json
+{
+  "approvals": {
+    "mode": "auto",
+    "allowlist": false,
+    "rater": { "escalate": "caution" }
+  }
+}
+```
+
+**Behaviour change to expect:** the rater used to be off unless you opted in. An interactive
+`code` / `chat` session on a terminal now defaults to `approvals.mode: "auto"`, so clearly-safe
+commands run without a prompt and each gated command costs one rater model call. To keep confirming
+every command yourself, set `"approvals": { "mode": "ask" }`. One-shot commands (`exec`, `ask`,
+`review`, `pr`) and the API servers are unchanged: no rater, and a gated command with nobody to ask
+is refused. See [Shell tool & approvals](guides/shell-tool-and-approvals.md).
+
 ## Interactive slash commands (renames)
 
 Inside `chat`/`code` sessions (both the TUI and the plain `--no-tui` readline surface, which now
@@ -402,6 +461,13 @@ share one command registry):
   is still in alpha).
 - `/mode` removed — its output is folded into `/status`.
 - `/quit` added as an alias of `/exit`.
+- `/yolo` **removed** (no alias). Its behaviour is now `/bypass-approve` — which also states that it
+  skips the AI rater, not just the prompt.
+- `/auto-approve` is now a shortcut for `/approvals auto`: rater-mediated, **not** unconditional.
+  `/auto-approve off` means `/approvals ask`. It no longer toggles — with three modes a flip has no
+  unambiguous meaning.
+- `/approvals` added — shows the mode, rater and allow-list counts, and switches with
+  `/approvals auto|ask|bypass`.
 
 ## Migration checklist
 
@@ -415,7 +481,10 @@ share one command registry):
 5. If you relied on the auto-saved `gth_<timestamp>_<COMMAND>.md` output files, set
    `writeOutputToFile: true` (or a string path) — the default is now `false` (E).
 6. Move any `commands.<cmd>.devTools` into the `builtInTools` registry (`run_*` → `{ "command": … }`,
-   `shell`/`shellYolo` → the `run_shell_command` entry with `yolo`) (G).
-7. Rename `projectGuidelines` → `prompts.guidelines` and `projectReviewInstructions` →
+   `shell` → the `run_shell_command` entry) (G).
+7. Move `yolo` / `judge` / `allowlist` / `persistAllowlist` off `run_shell_command` into the
+   top-level `approvals` block, and decide whether you want the new interactive `auto` default or
+   `"mode": "ask"` (I).
+8. Rename `projectGuidelines` → `prompts.guidelines` and `projectReviewInstructions` →
    `prompts.review` (H).
-8. Run `gth config validate` (and optionally `gth config print`) to confirm the result.
+9. Run `gth config validate` (and optionally `gth config print`) to confirm the result.

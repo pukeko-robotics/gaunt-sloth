@@ -33,6 +33,8 @@ import {
   rateShellCommand,
   type ShellSafetyVerdict,
 } from '#src/core/shell/rater.js';
+import { resolveRaterModel } from '#src/core/shell/raterModel.js';
+import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { env } from '#src/utils/systemUtils.js';
 import { getGslothConfigWritePath } from '#src/utils/fileUtils.js';
 import { SHELL_ALLOWLIST_FILE } from '#src/constants.js';
@@ -108,6 +110,13 @@ export class GthAgentRunner {
    * life of THIS runner instance. Instance-scoped (not module-global) so concurrent
    * sessions (ACP / AG-UI multi-session) cannot stomp each other's approvals.
    */
+  /**
+   * CFG-26 — the model the AI rater rates with, when `approvals.rater.profile` names an identity
+   * profile. Resolved ONCE at {@link init} (never mid-turn) and handed to `rateShellCommand`;
+   * `undefined` means no profile is configured and the rater uses the session model.
+   */
+  private raterModel: BaseChatModel | undefined;
+
   private readonly sessionAllowlist = new AllowlistStore();
 
   /**
@@ -215,6 +224,24 @@ export class GthAgentRunner {
     // GthDeepAgent) and therefore remains switchable (`/approvals ask`). Resolved per-command,
     // mirroring where the shell tool is actually emitted; no effect where the tool is ungated.
     this.sessionApprovals = resolveApprovals(configIn, command);
+
+    // CFG-26 — resolve the rater's own model when a profile is named, so the documented mitigation
+    // for a weak model ("point approvals.rater.profile at a stronger one") actually takes effect.
+    //
+    // EAGERLY, here, rather than lazily at first use: `initConfig` re-runs discovery and prints
+    // "Activating profile: …", which mid-turn would write raw over the Ink TUI's managed frame,
+    // and a broken profile should fail at startup rather than three turns in. It deliberately does
+    // NOT catch — a named-but-unusable rater profile is an error, never a silent fallback to the
+    // session model (GS2-62).
+    //
+    // No extra "will the rater actually run?" gate: NAMING a profile is itself what enables the
+    // rater (`resolveApprovals` treats an object `rater` as enabled), so `rater.profile` set
+    // implies `rater.enabled`, on every command. A one-shot `exec` with an explicitly configured
+    // rater really does rate — the defaults matrix is defaults-only, and explicit config beats it
+    // everywhere — so there is no wasted load to guard against, and a gate here would be dead
+    // code that reads as if it were doing something.
+    const raterProfile = this.sessionApprovals.rater.profile;
+    this.raterModel = raterProfile ? await resolveRaterModel(raterProfile) : undefined;
 
     // Initialize debug logging
     initDebugLogging(configIn.debugLog ?? false);
@@ -439,6 +466,10 @@ export class GthAgentRunner {
       const verdict = await rateShellCommand(command, this.config as GthConfig, {
         home: env?.HOME,
         strictness: approvals.rater.strictness,
+        // The profile's model when one is configured; undefined lets rateShellCommand use the
+        // session model. `init` throws rather than leaving this undefined for a NAMED profile, so
+        // a configured profile can never silently degrade to the session model here.
+        model: this.raterModel,
       });
       const decision = mapVerdictToAction(command, verdict, {
         mode: approvals.mode,
