@@ -29,7 +29,9 @@ gth batch prompts/triage.md --over data/tickets.csv -j 8
 
 Each row becomes one cell — an isolated single-shot run with the row's values spliced into the
 prompt. (A placeholder that matches no column is left as-is; a script with no matching
-placeholders at all gets the row appended as a context block instead.) The run ends with
+placeholders at all gets the row appended as a context block instead.) `-j`/`--concurrency` caps
+how many cells run at once (default 4); raise it to push through a large matrix faster, or lower
+it to stay under a provider's rate limit. The run ends with
 `Batch complete: <passed>/<total> cell(s) passed` — plus, if cells failed, a warning pointing at
 `results.json`; the per-cell files hold each answer.
 
