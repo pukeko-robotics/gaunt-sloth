@@ -358,10 +358,13 @@ describe('GthAgentRunner', () => {
     });
 
     // EXT-9 Tier-2: session-scoped allow-list config (persistence off so no disk writes).
+    // CFG-26 — persistAllowlist moved to the top-level `approvals` block; on the retired per-tool
+    // entry it would now be a silent no-op and these tests would touch the real allow-list file.
     const ALLOWLIST_CONFIG = {
       streamOutput: true as const,
+      approvals: { mode: 'ask' as const, persistAllowlist: false },
       commands: {
-        code: { builtInTools: { run_shell_command: { enabled: true, persistAllowlist: false } } },
+        code: { builtInTools: { run_shell_command: { enabled: true } } },
       },
     };
 

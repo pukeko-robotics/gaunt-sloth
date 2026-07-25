@@ -164,8 +164,10 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
       ...BASE_CONFIG,
       llm: new ScriptedShellCallingModel(commands),
       // persistAllowlist OFF so no test touches the on-disk allow-list file; enabled defaults ON
-      // in code mode (EXT-12).
-      builtInTools: { run_shell_command: { persistAllowlist: false } },
+      // in code mode (EXT-12). CFG-26 — the knob lives on `approvals` now; left on the retired
+      // per-tool entry it would be a silent no-op and these tests WOULD write to disk. `ask` is
+      // explicit so the default rater does not run on the tests that are not about the rater.
+      approvals: { mode: 'ask', persistAllowlist: false },
       ...configExtra,
     } as unknown as GthConfig;
     await runner.init('code', config, new MemorySaver());

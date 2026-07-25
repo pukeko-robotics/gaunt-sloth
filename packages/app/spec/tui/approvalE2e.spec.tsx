@@ -261,7 +261,10 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     const { runner, bridge, tuiAgent } = wireRunner(agent, {}, 'code');
     await runner.init('code' as never, {
       ...FULL_CONFIG,
-      commands: { code: { builtInTools: { run_shell_command: { enabled: true, persistAllowlist: false } } } },
+      // CFG-26 — persistAllowlist moved to `approvals`; on the retired per-tool entry it is a
+      // silent no-op, which would let this test write the real allow-list file.
+      approvals: { mode: 'ask', persistAllowlist: false },
+      commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
     } as GthConfig);
 
     let promptCount = 0;
