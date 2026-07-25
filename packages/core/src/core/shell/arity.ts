@@ -18,7 +18,15 @@
  * redirections. Such commands NEVER auto-match an allow-list entry — they always go to
  * fresh human approval. This is what stops `git checkout x; rm -rf /` from matching an
  * approved `git checkout *`.
+ *
+ * EXT-55: "newlines" in that list was aspirational until this node. `normalizeCommand` folded
+ * a line break to a SPACE, so the check below never saw one and `ls -la\nrm -rf /` classified
+ * as the single command `ls`. The separator set now lives in ONE place
+ * ({@link import('./normalize.js').COMMAND_SEPARATOR_CLASS}) and a line break survives
+ * normalization, so a multi-line command is categorically ambiguous — exactly like `;`.
  */
+
+import { COMMAND_SEPARATOR_RE, LINE_BREAK_RE } from '#src/core/shell/normalize.js';
 
 /**
  * Arity table: command-prefix string → number of leading tokens (binary + subcommands,
@@ -202,10 +210,9 @@ export interface CommandClassification {
  * Note: `&&`/`||`/`|` are covered by the bare `&`/`|` character scan; listed conceptually.
  */
 function hasUnsafeComposition(normalized: string): boolean {
-  // Newlines are folded by normalizeCommand, but guard anyway in case a raw string is passed.
-  if (/[\n\r]/.test(normalized)) return true;
-  // Shell control / separator operators and background.
-  if (/[;|&]/.test(normalized)) return true;
+  // Shell control / separator operators, background, AND line breaks — one shared definition of
+  // "a new command begins here" (EXT-55), so this can never drift from the hardline floor's.
+  if (COMMAND_SEPARATOR_RE.test(normalized)) return true;
   // Command substitution: $(...) or `...`.
   if (/\$\(/.test(normalized)) return true;
   if (/`/.test(normalized)) return true;
@@ -250,7 +257,9 @@ export function tokenize(command: string): string[] | null {
       inToken = true;
       continue;
     }
-    if (ch === ' ' || ch === '\t') {
+    // EXT-55: line breaks are whitespace here too, so a token can never be glued across a line
+    // (`ls\n-o` must tokenize as `ls` + `-o`, or `hasWideningFlag` would not see the flag).
+    if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
       if (inToken) {
         tokens.push(current);
         current = '';
@@ -312,6 +321,13 @@ export function classifyCommand(
   command: string,
   normalize: (cmd: string) => string
 ): CommandClassification | null {
+  // EXT-55 — the boundary question is answered HERE, not delegated to the injected normalizer.
+  // `normalize` is a parameter, so this function cannot assume it preserved the command
+  // separators (folding them away is exactly the bug this node fixed). A line break anywhere
+  // INSIDE the command means more than one command → never classifiable. `.trim()` first: a
+  // purely leading/trailing break separates nothing, and models routinely emit `"npm test\n"`.
+  if (LINE_BREAK_RE.test(command.trim())) return null;
+
   const normalized = normalize(command);
   if (!normalized) return null;
 

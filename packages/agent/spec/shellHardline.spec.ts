@@ -60,3 +60,45 @@ describe('checkHardline', () => {
     expect(checkHardline(cmd), `expected "${cmd}" to be allowed`).toBeNull();
   });
 });
+
+/**
+ * EXT-55 — the hardline floor is the last line of defence and does not trust the layers above
+ * it, so it is audited independently. `CMD_POS` already listed `\n` as a command position, but
+ * the individual patterns terminated on `(?:$|[;&|])`, which omitted it — so a catastrophic
+ * command with ANYTHING after it on the next line was not matched:
+ * `checkHardline('ls\nrm -rf /\nls -la')` returned null while `checkHardline('rm -rf /')` blocked.
+ */
+describe('checkHardline — line breaks terminate a command (EXT-55)', () => {
+  // Every separator must behave the same; `;` is the reference behaviour.
+  const separators: ReadonlyArray<readonly [string, string]> = [
+    ['; (reference)', ';'],
+    ['\\n', '\n'],
+    ['\\r', '\r'],
+    ['\\r\\n', '\r\n'],
+  ];
+
+  it.each(separators)('blocks a catastrophic command followed by more input (%s)', (_l, sep) => {
+    expect(checkHardline(`ls${sep}rm -rf /${sep}ls -la`)).not.toBeNull();
+    expect(checkHardline(`ls${sep}rm -rf /*${sep}ls`)).not.toBeNull();
+    expect(checkHardline(`ls${sep}rm -rf /etc${sep}ls`)).not.toBeNull();
+    expect(checkHardline(`ls${sep}rm -rf /usr/*${sep}ls`)).not.toBeNull();
+    expect(checkHardline(`ls${sep}rm -rf ~${sep}ls`)).not.toBeNull();
+    expect(checkHardline(`ls${sep}rm -rf $HOME${sep}ls`)).not.toBeNull();
+    expect(checkHardline(`ls${sep}sudo rm -rf /${sep}ls`)).not.toBeNull();
+  });
+
+  it.each(separators)('blocks a catastrophic command as the LAST line (%s)', (_l, sep) => {
+    expect(checkHardline(`ls -la${sep}rm -rf /`)).not.toBeNull();
+    expect(checkHardline(`echo hi${sep}rm -rf /etc`)).not.toBeNull();
+  });
+
+  it.each(separators)('anchors the shutdown family to a command position after a %s', (_l, sep) => {
+    expect(checkHardline(`ls${sep}reboot`)).not.toBeNull();
+    expect(checkHardline(`ls${sep}sudo poweroff${sep}ls`)).not.toBeNull();
+  });
+
+  it.each(separators)('still allows a benign multi-command string (%s)', (_l, sep) => {
+    expect(checkHardline(`ls${sep}rm -rf ./build${sep}ls`)).toBeNull();
+    expect(checkHardline(`npm test${sep}echo reboot`)).toBeNull();
+  });
+});

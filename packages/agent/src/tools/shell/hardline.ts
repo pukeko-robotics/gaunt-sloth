@@ -14,17 +14,27 @@
  *
  * Patterns match the NORMALIZED command (`@gaunt-sloth/core` `core/shell/normalize`) so
  * obfuscation (ANSI/fullwidth/backslash splits/whitespace padding) cannot bypass them.
+ * The normalized form PRESERVES line breaks (EXT-55) — they are command separators, not
+ * padding — so a pattern must terminate on one just as it does on `;`/`&`/`|`. Both the
+ * command-position prefix ({@link CMD_POS}) and the pattern tail ({@link CMD_END}) are built
+ * from the one shared `COMMAND_SEPARATOR_CLASS` in core so they cannot disagree.
+ *
+ * This floor is deliberately INDEPENDENT of the allow-list classifier above it: it must block
+ * a catastrophic command even if every layer above wrongly decided the command was safe.
  *
  * Patterned after hermes-agent `tools/approval.py` HARDLINE_PATTERNS.
  */
-import { normalizeCommand } from '@gaunt-sloth/core/core/shell/normalize.js';
+import {
+  COMMAND_SEPARATOR_CLASS,
+  normalizeCommand,
+} from '@gaunt-sloth/core/core/shell/normalize.js';
 
 // Matches a position where the shell would begin parsing a NEW command: start of
 // string, after a separator (; & | newline), after `$(` or backtick, optionally
 // consuming leading wrappers (sudo/env VAR=VAL/exec/nohup/setsid/time). Used by
 // the shutdown-family patterns so they don't false-positive on `echo reboot`.
 const CMD_POS =
-  '(?:^|[;&|\\n`]|\\$\\()' +
+  `(?:^|[${COMMAND_SEPARATOR_CLASS}\`]|\\$\\()` +
   '\\s*' +
   '(?:sudo\\s+(?:-[^\\s]+\\s+)*)?' +
   '(?:env\\s+(?:\\w+=\\S*\\s+)*)?' +
@@ -32,21 +42,45 @@ const CMD_POS =
   '\\s*';
 
 /**
+ * EXT-55 — the tail of a hardline pattern: the command ends here, either at end of input or at a
+ * separator that starts a NEW command.
+ *
+ * This used to be the literal `(?:$|[;&|])`, which omitted the newline that {@link CMD_POS}
+ * already listed. The two halves of this module therefore disagreed about what a separator is,
+ * and `checkHardline('ls\nrm -rf /\nls -la')` returned null while `checkHardline('rm -rf /')`
+ * blocked. Both halves are now built from the ONE shared
+ * {@link COMMAND_SEPARATOR_CLASS} so they cannot drift apart again.
+ *
+ * (JS `$` without the `m` flag matches only true end-of-input, so the explicit line break in the
+ * class is genuinely required; the `m` flag is NOT an alternative — it would also change `^` in
+ * {@link CMD_POS}.)
+ */
+const CMD_END = `(?:$|[${COMMAND_SEPARATOR_CLASS}])`;
+
+/**
  * Hardline patterns: [regex, human description]. Matched case-insensitively
  * against the normalized command.
  */
 export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   // rm -rf targeting the root filesystem (`/`, `/*`).
-  [/\brm\s+(?:-[^\s]*\s+)*\/\s*\*?\s*(?:$|[;&|])/, 'recursive delete of root filesystem'],
+  // EXT-55: built with `new RegExp` so the tail comes from the shared CMD_END, not a literal.
+  [
+    new RegExp('\\brm\\s+(?:-[^\\s]*\\s+)*/\\s*\\*?\\s*' + CMD_END),
+    'recursive delete of root filesystem',
+  ],
   // rm -rf targeting protected system directories (with optional /* suffix).
   [
-    /\brm\s+(?:-[^\s]*\s+)*(?:\/(?:home|root|etc|usr|var|bin|sbin|boot|lib|lib64|opt|sys|proc))(?:\/\*)?\s*(?:$|[;&|])/,
+    new RegExp(
+      '\\brm\\s+(?:-[^\\s]*\\s+)*' +
+        '(?:/(?:home|root|etc|usr|var|bin|sbin|boot|lib|lib64|opt|sys|proc))(?:/\\*)?\\s*' +
+        CMD_END
+    ),
     'recursive delete of system directory',
   ],
   // rm -rf targeting the home directory (~ or $HOME).
   // Note: patterns match the LOWERCASED normalized command, so $HOME → $home.
   [
-    /\brm\s+(?:-[^\s]*\s+)*(?:~|\$home)(?:\/\*)?\s*(?:$|[;&|])/,
+    new RegExp('\\brm\\s+(?:-[^\\s]*\\s+)*(?:~|\\$home)(?:/\\*)?\\s*' + CMD_END),
     'recursive delete of home directory',
   ],
   // Filesystem format.
