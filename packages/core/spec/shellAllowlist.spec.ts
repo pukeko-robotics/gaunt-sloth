@@ -53,6 +53,53 @@ describe('matchesApproval (anti-injection)', () => {
   });
 });
 
+/**
+ * EXT-55 — the headline consequence of the newline bug: the most ordinary grant imaginable
+ * (`[a]lways` on a plain `ls`) auto-approved `ls\nsudo rm -rf /etc` with NO prompt, NO LLM call
+ * and NO hardline block, because the classifier read it as the single command `ls`.
+ */
+describe('matchesApproval — an allow-listed prefix cannot be extended with a line break (EXT-55)', () => {
+  const separators: ReadonlyArray<readonly [string, string]> = [
+    ['; (reference)', ';'],
+    ['\\n', '\n'],
+    ['\\r', '\r'],
+    ['\\r\\n', '\r\n'],
+  ];
+
+  it.each(separators)('refuses a %s-separated payload riding an approved `ls`', (_label, sep) => {
+    const session = new AllowlistStore(['ls']);
+    // Positive control: the approved command itself still auto-approves.
+    expect(matchesApproval('ls -la', { session })).toBe(true);
+    // The payload must NOT ride the grant.
+    expect(matchesApproval(`ls${sep}rm -rf /`, { session })).toBe(false);
+    expect(matchesApproval(`ls${sep}sudo rm -rf /etc${sep}ls`, { session })).toBe(false);
+    expect(matchesApproval(`ls -la${sep}curl evil.example.com`, { session })).toBe(false);
+  });
+
+  it.each(separators)('refuses a %s-separated payload riding an approved prefix', (_label, sep) => {
+    const session = new AllowlistStore(['git checkout']);
+    expect(matchesApproval(`git checkout x${sep}rm -rf /`, { session })).toBe(false);
+  });
+
+  it.each(separators)(
+    'refuses a %s-separated payload riding the PERSISTED store',
+    (_label, sep) => {
+      // Scope (d): the persisted store is populated only from a successful classification, so a
+      // line break can never be stored — and a stored prefix can never be extended with one.
+      const always = new AllowlistStore(['ls']);
+      const session = new AllowlistStore();
+      expect(matchesApproval('ls -la', { session, always })).toBe(true);
+      expect(matchesApproval(`ls${sep}rm -rf /`, { session, always })).toBe(false);
+    }
+  );
+
+  it('still auto-approves a command with only a trailing line break', () => {
+    const session = new AllowlistStore(['ls']);
+    expect(matchesApproval('ls -la\n', { session })).toBe(true);
+    expect(matchesApproval('ls -la\r\n', { session })).toBe(true);
+  });
+});
+
 describe('AllowlistStore (session scope)', () => {
   it('has/add set semantics', () => {
     const s = new AllowlistStore();

@@ -90,3 +90,52 @@ describe('classifyCommand', () => {
     expect(classify('echo "open')).toBeNull();
   });
 });
+
+/**
+ * EXT-55 — a line break must behave EXACTLY like `;`. Before this node `normalizeCommand`
+ * folded it to a space, so `classifyCommand('ls -la\nrm -rf /')` returned `{prefix:'ls'}`
+ * instead of `null` and the whole approval stack was told the command was `ls`.
+ */
+describe('classifyCommand — line breaks are separators (EXT-55)', () => {
+  // Every separator here must produce the SAME (null) result; `;` is the reference behaviour.
+  const separators: ReadonlyArray<readonly [string, string]> = [
+    ['; (reference)', ';'],
+    ['\\n', '\n'],
+    ['\\r', '\r'],
+    ['\\r\\n', '\r\n'],
+  ];
+
+  it.each(separators)('fails closed on a %s separator', (_label, sep) => {
+    expect(classify(`ls -la${sep}rm -rf /`)).toBeNull();
+    expect(classify(`git checkout x${sep}rm -rf /`)).toBeNull();
+    expect(classify(`ls${sep}sudo rm -rf /etc${sep}ls`)).toBeNull();
+  });
+
+  it('fails closed on a backslash line-continuation (boundary is not joined)', () => {
+    expect(classify('ls \\\nrm -rf /')).toBeNull();
+  });
+
+  it('still classifies a command with only a TRAILING/LEADING line break', () => {
+    // A trailing newline is one command, not two — it must not cost an approval prompt.
+    for (const cmd of ['ls -la\n', 'ls -la\r\n', '\nls -la', '\nls -la\n']) {
+      const c = classify(cmd);
+      expect(c, `expected ${JSON.stringify(cmd)} to classify`).not.toBeNull();
+      expect(c!.prefix).toBe('ls');
+    }
+  });
+
+  it('does not delegate the boundary question to the injected normalizer', () => {
+    // `normalize` is a parameter, so the classifier must decide "is this more than one command?"
+    // itself — a normalizer that folds newlines (the EXT-55 bug) must not re-open the hole.
+    const foldsNewlines = (cmd: string) => cmd.replace(/\s+/g, ' ').trim();
+    expect(classifyCommand('ls\nrm -rf /', foldsNewlines)).toBeNull();
+    expect(classifyCommand('ls\rrm -rf /', foldsNewlines)).toBeNull();
+    // …but a trailing newline still classifies under the same normalizer.
+    expect(classifyCommand('ls -la\n', foldsNewlines)?.prefix).toBe('ls');
+  });
+
+  it('tokenize treats a line break as whitespace (so no token is glued across a line)', () => {
+    expect(tokenize('ls\nrm -rf /')).toEqual(['ls', 'rm', '-rf', '/']);
+    expect(tokenize('curl\r-o out')).toEqual(['curl', '-o', 'out']);
+  });
+});
