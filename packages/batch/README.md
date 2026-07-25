@@ -42,8 +42,8 @@ A case passes when its deterministic checks hold (`must_contain` / `must_not_con
 `should_contain_any`) and, if a `judge` rubric is set, the LLM judge rates the answer at or above
 `pass_threshold` (0–10 scale, suite default `6`). `gth eval` prints a `PASS`/`FAIL` line per case
 plus a suite total, writes structured per-case JSON and a `results.json` summary to a timestamped
-output dir (override with `-o <dir>`), and exits non-zero if any case failed. Add `-j <n>` to cap
-in-flight cases.
+output dir (override with `-o <dir>`), and exits non-zero if any case failed. `-j <n>` caps
+in-flight cases (default `1` — cases run one at a time until you ask for more).
 
 ### Examples
 

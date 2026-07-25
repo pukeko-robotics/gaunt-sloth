@@ -21,8 +21,8 @@ Ticket {{id}} from {{customer}}:
 {{description}}
 ```
 
-With `data/tickets.csv` having `id,customer,description` columns, run eight cells at a time
-(cells run one at a time unless you ask for more — see below):
+With `data/tickets.csv` having `id,customer,description` columns, fan out to eight cells at a
+time — parallelism is opt-in, see below:
 
 ```bash
 gth batch prompts/triage.md --over data/tickets.csv -j 8

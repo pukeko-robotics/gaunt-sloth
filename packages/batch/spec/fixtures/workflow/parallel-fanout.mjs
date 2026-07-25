@@ -1,6 +1,6 @@
 // BATCH-24 regression fixture: measures how many thunks `ctx.parallel` ever has in flight at once.
-// Each thunk holds a slot until every thunk that will ever start has started (the barrier below
-// resolves once no further thunk can begin), so the observed peak IS the host's fan-out cap.
+// Each thunk occupies its slot for a fixed 20 ms, which is far longer than the host needs to start
+// every worker it intends to run, so the observed peak settles on the host's real fan-out cap.
 export default async function parallelFanout(ctx) {
   const thunkCount = 12;
   let inFlight = 0;

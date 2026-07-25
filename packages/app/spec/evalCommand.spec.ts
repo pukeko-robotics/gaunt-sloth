@@ -1677,7 +1677,11 @@ cases:
       );
       expect(consoleUtilsMock.displayInfo).toHaveBeenCalledExactlyOnceWith(HINT);
       // Hard requirement: never suggest a specific -j value — the right number is backend-specific.
-      expect(HINT).not.toMatch(/-j\s*\d/);
+      // Asserted against what the command actually printed, not against HINT (a local literal
+      // cannot fail), so this guards production output rather than the test's own constant.
+      expect(consoleUtilsMock.displayInfo).not.toHaveBeenCalledWith(
+        expect.stringMatching(/-j\s*\d/)
+      );
     });
 
     it('does not print the hint when -j was passed explicitly', async () => {

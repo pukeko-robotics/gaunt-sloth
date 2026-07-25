@@ -103,11 +103,13 @@ function normalizeConcurrency(concurrency: number | undefined): number {
  * single-GPU ollama wants exactly this serial default, a cloud key with headroom can take many —
  * so printing "try -j 4" would hand the wrong advice to the very setup this default protects.
  *
+ * Kept out of the package root's export list because it is a detail two first-party commands
+ * share rather than something the plugin API advertises. Note that is discoverability only, not
+ * a boundary: the package publishes a `./*.js` subpath map, so `@gaunt-sloth/batch/BatchRunner.js`
+ * — the specifier both commands import it by — is reachable by any consumer.
+ *
  * @param unitCount - how many cells/cases the run actually processed
  * @param explicitConcurrency - the user's `-j/--concurrency` value, `undefined` when not supplied
- * Not re-exported from the package root: it is an internal detail two first-party commands share
- * (both import it via the `@gaunt-sloth/batch/BatchRunner.js` subpath), not part of the plugin API.
- *
  * @param noun - what the units are called on this surface (`batch` cells vs `eval` cases)
  */
 export function concurrencyHint(
