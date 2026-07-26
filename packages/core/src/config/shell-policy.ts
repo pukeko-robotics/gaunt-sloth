@@ -2,8 +2,9 @@
  * @packageDocumentation
  * Shell / dev-tools policy: the {@link GthDevToolsConfig} type plus all the resolvers
  * that interpret it (shell enablement, timeouts, output budget, per-command dev-tools
- * selection), and — since CFG-26 — the {@link ApprovalsConfig} block and its context-aware
- * resolver {@link resolveApprovals} (approval mode, the AI rater, the allow-list knobs).
+ * selection), and — since CFG-27 — the {@link ApprovalsConfig} value and its resolver
+ * {@link resolveApprovals} (the five-rung ladder, the rater's identity profile, and the declared
+ * allow/deny lists).
  *
  * CFG-18 — the dev/shell tools are now configured through the unified {@link GthConfig.builtInTools}
  * registry (`string[] | Record<string, boolean | BuiltInToolConfig>`), NOT the removed per-command
@@ -14,7 +15,6 @@
  */
 import { type GthCommand, StatusLevel } from '#src/core/types.js';
 import type { GthConfig } from '#src/config/types.js';
-import { isTTY } from '#src/utils/systemUtils.js';
 
 /**
  * CFG-18 — the per-tool config object carried as a value in the {@link GthConfig.builtInTools}
@@ -357,153 +357,191 @@ export function getEffectiveDevToolsConfig(
 }
 
 /* -------------------------------------------------------------------------------------------- *
- * CFG-26 — the `approvals` block: mode + AI rater + allow-list.
+ * CFG-27 — the `approvals` ladder: one ordered set of five rungs, plus the declared lists.
  * -------------------------------------------------------------------------------------------- */
 
 /**
- * The user-facing approval posture.
- * - `auto` — the AI rater rates every gated call; `safe` runs, below the escalate threshold the
- *   rejection reason goes back to the model, at/above it the human is asked, `critical` is refused.
- * - `ask` — every gated call prompts the human (a configured rater acts as an advisor only).
- * - `bypass` — no gate (the honest name for the retired `yolo`). The exec-time hardline floor
- *   still refuses catastrophic commands.
+ * CFG-27 (spec §1, §2) — **the ladder**. There is ONE approvals setting and it is a single ordered
+ * ladder of five rungs; each rung fully determines behaviour. There are no severity thresholds, no
+ * strictness levels and no independent rater on/off switch.
+ *
+ * | # | Rung | Rater | LLM cost |
+ * |---|---|---|---|
+ * | 1 | `read-only` | no | none |
+ * | 2 | `write` | no | none |
+ * | 3 | `auto-safe` | yes | 1 call per gated call |
+ * | 4 | `full-auto` | yes | 1–2 calls per gated call |
+ * | 5 | `bypass` | no | none |
+ *
+ * Rungs 1, 2 and 5 are fully deterministic: no model is consulted, so behaviour is reproducible
+ * and costs nothing.
+ *
+ * **`bypass` is NOT a higher-autonomy rung than `full-auto`** (§2.5). Both let the agent act
+ * without asking; `bypass` is the same autonomy with the checks removed. The ordering below is the
+ * order the rungs are *offered* in, and must never be presented as though `full-auto` were an
+ * incomplete `bypass`.
+ *
+ * Identifiers are kebab-case (§9.1) because the same token must work as a config value, a
+ * slash-command argument and a CLI flag — a space breaks the last two. Display names keep their
+ * spaces; see {@link APPROVAL_RUNG_LABELS}.
  */
-export type ApprovalMode = 'auto' | 'ask' | 'bypass';
+export const APPROVAL_RUNGS = ['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'] as const;
 
-/** How strict the RATING PROMPT's tier definitions are. Never changes the action mapping. */
-export type RaterStrictness = 'lenient' | 'standard' | 'strict';
+/** One rung of {@link APPROVAL_RUNGS}. */
+export type ApprovalRung = (typeof APPROVAL_RUNGS)[number];
 
 /**
- * The only model-vs-human routing knob: a verdict at/above this tier asks the human, below it the
- * reason is returned to the model. `critical` is deliberately absent — it always rejects.
+ * §9.1 rule / §10 rule 4 — the display spelling of each rung, with spaces. An identifier and a
+ * label do not have to match and only one of them has to survive a shell, so user-facing prose
+ * uses these and never the kebab-case identifiers.
  */
-export type RaterEscalateThreshold = 'caution' | 'danger' | 'never';
+export const APPROVAL_RUNG_LABELS: Record<ApprovalRung, string> = {
+  'read-only': 'Read only',
+  write: 'Write',
+  'auto-safe': 'Auto safe',
+  'full-auto': 'Full auto',
+  bypass: 'Bypass',
+};
 
-/** On-disk `approvals.rater` object form. `false`/`true` are handled by {@link ApprovalsConfig}. */
-export interface RaterConfig {
-  /** Identity profile the rater runs under (strict resolution, GS2-62). Omitted = the main model. */
-  profile?: string;
-  /** Rating-prompt strictness. Default {@link DEFAULT_RATER_STRICTNESS}. */
-  strictness?: RaterStrictness;
-  /** Escalate-to-human threshold. Default {@link DEFAULT_RATER_ESCALATE}. */
-  escalate?: RaterEscalateThreshold;
+/**
+ * §10 — the one sentence shown wherever a rung is chosen or displayed. **Copied verbatim from the
+ * specification**; the wording is constrained by four normative rules there (state what the rung
+ * PERMITS, state the allow-list carve-out, never claim safety this system cannot deliver, use the
+ * display spelling) plus §8.1 (the hardline floor is real but is NEVER advertised — descriptions
+ * cite only protections the user can inspect and extend, i.e. the deny list). Do not "improve"
+ * these: `auto-safe` in particular MUST keep the sentence saying files are still rewritten and
+ * deleted without asking.
+ *
+ * The only departure from the source text is that §10's markdown emphasis markers (`**not**` in
+ * *Full auto*) are dropped, since these strings are rendered as plain terminal copy.
+ */
+export const APPROVAL_RUNG_DESCRIPTIONS: Record<ApprovalRung, string> = {
+  'read-only':
+    'Gaunt Sloth may automatically read and list files in the current working folder. It asks ' +
+    'for approval for anything else, until you tell it to always allow a command.',
+  write:
+    'Gaunt Sloth may automatically read, edit, create and delete files in the current working ' +
+    'folder. It asks for approval for anything else, until you tell it to always allow a command.',
+  'auto-safe':
+    'Same as write, plus the auto-rater rates everything else and automatically approves what it ' +
+    'rates as safe; anything questionable comes to you. Gaunt Sloth can still rewrite and delete ' +
+    'files in your working folder without asking — "safe" means each action is checked for ' +
+    'reaching outside that folder or harming your system, not that nothing changes.',
+  'full-auto':
+    'The auto-rater steers Gaunt Sloth: it decides for itself and does not stop to ask you. This ' +
+    'is safer than bypass — the auto-rater still halts anything that would send your secrets off ' +
+    'the machine or send your data somewhere your project did not set up, and your deny list ' +
+    'still applies — but it is not safe. Gaunt Sloth will change and delete things. Use it where ' +
+    'the consequences are recoverable, and put real gates (deployment approvals, two-factor, ' +
+    'branch protection) on anything that is not.',
+  bypass:
+    'No gate. Gaunt Sloth runs whatever it decides to run, without asking and without rating. ' +
+    'Only the refusals configured in the deny list in your config still apply.',
+};
+
+/** Narrowing type guard for a raw string that may name a rung. */
+export function isApprovalRung(value: unknown): value is ApprovalRung {
+  return typeof value === 'string' && (APPROVAL_RUNGS as readonly string[]).includes(value);
+}
+
+/** The rungs at which every gated call is rated by the model (§2.3, §2.4). */
+export function isRatedRung(rung: ApprovalRung): boolean {
+  return rung === 'auto-safe' || rung === 'full-auto';
 }
 
 /**
- * On-disk `approvals` block (root or per command). Replaces the retired
- * `builtInTools.run_shell_command.{yolo,judge,allowlist,persistAllowlist}` knobs.
+ * On-disk `approvals` object form (root or per command). The **scalar form is exactly sugar for
+ * `{ mode: <value> }`** (§9.1) — the union exists so the extras have a home when they are needed,
+ * not so there are two ways to say the same thing.
  */
-export interface ApprovalsConfig {
-  mode?: ApprovalMode;
-  /** `false` disables the rater; `true`/an object enables it. Absent = on iff `mode` is `auto`. */
-  rater?: boolean | RaterConfig;
-  /** EXT-9 Tier-2 scoped allow-list master switch. Default `true`. */
-  allowlist?: boolean;
-  /** Persist `always`-scoped grants to the project file. Default `true`. */
-  persistAllowlist?: boolean;
+export interface ApprovalsObjectConfig {
+  /** The rung. Absent = {@link DEFAULT_APPROVAL_RUNG}. */
+  mode?: ApprovalRung;
+  /**
+   * §9.1 — the identity profile the rater runs under, as a **bare name** (strict resolution,
+   * GS2-62: a name that does not resolve is a hard config error, never a silent fallback).
+   * Omitted = the main model. It is the only rater knob; nesting a one-field object is what this
+   * design removed.
+   */
+  rater?: string;
+  /** §3 — declared allow-list: command prefixes the human trusts. Read-only input. */
+  allow?: string[];
+  /** §3 — declared deny-list: command prefixes never to run. Read-only input; applies under `bypass`. */
+  deny?: string[];
 }
 
-/** The rater half of {@link ResolvedApprovals}, with every default already applied. */
-export interface ResolvedRater {
-  enabled: boolean;
-  profile?: string;
-  strictness: RaterStrictness;
-  escalate: RaterEscalateThreshold;
-}
+/** On-disk `approvals` value: the rung on its own, or the object when the extras are needed. */
+export type ApprovalsConfig = ApprovalRung | ApprovalsObjectConfig;
 
-/** The fully-defaulted approvals posture for one command in one context. */
+/**
+ * The fully-defaulted approvals posture for one command. `allow`/`deny` are the **declared**
+ * lists straight from config — read-only input that the runner merges with the runtime stores the
+ * escalation menu writes, and that is never written back to config (§9.1).
+ */
 export interface ResolvedApprovals {
-  mode: ApprovalMode;
-  rater: ResolvedRater;
-  allowlist: boolean;
-  persistAllowlist: boolean;
+  /** The rung in force. */
+  rung: ApprovalRung;
+  /** Identity profile the rater runs under, or `undefined` for the session model. */
+  rater?: string;
+  /** Declared allow-list prefixes (§3). Empty when none are declared. */
+  allow: string[];
+  /** Declared deny-list prefixes (§3). Empty when none are declared. */
+  deny: string[];
 }
 
 /**
  * CFG-26 — how many command prefixes the allow-list holds, for the `/approvals` display.
- * `always: undefined` means the persisted store has not been loaded (or persistence is off) —
- * rendered `—` rather than a misleading `0`, since a display must never create the store.
+ * `always: undefined` means the persisted store has not been loaded — rendered `—` rather than a
+ * misleading `0`, since a display must never create the store.
  */
 export interface AllowlistCounts {
   session: number;
   always: number | undefined;
 }
 
-/** Default rating-prompt strictness when `approvals.rater.strictness` is absent. */
-export const DEFAULT_RATER_STRICTNESS: RaterStrictness = 'standard';
-
-/** Default escalate-to-human threshold when `approvals.rater.escalate` is absent. */
-export const DEFAULT_RATER_ESCALATE: RaterEscalateThreshold = 'danger';
-
 /**
- * The commands whose default posture is the INTERACTIVE row of the defaults matrix — the surfaces
- * where a human is present at a terminal to answer a prompt. Everything else (`exec`/`ask`/
- * `review`/`pr` one-shots and the `api` AG-UI/ACP servers) takes the fail-closed row.
+ * §1.1 — **the default rung is `auto-safe`, everywhere.** It is the default in every interactive
+ * context, it does NOT vary with the configured model, and there is no separate non-interactive
+ * default. What changes without a human is what an escalation *does* (§6.2: an immediate non-zero
+ * exit, never an approval), not which rung the session starts on. A context-dependent default
+ * would reintroduce exactly the hidden branching this ladder exists to remove.
  */
-const INTERACTIVE_APPROVAL_COMMANDS: ReadonlySet<string> = new Set(['code', 'chat']);
+export const DEFAULT_APPROVAL_RUNG: ApprovalRung = 'auto-safe';
+
+/** Normalize the scalar/object union to the object form. The scalar is sugar for `{ mode }`. */
+function toApprovalsObject(raw: ApprovalsConfig | undefined): ApprovalsObjectConfig | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw === 'string') return { mode: raw };
+  return raw;
+}
 
 /**
- * CFG-26 — resolve the effective {@link ResolvedApprovals} for the active command, applying the
- * spec's defaults matrix when no `approvals` key exists:
+ * CFG-27 — resolve the effective {@link ResolvedApprovals} for the active command.
  *
- * | Context | Effective default |
- * |---|---|
- * | Interactive `code`/`chat` (TTY) | `mode: auto`, rater on (main model), `standard`, `danger` |
- * | One-shot `exec`/`ask`/`review`/`pr` | rater off, `ask` semantics — non-TTY stays fail-closed |
- * | AG-UI / ACP servers (`api`) | same as one-shot: rater off, fail-closed |
- *
- * "Fail-closed" is not implemented here: it is the runner's existing rule that a pending tool call
- * with NO approval handler is REJECTED (never auto-approved). This resolver only says the posture
- * is `ask`; with no TTY handler wired, `ask` therefore rejects.
- *
- * Precedence: a per-command `approvals` block REPLACES the root one wholesale (no deep merge),
- * mirroring `builtInTools` in {@link getEffectiveDevToolsConfig}. Defaults are applied HERE, at
- * the read site, rather than in `DEFAULT_CONFIG` — so the effective-config snapshot the `/config`
+ * There is no defaults *matrix* any more: §1.1 makes `auto-safe` the default in every context, so
+ * this resolver neither detects nor accepts a "context". Precedence is the only thing it decides:
+ * a per-command `approvals` value **replaces the root one wholesale** (no merge), mirroring how
+ * `builtInTools` resolves in {@link getEffectiveDevToolsConfig}. Defaults are applied HERE, at the
+ * read site, rather than in `DEFAULT_CONFIG` — so the effective-config snapshot the `/config`
  * panel renders never churns (à la GS2-34 `injectModelContext` / GS2-63 `output.header`).
  *
- * The rater is on when `approvals.rater` is explicitly set to anything but `false`, and otherwise
- * exactly when the effective mode is `auto` — Mari's rule that **auto-mode exists only where the
- * rater does**. (`mode: "auto"` + `rater: false` is rejected by the schema refinement, so the two
- * can never disagree.)
- *
- * @param command The active command; selects the matrix row and the per-command block.
- * @param options.interactive Override the context detection. Omitted = the command is an
- *   interactive one AND we are on a TTY. Pass it explicitly in tests and from callers that already
- *   know (a TUI session, a server).
+ * @param command The active command; selects the per-command block.
  */
 export function resolveApprovals(
   config: Pick<GthConfig, 'commands' | 'approvals'> | undefined,
-  command: GthCommand | undefined,
-  options?: { interactive?: boolean }
+  command: GthCommand | undefined
 ): ResolvedApprovals {
-  const interactive =
-    options?.interactive ??
-    (command !== undefined && INTERACTIVE_APPROVAL_COMMANDS.has(command) && isTTY());
-
   const perCommand = command
     ? (config?.commands as Record<string, { approvals?: ApprovalsConfig }> | undefined)?.[command]
         ?.approvals
     : undefined;
-  const raw = perCommand ?? config?.approvals;
-
-  const mode: ApprovalMode = raw?.mode ?? (interactive ? 'auto' : 'ask');
-
-  const raterSetting = raw?.rater;
-  const raterObject: RaterConfig | undefined =
-    raterSetting && typeof raterSetting === 'object' ? raterSetting : undefined;
-  const raterEnabled =
-    raterSetting === false ? false : raterSetting !== undefined ? true : mode === 'auto';
+  const raw = toApprovalsObject(perCommand ?? config?.approvals);
 
   return {
-    mode,
-    rater: {
-      enabled: raterEnabled,
-      profile: raterObject?.profile,
-      strictness: raterObject?.strictness ?? DEFAULT_RATER_STRICTNESS,
-      escalate: raterObject?.escalate ?? DEFAULT_RATER_ESCALATE,
-    },
-    allowlist: raw?.allowlist ?? true,
-    persistAllowlist: raw?.persistAllowlist ?? true,
+    rung: raw?.mode ?? DEFAULT_APPROVAL_RUNG,
+    rater: raw?.rater,
+    allow: raw?.allow ?? [],
+    deny: raw?.deny ?? [],
   };
 }
 
@@ -535,84 +573,64 @@ export interface ShellApprovalGateDecision {
  * interrupt; the policy and its user-facing copy live here so the two can never drift (and so a
  * later rename of this config surface has one place to change).
  *
- * CFG-26 — how `approvals.mode` (the retired `run_shell_command.yolo` is now `mode: "bypass"`)
- * interacts with gating:
- *   • In interactive `code` mode the tool stays GATED even under `bypass`, so the runner's session
- *     mode governs it and `/approvals ask` can restore the per-command prompt mid-session.
- *     `GthAgentRunner.init` seeds that session mode from config, so the user still sees no prompt
- *     by default; the interactive event/stream path drains the interrupt and approves silently.
- *   • In non-interactive modes (`exec` / `ask --write`) a single-shot run does not drain
- *     interrupts, so `bypass` keeps the tool UNGATED (it runs inline without suspending),
- *     preserving prior behaviour. There is no slash-command surface there to toggle anyway.
- *   • Under `auto` and `ask` the tool is gated; the difference (rater-mediated vs always-prompt)
- *     is decided later, in `GthAgentRunner.decideToolApproval`.
+ * CFG-27 — **the tool is gated whenever it is enabled, at every rung including `bypass`.** CFG-26
+ * used to leave it UNGATED under `bypass` outside interactive `code`, which the ladder cannot
+ * afford: §2.5 makes the declared **deny list the one check `bypass` keeps**, and a deny entry can
+ * only fire if the call reaches `GthAgentRunner.decideToolApproval` — an ungated call never does.
+ * Gating unconditionally also keeps the rung switchable mid-session (`/approvals <rung>`), since a
+ * tool wired without the interrupt cannot be re-gated without rebuilding the agent.
+ *
+ * What each rung then does is decided in `decideToolApproval`, not here:
+ *   • `bypass` — deny list, then approve without prompting or rating.
+ *   • `read-only`/`write` — deny list, allow-list, else escalate to the human.
+ *   • `auto-safe`/`full-auto` — deny list, allow-list, then the rater.
  *   • With the shell tool disabled — or on a non-dev-tools command (chat/api/…) — nothing is gated
  *     and nothing is announced.
  *
  * Shell enablement itself is resolved through {@link getEffectiveDevToolsConfig} +
  * {@link isShellToolEnabled}, so the gate stays in lockstep with where `GthDevToolkit` actually
  * emits the tool; the posture comes from {@link resolveApprovals}, so this and the runner can
- * never disagree about what mode is in force.
+ * never disagree about which rung is in force.
  */
 export function resolveShellApprovalGate(
   config: Pick<GthConfig, 'commands' | 'builtInTools' | 'askWriteMode' | 'approvals'> | undefined,
   command: GthCommand | undefined
 ): ShellApprovalGateDecision {
   const devTools = getEffectiveDevToolsConfig(config, command);
-  const shellEnabled = isShellToolEnabled(devTools, command);
-  const isInteractive = command === 'code';
-  // The gate question is only about `bypass`; resolve the mode in the command's own context so an
-  // explicit config value wins and the context default applies otherwise.
-  //
-  // NOTE: `interactive` is pinned to "is this the `code` command", NOT to the TTY, so the gate (and
-  // its notice) is deterministic and a piped `gth code` under `bypass` stays GATED exactly as
-  // before. `GthAgentRunner.init` resolves the SESSION posture with the TTY-aware default, so on a
-  // NON-TTY `code` run with no `approvals` config this notice can say `auto` while the session
-  // resolves to `ask` (fail-closed, since no approval handler is wired there anyway). CFG-26 Task 2
-  // should render the status bar from the runner's live posture, not from this notice.
-  const { mode } = resolveApprovals(config, command, { interactive: isInteractive });
-  const gateShell = shellEnabled && (mode !== 'bypass' || isInteractive);
+  const gateShell = isShellToolEnabled(devTools, command);
+  if (!gateShell) return { gateShell };
 
-  if (gateShell && mode === 'bypass') {
-    return {
-      gateShell,
-      notice: {
-        level: StatusLevel.INFO,
-        message:
-          'Shell tool (run_shell_command) auto-approved by config (approvals.mode: bypass). ' +
-          'Type /approvals ask to require per-command approval.',
-      },
-    };
-  }
-  if (gateShell && mode === 'auto') {
-    return {
-      gateShell,
-      notice: {
-        level: StatusLevel.INFO,
-        message:
-          'Shell tool (run_shell_command) gated by the AI rater (approvals.mode: auto); ' +
-          'risky commands are still escalated to you.',
-      },
-    };
-  }
-  if (gateShell) {
-    return {
-      gateShell,
-      notice: {
-        level: StatusLevel.INFO,
-        message: 'Shell tool (run_shell_command) enabled with per-command approval.',
-      },
-    };
-  }
-  if (shellEnabled) {
+  const { rung } = resolveApprovals(config, command);
+
+  if (rung === 'bypass') {
     return {
       gateShell,
       notice: {
         level: StatusLevel.WARNING,
         message:
-          'Shell tool (run_shell_command) enabled in bypass mode: commands run WITHOUT confirmation.',
+          'Shell tool (run_shell_command): commands run without asking and without rating ' +
+          '(approvals: bypass). Only your deny list still applies — type /approvals auto-safe to ' +
+          'rate commands again.',
       },
     };
   }
-  return { gateShell };
+  if (isRatedRung(rung)) {
+    return {
+      gateShell,
+      notice: {
+        level: StatusLevel.INFO,
+        message:
+          `Shell tool (run_shell_command) rated by the auto-rater (approvals: ${rung}); ` +
+          'anything it does not rate safe is still ' +
+          (rung === 'auto-safe' ? 'escalated to you.' : 'refused or escalated.'),
+      },
+    };
+  }
+  return {
+    gateShell,
+    notice: {
+      level: StatusLevel.INFO,
+      message: `Shell tool (run_shell_command) enabled with per-command approval (approvals: ${rung}).`,
+    },
+  };
 }

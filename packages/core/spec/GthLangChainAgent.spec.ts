@@ -583,23 +583,23 @@ describe('GthLangChainAgent', () => {
       };
 
       it('gates code mode by default (shell defaults ON in code) and announces the gate', async () => {
-        // CFG-26 — interactive `code` defaults to `approvals.mode: auto`, so the notice names the
-        // rater. `mode: ask` is asserted separately below.
+        // CFG-27 — the default rung is `auto-safe`, so the notice names the rater. The unrated
+        // rungs are asserted separately below.
         await initAgent('code', mockConfig);
         expect(middlewareNames()).toContain('HumanInTheLoopMiddleware');
         expect(statusUpdateCallback).toHaveBeenCalledWith(
           StatusLevel.INFO,
-          'Shell tool (run_shell_command) gated by the AI rater (approvals.mode: auto); ' +
-            'risky commands are still escalated to you.'
+          'Shell tool (run_shell_command) rated by the auto-rater (approvals: auto-safe); ' +
+            'anything it does not rate safe is still escalated to you.'
         );
       });
 
-      it('announces the per-command prompt under an explicit approvals.mode: ask', async () => {
-        await initAgent('code', { ...mockConfig, approvals: { mode: 'ask' } } as GthConfig);
+      it('announces the per-command prompt at the unrated rung `write`', async () => {
+        await initAgent('code', { ...mockConfig, approvals: 'write' } as GthConfig);
         expect(middlewareNames()).toContain('HumanInTheLoopMiddleware');
         expect(statusUpdateCallback).toHaveBeenCalledWith(
           StatusLevel.INFO,
-          'Shell tool (run_shell_command) enabled with per-command approval.'
+          'Shell tool (run_shell_command) enabled with per-command approval (approvals: write).'
         );
       });
 
@@ -634,32 +634,30 @@ describe('GthLangChainAgent', () => {
         expect(middlewareNames()).toContain('HumanInTheLoopMiddleware');
       });
 
-      it('leaves exec UNGATED under approvals.mode: bypass (single-shot runs inline) with the bypass warning', async () => {
-        await initAgent('exec', {
-          ...mockConfig,
-          approvals: { mode: 'bypass' },
-          // enabled must be explicit: outside `code` the absent-enabled default is OFF.
-          builtInTools: { run_shell_command: { enabled: true } },
-        } as GthConfig);
-        expect(middlewareNames()).not.toContain('HumanInTheLoopMiddleware');
-        expect(statusUpdateCallback).toHaveBeenCalledWith(
-          StatusLevel.WARNING,
-          'Shell tool (run_shell_command) enabled in bypass mode: commands run WITHOUT confirmation.'
-        );
-      });
-
-      it('keeps interactive code GATED under approvals.mode: bypass (so /approvals ask can restore the prompt) and says so', async () => {
-        await initAgent('code', {
-          ...mockConfig,
-          approvals: { mode: 'bypass' },
-        } as GthConfig);
-        expect(middlewareNames()).toContain('HumanInTheLoopMiddleware');
-        expect(statusUpdateCallback).toHaveBeenCalledWith(
-          StatusLevel.INFO,
-          'Shell tool (run_shell_command) auto-approved by config (approvals.mode: bypass). ' +
-            'Type /approvals ask to require per-command approval.'
-        );
-      });
+      /**
+       * CFG-27 — `bypass` keeps the gate in EVERY context, `exec` included. CFG-26 left it
+       * ungated outside interactive `code`; the ladder cannot afford that, because §2.5 makes the
+       * declared deny list the one check `bypass` keeps and a deny entry can only fire if the call
+       * reaches the runner's `decideToolApproval` — an ungated call never does.
+       */
+      it.each(['code', 'exec'] as const)(
+        'keeps %s GATED under approvals: bypass, and warns without leaning on the floor',
+        async (command) => {
+          await initAgent(command, {
+            ...mockConfig,
+            approvals: 'bypass',
+            // enabled must be explicit: outside `code` the absent-enabled default is OFF.
+            builtInTools: { run_shell_command: { enabled: true } },
+          } as GthConfig);
+          expect(middlewareNames()).toContain('HumanInTheLoopMiddleware');
+          expect(statusUpdateCallback).toHaveBeenCalledWith(
+            StatusLevel.WARNING,
+            'Shell tool (run_shell_command): commands run without asking and without rating ' +
+              '(approvals: bypass). Only your deny list still applies — type /approvals auto-safe ' +
+              'to rate commands again.'
+          );
+        }
+      );
     });
 
     // GS2-36: the retry budget caps a self-inflicted tool-error loop. A beforeModel guard walks the

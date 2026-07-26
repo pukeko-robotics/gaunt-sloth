@@ -14,7 +14,13 @@
  * can append more entries via {@link createCommandRegistry} without this module changing.
  */
 
-import type { ApprovalMode, ResolvedApprovals } from '@gaunt-sloth/core/config.js';
+import type { ApprovalRung, ResolvedApprovals } from '@gaunt-sloth/core/config.js';
+import {
+  APPROVAL_RUNG_DESCRIPTIONS,
+  APPROVAL_RUNG_LABELS,
+  APPROVAL_RUNGS,
+  isRatedRung,
+} from '@gaunt-sloth/core/config.js';
 
 /** Read-only session context a command may surface (e.g. `/status`, `/model`). */
 export interface SlashCommandContext {
@@ -273,16 +279,17 @@ export interface SlashCommandResult {
   /** When true, the component toggles tool-call panels between collapsed and expanded. */
   toggleTools?: boolean;
   /**
-   * CFG-26 — a requested approvals action from the `/approvals` family (`/approvals`,
-   * `/auto-approve`, `/bypass-approve`). `{ show: true }` asks the surface to DISPLAY the current
-   * posture; `{ mode }` asks it to switch the session to that mode. The command itself stays pure
-   * — it cannot read the runner's posture — so the surface owns the apply + the resulting-state
-   * notice (mirroring how `/verbose` / `/debug` defer their state-aware copy to the App).
+   * CFG-27 — a requested action from `/approvals`. `{ show: true }` asks the surface to DISPLAY
+   * the current posture; `{ rung }` asks it to switch the session to that rung. The command itself
+   * stays pure — it cannot read the runner's posture — so the surface owns the apply + the
+   * resulting-state notice (mirroring how `/verbose` / `/debug` defer their state-aware copy to
+   * the App).
    *
-   * There is deliberately NO `toggle` action: with three modes a flip has no honest meaning, and
-   * the spec defines `/auto-approve` as a straight shortcut for `/approvals auto`.
+   * There is deliberately NO `toggle` action: with five ordered rungs a flip has no honest
+   * meaning, which is also why `/auto-approve` and `/bypass-approve` were retired with the
+   * three-mode vocabulary that gave them their names.
    */
-  approvals?: { show: true } | { mode: ApprovalMode };
+  approvals?: { show: true } | { rung: ApprovalRung };
   /**
    * TUI-C18 — a committed turn's thinking to REPRINT into the transcript (the `/reasoning` command).
    * Committed reasoning is frozen in Ink's `<Static>` and can never re-expand in place, so instead of
@@ -421,106 +428,72 @@ export function debugToggleNotice(visible: boolean): SlashCommandNotice {
 }
 
 /**
- * CFG-26 — the notice for a landed approvals MODE, given the RESULTING (post-apply) posture.
+ * CFG-27 — the notice for a landed approvals RUNG, given the RESULTING (post-apply) posture.
  * Shared so every surface reports exactly the state that was applied, and so the copy can never
  * drift from what the gate actually does.
  *
- * `bypass` is the only warn-toned one: it is the single mode with NO gate at all, and the spec
- * requires it to say so — "without asking AND without the AI rater". `auto` is deliberately NOT
- * described as "runs without asking": it is rater-mediated, and risky commands still reach the
- * human. Naming the rater profile (when one is set) is the spec's status-line requirement.
- */
-export function approvalsModeNotice(approvals: ResolvedApprovals): SlashCommandNotice {
-  const raterName = approvals.rater.profile
-    ? `the ${approvals.rater.profile} rater`
-    : 'the AI rater';
-  switch (approvals.mode) {
-    case 'auto':
-      return {
-        title: 'Approvals: auto — the AI rater reviews each command',
-        lines: [
-          `${raterName} rates every shell command: clearly-safe ones run, risky ones still ask you.`,
-          `Anything rated ${approvals.rater.escalate === 'never' ? 'below critical' : approvals.rater.escalate} or worse is escalated to you; critical is always refused.`,
-          'Session-scoped only (not saved); run /approvals ask to confirm every command yourself.',
-        ],
-      };
-    case 'bypass':
-      return {
-        title: 'Approvals: bypass — commands run without asking',
-        lines: [
-          'run_shell_command runs WITHOUT asking and WITHOUT the AI rater.',
-          'The hardline safety floor still blocks catastrophic commands.',
-          'Session-scoped only (not saved); run /approvals ask to require approvals again.',
-        ],
-        tone: 'warn',
-      };
-    case 'ask':
-    default:
-      return {
-        title: 'Approvals: ask — you confirm every command',
-        lines: [
-          'run_shell_command will prompt for approval before each command.',
-          'Run /auto-approve to let the AI rater handle the clearly-safe ones.',
-        ],
-      };
-  }
-}
-
-/**
- * CFG-26 — the `/approvals` DISPLAY: mode, rater (profile / strictness / escalate) and the
- * allow-list counts. Pure: the surface reads the live posture from the runner and hands it in.
+ * The body of each notice is §10's description, **verbatim** — the one place the ladder is
+ * explained to the user, so it must not be paraphrased per surface. §10 rule 4 also fixes the
+ * label: the display spelling with spaces, never the kebab-case identifier.
  *
- * `always: undefined` means the persisted store has not been loaded (or persistence is off), and
- * is rendered `—` rather than a misleading `0` — a display must not create the store to count it.
+ * `bypass` is the only warn-toned one: it is the single rung with no gate at all. Note what is
+ * NOT here — the hardline floor. §8.1 forbids advertising it: descriptions name only protections
+ * the user can inspect and extend, which is the deny list.
  */
-export function approvalsStatusNotice(
-  approvals: ResolvedApprovals,
-  allowlist: { session: number; always: number | undefined }
-): SlashCommandNotice {
-  const rater = approvals.rater.enabled
-    ? `${approvals.rater.profile ?? 'main model'} · strictness: ${approvals.rater.strictness} · escalate: ${approvals.rater.escalate}`
-    : 'off';
+export function approvalsRungNotice(approvals: ResolvedApprovals): SlashCommandNotice {
+  const lines = [APPROVAL_RUNG_DESCRIPTIONS[approvals.rung]];
+  if (isRatedRung(approvals.rung) && approvals.rater) {
+    lines.push(`The auto-rater runs under the "${approvals.rater}" identity profile.`);
+  }
+  lines.push('Session-scoped only (not saved); run /approvals to see or change it.');
   return {
-    title: `Approvals: ${approvals.mode}`,
-    lines: [
-      `AI rater: ${rater}`,
-      `Allow-list: ${approvals.allowlist ? 'on' : 'off'} · session: ${allowlist.session} · persisted: ${allowlist.always ?? '—'}`,
-      'Switch with /approvals auto | /approvals ask | /approvals bypass.',
-    ],
-    tone: approvals.mode === 'bypass' ? 'warn' : 'info',
+    title: `Approvals: ${APPROVAL_RUNG_LABELS[approvals.rung]}`,
+    lines,
+    tone: approvals.rung === 'bypass' ? 'warn' : 'info',
   };
 }
 
-/** The modes `/approvals <mode>` accepts. */
-const APPROVAL_MODES: readonly ApprovalMode[] = ['auto', 'ask', 'bypass'];
-
 /**
- * CFG-26 — parse the `/approvals` argument: no arg SHOWS the current posture; `auto`/`ask`/
- * `bypass` switch. Returns `null` for an unrecognized argument so the command renders a usage
- * hint instead of guessing.
+ * CFG-27 — the `/approvals` DISPLAY: the rung and its description, the rater profile at the two
+ * rated rungs, and the allow/deny list sizes. Pure: the surface reads the live posture from the
+ * runner and hands it in.
+ *
+ * `always: undefined` means the persisted store has not been loaded, and is rendered `—` rather
+ * than a misleading `0` — a display must not create the store in order to count it.
  */
-export function parseApprovalsArg(args: string[]): { show: true } | { mode: ApprovalMode } | null {
-  if (args.length === 0) return { show: true };
-  const arg = args[0].toLowerCase();
-  const mode = APPROVAL_MODES.find((m) => m === arg);
-  return mode ? { mode } : null;
+export function approvalsStatusNotice(
+  approvals: ResolvedApprovals,
+  allowlist: { session: number; always: number | undefined },
+  deny: readonly string[] = []
+): SlashCommandNotice {
+  const rater = isRatedRung(approvals.rung)
+    ? (approvals.rater ?? 'main model')
+    : 'not used at this rung';
+  return {
+    title: `Approvals: ${APPROVAL_RUNG_LABELS[approvals.rung]}`,
+    lines: [
+      APPROVAL_RUNG_DESCRIPTIONS[approvals.rung],
+      `Auto-rater: ${rater}`,
+      `Allowed: ${allowlist.session} this session · ${allowlist.always ?? '—'} remembered · Denied: ${deny.length}`,
+      `Switch with /approvals ${APPROVAL_RUNGS.join(' | /approvals ')}.`,
+    ],
+    tone: approvals.rung === 'bypass' ? 'warn' : 'info',
+  };
 }
 
 /**
- * CFG-26 — parse the `/auto-approve` argument. The spec defines this command as a straight
- * shortcut for `/approvals auto`, so: no arg / `on` → `auto`, `off` → `ask` (the resolved spec
- * gap — "off" means confirm every command yourself, which is `ask`, not `bypass`).
+ * CFG-27 — parse the `/approvals` argument: no arg SHOWS the current posture; any of the five
+ * kebab-case rung names switches to it. Returns `null` for an unrecognized argument so the
+ * command renders a usage hint instead of guessing.
  *
- * There is no `toggle`: the pre-CFG-26 command flipped a boolean, but with three modes a flip has
- * no honest meaning, and a command that cannot say what it will do is exactly the class of lie
- * this node removes.
+ * The retired `auto` / `ask` spellings are NOT accepted as aliases — this is still alpha, and a
+ * silent alias would leave the user believing in a vocabulary the gate no longer has.
  */
-export function parseAutoApproveArg(args: string[]): ApprovalMode | null {
-  if (args.length === 0) return 'auto';
+export function parseApprovalsArg(args: string[]): { show: true } | { rung: ApprovalRung } | null {
+  if (args.length === 0) return { show: true };
   const arg = args[0].toLowerCase();
-  if (arg === 'on' || arg === 'enable' || arg === 'true') return 'auto';
-  if (arg === 'off' || arg === 'disable' || arg === 'false') return 'ask';
-  return null;
+  const rung = APPROVAL_RUNGS.find((r) => r === arg);
+  return rung ? { rung } : null;
 }
 
 /**
@@ -695,10 +668,15 @@ export function createCommandRegistry(): SlashCommand[] {
     {
       name: 'approvals',
       description:
-        'Show or switch the tool-approval mode (/approvals auto|ask|bypass; no arg shows it)',
+        'Show or switch the approvals rung ' +
+        '(/approvals read-only|write|auto-safe|full-auto|bypass; no arg shows it)',
       // Available mid-turn so the user can change how the run's REMAINING tool calls are handled
-      // (EXT-12's reason, generalized to the mode). The surface owns the runner posture, so it
+      // (EXT-12's reason, generalized to the rung). The surface owns the runner posture, so it
       // applies the change and commits the notice for the landed state.
+      //
+      // CFG-27 retired `/auto-approve` and `/bypass-approve` with the three-mode vocabulary they
+      // named. Neither maps onto the ladder honestly — "auto-approve off" had to mean one of two
+      // different rungs — and `/approvals <rung>` says exactly what it will do.
       availableDuringRun: true,
       run: (_ctx, args) => {
         const action = parseApprovalsArg(args);
@@ -707,9 +685,10 @@ export function createCommandRegistry(): SlashCommand[] {
             notice: {
               title: `Unknown option: ${args[0]}`,
               lines: [
-                'Usage: /approvals [auto|ask|bypass] — with no argument it shows the current mode.',
-                'auto = the AI rater reviews each command; ask = you confirm every one;',
-                'bypass = no gate at all (the hardline floor still blocks catastrophic commands).',
+                `Usage: /approvals [${APPROVAL_RUNGS.join('|')}] — with no argument it shows the current rung.`,
+                ...APPROVAL_RUNGS.map(
+                  (rung) => `${rung} — ${APPROVAL_RUNG_DESCRIPTIONS[rung].split('. ')[0]}.`
+                ),
               ],
               tone: 'warn',
             },
@@ -717,35 +696,6 @@ export function createCommandRegistry(): SlashCommand[] {
         }
         return { approvals: action };
       },
-    },
-    {
-      name: 'auto-approve',
-      description:
-        'Shortcut for /approvals auto — the AI rater reviews each command (/auto-approve off = ask)',
-      availableDuringRun: true,
-      run: (_ctx, args) => {
-        const mode = parseAutoApproveArg(args);
-        if (mode === null) {
-          return {
-            notice: {
-              title: `Unknown option: ${args[0]}`,
-              lines: [
-                'Usage: /auto-approve [on|off] — no argument means on.',
-                'on = the AI rater reviews each command (/approvals auto);',
-                'off = you confirm every command yourself (/approvals ask).',
-              ],
-              tone: 'warn',
-            },
-          };
-        }
-        return { approvals: { mode } };
-      },
-    },
-    {
-      name: 'bypass-approve',
-      description: 'Shortcut for /approvals bypass — run without asking AND without the AI rater',
-      availableDuringRun: true,
-      run: () => ({ approvals: { mode: 'bypass' } }),
     },
     {
       name: 'exit',

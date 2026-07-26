@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  APPROVALS_AUTO_REQUIRES_RATER,
   findApprovalsRaterProfiles,
   findDeprecatedConfigIssues,
   findUnknownTopLevelKeys,
@@ -303,11 +302,14 @@ describe('config schema (GS2-1 B1)', () => {
      * run with its approval posture quietly ignored.
      */
     describe('retired run_shell_command approval knobs (CFG-26)', () => {
+      // CFG-27 rescaled the replacements these messages name: the rung IS the setting, so
+      // `yolo` points at the `bypass` rung, `allowlist` at the declared `approvals.allow` list,
+      // and `persistAllowlist` at nothing (persistence is a per-decision choice now).
       const RETIRED = {
-        yolo: 'approvals.mode',
+        yolo: '"approvals": "bypass"',
         judge: 'approvals.rater',
-        allowlist: 'approvals.allowlist',
-        persistAllowlist: 'approvals.persistAllowlist',
+        allowlist: 'approvals.allow',
+        persistAllowlist: 'per-decision choice at the approval prompt',
       } as const;
 
       for (const [key, replacement] of Object.entries(RETIRED)) {
@@ -345,14 +347,15 @@ describe('config schema (GS2-1 B1)', () => {
         });
       }
 
-      it('the retired judge message also points at the 4-tier escalate replacement', () => {
+      it('the retired judge message names the RUNG that replaced the low/medium/high knobs', () => {
         const issues = findDeprecatedConfigIssues({
           builtInTools: {
             run_shell_command: { judge: { autoApproveLow: false, blockHigh: true } },
           },
         });
-        expect(issues[0].message).toContain('approvals.rater.escalate');
-        expect(issues[0].message).toContain('critical now always rejects');
+        expect(issues[0].message).toContain('auto-safe');
+        expect(issues[0].message).toContain('full-auto');
+        expect(issues[0].message).toContain('safe/destructive/exfiltration');
       });
 
       it('reports EVERY retired knob present, not just the first', () => {
@@ -389,19 +392,29 @@ describe('config schema (GS2-1 B1)', () => {
     });
 
     /**
-     * CFG-26 — the `approvals` block itself: what parses, what the enum refuses, and the
-     * mode/rater coupling refinement.
+     * CFG-27 — the `approvals` value itself: the scalar-or-object union, what the enum refuses,
+     * and the retired keys / retired mode values that must hard-error naming the rung.
      */
-    describe('approvals block (CFG-26)', () => {
+    describe('approvals (CFG-27 ladder)', () => {
       const parse = (approvals: unknown) =>
         rawGthConfigSchema.safeParse({ llm: { type: 'openai' }, approvals });
 
-      it('parses a full valid block and preserves every field', () => {
+      const RUNGS = ['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'] as const;
+
+      it.each(RUNGS)('accepts the bare rung name "%s" (§9.1 scalar sugar)', (rung) => {
+        const result = parse(rung);
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect((result.data as Record<string, unknown>).approvals).toBe(rung);
+        }
+      });
+
+      it('parses a full valid object and preserves every field', () => {
         const approvals = {
-          mode: 'auto',
-          rater: { profile: 'safety-rater', strictness: 'standard', escalate: 'danger' },
-          allowlist: true,
-          persistAllowlist: true,
+          mode: 'auto-safe',
+          rater: 'safety-rater',
+          allow: ['npm test', 'git status'],
+          deny: ['git push --force', 'npm publish'],
         };
         const result = parse(approvals);
         expect(result.success).toBe(true);
@@ -410,77 +423,182 @@ describe('config schema (GS2-1 B1)', () => {
         }
       });
 
-      it('accepts the boolean rater arms (`rater: true` / `rater: false`)', () => {
-        expect(parse({ mode: 'ask', rater: true }).success).toBe(true);
-        expect(parse({ mode: 'ask', rater: false }).success).toBe(true);
-      });
-
-      it('REJECTS escalate: "critical" — critical always rejects, it is not a threshold', () => {
-        const result = parse({ mode: 'auto', rater: { escalate: 'critical' } });
-        expect(result.success).toBe(false);
-      });
-
-      it('rejects an unknown mode', () => {
+      it('rejects an unknown rung, in either form', () => {
+        expect(parse('yolo').success).toBe(false);
         expect(parse({ mode: 'yolo' }).success).toBe(false);
       });
 
-      it('parses per-command approvals on every command', () => {
+      it('rejects a rater that is not a bare string (the object/boolean forms are retired)', () => {
+        expect(parse({ mode: 'auto-safe', rater: { profile: 'x' } }).success).toBe(false);
+        expect(parse({ mode: 'auto-safe', rater: true }).success).toBe(false);
+      });
+
+      it('parses per-command approvals on every command, scalar and object alike', () => {
         const result = rawGthConfigSchema.safeParse({
           llm: { type: 'openai' },
           commands: {
-            pr: { approvals: { mode: 'ask' } },
-            review: { approvals: { mode: 'ask' } },
-            ask: { approvals: { mode: 'ask' } },
-            chat: { approvals: { mode: 'auto' } },
-            code: { approvals: { mode: 'auto' } },
-            exec: { approvals: { mode: 'bypass' } },
-            api: { approvals: { mode: 'ask' } },
+            pr: { approvals: 'read-only' },
+            review: { approvals: 'read-only' },
+            ask: { approvals: { mode: 'write' } },
+            chat: { approvals: 'auto-safe' },
+            code: { approvals: { mode: 'auto-safe', rater: 'safety-rater' } },
+            exec: { approvals: 'bypass' },
+            api: { approvals: 'read-only' },
           },
         });
         expect(result.success).toBe(true);
       });
 
-      describe('mode/rater coupling refinement', () => {
-        it('rejects mode:"auto" with the rater explicitly disabled, with the spec wording', () => {
-          const result = parse({ mode: 'auto', rater: false });
-          expect(result.success).toBe(false);
-          if (!result.success) {
-            const rendered = formatConfigValidationError(result.error);
-            expect(rendered).toContain(APPROVALS_AUTO_REQUIRES_RATER);
-            expect(rendered).toContain('approvals.rater');
-          }
-        });
+      /**
+       * The CFG-26 migration UX, rescaled: a retired key or a retired `mode` VALUE is a hard
+       * error naming the rung that replaced it. `approvalsSchema`'s object arm is a `z.object`,
+       * which silently STRIPS unknown keys — so without the pre-parse reject an
+       * `approvals: { mode: "auto-safe", strictness: "strict" }` would run with its declared
+       * posture quietly ignored, which is the worst possible failure for a safety gate.
+       */
+      describe('retired approvals keys and mode values (CFG-27)', () => {
+        const RETIRED_KEYS = ['strictness', 'escalate', 'allowlist', 'persistAllowlist'] as const;
 
-        it('applies per-command too', () => {
-          const result = rawGthConfigSchema.safeParse({
-            llm: { type: 'openai' },
-            commands: { code: { approvals: { mode: 'auto', rater: false } } },
+        for (const key of RETIRED_KEYS) {
+          it(`hard-errors on ${key} at the ROOT approvals value`, () => {
+            const issues = findDeprecatedConfigIssues({
+              llm: { type: 'openai' },
+              approvals: { mode: 'auto-safe', [key]: 'whatever' },
+            });
+            expect(issues).toHaveLength(1);
+            expect(issues[0].path).toBe(`approvals.${key}`);
+            expect(issues[0].message).toContain('no longer supported');
+            // The message NAMES the ladder, so the user learns what replaced the knob.
+            expect(issues[0].message).toContain('read-only, write, auto-safe, full-auto, bypass');
+            expect(issues[0].message).toContain(MIGRATION_DOC_URL);
           });
-          expect(result.success).toBe(false);
-          if (!result.success) {
-            expect(formatConfigValidationError(result.error)).toContain(
-              APPROVALS_AUTO_REQUIRES_RATER
-            );
-          }
+
+          it(`hard-errors on ${key} at commands.<cmd>.approvals too`, () => {
+            const issues = findDeprecatedConfigIssues({
+              llm: { type: 'openai' },
+              commands: { code: { approvals: { mode: 'auto-safe', [key]: 'whatever' } } },
+            });
+            expect(issues).toHaveLength(1);
+            expect(issues[0].path).toBe(`commands.code.approvals.${key}`);
+          });
+
+          it(`validateRawGthConfig HARD-rejects ${key} (never a silent strip)`, () => {
+            const result = validateRawGthConfig({
+              llm: { type: 'openai' },
+              approvals: { mode: 'auto-safe', [key]: 'whatever' },
+            });
+            expect(result.ok).toBe(false);
+            expect(result.errorMessage).toContain(`approvals.${key}`);
+            expect(result.warnings).toEqual([]);
+          });
+        }
+
+        const RETIRED_MODES = {
+          auto: 'auto-safe',
+          ask: 'write',
+        } as const;
+
+        for (const [retired, rung] of Object.entries(RETIRED_MODES)) {
+          it(`hard-errors on the retired mode "${retired}", naming ${rung}`, () => {
+            const issues = findDeprecatedConfigIssues({
+              llm: { type: 'openai' },
+              approvals: { mode: retired },
+            });
+            expect(issues).toHaveLength(1);
+            expect(issues[0].path).toBe('approvals.mode');
+            expect(issues[0].message).toContain(rung);
+            expect(issues[0].message).toContain('ladder of five rungs');
+          });
+
+          it(`hard-errors on the retired SCALAR "${retired}" too, naming ${rung}`, () => {
+            const issues = findDeprecatedConfigIssues({
+              llm: { type: 'openai' },
+              approvals: retired,
+            });
+            expect(issues).toHaveLength(1);
+            expect(issues[0].path).toBe('approvals');
+            expect(issues[0].message).toContain(rung);
+          });
+
+          it(`hard-errors on the retired mode "${retired}" per command`, () => {
+            const issues = findDeprecatedConfigIssues({
+              llm: { type: 'openai' },
+              commands: { pr: { approvals: retired } },
+            });
+            expect(issues).toHaveLength(1);
+            expect(issues[0].path).toBe('commands.pr.approvals');
+          });
+        }
+
+        it('hard-errors on the retired OBJECT rater form, pointing at the bare profile name', () => {
+          const issues = findDeprecatedConfigIssues({
+            llm: { type: 'openai' },
+            approvals: { mode: 'auto-safe', rater: { profile: 'safety-rater' } },
+          });
+          expect(issues).toHaveLength(1);
+          expect(issues[0].path).toBe('approvals.rater');
+          expect(issues[0].message).toContain('bare identity-profile name');
         });
 
-        it('allows the same rater:false under ask / bypass', () => {
-          expect(parse({ mode: 'ask', rater: false }).success).toBe(true);
-          expect(parse({ mode: 'bypass', rater: false }).success).toBe(true);
+        it('reports EVERY retired key present, not just the first', () => {
+          const issues = findDeprecatedConfigIssues({
+            approvals: { mode: 'auto', strictness: 'strict', escalate: 'danger' },
+          });
+          expect(issues.map((i) => i.path).sort()).toEqual([
+            'approvals.escalate',
+            'approvals.mode',
+            'approvals.strictness',
+          ]);
         });
 
-        it('allows mode:"auto" with no rater key (the rater defaults ON)', () => {
-          expect(parse({ mode: 'auto' }).success).toBe(true);
+        it('does not fire on a valid ladder config, scalar or object', () => {
+          expect(findDeprecatedConfigIssues({ approvals: 'auto-safe' })).toEqual([]);
+          expect(
+            findDeprecatedConfigIssues({
+              approvals: { mode: 'full-auto', rater: 'safety-rater', allow: ['npm test'] },
+            })
+          ).toEqual([]);
         });
+      });
 
-        it('does NOT leak the refinement into the generated JSON Schema (the /v2/ channel stays complete)', () => {
+      /**
+       * The emitted JSON Schema feeds the hosted /schema/v2/ + /schema/alpha/ channels, so the
+       * union must be describable there. CFG-27 leaves NO refinement on `approvals` at all — with
+       * `rater` flattened to a bare string and `rater: false` gone there is no coupling rule left
+       * to enforce — so what is checked here is that the union itself emitted correctly.
+       */
+      describe('the emitted JSON Schema', () => {
+        it('emits the scalar|object union as an anyOf, with no refinement leakage', () => {
           const generated = generateConfigJsonSchema();
           const approvals = (generated.properties as Record<string, Record<string, unknown>>)
             .approvals;
-          // A refinement has no JSON Schema representation; the published channel must therefore
-          // describe the full shape (both rater arms) with no `not`/`allOf` constraint bolted on.
-          expect(Object.keys(approvals)).toEqual(['type', 'properties']);
-          expect(JSON.stringify(approvals)).not.toContain('auto-approve requires');
+          expect(Object.keys(approvals)).toEqual(['anyOf']);
+          const arms = approvals.anyOf as Array<Record<string, unknown>>;
+          expect(arms).toHaveLength(2);
+          expect(arms[0].enum).toEqual([...RUNGS]);
+          expect(Object.keys(arms[1].properties as object).sort()).toEqual([
+            'allow',
+            'deny',
+            'mode',
+            'rater',
+          ]);
+          // A refinement has no JSON Schema representation; nothing of that shape may appear.
+          expect(JSON.stringify(approvals)).not.toContain('not');
+          expect(JSON.stringify(approvals)).not.toContain('allOf');
+        });
+
+        it('describes approvals in ALL EIGHT positions (root + each per-command block)', () => {
+          const generated = generateConfigJsonSchema() as Record<string, any>;
+          const positions = [generated.properties.approvals];
+          const commands = generated.properties.commands.properties as Record<string, any>;
+          for (const name of Object.keys(commands)) {
+            positions.push(commands[name].properties.approvals);
+          }
+          expect(positions).toHaveLength(8);
+          for (const position of positions) {
+            expect(position.anyOf).toHaveLength(2);
+            expect(position.anyOf[0].enum).toEqual([...RUNGS]);
+          }
         });
       });
     });
@@ -495,16 +613,16 @@ describe('config schema (GS2-1 B1)', () => {
      * hard-exits on: a validator that passes what the runtime refuses is worse than none. The
      * resolver is INJECTED so `schema.ts` stays pure.
      */
-    describe('validateRawGthConfig + rater.profile resolution (CFG-26)', () => {
+    describe('validateRawGthConfig + approvals.rater resolution (CFG-26, flattened by CFG-27)', () => {
       const config = {
         llm: { type: 'openai' },
-        approvals: { mode: 'auto', rater: { profile: 'safety-rater' } },
+        approvals: { mode: 'auto-safe', rater: 'safety-rater' },
       };
 
-      it('rejects an unresolvable rater.profile, naming the path and the profile', () => {
+      it('rejects an unresolvable rater profile, naming the path and the profile', () => {
         const result = validateRawGthConfig(config, { resolveProfile: () => false });
         expect(result.ok).toBe(false);
-        expect(result.errorMessage).toContain('approvals.rater.profile');
+        expect(result.errorMessage).toContain('approvals.rater');
         expect(result.errorMessage).toContain('identity profile "safety-rater" not found');
       });
 
@@ -516,12 +634,12 @@ describe('config schema (GS2-1 B1)', () => {
         const result = validateRawGthConfig(
           {
             llm: { type: 'openai' },
-            commands: { code: { approvals: { rater: { profile: 'nope' } } } },
+            commands: { code: { approvals: { rater: 'nope' } } },
           },
           { resolveProfile: () => false }
         );
         expect(result.ok).toBe(false);
-        expect(result.errorMessage).toContain('commands.code.approvals.rater.profile');
+        expect(result.errorMessage).toContain('commands.code.approvals.rater');
       });
 
       it('skips the check entirely with no resolver, so pure/in-memory callers are unaffected', () => {
@@ -533,10 +651,7 @@ describe('config schema (GS2-1 B1)', () => {
       it('shares ONE message with the loader, so the two surfaces cannot drift', () => {
         const result = validateRawGthConfig(config, { resolveProfile: () => false });
         expect(result.errorMessage).toContain(
-          unresolvedRaterProfileMessage({
-            path: 'approvals.rater.profile',
-            profile: 'safety-rater',
-          })
+          unresolvedRaterProfileMessage({ path: 'approvals.rater', profile: 'safety-rater' })
         );
       });
     });
@@ -545,22 +660,23 @@ describe('config schema (GS2-1 B1)', () => {
       it('collects root and per-command profile references with their config paths', () => {
         expect(
           findApprovalsRaterProfiles({
-            approvals: { rater: { profile: 'root-rater' } },
+            approvals: { rater: 'root-rater' },
             commands: {
-              code: { approvals: { rater: { profile: 'code-rater' } } },
-              exec: { approvals: { mode: 'ask' } },
+              code: { approvals: { rater: 'code-rater' } },
+              exec: { approvals: 'write' },
             },
           })
         ).toEqual([
-          { path: 'approvals.rater.profile', profile: 'root-rater' },
-          { path: 'commands.code.approvals.rater.profile', profile: 'code-rater' },
+          { path: 'approvals.rater', profile: 'root-rater' },
+          { path: 'commands.code.approvals.rater', profile: 'code-rater' },
         ]);
       });
 
-      it('ignores an absent / blank / non-object rater', () => {
-        expect(findApprovalsRaterProfiles({ approvals: { mode: 'auto' } })).toEqual([]);
+      it('ignores an absent / blank / non-string rater, and the scalar sugar form', () => {
+        expect(findApprovalsRaterProfiles({ approvals: { mode: 'auto-safe' } })).toEqual([]);
+        expect(findApprovalsRaterProfiles({ approvals: 'auto-safe' })).toEqual([]);
         expect(findApprovalsRaterProfiles({ approvals: { rater: true } })).toEqual([]);
-        expect(findApprovalsRaterProfiles({ approvals: { rater: { profile: '  ' } } })).toEqual([]);
+        expect(findApprovalsRaterProfiles({ approvals: { rater: '  ' } })).toEqual([]);
         expect(findApprovalsRaterProfiles({})).toEqual([]);
       });
     });

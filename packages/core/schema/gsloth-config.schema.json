@@ -398,54 +398,48 @@
       ]
     },
     "approvals": {
-      "type": "object",
-      "properties": {
-        "mode": {
+      "anyOf": [
+        {
           "type": "string",
           "enum": [
-            "auto",
-            "ask",
+            "read-only",
+            "write",
+            "auto-safe",
+            "full-auto",
             "bypass"
           ]
         },
-        "rater": {
-          "anyOf": [
-            {
-              "type": "boolean"
+        {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "read-only",
+                "write",
+                "auto-safe",
+                "full-auto",
+                "bypass"
+              ]
             },
-            {
-              "type": "object",
-              "properties": {
-                "profile": {
-                  "type": "string"
-                },
-                "strictness": {
-                  "type": "string",
-                  "enum": [
-                    "lenient",
-                    "standard",
-                    "strict"
-                  ]
-                },
-                "escalate": {
-                  "type": "string",
-                  "enum": [
-                    "caution",
-                    "danger",
-                    "never"
-                  ]
-                }
+            "rater": {
+              "type": "string"
+            },
+            "allow": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "deny": {
+              "type": "array",
+              "items": {
+                "type": "string"
               }
             }
-          ]
-        },
-        "allowlist": {
-          "type": "boolean"
-        },
-        "persistAllowlist": {
-          "type": "boolean"
+          }
         }
-      }
+      ]
     },
     "tools": {
       "type": "array",
@@ -682,54 +676,48 @@
               ]
             },
             "approvals": {
-              "type": "object",
-              "properties": {
-                "mode": {
+              "anyOf": [
+                {
                   "type": "string",
                   "enum": [
-                    "auto",
-                    "ask",
+                    "read-only",
+                    "write",
+                    "auto-safe",
+                    "full-auto",
                     "bypass"
                   ]
                 },
-                "rater": {
-                  "anyOf": [
-                    {
-                      "type": "boolean"
+                {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "read-only",
+                        "write",
+                        "auto-safe",
+                        "full-auto",
+                        "bypass"
+                      ]
                     },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "profile": {
-                          "type": "string"
-                        },
-                        "strictness": {
-                          "type": "string",
-                          "enum": [
-                            "lenient",
-                            "standard",
-                            "strict"
-                          ]
-                        },
-                        "escalate": {
-                          "type": "string",
-                          "enum": [
-                            "caution",
-                            "danger",
-                            "never"
-                          ]
-                        }
+                    "rater": {
+                      "type": "string"
+                    },
+                    "allow": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "deny": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
                       }
                     }
-                  ]
-                },
-                "allowlist": {
-                  "type": "boolean"
-                },
-                "persistAllowlist": {
-                  "type": "boolean"
+                  }
                 }
-              }
+              ]
             },
             "customTools": {
               "anyOf": [
@@ -946,54 +934,48 @@
               ]
             },
             "approvals": {
-              "type": "object",
-              "properties": {
-                "mode": {
+              "anyOf": [
+                {
                   "type": "string",
                   "enum": [
-                    "auto",
-                    "ask",
+                    "read-only",
+                    "write",
+                    "auto-safe",
+                    "full-auto",
                     "bypass"
                   ]
                 },
-                "rater": {
-                  "anyOf": [
-                    {
-                      "type": "boolean"
+                {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "read-only",
+                        "write",
+                        "auto-safe",
+                        "full-auto",
+                        "bypass"
+                      ]
                     },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "profile": {
-                          "type": "string"
-                        },
-                        "strictness": {
-                          "type": "string",
-                          "enum": [
-                            "lenient",
-                            "standard",
-                            "strict"
-                          ]
-                        },
-                        "escalate": {
-                          "type": "string",
-                          "enum": [
-                            "caution",
-                            "danger",
-                            "never"
-                          ]
-                        }
+                    "rater": {
+                      "type": "string"
+                    },
+                    "allow": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "deny": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
                       }
                     }
-                  ]
-                },
-                "allowlist": {
-                  "type": "boolean"
-                },
-                "persistAllowlist": {
-                  "type": "boolean"
+                  }
                 }
-              }
+              ]
             },
             "customTools": {
               "anyOf": [
@@ -1201,54 +1183,48 @@
               ]
             },
             "approvals": {
-              "type": "object",
-              "properties": {
-                "mode": {
+              "anyOf": [
+                {
                   "type": "string",
                   "enum": [
-                    "auto",
-                    "ask",
+                    "read-only",
+                    "write",
+                    "auto-safe",
+                    "full-auto",
                     "bypass"
                   ]
                 },
-                "rater": {
-                  "anyOf": [
-                    {
-                      "type": "boolean"
+                {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "read-only",
+                        "write",
+                        "auto-safe",
+                        "full-auto",
+                        "bypass"
+                      ]
                     },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "profile": {
-                          "type": "string"
-                        },
-                        "strictness": {
-                          "type": "string",
-                          "enum": [
-                            "lenient",
-                            "standard",
-                            "strict"
-                          ]
-                        },
-                        "escalate": {
-                          "type": "string",
-                          "enum": [
-                            "caution",
-                            "danger",
-                            "never"
-                          ]
-                        }
+                    "rater": {
+                      "type": "string"
+                    },
+                    "allow": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "deny": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
                       }
                     }
-                  ]
-                },
-                "allowlist": {
-                  "type": "boolean"
-                },
-                "persistAllowlist": {
-                  "type": "boolean"
+                  }
                 }
-              }
+              ]
             },
             "customTools": {
               "anyOf": [
@@ -1436,54 +1412,48 @@
               ]
             },
             "approvals": {
-              "type": "object",
-              "properties": {
-                "mode": {
+              "anyOf": [
+                {
                   "type": "string",
                   "enum": [
-                    "auto",
-                    "ask",
+                    "read-only",
+                    "write",
+                    "auto-safe",
+                    "full-auto",
                     "bypass"
                   ]
                 },
-                "rater": {
-                  "anyOf": [
-                    {
-                      "type": "boolean"
+                {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "read-only",
+                        "write",
+                        "auto-safe",
+                        "full-auto",
+                        "bypass"
+                      ]
                     },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "profile": {
-                          "type": "string"
-                        },
-                        "strictness": {
-                          "type": "string",
-                          "enum": [
-                            "lenient",
-                            "standard",
-                            "strict"
-                          ]
-                        },
-                        "escalate": {
-                          "type": "string",
-                          "enum": [
-                            "caution",
-                            "danger",
-                            "never"
-                          ]
-                        }
+                    "rater": {
+                      "type": "string"
+                    },
+                    "allow": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "deny": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
                       }
                     }
-                  ]
-                },
-                "allowlist": {
-                  "type": "boolean"
-                },
-                "persistAllowlist": {
-                  "type": "boolean"
+                  }
                 }
-              }
+              ]
             },
             "customTools": {
               "anyOf": [
@@ -1671,54 +1641,48 @@
               ]
             },
             "approvals": {
-              "type": "object",
-              "properties": {
-                "mode": {
+              "anyOf": [
+                {
                   "type": "string",
                   "enum": [
-                    "auto",
-                    "ask",
+                    "read-only",
+                    "write",
+                    "auto-safe",
+                    "full-auto",
                     "bypass"
                   ]
                 },
-                "rater": {
-                  "anyOf": [
-                    {
-                      "type": "boolean"
+                {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "read-only",
+                        "write",
+                        "auto-safe",
+                        "full-auto",
+                        "bypass"
+                      ]
                     },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "profile": {
-                          "type": "string"
-                        },
-                        "strictness": {
-                          "type": "string",
-                          "enum": [
-                            "lenient",
-                            "standard",
-                            "strict"
-                          ]
-                        },
-                        "escalate": {
-                          "type": "string",
-                          "enum": [
-                            "caution",
-                            "danger",
-                            "never"
-                          ]
-                        }
+                    "rater": {
+                      "type": "string"
+                    },
+                    "allow": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "deny": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
                       }
                     }
-                  ]
-                },
-                "allowlist": {
-                  "type": "boolean"
-                },
-                "persistAllowlist": {
-                  "type": "boolean"
+                  }
                 }
-              }
+              ]
             },
             "customTools": {
               "anyOf": [
@@ -1906,54 +1870,48 @@
               ]
             },
             "approvals": {
-              "type": "object",
-              "properties": {
-                "mode": {
+              "anyOf": [
+                {
                   "type": "string",
                   "enum": [
-                    "auto",
-                    "ask",
+                    "read-only",
+                    "write",
+                    "auto-safe",
+                    "full-auto",
                     "bypass"
                   ]
                 },
-                "rater": {
-                  "anyOf": [
-                    {
-                      "type": "boolean"
+                {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "read-only",
+                        "write",
+                        "auto-safe",
+                        "full-auto",
+                        "bypass"
+                      ]
                     },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "profile": {
-                          "type": "string"
-                        },
-                        "strictness": {
-                          "type": "string",
-                          "enum": [
-                            "lenient",
-                            "standard",
-                            "strict"
-                          ]
-                        },
-                        "escalate": {
-                          "type": "string",
-                          "enum": [
-                            "caution",
-                            "danger",
-                            "never"
-                          ]
-                        }
+                    "rater": {
+                      "type": "string"
+                    },
+                    "allow": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "deny": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
                       }
                     }
-                  ]
-                },
-                "allowlist": {
-                  "type": "boolean"
-                },
-                "persistAllowlist": {
-                  "type": "boolean"
+                  }
                 }
-              }
+              ]
             },
             "customTools": {
               "anyOf": [
@@ -2141,54 +2099,48 @@
               ]
             },
             "approvals": {
-              "type": "object",
-              "properties": {
-                "mode": {
+              "anyOf": [
+                {
                   "type": "string",
                   "enum": [
-                    "auto",
-                    "ask",
+                    "read-only",
+                    "write",
+                    "auto-safe",
+                    "full-auto",
                     "bypass"
                   ]
                 },
-                "rater": {
-                  "anyOf": [
-                    {
-                      "type": "boolean"
+                {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "read-only",
+                        "write",
+                        "auto-safe",
+                        "full-auto",
+                        "bypass"
+                      ]
                     },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "profile": {
-                          "type": "string"
-                        },
-                        "strictness": {
-                          "type": "string",
-                          "enum": [
-                            "lenient",
-                            "standard",
-                            "strict"
-                          ]
-                        },
-                        "escalate": {
-                          "type": "string",
-                          "enum": [
-                            "caution",
-                            "danger",
-                            "never"
-                          ]
-                        }
+                    "rater": {
+                      "type": "string"
+                    },
+                    "allow": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "deny": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
                       }
                     }
-                  ]
-                },
-                "allowlist": {
-                  "type": "boolean"
-                },
-                "persistAllowlist": {
-                  "type": "boolean"
+                  }
                 }
-              }
+              ]
             },
             "port": {
               "type": "number"

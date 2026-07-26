@@ -895,11 +895,12 @@ describe('config', async () => {
       expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });
 
-    // CFG-26 — `approvals.rater.profile` gets the SAME strict resolution as an explicitly-named
-    // identity profile (GS2-62): a name that does not resolve is a hard config error, never a
-    // silent fallback to the main model. Checked in the loader (not the zod schema) because
-    // resolution needs the filesystem and `schema.ts` must stay pure.
-    it('CFG-26: an unresolvable approvals.rater.profile ERRORS instead of silently using the main model', async () => {
+    // CFG-26 — `approvals.rater` gets the SAME strict resolution as an explicitly-named identity
+    // profile (GS2-62): a name that does not resolve is a hard config error, never a silent
+    // fallback to the main model. Checked in the loader (not the zod schema) because resolution
+    // needs the filesystem and `schema.ts` must stay pure. CFG-27 flattened the key to a bare
+    // profile NAME; the rule is unchanged.
+    it('CFG-26: an unresolvable approvals.rater ERRORS instead of silently using the main model', async () => {
       fileUtilsMock.getGslothConfigReadPath.mockImplementation(
         (filename: string) => `/mock/read/${filename}`
       );
@@ -911,7 +912,7 @@ describe('config', async () => {
         path === `/mock/read/${PROJECT_JSON_MARKER}`
           ? JSON.stringify({
               llm: { type: 'vertexai' },
-              approvals: { mode: 'auto', rater: { profile: 'missing-rater' } },
+              approvals: { mode: 'auto-safe', rater: 'missing-rater' },
             })
           : ''
       );
@@ -924,12 +925,12 @@ describe('config', async () => {
       }
 
       const errorOutput = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
-      expect(errorOutput).toContain('approvals.rater.profile');
+      expect(errorOutput).toContain('approvals.rater');
       expect(errorOutput).toContain('identity profile "missing-rater" not found');
       expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
     });
 
-    it('CFG-26: a per-command approvals.rater.profile is checked too', async () => {
+    it('CFG-26: a per-command approvals.rater is checked too', async () => {
       fileUtilsMock.getGslothConfigReadPath.mockImplementation(
         (filename: string) => `/mock/read/${filename}`
       );
@@ -940,7 +941,7 @@ describe('config', async () => {
         path === `/mock/read/${PROJECT_JSON_MARKER}`
           ? JSON.stringify({
               llm: { type: 'vertexai' },
-              commands: { code: { approvals: { rater: { profile: 'nope' } } } },
+              commands: { code: { approvals: { rater: 'nope' } } },
             })
           : ''
       );
@@ -953,12 +954,12 @@ describe('config', async () => {
       }
 
       const errorOutput = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
-      expect(errorOutput).toContain('commands.code.approvals.rater.profile');
+      expect(errorOutput).toContain('commands.code.approvals.rater');
       expect(errorOutput).toContain('identity profile "nope" not found');
       expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
     });
 
-    it('CFG-26: an approvals.rater.profile that DOES resolve loads without erroring', async () => {
+    it('CFG-26: an approvals.rater that DOES resolve loads without erroring', async () => {
       const RATER_PROFILE_CONFIG =
         '/mock/current/dir/.gsloth/.gsloth-settings/safety-rater/.gsloth.config.json';
       fileUtilsMock.getGslothConfigReadPath.mockImplementation(
@@ -972,7 +973,7 @@ describe('config', async () => {
         path === `/mock/read/${PROJECT_JSON_MARKER}`
           ? JSON.stringify({
               llm: { type: 'vertexai' },
-              approvals: { mode: 'auto', rater: { profile: 'safety-rater' } },
+              approvals: { mode: 'auto-safe', rater: 'safety-rater' },
             })
           : ''
       );
@@ -987,8 +988,8 @@ describe('config', async () => {
       expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
       expect(systemUtilsMock.exit).not.toHaveBeenCalled();
       expect(config.approvals).toEqual({
-        mode: 'auto',
-        rater: { profile: 'safety-rater' },
+        mode: 'auto-safe',
+        rater: 'safety-rater',
       });
     });
 

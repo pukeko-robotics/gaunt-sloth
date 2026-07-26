@@ -12,30 +12,25 @@ import type { PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
  * suspends the normal prompt, so the command can't be typed into the chat box.
  *
  * Pure/presentational: it only renders the pending command + the choices. The key handling
- * (o/s/a → approve, y → switch to rater-mediated auto, anything else → reject) lives in
- * `<App>`'s `useInput`, mirroring the way the debug panel's scroll keys are owned by the root
- * component.
+ * (o/s/a → approve, anything else → reject) lives in `<App>`'s `useInput`, mirroring the way the
+ * debug panel's scroll keys are owned by the root component.
+ *
+ * CFG-27 dropped the `[y]` affordance ("switch to auto-approve"). Spec §6 offers the human five
+ * choices — ask to explain · approve · always approve · reject · always reject — and a per-prompt
+ * change of RUNG is not among them: the ladder deliberately has no "turn the gate down from
+ * here" action. [[TUI-C26]] owns building that five-choice menu (and the §6.1 exfiltration
+ * banner); until it lands this stays the EXT-9 scoped prompt, minus the choice the ladder no
+ * longer has.
  */
-export function ApprovalPrompt({
-  pending,
-  raterEnabled,
-}: {
-  pending: PendingToolInterrupt;
-  /**
-   * CFG-26 — whether this session can rate at all (`approvals.rater.enabled`, the SAME signal the
-   * runner's `decideToolApproval` uses, so the offer and the gate can never disagree). When false
-   * the `[y]` affordance is omitted: offering "switch to auto-approve (AI rater)" in a session
-   * with no rater would promise a mode that cannot exist here — the same class of lie as a status
-   * badge that under-reports.
-   */
-  raterEnabled?: boolean;
-}): React.ReactElement {
+export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): React.ReactElement {
   const commandText =
     typeof pending.args.command === 'string'
       ? (pending.args.command as string)
       : JSON.stringify(pending.args);
-  // CFG-26: when the AI rater escalated this command (rather than approving it or bouncing it
-  // back to the model), show its tier + reason so the human has the rater's read before deciding.
+  // CFG-27: when the auto-rater escalated this command (rather than approving it), show its
+  // outcome + reason so the human has the rater's read before deciding. §6 makes the explanation
+  // mandatory whenever a rating exists; at the unrated rungs there is none and the prompt shows
+  // the command alone.
   const verdict = pending.safetyVerdict;
   return (
     <Box flexDirection="column">
@@ -45,13 +40,9 @@ export function ApprovalPrompt({
       </Text>
       <Text dimColor>{`    ${commandText}`}</Text>
       {verdict ? (
-        <Text color="yellow">{`⚠ AI rater (${verdict.tier}): ${verdict.reason}`}</Text>
+        <Text color="yellow">{`⚠ Auto-rater (${verdict.outcome}): ${verdict.reason}`}</Text>
       ) : null}
-      <Text dimColor>
-        {raterEnabled
-          ? 'Approve?  [o]nce   [s]ession   [a]lways   [y] switch to auto-approve (AI rater)   [N]o'
-          : 'Approve?  [o]nce   [s]ession   [a]lways   [N]o'}
-      </Text>
+      <Text dimColor>{'Approve?  [o]nce   [s]ession   [a]lways   [N]o'}</Text>
     </Box>
   );
 }

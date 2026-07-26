@@ -10,7 +10,7 @@ import {
 } from '#src/tui/viewModel.js';
 import type { PendingApproval, TranscriptItem, TuiAppProps } from '#src/tui/types.js';
 import type { ToolApprovalScope } from '@gaunt-sloth/core/core/types.js';
-import type { ApprovalMode } from '@gaunt-sloth/core/config.js';
+import type { ApprovalRung } from '@gaunt-sloth/core/config.js';
 import { Transcript } from '#src/tui/components/Transcript.js';
 import { ApprovalPrompt } from '#src/tui/components/ApprovalPrompt.js';
 import { LiveTurn } from '#src/tui/components/LiveTurn.js';
@@ -26,7 +26,7 @@ import {
   type DebugTab,
 } from '#src/tui/components/DebugPanel.js';
 import {
-  approvalsModeNotice,
+  approvalsRungNotice,
   approvalsStatusNotice,
   createCommandRegistry,
   dispatchSlashCommand,
@@ -294,14 +294,13 @@ export function App(props: TuiAppProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // CFG-26 — apply an approvals MODE change (from `/approvals <mode>`, `/auto-approve`,
-  // `/bypass-approve`, or the approval prompt's `y` key). The runner owns the posture, so ask it
-  // to apply the mode, mirror the LANDED posture into local state + ref (drives the status badge),
-  // and commit the state-aware notice. Falls back to a clear system line when the agent has no
-  // runner (the fixture agent omits the method).
-  const applyApprovalMode = useCallback(
-    (mode: ApprovalMode): void => {
-      if (!agent.setApprovalMode) {
+  // CFG-27 — apply an approvals RUNG change (`/approvals <rung>`). The runner owns the posture,
+  // so ask it to apply the rung, mirror the LANDED posture into local state + ref (drives the
+  // status badge), and commit the state-aware notice. Falls back to a clear system line when the
+  // agent has no runner (the fixture agent omits the method).
+  const applyApprovalRung = useCallback(
+    (rung: ApprovalRung): void => {
+      if (!agent.setApprovalRung) {
         push({
           kind: 'system',
           level: 'warning',
@@ -309,12 +308,12 @@ export function App(props: TuiAppProps): React.ReactElement {
         });
         return;
       }
-      // The runner may land on more than the requested mode (switching to `auto` turns the rater
-      // on), so the notice is built from what it RETURNS, never from what we asked for.
-      const landed = agent.setApprovalMode(mode);
+      // The notice is built from what the runner RETURNS, never from what we asked for, so the
+      // copy can only ever describe the posture actually in force.
+      const landed = agent.setApprovalRung(rung);
       approvalsRef.current = landed;
       setApprovals(landed);
-      const { title, lines, tone } = approvalsModeNotice(landed);
+      const { title, lines, tone } = approvalsRungNotice(landed);
       push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -332,10 +331,10 @@ export function App(props: TuiAppProps): React.ReactElement {
       });
       return;
     }
-    const { approvals: current, allowlist } = agent.getApprovals();
+    const { approvals: current, allowlist, deny } = agent.getApprovals();
     approvalsRef.current = current;
     setApprovals(current);
-    const { title, lines, tone } = approvalsStatusNotice(current, allowlist);
+    const { title, lines, tone } = approvalsStatusNotice(current, allowlist, deny);
     push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent]);
@@ -472,7 +471,7 @@ export function App(props: TuiAppProps): React.ReactElement {
           // notice for the LANDED state via the shared helper (single-sourced with the approval
           // prompt's y key). CFG-26.
           if ('show' in result.approvals) showApprovals();
-          else applyApprovalMode(result.approvals.mode);
+          else applyApprovalRung(result.approvals.rung);
         }
         if (result.toggleDebug) {
           setDebugVisible((v) => {
@@ -514,7 +513,7 @@ export function App(props: TuiAppProps): React.ReactElement {
       void runTurn(value);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [runTurn, quit, registry, mode, modelDisplayName, toggleTools, applyApprovalMode, showApprovals]
+    [runTurn, quit, registry, mode, modelDisplayName, toggleTools, applyApprovalRung, showApprovals]
   );
 
   // Keyboard handling, in priority order:
@@ -525,30 +524,21 @@ export function App(props: TuiAppProps): React.ReactElement {
   //     PageUp/PageDown page-step, m maximises, Esc unfocuses.
   useInput((input, key) => {
     // Highest priority: a pending tool approval OWNS the keyboard (EXT-9 Phase B2). While one is
-    // shown, o/s/a resolve approve with the matching scope; `y` turns on session auto-approve
-    // (invoking /auto-approve during inference) and approves this one; anything else (n, Esc,
-    // Enter, …) resolves reject — fail-closed, mirroring the readline path. We swallow the key
-    // either way so it can't fall through to abort/debug handling or get typed into the prompt.
+    // shown, o/s/a resolve approve with the matching scope; anything else (n, Esc, Enter, …)
+    // resolves reject — fail-closed, mirroring the readline path. We swallow the key either way
+    // so it can't fall through to abort/debug handling or get typed into the prompt.
+    //
+    // CFG-27 removed the `y` key ("switch to auto-approve and approve this one"). Spec §6's
+    // escalation menu offers five choices — ask to explain · approve · always approve · reject ·
+    // always reject — and a per-prompt change of RUNG is not one of them: the ladder has no
+    // "turn the gate down from here" action, so keeping the key would have meant inventing one.
+    // [[TUI-C26]] builds the five-choice menu (and the §6.1 exfiltration banner) on this seam.
     if (approvalQueueRef.current.length > 0) {
       const ch = input.toLowerCase();
       if (ch === 'o') resolveApproval('once');
       else if (ch === 's') resolveApproval('session');
       else if (ch === 'a') resolveApproval('always');
-      else if (ch === 'y') {
-        // CFG-26 — `y` switches the session to rater-mediated `auto` (NOT `bypass`: a user
-        // reaching for "approve automatically" must not silently get "approve everything,
-        // unchecked"), then approves this pending command once so the run continues. Later gated
-        // commands are then rated, and risky ones still come back to this prompt.
-        //
-        // It is INERT when the session cannot rate at all — `rater.enabled` false, which is the
-        // same signal `decideToolApproval` uses, so the key and the gate can never disagree. The
-        // prompt hides the affordance in that case; swallowing the key here keeps a stray `y`
-        // from silently rejecting.
-        if (approvalsRef.current?.rater.enabled) {
-          if (approvalsRef.current.mode !== 'auto') applyApprovalMode('auto');
-          resolveApproval('once');
-        }
-      } else resolveApproval('reject');
+      else resolveApproval('reject');
       return;
     }
 
@@ -773,7 +763,6 @@ export function App(props: TuiAppProps): React.ReactElement {
           the input dock, owns the keyboard, and suspends the normal prompt below. */}
       {pendingApproval ? <ApprovalPrompt
           pending={pendingApproval.pending}
-          raterEnabled={approvals?.rater.enabled}
         /> : null}
       <Rule />
       {/* TUI-C19 — persistent startup-advisory line. Lives here in the live (non-<Static>) chrome,
@@ -794,9 +783,8 @@ export function App(props: TuiAppProps): React.ReactElement {
         approvals={
           approvals
             ? {
-                mode: approvals.mode,
-                raterEnabled: approvals.rater.enabled,
-                raterProfile: approvals.rater.profile,
+                rung: approvals.rung,
+                raterProfile: approvals.rater,
               }
             : undefined
         }

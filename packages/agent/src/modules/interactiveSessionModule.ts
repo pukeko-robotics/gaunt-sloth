@@ -33,7 +33,7 @@ import { MemorySaver } from '@langchain/langgraph';
 import { createResolvers } from '#src/resolvers.js';
 import { resolveAgentFactory } from '#src/core/resolveAgentFactory.js';
 import {
-  approvalsModeNotice,
+  approvalsRungNotice,
   approvalsStatusNotice,
   createCommandRegistry,
   dispatchSlashCommand,
@@ -141,11 +141,12 @@ export async function createInteractiveSession(
           : JSON.stringify(pending.args);
       displayWarning(`\nThe agent wants to run a shell command via ${pending.name}:`);
       display(`\n    ${commandText}\n`);
-      // CFG-26: if the AI rater escalated (rather than approving or bouncing it back to the
-      // model) this command, show its tier + reason before the human decides.
+      // CFG-27: when the auto-rater escalated this command (rather than approving it), show its
+      // outcome + reason before the human decides. §6 makes that explanation mandatory whenever a
+      // rating exists; at the unrated rungs there is none and the prompt shows the command alone.
       if (pending.safetyVerdict) {
         displayWarning(
-          `⚠ AI rater (${pending.safetyVerdict.tier}): ${pending.safetyVerdict.reason}`
+          `⚠ Auto-rater (${pending.safetyVerdict.outcome}): ${pending.safetyVerdict.reason}`
         );
       }
       setRawMode(false); // ensure typed input is echoed for this confirm
@@ -284,19 +285,21 @@ export async function createInteractiveSession(
             break;
           }
           if (result.approvals) {
-            // CFG-26 — the `/approvals` family sets the session approval MODE at the
-            // approval-decision layer (the runner posture). Session-scoped, reversible, never
-            // persisted; the hardline floor still blocks catastrophic commands under every mode.
-            // With no argument the command DISPLAYS the posture instead of changing it.
+            // CFG-27 — `/approvals <rung>` sets the session rung at the approval-decision layer
+            // (the runner posture). Session-scoped, reversible, never persisted. With no argument
+            // the command DISPLAYS the posture instead of changing it.
             if ('show' in result.approvals) {
               printNotice(
-                approvalsStatusNotice(runner.getSessionApprovals(), runner.getAllowlistCounts())
+                approvalsStatusNotice(
+                  runner.getSessionApprovals(),
+                  runner.getAllowlistCounts(),
+                  runner.getDenylist()
+                )
               );
             } else {
-              runner.setSessionApprovalMode(result.approvals.mode);
-              // Report the posture the runner actually LANDED on, not the one requested — the
-              // runner turns the rater on when switching to `auto`, and the notice names it.
-              printNotice(approvalsModeNotice(runner.getSessionApprovals()));
+              runner.setSessionApprovalRung(result.approvals.rung);
+              // Report the posture the runner actually LANDED on, not the one requested.
+              printNotice(approvalsRungNotice(runner.getSessionApprovals()));
             }
           } else if (
             result.clearTranscript ||

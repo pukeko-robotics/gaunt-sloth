@@ -98,77 +98,59 @@ const binaryFormatConfigSchema = z.object({
 const binaryFormatsSchema = z.union([z.literal(false), z.array(binaryFormatConfigSchema)]);
 
 /**
- * CFG-26 — the exact error text for the `mode: "auto"` + rater-disabled coupling violation
- * (spec wording). Exported so the loader's per-command check and the tests share one string.
+ * CFG-27 — the five rungs of the approvals ladder, as the schema sees them. Kept as a literal
+ * tuple here (rather than imported from `shell-policy.ts`) so the schema module stays the single
+ * pre-parse source of truth for what the config channel accepts; `APPROVAL_RUNGS` in
+ * `shell-policy.ts` is the runtime twin and `configSchema.spec.ts` pins the two together.
  */
-export const APPROVALS_AUTO_REQUIRES_RATER =
-  "auto-approve requires the AI rater; set approvals.mode to 'ask' or configure approvals.rater";
+const APPROVAL_RUNG_VALUES = ['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'] as const;
 
 /**
- * CFG-26 — the AI **rater**: the LLM that rates a pending tool call before it runs. `false`
- * disables it entirely; `true`/absent means "on with defaults" (the session's main model); the
- * object form is fine-grained. Deliberately ONE off-switch (`rater: false`) rather than both a
- * boolean form and an `enabled` field — two ways to say one thing in a channel that freezes at GA
- * is exactly the sloppiness this node removes.
+ * CFG-27 — the `approvals` value: **either the rung name on its own, or an object when the extras
+ * are needed** (spec §9). There are no other approvals keys.
  *
- * - `profile` — an identity profile the rater runs under (strict resolution, GS2-62: a name that
- *   does not resolve is a hard config error, never a silent fallback). Omitted = the main model.
- * - `strictness` — tunes the RATING-PROMPT tier definitions only (what counts as `safe` vs
- *   `caution`); it never changes the action mapping.
- * - `escalate` — the ONLY model-vs-human routing knob: risk at/above this tier asks the human,
- *   below it the rejection reason goes back to the model. `critical` is deliberately NOT a valid
- *   value: critical always rejects, with no knob that lets it through to a prompt.
+ * ```jsonc
+ * { "approvals": "auto-safe" }
+ * ```
+ * ```jsonc
+ * { "approvals": {
+ *     "mode": "auto-safe",
+ *     "rater": "safety-rater",                     // identity profile the rater runs under
+ *     "allow": ["npm test", "git status"],         // declared allow-list (§3)
+ *     "deny":  ["git push --force", "npm publish"] // declared deny-list (§3)
+ * } }
+ * ```
+ *
+ * - **The scalar form is exactly sugar for `{ "mode": <value> }`** (§9.1). The union exists so the
+ *   extras have a home when they are needed, not so there are two ways to say the same thing.
+ * - `rater` is a **bare identity-profile name**, not an object (strict resolution, GS2-62: a name
+ *   that does not resolve is a hard config error, never a silent fallback). It is the only rater
+ *   knob; nesting a one-field object is what this design removed.
+ * - `allow`/`deny` are **read-only input**: merged with the runtime stores the escalation menu
+ *   writes, and never written back to config.
+ * - The retired `strictness` / `escalate` / `allowlist` / `persistAllowlist` keys and the retired
+ *   `auto` / `ask` mode values are hard migration errors naming their replacement — see
+ *   `RETIRED_APPROVALS_KEYS` / `RETIRED_APPROVAL_MODES` in {@link findDeprecatedConfigIssues}.
+ *
+ * Defaults are applied at the READ site (`resolveApprovals` in `shell-policy.ts`), not in
+ * DEFAULT_CONFIG, so the effective-config snapshot never churns (à la GS2-34/GS2-63).
  *
  * NOTE: "judge" is reserved for the eval grader (`gth eval --judge <profile>`) — a different
  * concept that keeps its name.
  */
-const raterConfigSchema = z.union([
-  z.boolean(),
+const approvalsSchema = z.union([
+  z.enum(APPROVAL_RUNG_VALUES),
   z.object({
-    profile: z.string().optional(),
-    strictness: z.enum(['lenient', 'standard', 'strict']).optional(),
-    escalate: z.enum(['caution', 'danger', 'never']).optional(),
+    mode: z.enum(APPROVAL_RUNG_VALUES).optional(),
+    rater: z.string().optional(),
+    allow: z.array(z.string()).optional(),
+    deny: z.array(z.string()).optional(),
   }),
 ]);
 
 /**
- * CFG-26 — the top-level `approvals` block: the whole gate deciding whether/how a mutating tool
- * call gets permission to run. Replaces the per-tool `builtInTools.run_shell_command.{yolo,judge,
- * allowlist,persistAllowlist}` knobs, which sat on the object shared by EVERY built-in tool (so
- * `gth_grep: { yolo: true }` validated) — moving them here fixes that too.
- *
- * - `mode` — `auto` (rater-mediated), `ask` (always prompt), `bypass` (no gate; the honest name
- *   for the retired `yolo`). The exec-time hardline floor still refuses catastrophic commands
- *   under every mode.
- * - `rater` / `allowlist` / `persistAllowlist` — see {@link raterConfigSchema}; the allow-list
- *   knobs keep their previous semantics, only their location changed.
- *
- * The `mode: "auto"` + rater-disabled coupling is enforced by a `.superRefine` rather than by the
- * object shape ON PURPOSE: refinements do not emit into the generated JSON Schema, so the
- * published `/v2/` channel stays complete and correct while the runtime still rejects the
- * combination. Defaults are applied at the READ site (`resolveApprovals` in `shell-policy.ts`),
- * not in DEFAULT_CONFIG, so the effective-config snapshot never churns (à la GS2-34/GS2-63).
- */
-const approvalsSchema = z
-  .object({
-    mode: z.enum(['auto', 'ask', 'bypass']).optional(),
-    rater: raterConfigSchema.optional(),
-    allowlist: z.boolean().optional(),
-    persistAllowlist: z.boolean().optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (value.mode === 'auto' && value.rater === false) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['rater'],
-        message: APPROVALS_AUTO_REQUIRES_RATER,
-      });
-    }
-  });
-
-/**
  * EXT-36 — the tool-loop guard (repeated identical `(tool, args)` / no-progress detector), the
- * orthogonal sibling of GS2-36's error budget. Modeled on {@link raterConfigSchema}: `false` disables
+ * orthogonal sibling of GS2-36's error budget. A boolean-or-object union: `false` disables
  * it entirely; `true`/absent is warn-on defaults; the object form is fine-grained. `warn` (default
  * ON) injects a control-flow-free nudge at the threshold; `halt` (default OFF, opt-in) ends the run
  * cleanly at the threshold; `threshold` is the number of consecutive identical calls that trip it.
@@ -258,7 +240,7 @@ const prCommandSchema = z.object({
   requirementSource: z.string().optional(),
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-26 — per-command approvals posture; replaces the root block wholesale when set.
+  // CFG-27 — per-command approvals rung; replaces the root value wholesale when set.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -272,7 +254,7 @@ const reviewCommandSchema = z.object({
   requirementSource: z.string().optional(),
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-26 — per-command approvals posture; replaces the root block wholesale when set.
+  // CFG-27 — per-command approvals rung; replaces the root value wholesale when set.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -283,7 +265,7 @@ const reviewCommandSchema = z.object({
 const askCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-26 — per-command approvals posture; replaces the root block wholesale when set.
+  // CFG-27 — per-command approvals rung; replaces the root value wholesale when set.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -293,7 +275,7 @@ const askCommandSchema = z.object({
 const chatCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-26 — per-command approvals posture; replaces the root block wholesale when set.
+  // CFG-27 — per-command approvals rung; replaces the root value wholesale when set.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -303,7 +285,7 @@ const chatCommandSchema = z.object({
 const codeCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-26 — per-command approvals posture; replaces the root block wholesale when set.
+  // CFG-27 — per-command approvals rung; replaces the root value wholesale when set.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -313,7 +295,7 @@ const codeCommandSchema = z.object({
 const execCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-26 — per-command approvals posture; replaces the root block wholesale when set.
+  // CFG-27 — per-command approvals rung; replaces the root value wholesale when set.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -323,7 +305,7 @@ const execCommandSchema = z.object({
 const apiCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-26 — per-command approvals posture; replaces the root block wholesale when set.
+  // CFG-27 — per-command approvals rung; replaces the root value wholesale when set.
   approvals: approvalsSchema.optional(),
   port: z.number().optional(),
   cors: z
@@ -421,9 +403,10 @@ export const rawGthConfigSchema = z.looseObject({
   noDefaultPrompts: z.boolean().optional(),
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-26 — the tool-approval gate (mode + AI rater + allow-list). Settable at the root or per
-  // command (`commands.<command>.approvals`, which REPLACES the root block wholesale, mirroring
-  // `builtInTools`). Absent = the context defaults in `resolveApprovals` (shell-policy.ts).
+  // CFG-27 — the approvals ladder: a rung name, or an object carrying the rater profile and the
+  // declared allow/deny lists. Settable at the root or per command
+  // (`commands.<command>.approvals`, which REPLACES the root value wholesale, mirroring
+  // `builtInTools`). Absent = `auto-safe` (`resolveApprovals` in shell-policy.ts).
   approvals: approvalsSchema.optional(),
   // Live tool instances / toolkits in JS configs — kept permissive.
   tools: z.array(z.unknown()).optional(),
@@ -611,19 +594,76 @@ const REMOVED_COMMAND_KEYS: ReadonlyArray<readonly [string, string]> = [
  * and `approvals.rater.escalate`, and notes that `critical` now always rejects with no knob.
  */
 const RETIRED_SHELL_TOOL_PAIRS: ReadonlyArray<readonly [string, string]> = [
-  ['yolo', '"approvals.mode": "bypass"'],
+  ['yolo', '"approvals": "bypass"'],
   [
     'judge',
-    '"approvals.mode": "auto" with "approvals.rater" (the low/medium/high tiers became ' +
-      'safe/caution/danger/critical: autoApproveLow/blockHigh are replaced by ' +
-      '"approvals.rater.escalate", and critical now always rejects)',
+    '"approvals": "auto-safe" (or "full-auto"), optionally with "approvals.rater" naming an ' +
+      'identity profile — the low/medium/high tiers became the safe/destructive/exfiltration ' +
+      'outcomes, and autoApproveLow/blockHigh are replaced by the rung you choose',
   ],
-  ['allowlist', '"approvals.allowlist"'],
-  ['persistAllowlist', '"approvals.persistAllowlist"'],
+  ['allowlist', '"approvals.allow" (a declared list of command prefixes)'],
+  [
+    'persistAllowlist',
+    'nothing — persistence is a per-decision choice at the approval prompt (approve forgets, ' +
+      'always approve persists)',
+  ],
 ];
 
 /** The `builtInTools` entry the retired approval knobs used to hang off. */
 const SHELL_TOOL_REGISTRY_KEY = 'run_shell_command';
+
+/**
+ * CFG-27 — keys retired from the `approvals` object itself when the four-tier lattice became one
+ * ordered ladder of five rungs. `[retired, "how to say it now"]`.
+ *
+ * Rejected PRE-PARSE rather than left to the union: `approvalsSchema`'s object arm is a `z.object`,
+ * which silently strips unknown keys, so an `approvals: { mode: "auto-safe", strictness: "strict" }`
+ * would otherwise run with its declared posture quietly ignored — the worst possible failure for a
+ * safety gate, and exactly what CFG-26 fixed for the per-tool knobs.
+ *
+ * `strictness` and `escalate` are **deleted, not remapped**: there are no severity thresholds and
+ * no independent rater switch, so each message points at the rung that expresses the intent.
+ */
+const RETIRED_APPROVALS_KEYS: ReadonlyArray<readonly [string, string]> = [
+  [
+    'strictness',
+    'nothing — there are no strictness levels any more. Choose a rung instead: ' +
+      '"read-only"/"write" never rate, "auto-safe" escalates anything not rated safe, ' +
+      '"full-auto" lets the auto-rater decide',
+  ],
+  [
+    'escalate',
+    'nothing — there is no escalate threshold any more. "auto-safe" escalates everything the ' +
+      'auto-rater does not rate safe; "full-auto" does not stop to ask',
+  ],
+  ['allowlist', '"approvals.allow" (a declared list of command prefixes)'],
+  [
+    'persistAllowlist',
+    'nothing — persistence is a per-decision choice at the approval prompt (approve forgets, ' +
+      'always approve persists)',
+  ],
+];
+
+/**
+ * CFG-27 — retired `approvals.mode` VALUES → the rung that replaced them. The three-mode
+ * vocabulary is gone: `auto` was the rater-mediated mode (now the `auto-safe` rung) and `ask`
+ * meant "prompt for everything the allow-list does not cover" (now `read-only`, or `write` if the
+ * agent should still edit files freely). `bypass` survives unchanged and is deliberately absent.
+ *
+ * Caught here rather than by the enum so the error NAMES the rung instead of listing five
+ * identifiers and leaving the user to guess which one preserves their intent.
+ */
+const RETIRED_APPROVAL_MODES: ReadonlyArray<readonly [string, string]> = [
+  [
+    'auto',
+    '"auto-safe" (the auto-rater rates every gated call and escalates anything questionable)',
+  ],
+  [
+    'ask',
+    '"write" (Gaunt Sloth edits files freely and asks about everything else) or "read-only" ' +
+      '(it asks before writing too)',
+  ],
+];
 
 /**
  * Pointer to the migration path, appended to every deprecated-shape error so the user
@@ -671,6 +711,80 @@ function collectRetiredShellToolIssues(
 }
 
 /**
+ * CFG-27 — scan one `approvals` value (root or per-command) for the keys and `mode` values the
+ * five-rung ladder retired, pushing one issue per occurrence. The scalar form carries no keys, so
+ * only the object form can offend — except for a retired `mode` VALUE, which the scalar form can
+ * carry directly (`"approvals": "auto"`), so both shapes are checked for that.
+ *
+ * `pathPrefix` is `approvals` at the root and `commands.<name>.approvals` per command, so the
+ * reported path points exactly at the offending key.
+ */
+function collectRetiredApprovalsIssues(
+  approvals: unknown,
+  pathPrefix: string,
+  issues: DeprecatedConfigIssue[]
+): void {
+  if (approvals === undefined || approvals === null) return;
+
+  // The scalar sugar form: `"approvals": "auto"`. Only a retired VALUE is an issue here; an
+  // unknown string is left to the enum, which lists the five valid rungs.
+  if (typeof approvals === 'string') {
+    for (const [retired, replacement] of RETIRED_APPROVAL_MODES) {
+      if (approvals === retired) {
+        issues.push({
+          path: pathPrefix,
+          message:
+            `Approval mode "${retired}" is no longer supported: approvals is now one ordered ` +
+            `ladder of five rungs (read-only, write, auto-safe, full-auto, bypass). ` +
+            `Use ${replacement} instead. ${MIGRATION_HINT}`,
+        });
+      }
+    }
+    return;
+  }
+
+  if (typeof approvals !== 'object' || Array.isArray(approvals)) return;
+  const block = approvals as Record<string, unknown>;
+
+  for (const [retired, replacement] of RETIRED_APPROVALS_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(block, retired)) {
+      issues.push({
+        path: `${pathPrefix}.${retired}`,
+        message:
+          `Config property "${retired}" in ${pathPrefix} is no longer supported: approvals is now ` +
+          `one ordered ladder of five rungs (read-only, write, auto-safe, full-auto, bypass), ` +
+          `and each rung fully determines behaviour. Use ${replacement}. ${MIGRATION_HINT}`,
+      });
+    }
+  }
+
+  // `rater` flattened from an object to a bare identity-profile name.
+  const rater = block.rater;
+  if (rater !== undefined && typeof rater !== 'string') {
+    issues.push({
+      path: `${pathPrefix}.rater`,
+      message:
+        `Config property "rater" in ${pathPrefix} is now a bare identity-profile name, not an ` +
+        `object or a boolean (e.g. "rater": "safety-rater"). Whether the rater runs at all is ` +
+        `decided by the rung: "auto-safe" and "full-auto" rate, the other three never do. ` +
+        MIGRATION_HINT,
+    });
+  }
+
+  for (const [retired, replacement] of RETIRED_APPROVAL_MODES) {
+    if (block.mode === retired) {
+      issues.push({
+        path: `${pathPrefix}.mode`,
+        message:
+          `Approval mode "${retired}" is no longer supported: approvals is now one ordered ladder ` +
+          `of five rungs (read-only, write, auto-safe, full-auto, bypass). Use ${replacement} ` +
+          `instead. ${MIGRATION_HINT}`,
+      });
+    }
+  }
+}
+
+/**
  * GS2-28 — detect the removed pre-2.0 config shapes on the RAW input (read-only; no
  * mutation), returning one {@link DeprecatedConfigIssue} per occurrence. A non-empty
  * result is a HARD validation failure: 2.0 dropped back-compat coercion, so an old shape
@@ -684,7 +798,10 @@ function collectRetiredShellToolIssues(
  *   `commands.<cmd>.devTools` → configure under `builtInTools`);
  * - (E, CFG-26) a retired `run_shell_command` approval knob ({@link RETIRED_SHELL_TOOL_PAIRS}) at
  *   EITHER `builtInTools.run_shell_command.*` or `commands.<cmd>.builtInTools.run_shell_command.*`
- *   — each message names the `approvals.*` key that replaced it.
+ *   — each message names the `approvals.*` key that replaced it;
+ * - (F, CFG-27) a retired `approvals` key or `mode` value ({@link RETIRED_APPROVALS_KEYS},
+ *   {@link RETIRED_APPROVAL_MODES}) at EITHER `approvals.*` or `commands.<cmd>.approvals.*` —
+ *   each message names the rung that replaced it.
  *
  * Runs on the raw input specifically so nested `commands.*.contentProvider` is still visible
  * (zod's per-command `z.object` would strip it before any schema-embedded check could fire).
@@ -721,6 +838,9 @@ export function findDeprecatedConfigIssues(raw: Record<string, unknown>): Deprec
   // (E, CFG-26) Retired run_shell_command approval knobs at the ROOT builtInTools registry.
   collectRetiredShellToolIssues(raw.builtInTools, 'builtInTools', issues);
 
+  // (F, CFG-27) Retired approvals keys / mode values in the ROOT approvals value.
+  collectRetiredApprovalsIssues(raw.approvals, 'approvals', issues);
+
   // (C) Deprecated *Provider* names + (CFG-18) removed keys inside each commands.<name> block.
   const commands = raw.commands;
   if (commands && typeof commands === 'object' && !Array.isArray(commands)) {
@@ -753,6 +873,12 @@ export function findDeprecatedConfigIssues(raw: Record<string, unknown>): Deprec
           `commands.${name}.builtInTools`,
           issues
         );
+        // (F, CFG-27) retired approvals keys / mode values in this command's approvals value.
+        collectRetiredApprovalsIssues(
+          (cmd as Record<string, unknown>).approvals,
+          `commands.${name}.approvals`,
+          issues
+        );
       }
     }
   }
@@ -761,18 +887,19 @@ export function findDeprecatedConfigIssues(raw: Record<string, unknown>): Deprec
 }
 
 /**
- * CFG-26 — one `approvals.rater.profile` reference found in a raw config, with the dotted config
- * path it was found at (`approvals.rater.profile` or `commands.<name>.approvals.rater.profile`).
+ * CFG-26 — one `approvals.rater` reference found in a raw config, with the dotted config path it
+ * was found at (`approvals.rater` or `commands.<name>.approvals.rater`).
  */
 export interface RaterProfileRef {
-  /** Dotted config path of the `profile` key, for the error message. */
+  /** Dotted config path of the `rater` key, for the error message. */
   path: string;
   /** The profile name as written. */
   profile: string;
 }
 
 /**
- * CFG-26 — collect every `approvals.rater.profile` in a raw config (root + each `commands.<name>`).
+ * CFG-26 — collect every `approvals.rater` in a raw config (root + each `commands.<name>`).
+ * CFG-27 flattened the key: it is a BARE identity-profile name, not `rater.profile`.
  *
  * PURE — it only reads the object; the caller decides whether each name RESOLVES. That split is
  * deliberate: profile resolution needs the filesystem, and `schema.ts` must stay pure so
@@ -784,12 +911,11 @@ export function findApprovalsRaterProfiles(raw: Record<string, unknown>): RaterP
   const refs: RaterProfileRef[] = [];
 
   const collect = (approvals: unknown, prefix: string): void => {
+    // The scalar sugar form (`"approvals": "auto-safe"`) carries no rater.
     if (!approvals || typeof approvals !== 'object' || Array.isArray(approvals)) return;
     const rater = (approvals as Record<string, unknown>).rater;
-    if (!rater || typeof rater !== 'object' || Array.isArray(rater)) return;
-    const profile = (rater as Record<string, unknown>).profile;
-    if (typeof profile === 'string' && profile.trim().length > 0) {
-      refs.push({ path: `${prefix}.rater.profile`, profile: profile.trim() });
+    if (typeof rater === 'string' && rater.trim().length > 0) {
+      refs.push({ path: `${prefix}.rater`, profile: rater.trim() });
     }
   };
 
@@ -816,7 +942,7 @@ export function unresolvedRaterProfileMessage(ref: RaterProfileRef): string {
   return (
     `identity profile "${ref.profile}" not found ` +
     `(checked ${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${ref.profile}/). ` +
-    'Create it with `gth config profile create`, or omit approvals.rater.profile to rate ' +
+    'Create it with `gth config profile create`, or omit approvals.rater to rate ' +
     'with the main model.'
   );
 }

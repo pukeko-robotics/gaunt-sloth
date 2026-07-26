@@ -736,53 +736,38 @@ describe('GthDeepAgent', () => {
     });
   });
 
-  it('KEEPS interruptOn under approvals.mode: bypass in interactive code mode so /approvals ask can switch it (CFG-26)', async () => {
-    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
-    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
-    const config = makeConfig({
-      commands: {
-        code: {
-          approvals: { mode: 'bypass' },
-          builtInTools: { run_shell_command: { enabled: true } },
-        },
-      } as any,
-    });
+  /**
+   * CFG-27 — `bypass` KEEPS the interrupt in EVERY context, `exec` included. CFG-26 omitted it
+   * outside interactive `code`; the ladder cannot afford that, because §2.5 makes the declared
+   * deny list the one check `bypass` keeps and a deny entry can only fire if the call reaches the
+   * runner's `decideToolApproval` — an ungated call never does.
+   */
+  it.each(['code', 'exec'] as const)(
+    'KEEPS interruptOn at %s under approvals: bypass, so the deny list can still fire',
+    async (command) => {
+      const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+      const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+      const config = makeConfig({
+        commands: {
+          [command]: {
+            approvals: 'bypass',
+            builtInTools: { run_shell_command: { enabled: true } },
+          },
+        } as any,
+      });
 
-    await agent.init('code', config);
+      await agent.init(command, config);
 
-    // The tool stays gated; the runner seeds its session mode from approvals.mode, so the user
-    // still sees no prompt by default but can restore it mid-session with /approvals ask.
-    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toEqual({
-      run_shell_command: { allowedDecisions: ['approve', 'reject'] },
-    });
-    // It reports that config pre-selected bypass (not the ungated bypass-mode warning).
-    expect(statusUpdate).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.stringContaining('auto-approved by config (approvals.mode: bypass)')
-    );
-  });
-
-  it('omits interruptOn under bypass in non-interactive exec mode so the tool runs inline (single-shot)', async () => {
-    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
-    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
-    const config = makeConfig({
-      commands: {
-        exec: {
-          approvals: { mode: 'bypass' },
-          builtInTools: { run_shell_command: { enabled: true } },
-        },
-      } as any,
-    });
-
-    await agent.init('exec', config);
-
-    // exec's single-shot path does not drain interrupts, so bypass keeps the tool ungated.
-    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toBeUndefined();
-    expect(statusUpdate).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.stringContaining('bypass mode')
-    );
-  });
+      expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toEqual({
+        run_shell_command: { allowedDecisions: ['approve', 'reject'] },
+      });
+      // §8.1 — the warning cites the deny list, never the hardline floor.
+      expect(statusUpdate).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('Only your deny list still applies')
+      );
+    }
+  );
 
   it('reads the exec command devTools for the interrupt wiring', async () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');

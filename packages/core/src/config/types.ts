@@ -191,12 +191,14 @@ export interface GthConfig {
    */
   builtInTools?: BuiltInToolsSetting;
   /**
-   * CFG-26 — the tool-approval gate: `mode` (`auto`/`ask`/`bypass`), the AI `rater`, and the
-   * allow-list knobs. Replaces the retired per-tool
-   * `builtInTools.run_shell_command.{yolo,judge,allowlist,persistAllowlist}` knobs, which sat on
-   * the object shared by EVERY built-in tool. Settable at the root or per command
-   * (`commands.<command>.approvals`); a per-command value replaces the top-level one. Absent =
-   * the context defaults resolved by `resolveApprovals`.
+   * CFG-27 — the tool-approval **ladder**: one of the five rungs (`read-only` · `write` ·
+   * `auto-safe` · `full-auto` · `bypass`), written either as the bare rung name or as an object
+   * carrying the rater's identity profile and the declared allow/deny lists. Each rung fully
+   * determines behaviour — there are no severity thresholds, no strictness levels and no
+   * independent rater switch.
+   *
+   * Settable at the root or per command (`commands.<command>.approvals`); a per-command value
+   * replaces the top-level one wholesale. Absent = `auto-safe`, resolved by `resolveApprovals`.
    */
   approvals?: ApprovalsConfig;
   tools?: StructuredToolInterface[] | BaseToolkit[] | ServerTool[];

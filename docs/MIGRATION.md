@@ -60,7 +60,8 @@ these before you upgrade.
 | `rating` is now an object | `rating: false` (or any boolean) is a validation abort: `expected object, received boolean` | `rating: { enabled: false }` |
 | Command configs must nest under `commands.*` | A top-level command key (e.g. `pr`) is a validation abort: `Top-level command config "pr" is no longer supported in 2.0. Move it under "commands.pr".` | Move it under `commands.<cmd>` |
 | Per-command `devTools` folded into `builtInTools` | `commands.<cmd>.devTools` is a validation abort: `Config property "devTools" in commands.code is no longer supported in 2.0. Configure tools under "builtInTools" instead.` | Move the dev/shell tools into the `builtInTools` registry (see section G) |
-| Approval knobs moved off `run_shell_command` | `yolo` / `judge` / `allowlist` / `persistAllowlist` on that entry are a validation abort: `Config property "yolo" in builtInTools.run_shell_command is no longer supported in 2.0. Use "approvals.mode": "bypass" instead.` | Move them into the top-level `approvals` block (see section I) |
+| Approval knobs moved off `run_shell_command` | `yolo` / `judge` / `allowlist` / `persistAllowlist` on that entry are a validation abort: `Config property "yolo" in builtInTools.run_shell_command is no longer supported in 2.0. Use "approvals": "bypass" instead.` | Move them into the top-level `approvals` setting (see section I) |
+| Approvals became one ladder of five rungs | `approvals.strictness` / `.escalate` / `.allowlist` / `.persistAllowlist`, an object-form `rater`, and the `mode` values `auto` / `ask` are all validation aborts naming the rung that replaced them | Pick a rung: `read-only` · `write` · `auto-safe` · `full-auto` · `bypass` (see section I) |
 | `projectGuidelines` / `projectReviewInstructions` folded into `prompts` | Either key is a validation abort: `Config property "projectGuidelines" was renamed in 2.0. Use "prompts.guidelines" instead.` | `prompts.guidelines` / `prompts.review` (see section H) |
 | Deprecated `*Provider*` config keys | `contentProvider` / `requirementsProvider` (and the `*ProviderConfig` variants) are rejected: `Config property "contentProvider" was renamed in 2.0. Use "contentSource" instead.` | Rename to `contentSource` / `requirementSource` (and `*SourceConfig`) |
 | `--content-provider` / `--requirements-provider` CLI flags removed | Scripts passing those flags error out | `--content-source` / `--requirements-source` (`-p` still aliases `--requirements-source`) |
@@ -396,25 +397,47 @@ real prompt), and guidelines default to empty until you create the file — or p
 `prompts.guidelines` at one you already have (e.g. `AGENTS.md`). Existing planted files keep
 working; they are simply no longer created for you.
 
-## I. Approvals and the AI rater (HARD)
+## I. Approvals and the auto-rater (HARD)
 
-The approval settings used to hang off the `run_shell_command` entry of `builtInTools`. That entry
-is the object shared by **every** built-in tool, so a nonsensical `"gth_grep": { "yolo": true }`
-validated happily. 2.0 moves them to a single top-level `approvals` block, and each retired key is
-a hard validation error naming its replacement.
+Approvals used to hang off the `run_shell_command` entry of `builtInTools` — the object shared by
+**every** built-in tool, so a nonsensical `"gth_grep": { "yolo": true }` validated happily. There is
+now a single top-level `approvals` setting, and every retired key is a hard validation error naming
+its replacement.
 
-| Old (`builtInTools.run_shell_command.*`) | New |
+`approvals` is **one ordered ladder of five rungs**. Each rung fully determines behaviour: there are
+no severity thresholds, no strictness levels, and no independent rater switch.
+
+| # | Rung | Rater |
+| --- | --- | --- |
+| 1 | `read-only` | no |
+| 2 | `write` | no |
+| 3 | `auto-safe` (the default) | yes |
+| 4 | `full-auto` | yes |
+| 5 | `bypass` | no |
+
+### Old → new
+
+| Old | New |
 | --- | --- |
-| `yolo: true` | `approvals.mode: "bypass"` |
-| `judge: true` / `judge.enabled` | `approvals.mode: "auto"` (the rater is on in `auto`) |
-| `judge.model` | `approvals.rater.profile` — an **identity profile name**, not a raw model block |
-| `judge.autoApproveLow: false` | `approvals.rater.escalate: "caution"` (nearest equivalent) |
-| `judge.blockHigh` | gone — a `critical` command is always refused, with no knob |
-| `allowlist` / `persistAllowlist` | `approvals.allowlist` / `approvals.persistAllowlist` |
+| `builtInTools.run_shell_command.yolo: true` | `"approvals": "bypass"` |
+| `builtInTools.run_shell_command.judge: true` | `"approvals": "auto-safe"` |
+| `judge.model` | `approvals.rater` — an **identity profile name**, not a raw model block |
+| `judge.autoApproveLow: false` / `judge.blockHigh` | gone — the rung decides; there are no per-tier knobs |
+| `builtInTools.run_shell_command.allowlist` | `approvals.allow` — a declared list of command prefixes |
+| `builtInTools.run_shell_command.persistAllowlist` | gone — persistence is a per-decision choice at the prompt (*approve* forgets, *always approve* persists) |
+| `approvals.mode: "auto"` | `approvals.mode: "auto-safe"` |
+| `approvals.mode: "ask"` | `approvals.mode: "write"` (the agent still edits files freely) or `"read-only"` (it asks before writing too) |
+| `approvals.rater: { profile: "x" }` | `approvals.rater: "x"` |
+| `approvals.rater.strictness` | gone — choose a rung instead |
+| `approvals.rater.escalate` | gone — `auto-safe` escalates everything not rated safe; `full-auto` does not stop to ask |
+| `approvals.allowlist` / `approvals.persistAllowlist` | `approvals.allow` / gone (as above) |
 | `run_shell_command` keeps | `enabled`, `timeout`, `maxOutputBytes` |
 
-The `low` / `medium` / `high` risk scale became **`safe` / `caution` / `danger` / `critical`**, and
-one knob (`escalate`) decides what reaches you instead of two half-overlapping booleans.
+The rater's scale changed with it: `safe` / `caution` / `danger` / `critical` became **three
+outcomes** — `safe`, `destructive` and `exfiltration`. `destructive` is the catch-all (anything
+harmful that is not exfiltration, including anything the rater cannot assess), and `exfiltration`
+— secrets leaving the machine, or data going somewhere your project did not configure — ends the
+run.
 
 Before:
 
@@ -436,21 +459,34 @@ Before:
 After:
 
 ```json
+{ "approvals": "auto-safe" }
+```
+
+Or, if you want to name the rater's model and declare what it may and may not run:
+
+```json
 {
   "approvals": {
-    "mode": "auto",
-    "allowlist": false,
-    "rater": { "escalate": "caution" }
+    "mode": "auto-safe",
+    "rater": "safety-rater",
+    "allow": ["npm test", "git status"],
+    "deny": ["npm publish", "git push --force"]
   }
 }
 ```
 
-**Behaviour change to expect:** the rater used to be off unless you opted in. An interactive
-`code` / `chat` session on a terminal now defaults to `approvals.mode: "auto"`, so clearly-safe
-commands run without a prompt and each gated command costs one rater model call. To keep confirming
-every command yourself, set `"approvals": { "mode": "ask" }`. One-shot commands (`exec`, `ask`,
-`review`, `pr`) and the API servers are unchanged: no rater, and a gated command with nobody to ask
-is refused. See [Shell tool & approvals](guides/shell-tool-and-approvals.md).
+**Two behaviour changes to expect.**
+
+1. **The default is `auto-safe` everywhere**, interactive or not, and it does not vary with the
+   configured model. Clearly-safe commands run without a prompt, and each gated command costs one
+   rater model call. To keep confirming every command yourself, set `"approvals": "write"`.
+2. **Where there is nobody to ask, an escalation exits non-zero** rather than handing the model a
+   rejection and continuing. A CI run, a one-shot `gth exec` or a server now fails loudly — printing
+   the command, its rating and the reason — instead of quietly continuing without the command.
+   Declare what the pipeline may run in `approvals.allow`, which is checked before the rater and
+   therefore never escalates.
+
+See [Shell tool & approvals](guides/shell-tool-and-approvals.md).
 
 ## Interactive slash commands (renames)
 
@@ -461,13 +497,13 @@ share one command registry):
   is still in alpha).
 - `/mode` removed — its output is folded into `/status`.
 - `/quit` added as an alias of `/exit`.
-- `/yolo` **removed** (no alias). Its behaviour is now `/bypass-approve` — which also states that it
-  skips the AI rater, not just the prompt.
-- `/auto-approve` is now a shortcut for `/approvals auto`: rater-mediated, **not** unconditional.
-  `/auto-approve off` means `/approvals ask`. It no longer toggles — with three modes a flip has no
-  unambiguous meaning.
-- `/approvals` added — shows the mode, rater and allow-list counts, and switches with
-  `/approvals auto|ask|bypass`.
+- `/yolo`, `/auto-approve` and `/bypass-approve` are **removed** (no aliases). `/approvals <rung>`
+  replaces all three: `/approvals bypass` for the first two's unconditional behaviour, and
+  `/approvals write` to confirm every command yourself. There is no toggle — with five ordered
+  rungs a flip has no unambiguous meaning, which is also why `/auto-approve off` could not survive:
+  it had to mean one of two different rungs.
+- `/approvals` shows the current rung, the rater and the allow/deny counts, and switches with
+  `/approvals read-only|write|auto-safe|full-auto|bypass`.
 
 ## Migration checklist
 
@@ -482,9 +518,10 @@ share one command registry):
    `writeOutputToFile: true` (or a string path) — the default is now `false` (E).
 6. Move any `commands.<cmd>.devTools` into the `builtInTools` registry (`run_*` → `{ "command": … }`,
    `shell` → the `run_shell_command` entry) (G).
-7. Move `yolo` / `judge` / `allowlist` / `persistAllowlist` off `run_shell_command` into the
-   top-level `approvals` block, and decide whether you want the new interactive `auto` default or
-   `"mode": "ask"` (I).
+7. Replace every approvals knob — `yolo` / `judge` / `allowlist` / `persistAllowlist` on
+   `run_shell_command`, and `strictness` / `escalate` / an object-form `rater` / the `auto` and
+   `ask` modes on `approvals` — with one of the five rungs, plus `approvals.allow` / `.deny` where
+   you need them. Decide whether you want the new `auto-safe` default or `"write"` (I).
 8. Rename `projectGuidelines` → `prompts.guidelines` and `projectReviewInstructions` →
    `prompts.review` (H).
 9. Run `gth config validate` (and optionally `gth config print`) to confirm the result.

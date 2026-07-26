@@ -408,17 +408,21 @@ export async function createTuiSession(
       resetThread() {
         runner.resetThread();
       },
-      // CFG-26 — the `/approvals` family switches the runner's session approval MODE. Returns the
-      // posture the runner LANDED on (it turns the rater on when switching to `auto`), so the
-      // notice and the status badge describe the real state rather than the requested one.
-      setApprovalMode(mode) {
-        runner.setSessionApprovalMode(mode);
+      // CFG-27 — `/approvals <rung>` switches the runner's session rung. Returns the posture the
+      // runner LANDED on, so the notice and the status badge describe the real state rather than
+      // the requested one.
+      setApprovalRung(rung) {
+        runner.setSessionApprovalRung(rung);
         return runner.getSessionApprovals();
       },
-      // CFG-26 — the read-only `/approvals` display. Kept separate from the setter so showing
+      // CFG-27 — the read-only `/approvals` display. Kept separate from the setter so showing
       // status can never mutate session state.
       getApprovals() {
-        return { approvals: runner.getSessionApprovals(), allowlist: runner.getAllowlistCounts() };
+        return {
+          approvals: runner.getSessionApprovals(),
+          allowlist: runner.getAllowlistCounts(),
+          deny: runner.getDenylist(),
+        };
       },
     };
 
