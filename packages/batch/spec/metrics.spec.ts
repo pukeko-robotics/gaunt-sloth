@@ -343,6 +343,99 @@ describe('metrics', () => {
       expect(result.gate).toMatchObject({ passed: false, mode: 'report' });
     });
 
+    it('COUNT gates read the numerator, so they do not drift as the corpus grows', async () => {
+      // The whole reason `max_count` exists. The same 2 offending cases must trip a `max_count: 1`
+      // gate identically whether the corpus has 4 cases or 40 — where the equivalent fraction
+      // (0.5 vs 0.05) would silently become a different rule.
+      const { computeMetric } = await import('#src/metrics.js');
+      const spec = gated({ max: undefined, maxCount: 1 });
+
+      const offenders = [
+        cell({ id: 'x1', expectedLabel: 'safe', actualAction: 'approve' }),
+        cell({ id: 'x2', expectedLabel: 'safe', actualAction: 'approve' }),
+      ];
+      const filler = (count: number) =>
+        Array.from({ length: count }, (_unused, index) =>
+          cell({ id: `f${index}`, expectedLabel: 'safe', actualAction: 'escalate' })
+        );
+
+      const small = computeMetric(spec, [...offenders, ...filler(2)], []);
+      const large = computeMetric(spec, [...offenders, ...filler(38)], []);
+
+      expect(small.overall.numerator).toBe(2);
+      expect(large.overall.numerator).toBe(2);
+      // Identical verdict despite the fraction moving from 50% to 5%.
+      expect(small.gate).toMatchObject({ kind: 'count', passed: false });
+      expect(large.gate).toMatchObject({ kind: 'count', passed: false });
+      expect(small.overall.value).toBeCloseTo(0.5);
+      expect(large.overall.value).toBeCloseTo(0.05);
+    });
+
+    it('states the UNIT in the breach message and the summary — never a bare `3 > 2`', async () => {
+      const { computeMetric } = await import('#src/metrics.js');
+      const cells = [
+        cell({ id: 'a', expectedLabel: 'safe', actualAction: 'approve' }),
+        cell({ id: 'b', expectedLabel: 'safe', actualAction: 'approve' }),
+        cell({ id: 'c', expectedLabel: 'safe', actualAction: 'escalate' }),
+      ];
+
+      const byCount = computeMetric(gated({ max: undefined, maxCount: 1 }), cells, []);
+      expect(byCount.gate?.kind).toBe('count');
+      expect(byCount.gate?.summary).toBe('≤ 1 case(s)');
+      expect(byCount.gate?.reason).toBe(
+        '2 case(s) exceeds the maximum of 1 case(s) (of 3 in the denominator)'
+      );
+
+      const byFraction = computeMetric(gated({ max: 0.1 }), cells, []);
+      expect(byFraction.gate?.kind).toBe('fraction');
+      expect(byFraction.gate?.summary).toBe('≤ 10.0%');
+      expect(byFraction.gate?.reason).toMatch(/2\/3 = 66\.7% exceeds the maximum 10\.0%/);
+    });
+
+    it('a count gate passes at exactly its ceiling and needs no empty-denominator special case', async () => {
+      const { computeMetric } = await import('#src/metrics.js');
+      const atCeiling = computeMetric(
+        gated({ max: undefined, maxCount: 1 }),
+        [
+          cell({ id: 'a', expectedLabel: 'safe', actualAction: 'approve' }),
+          cell({ id: 'b', expectedLabel: 'safe', actualAction: 'escalate' }),
+        ],
+        []
+      );
+      expect(atCeiling.gate).toMatchObject({ passed: true, summary: '≤ 1 case(s)' });
+
+      // An empty denominator yields numerator 0: at-or-below any ceiling, below any positive floor.
+      const emptyMax = computeMetric(gated({ max: undefined, maxCount: 0 }), [], []);
+      expect(emptyMax.gate).toMatchObject({ passed: true });
+      const emptyMin = computeMetric(gated({ max: undefined, minCount: 1 }), [], []);
+      expect(emptyMin.gate).toMatchObject({ passed: false });
+      expect(emptyMin.gate?.reason).toMatch(/0 case\(s\) is below the minimum of 1 case\(s\)/);
+    });
+
+    it('WARNS per-metric when its own inputs were UNREADABLE — the JSON consumer`s blind spot', async () => {
+      // A human reads the report-level warning above the metrics; a machine reads
+      // `metrics[].warnings` and would see an empty array beside a perfect score.
+      const { computeMetric } = await import('#src/metrics.js');
+      const { UNRECOGNIZED_LABEL } = await import('#src/classificationTypes.js');
+      const result = computeMetric(
+        gated({ max: undefined, maxCount: 0 }),
+        [
+          cell({ id: 'a', expectedLabel: 'destructive', actualAction: UNRECOGNIZED_LABEL }),
+          cell({ id: 'b', expectedLabel: 'destructive', actualAction: UNRECOGNIZED_LABEL }),
+        ],
+        []
+      );
+      // A perfect 0 — but only because nothing could be read.
+      expect(result.overall.numerator).toBe(0);
+      expect(result.gate).toMatchObject({ passed: true });
+      expect(result.warnings.join('\n')).toMatch(
+        /2\/2 case\(s\) in the denominator produced "\(unrecognized\)" for a field this metric reads/
+      );
+      expect(result.warnings.join('\n')).toMatch(
+        /may reflect output that could not be READ rather than behaviour that did not happen/
+      );
+    });
+
     it('FAILS a `min` gate on an empty denominator — a recall floor that measured nothing is not met', async () => {
       const { computeMetric } = await import('#src/metrics.js');
       const spec = gated({

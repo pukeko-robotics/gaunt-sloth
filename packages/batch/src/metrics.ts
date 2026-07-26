@@ -342,6 +342,30 @@ export function computeMetric(
   // INFLATED rate rather than a flattering one. Same failure, opposite sign, same fix: say which
   // cases, and point at the denominator.
   const fields = referencedFields([...spec.where, ...over]);
+
+  // A metric whose own inputs were UNREADABLE. This warning is deliberately duplicated from the
+  // report level onto each metric: a human reads the report header above the metrics and is
+  // covered, but a machine consumer reads `metrics[].warnings` from results.json and would see an
+  // empty array beside a perfect score. That asymmetry is precisely how an automated gate comes to
+  // trust a number a human would have questioned — e.g. `false_approve: 0/3 (0.0%)` which is
+  // perfect only because the extractor never produced `approve` at all.
+  const unreadable = denominatorCells.filter((cell) =>
+    fields.some((field) => fieldValue(cell, field) === UNRECOGNIZED_LABEL)
+  );
+  if (unreadable.length > 0) {
+    warnings.push(
+      `${unreadable.length}/${denominatorCells.length} case(s) in the denominator produced ` +
+        `"${UNRECOGNIZED_LABEL}" for a field this metric reads (${fields.join(', ')}), e.g. ` +
+        `${unreadable
+          .slice(0, 3)
+          .map((cell) => cell.id)
+          .join(
+            ', '
+          )}. This metric's value may reflect output that could not be READ rather than ` +
+        'behaviour that did not happen — check the extractor before trusting it.'
+    );
+  }
+
   const missingField = denominatorCells.filter((cell) =>
     fields.some((field) => fieldValue(cell, field) === undefined)
   );
@@ -376,41 +400,105 @@ export function computeMetric(
     warnings,
   };
 
-  if (spec.max !== undefined || spec.min !== undefined) {
+  if (
+    spec.max !== undefined ||
+    spec.min !== undefined ||
+    spec.maxCount !== undefined ||
+    spec.minCount !== undefined
+  ) {
     result.gate = evaluateGate(spec, overall);
   }
   return result;
 }
 
-/** Decide a metric's threshold. An empty denominator PASSES a `max` gate vacuously (there is
- * nothing above the ceiling) but FAILS a `min` gate: a recall floor that measured nothing has not
- * been met, it has been left unmeasured, and treating that as success is how a dead assertion
- * survives. The empty-denominator warning fires either way. */
+/** True when this metric's thresholds are absolute COUNTS rather than fractions. The two forms are
+ * mutually exclusive per metric (enforced at parse time), so one flag decides the whole reading. */
+export function isCountGate(spec: EvalMetricSpec): boolean {
+  return spec.maxCount !== undefined || spec.minCount !== undefined;
+}
+
+/** The threshold as a human string, unit ALWAYS included. A reader seeing `3 > 2` must never have
+ * to work out whether `2` was two cases or 200%. */
+function gateSummary(spec: EvalMetricSpec): string {
+  const parts: string[] = [];
+  if (isCountGate(spec)) {
+    if (spec.maxCount !== undefined) parts.push(`≤ ${spec.maxCount} case(s)`);
+    if (spec.minCount !== undefined) parts.push(`≥ ${spec.minCount} case(s)`);
+  } else {
+    if (spec.max !== undefined) parts.push(`≤ ${formatPercent(spec.max)}`);
+    if (spec.min !== undefined) parts.push(`≥ ${formatPercent(spec.min)}`);
+  }
+  return parts.join(' and ');
+}
+
+/**
+ * Decide a metric's threshold, in whichever unit it declared.
+ *
+ * **COUNT form** (`max_count`/`min_count`) reads the NUMERATOR directly, so it is invariant to
+ * corpus size — which is the entire reason it exists. "At most 2 cases may do this" keeps meaning
+ * that when the corpus grows; `max: 0.0909` quietly becomes a different rule.
+ *
+ * **FRACTION form** (`max`/`min`) reads the value, and therefore inherits the empty-denominator
+ * question: an empty denominator PASSES a `max` gate vacuously (nothing is above the ceiling) but
+ * FAILS a `min` gate, because a recall floor that measured nothing has not been met — it has been
+ * left unmeasured, and treating that as success is how a dead assertion survives. The
+ * empty-denominator warning fires either way.
+ *
+ * The count form needs no such special case: an empty denominator yields a numerator of 0, which is
+ * simply at-or-below any ceiling and below any positive floor.
+ */
 function evaluateGate(
   spec: EvalMetricSpec,
   overall: EvalMetricTally
 ): NonNullable<EvalMetricResult['gate']> {
-  const mode = spec.gate;
+  const base = {
+    kind: isCountGate(spec) ? ('count' as const) : ('fraction' as const),
+    max: spec.max,
+    min: spec.min,
+    maxCount: spec.maxCount,
+    minCount: spec.minCount,
+    mode: spec.gate,
+    summary: gateSummary(spec),
+  };
+
+  if (isCountGate(spec)) {
+    if (spec.maxCount !== undefined && overall.numerator > spec.maxCount) {
+      return {
+        ...base,
+        passed: false,
+        reason:
+          `${overall.numerator} case(s) exceeds the maximum of ${spec.maxCount} case(s) ` +
+          `(of ${overall.denominator} in the denominator)`,
+      };
+    }
+    if (spec.minCount !== undefined && overall.numerator < spec.minCount) {
+      return {
+        ...base,
+        passed: false,
+        reason:
+          `${overall.numerator} case(s) is below the minimum of ${spec.minCount} case(s) ` +
+          `(of ${overall.denominator} in the denominator)`,
+      };
+    }
+    return { ...base, passed: true };
+  }
+
   if (overall.value === null) {
     if (spec.min !== undefined) {
       return {
-        max: spec.max,
-        min: spec.min,
-        mode,
+        ...base,
         passed: false,
         reason:
           `n/a (empty denominator) does not meet the minimum ${formatPercent(spec.min)} — ` +
           'the metric measured nothing.',
       };
     }
-    return { max: spec.max, min: spec.min, mode, passed: true };
+    return { ...base, passed: true };
   }
 
   if (spec.max !== undefined && overall.value > spec.max) {
     return {
-      max: spec.max,
-      min: spec.min,
-      mode,
+      ...base,
       passed: false,
       reason:
         `${overall.numerator}/${overall.denominator} = ${formatPercent(overall.value)} exceeds ` +
@@ -419,16 +507,14 @@ function evaluateGate(
   }
   if (spec.min !== undefined && overall.value < spec.min) {
     return {
-      max: spec.max,
-      min: spec.min,
-      mode,
+      ...base,
       passed: false,
       reason:
         `${overall.numerator}/${overall.denominator} = ${formatPercent(overall.value)} is below ` +
         `the minimum ${formatPercent(spec.min)}`,
     };
   }
-  return { max: spec.max, min: spec.min, mode, passed: true };
+  return { ...base, passed: true };
 }
 
 /** Format a tally for human output: `3/29 (10.3%)`, or `n/a (0 cases)` for an empty denominator —

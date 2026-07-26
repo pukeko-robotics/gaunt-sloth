@@ -245,14 +245,64 @@ cases:
       ).rejects.toThrow(/omit the key entirely to score the WHOLE corpus/);
     });
 
-    it('rejects a threshold outside 0..1 — thresholds are fractions, not counts', async () => {
+    it('rejects a fraction threshold outside 0..1, and points at the COUNT form instead', async () => {
+      // The redirect matters: someone writing `max: 5` almost certainly means five CASES, and the
+      // count form is the one that expresses that without drifting as the corpus grows.
       await expect(
         parse(
           'target: { type: gth-agent }\nclassification: { labels: [safe] }\n' +
             'metrics: [{ name: m, where: "actual.label == safe", max: 5 }]\n' +
             'cases: [{ id: a, prompt: p, expect_label: safe }]\n'
         )
-      ).rejects.toThrow(/thresholds are FRACTIONS of the denominator/);
+      ).rejects.toThrow(/use `max_count: 5` — it does not drift as the corpus grows/);
+    });
+
+    it('parses COUNT thresholds — an absolute target invariant to corpus size', async () => {
+      const suite = await parse(`
+target: { type: gth-agent }
+classification:
+  labels: [safe, destructive]
+  actions: [approve, escalate]
+  action_from: answer
+metrics:
+  - name: false_approve
+    where: ["expected.label != safe", "actual.action == approve"]
+    max_count: 0
+  - name: over_escalation
+    where: ["actual.action == escalate"]
+    over: ["expected.label == safe"]
+    max_count: 2
+    gate: report
+cases:
+  - id: a
+    prompt: "p"
+    expect_label: safe
+`);
+      expect(suite.metrics[0]).toMatchObject({ maxCount: 0, gate: 'fail' });
+      expect(suite.metrics[0].max).toBeUndefined();
+      expect(suite.metrics[1]).toMatchObject({ maxCount: 2, gate: 'report' });
+    });
+
+    it('REJECTS mixing the fraction and count forms on one metric', async () => {
+      await expect(
+        parse(
+          'target: { type: gth-agent }\nclassification: { labels: [safe] }\n' +
+            'metrics: [{ name: m, where: "actual.label == safe", max: 0.1, max_count: 2 }]\n' +
+            'cases: [{ id: a, prompt: p, expect_label: safe }]\n'
+        )
+      ).rejects.toThrow(/declares BOTH fraction thresholds .* and count thresholds/);
+    });
+
+    it('rejects a non-integer or negative count threshold', async () => {
+      for (const value of ['2.5', '-1']) {
+        await expect(
+          parse(
+            'target: { type: gth-agent }\nclassification: { labels: [safe] }\n' +
+              `metrics: [{ name: m, where: "actual.label == safe", max_count: ${value} }]\n` +
+              'cases: [{ id: a, prompt: p, expect_label: safe }]\n'
+          )
+        ).rejects.toThrow(/a count threshold is a whole, non-negative number of cases/);
+      }
     });
 
     it('rejects a duplicate metric name', async () => {

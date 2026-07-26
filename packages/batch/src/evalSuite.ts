@@ -181,8 +181,14 @@ const RawMetricSchema = z.object({
   description: z.string().optional(),
   where: RawPredicateListSchema,
   over: RawPredicateListSchema.optional(),
+  // FRACTION thresholds (0..1).
   max: z.number().optional(),
   min: z.number().optional(),
+  // COUNT thresholds — absolute case counts, invariant to corpus size. Mutually exclusive with the
+  // fraction form on a single metric (enforced in code: two thresholds on one gate would have no
+  // defined precedence).
+  max_count: z.number().optional(),
+  min_count: z.number().optional(),
   gate: z.enum(['fail', 'report']).optional(),
 });
 
@@ -826,14 +832,42 @@ function buildMetricSpecs(
       );
     }
 
+    // A metric declares its thresholds in ONE unit. Mixing them would put two thresholds on one
+    // gate with no defined precedence, and would leave every downstream reader — the console, the
+    // comparison table, results.json — guessing whether `2` meant two cases or 200%.
+    const hasFraction = rawMetric.max !== undefined || rawMetric.min !== undefined;
+    const hasCount = rawMetric.max_count !== undefined || rawMetric.min_count !== undefined;
+    if (hasFraction && hasCount) {
+      throw new Error(
+        `${at} declares BOTH fraction thresholds (\`max\`/\`min\`) and count thresholds ` +
+          '(`max_count`/`min_count`) — a metric gates in one unit. Use counts when the target is ' +
+          '"at most N cases" (invariant to corpus size), fractions when it is "at most X% of the ' +
+          'denominator".'
+      );
+    }
+
     for (const [field, value] of [
       ['max', rawMetric.max],
       ['min', rawMetric.min],
     ] as const) {
       if (value !== undefined && (value < 0 || value > 1)) {
         throw new Error(
-          `${at} has \`${field}: ${value}\` — thresholds are FRACTIONS of the denominator (0..1), ` +
-            'so a zero-tolerance gate is `max: 0` and a full-recall gate is `min: 1`.'
+          `${at} has \`${field}: ${value}\` — \`${field}\` is a FRACTION of the denominator ` +
+            `(0..1), so a zero-tolerance gate is \`max: 0\` and a full-recall gate is \`min: 1\`. ` +
+            `For an absolute target like "at most ${value} case(s)", use \`${field}_count: ` +
+            `${value}\` — it does not drift as the corpus grows.`
+        );
+      }
+    }
+
+    for (const [field, value] of [
+      ['max_count', rawMetric.max_count],
+      ['min_count', rawMetric.min_count],
+    ] as const) {
+      if (value !== undefined && (!Number.isInteger(value) || value < 0)) {
+        throw new Error(
+          `${at} has \`${field}: ${value}\` — a count threshold is a whole, non-negative number ` +
+            'of cases. For a fractional target use `max`/`min` (0..1).'
         );
       }
     }
@@ -845,6 +879,8 @@ function buildMetricSpecs(
       over: overPredicates,
       max: rawMetric.max,
       min: rawMetric.min,
+      maxCount: rawMetric.max_count,
+      minCount: rawMetric.min_count,
       gate: rawMetric.gate ?? 'fail',
     };
   });

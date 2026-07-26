@@ -115,10 +115,16 @@ So declare that number and let it fail the build:
 metrics:
   - name: false_approve
     where: ["expected.label != safe", "actual.action == approve"]
-    max: 0
+    max_count: 0        # not one case may do this
 ```
 
 A breached threshold exits `1` even when every case passed.
+
+Thresholds come in two units, and the choice matters more than it looks. `max_count` is a number of
+cases; `max` is a fraction of the denominator. Use a **count** whenever the target is "at most N
+cases", because a fraction has to be recomputed by hand from the corpus size and then **drifts
+silently every time the corpus grows** — add ten cases and the gate quietly tightens or loosens with
+no edit and no warning. Use a fraction only when the target really is proportional.
 
 **The part worth internalising** is what `eval` does with the *denominator*. Omit `over:` and the
 metric is scored over the whole corpus — and if you do narrow it, or if some cases error out, the

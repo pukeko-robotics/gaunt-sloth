@@ -122,11 +122,36 @@ export interface EvalMetricSpec {
   /** The denominator predicate list (ANDed). Absent = every scored cell — corpus-wide by
    * construction. */
   over?: MetricPredicate[];
-  /** Gate: fail when the value is strictly GREATER than this. */
+  /** FRACTION gate: fail when the value is strictly GREATER than this (0..1). */
   max?: number;
-  /** Gate: fail when the value is strictly LESS than this — or when the denominator is empty
-   * (a recall metric that measured nothing has not met its floor; it has measured nothing). */
+  /** FRACTION gate: fail when the value is strictly LESS than this (0..1) — or when the denominator
+   * is empty (a recall metric that measured nothing has not met its floor; it has measured
+   * nothing). */
   min?: number;
+  /**
+   * COUNT gate: fail when the NUMERATOR exceeds this many cases.
+   *
+   * Not sugar for {@link max}. A target like "at most 2 of the 22 cases in this family" is an
+   * absolute count against an honest denominator, and expressing it as a fraction has two failures
+   * the fraction form cannot avoid:
+   *
+   * - the author must compute `2/22 = 0.0909` by hand from the current corpus size, and
+   * - **it silently drifts as the corpus grows.** Add ten cases and the gate quietly tightens or
+   *   loosens — no edit, no warning, the number still plausible while its meaning has moved.
+   *
+   * That second one is the same species as the blind denominator the rest of this file guards
+   * against: a number that stays believable while what it measures changes underneath it. A count
+   * gate is invariant to corpus size by construction.
+   *
+   * A count gate also reads more honestly wherever the target genuinely IS zero cases —
+   * `max_count: 0` says "not one case may do this", where `max: 0` says it in a unit that happens
+   * to coincide at zero.
+   */
+  maxCount?: number;
+  /** COUNT gate: fail when the NUMERATOR is below this many cases. Unlike {@link min}, this needs
+   * no empty-denominator special case — an empty denominator yields a numerator of 0, which is
+   * simply below any positive floor. */
+  minCount?: number;
   /** `fail` (default when a threshold is declared) — a tripped gate fails the run (exit 1).
    * `report` — the threshold is computed and printed but never changes the exit code. */
   gate: 'fail' | 'report';
@@ -169,15 +194,23 @@ export interface EvalMetricResult {
   coverage: EvalMetricCoverage;
   /** Every way this metric's denominator falls short of the whole corpus. Empty is the good case. */
   warnings: string[];
-  /** Present when the metric declares a `max`/`min` threshold. */
+  /** Present when the metric declares any threshold. */
   gate?: {
+    /** Which unit the thresholds are in. A consumer must never have to infer whether `2` meant two
+     * cases or 200% — the two forms are mutually exclusive per metric, and this names which. */
+    kind: 'fraction' | 'count';
     max?: number;
     min?: number;
+    maxCount?: number;
+    minCount?: number;
     mode: 'fail' | 'report';
     /** `false` = the threshold was breached. A breached `fail` gate fails the run. */
     passed: boolean;
-    /** Why it failed; empty when it passed. */
+    /** Why it failed; empty when it passed. Always states the unit. */
     reason?: string;
+    /** The threshold as a human string, unit included (`≤ 2 case(s)`, `≤ 5.0%`). Rendered whether
+     * the gate passed or failed, so a passing gate is as legible as a failing one. */
+    summary: string;
   };
 }
 

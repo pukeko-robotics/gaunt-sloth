@@ -122,11 +122,14 @@ export function renderConfusionMatrix(matrix: EvalConfusionMatrix, title: string
 export function renderMetric(metric: EvalMetricResult, tags: string[]): string[] {
   const lines: string[] = [];
 
+  // The threshold's UNIT is always on the line, passing or failing. `[gate ok]` alone left a reader
+  // unable to tell whether the bar was two cases or 2% — and the count form exists precisely
+  // because those are different rules that drift apart as the corpus grows.
   const gateSuffix = metric.gate
     ? metric.gate.passed
-      ? ' [gate ok]'
+      ? ` [gate ok: ${metric.gate.summary}]`
       : ` [GATE ${metric.gate.mode === 'fail' ? 'FAILED' : 'breached (report-only)'}: ${
-          metric.gate.reason ?? 'threshold breached'
+          metric.gate.reason ?? `threshold ${metric.gate.summary} breached`
         }]`
     : '';
   lines.push(`  ${metric.name}: ${formatTally(metric.overall)}${gateSuffix}`);
