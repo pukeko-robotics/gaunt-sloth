@@ -6,6 +6,12 @@
  * — eval's shapes layer on top of (not into) that file.
  */
 import type { ToolResultRecord } from '#src/types.js';
+import type {
+  EvalCaseClassification,
+  EvalClassificationReport,
+  EvalClassificationSpec,
+  EvalMetricSpec,
+} from '#src/classificationTypes.js';
 
 /** The 0-10 judge scale's default pass threshold, matching `review`'s own (unexported)
  * `DEFAULT_PASS_THRESHOLD` in `packages/review/src/middleware/reviewRateMiddleware.ts` — same
@@ -144,6 +150,26 @@ export interface EvalExpectation {
   toolResultJsonPath: ToolResultJsonPathCheck[];
   /** The judge rubric, when present and non-blank. `undefined` = no judge for this block. */
   judgeRubric?: string;
+  /**
+   * BATCH-25 — the expected CLASSIFICATION label for this block, over the suite's declared
+   * `classification.labels` enum. `undefined` = this block asserts no label.
+   *
+   * It lives on the EXPECTATION (not the case) deliberately: an expectation block is the atom that
+   * is both identity-scoped AND per-turn, and a multi-round negotiation case needs a different
+   * expected value per round (the corpus plan's N1 is reject · reject · escalate). A case-level
+   * field could not express that.
+   */
+  expectLabel?: string;
+  /**
+   * BATCH-25 — the expected ACTION for this block, over the suite's declared
+   * `classification.actions` enum.
+   *
+   * Separate from {@link expectLabel} because the two answer different questions and diverge by
+   * design: the label is what the model returned (diagnostic), the action is what the gate did
+   * (what a user experiences), and a deterministic preflight can rewrite the second without
+   * touching the first.
+   */
+  expectAction?: string;
 }
 
 /**
@@ -189,6 +215,73 @@ export interface TurnRunOutcome {
 export type RunConversationFn = (userMessages: string[]) => Promise<TurnRunOutcome[]>;
 
 /**
+ * BATCH-25 — what an injected CLASSIFIER target is asked to decide. One request per (case × cell).
+ *
+ * ## This is the Half-B seam
+ *
+ * TODO(BATCH-25 Half B / CFG-27): the `rater` target implements {@link RunClassifyFn} by driving the
+ * approvals rating prompt + decision mapping at a declared rung. It is deliberately NOT built here:
+ * it imports the three-outcome types being written concurrently on `node/CFG-27`
+ * (`packages/core/src/core/shell/rater.ts`), and writing against types that do not exist yet is how
+ * a seam gets bent to fit a guess. Half A ships the shape, the runner plumbing, and the tests
+ * (against an injected fake); Half B supplies the one function.
+ *
+ * The shape is what it is because the rater's unit is not an agent turn: it is
+ * `(command, rung, [user messages], [negotiation so far]) → outcome → action`. So a request carries
+ * the case's ordered inputs (the negotiation rounds, one entry for a single-round case) rather than
+ * a single prompt, and the outcome carries BOTH dimensions plus its own cost.
+ */
+export interface ClassifyRequest {
+  /** The case id, for the target's own diagnostics. */
+  caseId: string;
+  /** The case's turn inputs in order — the command, then each negotiation round. Length 1 for a
+   * single-round case. */
+  inputs: string[];
+  /** The case's family tags. */
+  tags: string[];
+  /** The case declared `model_free: true` — the target is expected to decide with no model call,
+   * and the runner FAILS the case if the returned `modelCalls` is not 0. */
+  modelFree: boolean;
+}
+
+/**
+ * BATCH-25 — one classification outcome. `modelCalls` is mandatory and is what makes
+ * {@link EvalCase.modelFree} enforceable rather than aspirational: a target that quietly rings the
+ * model on a case declared free would otherwise be invisible.
+ *
+ * NOTE it lives here and NOT on BATCH-1's `CellRunOutcome` (`#src/types.js`), which documents itself
+ * as scoped to cells/outcomes and is shared with the non-eval `gth batch` path.
+ */
+export interface ClassifyOutcome {
+  /** `false` = the target could not produce a classification (the case is excluded from every
+   * metric denominator and reported as excluded — never silently counted as a miss). */
+  ok: boolean;
+  /** The label the target produced, over the suite's declared enum. */
+  label?: string;
+  /** The action the target's decision mapping produced. */
+  action?: string;
+  /** The target's own explanation, carried into the per-cell JSON for diagnosis. */
+  rationale?: string;
+  /** Model calls this classification cost. `0` for a deterministic decision. */
+  modelCalls: number;
+  /** Set when `ok` is `false`. */
+  error?: string;
+}
+
+/**
+ * BATCH-25 — the injectable "classify one case" seam, the classifier analogue of BATCH-1's
+ * `RunCellFn`. Provided by a classification TARGET (Half B's `rater`); when absent, a classifier
+ * suite reads its label/action out of the ordinary agent answer via the suite's declared
+ * extractors, which is what makes Half A usable on its own.
+ *
+ * Returns ONE outcome PER ROUND, in order — the same shape {@link RunConversationFn} returns, and
+ * for the same reason: a negotiation case asserts a different expected action on each round
+ * (reject · reject · escalate), so a single collapsed outcome could not be graded against it. A
+ * single-round case returns a one-element array.
+ */
+export type RunClassifyFn = (request: ClassifyRequest) => Promise<ClassifyOutcome[]>;
+
+/**
  * One case parsed and normalized from suite YAML. Every case — flat or matrix — reduces to this
  * ONE shape: a list of {@link EvalTurn}s (Task 1: length exactly 1, its `user` = the case's
  * `prompt`) whose expectations carry the assertions. `passThreshold` is per-case and pre-resolved
@@ -198,6 +291,23 @@ export interface EvalCase {
   id: string;
   turns: EvalTurn[];
   passThreshold: number;
+  /**
+   * BATCH-25 — the case's family tags, as authored (`tags: [injection, rce]`). `[]` when the case
+   * declares none. Every metric and the confusion matrix report per tag as well as overall, because
+   * an aggregate hides adversarial collapse.
+   */
+  tags: string[];
+  /**
+   * BATCH-25 — this case must be decided with **zero model calls**. The hardline-floor and
+   * ambiguity families of the approvals corpus assert an action deterministically, which makes a
+   * meaningful slice of the corpus free to run and is the EXT-55 regression gate (a floor that had
+   * silently stopped firing, invisible to build, lint and unit).
+   *
+   * A target that cannot honour it rejects the case at parse time rather than quietly billing a
+   * model call: `model_free` requires an injected classifier ({@link RunClassifyFn}) that reports
+   * its own `modelCalls`. The runner FAILS the case when a model-free case reports `modelCalls > 0`.
+   */
+  modelFree: boolean;
 }
 
 /** A fully parsed and validated suite — see {@link ../evalSuite.js}'s `parseEvalSuite`. */
@@ -216,7 +326,57 @@ export interface EvalSuite {
    * unless `default`). Resolved by the CLI as `--judge <profile>` > this > none (none = judge uses
    * the SUT's `config.llm`, the pre-Task-2 behavior). Absent/blank = no separate judge. */
   judgeProfile?: string;
+  /**
+   * BATCH-25 — the suite's classification declaration: the label/action enum that gives the
+   * confusion matrix its axes, and how a value is read out of the SUT's answer. Absent = an
+   * ordinary pass/fail suite (every #405-era suite), and the whole classifier layer is inert.
+   */
+  classification?: EvalClassificationSpec;
+  /**
+   * BATCH-25 — suite-declared aggregate metrics over the corpus, each optionally gating the exit
+   * code. `[]` when the suite declares none. Requires {@link classification} (a metric with no
+   * label enum has nothing to read).
+   */
+  metrics: EvalMetricSpec[];
+  /**
+   * BATCH-25 — the config sweep: named cells the WHOLE suite is run once per, so one corpus
+   * produces one comparison table instead of N unrelated runs. Absent = a single run.
+   *
+   * Consumed by the CLI, not by {@link ../evalRunner.js runEvalSuite}: a sweep is a run-level
+   * concept (same suite, different config) exactly like BATCH-19's multi-suite loop, so the runner
+   * stays about grading and #405's identity matrix is untouched.
+   */
+  sweep?: EvalSweep;
   cases: EvalCase[];
+}
+
+/**
+ * BATCH-25 — one sweep axis value: a named bundle of config overrides applied to the run.
+ *
+ * The two fields are separate because they reach the config by different, differently-safe routes:
+ * - `model` goes through `initConfig({ …, model })` — BATCH-1's supported seam, which re-runs the
+ *   provider's `processJsonConfig()` so the cell gets a genuinely fresh `.llm` instance rather than
+ *   a structural clone of an already-instantiated LangChain model.
+ * - `config` is a deep merge of plain JSON data onto the resolved `GthConfig`. `llm` is rejected in
+ *   it at parse time: it holds a constructed model instance, not data, and merging into it would
+ *   produce a half-built object. Use `model` for the model axis.
+ */
+export interface EvalSweepValue {
+  /** The cell's name on this axis — a path-safe token; it becomes an output-dir component. */
+  name: string;
+  /** `llm.model` for this cell, via the supported fresh-construction seam. */
+  model?: string;
+  /** Plain-data config overrides deep-merged onto the resolved config (never `llm`). */
+  config?: Record<string, unknown>;
+}
+
+/**
+ * BATCH-25 — the sweep: named axes whose CARTESIAN PRODUCT is the set of runs. The approvals
+ * sweep's axes are `rung × model`; a one-axis sweep is just a list of settings.
+ */
+export interface EvalSweep {
+  /** Axis name → its ordered values. At least one axis, each with at least one value. */
+  axes: { name: string; values: EvalSweepValue[] }[];
 }
 
 /** The result of running one case's answer through its deterministic checks. */
@@ -276,6 +436,10 @@ export interface EvalTurnResult {
   judge?: JudgeOutcome;
   /** Every reason this turn FAILed; empty when `verdict` is `PASS`. */
   reasons: string[];
+  /** BATCH-25 — this ROUND's classification. A negotiation case asserts a different expected action
+   * per round (reject · reject · escalate), so the per-round values are the ones that diagnose it.
+   * Omitted for a non-classifier suite. */
+  classification?: EvalCaseClassification;
 }
 
 /** One graded cell's full outcome, as written to `<id>.json` (matrix: `<id>__<identity>.json`) and
@@ -315,12 +479,30 @@ export interface EvalCaseResult {
    * are left unset for a multi-turn cell (there is no single answer) — read {@link turns} instead.
    */
   turns?: EvalTurnResult[];
+  /**
+   * BATCH-25 — this cell's classification (expected vs actual label/action). Omitted entirely for a
+   * suite that declares no `classification:` block, so a pre-BATCH-25 `<id>.json` is byte-for-byte
+   * unchanged. For a multi-turn cell this carries the LAST turn's classification (the round the
+   * corpus's expected outcome is asserted on); per-round values are in {@link turns}.
+   */
+  classification?: EvalCaseClassification;
+  /** BATCH-25 — the case's family tags, echoed here so a single `<id>.json` is self-describing and
+   * a per-tag re-aggregation needs nothing else. Omitted when the case declares none. */
+  tags?: string[];
 }
 
-/** The suite-level aggregate written to `results.json` — `gth eval` exits 0 iff `failed === 0`. */
+/**
+ * The suite-level aggregate written to `results.json`. `gth eval` exits 0 iff `failed === 0` AND no
+ * `gate: fail` metric threshold was breached (see `classifyEvalExit`) — a metric gate is a product
+ * signal exactly like a failed assertion, and a corpus can be entirely within per-case tolerance
+ * while its false-approve rate is unacceptable.
+ */
 export interface EvalSuiteSummary {
   total: number;
   passed: number;
   failed: number;
   cases: EvalCaseResult[];
+  /** BATCH-25 — the confusion matrices + declared metrics. Omitted entirely for a suite with no
+   * `classification:` block, so a pre-BATCH-25 `results.json` is byte-for-byte unchanged. */
+  classification?: EvalClassificationReport;
 }

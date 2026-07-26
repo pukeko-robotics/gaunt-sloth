@@ -4,6 +4,7 @@ import { runToolCallChecks } from '#src/toolChecks.js';
 import { runToolResultChecks } from '#src/toolResultChecks.js';
 import type { CellResult, MatrixCell, RunCellFn, ToolResultRecord } from '#src/types.js';
 import type {
+  ClassifyOutcome,
   EvalCase,
   EvalCaseResult,
   EvalExpectation,
@@ -12,9 +13,18 @@ import type {
   EvalTurnResult,
   JudgeFn,
   JudgeOutcome,
+  RunClassifyFn,
   RunConversationFn,
   TurnRunOutcome,
 } from '#src/evalTypes.js';
+import type {
+  ClassifiedCell,
+  EvalCaseClassification,
+  EvalClassificationSpec,
+} from '#src/classificationTypes.js';
+import { UNRECOGNIZED_LABEL } from '#src/classificationTypes.js';
+import { extractClassificationValue, readRaw } from '#src/classification.js';
+import { buildClassificationReport } from '#src/classificationReport.js';
 
 /** Options for {@link runEvalSuite}. */
 export interface RunEvalSuiteOptions {
@@ -54,6 +64,22 @@ export interface RunEvalSuiteOptions {
   /** Max in-flight cells — reuses BATCH-1's `runBatchMatrix` pool (`DEFAULT_CELL_CONCURRENCY`,
    * i.e. serial, when omitted); no second concurrency mechanism is introduced for eval. */
   concurrency?: number;
+  /**
+   * BATCH-25 Half B SEAM — an injected CLASSIFICATION target. When provided (and the suite declares
+   * a `classification:` block), every case is dispatched through it INSTEAD of the agent runners:
+   * the target returns the label/action per round directly, plus the model-call count that makes
+   * `model_free` enforceable.
+   *
+   * TODO(BATCH-25 Half B / CFG-27): the `rater` target supplies this by driving the approvals rating
+   * prompt + decision mapping at a declared rung. Nothing in the tree supplies it yet — the suite
+   * parser rejects `model_free` for every target that exists today for exactly that reason — so in
+   * Half A this path is exercised by the unit suite's injected fake. That is the seam working as
+   * intended: Half B adds one function and changes nothing here.
+   *
+   * When absent, a classifier suite reads its label/action out of the ordinary agent answer via the
+   * suite's declared extractors, which is what makes the facility usable on its own today.
+   */
+  classify?: RunClassifyFn;
 }
 
 /**
@@ -71,6 +97,19 @@ interface EvalUnit {
   evalCase: EvalCase;
   identity?: string;
   applicablePerTurn: EvalExpectation[][];
+}
+
+/**
+ * BATCH-25 — a case's tags, read defensively.
+ *
+ * `EvalCase.tags` is REQUIRED and `parseEvalSuite` always supplies it (`[]` when the case declares
+ * none), following this layer's stated convention that arrays default to `[]` so callers never need
+ * an existence check. But `EvalSuite` is a public export that a caller can also construct by hand,
+ * and a missing array must degrade to "no tags" rather than crash a whole run — the same `?? []`
+ * discipline `cellResult.tools`/`toolResults` already get here.
+ */
+function caseTags(evalCase: EvalCase): string[] {
+  return evalCase.tags ?? [];
 }
 
 /** A block applies to an identity when it names no identities (unscoped → all) or explicitly names
@@ -191,8 +230,44 @@ export async function runEvalSuite(
   // populate this; single-turn cells grade straight from their `CellResult` as before.
   const conversationOutcomes = new Map<number, TurnRunOutcome[]>();
 
+  // The classification target is only in play for a suite that actually declares a `classification:`
+  // block — an injected classifier with no label enum would have no axes to report against.
+  const spec = suite.classification;
+  const classifier = spec ? options.classify : undefined;
+
+  // BATCH-25 — per-round classification outcomes from an injected classification target, keyed by
+  // the same unique `inputIndex`. Populated only on the `options.classify` path.
+  const classifyOutcomes = new Map<number, ClassifyOutcome[]>();
+
   const dispatchRunCell: RunCellFn = async (cell) => {
     const unit = unitByInputIndex.get(cell.inputIndex)!;
+
+    // BATCH-25 — a CLASSIFICATION target decides the case itself; there is no agent turn to run.
+    // Its per-round outcomes are stashed for grading and ALSO adapted into the conversation stash,
+    // so a multi-round classifier case rides the existing per-turn grader unchanged.
+    if (classifier) {
+      const outcomes = await classifier({
+        caseId: unit.evalCase.id,
+        inputs: unit.evalCase.turns.map((turn) => turn.user),
+        tags: caseTags(unit.evalCase),
+        modelFree: unit.evalCase.modelFree,
+      });
+      classifyOutcomes.set(cell.inputIndex, outcomes);
+      conversationOutcomes.set(
+        cell.inputIndex,
+        outcomes.map((outcome) => ({
+          ok: outcome.ok,
+          answer: outcome.rationale,
+          error: outcome.error,
+        }))
+      );
+      return {
+        ok: outcomes.length > 0 && outcomes.every((outcome) => outcome.ok),
+        answer: outcomes[0]?.rationale,
+        error: outcomes[0]?.error,
+      };
+    }
+
     // Single-turn: the proven `runSingleShot`-backed path, byte-for-byte (unchanged dispatch).
     if (unit.evalCase.turns.length <= 1) {
       return runCellFor(unit.identity)(cell);
@@ -218,22 +293,196 @@ export async function runEvalSuite(
     /* istanbul ignore next -- inputIndex is derived 1:1 from units (each cell's inputIndex is its
        unit's array position, preserved through runBatchMatrix), so every result maps to one unit */
     if (!unit) continue;
+    const outcomes = conversationOutcomes.get(cellResult.inputIndex);
+    // BATCH-25 — the per-round answers this unit produced, in turn order. A single-turn cell has one
+    // (the cell's own answer); a multi-turn / classifier cell has one per round.
+    const answersPerTurn =
+      unit.evalCase.turns.length <= 1
+        ? [cellResult.answer]
+        : unit.evalCase.turns.map((_, index) => outcomes?.[index]?.answer);
+    const classifications = buildActualClassifications(
+      unit,
+      spec,
+      answersPerTurn,
+      classifyOutcomes.get(cellResult.inputIndex)
+    );
+
     if (unit.evalCase.turns.length <= 1) {
-      results.push(await gradeUnit(unit, cellResult, options.judge));
+      results.push(await gradeUnit(unit, cellResult, options.judge, classifications?.[0]));
     } else {
       results.push(
-        await gradeConversationUnit(
-          unit,
-          conversationOutcomes.get(cellResult.inputIndex),
-          cellResult,
-          options.judge
-        )
+        await gradeConversationUnit(unit, outcomes, cellResult, options.judge, classifications)
       );
     }
   }
 
   const passed = results.filter((result) => result.verdict === 'PASS').length;
-  return { total: results.length, passed, failed: results.length - passed, cases: results };
+  const summary: EvalSuiteSummary = {
+    total: results.length,
+    passed,
+    failed: results.length - passed,
+    cases: results,
+  };
+
+  // BATCH-25 — the classifier report (matrices + declared metrics) is attached ONLY for a suite that
+  // declares `classification:`, so a #405-era `results.json` is byte-for-byte unchanged.
+  if (spec) {
+    summary.classification = buildClassificationReport(
+      spec,
+      // Same defensive read as `caseTags`: required on the parsed shape, tolerated absent on a
+      // hand-constructed one.
+      suite.metrics ?? [],
+      toClassifiedCells(results)
+    );
+  }
+  return summary;
+}
+
+/**
+ * BATCH-25 — reduce the graded results to the shape the matrices and metrics read.
+ *
+ * `scored` is the load-bearing field: a cell whose SUT never ran has NO place in any matrix cell or
+ * any metric denominator, and is instead counted as `excluded` and said out loud. Silently treating
+ * it as a wrong answer would inflate the error rate; silently dropping it would inflate coverage.
+ * Both are how a classifier report comes to claim more than it measured.
+ */
+export function toClassifiedCells(results: EvalCaseResult[]): ClassifiedCell[] {
+  return results.map((result) => ({
+    id: result.identity === undefined ? result.id : `${result.id}__${result.identity}`,
+    tags: result.tags ?? [],
+    expectedLabel: result.classification?.expectedLabel,
+    expectedAction: result.classification?.expectedAction,
+    actualLabel: result.classification?.actualLabel,
+    actualAction: result.classification?.actualAction,
+    scored: result.sutOk && result.classification !== undefined,
+  }));
+}
+
+/**
+ * BATCH-25 — build one {@link EvalCaseClassification} per round: what the corpus expected, and what
+ * the SUT actually produced.
+ *
+ * The EXPECTED side comes from the round's APPLICABLE expectation blocks (already filtered to this
+ * identity), so an identity-scoped or round-scoped expectation is read correctly. When two
+ * applicable blocks declare different expected labels the first wins for reporting purposes — but
+ * both are still graded independently, so a contradictory pair fails the case rather than being
+ * quietly reconciled here.
+ *
+ * The ACTUAL side comes from the injected classification target when there is one, and otherwise
+ * from the suite's declared extractors reading the round's answer. Either way a value the suite does
+ * not declare becomes {@link UNRECOGNIZED_LABEL} — a visible bucket, never a dropped row.
+ */
+function buildActualClassifications(
+  unit: EvalUnit,
+  spec: EvalClassificationSpec | undefined,
+  answersPerTurn: (string | undefined)[],
+  classifyOutcomes: ClassifyOutcome[] | undefined
+): EvalCaseClassification[] | undefined {
+  if (!spec) return undefined;
+
+  return unit.evalCase.turns.map((_turn, index) => {
+    const applicable = unit.applicablePerTurn[index] ?? [];
+    const expectedLabel = applicable.find((block) => block.expectLabel !== undefined)?.expectLabel;
+    const expectedAction = applicable.find(
+      (block) => block.expectAction !== undefined
+    )?.expectAction;
+
+    const outcome = classifyOutcomes?.[index];
+    const answer = answersPerTurn[index];
+
+    let actualLabel: string | undefined;
+    let actualAction: string | undefined;
+    let raw: string | undefined;
+
+    if (outcome) {
+      // A classification target reports its verdict directly — but it is still held to the suite's
+      // declared enum, so a target returning an undeclared value shows up as `(unrecognized)`
+      // rather than silently widening the axis.
+      actualLabel = outcome.ok ? normalizeAgainstEnum(outcome.label, spec.labels) : undefined;
+      actualAction =
+        outcome.ok && spec.actions.length > 0
+          ? normalizeAgainstEnum(outcome.action, spec.actions)
+          : undefined;
+      raw = outcome.rationale;
+    } else if (answer !== undefined) {
+      actualLabel = extractClassificationValue(answer, spec.labelFrom, spec.labels);
+      if (spec.actionFrom) {
+        actualAction = extractClassificationValue(answer, spec.actionFrom, spec.actions);
+      }
+      // Keep the text the extractor actually read when it is NOT just the whole answer, so an
+      // `(unrecognized)` result is diagnosable from the per-cell JSON without re-running.
+      const readValue = readRaw(answer, spec.labelFrom);
+      if (readValue !== undefined && readValue !== answer) raw = readValue;
+    }
+
+    return {
+      expectedLabel,
+      expectedAction,
+      actualLabel,
+      actualAction,
+      raw,
+      modelCalls: outcome?.modelCalls,
+    };
+  });
+}
+
+/** Hold a classification target's own verdict to the suite's declared enum. An absent value stays
+ * absent (the target reported nothing on this dimension); an undeclared one becomes
+ * {@link UNRECOGNIZED_LABEL}. */
+function normalizeAgainstEnum(value: string | undefined, declared: string[]): string | undefined {
+  if (value === undefined) return undefined;
+  return declared.includes(value) ? value : UNRECOGNIZED_LABEL;
+}
+
+/**
+ * BATCH-25 — grade one round's classification assertions and the `model_free` contract.
+ *
+ * Returns failure reasons; empty means the round's classification assertions held. The label and
+ * the action are graded SEPARATELY and both are reported, because they diverge by design: a
+ * deterministic preflight can produce the right action from the wrong label, and a report that
+ * collapsed them would hide which component drifted.
+ */
+function gradeClassificationBlock(
+  block: EvalExpectation,
+  classification: EvalCaseClassification | undefined
+): string[] {
+  const reasons: string[] = [];
+  if (block.expectLabel !== undefined) {
+    const actual = classification?.actualLabel;
+    if (actual !== block.expectLabel) {
+      reasons.push(`expected label "${block.expectLabel}" but got "${actual ?? '(none)'}"`);
+    }
+  }
+  if (block.expectAction !== undefined) {
+    const actual = classification?.actualAction;
+    if (actual !== block.expectAction) {
+      reasons.push(`expected action "${block.expectAction}" but got "${actual ?? '(none)'}"`);
+    }
+  }
+  return reasons;
+}
+
+/** BATCH-25 — the `model_free` contract: a case declared free must cost ZERO model calls. A target
+ * that quietly rings the model on such a case would otherwise be invisible, and these cases are
+ * exactly the cheap, deterministic regression gate (the EXT-55 class — a hardline floor that had
+ * silently stopped firing, invisible to build, lint and unit). `undefined` model calls means the
+ * target did not report them, which is itself a failure of the contract. */
+function gradeModelFree(
+  evalCase: EvalCase,
+  classification: EvalCaseClassification | undefined
+): string[] {
+  if (!evalCase.modelFree) return [];
+  const calls = classification?.modelCalls;
+  if (calls === undefined) {
+    return [
+      'model_free: the target reported no model-call count, so "zero model calls" could not be ' +
+        'verified.',
+    ];
+  }
+  if (calls > 0) {
+    return [`model_free: expected 0 model calls but the target made ${calls}`];
+  }
+  return [];
 }
 
 /** The three-way process exit code for a completed `gth eval` run. See {@link classifyEvalExit}. */
@@ -255,6 +504,12 @@ export type EvalExitCode = 0 | 1 | 2;
  * Classification is anchored on `sutOk`, not the verdict: a cell that ran (`sutOk === true`) but
  * whose judge errored (or whose answer failed a check) is a real result → exit `1`, never `2`. A
  * *mix* of `sutOk:false` and `sutOk:true` cells therefore yields `1`.
+ *
+ * BATCH-25 adds ONE further way to reach `1`: a breached `gate: fail` metric threshold. That is a
+ * product signal of exactly the same kind — and it is the one that a per-case pass/fail sweep cannot
+ * express, because a classifier corpus can be entirely within per-case tolerance while its
+ * false-approve rate is unacceptable. Per-case verdicts answer "did each case behave"; a gated
+ * metric answers "is the aggregate shippable", and only the second gates a release.
  */
 export function classifyEvalExit(summary: EvalSuiteSummary): EvalExitCode {
   // No gradeable results at all → harness/environment error, not a product signal.
@@ -263,6 +518,11 @@ export function classifyEvalExit(summary: EvalSuiteSummary): EvalExitCode {
   }
   // Ran and produced gradeable results, but at least one cell failed → product regression.
   if (summary.failed > 0) {
+    return 1;
+  }
+  // BATCH-25 — every cell passed, but a declared metric breached its hard threshold. Still a
+  // product signal (exit 1), never a harness one: the run worked, the aggregate is out of bounds.
+  if ((summary.classification?.gateFailures.length ?? 0) > 0) {
     return 1;
   }
   // Every cell passed.
@@ -284,7 +544,8 @@ async function gradeApplicableBlocks(
   toolResults: ToolResultRecord[],
   applicable: EvalExpectation[],
   passThreshold: number,
-  judge: JudgeFn | undefined
+  judge: JudgeFn | undefined,
+  classification: EvalCaseClassification | undefined
 ): Promise<{
   reasons: string[];
   deterministicFailures: string[];
@@ -303,8 +564,18 @@ async function gradeApplicableBlocks(
     // third input kind, graded by its own checker (#src/toolResultChecks.js) and merged into the
     // same `reasons` so they drive the same PASS/FAIL/exit contract.
     const toolResultFailures = runToolResultChecks(toolResults, block);
+    // BATCH-25 classification assertions read the cell's CLASSIFICATION (a fourth input kind,
+    // beside the answer, the tool trace and the tool results), so they are graded by their own
+    // checker and merged into the same `reasons` — the same PASS/FAIL/exit contract as every other
+    // assertion.
+    const classificationFailures = gradeClassificationBlock(block, classification);
     deterministicFailures.push(...checks.failures);
-    reasons.push(...checks.failures, ...toolFailures, ...toolResultFailures);
+    reasons.push(
+      ...checks.failures,
+      ...toolFailures,
+      ...toolResultFailures,
+      ...classificationFailures
+    );
 
     if (block.judgeRubric) {
       let outcome: JudgeOutcome;
@@ -338,7 +609,8 @@ async function gradeApplicableBlocks(
 async function gradeUnit(
   unit: EvalUnit,
   cellResult: CellResult,
-  judge: JudgeFn | undefined
+  judge: JudgeFn | undefined,
+  classification: EvalCaseClassification | undefined
 ): Promise<EvalCaseResult> {
   const { evalCase, identity, applicablePerTurn } = unit;
   const applicable = applicablePerTurn[0];
@@ -356,6 +628,10 @@ async function gradeUnit(
     // pre-BATCH-21 cell's `<id>.json` keeps its exact keys (JSON.stringify drops undefined).
     toolResults: cellResult.toolResults,
     durationMs: cellResult.durationMs,
+    // BATCH-25 — omitted entirely (not set to `undefined`) for a non-classifier suite, so a
+    // pre-BATCH-25 `<id>.json` keeps its exact key set.
+    ...(classification !== undefined ? { classification } : {}),
+    ...(caseTags(unit.evalCase).length > 0 ? { tags: caseTags(unit.evalCase) } : {}),
   };
 
   if (!cellResult.ok) {
@@ -390,8 +666,10 @@ async function gradeUnit(
     toolResults,
     applicable,
     evalCase.passThreshold,
-    judge
+    judge,
+    classification
   );
+  reasons.push(...gradeModelFree(evalCase, classification));
 
   // A cell PASSES iff nothing was recorded against it: every applicable block's deterministic
   // checks, tool-trace checks, and judge all passed (a passing judge appends no reason). For a
@@ -426,7 +704,8 @@ async function gradeConversationUnit(
   unit: EvalUnit,
   outcomes: TurnRunOutcome[] | undefined,
   cellResult: CellResult,
-  judge: JudgeFn | undefined
+  judge: JudgeFn | undefined,
+  classifications: EvalCaseClassification[] | undefined
 ): Promise<EvalCaseResult> {
   const { evalCase, identity, applicablePerTurn } = unit;
   const turnOutcomes = outcomes ?? [];
@@ -450,6 +729,7 @@ async function gradeConversationUnit(
     }
 
     const outcome = turnOutcomes[i];
+    const classification = classifications?.[i];
     const label = `turn ${i + 1}`;
 
     if (!outcome || !outcome.ok) {
@@ -471,6 +751,7 @@ async function gradeConversationUnit(
         ok: false,
         verdict: 'FAIL',
         reasons: [detail],
+        ...(classification !== undefined ? { classification } : {}),
       });
       cellReasons.push(`${label}: ${detail}`);
       continue;
@@ -486,8 +767,10 @@ async function gradeConversationUnit(
       toolResults,
       applicable,
       evalCase.passThreshold,
-      judge
+      judge,
+      classification
     );
+    reasons.push(...gradeModelFree(evalCase, classification));
     const turnVerdict: 'PASS' | 'FAIL' = reasons.length === 0 ? 'PASS' : 'FAIL';
     turnResults.push({
       user: turn.user,
@@ -501,6 +784,7 @@ async function gradeConversationUnit(
       checks: { passed: deterministicFailures.length === 0, failures: deterministicFailures },
       judge: judgeOutcome,
       reasons,
+      ...(classification !== undefined ? { classification } : {}),
     });
     for (const reason of reasons) cellReasons.push(`${label}: ${reason}`);
   }
@@ -516,5 +800,12 @@ async function gradeConversationUnit(
     sutOk: anyTurnRan,
     reasons: cellReasons,
     turns: turnResults,
+    // BATCH-25 — the cell-level classification is the LAST round's: a negotiation corpus asserts its
+    // outcome on where the exchange ENDED (reject · reject · escalate), so that is the value the
+    // confusion matrix and the metrics must read. Every round's own value is in `turns`.
+    ...(classifications !== undefined && classifications.length > 0
+      ? { classification: classifications[classifications.length - 1] }
+      : {}),
+    ...(caseTags(evalCase).length > 0 ? { tags: caseTags(evalCase) } : {}),
   };
 }

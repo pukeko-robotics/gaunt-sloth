@@ -207,4 +207,76 @@ describe('textReporter (byte-for-byte port of the former printSummary)', () => {
 
     expect(consoleUtilsMock.display).not.toHaveBeenCalledWith(expect.stringContaining('Judge:'));
   });
+
+  describe('BATCH-25 — the classification block is CONDITIONAL', () => {
+    const plainSummary = (): EvalSuiteSummary => ({
+      total: 1,
+      passed: 1,
+      failed: 0,
+      cases: [
+        { id: 'c', verdict: 'PASS', passThreshold: 6, sutOk: true, durationMs: 1, reasons: [] },
+      ],
+    });
+
+    it("prints NOTHING extra for a suite with no `classification:` — #405's console contract", async () => {
+      // The one assertion that would catch an accidental unconditional print. Every #405-era suite
+      // has no classification block, so its output must be exactly the two lines it always was.
+      await drive(plainSummary());
+
+      expect(consoleUtilsMock.display.mock.calls).toEqual([['PASS  c']]);
+      expect(consoleUtilsMock.displaySuccess.mock.calls).toEqual([
+        ['EVAL RESULT: 1/1 case(s) passed. Results written to /out/run-1'],
+      ]);
+      expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+    });
+
+    it('prints the coverage line, the matrix and the metrics when the suite declares one', async () => {
+      const summary: EvalSuiteSummary = {
+        ...plainSummary(),
+        classification: {
+          labels: ['safe', 'destructive'],
+          actions: [],
+          tags: [],
+          coverage: { total: 2, scored: 1, excluded: 1 },
+          labelMatrix: {
+            dimension: 'label',
+            rows: ['safe', 'destructive'],
+            columns: ['safe', 'destructive'],
+            counts: { safe: { safe: 1, destructive: 0 }, destructive: { safe: 0, destructive: 0 } },
+            counted: 1,
+            excluded: 1,
+          },
+          labelMatrixByTag: {},
+          metrics: [
+            {
+              name: 'false_approve',
+              overall: { numerator: 1, denominator: 2, value: 0.5 },
+              byTag: {},
+              coverage: { total: 2, scored: 1, excluded: 1, denominator: 2 },
+              warnings: ['denominator covers 2/4 case(s) (50.0%) — a subset metric is blind.'],
+              gate: { max: 0, mode: 'fail', passed: false, reason: '1/2 = 50.0% exceeds 0.0%' },
+            },
+          ],
+          warnings: ['1/2 cell(s) produced no classification.'],
+          gateFailures: ['false_approve'],
+        },
+      };
+
+      await drive(summary);
+
+      const printed = consoleUtilsMock.display.mock.calls.map((call) => call[0]).join('\n');
+      const warned = consoleUtilsMock.displayWarning.mock.calls.map((call) => call[0]).join('\n');
+
+      expect(printed).toMatch(/coverage: 1\/2 cell\(s\) classified, 1 excluded/);
+      expect(printed).toMatch(/confusion \(label\) — rows = expected, cols = actual/);
+      expect(printed).toMatch(/counted 1, EXCLUDED 1 \(not classified\)/);
+      expect(printed).toMatch(/false_approve: 1\/2 \(50\.0%\) \[GATE FAILED/);
+
+      // Warnings and the gate verdict go to the warning channel — they are the lines a reader must
+      // not skim past.
+      expect(warned).toMatch(/! 1\/2 cell\(s\) produced no classification\./);
+      expect(warned).toMatch(/! denominator covers 2\/4 case\(s\)/);
+      expect(warned).toMatch(/METRIC GATE FAILED: false_approve/);
+    });
+  });
 });

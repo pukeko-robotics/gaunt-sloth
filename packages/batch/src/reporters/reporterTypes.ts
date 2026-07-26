@@ -11,6 +11,15 @@ export interface EvalRunContext {
   outputDir: string;
   /** The BATCH-10-Task-2 self-describing judge line, when a separate judge profile is in effect. */
   judgeNotice?: { profile: string; model?: string };
+  /**
+   * BATCH-25 — the sweep cell this run is, when the suite declares a `sweep:`. Two jobs, both
+   * necessary once a sweep prints N reports in a row: it ATTRIBUTES each block to its cell (without
+   * it, four classification blocks appear with nothing saying which config produced which), and it
+   * tells the reporter to render compactly — the per-tag matrices are suppressed per cell so the
+   * cross-cell comparison table that follows is not buried under them. The per-tag numbers are
+   * still in each cell's `results.json`, and the comparison table carries per-tag rows.
+   */
+  sweepCell?: string;
 }
 
 /** A reporter renders an eval run. Every hook is optional — a reporter implements only what it needs

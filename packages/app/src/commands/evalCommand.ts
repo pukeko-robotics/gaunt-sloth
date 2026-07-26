@@ -1,7 +1,7 @@
 import { Command } from 'commander';
-import { readdirSync, statSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { basename, extname, join, resolve } from 'node:path';
+import { basename, dirname, extname, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   CommandLineConfigOverrides,
@@ -16,6 +16,7 @@ import {
 } from '#src/commands/batchCommand.js';
 import { parseIntOption } from '#src/commands/cliOptionParsers.js';
 import {
+  display,
   displayError,
   displayInfo,
   displaySuccess,
@@ -29,12 +30,15 @@ import {
   readFileFromProjectDir,
 } from '@gaunt-sloth/core/utils/fileUtils.js';
 import type {
+  ComparisonColumn,
   EvalCaseResult,
   EvalReporterFactory,
+  EvalSuite,
   EvalSuiteSummary,
   JudgeFn,
   RunCellFn,
   RunConversationFn,
+  SweepCell,
 } from '@gaunt-sloth/batch';
 
 interface EvalCommandOptions {
@@ -49,6 +53,15 @@ interface EvalCommandOptions {
    * comma-splittable; the collector accumulates raw values, {@link normalizeReporterNames} splits +
    * de-duplicates them. Absent = the default `['text']`. */
   reporter?: string[];
+  /** BATCH-25 `--export-blind <file>` — write the suite's cases WITHOUT their labels and exit
+   * without running anything. What makes an independent second-person relabel possible. */
+  exportBlind?: string;
+  /** BATCH-25 `--relabel-diff <file>` — compare a second labeller's file to the corpus by id and
+   * exit without running anything. */
+  relabelDiff?: string;
+  /** BATCH-25 `--compare-to <dir>` — a previous run's `-o` output root; each run unit is diffed
+   * against the matching `results.json` under it. */
+  compareTo?: string;
 }
 
 /** Split each collected `--reporter` value on `,`, flatten, trim, drop blanks, and de-duplicate
@@ -168,6 +181,41 @@ async function buildCustomReporterFactories(
  * same convention as `defaultBatchOutputDir` in `batchCommand.ts`, `_EVAL` suffix instead. */
 export function defaultEvalOutputDir(): string {
   return getGslothFilePath(`gth_${fileSafeLocalDate()}_EVAL`);
+}
+
+/**
+ * BATCH-25 — resolve one run unit's config, applying a sweep cell's overrides.
+ *
+ * The two override kinds reach the config by different routes on purpose:
+ * - `model` goes through `initConfig({ …, model })` — BATCH-1's supported seam, which re-runs the
+ *   provider's `processJsonConfig()` so the cell gets a genuinely fresh `.llm` rather than a
+ *   structural clone of an already-instantiated LangChain model (unsafe for any provider class
+ *   keeping state behind private `#fields`);
+ * - `config` is deep-merged onto the RESOLVED `GthConfig`, which is plain data everywhere except
+ *   `llm` — and `config.llm` is rejected at suite-parse time precisely because merging into a
+ *   constructed instance would produce a half-built object.
+ *
+ * With no sweep cell this is exactly `initConfig(overrides)`, byte-for-byte as before.
+ */
+async function initConfigForCell(
+  commandLineConfigOverrides: CommandLineConfigOverrides,
+  cell: SweepCell | undefined,
+  identityProfile?: string
+): Promise<GthConfig> {
+  const config = await initConfig({
+    ...commandLineConfigOverrides,
+    ...(cell?.model !== undefined ? { model: cell.model } : {}),
+    ...(identityProfile !== undefined ? { identityProfile } : {}),
+  });
+  if (!cell?.config || Object.keys(cell.config).length === 0) return config;
+  const { deepMerge } = await import('@gaunt-sloth/batch/evalCompare.js');
+  // `GthConfig` has no index signature, so it is not structurally a `Record<string, unknown>`; the
+  // cast is at the boundary only. `deepMerge` treats everything as plain data, which is exactly
+  // right here because `config.llm` — the ONE non-data field — is rejected at suite-parse time.
+  return deepMerge(
+    config as unknown as Record<string, unknown>,
+    cell.config
+  ) as unknown as GthConfig;
 }
 
 /** One resolved suite to run: `readPath` is what {@link readFileFromProjectDir} reads (the CLI
@@ -295,6 +343,124 @@ function judgeModelName(config: GthConfig): string | undefined {
 }
 
 /**
+ * BATCH-25 — write one suite's BLIND export.
+ *
+ * The file carries the case id, its input(s) and its family tags, and nothing else: no expected
+ * label, no expected action, no rationale, no assertion. A corpus labelled by one person carries
+ * that person's blind spots, and a self-relabel produces agreement that means nothing — so the
+ * export is what makes a genuinely independent second opinion possible.
+ *
+ * With several suites in one invocation, each writes beside the given path with the suite's stem
+ * appended, so a directory run does not silently leave only the last suite's export.
+ */
+async function writeBlindExport(
+  parsedSuite: EvalSuite,
+  exportPath: string,
+  suitePath: string,
+  single: boolean
+): Promise<void> {
+  const projectDir = getProjectDir();
+  const target = single
+    ? resolve(projectDir, exportPath)
+    : (() => {
+        const absolute = resolve(projectDir, exportPath);
+        const ext = extname(absolute);
+        const stem = ext ? absolute.slice(0, -ext.length) : absolute;
+        return `${stem}.${suiteStem(suitePath)}${ext}`;
+      })();
+
+  const { buildBlindExport } = await import('@gaunt-sloth/batch/blindExport.js');
+  const blind = buildBlindExport(parsedSuite);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, `${JSON.stringify(blind, null, 2)}\n`);
+  displaySuccess(
+    `eval: blind export of ${blind.cases.length} case(s) from ${suitePath} written to ${target} ` +
+      '(no labels, no rationales).'
+  );
+}
+
+/**
+ * BATCH-25 — diff a second labeller's file against the corpus by id, and print it.
+ *
+ * The file is the blind export with `label` (and optionally `action`) filled in. Ids present in
+ * only one of the two are reported explicitly: a relabel that covers 68 of 78 cases must not read
+ * as full agreement on the corpus.
+ */
+async function printRelabelDiff(parsedSuite: EvalSuite, relabelPath: string): Promise<void> {
+  const { diffRelabel, renderRelabelDiff } = await import('@gaunt-sloth/batch/blindExport.js');
+  const absolute = resolve(getProjectDir(), relabelPath);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(absolute, 'utf-8'));
+  } catch (error) {
+    throw new Error(
+      `could not read the relabel file "${relabelPath}": ` +
+        (error instanceof Error ? error.message : String(error))
+    );
+  }
+  // Accept either the blind-export document (with its `cases` array filled in) or a bare array —
+  // a second labeller returning the file they were given is the expected shape, and demanding a
+  // re-wrap would be friction for no gain.
+  const entries = Array.isArray(parsed) ? parsed : ((parsed as { cases?: unknown }).cases ?? []);
+  if (!Array.isArray(entries)) {
+    throw new Error(
+      `the relabel file "${relabelPath}" must be a JSON array of {id, label} entries, or the ` +
+        'blind-export document with its `cases` array filled in.'
+    );
+  }
+
+  const diff = diffRelabel(parsedSuite, entries as { id: string; label?: string }[]);
+  for (const line of renderRelabelDiff(diff)) {
+    if (line.trimStart().startsWith('!')) displayWarning(line);
+    else display(line);
+  }
+}
+
+/**
+ * BATCH-25 — diff one run unit against the matching unit under a baseline output root, so a
+ * rating-prompt edit produces a signal rather than a vibe.
+ *
+ * The baseline is located by the run unit's path RELATIVE to this invocation's output root, so the
+ * suite/sweep-cell structure lines up automatically. A missing baseline is a warning, never a
+ * failure: comparing against a run that does not exist is not a regression.
+ */
+async function printRunDiff(
+  compareToRoot: string,
+  outputRoot: string,
+  cellOutputDir: string,
+  summary: EvalSuiteSummary
+): Promise<void> {
+  const projectDir = getProjectDir();
+  const relativePath = relative(
+    resolve(projectDir, outputRoot),
+    resolve(projectDir, cellOutputDir)
+  );
+  const baselineFile = join(resolve(projectDir, compareToRoot), relativePath, 'results.json');
+
+  let baseline: EvalSuiteSummary;
+  try {
+    baseline = JSON.parse(readFileSync(baselineFile, 'utf-8')) as EvalSuiteSummary;
+  } catch {
+    displayWarning(
+      `eval: no baseline to compare against at ${baselineFile} — skipping the run-over-run diff ` +
+        'for this unit. "No regressions" cannot be claimed for a comparison that did not happen.'
+    );
+    return;
+  }
+
+  const { diffRuns, renderRunDiff } = await import('@gaunt-sloth/batch/evalCompare.js');
+  const diff = diffRuns(baseline, summary);
+  for (const line of renderRunDiff(diff)) {
+    if (line.trimStart().startsWith('!') || line.trimStart().startsWith('REGRESSED')) {
+      displayWarning(line);
+    } else {
+      display(line);
+    }
+  }
+}
+
+/**
  * Adds the `eval` command to the program.
  *
  * `gth eval <suite.yaml> [-j 8] [-o out/]` — grades a suite of cases (deterministic checks and/or
@@ -359,6 +525,23 @@ export function evalCommand(
         'Register more reporters (e.g. teamcity) via config `reporters`.',
       (value: string, previous: string[] = []) => [...previous, value]
     )
+    .option(
+      '--export-blind <file>',
+      "BLIND EXPORT: write each suite's cases (id, input(s), tags) to <file> as JSON WITHOUT " +
+        'their expected labels, actions or rationales, then exit without running anything. What ' +
+        'makes an independent second-person relabel possible.'
+    )
+    .option(
+      '--relabel-diff <file>',
+      "Compare a second labeller's file (the blind export, with `label`/`action` filled in) to " +
+        'the corpus BY ID and exit without running anything. Reports agreement, per-case ' +
+        'disagreements, and any ids present in only one of the two.'
+    )
+    .option(
+      '--compare-to <dir>',
+      "A previous run's -o output root. Each run unit is diffed against the matching results.json " +
+        'under it: verdict regressions, verdict fixes, reclassifications, and metric deltas.'
+    )
     .addHelpText(
       'after',
       '\n' +
@@ -378,7 +561,19 @@ export function evalCommand(
         '  $ gth eval eval/js-basics.yaml eval/authz-matrix.yaml   # many suites, one exit\n' +
         '  $ gth eval eval/ -o eval/out --reporter junit           # a whole directory\n' +
         '  $ gth eval eval/js-basics.yaml --reporter junit\n' +
-        '  $ gth eval eval/js-basics.yaml --reporter text,junit\n'
+        '  $ gth eval eval/js-basics.yaml --reporter text,junit\n' +
+        '\n' +
+        'Classifier suites (BATCH-25):\n' +
+        '  A suite that declares `classification: { labels: [...] }` grades `expect_label` /\n' +
+        '  `expect_action` per case, emits a confusion matrix (rows = expected, cols = actual) and\n' +
+        '  per-tag sub-scores, and computes any `metrics:` it declares. A metric with a `max`/`min`\n' +
+        '  threshold and `gate: fail` FAILS the run (exit 1) on breach, even when every case passed.\n' +
+        '  A metric whose denominator covers only part of the corpus is flagged.\n' +
+        '  A `sweep:` runs the whole suite once per config cell and prints ONE comparison table.\n' +
+        '\n' +
+        '  $ gth eval eval/rater.yaml --export-blind blind.json      # relabel by a second person\n' +
+        '  $ gth eval eval/rater.yaml --relabel-diff relabelled.json # then diff it back\n' +
+        '  $ gth eval eval/rater.yaml -o out/today --compare-to out/yesterday\n'
     )
     .action(async (suitePaths: string[], options: EvalCommandOptions) => {
       try {
@@ -391,6 +586,7 @@ export function evalCommand(
         const { concurrencyHint } = await import('@gaunt-sloth/batch/BatchRunner.js');
         const { resolveReporters } = await import('@gaunt-sloth/batch/reporters/registry.js');
         const { driveReporters } = await import('@gaunt-sloth/batch/reporters/drive.js');
+        const { expandSweep, renderComparison } = await import('@gaunt-sloth/batch/evalCompare.js');
 
         // The reporter selection (`--reporter`, else the default `['text']`) and the output ROOT are
         // invocation-level — the same for every suite. REPLACES the default: the `--reporter` value
@@ -416,11 +612,13 @@ export function evalCommand(
         // are built per suite, not cached across suites — a documented non-goal.)
         const runOneSuite = async (
           suite: ResolvedEvalSuite,
-          suiteOutputDir: string
+          suiteOutputDir: string,
+          parsedSuite: EvalSuite,
+          // BATCH-25 — the sweep cell this run is for (`undefined` = no sweep, the original path).
+          // It changes only how the config is BUILT; everything downstream is identical, which is
+          // why a sweep needed no change to the runner or to #405's identity matrix.
+          sweepCell: SweepCell | undefined
         ): Promise<EvalSuiteSummary> => {
-          const suiteText = readFileFromProjectDir(suite.readPath);
-          const parsedSuite = parseEvalSuite(suiteText, suite.readPath);
-
           // BATCH-12 PRECONDITION — trustworthy loads (no false-green): every suite-declared identity
           // must resolve to its OWN config (`.gsloth-settings/<name>/`), not the global/plain
           // fallback. Verify ALL of them with GS2-62's PURE, catchable helper BEFORE building any
@@ -468,10 +666,11 @@ export function evalCommand(
             runConversationByIdentity = new Map();
             let firstIdentityConfig: GthConfig | undefined;
             for (const identity of suiteIdentities) {
-              const identityConfig = await initConfig({
-                ...commandLineConfigOverrides,
-                identityProfile: identity,
-              });
+              const identityConfig = await initConfigForCell(
+                commandLineConfigOverrides,
+                sweepCell,
+                identity
+              );
               if (!firstIdentityConfig) firstIdentityConfig = identityConfig;
               const identityPreamble = getAskSystemPrompt(identityConfig);
               runCellByIdentity.set(
@@ -499,7 +698,7 @@ export function evalCommand(
             // (its own model/tools/auth), so there is no per-identity gth config — the `identities`
             // matrix is rejected for this target at parse time, leaving only the single-run path. The
             // judge still grades via the local gth config, so build it from `initConfig(overrides)`.
-            baseConfig = await initConfig(commandLineConfigOverrides);
+            baseConfig = await initConfigForCell(commandLineConfigOverrides, sweepCell);
             const { buildAdkRunCell, buildAdkRunConversation } =
               await import('#src/commands/adkEvalRunner.js');
             runCell = buildAdkRunCell(parsedSuite.target);
@@ -510,7 +709,7 @@ export function evalCommand(
             // the `identities` matrix is rejected for this target at parse time. Unlike ADK, the AG-UI
             // wire streams tool calls, so the runner captures them and `must_call`/`must_not_call`
             // grade normally. The judge still grades via the local gth `initConfig(overrides)` config.
-            baseConfig = await initConfig(commandLineConfigOverrides);
+            baseConfig = await initConfigForCell(commandLineConfigOverrides, sweepCell);
             const { buildAgUiRunCell, buildAgUiRunConversation } =
               await import('#src/commands/agUiEvalRunner.js');
             runCell = buildAgUiRunCell(parsedSuite.target);
@@ -518,7 +717,7 @@ export function evalCommand(
           } else {
             // gth-agent, NO identities (unchanged): one runCell/runConversation under the invoked
             // profile, from the single `initConfig(overrides)` base config (byte-for-byte as before).
-            baseConfig = await initConfig(commandLineConfigOverrides);
+            baseConfig = await initConfigForCell(commandLineConfigOverrides, sweepCell);
             const preamble = getAskSystemPrompt(baseConfig);
             runCell = await buildProductionRunCell(
               baseConfig,
@@ -549,6 +748,11 @@ export function evalCommand(
           // `initConfig({ …overrides, identityProfile })` path `gth batch --models` uses to
           // reconstruct a fresh `.llm` — so the judge runs under its own model. When unset, the judge
           // shares the base config (the SUT's for a single run; the FIRST identity's for a matrix).
+          // BATCH-25 note: with NO judge profile the judge shares `baseConfig`, which a sweep cell
+          // has already overridden — so sweeping `model:` moves the GRADER along with the SUT and
+          // the cross-cell pass rates are not comparable. Deliberately not "fixed" here: pinning
+          // the judge would silently diverge from the documented "judge = SUT model by default"
+          // contract. The docs tell the author to set `judge_profile:` when sweeping models.
           const judgeProfile = resolveJudgeProfile(options.judge, parsedSuite.judgeProfile);
           if (judgeProfile && !resolveIdentityProfileConfigPath(judgeProfile)) {
             // GS2-62 (BATCH-10 review Minor 1): pre-check the requested judge profile with the PURE
@@ -590,6 +794,9 @@ export function evalCommand(
             judgeNotice: judgeProfile
               ? { profile: judgeProfile, model: judgeModelName(judgeConfig) }
               : undefined,
+            // BATCH-25 — names the cell this block belongs to, and puts the classifier block in
+            // compact mode so N cells do not bury the comparison table.
+            sweepCell: sweepCell?.name,
           });
 
           return summary;
@@ -613,6 +820,12 @@ export function evalCommand(
         const single = suites.length === 1;
         const usedStems = new Map<string, number>();
         const combinedCases: EvalCaseResult[] = [];
+        // BATCH-25 — a breached `gate: fail` metric threshold is a PRODUCT signal (exit 1) exactly
+        // like a failed case, and it is tracked HERE rather than read off `combined`: the aggregate
+        // summary is a bare concatenation of cases and carries no per-suite `classification` report,
+        // so a gate breached in one suite of many would otherwise be lost between the per-suite
+        // report that printed it and the exit code that should have honoured it.
+        let anyMetricGateFailed = false;
         for (const suite of suites) {
           let suiteOutputDir = outputRoot;
           if (!single) {
@@ -630,8 +843,61 @@ export function evalCommand(
           }
 
           try {
-            const summary = await runOneSuite(suite, suiteOutputDir);
-            combinedCases.push(...summary.cases);
+            // Parse ONCE per suite, here, so the sweep expansion, the blind export and the relabel
+            // diff all read the same parsed suite the run does.
+            const parsedSuite = parseEvalSuite(
+              readFileFromProjectDir(suite.readPath),
+              suite.readPath
+            );
+
+            // BATCH-25 — the two operations that do NOT run the suite. They short-circuit before any
+            // config is built or any model is called: a blind export exists to be handed to a human,
+            // and a relabel diff is arithmetic over two files.
+            if (options.exportBlind !== undefined) {
+              await writeBlindExport(parsedSuite, options.exportBlind, suite.readPath, single);
+              continue;
+            }
+            if (options.relabelDiff !== undefined) {
+              await printRelabelDiff(parsedSuite, options.relabelDiff);
+              continue;
+            }
+
+            // BATCH-25 — the config sweep: the SAME corpus run once per cell, then ONE comparison
+            // table. `undefined` cell = no sweep, and then this loop runs exactly once with exactly
+            // the pre-BATCH-25 output layout.
+            const sweepCells: (SweepCell | undefined)[] = parsedSuite.sweep
+              ? expandSweep(parsedSuite.sweep)
+              : [undefined];
+            if (sweepCells.length > 1) {
+              displayInfo(
+                `eval: sweeping ${suite.readPath} over ${sweepCells.length} config cell(s) — ` +
+                  'one comparison table follows the per-cell reports.'
+              );
+            }
+
+            const columns: ComparisonColumn[] = [];
+            for (const cell of sweepCells) {
+              // Each cell writes into its own subdir so the per-cell results.json/results.xml never
+              // clobber. A no-sweep run keeps writing directly into the suite dir.
+              const cellOutputDir = cell ? join(suiteOutputDir, cell.dirName) : suiteOutputDir;
+              const summary = await runOneSuite(suite, cellOutputDir, parsedSuite, cell);
+              combinedCases.push(...summary.cases);
+              if ((summary.classification?.gateFailures.length ?? 0) > 0) {
+                anyMetricGateFailed = true;
+              }
+              if (cell) columns.push({ name: cell.name, summary });
+
+              // BATCH-25 — run-over-run diff against the matching unit under the baseline root.
+              if (options.compareTo !== undefined) {
+                await printRunDiff(options.compareTo, outputRoot, cellOutputDir, summary);
+              }
+            }
+
+            // One comparison table across the cells, not N unrelated reports — the whole point of
+            // sweeping. Emitted only when there IS a sweep.
+            if (columns.length > 0) {
+              for (const line of renderComparison(columns)) display(line);
+            }
           } catch (error) {
             // A harness-level error for THIS suite (parse/config/reporter/precondition/unexpected).
             // A harness error in ANY suite dominates the aggregate exit → 2 (a partial run can't be
@@ -642,6 +908,14 @@ export function evalCommand(
             );
             anyHarnessError = true;
           }
+        }
+
+        // BATCH-25 — the two no-run operations are complete once every suite has been processed.
+        // Exit 2 if any suite failed to parse; otherwise 0. Neither is a product verdict, so neither
+        // reads the case results (there are none).
+        if (options.exportBlind !== undefined || options.relabelDiff !== undefined) {
+          if (anyHarnessError) setExitCode(2);
+          return;
         }
 
         // Aggregate three-way exit: concatenate every successful suite's cases into ONE combined
@@ -696,7 +970,13 @@ export function evalCommand(
           displayInfo(hint);
         }
 
-        const exitCode = anyHarnessError ? 2 : classifyEvalExit(combined);
+        // BATCH-25 — a breached hard metric gate forces exit 1 even when every case passed. It is a
+        // product signal, never a harness one, so a harness error still dominates it.
+        const exitCode = anyHarnessError
+          ? 2
+          : anyMetricGateFailed
+            ? Math.max(classifyEvalExit(combined), 1)
+            : classifyEvalExit(combined);
         if (exitCode !== 0) {
           setExitCode(exitCode);
         }

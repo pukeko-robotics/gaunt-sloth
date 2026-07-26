@@ -49,6 +49,60 @@ export type {
 export type { RunEvalSuiteOptions } from '#src/evalRunner.js';
 export { DEFAULT_EVAL_PASS_THRESHOLD } from '#src/evalTypes.js';
 
+// BATCH-25 — the classifier eval facility: label/action assertions, the confusion matrix, declared
+// metrics with corpus-wide denominators, blind export, and the sweep/run-over-run comparison.
+export {
+  extractClassificationValue,
+  buildConfusionMatrix,
+  collectTags,
+  readRaw,
+} from '#src/classification.js';
+export { buildClassificationReport } from '#src/classificationReport.js';
+export {
+  computeMetric,
+  parseMetricPredicate,
+  evaluatePredicate,
+  evaluatePredicates,
+  formatTally,
+} from '#src/metrics.js';
+export {
+  renderClassificationReport,
+  renderConfusionMatrix,
+  renderMetric,
+} from '#src/classificationRender.js';
+export { buildBlindExport, diffRelabel, renderRelabelDiff } from '#src/blindExport.js';
+export type { BlindExport, BlindExportCase, RelabelDiff, RelabelEntry } from '#src/blindExport.js';
+export {
+  expandSweep,
+  deepMerge,
+  renderComparison,
+  diffRuns,
+  renderRunDiff,
+} from '#src/evalCompare.js';
+export type { ComparisonColumn, RunDiff, RunDiffEntry, SweepCell } from '#src/evalCompare.js';
+export { UNRECOGNIZED_LABEL, NO_EXPECTATION } from '#src/classificationTypes.js';
+export type {
+  ClassificationExtractor,
+  ClassifiedCell,
+  EvalCaseClassification,
+  EvalClassificationReport,
+  EvalClassificationSpec,
+  EvalConfusionMatrix,
+  EvalMetricCoverage,
+  EvalMetricResult,
+  EvalMetricSpec,
+  EvalMetricTally,
+  MetricField,
+  MetricPredicate,
+} from '#src/classificationTypes.js';
+export type {
+  ClassifyOutcome,
+  ClassifyRequest,
+  EvalSweep,
+  EvalSweepValue,
+  RunClassifyFn,
+} from '#src/evalTypes.js';
+
 // BATCH-19 — the `gth eval` reporter facility (A1 seam). These are the public plugin contract an
 // out-of-core `@gaunt-sloth/eval-reporter-*` package implements, exported from the package root so a
 // reporter package can type its factory against ONE import.
