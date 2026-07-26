@@ -466,7 +466,9 @@ export function approvalsStatusNotice(
   allowlist: { session: number; always: number | undefined },
   deny: readonly string[] = []
 ): SlashCommandNotice {
-  const rater = isRatedRung(approvals.rung) ? (approvals.rater ?? 'main model') : 'not used at this rung';
+  const rater = isRatedRung(approvals.rung)
+    ? (approvals.rater ?? 'main model')
+    : 'not used at this rung';
   return {
     title: `Approvals: ${APPROVAL_RUNG_LABELS[approvals.rung]}`,
     lines: [

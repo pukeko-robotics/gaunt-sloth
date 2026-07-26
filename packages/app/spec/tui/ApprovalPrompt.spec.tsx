@@ -47,10 +47,7 @@ function makeApprovalHarness() {
 describe('tui <ApprovalPrompt>', () => {
   it('renders the tool name, command text and the [o]/[s]/[a]/[N] choices', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt
-        pending={{ name: 'run_shell_command', args: { command: 'ls -la /tmp' } }}
-        raterEnabled
-      />
+      <ApprovalPrompt pending={{ name: 'run_shell_command', args: { command: 'ls -la /tmp' } }} />
     );
     const f = lastFrame() ?? '';
     expect(f).toContain('run_shell_command');
@@ -58,27 +55,40 @@ describe('tui <ApprovalPrompt>', () => {
     expect(f).toContain('[o]nce');
     expect(f).toContain('[s]ession');
     expect(f).toContain('[a]lways');
-    // CFG-26 — `y` now switches to rater-mediated auto, and says so. The old "auto-approve all"
-    // promised unconditional execution, which is bypass, not auto.
-    expect(f).toContain('[y] switch to auto-approve (AI rater)');
-    expect(f).not.toContain('auto-approve all');
     expect(f).toContain('[N]o');
     unmount();
   });
 
-  // CFG-26 acceptance #6 — offering a rater-mediated mode in a session that cannot rate is the
-  // same class of lie as a status badge that under-reports, so the affordance is withheld.
-  it('omits the [y] affordance entirely when the session has no rater', () => {
+  /**
+   * CFG-27 removed the `[y]` affordance ("switch to auto-approve and approve this one"). Spec §6's
+   * escalation menu offers five choices — ask to explain · approve · always approve · reject ·
+   * always reject — and a per-prompt change of RUNG is not one of them, so keeping the key would
+   * have meant inventing an action the ladder does not have. [[TUI-C26]] builds the real
+   * five-choice menu on this seam.
+   */
+  it('offers NO rung-switching key: the ladder has no "turn the gate down from here" action', () => {
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt pending={{ name: 'run_shell_command', args: { command: 'ls -la /tmp' } }} />
+    );
+    const f = lastFrame() ?? '';
+    expect(f).not.toContain('[y]');
+    expect(f).not.toMatch(/auto-approve/i);
+    unmount();
+  });
+
+  it('shows the auto-rater OUTCOME and reason when a rating escalated the command (§6)', () => {
     const { lastFrame, unmount } = render(
       <ApprovalPrompt
-        pending={{ name: 'run_shell_command', args: { command: 'ls -la /tmp' } }}
-        raterEnabled={false}
+        pending={{
+          name: 'run_shell_command',
+          args: { command: 'rm -rf build' },
+          safetyVerdict: { outcome: 'destructive', reason: 'deletes the build output' },
+        }}
       />
     );
     const f = lastFrame() ?? '';
-    expect(f).toContain('[o]nce');
-    expect(f).toContain('[N]o');
-    expect(f).not.toContain('[y]');
+    expect(f).toContain('Auto-rater (destructive)');
+    expect(f).toContain('deletes the build output');
     unmount();
   });
 

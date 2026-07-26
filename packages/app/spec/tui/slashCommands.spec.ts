@@ -166,14 +166,14 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     expect(result.notice).toBeUndefined();
   });
 
-  it('/approvals auto|ask|bypass request the mode; an unknown arg returns a usage notice', async () => {
+  it('/approvals <rung> requests each of the five rungs; an unknown arg returns a usage notice', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
-    for (const mode of ['auto', 'ask', 'bypass'] as const) {
+    for (const rung of ['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'] as const) {
       expect(
-        dispatchSlashCommand(parseSlashCommand(`/approvals ${mode}`)!, registry, ctx).approvals
-      ).toEqual({ mode });
+        dispatchSlashCommand(parseSlashCommand(`/approvals ${rung}`)!, registry, ctx).approvals
+      ).toEqual({ rung });
     }
     const bad = dispatchSlashCommand(parseSlashCommand('/approvals maybe')!, registry, ctx);
     expect(bad.approvals).toBeUndefined();
@@ -181,37 +181,28 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     expect(bad.notice?.title).toContain('maybe');
   });
 
-  // The core of the CFG-26 re-point: `/auto-approve` must mean rater-mediated `auto`, never
-  // `bypass`. A user reaching for "approve automatically" must not silently get "approve
-  // everything, unchecked".
-  it('/auto-approve requests AUTO (not bypass); off requests ASK', async () => {
+  /**
+   * CFG-27 — the retired three-mode vocabulary is gone with NO aliases. `auto` and `ask` are not
+   * accepted as rung spellings, and `/auto-approve` / `/bypass-approve` are not commands: still
+   * alpha, and a silent alias would leave the user believing in a vocabulary the gate no longer
+   * has. `/auto-approve off` in particular had to mean one of two different rungs.
+   */
+  it('the retired `auto`/`ask` spellings and the /auto-approve, /bypass-approve commands are gone', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
-    expect(
-      dispatchSlashCommand(parseSlashCommand('/auto-approve')!, registry, ctx).approvals
-    ).toEqual({ mode: 'auto' });
-    expect(
-      dispatchSlashCommand(parseSlashCommand('/auto-approve on')!, registry, ctx).approvals
-    ).toEqual({ mode: 'auto' });
-    // The resolved spec gap: `off` means "confirm every command yourself" = ask, NOT bypass.
-    expect(
-      dispatchSlashCommand(parseSlashCommand('/auto-approve off')!, registry, ctx).approvals
-    ).toEqual({ mode: 'ask' });
-    const bad = dispatchSlashCommand(parseSlashCommand('/auto-approve maybe')!, registry, ctx);
-    expect(bad.approvals).toBeUndefined();
-    expect(bad.notice?.tone).toBe('warn');
-  });
-
-  it('/bypass-approve requests bypass', async () => {
-    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
-      await import('@gaunt-sloth/agent/modules/slashCommands.js');
-    const result = dispatchSlashCommand(
-      parseSlashCommand('/bypass-approve')!,
-      createCommandRegistry(),
-      ctx
-    );
-    expect(result.approvals).toEqual({ mode: 'bypass' });
+    for (const retired of ['auto', 'ask']) {
+      const result = dispatchSlashCommand(
+        parseSlashCommand(`/approvals ${retired}`)!,
+        registry,
+        ctx
+      );
+      expect(result.approvals).toBeUndefined();
+      expect(result.notice?.title).toContain(retired);
+    }
+    for (const name of ['auto-approve', 'bypass-approve']) {
+      expect(registry.some((c) => c.name === name)).toBe(false);
+    }
   });
 
   it('/yolo is DELETED pre-beta — an unknown command, not an alias and not a deprecation warning', async () => {
@@ -224,75 +215,80 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     expect(createCommandRegistry().some((c) => c.name === 'yolo')).toBe(false);
   });
 
-  it('approvalsModeNotice copy: bypass is warn-tone and names the rater it skips; auto never claims "without asking"', async () => {
-    const { approvalsModeNotice } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
-    const posture = (mode: 'auto' | 'ask' | 'bypass', profile?: string) => ({
-      mode,
-      rater: {
-        enabled: mode === 'auto',
-        profile,
-        strictness: 'standard' as const,
-        escalate: 'danger' as const,
-      },
-      allowlist: true,
-      persistAllowlist: true,
-    });
+  /**
+   * §10 — the notice body IS the spec's description, verbatim, and §8.1 forbids any of it leaning
+   * on the hardline floor. §10 rule 4 fixes the title's spelling: the display form with spaces.
+   */
+  it('approvalsRungNotice renders §10 copy, warn-tones bypass, and never names the floor', async () => {
+    const { approvalsRungNotice } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    const posture = (rung: string, rater?: string) => ({ rung, rater, allow: [], deny: [] }) as any;
 
-    const bypass = approvalsModeNotice(posture('bypass'));
-    expect(bypass.title).toContain('bypass');
+    const bypass = approvalsRungNotice(posture('bypass'));
+    expect(bypass.title).toBe('Approvals: Bypass');
     expect(bypass.tone).toBe('warn');
-    expect(bypass.lines.join(' ')).toContain('WITHOUT the AI rater');
-    expect(bypass.lines.join(' ')).toContain('hardline');
+    expect(bypass.lines.join(' ')).toContain('without asking and without rating');
+    // §8.1 — the only protection cited is one the user can inspect and extend.
+    expect(bypass.lines.join(' ')).toContain('deny list');
+    expect(bypass.lines.join(' ')).not.toMatch(/hardline|floor/i);
 
-    // `auto` is rater-mediated: it must NOT reuse the old unconditional "runs without asking" copy.
-    const auto = approvalsModeNotice(posture('auto'));
-    expect(auto.title).toContain('auto');
-    expect(auto.tone).toBeUndefined();
-    expect(auto.lines.join(' ')).not.toContain('without asking');
-    expect(auto.lines.join(' ')).toContain('risky ones still ask you');
-    // It names the configured rater profile when there is one (the spec's status requirement).
-    expect(approvalsModeNotice(posture('auto', 'safety-rater')).lines.join(' ')).toContain(
+    // `auto-safe` must state plainly that files are STILL rewritten and deleted without asking.
+    const autoSafe = approvalsRungNotice(posture('auto-safe'));
+    expect(autoSafe.title).toBe('Approvals: Auto safe');
+    expect(autoSafe.tone).toBe('info');
+    expect(autoSafe.lines.join(' ')).toContain(
+      'rewrite and delete files in your working folder without asking'
+    );
+
+    // `full-auto` is described as safer than bypass and explicitly not safe.
+    const fullAuto = approvalsRungNotice(posture('full-auto'));
+    expect(fullAuto.title).toBe('Approvals: Full auto');
+    expect(fullAuto.lines.join(' ')).toContain('safer than bypass');
+    expect(fullAuto.lines.join(' ')).toContain('it is not safe');
+
+    // A configured rater profile is named at the rated rungs (the spec's status requirement).
+    expect(approvalsRungNotice(posture('auto-safe', 'safety-rater')).lines.join(' ')).toContain(
       'safety-rater'
     );
-
-    const ask = approvalsModeNotice(posture('ask'));
-    expect(ask.title).toContain('ask');
-    expect(ask.tone).toBeUndefined();
+    // ...and never at an unrated one, where naming it would promise a call that never happens.
+    expect(approvalsRungNotice(posture('write', 'safety-rater')).lines.join(' ')).not.toContain(
+      'safety-rater'
+    );
   });
 
-  it('approvalsStatusNotice shows mode, rater detail and allow-list counts (— when not loaded)', async () => {
+  it('approvalsStatusNotice shows the rung, the rater and the allow/deny sizes (— when not loaded)', async () => {
     const { approvalsStatusNotice } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const notice = approvalsStatusNotice(
-      {
-        mode: 'auto',
-        rater: {
-          enabled: true,
-          profile: 'safety-rater',
-          strictness: 'strict',
-          escalate: 'caution',
-        },
-        allowlist: true,
-        persistAllowlist: true,
-      },
-      { session: 3, always: undefined }
+      { rung: 'auto-safe', rater: 'safety-rater', allow: [], deny: ['npm publish'] } as any,
+      { session: 3, always: undefined },
+      ['npm publish']
     );
-    expect(notice.title).toBe('Approvals: auto');
+    expect(notice.title).toBe('Approvals: Auto safe');
     const body = notice.lines.join(' ');
     expect(body).toContain('safety-rater');
-    expect(body).toContain('strictness: strict');
-    expect(body).toContain('escalate: caution');
-    expect(body).toContain('session: 3');
+    expect(body).toContain('3 this session');
+    expect(body).toContain('Denied: 1');
     // Not loaded → `—`, never a misleading 0.
-    expect(body).toContain('persisted: —');
+    expect(body).toContain('— remembered');
+  });
+
+  it('the /approvals display says the rater is unused at the three deterministic rungs', async () => {
+    const { approvalsStatusNotice } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    for (const rung of ['read-only', 'write', 'bypass'] as const) {
+      const notice = approvalsStatusNotice(
+        { rung, rater: 'safety-rater', allow: [], deny: [] } as any,
+        { session: 0, always: 0 }
+      );
+      expect(notice.lines.join(' ')).toContain('not used at this rung');
+    }
   });
 
   it('dispatch during a run refuses idle-only commands but allows availableDuringRun ones', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
-    // The whole /approvals family is run-safe → still requests the change mid-turn (EXT-12's
-    // reason, generalized: the user must be able to change how the REST of the run is handled).
-    for (const line of ['/approvals', '/approvals ask', '/auto-approve', '/bypass-approve']) {
+    // /approvals is run-safe → still requests the change mid-turn (EXT-12's reason, generalized:
+    // the user must be able to change how the REST of the run is handled).
+    for (const line of ['/approvals', '/approvals write', '/approvals bypass']) {
       expect(
         dispatchSlashCommand(parseSlashCommand(line)!, registry, ctx, { duringRun: true }).approvals
       ).toBeDefined();

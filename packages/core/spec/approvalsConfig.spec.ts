@@ -47,12 +47,15 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
   });
 
   describe('§9.1 — the scalar form is exactly sugar for { mode: <value> }', () => {
-    it.each(APPROVAL_RUNGS)('"%s" resolves identically written as a scalar or an object', (rung) => {
-      const scalar = resolveApprovals({ approvals: rung } as ApprovalsInput, 'code');
-      const object = resolveApprovals({ approvals: { mode: rung } } as ApprovalsInput, 'code');
-      expect(scalar).toEqual(object);
-      expect(scalar.rung).toBe(rung);
-    });
+    it.each(APPROVAL_RUNGS)(
+      '"%s" resolves identically written as a scalar or an object',
+      (rung) => {
+        const scalar = resolveApprovals({ approvals: rung } as ApprovalsInput, 'code');
+        const object = resolveApprovals({ approvals: { mode: rung } } as ApprovalsInput, 'code');
+        expect(scalar).toEqual(object);
+        expect(scalar.rung).toBe(rung);
+      }
+    );
   });
 
   describe('precedence', () => {

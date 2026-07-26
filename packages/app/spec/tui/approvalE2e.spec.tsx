@@ -293,12 +293,13 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
   });
 
   /**
-   * CFG-26 — `y` no longer means "never ask again". It switches the session to rater-mediated
-   * `auto` and approves the pending call; LATER commands are then RATED, not blindly approved.
-   * Here the rater returns `safe`, so the second command runs with no prompt — the fatigue-
-   * reducing outcome the user asked for, with a check in the loop rather than none.
+   * CFG-27 — the property the CFG-26 `[y]` test really pinned was "the rater was actually CALLED,
+   * not waved through". That survives the ladder; the key that triggered it does not (§6's
+   * escalation menu has no rung-switching choice, so the affordance was removed). Here the
+   * session starts at `auto-safe`, the rater rates everything `safe`, and the run proceeds with
+   * NO human prompt at all — a check in the loop rather than none.
    */
-  it('pressing y switches to rater-mediated auto: this command runs and the rater clears the next', async () => {
+  it('at auto-safe the rater is CALLED and a safe verdict runs the command with no prompt', async () => {
     let phase = 0;
     const agent: GthAgentInterface = {
       async init() {},
@@ -322,8 +323,8 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       },
       async cleanup() {},
     };
-    // A rater that rates everything `safe`, so the post-switch behaviour is deterministic.
-    const rate = vi.fn().mockResolvedValue({ tier: 'safe', reason: 'routine dev command' });
+    // A rater that rates everything `safe`, so the behaviour is deterministic.
+    const rate = vi.fn().mockResolvedValue({ outcome: 'safe', reason: 'routine dev command' });
     const raterLlm = {
       withStructuredOutput: vi.fn().mockReturnValue({ invoke: rate }),
     } as unknown as GthConfig['llm'];
@@ -331,9 +332,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     await runner.init('code' as never, {
       ...FULL_CONFIG,
       llm: raterLlm,
-      // Start in `ask` WITH a rater configured, so the `[y]` affordance is offered (it is withheld
-      // when the session cannot rate at all) and the switch is observable.
-      approvals: { mode: 'ask', rater: true, allowlist: false },
+      approvals: 'auto-safe',
       commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
     } as GthConfig);
 
@@ -343,7 +342,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     });
     runner.setToolApprovalCallback((pending) => bridge.request(pending));
 
-    const { stdin, lastFrame, frames, unmount } = render(
+    const { lastFrame, unmount } = render(
       <App
         {...baseProps}
         agent={tuiAgent}
@@ -353,40 +352,28 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       />
     );
 
-    // First command prompts, and the `y` chooser advertises what it actually does.
-    await vi.waitFor(() => {
-      const f = lastFrame() ?? '';
-      expect(f).toContain('npm run build');
-      expect(f).toContain('[y] switch to auto-approve (AI rater)');
-    });
-    stdin.write('y');
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
 
-    // The landed mode is AUTO — the regression this task fixes: `y` must not silently select the
-    // unchecked bypass.
-    await vi.waitFor(() => {
-      expect(frames.join('\n')).toContain('Approvals: auto');
-      expect(lastFrame()).toContain('turns: 1');
-    });
-    expect(runner.getSessionApprovals().mode).toBe('auto');
-    expect(lastFrame()).toContain('approvals: auto');
-
-    // The second command never reached the human — but it was RATED rather than waved through.
-    expect(promptCount).toBe(1);
-    expect(rate).toHaveBeenCalled();
+    // NEITHER command reached the human — and both were RATED rather than waved through. That
+    // negative-plus-positive pair is what separates "rated" from "approved blindly".
+    expect(promptCount).toBe(0);
+    expect(rate).toHaveBeenCalledTimes(2);
+    // §10 rule 4 — the badge carries the display spelling.
+    expect(lastFrame()).toContain('approvals: Auto safe');
 
     unmount();
   });
 
-  it('AI-rater escalation surfaces the verdict line in the ApprovalPrompt', async () => {
+  it('auto-rater escalation surfaces the verdict line in the ApprovalPrompt', async () => {
     const agent = fakeInterruptingAgent({
       command: 'cat /etc/passwd',
       toolResult: 'root:x:0:0',
       approvedAnswer: 'read it',
       rejectedAnswer: 'skipped',
     });
-    // Rater ON returning a `danger` verdict → escalate to the human with the verdict attached.
+    // A `destructive` verdict at `auto-safe` → escalate to the human with the verdict attached.
     const invoke = vi.fn().mockResolvedValue({
-      tier: 'danger',
+      outcome: 'destructive',
       reason: 'accesses a system-wide sensitive file outside the project directory',
     });
     const raterLlm = {
@@ -396,7 +383,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     await runner.init('code' as never, {
       ...FULL_CONFIG,
       llm: raterLlm,
-      approvals: { mode: 'auto', allowlist: false },
+      approvals: 'auto-safe',
       commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
     } as GthConfig);
     runner.setToolApprovalCallback((pending) => bridge.request(pending));
@@ -415,7 +402,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       expect(f).toContain('cat /etc/passwd'); // escalated command shown
       // The rater's verdict reason is surfaced in the prompt (the AI-rater line).
       expect(f).toContain('system-wide sensitive file');
-      expect(f).toContain('AI rater (danger)');
+      expect(f).toContain('Auto-rater (destructive)');
     });
     expect(invoke).toHaveBeenCalled(); // the rater actually ran
 

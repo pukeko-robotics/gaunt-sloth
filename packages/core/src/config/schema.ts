@@ -654,7 +654,10 @@ const RETIRED_APPROVALS_KEYS: ReadonlyArray<readonly [string, string]> = [
  * identifiers and leaving the user to guess which one preserves their intent.
  */
 const RETIRED_APPROVAL_MODES: ReadonlyArray<readonly [string, string]> = [
-  ['auto', '"auto-safe" (the auto-rater rates every gated call and escalates anything questionable)'],
+  [
+    'auto',
+    '"auto-safe" (the auto-rater rates every gated call and escalates anything questionable)',
+  ],
   [
     'ask',
     '"write" (Gaunt Sloth edits files freely and asks about everything else) or "read-only" ' +

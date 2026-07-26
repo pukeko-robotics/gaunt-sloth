@@ -178,93 +178,87 @@ describe('tui <App>', () => {
     unmount();
   });
 
-  // CFG-26 — a posture stub standing in for the runner: it lands the requested mode and turns the
-  // rater on for `auto`, exactly as GthAgentRunner.setSessionApprovalMode does.
+  // CFG-27 — a posture stub standing in for the runner: it lands the requested rung, exactly as
+  // GthAgentRunner.setSessionApprovalRung does.
   const approvalsAgent = (
-    initial: 'auto' | 'ask' | 'bypass' = 'ask',
+    initial = 'auto-safe',
     extra?: Partial<TuiAgent>
-  ): { agent: TuiAgent; mode: () => string } => {
-    let mode = initial;
-    const posture = () => ({
-      mode,
-      rater: {
-        enabled: mode === 'auto',
-        profile: undefined,
-        strictness: 'standard' as const,
-        escalate: 'danger' as const,
-      },
-      allowlist: true,
-      persistAllowlist: true,
-    });
+  ): { agent: TuiAgent; rung: () => string } => {
+    let rung = initial;
+    const posture = () => ({ rung, rater: undefined, allow: [], deny: [] }) as any;
     return {
-      mode: () => mode,
+      rung: () => rung,
       agent: {
         async *runTurn() {
           yield { type: 'text', delta: 'should not run' };
         },
-        setApprovalMode(next) {
-          mode = next;
+        setApprovalRung(next: string) {
+          rung = next;
           return posture();
         },
         getApprovals() {
-          return { approvals: posture(), allowlist: { session: 2, always: undefined } };
+          return {
+            approvals: posture(),
+            allowlist: { session: 2, always: undefined },
+            deny: ['npm publish'],
+          };
         },
         ...extra,
       } as TuiAgent,
     };
   };
 
-  it('/auto-approve switches to rater-mediated AUTO (never bypass) and the badge names the mode', async () => {
-    const { agent, mode } = approvalsAgent('ask');
+  it('/approvals <rung> switches the session rung and the badge names it in display spelling', async () => {
+    const { agent, rung } = approvalsAgent('write');
     const { stdin, frames, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
 
     await vi.waitFor(() => expect(lastFrame()).toContain('>'));
-    stdin.write('/auto-approve');
-    await vi.waitFor(() => expect(lastFrame()).toContain('/auto-approve'));
+    stdin.write('/approvals auto-safe');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/approvals auto-safe'));
     stdin.write('\r');
 
     await vi.waitFor(() => {
-      expect(frames.join('\n')).toContain('Approvals: auto');
-      // The status badge names the MODE, not a boolean.
-      expect(lastFrame()).toContain('approvals: auto');
+      expect(frames.join('\n')).toContain('Approvals: Auto safe');
+      // §10 rule 4: the badge uses the DISPLAY spelling, never the kebab-case identifier.
+      expect(lastFrame()).toContain('approvals: Auto safe');
     });
-    // The regression this task exists for: the user asked to auto-approve and got the
-    // rater-mediated mode, NOT the unchecked bypass.
-    expect(mode()).toBe('auto');
-    expect(lastFrame()).not.toContain('bypass');
+    expect(rung()).toBe('auto-safe');
+    expect(lastFrame()).not.toContain('Bypass');
 
-    // /auto-approve off → ask.
-    stdin.write('/auto-approve off');
-    await vi.waitFor(() => expect(lastFrame()).toContain('/auto-approve off'));
+    stdin.write('/approvals read-only');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/approvals read-only'));
     stdin.write('\r');
     await vi.waitFor(() => {
-      expect(frames.join('\n')).toContain('Approvals: ask');
-      expect(lastFrame()).toContain('approvals: ask');
+      expect(frames.join('\n')).toContain('Approvals: Read only');
+      expect(lastFrame()).toContain('approvals: Read only');
     });
-    expect(mode()).toBe('ask');
+    expect(rung()).toBe('read-only');
 
     unmount();
   });
 
-  it('/bypass-approve switches to bypass and the badge shows the warn-styled ⚡ bypass', async () => {
-    const { agent, mode } = approvalsAgent('ask');
+  it('/approvals bypass shows the warn-styled ⚡ Bypass badge and cites the deny list, not the floor', async () => {
+    const { agent, rung } = approvalsAgent('write');
     const { stdin, frames, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
 
     await vi.waitFor(() => expect(lastFrame()).toContain('>'));
-    stdin.write('/bypass-approve');
-    await vi.waitFor(() => expect(lastFrame()).toContain('/bypass-approve'));
+    stdin.write('/approvals bypass');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/approvals bypass'));
     stdin.write('\r');
 
     await vi.waitFor(() => {
-      expect(frames.join('\n')).toContain('WITHOUT the AI rater');
-      expect(lastFrame()).toContain('⚡ bypass');
+      expect(frames.join('\n')).toContain('without asking and without rating');
+      expect(lastFrame()).toContain('⚡ Bypass');
     });
-    expect(mode()).toBe('bypass');
+    // §8.1 — the copy names only a protection the user can inspect and extend.
+    expect(frames.join('\n')).toContain('deny list');
+    expect(frames.join('\n')).not.toMatch(/hardline|safety floor/i);
+    expect(rung()).toBe('bypass');
     unmount();
   });
 
   it('/approvals with no arg SHOWS the posture (counts included) without changing it', async () => {
-    const { agent, mode } = approvalsAgent('ask');
+    const { agent, rung } = approvalsAgent('write');
     const { stdin, frames, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
 
     await vi.waitFor(() => expect(lastFrame()).toContain('>'));
@@ -274,65 +268,64 @@ describe('tui <App>', () => {
 
     await vi.waitFor(() => {
       const out = frames.join('\n');
-      expect(out).toContain('Approvals: ask');
-      expect(out).toContain('session: 2');
+      expect(out).toContain('Approvals: Write');
+      expect(out).toContain('2 this session');
+      expect(out).toContain('Denied: 1');
     });
-    expect(mode()).toBe('ask'); // display only — nothing switched
+    expect(rung()).toBe('write'); // display only — nothing switched
     unmount();
   });
 
   /**
-   * CFG-26 acceptance #5 — the test that would have caught the original bug. Task 1 made
-   * interactive `code`/`chat` default to rater-mediated `auto`, but the badge was seeded from the
-   * session BYPASS flag, so it read "off" while the rater was approving safe commands with no
-   * prompt. It asserts the rendered MODE, not the absence of a word, so a future boolean-shaped
-   * regression cannot slip past it.
+   * CFG-26 acceptance #5, rescaled — the test that would have caught the original bug. The badge
+   * was once seeded from a session BYPASS flag, so it read "off" while the rater was approving
+   * safe commands with no prompt. It asserts the rendered RUNG, not the absence of a word, so a
+   * future boolean-shaped regression cannot slip past it.
    */
-  it('seeds the badge from the RESOLVED posture: the interactive auto default is visible from frame 1', async () => {
+  it('seeds the badge from the RESOLVED posture: the auto-safe default is visible from frame 1', async () => {
     const agent = scriptedAgent([]);
     const { lastFrame, unmount } = render(
       <App
         {...baseProps}
         agent={agent}
-        initialApprovals={{
-          mode: 'auto',
-          rater: { enabled: true, strictness: 'standard', escalate: 'danger' },
-          allowlist: true,
-          persistAllowlist: true,
-        }}
+        initialApprovals={{ rung: 'auto-safe', allow: [], deny: [] }}
       />
     );
-    await vi.waitFor(() => expect(lastFrame()).toContain('approvals: auto'));
-    // ...and it says WHO is rating, so "auto" is never an unexplained word.
-    expect(lastFrame()).toContain('AI rater');
+    await vi.waitFor(() => expect(lastFrame()).toContain('approvals: Auto safe'));
+    // ...and it says WHO is rating, so the rung is never an unexplained word.
+    expect(lastFrame()).toContain('auto-rater');
     unmount();
   });
 
-  it('names the configured rater profile in the badge', async () => {
+  it('names the configured rater profile in the badge at a RATED rung', async () => {
     const agent = scriptedAgent([]);
     const { lastFrame, unmount } = render(
       <App
         {...baseProps}
         agent={agent}
-        initialApprovals={{
-          mode: 'auto',
-          rater: {
-            enabled: true,
-            profile: 'safety-rater',
-            strictness: 'standard',
-            escalate: 'danger',
-          },
-          allowlist: true,
-          persistAllowlist: true,
-        }}
+        initialApprovals={{ rung: 'full-auto', rater: 'safety-rater', allow: [], deny: [] }}
       />
     );
-    await vi.waitFor(() => expect(lastFrame()).toContain('approvals: auto (safety-rater)'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('approvals: Full auto (safety-rater)'));
+    unmount();
+  });
+
+  it('does NOT name a rater at an unrated rung — no call happens there', async () => {
+    const agent = scriptedAgent([]);
+    const { lastFrame, unmount } = render(
+      <App
+        {...baseProps}
+        agent={agent}
+        initialApprovals={{ rung: 'write', rater: 'safety-rater', allow: [], deny: [] }}
+      />
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('approvals: Write'));
+    expect(lastFrame()).not.toContain('safety-rater');
     unmount();
   });
 
   it('/approvals is dispatchable mid-turn; a plain message mid-turn is refused (EXT-12)', async () => {
-    let mode = 'ask';
+    let rung = 'write';
     // A turn that streams then blocks until aborted, so the prompt stays mounted (running) while
     // we exercise mid-turn input.
     const agent: TuiAgent = {
@@ -343,21 +336,11 @@ describe('tui <App>', () => {
           signal.addEventListener('abort', () => resolve());
         });
       },
-      setApprovalMode(next) {
-        mode = next;
-        return {
-          mode: next,
-          rater: {
-            enabled: next === 'auto',
-            profile: undefined,
-            strictness: 'standard',
-            escalate: 'danger',
-          },
-          allowlist: true,
-          persistAllowlist: true,
-        };
+      setApprovalRung(next: string) {
+        rung = next;
+        return { rung: next, rater: undefined, allow: [], deny: [] } as any;
       },
-    };
+    } as TuiAgent;
     const { stdin, frames, lastFrame, unmount } = render(
       <App {...baseProps} agent={agent} initialMessage="go" />
     );
@@ -369,12 +352,12 @@ describe('tui <App>', () => {
     stdin.write('\r');
     await vi.waitFor(() => expect(frames.join('\n')).toContain('only slash commands'));
 
-    // While running, /auto-approve IS honoured (mode switches, badge appears next to the spinner).
-    stdin.write('/auto-approve');
-    await vi.waitFor(() => expect(lastFrame()).toContain('> /auto-approve'));
+    // While running, /approvals IS honoured (the rung switches, the badge appears by the spinner).
+    stdin.write('/approvals auto-safe');
+    await vi.waitFor(() => expect(lastFrame()).toContain('> /approvals auto-safe'));
     stdin.write('\r');
-    await vi.waitFor(() => expect(mode).toBe('auto'));
-    await vi.waitFor(() => expect(lastFrame()).toContain('approvals: auto'));
+    await vi.waitFor(() => expect(rung).toBe('auto-safe'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('approvals: Auto safe'));
 
     stdin.write(String.fromCharCode(27)); // Esc to end the run cleanly
     unmount();

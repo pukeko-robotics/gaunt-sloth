@@ -333,7 +333,11 @@ describe('GthAgentRunner', () => {
       // CFG-27: `write` is the rung that reproduces the pre-rater behaviour — the shell always
       // escalates and no model is consulted. Pinned explicitly so this EXT-52 seam test is not
       // silently re-testing the rater (the default rung, `auto-safe`, rates).
-      await runner.init(undefined, { ...mockConfig, streamOutput: true, approvals: 'write' } as any);
+      await runner.init(undefined, {
+        ...mockConfig,
+        streamOutput: true,
+        approvals: 'write',
+      } as any);
       const approve = vi.fn().mockResolvedValue({ type: 'approve' });
       runner.setToolApprovalCallback(approve);
 
@@ -367,7 +371,11 @@ describe('GthAgentRunner', () => {
       const streamResume = vi.fn().mockResolvedValue(streamOf(''));
       (mockAgent as any).streamResume = streamResume;
 
-      await runner.init(undefined, { ...mockConfig, streamOutput: true, approvals: 'write' } as any);
+      await runner.init(undefined, {
+        ...mockConfig,
+        streamOutput: true,
+        approvals: 'write',
+      } as any);
       // No setToolApprovalCallback → the one-shot / CI / server case.
 
       const error = await runner
@@ -816,10 +824,7 @@ describe('GthAgentRunner', () => {
     }
 
     /** A rated rung with the given verdict. `rung` defaults to the default rung, `auto-safe`. */
-    function raterConfig(
-      verdict: unknown,
-      approvals: Record<string, unknown> = {}
-    ) {
+    function raterConfig(verdict: unknown, approvals: Record<string, unknown> = {}) {
       const { model, withStructuredOutput, invoke } = raterModel(verdict);
       return {
         config: {
@@ -1155,7 +1160,11 @@ describe('GthAgentRunner', () => {
       return streamResume;
     }
 
-    function denyConfig(rung: string, deny: string[], verdict: unknown = { outcome: 'safe', reason: 'ok' }) {
+    function denyConfig(
+      rung: string,
+      deny: string[],
+      verdict: unknown = { outcome: 'safe', reason: 'ok' }
+    ) {
       const invoke = vi.fn().mockResolvedValue(verdict);
       const withStructuredOutput = vi.fn().mockReturnValue({ invoke });
       return {
@@ -1270,7 +1279,11 @@ describe('GthAgentRunner', () => {
 
       // `write` — the unrated rung, so this EXT-11 seam test exercises the interrupt round-trip
       // rather than the rater (the default rung, `auto-safe`, rates).
-      await runner.init(undefined, { ...mockConfig, streamOutput: true, approvals: 'write' } as any);
+      await runner.init(undefined, {
+        ...mockConfig,
+        streamOutput: true,
+        approvals: 'write',
+      } as any);
       const approve = vi.fn().mockResolvedValue({ type: 'approve' });
       runner.setToolApprovalCallback(approve);
 
@@ -1309,7 +1322,11 @@ describe('GthAgentRunner', () => {
       const streamWithEventsResume = vi.fn().mockImplementation(() => eventStream());
       (mockAgent as any).streamWithEventsResume = streamWithEventsResume;
 
-      await runner.init(undefined, { ...mockConfig, streamOutput: true, approvals: 'write' } as any);
+      await runner.init(undefined, {
+        ...mockConfig,
+        streamOutput: true,
+        approvals: 'write',
+      } as any);
       // No setToolApprovalCallback → the one-shot / server case.
 
       const error = await drain(runner.processMessagesWithEvents([new HumanMessage('run rm')]))
@@ -1335,7 +1352,11 @@ describe('GthAgentRunner', () => {
       (mockAgent as any).getPendingToolInterrupts = getPending;
       (mockAgent as any).streamWithEventsResume = streamWithEventsResume;
       // The rung is pinned so no model is consulted for these two calls.
-      await runner.init(undefined, { ...mockConfig, streamOutput: true, approvals: 'write' } as any);
+      await runner.init(undefined, {
+        ...mockConfig,
+        streamOutput: true,
+        approvals: 'write',
+      } as any);
       const approve = vi.fn().mockResolvedValue({ type: 'approve' });
       runner.setToolApprovalCallback(approve);
 

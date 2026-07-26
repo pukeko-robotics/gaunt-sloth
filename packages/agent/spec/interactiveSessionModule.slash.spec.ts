@@ -36,7 +36,12 @@ const consoleUtilsMock = {
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => consoleUtilsMock);
 
 const initConfigMock = vi.fn();
-vi.mock('@gaunt-sloth/core/config.js', () => ({
+// Only `initConfig` is stubbed; everything else in the barrel is the REAL implementation. CFG-27
+// made that split load-bearing: `/approvals` renders §10's rung descriptions and labels from
+// `APPROVAL_RUNG_DESCRIPTIONS` / `APPROVAL_RUNG_LABELS`, so a mock that omitted them would make
+// the command throw and these tests would assert against an empty transcript.
+vi.mock('@gaunt-sloth/core/config.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@gaunt-sloth/core/config.js')>()),
   initConfig: initConfigMock,
 }));
 
@@ -49,9 +54,10 @@ const runnerInstanceMock = {
   init: vi.fn(),
   processMessages: vi.fn(),
   setToolApprovalCallback: vi.fn(),
-  setSessionApprovalMode: vi.fn(),
+  setSessionApprovalRung: vi.fn(),
   getSessionApprovals: vi.fn(),
   getAllowlistCounts: vi.fn(),
+  getDenylist: vi.fn(),
   getAgent: vi.fn(),
   cleanup: vi.fn(),
 };
@@ -113,20 +119,21 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
     runnerInstanceMock.init.mockResolvedValue(undefined);
     runnerInstanceMock.processMessages.mockResolvedValue('answer');
     runnerInstanceMock.cleanup.mockResolvedValue(undefined);
-    // CFG-26 — the runner owns the posture; the module reads back what it LANDED on, so the mock
+    // CFG-27 — the runner owns the posture; the module reads back what it LANDED on, so the mock
     // mirrors that contract (set → the module then re-reads getSessionApprovals).
-    let mode: 'auto' | 'ask' | 'bypass' = 'ask';
-    runnerInstanceMock.setSessionApprovalMode.mockImplementation((m: typeof mode) => {
-      mode = m;
-      return m;
+    let rung = 'auto-safe';
+    runnerInstanceMock.setSessionApprovalRung.mockImplementation((r: string) => {
+      rung = r;
+      return r;
     });
     runnerInstanceMock.getSessionApprovals.mockImplementation(() => ({
-      mode,
-      rater: { enabled: mode === 'auto', strictness: 'standard', escalate: 'danger' },
-      allowlist: true,
-      persistAllowlist: true,
+      rung,
+      rater: undefined,
+      allow: [],
+      deny: [],
     }));
     runnerInstanceMock.getAllowlistCounts.mockReturnValue({ session: 0, always: undefined });
+    runnerInstanceMock.getDenylist.mockReturnValue([]);
   });
 
   it('/status answers with the session status (mode folded in from the old /mode) — never sent to the model', async () => {
@@ -200,51 +207,53 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
     expect(runnerInstanceMock.processMessages).not.toHaveBeenCalled();
   });
 
-  // CFG-26 — `/auto-approve` is now a shortcut for `/approvals auto` (rater-mediated), NOT the
-  // old unconditional bypass. `off` means `ask`, the resolved spec gap.
-  it('/auto-approve switches the session to rater-mediated auto', async () => {
-    await runSession('/auto-approve', 'exit');
-    expect(runnerInstanceMock.setSessionApprovalMode).toHaveBeenCalledWith('auto');
-    const out = allOutput();
-    expect(out).toContain('Approvals: auto');
-    expect(out).toContain('AI rater');
-    // It must NOT claim commands run unchecked — that was the old bypass copy.
-    expect(out).not.toContain('without asking');
-  });
+  // CFG-27 — `/approvals <rung>` is the whole surface. `/auto-approve` and `/bypass-approve`
+  // went with the three-mode vocabulary that named them: "auto-approve off" had to mean one of
+  // two different rungs, so neither could be mapped onto the ladder honestly.
+  it.each(['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'] as const)(
+    '/approvals %s switches the session rung and reports the §10 description',
+    async (rung) => {
+      await runSession(`/approvals ${rung}`, 'exit');
+      expect(runnerInstanceMock.setSessionApprovalRung).toHaveBeenCalledWith(rung);
+      expect(allOutput()).toContain('Approvals: ');
+    }
+  );
 
-  it('/auto-approve off switches to ask (not bypass)', async () => {
-    await runSession('/auto-approve off', 'exit');
-    expect(runnerInstanceMock.setSessionApprovalMode).toHaveBeenCalledWith('ask');
-    expect(allOutput()).toContain('Approvals: ask');
-  });
-
-  it('/bypass-approve switches to bypass and says the AI rater is skipped too', async () => {
-    await runSession('/bypass-approve', 'exit');
-    expect(runnerInstanceMock.setSessionApprovalMode).toHaveBeenCalledWith('bypass');
+  it('/approvals bypass warns and cites the DENY LIST, never the hardline floor (§8.1)', async () => {
+    await runSession('/approvals bypass', 'exit');
     const out = allOutput();
-    expect(out).toContain('Approvals: bypass');
-    expect(out).toContain('WITHOUT the AI rater');
-    expect(out).toContain('hardline safety floor');
+    expect(out).toContain('Approvals: Bypass');
+    expect(out).toContain('deny list');
+    expect(out).not.toMatch(/hardline|safety floor/i);
   });
 
   it('/approvals with no argument SHOWS the posture without changing it', async () => {
     await runSession('/approvals', 'exit');
-    expect(runnerInstanceMock.setSessionApprovalMode).not.toHaveBeenCalled();
+    expect(runnerInstanceMock.setSessionApprovalRung).not.toHaveBeenCalled();
     const out = allOutput();
-    expect(out).toContain('Approvals: ask');
-    expect(out).toContain('Allow-list:');
+    expect(out).toContain('Approvals: Auto safe');
+    expect(out).toContain('Auto-rater:');
   });
 
-  it('/approvals bypass switches the session mode', async () => {
-    await runSession('/approvals bypass', 'exit');
-    expect(runnerInstanceMock.setSessionApprovalMode).toHaveBeenCalledWith('bypass');
+  it('the retired /auto-approve and /bypass-approve read as unknown commands (no aliases)', async () => {
+    for (const command of ['/auto-approve', '/bypass-approve']) {
+      await runSession(command, 'exit');
+      expect(allOutput()).toContain(`Unknown command: ${command}`);
+    }
+    expect(runnerInstanceMock.setSessionApprovalRung).not.toHaveBeenCalled();
+  });
+
+  it('the retired `auto` / `ask` spellings are NOT accepted as rung aliases', async () => {
+    await runSession('/approvals auto', 'exit');
+    expect(runnerInstanceMock.setSessionApprovalRung).not.toHaveBeenCalled();
+    expect(allOutput()).toContain('Unknown option: auto');
   });
 
   // CFG-26 — deleted pre-beta with NO deprecation alias.
   it('/yolo is gone (2.0 hard removal): it reads as an unknown command', async () => {
     await runSession('/yolo', 'exit');
     expect(allOutput()).toContain('Unknown command: /yolo');
-    expect(runnerInstanceMock.setSessionApprovalMode).not.toHaveBeenCalled();
+    expect(runnerInstanceMock.setSessionApprovalRung).not.toHaveBeenCalled();
   });
 
   it('/mode is gone (2.0 hard removal): it reads as an unknown command here too', async () => {
