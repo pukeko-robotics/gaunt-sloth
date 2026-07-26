@@ -50,19 +50,20 @@ export async function configure() {
   return {
     llm: new ScriptedShellCallingModel({}),
     modelDisplayName: 'scripted-e2e',
-    // Hermetic and quiet: no per-run md log in the fixtures dir, no history store writes, and the
-    // shell approval allow-list is never persisted to disk (an `always` grant would otherwise
-    // write into this tracked fixtures dir — CFG-26 moved that knob to `approvals`).
+    // Hermetic and quiet: no per-run md log in the fixtures dir, no history store writes.
     writeOutputToFile: false,
-    // CFG-26 — `mode: "ask"` is set EXPLICITLY, not inherited. This suite exercises the EXT-52
-    // HUMAN approval seam (interrupt → <ApprovalPrompt> → resume), and interactive `code` on a TTY
-    // now defaults to `mode: "auto"` with the AI rater ON. Under that default the prompt still
-    // appeared, but only by accident: the rater ran against the scripted model above, which cannot
-    // produce a structured verdict, so it fail-closed to `danger` — which happens to sit exactly on
-    // the default `escalate: "danger"` threshold and therefore escalated to the human. Pinning
-    // `ask` removes a pointless rater round-trip through the scripted model AND stops the suite
-    // silently ceasing to test the human seam if the default threshold ever moves. Rater behaviour
-    // belongs in its own coverage, not smuggled into the EXT-52 regression guard.
-    approvals: { mode: 'ask', persistAllowlist: false },
+    // CFG-27 — `write` is set EXPLICITLY, not inherited. This suite exercises the EXT-52 HUMAN
+    // approval seam (interrupt → <ApprovalPrompt> → resume), and `write` is the rung that gates
+    // the shell while consulting NO model: it always escalates to the human. The default rung
+    // (`auto-safe`) would rate first, and the scripted model above cannot produce a structured
+    // verdict, so it would fail-closed to `destructive` and escalate — the right prompt for the
+    // wrong reason, and one that would stop testing the human seam the moment the rating path
+    // changed. Rater behaviour belongs in its own coverage, not smuggled into this guard.
+    //
+    // CFG-27 also retired `persistAllowlist` (§3: persistence is a per-decision choice at the
+    // prompt). Nothing in this suite may press `[a]`/always — that would write
+    // `shell-allowlist.json` into this tracked fixtures dir, since the allow-list path resolves
+    // against the PROJECT dir, not the throwaway HOME the suite overrides.
+    approvals: 'write',
   };
 }

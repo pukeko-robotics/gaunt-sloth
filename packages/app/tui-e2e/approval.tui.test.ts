@@ -133,7 +133,7 @@ test.describe('gth code TUI — EXT-52 reject keeps the command from running', (
   });
 });
 
-test.describe('gth code TUI — EXT-52/CFG-26 approval-mode switching restores prompting (regression guard)', () => {
+test.describe('gth code TUI — EXT-52/CFG-27 rung switching restores prompting (regression guard)', () => {
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gth-e2e-approval-home-'));
 
   test.use({
@@ -148,27 +148,29 @@ test.describe('gth code TUI — EXT-52/CFG-26 approval-mode switching restores p
   });
 
   // The exact live finding EXT-52 fixes: the session approval switch used to be a placebo on lean.
-  // Switching the mode must silence the prompt; switching back must bring it BACK.
+  // Switching the rung must silence the prompt; switching back must bring it BACK.
   //
-  // CFG-26 re-point: the silencing half is now `/bypass-approve`, NOT `/auto-approve`. That is the
-  // whole point of this node — `/auto-approve` means rater-mediated `auto`, so it does NOT promise
-  // unconditional execution, and the assertions below say so rather than being softened into
-  // something that would pass either way.
-  test('/bypass-approve silences the prompt; /auto-approve off brings it back', async ({
+  // CFG-27 re-point: the switch is now `/approvals <rung>`. `/auto-approve` and `/bypass-approve`
+  // went with the three-mode vocabulary that named them, so the two halves are `/approvals bypass`
+  // (silences) and `/approvals write` (restores). The assertions state what each rung actually
+  // does rather than being softened into something that would pass either way.
+  test('/approvals bypass silences the prompt; /approvals write brings it back', async ({
     terminal,
   }) => {
     await expect(terminal.getByText('ready to code')).toBeVisible();
 
-    terminal.write('/bypass-approve');
-    await expect(terminal.getByText('> /bypass-approve')).toBeVisible();
+    terminal.write('/approvals bypass');
+    await expect(terminal.getByText('> /approvals bypass')).toBeVisible();
     terminal.submit();
+    await expect(terminal.getByText('Approvals: Bypass')).toBeVisible();
+    // The notice must state that the auto-rater is skipped too, not just the prompt...
     await expect(
-      terminal.getByText('Approvals: bypass — commands run without asking')
+      terminal.getByText('without asking and without rating', { strict: false })
     ).toBeVisible();
-    // The notice must state that the AI rater is skipped too, not just the prompt.
-    await expect(terminal.getByText('WITHOUT the AI rater', { strict: false })).toBeVisible();
-    // ...and the status bar carries the warn-styled mode badge.
-    await expect(terminal.getByText('⚡ bypass', { strict: false })).toBeVisible();
+    // ...and it cites only the deny list — §8.1 forbids user-facing copy leaning on the floor.
+    await expect(terminal.getByText('deny list', { strict: false })).toBeVisible();
+    // The status bar carries the warn-styled rung badge, in §10's display spelling.
+    await expect(terminal.getByText('⚡ Bypass', { strict: false })).toBeVisible();
 
     // Turn 1: NO approval prompt — the command executes straight away.
     terminal.write('run it');
@@ -182,14 +184,15 @@ test.describe('gth code TUI — EXT-52/CFG-26 approval-mode switching restores p
       terminal.getByText('The agent wants to run a shell command via run_shell_command')
     ).not.toBeVisible();
 
-    // Flip it back to ask. `/auto-approve off` is the resolved spec gap: "off" means confirm
-    // every command yourself, i.e. `/approvals ask` — NOT bypass.
-    terminal.write('/auto-approve off');
-    await expect(terminal.getByText('> /auto-approve off')).toBeVisible();
+    // Flip back to `write`: the rung that gates the shell and consults no model, so every command
+    // comes to the human.
+    terminal.write('/approvals write');
+    await expect(terminal.getByText('> /approvals write')).toBeVisible();
     terminal.submit();
-    await expect(terminal.getByText('Approvals: ask — you confirm every command')).toBeVisible();
+    await expect(terminal.getByText('Approvals: Write')).toBeVisible();
 
-    // Turn 2: the per-command prompt is BACK (not a placebo). Reject to finish cleanly.
+    // Turn 2: the per-command prompt is BACK (not a placebo). Reject to finish cleanly — pressing
+    // [a]/always here would write shell-allowlist.json into the tracked fixtures dir.
     terminal.write('run it again');
     await expect(terminal.getByText('> run it again')).toBeVisible();
     terminal.submit();
