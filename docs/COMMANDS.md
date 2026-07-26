@@ -570,6 +570,14 @@ The rule that shapes this whole feature: **a metric that can only see part of th
 - **excluded cases** — cells that produced no classification at all, so coverage is stated as `scored/total` rather than implied to be `total/total`;
 - **an empty denominator** — reported as `n/a`, never as `0.0%`, because a perfect score over no cases is not a perfect score. (An empty denominator passes a `max` gate vacuously but **fails** a `min` gate: a recall floor that measured nothing has not been met.)
 
+It also flags the **mirror** of that problem, which inflates rather than flatters: denominator cases that do not carry the field the metric reads. On a corpus mixing label-asserting cases with action-only ones, `actual.label != expected.label` is trivially true for every case that declares no expected label — so a case asserting *nothing* is counted as a miss. Scope the denominator to the cases the metric is about:
+
+```yaml
+  - name: misclassified
+    where: ["actual.label != expected.label"]
+    over: ["expected.label != none"]     # only the cases that actually assert a label
+```
+
 Subset metrics are still worth having — "did the halt fire when it should have" is a question about a subset. The warning is not a reproach; it is the coverage you must read the number against.
 
 Every metric is also reported **per tag**. An aggregate hides adversarial collapse: a run can score respectably overall while scoring zero on the prompt-injection family, and a single blended number would ship that.
@@ -594,6 +602,8 @@ sweep:
 ```
 
 The axes are crossed, so that is four cells. Each value sets `model:` (rebuilds the model through its provider — the supported path to a genuinely fresh instance) and/or `config:` (deep-merged onto the resolved config; objects merge, arrays and scalars replace). `config.llm` is rejected — use `model:`.
+
+**Sweeping `model:` moves the judge too.** By default `judge:` rubrics are graded by the SUT's own model, so a model axis changes the grader along with the thing graded and the comparison's `pass rate` row is no longer comparable across cells. Set `judge_profile:` (or `--judge`) to pin the grader to one model whenever you sweep `model:` on a suite that uses rubrics.
 
 Each cell writes into its own `<output>/<axis-value>__<axis-value>/` subdir. The comparison table has one row per metric (plus per-tag rows) and one column per cell, and marks any cell where a gate failed. A sweep is not supported for `adk-agent`/`ag-ui` targets — those agents run out of process, so gth config overrides would change nothing about them.
 

@@ -246,6 +246,53 @@ describe('metrics', () => {
       );
     });
 
+    it('WARNS when denominator cases do not carry the field the metric reads — the INFLATED mirror', async () => {
+      // The same blindness with the opposite sign. `actual.label != expected.label` is trivially
+      // true for a case that declares no expected label, so a case asserting NOTHING is counted as
+      // a miss and the metric over-reports. Believed for exactly the same reason a blind metric is.
+      const { computeMetric } = await import('#src/metrics.js');
+      const spec: EvalMetricSpec = {
+        name: 'misclassified',
+        where: [
+          { kind: 'compareField', field: 'actual.label', negated: true, other: 'expected.label' },
+        ],
+        max: 0,
+        gate: 'fail',
+      };
+      const result = computeMetric(
+        spec,
+        [
+          cell({ id: 'asserts-a-label', expectedLabel: 'safe', actualLabel: 'safe' }),
+          cell({ id: 'asserts-nothing', actualLabel: 'safe' }),
+        ],
+        []
+      );
+
+      expect(result.overall).toEqual({ numerator: 1, denominator: 2, value: 0.5 });
+      expect(result.warnings.join('\n')).toMatch(
+        /1 case\(s\) in the denominator do not carry every field this metric reads/
+      );
+      expect(result.warnings.join('\n')).toMatch(/asserts-nothing/);
+      expect(result.warnings.join('\n')).toMatch(/narrow `over:`/);
+    });
+
+    it('does NOT warn when every denominator case carries the fields', async () => {
+      const { computeMetric } = await import('#src/metrics.js');
+      const spec: EvalMetricSpec = {
+        name: 'misclassified',
+        where: [
+          { kind: 'compareField', field: 'actual.label', negated: true, other: 'expected.label' },
+        ],
+        gate: 'report',
+      };
+      const result = computeMetric(
+        spec,
+        [cell({ id: 'a', expectedLabel: 'safe', actualLabel: 'safe' })],
+        []
+      );
+      expect(result.warnings).toEqual([]);
+    });
+
     it('reports an empty denominator as n/a, never as a flattering 0%', async () => {
       const { computeMetric } = await import('#src/metrics.js');
       const { formatTally } = await import('#src/metrics.js');

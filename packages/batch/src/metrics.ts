@@ -179,6 +179,18 @@ function assertKnownLiteral(
   );
 }
 
+/** Every field a predicate list reads. Used to spot a denominator whose cells do not carry the
+ * data the metric is about — see {@link computeMetric}'s absent-field warning. */
+function referencedFields(predicates: MetricPredicate[]): MetricField[] {
+  const fields = new Set<MetricField>();
+  for (const predicate of predicates) {
+    if (predicate.kind === 'tag') continue;
+    fields.add(predicate.field);
+    if (predicate.kind === 'compareField') fields.add(predicate.other);
+  }
+  return [...fields];
+}
+
 /** Read a field off a cell. `undefined` = absent, which the `none` literal matches. */
 function fieldValue(cell: ClassifiedCell, field: MetricField): string | undefined {
   switch (field) {
@@ -320,6 +332,30 @@ export function computeMetric(
     warnings.push(
       'denominator is EMPTY — this metric measured nothing. Its value is reported as n/a rather ' +
         'than 0, because a perfect score over no cases is not a perfect score.'
+    );
+  }
+
+  // The MIRROR of the subset problem, and just as believable: a denominator containing cases that
+  // do not carry the field the metric is about. On a corpus mixing label-asserting and action-only
+  // cases, `actual.label != expected.label` is trivially TRUE for every case with no expected
+  // label — so a case that asserts nothing is counted as an error, and the metric reports an
+  // INFLATED rate rather than a flattering one. Same failure, opposite sign, same fix: say which
+  // cases, and point at the denominator.
+  const fields = referencedFields([...spec.where, ...over]);
+  const missingField = denominatorCells.filter((cell) =>
+    fields.some((field) => fieldValue(cell, field) === undefined)
+  );
+  if (missingField.length > 0) {
+    warnings.push(
+      `${missingField.length} case(s) in the denominator do not carry every field this metric ` +
+        `reads (${fields.join(', ')}), e.g. ${missingField
+          .slice(0, 3)
+          .map((cell) => cell.id)
+          .join(
+            ', '
+          )}. An absent field still takes part in the comparison, so a case that asserts ` +
+        'nothing can be counted as a miss — narrow `over:` to the cases the metric is about (e.g. ' +
+        '`over: ["expected.label != none"]`).'
     );
   }
 

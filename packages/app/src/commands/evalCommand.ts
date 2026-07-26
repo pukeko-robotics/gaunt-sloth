@@ -748,6 +748,11 @@ export function evalCommand(
           // `initConfig({ …overrides, identityProfile })` path `gth batch --models` uses to
           // reconstruct a fresh `.llm` — so the judge runs under its own model. When unset, the judge
           // shares the base config (the SUT's for a single run; the FIRST identity's for a matrix).
+          // BATCH-25 note: with NO judge profile the judge shares `baseConfig`, which a sweep cell
+          // has already overridden — so sweeping `model:` moves the GRADER along with the SUT and
+          // the cross-cell pass rates are not comparable. Deliberately not "fixed" here: pinning
+          // the judge would silently diverge from the documented "judge = SUT model by default"
+          // contract. The docs tell the author to set `judge_profile:` when sweeping models.
           const judgeProfile = resolveJudgeProfile(options.judge, parsedSuite.judgeProfile);
           if (judgeProfile && !resolveIdentityProfileConfigPath(judgeProfile)) {
             // GS2-62 (BATCH-10 review Minor 1): pre-check the requested judge profile with the PURE
