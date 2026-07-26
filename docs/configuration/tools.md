@@ -190,8 +190,7 @@ default in `code` mode** (each invocation still goes through the approvals gate)
 - `maxOutputBytes` — byte budget for the captured output returned to the model (default `100000`).
 
 **Who may run a command is configured separately**, in the top-level [`approvals`](#approvals)
-block — not here. A hardcoded blocklist of catastrophic commands is always refused, under every
-approvals mode.
+setting — not here.
 
 ```json
 {
@@ -212,37 +211,39 @@ approvals mode.
 
 ### `approvals`
 
-The approvals gate is a **top-level** key (settable per command as `commands.<cmd>.approvals`,
-which replaces the root block wholesale). In 2.0 it replaces the retired
-`run_shell_command.yolo` / `.judge` / `.allowlist` / `.persistAllowlist` knobs, which used to sit on
-the object shared by every built-in tool — see
-[Migration](../MIGRATION.md#i-approvals-and-the-ai-rater-hard).
+Approvals are a **top-level** key (settable per command as `commands.<cmd>.approvals`, which
+replaces the root value wholesale). It takes one of five rung names — `read-only`, `write`,
+`auto-safe` (the default), `full-auto`, `bypass` — either on its own or as `mode` inside an object
+carrying the extras. See
+[Migration](../MIGRATION.md#i-approvals-and-the-ai-rater-hard) for the retired keys.
 
-- `mode` — `auto` (the AI rater rates each command), `ask` (you confirm every one), or `bypass`
-  (no gate at all). Defaults to `auto` in an interactive `code`/`chat` session on a TTY, and to
-  `ask` for one-shot commands and servers, where there is nobody to prompt and a gated call is
-  refused.
-- `rater` — `false` to disable, or `{ profile, strictness, escalate }`. `profile` names an identity
-  profile whose model rates (a name that does not resolve is a config error); `strictness` is
-  `lenient` / `standard` (default) / `strict`; `escalate` is `caution` / `danger` (default) /
-  `never`. `escalate` does not accept `critical` — a catastrophic command is always refused.
-- `allowlist` — master switch for the scoped approval allow-list (default `true`).
-- `persistAllowlist` — persist `always`-scoped approvals to
-  `.gsloth/.gsloth-settings/shell-allowlist.json` (default `true`).
+- `mode` — the rung. Defaults to `auto-safe` in every context, interactive or not. What changes
+  without a human is what an escalation *does* (it exits non-zero rather than prompting), not which
+  rung the session starts on.
+- `rater` — the **name** of an identity profile whose model rates, instead of the session model. A
+  name that does not resolve is a config error. Only consulted at `auto-safe` and `full-auto`.
+- `allow` — command prefixes you trust. Checked before the rater at every rung except `bypass`.
+- `deny` — command prefixes never to run. Checked before `allow` and before the rater, and it still
+  applies under `bypass`.
+
+`allow` and `deny` are read-only input: they are merged with what you approve or reject at the
+prompt, and never written back to your config.
+
+```json
+{ "approvals": "auto-safe" }
+```
 
 ```json
 {
   "approvals": {
-    "mode": "auto",
-    "rater": { "profile": "safety-rater", "escalate": "caution" }
+    "mode": "full-auto",
+    "rater": "safety-rater",
+    "deny": ["npm publish", "git push --force"]
   }
 }
 ```
 
 Full walkthrough: [Shell tool & approvals](../guides/shell-tool-and-approvals.md).
-
-For how the approval prompt, scoped allow-list, and judge gate behave at runtime, see the
-[shell tool and approvals guide](../guides/shell-tool-and-approvals.md).
 
 ## Custom Tools Configuration
 
