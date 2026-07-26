@@ -1,6 +1,7 @@
 import { display, displaySuccess, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import type { EvalCaseResult, EvalSuiteSummary } from '#src/evalTypes.js';
 import type { EvalReporter, EvalRunContext } from '#src/reporters/reporterTypes.js';
+import { renderClassificationReport } from '#src/classificationRender.js';
 
 /**
  * The built-in default reporter: the human-readable, `review`-flavored summary — one PASS/FAIL line
@@ -37,6 +38,21 @@ export function createTextReporter(): EvalReporter {
     },
 
     onSuiteEnd(summary: EvalSuiteSummary, ctx: EvalRunContext): void {
+      // BATCH-25 — the classifier block prints ONLY for a suite that declares `classification:`.
+      // Every #405-era suite has no such block, so its console output is byte-for-byte what it was.
+      // It goes BEFORE the verdict line so the verdict stays the last thing on screen.
+      if (summary.classification) {
+        for (const line of renderClassificationReport(summary.classification)) {
+          // Warnings and gate failures carry `!` / `GATE FAILED` and are the lines a reader must
+          // not skim past, so they get the warning channel; the matrices and tallies are data.
+          if (line.trimStart().startsWith('!') || line.startsWith('METRIC GATE FAILED')) {
+            displayWarning(line);
+          } else {
+            display(line);
+          }
+        }
+      }
+
       // M1: X/Y counts CELLS in a matrix run (one per case × identity) — e.g. `2/2` for 1 case × 2
       // identities — so a bare "case(s)" would misreport the denominator. Use an identity-aware
       // noun: "case(s)" for a no-identities run (unchanged), "cell(s)" once any cell carries an

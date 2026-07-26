@@ -468,6 +468,21 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
   const metrics = buildMetricSpecs(data.metrics, classification, suffix);
   const sweep = buildSweep(data.sweep, suffix);
 
+  // BATCH-25 — a config sweep overrides the gth config the SUT is built from. An `adk-agent` /
+  // `ag-ui` target runs OUT OF PROCESS with its own model, tools and auth, so there is no config to
+  // sweep: the overrides would silently apply to the judge alone and the comparison table would
+  // report cells that differ in nothing. Reject it, the same way the `identities` matrix is
+  // rejected for those targets and for the same reason — a false-scope suite is a bug, not
+  // something to run half of.
+  if (sweep !== undefined && (target.type === 'adk-agent' || target.type === 'ag-ui')) {
+    throw new Error(
+      `Invalid eval suite${suffix}: a \`sweep\` is not supported for a "${target.type}" target — ` +
+        'the agent runs out-of-process with its own config, so config overrides would change ' +
+        'nothing about the SUT. Sweep a `gth-agent` target, or vary the external agent yourself ' +
+        'and run the suite once per variant.'
+    );
+  }
+
   const suiteDefaultThreshold = data.defaults?.pass_threshold ?? DEFAULT_EVAL_PASS_THRESHOLD;
 
   const seenIds = new Set<string>();
