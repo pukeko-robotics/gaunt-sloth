@@ -16,8 +16,19 @@ import { formatTally } from '#src/metrics.js';
  * that truncates is a silent cap, and a truncated matrix reads as a complete one.
  */
 
+/** Rendering options. */
+export interface RenderClassificationOptions {
+  /** Suppress the per-tag confusion matrices (the per-tag METRIC rows always stay). Set for a
+   * sweep cell, where N full blocks would bury the comparison table that is the point of sweeping.
+   * The suppressed matrices are still written to that cell's `results.json`. */
+  compact?: boolean;
+}
+
 /** Render the whole report: coverage, matrices, metrics, warnings, gate verdict. */
-export function renderClassificationReport(report: EvalClassificationReport): string[] {
+export function renderClassificationReport(
+  report: EvalClassificationReport,
+  options: RenderClassificationOptions = {}
+): string[] {
   const lines: string[] = [];
 
   lines.push('');
@@ -38,14 +49,25 @@ export function renderClassificationReport(report: EvalClassificationReport): st
   }
 
   // Per-tag matrices only when there is more than one family — with a single tag the per-tag matrix
-  // is the overall one, and printing it twice is noise, not information.
-  if (report.tags.length > 1) {
+  // is the overall one, and printing it twice is noise, not information — and never in compact mode.
+  if (report.tags.length > 1 && !options.compact) {
     for (const tag of report.tags) {
       const matrix = report.labelMatrixByTag[tag];
       if (!matrix) continue;
       lines.push('');
       lines.push(...renderConfusionMatrix(matrix, `label · tag "${tag}"`));
     }
+  }
+
+  if (options.compact && report.tags.length > 1) {
+    // Say what was withheld. A renderer that quietly drops a section is a silent cap, which is the
+    // one thing this facility may not do — even about its own output.
+    lines.push('');
+    lines.push(
+      `  (per-tag confusion matrices for ${report.tags.length} tag(s) omitted in a sweep cell — ` +
+        "they are in this cell's results.json; per-tag metric rows are below and in the " +
+        'comparison table.)'
+    );
   }
 
   if (report.metrics.length > 0) {

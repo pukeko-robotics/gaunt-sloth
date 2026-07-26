@@ -42,7 +42,11 @@ export function createTextReporter(): EvalReporter {
       // Every #405-era suite has no such block, so its console output is byte-for-byte what it was.
       // It goes BEFORE the verdict line so the verdict stays the last thing on screen.
       if (summary.classification) {
-        for (const line of renderClassificationReport(summary.classification)) {
+        // Attribute the block to its sweep cell — without this, N cells print N unlabelled blocks.
+        if (ctx.sweepCell) display(`CELL: ${ctx.sweepCell}`);
+        for (const line of renderClassificationReport(summary.classification, {
+          compact: ctx.sweepCell !== undefined,
+        })) {
           // Warnings and gate failures carry `!` / `GATE FAILED` and are the lines a reader must
           // not skim past, so they get the warning channel; the matrices and tallies are data.
           if (line.trimStart().startsWith('!') || line.startsWith('METRIC GATE FAILED')) {

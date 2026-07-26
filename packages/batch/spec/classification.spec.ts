@@ -47,7 +47,9 @@ describe('classification', () => {
       expect(extractClassificationValue(undefined, { kind: 'answer' }, LABELS)).toBe(
         UNRECOGNIZED_LABEL
       );
-      expect(extractClassificationValue('   ', { kind: 'answer' }, LABELS)).toBe(UNRECOGNIZED_LABEL);
+      expect(extractClassificationValue('   ', { kind: 'answer' }, LABELS)).toBe(
+        UNRECOGNIZED_LABEL
+      );
     });
   });
 
@@ -131,7 +133,8 @@ describe('classification', () => {
 
       // And an unscored cell contributes NOTHING to any bucket — it is not a wrong answer.
       const placed = matrix.rows.reduce(
-        (sum, row) => sum + matrix.columns.reduce((rowSum, col) => rowSum + matrix.counts[row][col], 0),
+        (sum, row) =>
+          sum + matrix.columns.reduce((rowSum, col) => rowSum + matrix.counts[row][col], 0),
         0
       );
       expect(placed).toBe(matrix.counted);

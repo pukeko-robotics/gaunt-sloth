@@ -212,7 +212,10 @@ async function initConfigForCell(
   // `GthConfig` has no index signature, so it is not structurally a `Record<string, unknown>`; the
   // cast is at the boundary only. `deepMerge` treats everything as plain data, which is exactly
   // right here because `config.llm` — the ONE non-data field — is rejected at suite-parse time.
-  return deepMerge(config as unknown as Record<string, unknown>, cell.config) as unknown as GthConfig;
+  return deepMerge(
+    config as unknown as Record<string, unknown>,
+    cell.config
+  ) as unknown as GthConfig;
 }
 
 /** One resolved suite to run: `readPath` is what {@link readFileFromProjectDir} reads (the CLI
@@ -399,9 +402,7 @@ async function printRelabelDiff(parsedSuite: EvalSuite, relabelPath: string): Pr
   // Accept either the blind-export document (with its `cases` array filled in) or a bare array —
   // a second labeller returning the file they were given is the expected shape, and demanding a
   // re-wrap would be friction for no gain.
-  const entries = Array.isArray(parsed)
-    ? parsed
-    : ((parsed as { cases?: unknown }).cases ?? []);
+  const entries = Array.isArray(parsed) ? parsed : ((parsed as { cases?: unknown }).cases ?? []);
   if (!Array.isArray(entries)) {
     throw new Error(
       `the relabel file "${relabelPath}" must be a JSON array of {id, label} entries, or the ` +
@@ -431,7 +432,10 @@ async function printRunDiff(
   summary: EvalSuiteSummary
 ): Promise<void> {
   const projectDir = getProjectDir();
-  const relativePath = relative(resolve(projectDir, outputRoot), resolve(projectDir, cellOutputDir));
+  const relativePath = relative(
+    resolve(projectDir, outputRoot),
+    resolve(projectDir, cellOutputDir)
+  );
   const baselineFile = join(resolve(projectDir, compareToRoot), relativePath, 'results.json');
 
   let baseline: EvalSuiteSummary;
@@ -523,7 +527,7 @@ export function evalCommand(
     )
     .option(
       '--export-blind <file>',
-      'BLIND EXPORT: write each suite\'s cases (id, input(s), tags) to <file> as JSON WITHOUT ' +
+      "BLIND EXPORT: write each suite's cases (id, input(s), tags) to <file> as JSON WITHOUT " +
         'their expected labels, actions or rationales, then exit without running anything. What ' +
         'makes an independent second-person relabel possible.'
     )
@@ -785,6 +789,9 @@ export function evalCommand(
             judgeNotice: judgeProfile
               ? { profile: judgeProfile, model: judgeModelName(judgeConfig) }
               : undefined,
+            // BATCH-25 — names the cell this block belongs to, and puts the classifier block in
+            // compact mode so N cells do not bury the comparison table.
+            sweepCell: sweepCell?.name,
           });
 
           return summary;

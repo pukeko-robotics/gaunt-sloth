@@ -58,7 +58,11 @@ const COMPARE_RE = new RegExp(`^${FIELD_PATTERN}\\s*(==|!=)\\s*(.+)$`);
 /** Strip one layer of matching quotes from a predicate literal. */
 function unquote(raw: string): string {
   const text = raw.trim();
-  if (text.length >= 2 && (text[0] === '"' || text[0] === "'") && text[text.length - 1] === text[0]) {
+  if (
+    text.length >= 2 &&
+    (text[0] === '"' || text[0] === "'") &&
+    text[text.length - 1] === text[0]
+  ) {
     return text.slice(1, -1);
   }
   return text;
@@ -358,7 +362,8 @@ function evaluateGate(
         min: spec.min,
         mode,
         passed: false,
-        reason: `n/a (empty denominator) does not meet the minimum ${formatPercent(spec.min)} — ` +
+        reason:
+          `n/a (empty denominator) does not meet the minimum ${formatPercent(spec.min)} — ` +
           'the metric measured nothing.',
       };
     }

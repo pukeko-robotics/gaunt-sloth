@@ -597,7 +597,7 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
         `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) declares ` +
           `\`model_free: true\`, which the "${target.type}" target cannot honour — running a case ` +
           'through an agent IS a model call. `model_free` needs a classification target that ' +
-          'decides deterministically and reports its own model-call count (BATCH-25 Half B\'s ' +
+          "decides deterministically and reports its own model-call count (BATCH-25 Half B's " +
           '`rater` target). Remove the flag, or wait for that target.'
       );
     }
@@ -755,9 +755,7 @@ function normalizeEnum(values: string[], field: string, suffix: string): string[
 }
 
 /** `"answer"` | `{ json_path }` → the normalized extractor. */
-function normalizeExtractor(
-  raw: z.infer<typeof RawExtractorSchema>
-): ClassificationExtractor {
+function normalizeExtractor(raw: z.infer<typeof RawExtractorSchema>): ClassificationExtractor {
   return raw === 'answer' ? { kind: 'answer' } : { kind: 'json_path', path: raw.json_path };
 }
 
@@ -894,7 +892,11 @@ function buildSweep(
             '`model:` nor `config:` — a cell that overrides nothing is an unnamed duplicate run.'
         );
       }
-      return { name: valueName, model: rawValue.model?.trim() || undefined, config: rawValue.config };
+      return {
+        name: valueName,
+        model: rawValue.model?.trim() || undefined,
+        config: rawValue.config,
+      };
     });
 
     return { name: axisName, values };

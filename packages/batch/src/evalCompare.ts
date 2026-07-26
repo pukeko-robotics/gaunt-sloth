@@ -228,7 +228,12 @@ export interface RunDiff {
   /** Cases whose actual label/action changed, verdict aside — a rating-prompt edit's real signal. */
   reclassified: RunDiffEntry[];
   /** Metric deltas, `after - before`, for metrics both runs computed. */
-  metricDeltas: { name: string; before: number | null; after: number | null; delta: number | null }[];
+  metricDeltas: {
+    name: string;
+    before: number | null;
+    after: number | null;
+    delta: number | null;
+  }[];
   /** Ids in only one of the two runs — reported, so a shrunken corpus cannot read as "no change". */
   onlyInBefore: string[];
   onlyInAfter: string[];
@@ -347,9 +352,7 @@ export function renderRunDiff(diff: RunDiff): string[] {
         delta.delta === null
           ? 'n/a'
           : `${delta.delta >= 0 ? '+' : ''}${(delta.delta * 100).toFixed(1)}pp`;
-      lines.push(
-        `    ${delta.name}: ${format(delta.before)} → ${format(delta.after)} (${change})`
-      );
+      lines.push(`    ${delta.name}: ${format(delta.before)} → ${format(delta.after)} (${change})`);
     }
   }
 

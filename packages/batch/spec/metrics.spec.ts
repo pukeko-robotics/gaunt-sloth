@@ -124,9 +124,9 @@ describe('metrics', () => {
     it('rejects an unparseable predicate with an actionable message naming the legal forms', async () => {
       await expect(parse('expected.label ~= safe')).rejects.toThrow(/could not parse predicate/);
       await expect(parse('label == safe')).rejects.toThrow(/could not parse predicate/);
-      await expect(
-        parse('expected.label == safe or actual.action == approve')
-      ).rejects.toThrow(/does not declare|could not parse/);
+      await expect(parse('expected.label == safe or actual.action == approve')).rejects.toThrow(
+        /does not declare|could not parse/
+      );
     });
   });
 
@@ -161,7 +161,12 @@ describe('metrics', () => {
       const cells = [
         cell({ id: 'a', tags: ['plain'], expectedLabel: 'destructive', actualAction: 'escalate' }),
         cell({ id: 'b', tags: ['plain'], expectedLabel: 'destructive', actualAction: 'escalate' }),
-        cell({ id: 'c', tags: ['injection'], expectedLabel: 'destructive', actualAction: 'approve' }),
+        cell({
+          id: 'c',
+          tags: ['injection'],
+          expectedLabel: 'destructive',
+          actualAction: 'approve',
+        }),
       ];
       const result = computeMetric(falseApprove, cells, ['injection', 'plain']);
 
@@ -254,7 +259,9 @@ describe('metrics', () => {
 
       expect(result.overall).toEqual({ numerator: 0, denominator: 0, value: null });
       expect(formatTally(result.overall)).toBe('n/a (0 cases)');
-      expect(result.warnings.join('\n')).toMatch(/denominator is EMPTY — this metric measured nothing/);
+      expect(result.warnings.join('\n')).toMatch(
+        /denominator is EMPTY — this metric measured nothing/
+      );
     });
   });
 
