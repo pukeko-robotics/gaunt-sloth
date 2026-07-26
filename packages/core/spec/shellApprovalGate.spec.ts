@@ -12,17 +12,17 @@ type PolicyConfig = Pick<GthConfig, 'commands' | 'builtInTools' | 'askWriteMode'
 
 const config = (partial: Partial<PolicyConfig>): PolicyConfig => partial as PolicyConfig;
 
-const GATED_NOTICE = 'Shell tool (run_shell_command) enabled with per-command approval.';
-const RATER_NOTICE =
-  'Shell tool (run_shell_command) gated by the AI rater (approvals.mode: auto); ' +
-  'risky commands are still escalated to you.';
-const BYPASS_GATED_NOTICE =
-  'Shell tool (run_shell_command) auto-approved by config (approvals.mode: bypass). ' +
-  'Type /approvals ask to require per-command approval.';
-const BYPASS_UNGATED_NOTICE =
-  'Shell tool (run_shell_command) enabled in bypass mode: commands run WITHOUT confirmation.';
+const GATED_NOTICE = (rung: string) =>
+  `Shell tool (run_shell_command) enabled with per-command approval (approvals: ${rung}).`;
+const RATED_NOTICE = (rung: string, tail: string) =>
+  `Shell tool (run_shell_command) rated by the auto-rater (approvals: ${rung}); ` +
+  `anything it does not rate safe is still ${tail}`;
+const BYPASS_NOTICE =
+  'Shell tool (run_shell_command): commands run without asking and without rating ' +
+  '(approvals: bypass). Only your deny list still applies — type /approvals auto-safe to ' +
+  'rate commands again.';
 
-describe('resolveShellApprovalGate (EXT-52 shared gate policy)', () => {
+describe('resolveShellApprovalGate (EXT-52 shared gate policy, CFG-27 ladder)', () => {
   describe('shell tool disabled — nothing gated, nothing announced', () => {
     it('a non-dev-tools command (chat) carries no shell tool at all', () => {
       expect(resolveShellApprovalGate(config({}), 'chat')).toEqual({ gateShell: false });
@@ -44,48 +44,63 @@ describe('resolveShellApprovalGate (EXT-52 shared gate policy)', () => {
   });
 
   describe('gated — the per-command approval interrupt is wired', () => {
-    it('code mode by default (shell ON in code, never bypass-by-default) — CFG-26 mode auto', () => {
-      // CFG-26 defaults matrix: interactive `code` defaults to `mode: auto`, so the notice names
-      // the rater rather than claiming every command will be confirmed.
-      expect(resolveShellApprovalGate(config({}), 'code')).toEqual({
+    it('code mode by default: the default rung is auto-safe, so the notice names the rater', () => {
+      const expected = {
         gateShell: true,
-        notice: { level: StatusLevel.INFO, message: RATER_NOTICE },
-      });
-      // Same for an absent config: the code-mode default is resolved downstream of it.
-      expect(resolveShellApprovalGate(undefined, 'code')).toEqual({
+        notice: {
+          level: StatusLevel.INFO,
+          message: RATED_NOTICE('auto-safe', 'escalated to you.'),
+        },
+      };
+      expect(resolveShellApprovalGate(config({}), 'code')).toEqual(expected);
+      // Same for an absent config: the code-mode shell default is resolved downstream of it.
+      expect(resolveShellApprovalGate(undefined, 'code')).toEqual(expected);
+    });
+
+    it('full-auto says the rater REFUSES OR ESCALATES — it does not promise to ask you', () => {
+      expect(resolveShellApprovalGate(config({ approvals: 'full-auto' }), 'code')).toEqual({
         gateShell: true,
-        notice: { level: StatusLevel.INFO, message: RATER_NOTICE },
+        notice: {
+          level: StatusLevel.INFO,
+          message: RATED_NOTICE('full-auto', 'refused or escalated.'),
+        },
       });
     });
 
-    it('an explicit approvals.mode: ask in code mode gates with the per-command prompt notice', () => {
-      expect(resolveShellApprovalGate(config({ approvals: { mode: 'ask' } }), 'code')).toEqual({
-        gateShell: true,
-        notice: { level: StatusLevel.INFO, message: GATED_NOTICE },
-      });
-    });
+    it.each(['read-only', 'write'] as const)(
+      'the unrated rung %s gates with the per-command prompt notice',
+      (rung) => {
+        expect(resolveShellApprovalGate(config({ approvals: rung }), 'code')).toEqual({
+          gateShell: true,
+          notice: { level: StatusLevel.INFO, message: GATED_NOTICE(rung) },
+        });
+      }
+    );
 
-    it('a per-command approvals block replaces the root one', () => {
+    it('a per-command approvals value replaces the root one', () => {
       expect(
         resolveShellApprovalGate(
           config({
-            approvals: { mode: 'bypass' },
-            commands: { code: { approvals: { mode: 'ask' } } },
-          }),
+            approvals: 'bypass',
+            commands: { code: { approvals: 'write' } },
+          } as Partial<PolicyConfig>),
           'code'
         )
       ).toEqual({
         gateShell: true,
-        notice: { level: StatusLevel.INFO, message: GATED_NOTICE },
+        notice: { level: StatusLevel.INFO, message: GATED_NOTICE('write') },
       });
     });
 
-    it('exec mode when the shell tool is explicitly enabled without bypass', () => {
+    it('exec mode when the shell tool is explicitly enabled', () => {
       expect(
-        resolveShellApprovalGate(config({ builtInTools: { run_shell_command: true } }), 'exec')
+        resolveShellApprovalGate(
+          config({ approvals: 'write', builtInTools: { run_shell_command: true } }),
+          'exec'
+        )
       ).toEqual({
         gateShell: true,
-        notice: { level: StatusLevel.INFO, message: GATED_NOTICE },
+        notice: { level: StatusLevel.INFO, message: GATED_NOTICE('write') },
       });
     });
 
@@ -93,6 +108,7 @@ describe('resolveShellApprovalGate (EXT-52 shared gate policy)', () => {
       expect(
         resolveShellApprovalGate(
           config({
+            approvals: 'write',
             builtInTools: { run_shell_command: false },
             commands: { exec: { builtInTools: { run_shell_command: true } } },
           } as Partial<PolicyConfig>),
@@ -100,50 +116,55 @@ describe('resolveShellApprovalGate (EXT-52 shared gate policy)', () => {
         )
       ).toEqual({
         gateShell: true,
-        notice: { level: StatusLevel.INFO, message: GATED_NOTICE },
+        notice: { level: StatusLevel.INFO, message: GATED_NOTICE('write') },
       });
     });
   });
 
-  describe('bypass in INTERACTIVE code mode — still gated, so /approvals ask can restore prompting', () => {
-    it('keeps the gate and announces that config pre-selected bypass', () => {
-      expect(resolveShellApprovalGate(config({ approvals: { mode: 'bypass' } }), 'code')).toEqual({
-        gateShell: true,
-        notice: { level: StatusLevel.INFO, message: BYPASS_GATED_NOTICE },
-      });
-    });
-  });
-
-  describe('bypass in a NON-INTERACTIVE mode — ungated, since a single-shot run drains no interrupts', () => {
-    it('exec runs the command inline and warns that nothing will be confirmed', () => {
+  /**
+   * CFG-27 — `bypass` is GATED TOO, in every context. CFG-26 left the tool ungated under bypass
+   * outside interactive `code`, which the ladder cannot afford: §2.5 makes the declared deny list
+   * the one check `bypass` keeps, and a deny entry can only fire if the call reaches
+   * `decideToolApproval` — an ungated call never does.
+   */
+  describe('bypass — gated in EVERY context, so the deny list can still fire', () => {
+    it.each(['code', 'exec'] as const)('%s keeps the gate under bypass', (command) => {
       expect(
         resolveShellApprovalGate(
-          config({
-            approvals: { mode: 'bypass' },
-            builtInTools: { run_shell_command: { enabled: true } },
-          }),
-          'exec'
+          config({ approvals: 'bypass', builtInTools: { run_shell_command: { enabled: true } } }),
+          command
         )
       ).toEqual({
-        gateShell: false,
-        notice: { level: StatusLevel.WARNING, message: BYPASS_UNGATED_NOTICE },
+        gateShell: true,
+        notice: { level: StatusLevel.WARNING, message: BYPASS_NOTICE },
       });
     });
 
-    it('`ask --write` behaves the same as exec', () => {
+    it('`ask --write` behaves the same', () => {
       expect(
         resolveShellApprovalGate(
           config({
             askWriteMode: true,
-            approvals: { mode: 'bypass' },
+            approvals: 'bypass',
             builtInTools: { run_shell_command: { enabled: true } },
           }),
           'ask'
         )
       ).toEqual({
-        gateShell: false,
-        notice: { level: StatusLevel.WARNING, message: BYPASS_UNGATED_NOTICE },
+        gateShell: true,
+        notice: { level: StatusLevel.WARNING, message: BYPASS_NOTICE },
       });
+    });
+
+    it('§8.1 — no notice advertises the hardline floor; the bypass one cites the deny list', () => {
+      for (const rung of ['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'] as const) {
+        const { notice } = resolveShellApprovalGate(
+          config({ approvals: rung, builtInTools: { run_shell_command: true } }),
+          'code'
+        );
+        expect(notice?.message).not.toMatch(/hardline|floor|blocklist/i);
+      }
+      expect(BYPASS_NOTICE).toContain('deny list');
     });
   });
 });

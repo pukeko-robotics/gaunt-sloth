@@ -26,8 +26,10 @@
  */
 
 /**
- * Base class for the two run-ending approvals outcomes, so a caller can catch both with one
- * `instanceof` (the TUI does this to render them as an ending rather than a crash).
+ * Base class for the two run-ending approvals outcomes, so a caller that wants to present them as
+ * an ending rather than a crash can catch both with one `instanceof`. Nothing does that today —
+ * every surface currently shows the message as-is, which is already the whole explanation — and
+ * [[TUI-C26]] is the node that will catch it to render the §6.1 banner.
  */
 export abstract class ApprovalStopError extends Error {
   /** The command that ended the run. */
@@ -56,8 +58,8 @@ export class ExfiltrationHaltError extends ApprovalStopError {
       `Run halted: the auto-rater rated this command as exfiltration, which ends the run.\n` +
         `  Command: ${command}\n` +
         `  Reason: ${reason}\n` +
-        `This is not negotiable at any rung except bypass. If you genuinely need this operation, ` +
-        `re-run at approvals "bypass" and accept the risk.`,
+        `This is not negotiable, and no rung except bypass turns it into anything else. If you ` +
+        `genuinely need this operation, run it at approvals "bypass" and accept the risk.`,
       command
     );
     this.reason = reason;

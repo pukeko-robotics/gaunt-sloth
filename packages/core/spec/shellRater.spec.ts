@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
-import type { ApprovalMode, GthConfig, RaterEscalateThreshold } from '#src/config.js';
+import type { ApprovalRung, GthConfig } from '#src/config.js';
+import { APPROVAL_RUNGS } from '#src/config.js';
 import {
   buildRaterPrompt,
   buildRaterSystemPrompt,
@@ -10,8 +11,8 @@ import {
   hasScriptEnvLeakRisk,
   mapVerdictToAction,
   rateShellCommand,
-  RISK_TIERS,
-  type RiskTier,
+  RATER_OUTCOMES,
+  type RaterOutcome,
   type ShellSafetyVerdict,
 } from '#src/core/shell/rater.js';
 
@@ -30,18 +31,19 @@ function fakeModel(invokeImpl: (() => Promise<unknown>) | (() => unknown)): {
   return { model, structuredInvoke };
 }
 
-const verdict = (tier: RiskTier, reason = `${tier} verdict`): ShellSafetyVerdict => ({
-  tier,
+const verdict = (outcome: RaterOutcome, reason = `${outcome} verdict`): ShellSafetyVerdict => ({
+  outcome,
   reason,
 });
 
 const SAFE = verdict('safe', 'read-only');
-const CRITICAL = verdict('critical', 'mass deletion');
+const DESTRUCTIVE = verdict('destructive', 'deletes files');
+const EXFILTRATION = verdict('exfiltration', 'sends a private key to an unconfigured host');
 
 const CONFIG = {} as GthConfig;
 
-const ALL_MODES: readonly ApprovalMode[] = ['auto', 'ask', 'bypass'];
-const ALL_THRESHOLDS: readonly RaterEscalateThreshold[] = ['caution', 'danger', 'never'];
+const RATED_RUNGS: readonly ApprovalRung[] = ['auto-safe', 'full-auto'];
+const UNRATED_RUNGS: readonly ApprovalRung[] = ['read-only', 'write'];
 
 describe('hasScriptEnvLeakRisk', () => {
   it('flags interpreter+script with ALL_CAPS env expansion', () => {
@@ -94,29 +96,59 @@ describe('buildRaterPrompt', () => {
     expect(user).toContain('rm -rf foo');
   });
 
-  it('adds a preflight note for script-env-leak commands', () => {
+  it('adds a preflight note for script-env-leak commands, on the THREE-outcome scale', () => {
     const { user } = buildRaterPrompt('node deploy.js $AWS_SECRET_ACCESS_KEY');
     expect(user).toMatch(/PREFLIGHT NOTE/);
+    // The retired `caution` tier must not survive in the note's wording.
+    expect(user).toMatch(/at least destructive/i);
+    expect(user).not.toMatch(/\bcaution\b/i);
   });
 
-  it('defines all four tiers and keeps the injection defence under every strictness', () => {
-    for (const strictness of ['lenient', 'standard', 'strict'] as const) {
-      const system = buildRaterSystemPrompt(strictness);
-      expect(system).toMatch(/UNTRUSTED DATA/i);
-      for (const tier of RISK_TIERS) expect(system).toContain(`- ${tier}:`);
+  it('defines all three outcomes and offers no retired tier as a choice', () => {
+    const system = buildRaterSystemPrompt();
+    for (const outcome of RATER_OUTCOMES) expect(system).toContain(`- ${outcome}:`);
+    // The retired tiers must not be offerable. ("CRITICAL — prompt-injection defense" is the
+    // preamble's emphasis, not a tier, so the assertion is on the definition-list form.)
+    expect(system).not.toMatch(/- (caution|danger|critical):/i);
+    expect(system).not.toMatch(/\bcaution\b/i);
+  });
+
+  it('defines `destructive` BY EXCLUSION, so nothing can fall outside the three (§4.1)', () => {
+    const system = buildRaterSystemPrompt();
+    expect(system).toMatch(/NOT safe and NOT exfiltration/i);
+    expect(system).toMatch(/catch-all/i);
+    // Uncertainty is not an outcome — it lands in `destructive`, and the prompt says so.
+    expect(system).toMatch(/Uncertainty is NOT an outcome/i);
+    expect(system).toMatch(/cannot assess/i);
+  });
+
+  /**
+   * §4.1.1 — the highest-consequence property of the whole prompt. `exfiltration` is the only
+   * outcome that halts the run, and from `auto-safe` (the default rung) the only recovery is
+   * `bypass`. A prompt that says only "data or credentials leaving the machine" halts the run on
+   * ordinary publishing, which is how a stop control becomes noise. The spec therefore REQUIRES
+   * the prompt to carry the scoping in its own words, not merely the one-line table definition.
+   */
+  it('carries the §4.1.1 exfiltration scoping, naming ordinary egress as NOT exfiltration', () => {
+    const system = buildRaterSystemPrompt();
+    // Test (a): secrets by any route, destination irrelevant.
+    expect(system).toMatch(/SECRETS OR CREDENTIALS LEAVE THE MACHINE BY ANY ROUTE/i);
+    expect(system).toMatch(/destination is irrelevant/i);
+    // Test (b): a destination the project did not configure.
+    expect(system).toMatch(/DESTINATION THE PROJECT DID NOT CONFIGURE/i);
+    // And the exclusions, by name — this is the part a plain reading gets wrong.
+    for (const ordinary of [
+      'git push',
+      'git push --force',
+      'git fetch',
+      'gh pr create',
+      'npm publish',
+      'docker push',
+    ]) {
+      expect(system).toContain(ordinary);
     }
-  });
-
-  it('strictness changes ONLY the prompt wording (strict pushes mutating commands up a tier)', () => {
-    expect(buildRaterSystemPrompt('strict')).toMatch(/MUTATES state/);
-    expect(buildRaterSystemPrompt('lenient')).toMatch(/Bias toward SAFE for ordinary development/);
-    expect(buildRaterPrompt('ls', { strictness: 'strict' }).system).not.toEqual(
-      buildRaterPrompt('ls', { strictness: 'lenient' }).system
-    );
-    // ...and the USER half (the data) is identical regardless of strictness.
-    expect(buildRaterPrompt('ls', { strictness: 'strict' }).user).toEqual(
-      buildRaterPrompt('ls', { strictness: 'lenient' }).user
-    );
+    expect(system).toMatch(/"Data leaving the machine" is NOT the test/i);
+    expect(system).toMatch(/are NOT exfiltration/);
   });
 });
 
@@ -129,14 +161,18 @@ describe('rateShellCommand', () => {
     expect(structuredInvoke).toHaveBeenCalledOnce();
   });
 
-  it('fails closed (danger + "could not assess") when the model throws', async () => {
+  it('fails closed (destructive + "could not assess") when the model throws', async () => {
     const { model } = fakeModel(() => {
       throw new Error('boom');
     });
     const result = await rateShellCommand('ls -la', CONFIG, { model });
     expect(result).toEqual(FAIL_CLOSED_VERDICT);
-    expect(result.tier).toBe('danger');
+    expect(result.outcome).toBe('destructive');
     expect(result.reason).toContain(COULD_NOT_ASSESS_PREFIX);
+  });
+
+  it('never fails closed to `exfiltration` — a failure to assess must not halt the run either', () => {
+    expect(FAIL_CLOSED_VERDICT.outcome).toBe('destructive');
   });
 
   it('fails closed when the model returns garbage', async () => {
@@ -144,8 +180,8 @@ describe('rateShellCommand', () => {
     expect(await rateShellCommand('ls -la', CONFIG, { model })).toEqual(FAIL_CLOSED_VERDICT);
   });
 
-  it('fails closed when the model returns a RETIRED low/medium/high verdict', async () => {
-    const { model } = fakeModel(() => ({ risk: 'low', destructive: false, reason: 'ok' }));
+  it('fails closed when the model returns a RETIRED four-tier verdict', async () => {
+    const { model } = fakeModel(() => ({ tier: 'caution', reason: 'ok' }));
     expect(await rateShellCommand('ls -la', CONFIG, { model })).toEqual(FAIL_CLOSED_VERDICT);
   });
 
@@ -170,70 +206,72 @@ describe('rateShellCommand', () => {
   });
 });
 
-describe('mapVerdictToAction (CFG-26 4-tier scale)', () => {
+describe('mapVerdictToAction (CFG-27: 3 outcomes × 5 rungs)', () => {
   const RESOLVABLE = 'ls -la';
 
-  /**
-   * The full mapping matrix: 4 tiers × 3 modes × 3 escalate thresholds, on a statically
-   * resolvable command. `escalate` is only consulted under `auto`.
-   */
-  const EXPECTED: Record<ApprovalMode, Record<RaterEscalateThreshold, Record<RiskTier, string>>> = {
-    auto: {
-      caution: {
-        safe: 'approve',
-        caution: 'escalate',
-        danger: 'escalate',
-        critical: 'reject',
-      },
-      danger: {
-        safe: 'approve',
-        caution: 'reject-with-reason',
-        danger: 'escalate',
-        critical: 'reject',
-      },
-      never: {
-        safe: 'approve',
-        caution: 'reject-with-reason',
-        danger: 'reject-with-reason',
-        critical: 'reject',
-      },
-    },
-    // Under `ask` the rater is an ADVISOR: it annotates the prompt and never approves.
-    ask: {
-      caution: { safe: 'escalate', caution: 'escalate', danger: 'escalate', critical: 'reject' },
-      danger: { safe: 'escalate', caution: 'escalate', danger: 'escalate', critical: 'reject' },
-      never: { safe: 'escalate', caution: 'escalate', danger: 'escalate', critical: 'reject' },
-    },
-    // Under `bypass` the gate is off — but `critical` STILL rejects.
-    bypass: {
-      caution: { safe: 'approve', caution: 'approve', danger: 'approve', critical: 'reject' },
-      danger: { safe: 'approve', caution: 'approve', danger: 'approve', critical: 'reject' },
-      never: { safe: 'approve', caution: 'approve', danger: 'approve', critical: 'reject' },
-    },
+  /** The full mapping matrix from §4.2, on a statically resolvable command. */
+  const EXPECTED: Record<ApprovalRung, Record<RaterOutcome, string>> = {
+    // No model is consulted at all: anything the allow-list did not approve asks the human.
+    'read-only': { safe: 'escalate', destructive: 'escalate', exfiltration: 'escalate' },
+    write: { safe: 'escalate', destructive: 'escalate', exfiltration: 'escalate' },
+    'auto-safe': { safe: 'approve', destructive: 'escalate', exfiltration: 'halt' },
+    // EXT-29 will turn `destructive` into a negotiation here; until then it escalates, which is
+    // strictly more conservative.
+    'full-auto': { safe: 'approve', destructive: 'escalate', exfiltration: 'halt' },
+    // The gate is off. The deny list and the exec-time floor are enforced elsewhere.
+    bypass: { safe: 'approve', destructive: 'approve', exfiltration: 'approve' },
   };
 
-  for (const mode of ALL_MODES) {
-    for (const escalate of ALL_THRESHOLDS) {
-      for (const tier of RISK_TIERS) {
-        it(`mode=${mode} escalate=${escalate} tier=${tier} → ${EXPECTED[mode][escalate][tier]}`, () => {
-          expect(mapVerdictToAction(RESOLVABLE, verdict(tier), { mode, escalate }).action).toBe(
-            EXPECTED[mode][escalate][tier]
-          );
-        });
-      }
+  for (const rung of APPROVAL_RUNGS) {
+    for (const outcome of RATER_OUTCOMES) {
+      it(`rung=${rung} outcome=${outcome} → ${EXPECTED[rung][outcome]}`, () => {
+        expect(mapVerdictToAction(RESOLVABLE, verdict(outcome), { rung }).action).toBe(
+          EXPECTED[rung][outcome]
+        );
+      });
     }
   }
 
-  it('critical rejects under EVERY mode and threshold — there is no knob', () => {
-    for (const mode of ALL_MODES) {
-      for (const escalate of ALL_THRESHOLDS) {
-        expect(mapVerdictToAction(RESOLVABLE, CRITICAL, { mode, escalate }).action).toBe('reject');
-        // ...including an ambiguous catastrophic command (the fail-closed rewrite must not
-        // downgrade `critical` to `danger`).
-        expect(
-          mapVerdictToAction('rm -rf foo; echo done', CRITICAL, { mode, escalate }).action
-        ).toBe('reject');
-      }
+  it('the unrated rungs consult no verdict at all — they escalate on their own', () => {
+    for (const rung of UNRATED_RUNGS) {
+      const decision = mapVerdictToAction(RESOLVABLE, undefined, { rung });
+      expect(decision.action).toBe('escalate');
+      expect(decision.verdict).toBeUndefined();
+    }
+  });
+
+  it('a missing verdict at a RATED rung is treated as the fail-closed one, never approved', () => {
+    for (const rung of RATED_RUNGS) {
+      const decision = mapVerdictToAction(RESOLVABLE, undefined, { rung });
+      expect(decision.action).toBe('escalate');
+      expect(decision.verdict?.reason).toContain(COULD_NOT_ASSESS_PREFIX);
+    }
+  });
+
+  it('`exfiltration` halts at BOTH rated rungs and is never negotiable', () => {
+    for (const rung of RATED_RUNGS) {
+      expect(mapVerdictToAction(RESOLVABLE, EXFILTRATION, { rung }).action).toBe('halt');
+      // ...including on an ambiguous command: the fail-closed rewrite must not DOWNGRADE it.
+      const ambiguous = mapVerdictToAction('rm -rf foo; echo done', EXFILTRATION, { rung });
+      expect(ambiguous.action).toBe('halt');
+      expect(ambiguous.verdict?.outcome).toBe('exfiltration');
+    }
+  });
+
+  /**
+   * The acceptance property from §4.1.1: the MAPPING must not manufacture a halt on ordinary
+   * egress. What the live rater actually returns for these is QA-5's measurement; here we pin
+   * that a `safe` verdict approves them and a `destructive` one asks, with no path to `halt`.
+   */
+  it('a `git push origin main`-shaped command never halts (safe → approve, destructive → escalate)', () => {
+    const PUSH = 'git push origin main';
+    for (const rung of RATED_RUNGS) {
+      expect(mapVerdictToAction(PUSH, SAFE, { rung }).action).toBe('approve');
+      expect(mapVerdictToAction(PUSH, DESTRUCTIVE, { rung }).action).toBe('escalate');
+    }
+    for (const rung of APPROVAL_RUNGS) {
+      expect(mapVerdictToAction(PUSH, SAFE, { rung }).action).not.toBe('halt');
+      expect(mapVerdictToAction(PUSH, DESTRUCTIVE, { rung }).action).not.toBe('halt');
     }
   });
 
@@ -241,49 +279,46 @@ describe('mapVerdictToAction (CFG-26 4-tier scale)', () => {
     const AMBIGUOUS = ['cat x | sh', 'python -c "..." ; rm y', 'echo $(whoami)'];
     const SCRIPT_LEAK = 'node deploy.js $AWS_SECRET_ACCESS_KEY';
 
-    it('rewrites an ambiguous command to danger + "could not assess", even on a SAFE verdict', () => {
+    it('rewrites an ambiguous command to destructive + "could not assess", even on a SAFE verdict', () => {
       for (const command of AMBIGUOUS) {
-        const decision = mapVerdictToAction(command, SAFE, { mode: 'auto', escalate: 'danger' });
-        expect(decision.verdict.tier).toBe('danger');
-        expect(decision.verdict.reason).toContain(COULD_NOT_ASSESS_PREFIX);
-        // Honest: never claims the command was FOUND dangerous.
-        expect(decision.verdict.reason).not.toMatch(/\bdangerous\b/i);
+        const decision = mapVerdictToAction(command, SAFE, { rung: 'auto-safe' });
+        expect(decision.verdict?.outcome).toBe('destructive');
+        expect(decision.verdict?.reason).toContain(COULD_NOT_ASSESS_PREFIX);
+        // Honest: never claims the command was FOUND harmful.
+        expect(decision.verdict?.reason).not.toMatch(/\bdangerous\b/i);
         expect(decision.action).toBe('escalate');
       }
     });
 
-    it('rewrites a script-env-leak command to danger + "could not assess" on a SAFE verdict', () => {
-      const decision = mapVerdictToAction(SCRIPT_LEAK, SAFE, { mode: 'auto', escalate: 'danger' });
-      expect(decision.verdict.tier).toBe('danger');
-      expect(decision.verdict.reason).toContain(COULD_NOT_ASSESS_PREFIX);
+    it('rewrites a script-env-leak command to destructive + "could not assess" on a SAFE verdict', () => {
+      const decision = mapVerdictToAction(SCRIPT_LEAK, SAFE, { rung: 'auto-safe' });
+      expect(decision.verdict?.outcome).toBe('destructive');
+      expect(decision.verdict?.reason).toContain(COULD_NOT_ASSESS_PREFIX);
       expect(decision.action).toBe('escalate');
     });
 
-    it('NEVER approves an unassessable command — under any mode, threshold or claimed tier', () => {
-      for (const command of [...AMBIGUOUS, SCRIPT_LEAK]) {
-        for (const mode of ALL_MODES) {
-          for (const escalate of ALL_THRESHOLDS) {
-            for (const tier of RISK_TIERS) {
-              const { action } = mapVerdictToAction(command, verdict(tier), { mode, escalate });
-              // `bypass` has no gate at all, so it is the documented exception: the exec-time
-              // hardline floor is what stops a catastrophic command there.
-              if (mode === 'bypass') continue;
-              expect(action).not.toBe('approve');
-            }
+    /**
+     * The safety property CFG-26 established and this node had to carry through the rescale: a
+     * rater verdict may only ever make an outcome WORSE, never better. A MANIPULATED `safe` on a
+     * command the gate cannot statically resolve must still not approve.
+     */
+    it('NEVER approves an unassessable command at a rated rung — whatever the rater claimed', () => {
+      for (const command of [...AMBIGUOUS, SCRIPT_LEAK, 'ls -la; rm -rf ~']) {
+        for (const rung of [...RATED_RUNGS, ...UNRATED_RUNGS]) {
+          for (const outcome of RATER_OUTCOMES) {
+            const { action } = mapVerdictToAction(command, verdict(outcome), { rung });
+            expect(action).not.toBe('approve');
           }
         }
+        // `bypass` is the documented exception: no gate at all. The deny list and the exec-time
+        // hardline floor are what stop a command there.
+        expect(mapVerdictToAction(command, SAFE, { rung: 'bypass' }).action).toBe('approve');
       }
-    });
-
-    it('under escalate: never, an unassessable command bounces to the MODEL rather than approving', () => {
-      const decision = mapVerdictToAction('cat x | sh', SAFE, { mode: 'auto', escalate: 'never' });
-      expect(decision.action).toBe('reject-with-reason');
-      expect(decision.verdict.reason).toContain(COULD_NOT_ASSESS_PREFIX);
     });
   });
 
   it('returns the rater verdict untouched when the command IS statically resolvable', () => {
-    const decision = mapVerdictToAction(RESOLVABLE, SAFE, { mode: 'auto', escalate: 'danger' });
+    const decision = mapVerdictToAction(RESOLVABLE, SAFE, { rung: 'auto-safe' });
     expect(decision.verdict).toEqual(SAFE);
   });
 });

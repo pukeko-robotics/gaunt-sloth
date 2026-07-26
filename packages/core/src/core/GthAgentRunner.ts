@@ -305,6 +305,10 @@ export class GthAgentRunner {
           // tool call, so keep going until the graph completes with no pending interrupts.
           result += await this.resolveToolInterrupts();
         } catch (streamError) {
+          // CFG-27 — an approvals STOP is not a stream failure: it is the gate deliberately
+          // ending the run, and its message IS the explanation the spec requires it to carry.
+          // Re-thrown unchanged (the outer catch does the same) so nothing buries it.
+          if (streamError instanceof ApprovalStopError) throw streamError;
           // Handle streaming-specific errors
           debugLogError('Stream processing', streamError);
           throw new Error(
