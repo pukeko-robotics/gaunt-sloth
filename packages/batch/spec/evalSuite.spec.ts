@@ -37,6 +37,11 @@ describe('parseEvalSuite', () => {
     expect(checksOnly).toEqual({
       id: 'checks-only',
       passThreshold: 6, // from suite defaults
+      // BATCH-25 — every parsed case now carries these two, following this layer's convention that
+      // arrays default to `[]` rather than `undefined`. A case declaring no `tags:`/`model_free:`
+      // gets the inert values, so the classifier layer is entirely absent from its behaviour.
+      tags: [],
+      modelFree: false,
       turns: [
         {
           user: 'say hello and goodbye',

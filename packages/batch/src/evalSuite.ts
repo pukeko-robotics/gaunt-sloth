@@ -2,7 +2,21 @@ import { parse as parseYaml } from 'yaml';
 import * as z from 'zod';
 
 import { DEFAULT_EVAL_PASS_THRESHOLD } from '#src/evalTypes.js';
-import type { EvalCase, EvalExpectation, EvalSuite, EvalTarget, EvalTurn } from '#src/evalTypes.js';
+import type {
+  EvalCase,
+  EvalExpectation,
+  EvalSuite,
+  EvalSweep,
+  EvalSweepValue,
+  EvalTarget,
+  EvalTurn,
+} from '#src/evalTypes.js';
+import type {
+  ClassificationExtractor,
+  EvalClassificationSpec,
+  EvalMetricSpec,
+} from '#src/classificationTypes.js';
+import { parseMetricPredicate } from '#src/metrics.js';
 
 /**
  * Raw suite-file shape (snake_case, as authored). BATCH-12 adds the identity matrix on top of the
@@ -89,6 +103,12 @@ const RawAssertionsSchema = z.object({
   // BATCH-21 tool-RESULT assertions (gth-agent target only, enforced after normalization below).
   must_error: z.array(z.string()).optional(),
   tool_result_json_path: z.array(RawToolResultJsonPathCheckSchema).optional(),
+  // BATCH-25 CLASSIFICATION assertions. They sit in the assertion bundle — not on the case — so
+  // they inherit identity scoping AND per-turn scoping for free; a multi-round negotiation case
+  // needs a different expected action per round, which a case-level field could not express.
+  // Validated against the suite's `classification` enums after normalization.
+  expect_label: z.string().optional(),
+  expect_action: z.string().optional(),
   judge: z.string().optional(),
 });
 
@@ -125,6 +145,65 @@ const RawCaseSchema = RawAssertionsSchema.extend({
   // each turn for a multi-turn case). Enforced in code.
   turns: z.array(RawTurnSchema).optional(),
   pass_threshold: z.number().min(0).max(10).optional(),
+  // BATCH-25: the case's family tags. Unlike the assertion keys these ARE case-level — a family is a
+  // property of the case, identical across identities and rounds — so they are legal on a multi-turn
+  // case too.
+  tags: z.array(z.string()).optional(),
+  // BATCH-25: this case must be decided with zero model calls (the hardline-floor / ambiguity
+  // families). Requires a target that can classify deterministically; rejected otherwise.
+  model_free: z.boolean().optional(),
+});
+
+/** BATCH-25 — how a classification value is read from an answer: the bare string `answer` (the
+ * trimmed answer, matched against the enum) or `{ json_path: "…" }` (the same minimal path resolver
+ * `json_path` assertions use). No fuzzy/substring mode exists, deliberately. */
+const RawExtractorSchema = z.union([
+  z.literal('answer'),
+  z.object({ json_path: z.string().min(1, 'json_path extractor needs a non-empty path') }),
+]);
+
+/** BATCH-25 — the suite's `classification:` block: the enum that gives the confusion matrix its
+ * axes, plus how to read a value out of the SUT's answer. */
+const RawClassificationSchema = z.object({
+  labels: z.array(z.string()).min(1, 'classification.labels must declare at least one label'),
+  actions: z.array(z.string()).optional(),
+  label_from: RawExtractorSchema.optional(),
+  action_from: RawExtractorSchema.optional(),
+});
+
+/** A predicate list, written as one string or a list of strings. Entries are ANDed. */
+const RawPredicateListSchema = z.union([z.string(), z.array(z.string())]);
+
+/** BATCH-25 — one declared metric. `over` (the denominator) is OPTIONAL and its absence means the
+ * WHOLE scored corpus; that default is the point, not a convenience. */
+const RawMetricSchema = z.object({
+  name: z.string().min(1, 'metric name must be a non-empty string'),
+  description: z.string().optional(),
+  where: RawPredicateListSchema,
+  over: RawPredicateListSchema.optional(),
+  max: z.number().optional(),
+  min: z.number().optional(),
+  gate: z.enum(['fail', 'report']).optional(),
+});
+
+/** BATCH-25 — one sweep axis value. `model` reaches the config through BATCH-1's supported
+ * `initConfig({ model })` seam (a genuinely fresh `.llm`); `config` is a deep merge of plain data. */
+const RawSweepValueSchema = z.object({
+  name: z.string().min(1, 'sweep value name must be a non-empty string'),
+  model: z.string().optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
+});
+
+/** BATCH-25 — the sweep: named axes whose cartesian product is the set of runs (`rung × model`). */
+const RawSweepSchema = z.object({
+  axes: z
+    .array(
+      z.object({
+        name: z.string().min(1, 'sweep axis name must be a non-empty string'),
+        values: z.array(RawSweepValueSchema).min(1, 'a sweep axis must declare at least one value'),
+      })
+    )
+    .min(1, 'sweep must declare at least one axis'),
 });
 
 const RawSuiteSchema = z.object({
@@ -152,6 +231,11 @@ const RawSuiteSchema = z.object({
       pass_threshold: z.number().min(0).max(10).optional(),
     })
     .optional(),
+  // BATCH-25: the classifier layer. All three are optional and inert when absent, so every #405-era
+  // suite parses to exactly the same `EvalSuite` it did before.
+  classification: RawClassificationSchema.optional(),
+  metrics: z.array(RawMetricSchema).optional(),
+  sweep: RawSweepSchema.optional(),
   cases: z.array(RawCaseSchema).min(1, 'suite must declare at least one case'),
 });
 
@@ -169,6 +253,11 @@ const FLAT_ASSERTION_KEYS = [
   'json_path',
   'must_error',
   'tool_result_json_path',
+  // BATCH-25 — the classification assertions MUST be listed here. This array drives BOTH the
+  // flat-vs-`expect:` exclusivity check and the multi-turn "case-level assertions are rejected"
+  // check; omitting them would let a suite declare both surfaces and have one silently ignored.
+  'expect_label',
+  'expect_action',
   'judge',
 ] as const;
 
@@ -371,6 +460,14 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
     );
   }
 
+  // BATCH-25 — the classifier layer. Parsed BEFORE the cases, because every `expect_label` /
+  // `expect_action` and every metric literal is validated against these enums: a typo'd value is a
+  // suite error here rather than an assertion that can never pass (or, worse, a metric that reports
+  // a permanent, trusted zero).
+  const classification = buildClassificationSpec(data.classification, suffix);
+  const metrics = buildMetricSpecs(data.metrics, classification, suffix);
+  const sweep = buildSweep(data.sweep, suffix);
+
   const suiteDefaultThreshold = data.defaults?.pass_threshold ?? DEFAULT_EVAL_PASS_THRESHOLD;
 
   const seenIds = new Set<string>();
@@ -428,6 +525,7 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
             turnIndex,
             declaredIdentities,
             identities,
+            classification,
           }),
         };
       });
@@ -450,15 +548,51 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
             turnIndex: undefined,
             declaredIdentities,
             identities,
+            classification,
           }),
         },
       ];
+    }
+
+    // BATCH-25 — family tags. De-duplicated, blanks dropped, order preserved: they are the axis of
+    // every per-tag sub-score, and a duplicate would double-count a case within its own family.
+    const seenTags = new Set<string>();
+    const tags: string[] = [];
+    for (const rawTag of rawCase.tags ?? []) {
+      const tag = rawTag.trim();
+      if (tag.length === 0) {
+        throw new Error(
+          `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) has a blank tag — ` +
+            'a tag names a case family and is a per-tag sub-score axis, so it must be non-empty.'
+        );
+      }
+      if (seenTags.has(tag)) continue;
+      seenTags.add(tag);
+      tags.push(tag);
+    }
+
+    // BATCH-25 — `model_free` requires a target that classifies DETERMINISTICALLY and reports its
+    // own model-call count. No target shipped today does (see the `RunClassifyFn` seam in
+    // evalTypes.ts): a gth-agent / adk-agent / ag-ui case IS a model call by construction. Reject it
+    // rather than accept a flag that would silently mean nothing — an assertion that cannot bite is
+    // worse than an absent one.
+    const modelFree = rawCase.model_free === true;
+    if (modelFree) {
+      throw new Error(
+        `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) declares ` +
+          `\`model_free: true\`, which the "${target.type}" target cannot honour — running a case ` +
+          'through an agent IS a model call. `model_free` needs a classification target that ' +
+          'decides deterministically and reports its own model-call count (BATCH-25 Half B\'s ' +
+          '`rater` target). Remove the flag, or wait for that target.'
+      );
     }
 
     return {
       id: rawCase.id,
       turns,
       passThreshold: rawCase.pass_threshold ?? suiteDefaultThreshold,
+      tags,
+      modelFree,
     };
   });
 
@@ -530,8 +664,240 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
     target,
     judgeProfile,
     identities,
+    classification,
+    metrics,
+    sweep,
     cases,
   };
+}
+
+/**
+ * BATCH-25 — normalize the suite's `classification:` block.
+ *
+ * `label_from` defaults to `answer` (the trimmed answer matched case-insensitively against the
+ * declared enum), which suits a suite whose prompt says "reply with exactly one of: …". An
+ * `action_from` has NO default: without it the suite has no action dimension, and `expect_action` is
+ * then a parse error rather than an assertion that could never be graded.
+ */
+function buildClassificationSpec(
+  raw: z.infer<typeof RawClassificationSchema> | undefined,
+  suffix: string
+): EvalClassificationSpec | undefined {
+  if (raw === undefined) return undefined;
+
+  const labels = normalizeEnum(raw.labels, 'classification.labels', suffix);
+  const actions = normalizeEnum(raw.actions ?? [], 'classification.actions', suffix);
+
+  const actionFrom = raw.action_from ? normalizeExtractor(raw.action_from) : undefined;
+  if (actions.length === 0 && actionFrom !== undefined) {
+    throw new Error(
+      `Invalid eval suite${suffix}: \`classification.action_from\` is declared but ` +
+        '`classification.actions` is empty — an extractor with no enum to match against can only ' +
+        'ever produce "(unrecognized)".'
+    );
+  }
+  if (actions.length > 0 && actionFrom === undefined) {
+    throw new Error(
+      `Invalid eval suite${suffix}: \`classification.actions\` is declared but ` +
+        '`classification.action_from` is not — declare how an action is read out of the answer ' +
+        '(e.g. `action_from: { json_path: "$.action" }`), or drop `actions`.'
+    );
+  }
+
+  return {
+    labels,
+    actions,
+    labelFrom: raw.label_from ? normalizeExtractor(raw.label_from) : { kind: 'answer' },
+    actionFrom,
+  };
+}
+
+/** Validate one declared enum: non-blank, unique, and free of the parenthesized synthetic buckets
+ * (`(unrecognized)` / `(none)`), which the matrix reserves for "no declared value matched" and "no
+ * expectation". A declared value colliding with one of those would make the two indistinguishable. */
+function normalizeEnum(values: string[], field: string, suffix: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const rawValue of values) {
+    const value = rawValue.trim();
+    if (value.length === 0) {
+      throw new Error(`Invalid eval suite${suffix}: \`${field}\` contains a blank value.`);
+    }
+    if (!/^[\w.-]+$/.test(value)) {
+      throw new Error(
+        `Invalid eval suite${suffix}: \`${field}\` value "${value}" must be a plain token ` +
+          '(alphanumeric, dashes, underscores, dots) — enum values are matrix axis labels and ' +
+          'metric-predicate literals.'
+      );
+    }
+    if (seen.has(value)) {
+      throw new Error(`Invalid eval suite${suffix}: duplicate \`${field}\` value "${value}".`);
+    }
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+/** `"answer"` | `{ json_path }` → the normalized extractor. */
+function normalizeExtractor(
+  raw: z.infer<typeof RawExtractorSchema>
+): ClassificationExtractor {
+  return raw === 'answer' ? { kind: 'answer' } : { kind: 'json_path', path: raw.json_path };
+}
+
+/** Accept a predicate list written as one string or a list of strings; entries are ANDed. */
+function toPredicateList(raw: string | string[] | undefined): string[] {
+  if (raw === undefined) return [];
+  return Array.isArray(raw) ? raw : [raw];
+}
+
+/**
+ * BATCH-25 — normalize the suite's `metrics:` list.
+ *
+ * Two rules here are load-bearing rather than defensive:
+ * - a metric requires a `classification:` block (there is nothing to read otherwise);
+ * - every predicate literal is checked against the declared enums by
+ *   {@link ../metrics.js parseMetricPredicate}, because a typo'd value produces an unsatisfiable
+ *   predicate — a metric that reports a permanent, and trusted, zero.
+ *
+ * `gate` defaults to `fail` when a threshold is declared: a threshold nobody acts on is a comment.
+ * An author who wants a reported-but-not-gating number writes `gate: report` (the corpus plan's
+ * `over_escalation`).
+ */
+function buildMetricSpecs(
+  raw: z.infer<typeof RawMetricSchema>[] | undefined,
+  classification: EvalClassificationSpec | undefined,
+  suffix: string
+): EvalMetricSpec[] {
+  if (raw === undefined || raw.length === 0) return [];
+  if (!classification) {
+    throw new Error(
+      `Invalid eval suite${suffix}: \`metrics\` requires a \`classification:\` block — a metric ` +
+        'reads labels/actions, so the suite must declare which ones exist.'
+    );
+  }
+
+  const seen = new Set<string>();
+  return raw.map((rawMetric, index) => {
+    const name = rawMetric.name.trim();
+    if (seen.has(name)) {
+      throw new Error(`Invalid eval suite${suffix}: duplicate metric name "${name}".`);
+    }
+    seen.add(name);
+
+    const where = toPredicateList(rawMetric.where);
+    if (where.length === 0) {
+      throw new Error(
+        `Invalid eval suite${suffix}: metric "${name}" (index ${index}) has an empty \`where\` — ` +
+          'a metric with no numerator predicate counts every case in its denominator, which is a ' +
+          'coverage report, not a metric.'
+      );
+    }
+    const rawOver = toPredicateList(rawMetric.over);
+
+    const at = `Invalid eval suite${suffix}: metric "${name}" (index ${index})`;
+    const wherePredicates = where.map((predicate) =>
+      parseMetricPredicate(predicate, classification, `${at} \`where\``)
+    );
+    const overPredicates =
+      rawMetric.over === undefined
+        ? undefined
+        : rawOver.map((predicate) =>
+            parseMetricPredicate(predicate, classification, `${at} \`over\``)
+          );
+    if (overPredicates !== undefined && overPredicates.length === 0) {
+      throw new Error(
+        `${at} has an empty \`over\` — omit the key entirely to score the WHOLE corpus (the ` +
+          'default, and the one that cannot go blind).'
+      );
+    }
+
+    for (const [field, value] of [
+      ['max', rawMetric.max],
+      ['min', rawMetric.min],
+    ] as const) {
+      if (value !== undefined && (value < 0 || value > 1)) {
+        throw new Error(
+          `${at} has \`${field}: ${value}\` — thresholds are FRACTIONS of the denominator (0..1), ` +
+            'so a zero-tolerance gate is `max: 0` and a full-recall gate is `min: 1`.'
+        );
+      }
+    }
+
+    return {
+      name,
+      description: rawMetric.description?.trim() || undefined,
+      where: wherePredicates,
+      over: overPredicates,
+      max: rawMetric.max,
+      min: rawMetric.min,
+      gate: rawMetric.gate ?? 'fail',
+    };
+  });
+}
+
+/** BATCH-25 — normalize the `sweep:` block. Axis and value names double as output-dir components,
+ * so they get the same path-safe validation case ids and identity names get. */
+function buildSweep(
+  raw: z.infer<typeof RawSweepSchema> | undefined,
+  suffix: string
+): EvalSweep | undefined {
+  if (raw === undefined) return undefined;
+
+  const seenAxes = new Set<string>();
+  const axes = raw.axes.map((rawAxis) => {
+    const axisName = rawAxis.name.trim();
+    assertPathSafeToken(axisName, `sweep axis name`, suffix);
+    if (seenAxes.has(axisName)) {
+      throw new Error(`Invalid eval suite${suffix}: duplicate sweep axis "${axisName}".`);
+    }
+    seenAxes.add(axisName);
+
+    const seenValues = new Set<string>();
+    const values: EvalSweepValue[] = rawAxis.values.map((rawValue) => {
+      const valueName = rawValue.name.trim();
+      assertPathSafeToken(valueName, `sweep value name (axis "${axisName}")`, suffix);
+      if (seenValues.has(valueName)) {
+        throw new Error(
+          `Invalid eval suite${suffix}: duplicate sweep value "${valueName}" on axis "${axisName}".`
+        );
+      }
+      seenValues.add(valueName);
+
+      if (rawValue.config && 'llm' in rawValue.config) {
+        throw new Error(
+          `Invalid eval suite${suffix}: sweep value "${axisName}=${valueName}" sets \`config.llm\`. ` +
+            '`llm` holds a CONSTRUCTED model instance, not data — merging into it produces a ' +
+            'half-built object. Use the sibling `model:` key, which rebuilds the model through the ' +
+            'provider (a genuinely fresh instance).'
+        );
+      }
+      if (rawValue.model === undefined && rawValue.config === undefined) {
+        throw new Error(
+          `Invalid eval suite${suffix}: sweep value "${axisName}=${valueName}" declares neither ` +
+            '`model:` nor `config:` — a cell that overrides nothing is an unnamed duplicate run.'
+        );
+      }
+      return { name: valueName, model: rawValue.model?.trim() || undefined, config: rawValue.config };
+    });
+
+    return { name: axisName, values };
+  });
+
+  return { axes };
+}
+
+/** A plain, path-safe token — the same rule case ids and identity names follow, for the same reason
+ * (these names become output-directory components). */
+function assertPathSafeToken(value: string, what: string, suffix: string): void {
+  if (!/^[\w.-]+$/.test(value) || value.includes('..')) {
+    throw new Error(
+      `Invalid eval suite${suffix}: ${what} "${value}" must be a plain token (alphanumeric, ` +
+        'dashes, underscores, dots) — it becomes an output-directory component, so path ' +
+        'separators and ".." are rejected.'
+    );
+  }
 }
 
 /** The suite's per-turn assertion surface as authored — a raw `RawAssertions` bundle plus an
@@ -552,6 +918,8 @@ interface TurnContext {
   declaredIdentities: Set<string> | undefined;
   /** The suite's declared identity list (for the per-(turn × identity) no-silent-pass guard). */
   identities: string[] | undefined;
+  /** BATCH-25 — the suite's classification enums, for validating `expect_label`/`expect_action`. */
+  classification: EvalClassificationSpec | undefined;
 }
 
 /**
@@ -596,6 +964,7 @@ function buildTurnExpectations(raw: RawTurnAssertions, ctx: TurnContext): EvalEx
         turnIndex: ctx.turnIndex,
         blockIndex,
         declaredIdentities: ctx.declaredIdentities,
+        classification: ctx.classification,
       })
     );
   } else {
@@ -608,6 +977,7 @@ function buildTurnExpectations(raw: RawTurnAssertions, ctx: TurnContext): EvalEx
         turnIndex: ctx.turnIndex,
         blockIndex: undefined,
         declaredIdentities: ctx.declaredIdentities,
+        classification: ctx.classification,
       }),
     ];
   }
@@ -645,6 +1015,8 @@ interface ExpectationContext {
   blockIndex: number | undefined;
   /** The suite's declared identity names, or `undefined` when the suite declares none. */
   declaredIdentities: Set<string> | undefined;
+  /** BATCH-25 — the suite's classification enums, for validating `expect_label`/`expect_action`. */
+  classification: EvalClassificationSpec | undefined;
 }
 
 /**
@@ -745,6 +1117,48 @@ function buildExpectation(
     return { tool: entry.tool, path: entry.path };
   });
 
+  // BATCH-25 classification assertions. Validated against the suite's declared enums HERE (not
+  // later) so a typo'd label is a suite error rather than a case that can never pass.
+  const expectLabel = raw.expect_label?.trim() || undefined;
+  const expectAction = raw.expect_action?.trim() || undefined;
+  if (expectLabel !== undefined) {
+    if (!ctx.classification) {
+      throw new Error(
+        `Invalid eval suite${ctx.suffix}: ${where} uses \`expect_label\` but the suite declares no ` +
+          '`classification:` block — add one naming the label enum (e.g. `classification: { ' +
+          'labels: [safe, destructive] }`), which is also what gives the confusion matrix its axes.'
+      );
+    }
+    if (!ctx.classification.labels.includes(expectLabel)) {
+      throw new Error(
+        `Invalid eval suite${ctx.suffix}: ${where} expects label "${expectLabel}", which is not in ` +
+          `the suite's \`classification.labels\` (${ctx.classification.labels.join(', ')}).`
+      );
+    }
+  }
+  if (expectAction !== undefined) {
+    if (!ctx.classification) {
+      throw new Error(
+        `Invalid eval suite${ctx.suffix}: ${where} uses \`expect_action\` but the suite declares ` +
+          'no `classification:` block — add one declaring `actions:` and `action_from:`.'
+      );
+    }
+    if (ctx.classification.actions.length === 0) {
+      throw new Error(
+        `Invalid eval suite${ctx.suffix}: ${where} uses \`expect_action\` but the suite's ` +
+          '`classification:` block declares no `actions:` enum — an action assertion with no ' +
+          'action dimension could never be graded, and an ungradeable assertion that silently ' +
+          'passes is the worst outcome for an eval tool.'
+      );
+    }
+    if (!ctx.classification.actions.includes(expectAction)) {
+      throw new Error(
+        `Invalid eval suite${ctx.suffix}: ${where} expects action "${expectAction}", which is not ` +
+          `in the suite's \`classification.actions\` (${ctx.classification.actions.join(', ')}).`
+      );
+    }
+  }
+
   const hasChecks =
     mustContain.length > 0 ||
     mustNotContain.length > 0 ||
@@ -755,7 +1169,12 @@ function buildExpectation(
     mustNotMatch.length > 0 ||
     jsonPath.length > 0 ||
     mustError.length > 0 ||
-    toolResultJsonPath.length > 0;
+    toolResultJsonPath.length > 0 ||
+    // BATCH-25 — a classification case whose ONLY assertion is `expect_label`/`expect_action` is the
+    // primary shape of a classifier suite; without these two clauses it would be rejected here as
+    // "no checks and no judge rubric".
+    expectLabel !== undefined ||
+    expectAction !== undefined;
   const judgeRubric = raw.judge?.trim();
   const hasJudge = !!judgeRubric;
 
@@ -764,7 +1183,7 @@ function buildExpectation(
       `Invalid eval suite${ctx.suffix}: ${where} has no checks and no judge rubric — it must ` +
         'declare at least one of must_contain / must_not_contain / should_contain_any / must_call ' +
         '/ must_not_call / must_match / must_not_match / json_path / must_error / ' +
-        'tool_result_json_path, or a judge rubric.'
+        'tool_result_json_path / expect_label / expect_action, or a judge rubric.'
     );
   }
 
@@ -780,6 +1199,8 @@ function buildExpectation(
     jsonPath,
     mustError,
     toolResultJsonPath,
+    expectLabel,
+    expectAction,
     judgeRubric: hasJudge ? judgeRubric : undefined,
   };
 }
