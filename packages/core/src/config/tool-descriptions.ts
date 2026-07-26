@@ -129,9 +129,19 @@ export interface GrantedToolSummary {
  * contribute text to the rater prompt.
  *
  * Restricted to tools that could plausibly stand in for a shell command — the file tools, content
- * search, the web fetch, and the fixed dev-command tools. `gth_checklist`, `gth_status_update` and
- * `show_a2ui_surface` are omitted: they substitute for nothing a model would otherwise shell out
- * for, and a suggestion list is only useful while it is short.
+ * search, and the fixed dev-command tools (whose command is human-authored config, so suggesting
+ * `run_tests` over `npm test` is exactly the trade this section exists to make). `gth_checklist`,
+ * `gth_status_update` and `show_a2ui_surface` are omitted: they substitute for nothing a model
+ * would otherwise shell out for, and a suggestion list is only useful while it is short.
+ *
+ * **`gth_web_fetch` is deliberately NOT here**, though it is ungated at every rung. §4.5's
+ * justification for disclosing the posture at all is that the granted tools are "by construction,
+ * the constrained ones confined to the working folder" — a network fetch is not. Offering it would
+ * let a refused `curl`/`wget` come back as a suggestion whose §7 clause tells the model, verbatim,
+ * that the alternative "will not interrupt the user": a refused egress turned into a free one,
+ * through the rater rather than through the gate. Exfiltration halts before any message reaches the
+ * model, but a merely `destructive` fetch would not. Same reasoning excludes MCP and custom tools,
+ * which additionally supply text we did not author.
  */
 export const BUILT_IN_TOOL_SUMMARIES: Readonly<Record<string, string>> = {
   read_file: 'Read one file in the working folder.',
@@ -153,7 +163,6 @@ export const BUILT_IN_TOOL_SUMMARIES: Readonly<Record<string, string>> = {
   glob: 'Find files in the working folder by glob pattern.',
   grep: 'Search file contents in the working folder by regular expression.',
   gth_grep: 'Search file contents in the working folder by regular expression.',
-  gth_web_fetch: 'Fetch a URL and return its content as text.',
   run_tests: "Run the project's configured test command.",
   run_single_test: "Run one test file with the project's configured test command.",
   run_lint: "Run the project's configured lint command.",

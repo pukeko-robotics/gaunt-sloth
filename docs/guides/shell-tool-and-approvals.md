@@ -101,8 +101,7 @@ saying so, and the tools that run freely say nothing. The shell is the only gate
 is the only description that changes — at `read-only` and `write` it says the call *will* require
 your approval, at `auto-safe` that it *may*, and at `full-auto` that the auto-rater may refuse it.
 Each sentence also tells the agent to reach for the shell only when the other tools cannot do the
-job, which is why a session at a lower rung tends to edit and search files directly rather than
-shelling out to `sed` and `grep`.
+job.
 
 The auto-rater backs that up at `auto-safe` and `full-auto`. When it does not rate a command safe
 and one of the tools the agent already has would do the same job, it names that tool in its

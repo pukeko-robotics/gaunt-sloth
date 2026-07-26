@@ -284,6 +284,24 @@ describe('§4.4 granted-built-in list', () => {
     }
   });
 
+  /**
+   * Ungated is not the same as offerable. §4.5's justification for disclosing the posture is that
+   * the granted tools are "by construction, the constrained ones confined to the working folder";
+   * a network fetch is not one of those. Offering it would let a refused `curl` come back as a
+   * suggestion whose §7 clause promises the model it "will not interrupt the user" — a refused
+   * egress turned into a free one, through the rater rather than through the gate.
+   */
+  it('never offers gth_web_fetch, however ungated it is', () => {
+    for (const rung of APPROVAL_RUNGS) {
+      const granted = describeGrantedBuiltInTools(
+        ['read_file', 'gth_web_fetch', SHELL_TOOL_NAME],
+        rung,
+        [SHELL_TOOL_NAME]
+      );
+      expect(granted.map((t) => t.name)).not.toContain('gth_web_fetch');
+    }
+  });
+
   it('never offers a tool this session did not register', () => {
     const granted = describeGrantedBuiltInTools(['read_file'], 'auto-safe', [SHELL_TOOL_NAME]);
     expect(granted.map((t) => t.name)).toEqual(['read_file']);
