@@ -2,10 +2,14 @@ import {
   type AllowlistCounts,
   type ApprovalRung,
   DEFAULT_APPROVAL_RUNG,
+  describeGrantedBuiltInTools,
+  type GrantedToolSummary,
   GthConfig,
   isRatedRung,
   type ResolvedApprovals,
   resolveApprovals,
+  resolveShellApprovalGate,
+  SHELL_TOOL_NAME,
 } from '#src/config.js';
 import { BaseCheckpointSaver } from '@langchain/langgraph';
 import {
@@ -511,6 +515,11 @@ export class GthAgentRunner {
         // session model. `init` throws rather than leaving this undefined for a NAMED profile, so
         // a configured profile can never silently degrade to the session model here.
         model: this.raterModel,
+        // EXT-58 (§4.4) — the already-granted built-ins of the CURRENT rung, so a non-`safe`
+        // outcome can name one the model could call for free instead. Computed per rating rather
+        // than cached at init, because `/approvals <rung>` moves the rung mid-session and a stale
+        // list would offer a tool that is no longer granted.
+        grantedTools: this.getGrantedBuiltInTools(),
       });
       const decision = mapVerdictToAction(command, verdict, { rung: approvals.rung });
       if (decision.action === 'approve') {
@@ -545,6 +554,30 @@ export class GthAgentRunner {
       this.recordApproval(command, decision.scope ?? 'once');
     }
     return decision;
+  }
+
+  /**
+   * EXT-58 (§4.3/§4.4) — the built-in tools already granted at the session's CURRENT rung, as
+   * names plus one-line locally-authored descriptions, for the rater prompt.
+   *
+   * Two filters make this safe to place outside the rater's fenced untrusted block:
+   * - the names come from what the agent actually registered
+   *   ({@link GthAgentInterface.getRegisteredToolNames}), so the rater can only ever offer a tool
+   *   this session has;
+   * - the descriptions come from core's own `BUILT_IN_TOOL_SUMMARIES` table, so no MCP, custom or
+   *   A2A tool's own (attacker-influenceable) description can reach the prompt.
+   *
+   * Empty when the agent does not expose its tools — the rater then gets no list and, per the
+   * prompt, offers nothing.
+   */
+  private getGrantedBuiltInTools(): GrantedToolSummary[] {
+    const registered = this.agent?.getRegisteredToolNames?.() ?? [];
+    if (registered.length === 0) return [];
+    // The gated set is resolved from the SAME shared policy both backends wire their interrupt
+    // from, so "granted" here means exactly what it means at tool-registration time (§4.5).
+    const { gateShell } = resolveShellApprovalGate(this.config ?? undefined, this.command);
+    const gatedTools = gateShell ? [SHELL_TOOL_NAME] : [];
+    return describeGrantedBuiltInTools(registered, this.sessionApprovals.rung, gatedTools);
   }
 
   /**

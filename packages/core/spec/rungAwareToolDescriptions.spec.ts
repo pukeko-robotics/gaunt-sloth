@@ -1,0 +1,437 @@
+/**
+ * EXT-58 acceptance for spec §4.5 (rung-aware tool descriptions) and the granted-built-in list
+ * §4.4 draws on.
+ *
+ * Two halves:
+ *
+ * 1. The pure policy (`config/tool-descriptions.ts`), matrixed over **five rungs × the built-in
+ *    set** — twice. Once with the gated set the code actually wires today (`run_shell_command`
+ *    alone, per §4.3's scope boundary: "every other tool is granted or escalated by the rung
+ *    without a rating call until EXT-30 widens the gate"), and once with an INJECTED wider gated
+ *    set of the shape EXT-30 will install. The second pass is what makes the rung's access-class
+ *    rule observable — `read-only` grants read tools only, `write` and up also grant write tools —
+ *    without shipping a sentence today that disagrees with today's gate.
+ * 2. The wiring, driven through the REAL `GthLangChainAgent.init` with `createAgent` mocked, so
+ *    the assertions are about the descriptions the graph is actually handed — including that the
+ *    suffix follows the RESOLVED rung, per-command override and all.
+ *
+ * The load-bearing negative in both halves: **a granted tool carries NO suffix.** The absence of
+ * the sentence is what marks a tool free, so any assertion here that a description is byte-equal
+ * to the original is testing the design, not an implementation detail.
+ */
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import {
+  APPROVAL_RUNGS,
+  applyRungAwareToolDescriptions,
+  describeGrantedBuiltInTools,
+  isGrantedAtRung,
+  RUNG_TOOL_DESCRIPTION_SUFFIXES,
+  SHELL_TOOL_NAME,
+  stripRungToolDescriptionSuffix,
+  type ApprovalRung,
+  type GthConfig,
+} from '#src/config.js';
+import type { StatusUpdateCallback } from '#src/core/types.js';
+
+// Silence the user-facing display fns so the suite's stdout stays clean; everything else in
+// consoleUtils stays real. Self-contained factory: this module is pulled in by the static
+// `#src/config.js` import below, i.e. before any outer `const` in this file is initialized.
+vi.mock('#src/utils/consoleUtils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#src/utils/consoleUtils.js')>();
+  return {
+    ...actual,
+    display: vi.fn(),
+    displayInfo: vi.fn(),
+    displayWarning: vi.fn(),
+    displayError: vi.fn(),
+    displaySuccess: vi.fn(),
+    displayDebug: vi.fn(),
+    displayToolIndication: vi.fn(),
+  };
+});
+
+const createAgentMock = vi.fn();
+vi.mock('langchain', async () => {
+  const actual = await vi.importActual<typeof import('langchain')>('langchain');
+  return { ...actual, createAgent: createAgentMock };
+});
+
+vi.mock('#src/middleware/registry.js', () => ({ resolveMiddleware: vi.fn(async () => []) }));
+
+vi.mock('#src/utils/llmUtils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#src/utils/llmUtils.js')>();
+  return {
+    ...actual,
+    buildSystemMessages: vi.fn(() => [{ content: 'SYSTEM PROMPT' }]),
+    readChatPrompt: vi.fn(() => 'chat-mode-prompt'),
+    readCodePrompt: vi.fn(() => 'code-mode-prompt'),
+    readExecPrompt: vi.fn(() => 'exec-mode-prompt'),
+  };
+});
+
+/** The four distinct sentences of §4.5's table, referenced by rung. */
+const SUFFIX = RUNG_TOOL_DESCRIPTION_SUFFIXES;
+
+/** A representative slice of the built-in set, one per class the policy distinguishes. */
+const TOOL_FIXTURES = [
+  { name: 'read_file', description: 'Read one file.' },
+  { name: 'list_directory', description: 'List a directory.' },
+  { name: 'gth_grep', description: 'Search file contents.' },
+  { name: 'write_file', description: 'Write one file.' },
+  { name: 'edit_file', description: 'Edit one file.' },
+  { name: 'delete_file', description: 'Delete one file.' },
+  { name: 'gth_web_fetch', description: 'Fetch a URL.' },
+  { name: 'run_tests', description: 'Run the tests.' },
+  { name: SHELL_TOOL_NAME, description: 'Run a shell command.' },
+  { name: 'mcp__srv__query', description: 'Query the server.' },
+] as const;
+
+const ORIGINAL_DESCRIPTIONS = new Map(TOOL_FIXTURES.map((t) => [t.name, t.description]));
+
+function freshTools(): { name: string; description: string }[] {
+  return TOOL_FIXTURES.map((t) => ({ name: t.name, description: t.description }));
+}
+
+/** Names whose description differs from the fixture's original, mapped to the appended sentence. */
+function suffixedNames(tools: { name: string; description: string }[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const tool of tools) {
+    const original = ORIGINAL_DESCRIPTIONS.get(tool.name)!;
+    if (tool.description === original) continue;
+    expect(tool.description.startsWith(`${original} `)).toBe(true);
+    out[tool.name] = tool.description.slice(original.length + 1);
+  }
+  return out;
+}
+
+describe('§4.5 suffix table', () => {
+  it('carries the four wordings verbatim, with bypass appending nothing', () => {
+    // read-only and write share one sentence: at both rungs the user's approval is a certainty.
+    expect(SUFFIX['read-only']).toBe(
+      "Calling this tool will require the user's approval. Only use it when the result cannot be " +
+        'achieved with the other provided tools.'
+    );
+    expect(SUFFIX.write).toBe(SUFFIX['read-only']);
+    expect(SUFFIX['auto-safe']).toBe(
+      "Calling this tool MAY require the user's approval if it does not look safe. Only use it " +
+        'when it is impossible to achieve the result with the other provided tools.'
+    );
+    // full-auto has its OWN wording: the user is not asked there, so promising the user's
+    // approval would be false — what can happen is a refusal by the rater.
+    expect(SUFFIX['full-auto']).toBe(
+      'Calling this tool MAY be refused by the auto-rater if it does not look safe. Only use it ' +
+        'when it is impossible to achieve the result with the other provided tools.'
+    );
+    expect(SUFFIX['full-auto']).not.toContain("user's approval");
+    expect(SUFFIX.bypass).toBeNull();
+  });
+
+  it('covers every rung of the ladder', () => {
+    expect(Object.keys(SUFFIX).sort()).toEqual([...APPROVAL_RUNGS].sort());
+  });
+});
+
+describe('§4.5 registration matrix — the gate as it is wired TODAY (shell only)', () => {
+  // §4.3: every tool other than the shell is granted by the rung without a rating call until
+  // EXT-30 widens the gate, so the shell is the only tool that can carry a sentence.
+  const gatedTools = [SHELL_TOOL_NAME];
+
+  it.each([
+    ['read-only', SUFFIX['read-only']],
+    ['write', SUFFIX.write],
+    ['auto-safe', SUFFIX['auto-safe']],
+    ['full-auto', SUFFIX['full-auto']],
+  ] as const)('at %s exactly the gated shell carries the sentence', (rung, expected) => {
+    const tools = freshTools();
+    applyRungAwareToolDescriptions(tools, { rung: rung as ApprovalRung, gatedTools });
+    expect(suffixedNames(tools)).toEqual({ [SHELL_TOOL_NAME]: expected });
+  });
+
+  it('at bypass no tool is modified at all', () => {
+    const tools = freshTools();
+    applyRungAwareToolDescriptions(tools, { rung: 'bypass', gatedTools });
+    expect(suffixedNames(tools)).toEqual({});
+    for (const tool of tools) {
+      expect(tool.description).toBe(ORIGINAL_DESCRIPTIONS.get(tool.name));
+    }
+  });
+});
+
+describe('§4.5 registration matrix — with a widened gated set (the EXT-30 shape)', () => {
+  // The rung's own access-class rule, made observable: EXT-30 gates everything but the read
+  // tools, at which point `read-only` vs `write` differ in WHICH tools are granted.
+  const gatedTools = [
+    SHELL_TOOL_NAME,
+    'read_file',
+    'list_directory',
+    'gth_grep',
+    'write_file',
+    'edit_file',
+    'delete_file',
+    'gth_web_fetch',
+    'run_tests',
+    'mcp__srv__query',
+  ];
+
+  it('at read-only the read tools are granted and the write tools are not', () => {
+    const tools = freshTools();
+    applyRungAwareToolDescriptions(tools, { rung: 'read-only', gatedTools });
+    expect(suffixedNames(tools)).toEqual({
+      write_file: SUFFIX['read-only'],
+      edit_file: SUFFIX['read-only'],
+      delete_file: SUFFIX['read-only'],
+      gth_web_fetch: SUFFIX['read-only'],
+      run_tests: SUFFIX['read-only'],
+      mcp__srv__query: SUFFIX['read-only'],
+      [SHELL_TOOL_NAME]: SUFFIX['read-only'],
+    });
+  });
+
+  it.each([
+    ['write', SUFFIX.write],
+    ['auto-safe', SUFFIX['auto-safe']],
+    ['full-auto', SUFFIX['full-auto']],
+  ] as const)('at %s the read AND write tools are granted', (rung, expected) => {
+    const tools = freshTools();
+    applyRungAwareToolDescriptions(tools, { rung: rung as ApprovalRung, gatedTools });
+    expect(suffixedNames(tools)).toEqual({
+      gth_web_fetch: expected,
+      run_tests: expected,
+      mcp__srv__query: expected,
+      [SHELL_TOOL_NAME]: expected,
+    });
+  });
+
+  it('at bypass still modifies nothing, however wide the gate is', () => {
+    const tools = freshTools();
+    applyRungAwareToolDescriptions(tools, { rung: 'bypass', gatedTools });
+    expect(suffixedNames(tools)).toEqual({});
+  });
+});
+
+describe('applyRungAwareToolDescriptions — mechanics', () => {
+  it('is idempotent and re-appliable: a second pass replaces, never stacks', () => {
+    const tools = freshTools();
+    applyRungAwareToolDescriptions(tools, { rung: 'read-only', gatedTools: [SHELL_TOOL_NAME] });
+    applyRungAwareToolDescriptions(tools, { rung: 'read-only', gatedTools: [SHELL_TOOL_NAME] });
+    expect(suffixedNames(tools)).toEqual({ [SHELL_TOOL_NAME]: SUFFIX['read-only'] });
+
+    applyRungAwareToolDescriptions(tools, { rung: 'full-auto', gatedTools: [SHELL_TOOL_NAME] });
+    expect(suffixedNames(tools)).toEqual({ [SHELL_TOOL_NAME]: SUFFIX['full-auto'] });
+
+    // …and dropping to bypass restores the tool's own description exactly.
+    applyRungAwareToolDescriptions(tools, { rung: 'bypass', gatedTools: [SHELL_TOOL_NAME] });
+    expect(tools.find((t) => t.name === SHELL_TOOL_NAME)!.description).toBe('Run a shell command.');
+  });
+
+  it('leaves nameless tools (provider-native ServerTools) alone', () => {
+    const tools = [{ description: 'A provider-native tool with no name.' }];
+    applyRungAwareToolDescriptions(tools, { rung: 'read-only', gatedTools: [SHELL_TOOL_NAME] });
+    expect(tools[0].description).toBe('A provider-native tool with no name.');
+  });
+
+  it('uses the sentence as the whole description when a gated tool has none', () => {
+    const tools = [{ name: SHELL_TOOL_NAME, description: '' }];
+    applyRungAwareToolDescriptions(tools, { rung: 'write', gatedTools: [SHELL_TOOL_NAME] });
+    expect(tools[0].description).toBe(SUFFIX.write);
+  });
+
+  it('strips every known wording, including a doubled one from an older build', () => {
+    expect(stripRungToolDescriptionSuffix(`Run it. ${SUFFIX['auto-safe']}`)).toBe('Run it.');
+    expect(
+      stripRungToolDescriptionSuffix(`Run it. ${SUFFIX['read-only']} ${SUFFIX['full-auto']}`)
+    ).toBe('Run it.');
+  });
+});
+
+describe('isGrantedAtRung', () => {
+  it('grants everything under bypass', () => {
+    for (const name of [SHELL_TOOL_NAME, 'write_file', 'mcp__srv__query']) {
+      expect(isGrantedAtRung(name, 'bypass', [SHELL_TOOL_NAME, 'write_file'])).toBe(true);
+    }
+  });
+
+  it('grants any tool the gate does not gate, at every rung', () => {
+    for (const rung of APPROVAL_RUNGS) {
+      expect(isGrantedAtRung('write_file', rung, [SHELL_TOOL_NAME])).toBe(true);
+      expect(isGrantedAtRung('mcp__srv__query', rung, [SHELL_TOOL_NAME])).toBe(true);
+    }
+  });
+
+  it('never grants a gated tool with no access class outside bypass', () => {
+    for (const rung of ['read-only', 'write', 'auto-safe', 'full-auto'] as const) {
+      expect(isGrantedAtRung(SHELL_TOOL_NAME, rung, [SHELL_TOOL_NAME])).toBe(false);
+    }
+  });
+});
+
+describe('§4.4 granted-built-in list', () => {
+  const registered = [
+    'read_file',
+    'write_file',
+    'gth_grep',
+    SHELL_TOOL_NAME,
+    'mcp__srv__query',
+    'my_custom_tool',
+  ];
+
+  it('offers only registered built-ins, never the shell, never MCP or custom tools', () => {
+    const granted = describeGrantedBuiltInTools(registered, 'auto-safe', [SHELL_TOOL_NAME]);
+    expect(granted.map((t) => t.name)).toEqual(['read_file', 'write_file', 'gth_grep']);
+    // Every description is locally authored text, never a tool's own (possibly hostile) blurb.
+    for (const tool of granted) {
+      expect(tool.description.length).toBeGreaterThan(0);
+    }
+  });
+
+  /**
+   * Ungated is not the same as offerable. §4.5's justification for disclosing the posture is that
+   * the granted tools are "by construction, the constrained ones confined to the working folder";
+   * a network fetch is not one of those. Offering it would let a refused `curl` come back as a
+   * suggestion whose §7 clause promises the model it "will not interrupt the user" — a refused
+   * egress turned into a free one, through the rater rather than through the gate.
+   */
+  it('never offers gth_web_fetch, however ungated it is', () => {
+    for (const rung of APPROVAL_RUNGS) {
+      const granted = describeGrantedBuiltInTools(
+        ['read_file', 'gth_web_fetch', SHELL_TOOL_NAME],
+        rung,
+        [SHELL_TOOL_NAME]
+      );
+      expect(granted.map((t) => t.name)).not.toContain('gth_web_fetch');
+    }
+  });
+
+  it('never offers a tool this session did not register', () => {
+    const granted = describeGrantedBuiltInTools(['read_file'], 'auto-safe', [SHELL_TOOL_NAME]);
+    expect(granted.map((t) => t.name)).toEqual(['read_file']);
+  });
+
+  it('drops a tool the rung does not grant', () => {
+    // With a widened gate, `write_file` is gated and `read-only` does not grant it — offering it
+    // would be offering a tool that would itself need approval.
+    const granted = describeGrantedBuiltInTools(registered, 'read-only', [
+      SHELL_TOOL_NAME,
+      'write_file',
+    ]);
+    expect(granted.map((t) => t.name)).toEqual(['read_file', 'gth_grep']);
+  });
+
+  it('returns nothing when no tools are registered', () => {
+    expect(describeGrantedBuiltInTools([], 'auto-safe', [SHELL_TOOL_NAME])).toEqual([]);
+  });
+});
+
+describe('§4.5 wiring — the suffix follows the RESOLVED rung', () => {
+  let GthLangChainAgent: typeof import('#src/core/GthLangChainAgent.js').GthLangChainAgent;
+  let statusUpdate: Mock<StatusUpdateCallback>;
+
+  /** Resolvers handing the agent a shell tool plus a granted built-in. */
+  const resolvers = {
+    resolveTools: async () => [
+      { name: SHELL_TOOL_NAME, description: 'Run a shell command.' },
+      { name: 'read_file', description: 'Read one file.' },
+    ],
+  };
+
+  const baseConfig = (): GthConfig =>
+    ({
+      llm: { _llmType: () => 'test', bindTools: vi.fn() },
+      streamOutput: false,
+      contentSource: 'file',
+      requirementSource: 'file',
+      filesystem: 'none',
+      useColour: false,
+      writeOutputToFile: false,
+      writeBinaryOutputsToFile: false,
+      streamSessionInferenceLog: false,
+      canInterruptInferenceWithEsc: false,
+      includeCurrentDateAfterGuidelines: false,
+      output: { header: false },
+    }) as unknown as GthConfig;
+
+  /** The tool descriptions actually handed to `createAgent`. */
+  function registeredDescriptions(): Record<string, string> {
+    const params = createAgentMock.mock.calls.at(-1)![0] as {
+      tools: { name: string; description: string }[];
+    };
+    return Object.fromEntries(params.tools.map((t) => [t.name, t.description]));
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    createAgentMock.mockReturnValue({ invoke: vi.fn(), stream: vi.fn() });
+    statusUpdate = vi.fn();
+    ({ GthLangChainAgent } = await import('#src/core/GthLangChainAgent.js'));
+  });
+
+  it('appends the rung sentence to the gated shell and nothing to the granted read tool', async () => {
+    const agent = new GthLangChainAgent(statusUpdate, resolvers as never);
+    await agent.init('code', { ...baseConfig(), approvals: 'write' } as GthConfig);
+
+    expect(registeredDescriptions()).toEqual({
+      [SHELL_TOOL_NAME]: `Run a shell command. ${SUFFIX.write}`,
+      read_file: 'Read one file.',
+    });
+  });
+
+  it('appends nothing at all under bypass', async () => {
+    const agent = new GthLangChainAgent(statusUpdate, resolvers as never);
+    await agent.init('code', { ...baseConfig(), approvals: 'bypass' } as GthConfig);
+
+    expect(registeredDescriptions()).toEqual({
+      [SHELL_TOOL_NAME]: 'Run a shell command.',
+      read_file: 'Read one file.',
+    });
+  });
+
+  it('follows a per-command override rather than the root rung', async () => {
+    // A description generated from the ROOT rung would say nothing here (root is bypass) while the
+    // gate would in fact stop and ask — exactly the disagreement §4.5 forbids.
+    const agent = new GthLangChainAgent(statusUpdate, resolvers as never);
+    await agent.init('code', {
+      ...baseConfig(),
+      approvals: 'bypass',
+      commands: { code: { approvals: 'read-only' } },
+    } as unknown as GthConfig);
+
+    expect(registeredDescriptions()[SHELL_TOOL_NAME]).toBe(
+      `Run a shell command. ${SUFFIX['read-only']}`
+    );
+  });
+
+  it('follows a per-command override in the permissive direction too', async () => {
+    const agent = new GthLangChainAgent(statusUpdate, resolvers as never);
+    await agent.init('code', {
+      ...baseConfig(),
+      approvals: 'read-only',
+      commands: { code: { approvals: 'bypass' } },
+    } as unknown as GthConfig);
+
+    expect(registeredDescriptions()[SHELL_TOOL_NAME]).toBe('Run a shell command.');
+  });
+
+  it('uses the auto-safe wording at the default rung', async () => {
+    const agent = new GthLangChainAgent(statusUpdate, resolvers as never);
+    await agent.init('code', baseConfig());
+
+    expect(registeredDescriptions()[SHELL_TOOL_NAME]).toBe(
+      `Run a shell command. ${SUFFIX['auto-safe']}`
+    );
+  });
+
+  it('appends nothing when the shell tool is not gated (no shell in this command)', async () => {
+    // `chat` emits no dev tools, so nothing is gated and no description may claim otherwise.
+    const agent = new GthLangChainAgent(statusUpdate, resolvers as never);
+    await agent.init('chat', { ...baseConfig(), approvals: 'read-only' } as GthConfig);
+
+    expect(registeredDescriptions()[SHELL_TOOL_NAME]).toBe('Run a shell command.');
+  });
+
+  it('records the registered tool names for the rater granted-list', async () => {
+    const agent = new GthLangChainAgent(statusUpdate, resolvers as never);
+    await agent.init('code', baseConfig());
+
+    expect(agent.getRegisteredToolNames()).toEqual([SHELL_TOOL_NAME, 'read_file']);
+  });
+});

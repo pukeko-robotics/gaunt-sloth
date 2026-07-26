@@ -159,6 +159,55 @@ describe('interactiveSessionModule EXT-18 (--no-tui readline stdin re-ref)', () 
     expect(decision.type).toBe('reject');
   });
 
+  /**
+   * EXT-58 §7 — a rejection returned to the model must name the MOVES available to it, not merely
+   * the refusal. Before this, the model was told "User rejected the shell command." and nothing
+   * else, so it either repeated the identical call or abandoned a legitimate task silently.
+   */
+  it('tells the model its moves on rejection (§7)', async () => {
+    const { createInteractiveSession } = await import('#src/modules/interactiveSessionModule.js');
+    await createInteractiveSession(sessionConfig, {});
+
+    rlQuestionMock.mockResolvedValueOnce('N');
+    const decision = await capturedApprovalCallback!({
+      name: 'run_shell_command',
+      args: { command: 'rm -rf build' },
+    });
+
+    expect(decision.type).toBe('reject');
+    expect(decision.message).toContain('The user rejected your call to run_shell_command.');
+    expect(decision.message).toContain('call the same command with a justification');
+    expect(decision.message).toContain('call a different command');
+    expect(decision.message).toContain('ask the user if there is no way around it');
+  });
+
+  /**
+   * EXT-58 §4.4 → §7 — when the rater named an already-granted alternative, the rejection carries
+   * it AND says it needs no approval. That clause is what actually redirects the model.
+   */
+  it('carries the granted alternative and the no-approval-needed clause', async () => {
+    const { createInteractiveSession } = await import('#src/modules/interactiveSessionModule.js');
+    await createInteractiveSession(sessionConfig, {});
+
+    rlQuestionMock.mockResolvedValueOnce('N');
+    const decision = await capturedApprovalCallback!({
+      name: 'run_shell_command',
+      args: { command: "sed -i 's/a/b/' src/a.ts" },
+      safetyVerdict: {
+        outcome: 'destructive',
+        reason: 'rewrites a file in place; edit_file does this without a shell',
+        suggestedTool: 'edit_file',
+      },
+    });
+
+    expect(decision.message).toContain(
+      'Explanation: rewrites a file in place; edit_file does this without a shell'
+    );
+    expect(decision.message).toContain(
+      '`edit_file` does this and is already approved at this level, so it will not interrupt the user.'
+    );
+  });
+
   it('refs stdin before rl.question() in the retry prompt after a failed turn', async () => {
     // Drive the askQuestion loop: 1st '  > ' -> a real prompt, processMessages throws, the
     // catch asks the retry question (-> 'n' to skip), 2nd '  > ' -> 'exit' to end.

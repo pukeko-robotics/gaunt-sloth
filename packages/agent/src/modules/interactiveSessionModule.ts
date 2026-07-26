@@ -11,6 +11,7 @@ import {
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
 import { GthAbstractAgent } from '@gaunt-sloth/core/core/GthAbstractAgent.js';
+import { buildRejectionMessage } from '@gaunt-sloth/core/core/shell/rejection.js';
 import { writeDebugDump } from '@gaunt-sloth/core/utils/debugDump.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
 import {
@@ -176,7 +177,18 @@ export async function createInteractiveSession(
         return { type: 'approve', scope: 'always' };
       }
       displayInfo('Command rejected.');
-      return { type: 'reject', message: 'User rejected the shell command.' };
+      // EXT-58 (§7): the model is told the moves it has — re-call with a justification, call a
+      // different command, or ask the user — and, when the rater named an already-granted
+      // alternative (§4.4), that tool plus the clause saying it needs no approval. A bare "user
+      // rejected" leaves the model to guess, which it does by repeating itself or giving up.
+      return {
+        type: 'reject',
+        message: buildRejectionMessage({
+          source: 'user',
+          toolName: pending.name,
+          verdict: pending.safetyVerdict,
+        }),
+      };
     });
 
     if (logFileName) {

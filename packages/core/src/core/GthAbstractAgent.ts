@@ -1,4 +1,10 @@
-import { GthConfig, ServerTool } from '#src/config.js';
+import {
+  applyRungAwareToolDescriptions,
+  GthConfig,
+  ServerTool,
+  type ApprovalRung,
+  type DescribableTool,
+} from '#src/config.js';
 import {
   AgentResolvers,
   AgentStreamEvent,
@@ -237,6 +243,13 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
    */
   private runStatsAcc: RunStatsAccumulator = createRunStatsAccumulator();
 
+  /**
+   * EXT-58 — the names of the tools registered with the graph at the last {@link init}, recorded by
+   * {@link registerApprovalsAwareTools}. Read by `GthAgentRunner` to build the rater's
+   * granted-built-in list (§4.4), so a suggestion can only ever name a tool the model actually has.
+   */
+  private registeredToolNames: string[] = [];
+
   constructor(statusUpdate: StatusUpdateCallback, resolvers?: AgentResolvers) {
     this.statusUpdate = (level: StatusLevel, message: string) => {
       statusUpdate(level, message);
@@ -255,6 +268,55 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   protected headerStatus(message: string): void {
     if (this.config?.output?.header === false) return;
     this.statusUpdate(StatusLevel.INFO, message);
+  }
+
+  /**
+   * EXT-58 (spec §4.5) — the ONE tool-registration hook both backends call with their final tool
+   * array, just before handing it to the graph builder. It does two things:
+   *
+   * 1. Appends the rung's approval sentence to every tool that is **not** auto-approved at that
+   *    rung, and leaves every granted tool's description untouched (the absence of the sentence is
+   *    what marks a tool free). See {@link applyRungAwareToolDescriptions}.
+   * 2. Records the registered tool names for {@link getRegisteredToolNames}, which feeds the
+   *    rater's granted-alternative list (§4.4).
+   *
+   * `gatedTools` MUST be the same set the caller wires into the approval interrupt
+   * (`humanInTheLoopMiddleware`'s `interruptOn` on lean, deepagents' `interruptOn` on deep). That
+   * shared parameter is what makes it impossible for a description to promise an approval the gate
+   * will not ask for — §4.5's "a description that disagrees with what the gate will actually do is
+   * worse than no description at all".
+   *
+   * `additionalToolNames` covers tools the graph builder registers itself and that therefore never
+   * appear in `tools` — deepagents' own filesystem tools on the deep backend. Their descriptions
+   * are deepagents', not ours, so they cannot be suffixed here; they are recorded only so the
+   * rater's suggestion list reflects what the deep model actually has.
+   */
+  protected registerApprovalsAwareTools<T extends DescribableTool>(
+    tools: T[],
+    options: {
+      rung: ApprovalRung;
+      gatedTools: readonly string[];
+      additionalToolNames?: readonly string[];
+    }
+  ): T[] {
+    applyRungAwareToolDescriptions(tools, {
+      rung: options.rung,
+      gatedTools: options.gatedTools,
+    });
+    const names = tools
+      .map((tool) => tool?.name)
+      .filter((name): name is string => typeof name === 'string' && name.length > 0);
+    this.registeredToolNames = [...names, ...(options.additionalToolNames ?? [])];
+    return tools;
+  }
+
+  /**
+   * EXT-58 — the tool names registered with the graph at the last {@link init} (empty before it).
+   * The runner intersects these with the built-in summaries table to build the rater's
+   * granted-alternative list, so the rater can never name a tool this session does not have.
+   */
+  getRegisteredToolNames(): string[] {
+    return [...this.registeredToolNames];
   }
 
   /**

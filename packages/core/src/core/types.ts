@@ -244,6 +244,15 @@ export interface GthAgentInterface {
   getPendingToolInterrupts?(runConfig: RunnableConfig): Promise<PendingToolInterrupt[]>;
 
   /**
+   * EXT-58 (spec §4.4) — the names of the tools registered with the graph at `init`. The runner
+   * intersects them with the built-in summaries table to tell the rater which already-granted
+   * built-ins it may offer as an alternative, so a suggestion can never name a tool the model does
+   * not have. Optional: an agent that does not track its tools simply omits it, and the rater then
+   * receives no granted list (and so suggests nothing).
+   */
+  getRegisteredToolNames?(): string[];
+
+  /**
    * GS2-16 — reset the per-run analytics accumulator so the NEXT turn's token/tool totals start
    * from zero. Called by {@link GthAgentRunner} at each turn boundary (the runner is reused across
    * turns in interactive sessions). Optional: agents that don't collect stats simply omit it.

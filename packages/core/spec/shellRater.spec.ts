@@ -3,6 +3,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { ApprovalRung, GthConfig } from '#src/config.js';
 import { APPROVAL_RUNGS } from '#src/config.js';
 import {
+  buildGrantedToolsGuidance,
   buildRaterPrompt,
   buildRaterSystemPrompt,
   COULD_NOT_ASSESS_PREFIX,
@@ -149,6 +150,160 @@ describe('buildRaterPrompt', () => {
     }
     expect(system).toMatch(/"Data leaving the machine" is NOT the test/i);
     expect(system).toMatch(/are NOT exfiltration/);
+  });
+});
+
+/**
+ * EXT-58 — §4.4, the granted-alternative suggestion. The rater is told which built-ins are already
+ * granted so a non-`safe` outcome can point the model at a free call instead of an interruption.
+ *
+ * The two NEGATIVES are the load-bearing cases and are asserted hardest: a rater that must not
+ * name a tool when none can do the job, and a suggestion that can never change what the gate does.
+ * A facility that manufactures suggestions would make "a suggestion is never an approval"
+ * meaningless.
+ */
+describe('§4.4 granted-alternative suggestion — the rater prompt', () => {
+  const GRANTED = [
+    { name: 'read_file', description: 'Read one file in the working folder.' },
+    { name: 'edit_file', description: 'Apply a targeted edit to a file in the working folder.' },
+  ];
+
+  it('carries the granted tools OUTSIDE the fenced untrusted block', () => {
+    const { system, user } = buildRaterPrompt('cat src/index.ts', { grantedTools: GRANTED });
+
+    // Present, with names and locally-authored one-liners — in the SYSTEM prompt, which is
+    // structurally outside the `<command_to_evaluate>` fence that carries untrusted text.
+    expect(system).toContain('ALREADY-GRANTED TOOLS');
+    expect(system).toContain('- read_file: Read one file in the working folder.');
+    expect(system).toContain('- edit_file: Apply a targeted edit to a file in the working folder.');
+
+    // And NOT inside the fence, where a rater is instructed to treat everything as data.
+    const open = user.indexOf('<command_to_evaluate>');
+    const close = user.indexOf('</command_to_evaluate>');
+    expect(user.slice(open, close)).not.toContain('read_file');
+    expect(user).not.toContain('ALREADY-GRANTED TOOLS');
+  });
+
+  it('requires naming a granted tool whenever the outcome is not safe and one would do', () => {
+    const system = buildRaterSystemPrompt(GRANTED);
+    expect(system).toMatch(/if your outcome is NOT `safe`/i);
+    expect(system).toMatch(/you MUST name that tool in your explanation/i);
+    expect(system).toMatch(/set `suggestedTool`/i);
+  });
+
+  it('forbids naming one when none can do the job — the load-bearing negative', () => {
+    const system = buildRaterSystemPrompt(GRANTED);
+    expect(system).toMatch(/If NONE of them can do the job, do NOT name one/i);
+    // The canonical case: neither the read nor the edit tool can reach outside the working folder.
+    expect(system).toMatch(/outside the working folder/i);
+    expect(system).toMatch(/inventing one is a failure/i);
+    expect(system).toMatch(/Never name a tool that is not on the list/i);
+  });
+
+  it('states that a suggestion is never an approval', () => {
+    const system = buildRaterSystemPrompt(GRANTED);
+    expect(system).toMatch(/A suggestion is NEVER an approval/i);
+    expect(system).toMatch(/does not change your outcome/i);
+    expect(system).toMatch(/still gated normally/i);
+    expect(system).toMatch(/Do not soften an\s+outcome because an alternative exists/i);
+  });
+
+  it('adds nothing at all when no tool is granted — no empty list to invent from', () => {
+    expect(buildRaterSystemPrompt([])).toBe(buildRaterSystemPrompt());
+    expect(buildRaterSystemPrompt()).not.toContain('ALREADY-GRANTED TOOLS');
+    expect(buildGrantedToolsGuidance([])).toBeNull();
+    expect(buildGrantedToolsGuidance(undefined)).toBeNull();
+  });
+});
+
+describe('§4.4 granted-alternative suggestion — the verdict', () => {
+  const GRANTED = [{ name: 'edit_file', description: 'Apply a targeted edit.' }];
+
+  beforeEach(() => vi.resetAllMocks());
+
+  it('carries a suggestion the rater made from the granted list', async () => {
+    const { model } = fakeModel(() => ({
+      outcome: 'destructive',
+      reason: 'rewrites a file in place; edit_file does this without a shell',
+      suggestedTool: 'edit_file',
+    }));
+    const result = await rateShellCommand("sed -i 's/a/b/' src/a.ts", CONFIG, {
+      model,
+      grantedTools: GRANTED,
+    });
+    expect(result.suggestedTool).toBe('edit_file');
+    // The outcome and reason are untouched — a suggestion rides along, it does not soften.
+    expect(result.outcome).toBe('destructive');
+  });
+
+  it('manufactures nothing when the rater named no tool (a path outside the working folder)', async () => {
+    const { model } = fakeModel(() => ({
+      outcome: 'destructive',
+      reason: 'reads a file outside the working folder, which no granted tool can reach',
+    }));
+    const result = await rateShellCommand('cat ~/.ssh/id_rsa', CONFIG, {
+      model,
+      grantedTools: GRANTED,
+    });
+    expect(result.suggestedTool).toBeUndefined();
+  });
+
+  it('drops a suggestion naming a tool that is not granted (hallucinated or gated)', async () => {
+    const { model } = fakeModel(() => ({
+      outcome: 'destructive',
+      reason: 'use curl instead',
+      suggestedTool: 'curl',
+    }));
+    const result = await rateShellCommand('wget https://example.com', CONFIG, {
+      model,
+      grantedTools: GRANTED,
+    });
+    expect(result.suggestedTool).toBeUndefined();
+    // Dropping the name changes nothing else about the verdict.
+    expect(result.outcome).toBe('destructive');
+    expect(result.reason).toBe('use curl instead');
+  });
+
+  it('drops any suggestion when no granted list was supplied at all', async () => {
+    const { model } = fakeModel(() => ({
+      outcome: 'destructive',
+      reason: 'x',
+      suggestedTool: 'edit_file',
+    }));
+    expect((await rateShellCommand('rm -rf x', CONFIG, { model })).suggestedTool).toBeUndefined();
+  });
+
+  it('never lets a suggestion change the action the gate takes', () => {
+    for (const rung of RATED_RUNGS) {
+      for (const outcome of RATER_OUTCOMES) {
+        const plain: ShellSafetyVerdict = { outcome, reason: 'r' };
+        const suggesting: ShellSafetyVerdict = { ...plain, suggestedTool: 'edit_file' };
+        expect(mapVerdictToAction('rm -f a.txt', suggesting, { rung }).action).toBe(
+          mapVerdictToAction('rm -f a.txt', plain, { rung }).action
+        );
+      }
+    }
+    // …and it is carried through untouched on the escalating path, so §7 can quote it.
+    const escalated = mapVerdictToAction(
+      'rm -f a.txt',
+      { outcome: 'destructive', reason: 'deletes a file', suggestedTool: 'edit_file' },
+      { rung: 'auto-safe' }
+    );
+    expect(escalated.action).toBe('escalate');
+    expect(escalated.verdict?.suggestedTool).toBe('edit_file');
+  });
+
+  it('drops the suggestion when the gate overrides the verdict it came with', () => {
+    // An ambiguous command is rewritten to a "could not assess" destructive. A verdict the gate
+    // has just declared untrustworthy must not keep recommending anything.
+    const decision = mapVerdictToAction(
+      'cat foo.txt | tee bar.txt',
+      { outcome: 'safe', reason: 'harmless', suggestedTool: 'edit_file' },
+      { rung: 'auto-safe' }
+    );
+    expect(decision.action).toBe('escalate');
+    expect(decision.verdict?.reason).toContain(COULD_NOT_ASSESS_PREFIX);
+    expect(decision.verdict?.suggestedTool).toBeUndefined();
   });
 });
 

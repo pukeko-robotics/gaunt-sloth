@@ -1,5 +1,9 @@
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
-import { resolveShellApprovalGate } from '@gaunt-sloth/core/config.js';
+import {
+  resolveApprovals,
+  resolveShellApprovalGate,
+  SHELL_TOOL_NAME,
+} from '@gaunt-sloth/core/config.js';
 import { GthAbstractAgent } from '@gaunt-sloth/core/core/GthAbstractAgent.js';
 import { type GthCommand, StatusLevel } from '@gaunt-sloth/core/core/types.js';
 import { debugLog, debugLogObject } from '@gaunt-sloth/core/utils/debugUtils.js';
@@ -695,8 +699,9 @@ export class GthDeepAgent extends GthAbstractAgent {
       this.config ?? undefined,
       this.command
     );
+    const gatedTools = gateShell ? [SHELL_TOOL_NAME] : [];
     const interruptOn = gateShell
-      ? ({ run_shell_command: { allowedDecisions: ['approve', 'reject'] } } as Record<
+      ? ({ [SHELL_TOOL_NAME]: { allowedDecisions: ['approve', 'reject'] } } as Record<
           string,
           boolean | InterruptOnConfig
         >)
@@ -704,6 +709,21 @@ export class GthDeepAgent extends GthAbstractAgent {
     if (shellGateNotice) {
       this.statusUpdate(shellGateNotice.level, shellGateNotice.message);
     }
+
+    // EXT-58 (spec §4.5) — the same tool-registration hook the lean backend calls, with the same
+    // gated set that is wired into `interruptOn` directly above, so neither backend's descriptions
+    // can disagree with its own gate. deepagents registers its OWN filesystem tools (this backend
+    // resolves with `filesystem: 'none'`), so they never appear in `passThroughTools` and cannot be
+    // suffixed here — they are auto-approved at every rung this ladder currently gates anyway, and
+    // are declared as additional registered names purely so the rater's granted-alternative list
+    // (§4.4) reflects the tools a deep session actually has. `execute` is deliberately excluded: it
+    // is deepagents' shell, not a filesystem tool, and must never be offered as a granted
+    // alternative to a shell command.
+    this.registerApprovalsAwareTools(passThroughTools as StructuredToolInterface[], {
+      rung: resolveApprovals(this.config ?? undefined, this.command).rung,
+      gatedTools,
+      additionalToolNames: FILESYSTEM_TOOL_NAMES.filter((name) => name !== 'execute'),
+    });
 
     return {
       model: this.config.llm,

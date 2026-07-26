@@ -234,6 +234,95 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     unmount();
   });
 
+  /**
+   * EXT-58 §7 (+ §4.4) — the message the MODEL is handed on a TUI rejection must name its moves,
+   * and must carry the rater's granted alternative plus the clause saying that alternative needs no
+   * approval. The on-screen "Command rejected" notice is unchanged; this asserts the other half of
+   * the rejection, which no test saw before.
+   */
+  it('rejection hands the model its moves and the granted alternative (§7)', async () => {
+    const decisions: ToolApprovalDecision[] = [];
+    let suspended = false;
+    const agent: GthAgentInterface = {
+      async init() {},
+      async invoke() {
+        return '';
+      },
+      async stream() {
+        throw new Error('not used');
+      },
+      async *streamWithEvents(): AsyncGenerator<AgentStreamEvent> {
+        suspended = true;
+        yield { type: 'text', delta: 'Rewriting the file…' };
+      },
+      async getPendingToolInterrupts(): Promise<PendingToolInterrupt[]> {
+        if (!suspended) return [];
+        suspended = false;
+        return [{ name: 'run_shell_command', args: { command: "sed -i 's/a/b/' src/a.ts" } }];
+      },
+      // EXT-58 §4.4 — what the runner intersects with core's summaries table to tell the rater
+      // which built-ins are already granted.
+      getRegisteredToolNames: () => ['read_file', 'edit_file', 'run_shell_command'],
+      async *streamWithEventsResume(resumeValue: unknown): AsyncGenerator<AgentStreamEvent> {
+        decisions.push(
+          ...((resumeValue as { decisions?: ToolApprovalDecision[] })?.decisions ?? [])
+        );
+        yield { type: 'text', delta: 'Understood.' };
+      },
+      async cleanup() {},
+    };
+
+    // A scripted rater that escalates and names an already-granted built-in.
+    const ratedConfig = {
+      ...FULL_CONFIG,
+      llm: {
+        withStructuredOutput: () => ({
+          invoke: async () => ({
+            outcome: 'destructive',
+            reason: 'rewrites a file in place; edit_file does this without a shell',
+            suggestedTool: 'edit_file',
+          }),
+        }),
+      } as unknown as GthConfig['llm'],
+      approvals: { mode: 'auto-safe' },
+      commands: {
+        code: { builtInTools: { run_shell_command: { enabled: true, allowlist: false } } },
+      },
+    };
+
+    const { runner, bridge, tuiAgent, command } = wireRunner(
+      agent,
+      ratedConfig as Partial<GthConfig>
+    );
+    await runner.init(command as never, ratedConfig as unknown as GthConfig);
+    runner.setToolApprovalCallback((pending) => bridge.request(pending));
+
+    const { stdin, lastFrame, frames, unmount } = render(
+      <App
+        {...baseProps}
+        agent={tuiAgent}
+        subscribeApproval={bridge.subscribe}
+        initialMessage="rewrite it"
+      />
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('sed'));
+    stdin.write('n');
+    await vi.waitFor(() => expect(frames.join('\n')).toContain('Understood.'));
+
+    const decision = decisions[0];
+    expect(decision?.type).toBe('reject');
+    const message = (decision as { message?: string }).message ?? '';
+    expect(message).toContain('The user rejected your call to run_shell_command.');
+    expect(message).toContain('call the same command with a justification');
+    expect(message).toContain('ask the user if there is no way around it');
+    expect(message).toContain(
+      '`edit_file` does this and is already approved at this level, so it will not interrupt the user.'
+    );
+
+    unmount();
+  });
+
   it('allow-list auto-approve: a pre-approved command runs with NO prompt', async () => {
     // Persist off; pre-seed nothing — instead grant 'session' on the first command, then a variant
     // auto-approves without a second prompt. We model this with TWO suspends in one turn.

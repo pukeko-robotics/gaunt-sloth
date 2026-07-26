@@ -1,4 +1,9 @@
-import { GthConfig, resolveShellApprovalGate } from '#src/config.js';
+import {
+  GthConfig,
+  resolveApprovals,
+  resolveShellApprovalGate,
+  SHELL_TOOL_NAME,
+} from '#src/config.js';
 import { GthCommand, StatusLevel } from '#src/core/types.js';
 import { GthAbstractAgent } from '#src/core/GthAbstractAgent.js';
 import { debugLog, debugLogObject } from '#src/utils/debugUtils.js';
@@ -628,11 +633,12 @@ export class GthLangChainAgent extends GthAbstractAgent {
       this.config ?? undefined,
       this.command
     );
+    const gatedTools = gateShell ? [SHELL_TOOL_NAME] : [];
     const shellApprovalMiddleware = gateShell
       ? [
           humanInTheLoopMiddleware({
             interruptOn: {
-              run_shell_command: {
+              [SHELL_TOOL_NAME]: {
                 allowedDecisions: ['approve', 'reject'],
               } satisfies InterruptOnConfig,
             },
@@ -642,6 +648,18 @@ export class GthLangChainAgent extends GthAbstractAgent {
     if (shellGateNotice) {
       this.statusUpdate(shellGateNotice.level, shellGateNotice.message);
     }
+
+    // EXT-58 (spec §4.5) — state the approvals posture where the model reads it: on the tool
+    // descriptions themselves. Every tool NOT auto-approved at the resolved rung gets the rung's
+    // sentence appended; every granted tool keeps its description exactly as written, because the
+    // ABSENCE of the sentence is what marks it free. `gatedTools` is literally the set wired into
+    // the interrupt above, so a description can never promise an approval this gate will not ask
+    // for. Applied after the allowedTools filter and before createAgent, so the model only ever
+    // sees the final, suffixed set.
+    this.registerApprovalsAwareTools(tools, {
+      rung: resolveApprovals(this.config ?? undefined, this.command).rung,
+      gatedTools,
+    });
 
     // EXT-52 placement note: the HITL gate sits EARLY in the array — before user-configured
     // middleware and, crucially, before toolCallRepairMiddleware — because afterModel hooks run in
