@@ -1,7 +1,9 @@
 import {
   type AllowlistCounts,
-  type ApprovalMode,
+  type ApprovalRung,
+  DEFAULT_APPROVAL_RUNG,
   GthConfig,
+  isRatedRung,
   type ResolvedApprovals,
   resolveApprovals,
 } from '#src/config.js';
@@ -28,6 +30,12 @@ import {
 } from '#src/core/shell/allowlist.js';
 import { classifyCommand } from '#src/core/shell/arity.js';
 import { normalizeCommand } from '#src/core/shell/normalize.js';
+import {
+  ApprovalStopError,
+  ExfiltrationHaltError,
+  NonInteractiveEscalationError,
+} from '#src/core/shell/approvalStop.js';
+import { DenylistStore } from '#src/core/shell/denylist.js';
 import {
   mapVerdictToAction,
   rateShellCommand,
@@ -88,21 +96,19 @@ export class GthAgentRunner {
   private lastRunStats: GthRunStats = { tools: [] };
 
   /**
-   * CFG-26 — the runtime, session-scoped approval posture, seeded at {@link init} from
-   * {@link resolveApprovals} (config + the context defaults matrix) and thereafter switchable for
-   * the session by the `/approvals` command family. Because the shell tool stays gated (in
-   * `interruptOn`) in interactive `code` mode, this is consulted at the TOP of
-   * {@link decideToolApproval}, so a config that pre-selects `bypass` still keeps the tool gated
-   * and therefore switchable back mid-session. Never persisted.
+   * CFG-27 — the runtime, session-scoped approvals posture, seeded at {@link init} from
+   * {@link resolveApprovals} and thereafter switchable for the session by `/approvals <rung>`.
+   * The shell tool stays gated (in `interruptOn`) at EVERY rung, so this is consulted at the top
+   * of {@link decideToolApproval} and a config that pre-selects `bypass` remains switchable back
+   * mid-session. Never persisted.
    *
    * It does NOT disable the hardline floor — catastrophic commands are still refused at exec time
-   * in `GthDevToolkit.executeCommand` under every mode.
+   * in `GthDevToolkit.executeCommand` under every rung.
    */
   private sessionApprovals: ResolvedApprovals = {
-    mode: 'ask',
-    rater: { enabled: false, strictness: 'standard', escalate: 'danger' },
-    allowlist: true,
-    persistAllowlist: true,
+    rung: DEFAULT_APPROVAL_RUNG,
+    allow: [],
+    deny: [],
   };
 
   /**
@@ -118,6 +124,14 @@ export class GthAgentRunner {
   private raterModel: BaseChatModel | undefined;
 
   private readonly sessionAllowlist = new AllowlistStore();
+
+  /**
+   * CFG-27 §3 — the session deny list: the entries declared in `approvals.deny` (read-only config
+   * input, seeded at {@link init}) merged with whatever the escalation menu's *always reject*
+   * choice adds at runtime ([[TUI-C26]] wires that writer). Consulted BEFORE the allow-list and
+   * BEFORE the rater, and — uniquely — it still applies under `bypass`.
+   */
+  private denylist = new DenylistStore();
 
   /**
    * EXT-9 Tier-2 persisted (`always`) allow-list, loaded lazily on first use from
@@ -154,26 +168,16 @@ export class GthAgentRunner {
   }
 
   /**
-   * CFG-26 — switch the session-scoped approval mode (the `/approvals auto|ask|bypass` family).
-   * Idempotent; returns the NEW mode so the caller can render a notice. Session-scoped only —
-   * nothing is written to config.
-   *
-   * Switching TO `auto` when no rater is configured would be a lie (auto-mode exists only where
-   * the rater does), so it turns the rater on with the resolved defaults.
+   * CFG-27 — switch the session-scoped rung (`/approvals <rung>`). Idempotent; returns the NEW
+   * rung so the caller can render a notice. Session-scoped only — nothing is written to config,
+   * and the declared allow/deny lists are unaffected (they are config input, not session state).
    */
-  public setSessionApprovalMode(mode: ApprovalMode): ApprovalMode {
-    this.sessionApprovals = {
-      ...this.sessionApprovals,
-      mode,
-      rater:
-        mode === 'auto'
-          ? { ...this.sessionApprovals.rater, enabled: true }
-          : this.sessionApprovals.rater,
-    };
-    return this.sessionApprovals.mode;
+  public setSessionApprovalRung(rung: ApprovalRung): ApprovalRung {
+    this.sessionApprovals = { ...this.sessionApprovals, rung };
+    return this.sessionApprovals.rung;
   }
 
-  /** CFG-26 — the session's current approval posture (mode + rater + allow-list knobs). */
+  /** CFG-27 — the session's current approvals posture (rung + rater profile + declared lists). */
   public getSessionApprovals(): ResolvedApprovals {
     return this.sessionApprovals;
   }
@@ -189,11 +193,15 @@ export class GthAgentRunner {
    * caller renders as `—` rather than a misleading `0`.
    */
   public getAllowlistCounts(): AllowlistCounts {
-    const always =
-      this.sessionApprovals.persistAllowlist && this.persistedAllowlistLoaded
-        ? (this.persistedAllowlist?.list().length ?? undefined)
-        : undefined;
+    const always = this.persistedAllowlistLoaded
+      ? (this.persistedAllowlist?.list().length ?? undefined)
+      : undefined;
     return { session: this.sessionAllowlist.list().length, always };
+  }
+
+  /** CFG-27 — the session's deny entries (declared in config, plus any added at runtime). */
+  public getDenylist(): string[] {
+    return this.denylist.list();
   }
 
   /**
@@ -219,14 +227,23 @@ export class GthAgentRunner {
     // only env-derived ones. Both surfaces (plain observer + Ink TUI) render through this module.
     setToolDisplayConfig(configIn);
 
-    // CFG-26 — seed the session approval posture from config + the context defaults matrix, so a
-    // config that pre-selects `bypass` starts there while the shell tool stays gated (see
-    // GthDeepAgent) and therefore remains switchable (`/approvals ask`). Resolved per-command,
-    // mirroring where the shell tool is actually emitted; no effect where the tool is ungated.
+    // CFG-27 — seed the session posture from config, so a config that pre-selects `bypass` starts
+    // there while the shell tool stays gated (see `resolveShellApprovalGate`) and therefore
+    // remains switchable (`/approvals write`). Resolved per-command, mirroring where the shell
+    // tool is actually emitted; no effect where the tool is ungated.
     this.sessionApprovals = resolveApprovals(configIn, command);
 
+    // §3/§9.1 — the DECLARED lists are read-only config input. `allow` is merged into the session
+    // allow-list store (which the human's `session` grants also write to) and `deny` seeds the
+    // deny store; neither is ever written back to config.
+    this.denylist = new DenylistStore(this.sessionApprovals.deny);
+    for (const prefix of this.sessionApprovals.allow) {
+      const trimmed = prefix.trim();
+      if (trimmed.length > 0) this.sessionAllowlist.add(trimmed);
+    }
+
     // CFG-26 — resolve the rater's own model when a profile is named, so the documented mitigation
-    // for a weak model ("point approvals.rater.profile at a stronger one") actually takes effect.
+    // for a weak model ("point approvals.rater at a stronger one") actually takes effect.
     //
     // EAGERLY, here, rather than lazily at first use: `initConfig` re-runs discovery and prints
     // "Activating profile: …", which mid-turn would write raw over the Ink TUI's managed frame,
@@ -234,13 +251,11 @@ export class GthAgentRunner {
     // NOT catch — a named-but-unusable rater profile is an error, never a silent fallback to the
     // session model (GS2-62).
     //
-    // No extra "will the rater actually run?" gate: NAMING a profile is itself what enables the
-    // rater (`resolveApprovals` treats an object `rater` as enabled), so `rater.profile` set
-    // implies `rater.enabled`, on every command. A one-shot `exec` with an explicitly configured
-    // rater really does rate — the defaults matrix is defaults-only, and explicit config beats it
-    // everywhere — so there is no wasted load to guard against, and a gate here would be dead
-    // code that reads as if it were doing something.
-    const raterProfile = this.sessionApprovals.rater.profile;
+    // Loaded whenever a profile is NAMED, without a second "will the rater actually run?" gate:
+    // naming a rater profile at an unrated rung is a config the user can hold (they may switch to
+    // `auto-safe` mid-session with `/approvals`), and a broken profile should still fail loudly at
+    // startup rather than at the moment they switch.
+    const raterProfile = this.sessionApprovals.rater;
     this.raterModel = raterProfile ? await resolveRaterModel(raterProfile) : undefined;
 
     // Initialize debug logging
@@ -350,6 +365,11 @@ export class GthAgentRunner {
         return result;
       }
     } catch (error) {
+      // CFG-27 §4.2/§6.2 — an approvals STOP is not an agent failure and must reach the user with
+      // its own words: the command, the rating and its reason are the whole point of it. Wrapping
+      // it as "Agent processing failed: …" would bury the explanation the spec requires it to
+      // carry, so it is re-thrown unchanged.
+      if (error instanceof ApprovalStopError) throw error;
       // Handle agent invocation errors
       debugLogError('Agent processing', error);
       const originalMessage = error instanceof Error ? error.message : String(error);
@@ -413,23 +433,31 @@ export class GthAgentRunner {
   }
 
   /**
-   * Decide a single pending tool call. CFG-26 order — `bypass → allow-list → rater → human
-   * prompt`, with the hardline floor at exec time regardless:
+   * Decide a single pending tool call. CFG-27 order — **deny → bypass → allow-list → rater →
+   * human prompt**, with the hardline floor at exec time regardless:
    *
-   * 1. **bypass** — the gate is off for this session; approve at scope `once`.
-   * 2. **allow-list** (EXT-9 Tier-2) — if the command's classified prefix is already approved
-   *    (session or persisted `always`) and survives the safe-bin anti-widening re-validation,
-   *    approve SILENTLY. A human-trusted prefix never pays for a rater call.
-   * 3. **AI rater** (under `auto`) — `safe` approves; below the escalate threshold the reason
-   *    goes back to the MODEL; at/above it we fall through to the human with the verdict
-   *    attached; `critical` is refused outright.
-   * 4. **human prompt** — the approval callback; when the human grants `session`/`always` scope,
+   * 1. **deny list** (§3) — a declared (or runtime `always reject`) prefix is refused with no
+   *    prompt and no rating call. It is consulted FIRST, and it is the one check that **still
+   *    applies under `bypass`**: choosing `bypass` says *"stop asking me"*, not *"forget what I
+   *    told you never to do"*. Its matcher is deliberately not the allow-list's — see
+   *    `core/shell/denylist.ts` for why the fail-direction has to be the opposite one.
+   * 2. **`bypass`** — the gate is off for this session; approve at scope `once`.
+   * 3. **allow-list** (§3, EXT-9 Tier-2) — if the command's classified prefix is already approved
+   *    (declared in `approvals.allow`, granted this session, or persisted `always`) and survives
+   *    the safe-bin anti-widening re-validation, approve SILENTLY. It applies at EVERY rung
+   *    except `bypass` (where it is moot) and is consulted **before** the rater, so a trusted
+   *    prefix never pays for a rating call.
+   * 4. **auto-rater** (`auto-safe` / `full-auto` only) — `safe` approves, `destructive` escalates,
+   *    `exfiltration` HALTS the run ({@link ExfiltrationHaltError}). The other three rungs
+   *    consult no model at all.
+   * 5. **human prompt** — the approval callback; when the human grants `session`/`always` scope,
    *    the command's classified prefix is recorded so future flag-variants stop re-prompting.
    *
-   * When no human callback is wired (non-TTY `exec` run, a server) and nothing approved the call
-   * earlier, REJECT — never auto-approve. That fail-closed default is what makes the one-shot /
-   * server row of the defaults matrix safe, and it deliberately sits ahead of every path that
-   * would otherwise reach a prompt that cannot be answered.
+   * §6.2 — where no human can answer (CI, a one-shot run, a server), an escalation is **not** a
+   * rejection handed back to the model: it is an immediate non-zero exit
+   * ({@link NonInteractiveEscalationError}) carrying the command, the rating and its reason. No
+   * prompt, no waiting, and never a timeout into approval. Declaring commands in `approvals.allow`
+   * is the supported way to make a pipeline pass.
    *
    * Hardline catastrophic commands remain refused at exec time regardless of any approval here
    * (defense in depth in `GthDevToolkit.executeCommand`), so an allow-listed `rm -rf /` still
@@ -439,72 +467,68 @@ export class GthAgentRunner {
     const command = typeof tool.args?.command === 'string' ? (tool.args.command as string) : null;
     const isShellCommand = tool.name === 'run_shell_command' && command !== null;
     const approvals = this.sessionApprovals;
-    const allowlistApplies = isShellCommand && approvals.allowlist;
 
-    // CFG-26 — `approvals.mode: bypass` (config or `/approvals bypass`): approve a gated shell
-    // command WITHOUT prompting, rating, or persisting. Scope `once` so nothing is written to the
-    // allow-list (the bypass is intentionally ephemeral and reversible). The hardline floor is NOT
-    // bypassed here — it is enforced at exec time in GthDevToolkit.executeCommand regardless of
-    // this decision, so a catastrophic command is still refused even under bypass.
-    if (isShellCommand && approvals.mode === 'bypass') {
+    // (1) The deny list — before everything, including `bypass`.
+    if (isShellCommand && command !== null) {
+      const denied = this.denylist.match(command);
+      if (denied !== null) {
+        return {
+          type: 'reject',
+          message:
+            `Refused: your deny list forbids this command (matched "${denied}"). ` +
+            'Remove the entry from approvals.deny if you want it to run.',
+        };
+      }
+    }
+
+    // (2) `bypass` (config or `/approvals bypass`): approve a gated shell command WITHOUT
+    // prompting or rating. Scope `once` so nothing is written to the allow-list (the bypass is
+    // intentionally ephemeral and reversible). The hardline floor is NOT bypassed here — it is
+    // enforced at exec time in GthDevToolkit.executeCommand regardless of this decision.
+    if (isShellCommand && approvals.rung === 'bypass') {
       return { type: 'approve', scope: 'once' };
     }
 
-    // Approve from the allow-list without prompting. The allow-list ALWAYS wins over the rater:
-    // a human-trusted prefix shouldn't pay for an LLM call on every variant.
+    // (3) Approve from the allow-list without prompting. The allow-list ALWAYS wins over the
+    // rater: a human-trusted prefix shouldn't pay for an LLM call on every variant.
+    const allowlistApplies = isShellCommand && approvals.rung !== 'bypass';
     if (allowlistApplies && this.isApprovedByAllowlist(command)) {
       return { type: 'approve', scope: 'session' };
     }
 
-    // CFG-26 — the AI rater. Under `auto` it runs BEFORE the human callback for a
-    // `run_shell_command` not already allow-listed: `safe` is approved (fatigue reducer), a tier
-    // below the escalate threshold is REJECTED WITH THE REASON HANDED BACK TO THE MODEL so it can
-    // self-correct, at/above the threshold falls through to the human with the verdict attached,
-    // and `critical` is refused outright. With the rater off this is a no-op (pure EXT-9).
+    // (4) The auto-rater, at the two rated rungs only. `safe` is approved (the fatigue reducer),
+    // `destructive` falls through to the human with the verdict attached, and `exfiltration` ends
+    // the run outright.
     let safetyVerdict: ShellSafetyVerdict | undefined;
-    if (isShellCommand && command !== null && approvals.rater.enabled) {
+    if (isShellCommand && command !== null && isRatedRung(approvals.rung)) {
       const verdict = await rateShellCommand(command, this.config as GthConfig, {
         home: env?.HOME,
-        strictness: approvals.rater.strictness,
         // The profile's model when one is configured; undefined lets rateShellCommand use the
         // session model. `init` throws rather than leaving this undefined for a NAMED profile, so
         // a configured profile can never silently degrade to the session model here.
         model: this.raterModel,
       });
-      const decision = mapVerdictToAction(command, verdict, {
-        mode: approvals.mode,
-        escalate: approvals.rater.escalate,
-      });
+      const decision = mapVerdictToAction(command, verdict, { rung: approvals.rung });
       if (decision.action === 'approve') {
         // Scope `once`: rater approvals are NEVER persisted to the allow-list.
         return { type: 'approve', scope: 'once' };
       }
-      if (decision.action === 'reject') {
-        return {
-          type: 'reject',
-          message: `AI rater blocked the command (critical): ${decision.verdict.reason}`,
-        };
-      }
-      if (decision.action === 'reject-with-reason') {
-        // The EXT-20/21 isError path returns this to the MODEL as the tool result, so it can
-        // adjust and retry rather than interrupting the human.
-        return {
-          type: 'reject',
-          message:
-            `AI rater declined the command (${decision.verdict.tier}): ` +
-            `${decision.verdict.reason} Adjust the command or explain why it is needed.`,
-        };
+      if (decision.action === 'halt') {
+        // §4.2 — not a rejection the model can respond to. It ends the agent loop.
+        throw new ExfiltrationHaltError(command, decision.verdict?.reason ?? '');
       }
       // Escalate: carry the verdict (the honest one — see mapVerdictToAction) to the human.
       safetyVerdict = decision.verdict;
     }
 
     if (!this.toolApprovalCallback) {
-      // No interactive handler (e.g. non-TTY exec run): reject rather than auto-approve.
-      return {
-        type: 'reject',
-        message: 'Tool call rejected: no interactive approval handler available.',
-      };
+      // §6.2 — no one to ask. Exit non-zero with everything a person needs, rather than handing
+      // the model a rejection it would just work around.
+      throw new NonInteractiveEscalationError(
+        command ?? tool.name,
+        safetyVerdict?.outcome,
+        safetyVerdict?.reason
+      );
     }
 
     // Surface the rater's verdict to the human prompt (if the rater escalated) without mutating
@@ -520,17 +544,16 @@ export class GthAgentRunner {
   }
 
   /**
-   * Lazily load (once per instance) the persisted `always` allow-list, unless persistence is
-   * disabled by config. Returns null when persistence is off so `always` grants behave as
-   * `session` (in-memory only).
+   * Lazily load (once per instance) the persisted `always` allow-list.
+   *
+   * CFG-27 removed the `persistAllowlist` switch: §3 makes persistence a per-decision choice in
+   * the escalation menu (`approve` forgets, `always approve` persists), and a global "never
+   * persist" setting would only duplicate a keystroke. Returns null when the store cannot be
+   * loaded at all, in which case `always` grants degrade to `session` (in-memory only).
    */
   private getPersistedAllowlist(): PersistedAllowlist | null {
     if (this.persistedAllowlistLoaded) return this.persistedAllowlist;
     this.persistedAllowlistLoaded = true;
-    if (!this.sessionApprovals.persistAllowlist) {
-      this.persistedAllowlist = null;
-      return null;
-    }
     try {
       const filePath = getGslothConfigWritePath(SHELL_ALLOWLIST_FILE);
       this.persistedAllowlist = new PersistedAllowlist(filePath);

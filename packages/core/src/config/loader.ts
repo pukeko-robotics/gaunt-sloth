@@ -115,7 +115,7 @@ function validateRawConfigLayer<T extends Record<string, unknown>>(raw: T, sourc
     return raw;
   }
 
-  // CFG-26 — `approvals.rater.profile` STRICT resolution (GS2-62): a named profile that does not
+  // CFG-26 — `approvals.rater` STRICT resolution (GS2-62): a named profile that does not
   // resolve to a real profile config is a hard error, never a silent fallback to the main model.
   // Checked HERE rather than in the zod schema on purpose — resolution needs the filesystem and
   // `schema.ts` must stay pure (it also feeds `z.toJSONSchema`).
@@ -280,7 +280,7 @@ export function findProjectConfigPath(
 
 /**
  * CFG-26 — the read-side validator's fs-backed hook, so `gth config validate`
- * ({@link collectConfigValidationLayers}) enforces the SAME `approvals.rater.profile` existence
+ * ({@link collectConfigValidationLayers}) enforces the SAME `approvals.rater` existence
  * rule the loader hard-exits on. `schema.ts` stays pure; the filesystem knowledge lives here.
  */
 const RAW_CONFIG_VALIDATION_OPTIONS = {
