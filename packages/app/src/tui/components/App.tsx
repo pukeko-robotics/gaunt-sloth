@@ -11,6 +11,7 @@ import {
 import type { PendingApproval, TranscriptItem, TuiAppProps } from '#src/tui/types.js';
 import type { ToolApprovalScope } from '@gaunt-sloth/core/core/types.js';
 import type { ApprovalRung } from '@gaunt-sloth/core/config.js';
+import { buildRejectionMessage } from '@gaunt-sloth/core/core/shell/rejection.js';
 import { Transcript } from '#src/tui/components/Transcript.js';
 import { ApprovalPrompt } from '#src/tui/components/ApprovalPrompt.js';
 import { LiveTurn } from '#src/tui/components/LiveTurn.js';
@@ -346,7 +347,18 @@ export function App(props: TuiAppProps): React.ReactElement {
     const head = approvalQueueRef.current[0];
     if (!head) return;
     if (decision === 'reject') {
-      head.resolve({ type: 'reject', message: 'User rejected the shell command.' });
+      // EXT-58 (§7): hand the model the moves it has (re-call with a justification, a different
+      // command, or ask the user) plus — when the rater named an already-granted alternative
+      // (§4.4) — that tool and the clause saying it will not interrupt the user. This is the
+      // message the MODEL sees; the on-screen notice below is unchanged.
+      head.resolve({
+        type: 'reject',
+        message: buildRejectionMessage({
+          source: 'user',
+          toolName: head.pending.name,
+          verdict: head.pending.safetyVerdict,
+        }),
+      });
       push({
         kind: 'notice',
         title: 'Command rejected',

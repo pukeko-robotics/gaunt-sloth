@@ -35,7 +35,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import * as z from 'zod';
 
-import type { ApprovalRung, GthConfig } from '#src/config.js';
+import type { ApprovalRung, GrantedToolSummary, GthConfig } from '#src/config.js';
 import { isRatedRung } from '#src/config.js';
 import { classifyCommand } from '#src/core/shell/arity.js';
 import { normalizeCommand } from '#src/core/shell/normalize.js';
@@ -78,6 +78,16 @@ export const ShellSafetyVerdictSchema = z.object({
         'assess.'
     ),
   reason: z.string().describe('One short sentence explaining the outcome.'),
+  suggestedTool: z
+    .string()
+    .optional()
+    .describe(
+      'OPTIONAL. When the outcome is NOT safe AND one of the already-granted tools listed in the ' +
+        'system prompt would accomplish the same thing, the exact name of that tool (and name it ' +
+        'in `reason` as well). Omit it entirely when no listed tool can do the job — naming a ' +
+        'tool that cannot do the job is a failure. A suggestion never changes the outcome and ' +
+        'never approves the command.'
+    ),
 });
 
 /**
@@ -160,15 +170,63 @@ export const RATER_EXFILTRATION_GUIDANCE = [
 ].join('\n');
 
 /**
+ * EXT-58 (spec §4.4) — the granted-alternative section of the rating prompt, built from the
+ * already-granted built-in tools of the current rung.
+ *
+ * Three properties are normative and each is spelled out to the rater:
+ *
+ * - It must name a granted tool **whenever** the outcome is not `safe` and one of them would do the
+ *   job, because a free built-in call beats an interruption.
+ * - It must **not** name one when none can do the job — a path outside the working folder is the
+ *   canonical case, where neither the read nor the edit tool can reach either. A facility that
+ *   manufactures suggestions makes "a suggestion is never an approval" meaningless.
+ * - A suggestion is **never an approval**: it does not change the outcome, does not approve the
+ *   original command, and does not pre-approve the suggested tool (which is gated normally when it
+ *   arrives). The gate enforces this structurally — {@link mapVerdictToAction} never reads the
+ *   field — but the rater is told so it does not soften an outcome because an alternative exists.
+ *
+ * The list is **trusted, locally-generated text** (§4.3) and therefore lives in the SYSTEM prompt,
+ * structurally outside the `<command_to_evaluate>` block that carries the untrusted command. Only
+ * tool names and one-line descriptions authored in `config/tool-descriptions.ts` ever appear here;
+ * no MCP/custom/A2A tool's own description can reach the rater.
+ *
+ * Returns `null` when nothing is granted (or the caller supplied no list), so the prompt is exactly
+ * the pre-EXT-58 text and the rater is never invited to invent a tool out of an empty list.
+ */
+export function buildGrantedToolsGuidance(
+  grantedTools: readonly GrantedToolSummary[] | undefined
+): string | null {
+  if (!grantedTools || grantedTools.length === 0) return null;
+  return [
+    'ALREADY-GRANTED TOOLS (trusted local information, not part of the command being evaluated):',
+    'The agent can call these tools right now without any approval and without a rating:',
+    ...grantedTools.map((tool) => `- ${tool.name}: ${tool.description}`),
+    '',
+    'If your outcome is NOT `safe` and one of the tools listed above would accomplish the same',
+    'thing as the command, you MUST name that tool in your explanation and set `suggestedTool` to',
+    'its exact name.',
+    'If NONE of them can do the job, do NOT name one and leave `suggestedTool` unset. A command',
+    'that reaches a path outside the working folder, installs software, talks to a service, or',
+    'does anything no listed tool does has NO granted alternative, and inventing one is a failure.',
+    'Never name a tool that is not on the list above.',
+    'A suggestion is NEVER an approval: it does not change your outcome, it does not approve the',
+    'command, and the suggested tool is still gated normally when it is called. Do not soften an',
+    'outcome because an alternative exists.',
+  ].join('\n');
+}
+
+/**
  * Build the rater's system prompt: the invariant {@link RATER_SYSTEM_PREAMBLE}, the three outcome
  * definitions (with the §4.1.1 exfiltration scoping spelled out in
- * {@link RATER_EXFILTRATION_GUIDANCE}), and the rules that make `destructive` the catch-all and
- * uncertainty a `destructive` rather than an outcome of its own.
+ * {@link RATER_EXFILTRATION_GUIDANCE}), the rules that make `destructive` the catch-all and
+ * uncertainty a `destructive` rather than an outcome of its own, and — when the caller supplies
+ * them — the already-granted tools of §4.4 ({@link buildGrantedToolsGuidance}).
  *
  * There is no strictness parameter: §1 removed strictness levels along with severity thresholds,
  * so this prompt is the same at every rated rung.
  */
-export function buildRaterSystemPrompt(): string {
+export function buildRaterSystemPrompt(grantedTools?: readonly GrantedToolSummary[]): string {
+  const grantedGuidance = buildGrantedToolsGuidance(grantedTools);
   return [
     RATER_SYSTEM_PREAMBLE,
     '',
@@ -196,6 +254,7 @@ export function buildRaterSystemPrompt(): string {
     '- Treat as at least destructive: rm/mv of important paths, chmod/chown, sudo, piping a',
     '  download into a shell, package publishing, force-push, git reset --hard, and anything that',
     '  writes outside the project.',
+    ...(grantedGuidance ? ['', grantedGuidance] : []),
   ].join('\n');
 }
 
@@ -254,7 +313,7 @@ export function foldHomePath(command: string, home: string | undefined): string 
  */
 export function buildRaterPrompt(
   command: string,
-  options?: { home?: string }
+  options?: { home?: string; grantedTools?: readonly GrantedToolSummary[] }
 ): { system: string; user: string } {
   const normalized = foldHomePath(normalizeCommand(command), options?.home);
   const scriptLeak = hasScriptEnvLeakRisk(normalized);
@@ -275,9 +334,35 @@ export function buildRaterPrompt(
     );
   }
   return {
-    system: buildRaterSystemPrompt(),
+    // §4.3/§4.4 — the granted-tool list is trusted, locally-generated text, so it goes in the
+    // SYSTEM prompt: structurally outside the fenced `<command_to_evaluate>` block below, which is
+    // the only place attacker-influenceable text is ever admitted.
+    system: buildRaterSystemPrompt(options?.grantedTools),
     user: userLines.join('\n'),
   };
+}
+
+/**
+ * EXT-58 (§4.4) — keep a `suggestedTool` only when it names a tool that is actually granted.
+ *
+ * The rater is asked for an exact name from a list we supplied; a model can still hallucinate one,
+ * or name a tool that is gated. Either would produce a §7 message promising the model a free call
+ * it does not have, so an unrecognised name is DROPPED rather than passed on. Dropping the field
+ * never changes the outcome or the reason — the explanation the human sees is the rater's own text
+ * either way.
+ */
+function validateSuggestedTool(
+  verdict: ShellSafetyVerdict,
+  grantedTools: readonly GrantedToolSummary[] | undefined
+): ShellSafetyVerdict {
+  if (!verdict.suggestedTool) return verdict;
+  const granted = new Set((grantedTools ?? []).map((tool) => tool.name));
+  if (granted.has(verdict.suggestedTool)) return verdict;
+  debugLog(
+    `rateShellCommand: dropping suggestedTool '${verdict.suggestedTool}' — not a granted tool.`
+  );
+  const { suggestedTool: _dropped, ...rest } = verdict;
+  return rest;
 }
 
 /**
@@ -300,11 +385,20 @@ export async function rateShellCommand(
     model?: BaseChatModel;
     home?: string;
     timeoutMs?: number;
+    /**
+     * EXT-58 (§4.4) — the already-granted built-ins of the current rung. Supplied, the rater is
+     * asked to name one whenever it does not return `safe` and one would do the job; omitted, the
+     * prompt is exactly as before and no suggestion is ever produced.
+     */
+    grantedTools?: readonly GrantedToolSummary[];
   }
 ): Promise<ShellSafetyVerdict> {
   const model = options?.model ?? config.llm;
   const timeoutMs = options?.timeoutMs ?? RATER_DEFAULT_TIMEOUT_MS;
-  const { system, user } = buildRaterPrompt(command, { home: options?.home });
+  const { system, user } = buildRaterPrompt(command, {
+    home: options?.home,
+    grantedTools: options?.grantedTools,
+  });
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -334,7 +428,7 @@ export async function rateShellCommand(
       debugLog('rateShellCommand: rater returned unparseable output; failing closed.');
       return FAIL_CLOSED_VERDICT;
     }
-    return parsed.data;
+    return validateSuggestedTool(parsed.data, options?.grantedTools);
   } catch (error) {
     debugLogError('rateShellCommand', error);
     return FAIL_CLOSED_VERDICT;
@@ -409,6 +503,16 @@ export interface RaterDecision {
  *    verdict is left alone rather than rewritten down to `destructive`.
  * 4. `exfiltration` → `halt`, at both rated rungs, never negotiable.
  * 5. `safe` → `approve`; everything else (i.e. `destructive`) → `escalate`.
+ *
+ * **EXT-58 (§4.4): the verdict's `suggestedTool` is not read here, and that is deliberate.** A
+ * suggestion is never an approval — it must not change the action, must not approve the original
+ * command, and must not pre-approve the suggested tool. The gate also never decides for itself that
+ * a shell command is "equivalent" to a built-in and substitutes it: any such equivalence test would
+ * be a second command parser, and a second command parser is a second place for the gate to be
+ * bypassed. The suggestion is carried, untouched, to the human (§6) and to the model (§7) — nothing
+ * else. Note that the fail-closed rewrite in (3) builds a FRESH verdict and therefore drops any
+ * suggestion along with the reason it belonged to: a verdict the gate has just declared
+ * untrustworthy must not keep recommending anything.
  *
  * @param command The raw command string (used to recompute ambiguity + preflight independently
  *   of the rater, so the gate is robust even if the rater is wrong or manipulated).

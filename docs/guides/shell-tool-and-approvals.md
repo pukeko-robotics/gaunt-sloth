@@ -33,8 +33,9 @@ Approve?  [o]nce   [s]ession   [a]lways   [N]o
   this session, without re-prompting.
 - **always** — same as session, but also remembered across future sessions (persisted to
   `.gsloth/.gsloth-settings/shell-allowlist.json`).
-- **No** (the default — just press Enter) — reject it; the agent gets the rejection and routes
-  around it.
+- **No** (the default — just press Enter) — reject it. The agent is told what it can do next: run
+  the same command with a justification, run a different one, or ask you — so it changes course
+  instead of retrying the same thing or giving up.
 
 The rater is only as good as the model behind it. On a small or local model, prefer the `write` rung
 (below) or point the rater at a stronger model with `approvals.rater`.
@@ -91,6 +92,33 @@ nothing. `auto-safe` spends one rating call per gated command.
 
 Switch rung for the current session with `/approvals read-only|write|auto-safe|full-auto|bypass`
 (see [Interactive sessions](interactive-sessions.md#slash-commands)).
+
+## The agent knows which of its tools cost you a prompt
+
+The cheapest approval is the one that never happens, so the agent is told the posture up front: at
+every rung except `bypass`, the description of each tool that needs approval gains a sentence
+saying so, and the tools that run freely say nothing. The shell is the only gated tool today, so it
+is the only description that changes — at `read-only` and `write` it says the call *will* require
+your approval, at `auto-safe` that it *may*, and at `full-auto` that the auto-rater may refuse it.
+Each sentence also tells the agent to reach for the shell only when the other tools cannot do the
+job, which is why a session at a lower rung tends to edit and search files directly rather than
+shelling out to `sed` and `grep`.
+
+The auto-rater backs that up at `auto-safe` and `full-auto`. When it does not rate a command safe
+and one of the tools the agent already has would do the same job, it names that tool in its
+explanation, so the tool shows up on the rater line of the approval prompt:
+
+```
+⚠ Auto-rater (destructive): rewrites a file in place; edit_file does this without a shell
+```
+
+If you then decline, the agent is told that `edit_file` needs no approval and will not interrupt
+you — which is what makes it take the other route rather than re-arguing this one.
+
+A named alternative is a suggestion, never an approval: it does not run the command, and the
+suggested tool is gated on its own terms when the agent calls it. If nothing the agent already has
+can do the job — a path outside your working folder, an install, a call to a service — the rater
+names nothing.
 
 ## The extras: rater, allow, deny
 
