@@ -255,8 +255,7 @@ export default class GthDevToolkit extends BaseToolkit {
     if (hardline) {
       const refusal =
         `Refusing to execute '${command}': blocked by hardline safety policy ` +
-        `(${hardline.description}). This is a catastrophic, non-recoverable command ` +
-        `and is blocked even when command confirmation is disabled.`;
+        `(${hardline.description}). This is blocked even when command confirmation is disabled.`;
       // TUI-C31 (a): route through the tool-output channel so the refusal lands in the managed
       // frame under the TUI (headless still gets displayWarning via the default sink, verbatim).
       emitToolOutput({ toolCallId, toolName, kind: 'warning', text: `\n⛔ ${refusal}` });

@@ -5,7 +5,7 @@ import type {
   McpConnectionFailure,
 } from '@gaunt-sloth/core/core/types.js';
 import type { TurnViewModel } from '#src/tui/viewModel.js';
-import type { AllowlistCounts, ApprovalMode, ResolvedApprovals } from '@gaunt-sloth/core/config.js';
+import type { AllowlistCounts, ApprovalRung, ResolvedApprovals } from '@gaunt-sloth/core/config.js';
 import type { CommandNoticeTone } from '#src/tui/components/CommandNotice.js';
 import type { DebugDumpInput } from '@gaunt-sloth/agent/modules/slashCommands.js';
 
@@ -35,19 +35,24 @@ export interface TuiAgent {
    */
   resetThread?(): void;
   /**
-   * CFG-26 — switch the session approval MODE and return the posture the runner LANDED on, so the
-   * App can render a state-aware notice and the status-bar mode badge. Wired to the `/approvals`
-   * family. Optional so the fixture agent (no runner) may omit it.
+   * CFG-27 — switch the session approvals RUNG and return the posture the runner LANDED on, so
+   * the App can render a state-aware notice and the status-bar badge. Wired to `/approvals
+   * <rung>`. Optional so the fixture agent (no runner) may omit it.
    *
-   * It returns the landed {@link ResolvedApprovals} rather than the requested mode because the
-   * runner may adjust more than `mode` (switching to `auto` turns the rater on).
+   * It returns the landed {@link ResolvedApprovals} rather than the requested rung so the copy
+   * can only ever describe the posture actually in force.
    */
-  setApprovalMode?(mode: ApprovalMode): ResolvedApprovals;
+  setApprovalRung?(rung: ApprovalRung): ResolvedApprovals;
   /**
-   * CFG-26 — read the current posture + allow-list counts for the `/approvals` display. Separate
-   * from {@link setApprovalMode} so showing status never mutates session state.
+   * CFG-27 — read the current posture, the allow-list counts and the deny entries for the
+   * `/approvals` display. Separate from {@link setApprovalRung} so showing status never mutates
+   * session state.
    */
-  getApprovals?(): { approvals: ResolvedApprovals; allowlist: AllowlistCounts };
+  getApprovals?(): {
+    approvals: ResolvedApprovals;
+    allowlist: AllowlistCounts;
+    deny: string[];
+  };
 }
 
 /**
@@ -82,15 +87,14 @@ export interface TuiAppProps {
   /** Model/provider display name for the status bar and `/model` (from `config.modelDisplayName`). */
   modelDisplayName?: string;
   /**
-   * CFG-26 — the RESOLVED approvals posture at session start, so the status bar names the real
-   * mode from the very first frame. The session module seeds it from
+   * CFG-27 — the RESOLVED approvals posture at session start, so the status bar names the real
+   * rung from the very first frame. The session module seeds it from
    * `runner.getSessionApprovals()`; the App keeps its own state after that.
    *
-   * This replaces the old `initialAutoApprove?: boolean`, which was seeded from
-   * `runner.isSessionYolo()` and therefore read "off" whenever the (now default) rater-mediated
-   * `auto` mode was in force — the status bar said nothing was being auto-approved while the
-   * rater was approving safe commands. A mode, not a boolean, is the only shape that can tell the
-   * truth about three modes.
+   * This replaced an `initialAutoApprove?: boolean` seeded from a session bypass flag, which read
+   * "off" whenever a RATED rung was in force — the status bar said nothing was being
+   * auto-approved while the rater was approving safe commands. A rung, not a boolean, is the only
+   * shape that can tell the truth about five of them.
    *
    * Undefined = no approvals surface in this session (the fixture agent / non-shell sessions),
    * and the badge is then omitted entirely rather than guessing.
