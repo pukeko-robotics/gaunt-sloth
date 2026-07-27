@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RawGthConfig } from '#src/config.js';
 import { StatusLevel } from '#src/core/types.js';
 import { platform } from 'node:os';
+// REAL node:path (never mocked here — see MOCK_CWD below) and the REAL constants the loader uses,
+// so an expected path built in this file is byte-identical to the one production builds.
+import { resolve } from 'node:path';
+import { GSLOTH_DIR, GSLOTH_SETTINGS_DIR } from '#src/constants.js';
 
 const fsMock = {
   existsSync: vi.fn(),
@@ -73,6 +77,22 @@ const globalConfigUtilsMock = {
 };
 vi.mock('#src/utils/globalConfigUtils.js', () => globalConfigUtilsMock);
 
+/**
+ * The mocked cwd every test in this file runs from. `walkConfigSearchDirs()` in
+ * `config/loader.ts` starts its up-tree walk at `getCurrentWorkDir()` (NOT `getProjectDir()`),
+ * so this is the base production feeds to the real `resolve()`.
+ *
+ * OPS-27 — any expected path this file compares by exact equality against a value the loader
+ * builds with the real `resolve()`/`join()` MUST be derived from this same base through that same
+ * real `resolve()` (see RATER_PROFILE_CONFIG below). A hand-written POSIX literal only matches on
+ * POSIX: on win32 a leading-slash string is drive-relative, so the loader produces
+ * `<drive>:\mock\current\dir\...` instead, the exact-equality check silently fails, and
+ * the test exercises the opposite branch. `node:path` is deliberately NOT mocked in this file —
+ * mocking it (or comparing with `endsWith`/`includes`/a separator-normalising regex) would go green
+ * everywhere while proving nothing about how the path is assembled.
+ */
+const MOCK_CWD = '/mock/current/dir';
+
 describe('config', async () => {
   beforeEach(async () => {
     // Reset mocks
@@ -80,8 +100,8 @@ describe('config', async () => {
     vi.clearAllMocks();
     vi.resetModules();
     // Reset and set up systemUtils mocks
-    systemUtilsMock.getCurrentWorkDir.mockReturnValue('/mock/current/dir');
-    systemUtilsMock.getProjectDir.mockReturnValue('/mock/current/dir');
+    systemUtilsMock.getCurrentWorkDir.mockReturnValue(MOCK_CWD);
+    systemUtilsMock.getProjectDir.mockReturnValue(MOCK_CWD);
     systemUtilsMock.getInstallDir.mockReturnValue('/mock/install/dir');
     systemUtilsMock.isTTY.mockReturnValue(true);
     // Default: global config path is absent (sentinel never matched by fs mocks).
@@ -960,8 +980,17 @@ describe('config', async () => {
     });
 
     it('CFG-26: an approvals.rater that DOES resolve loads without erroring', async () => {
-      const RATER_PROFILE_CONFIG =
-        '/mock/current/dir/.gsloth/.gsloth-settings/safety-rater/.gsloth.config.json';
+      // Built the way `resolveIdentityProfileConfigPath()` builds it — real `resolve()`, from the
+      // same mocked `getCurrentWorkDir()` base, through the same `GSLOTH_DIR`/`GSLOTH_SETTINGS_DIR`
+      // constants. So it is win32-shaped on Windows exactly as the loader's own path is, and it
+      // still goes red if the loader's segment sequence ever changes (OPS-27).
+      const RATER_PROFILE_CONFIG = resolve(
+        MOCK_CWD,
+        GSLOTH_DIR,
+        GSLOTH_SETTINGS_DIR,
+        'safety-rater',
+        PROJECT_JSON_MARKER
+      );
       fileUtilsMock.getGslothConfigReadPath.mockImplementation(
         (filename: string) => `/mock/read/${filename}`
       );
