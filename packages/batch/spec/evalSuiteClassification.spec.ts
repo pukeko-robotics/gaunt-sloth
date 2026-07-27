@@ -183,7 +183,7 @@ cases:
       ).rejects.toThrow(/has a blank tag/);
     });
 
-    it('REJECTS model_free for every target that exists, naming the Half-B rater target', async () => {
+    it('REJECTS model_free for an AGENT target, pointing at the rater target instead', async () => {
       // Running a case through an agent IS a model call. A flag that silently meant nothing is
       // worse than an absent one.
       await expect(
@@ -418,5 +418,102 @@ cases:
     expect(suite.cases[0].modelFree).toBe(false);
     expect(suite.cases[0].turns[0].expectations[0].mustCall).toEqual(['mcp__*']);
     expect(suite.cases[0].turns[0].expectations[1].mustError).toEqual(['mcp__*']);
+  });
+
+  /**
+   * BATCH-25 Half B — the `rater` target's parse surface.
+   *
+   * Two of these rejections are the ones that matter, and both prevent a run that would LOOK like a
+   * measurement: a rater suite with no `classification:` block (the classifier layer is inert, so
+   * every shell command would be sent to the chat model as a prompt), and a tool assertion (no agent
+   * runs, so `must_not_call` would pass vacuously).
+   */
+  describe('the rater target (Half B)', () => {
+    const raterSuite = (extra = '', target = 'target: { type: rater, rung: auto-safe }') =>
+      `${target}\n` +
+      'classification: { labels: [safe, destructive], actions: [approve, escalate] }\n' +
+      `${extra}` +
+      'cases: [{ id: a, prompt: "rm -rf /", expect_action: escalate }]\n';
+
+    it('parses a rater target with its rung', async () => {
+      const suite = await parse(raterSuite());
+      expect(suite.target).toEqual({ type: 'rater', rung: 'auto-safe' });
+    });
+
+    it('rejects a rater target with no rung — the action column would mean nothing', async () => {
+      await expect(parse(raterSuite('', 'target: { type: rater }'))).rejects.toThrow(
+        /a "rater" target requires a `rung`/
+      );
+    });
+
+    it('rejects a rung that is not on the approvals ladder', async () => {
+      await expect(parse(raterSuite('', 'target: { type: rater, rung: yolo }'))).rejects.toThrow(
+        /unsupported target.rung "yolo"/
+      );
+    });
+
+    it('rejects a profile on a rater target', async () => {
+      await expect(
+        parse(raterSuite('', 'target: { type: rater, rung: auto-safe, profile: strict }'))
+      ).rejects.toThrow(/does not take a `profile`/);
+    });
+
+    it('rejects a rater suite with no classification block', async () => {
+      await expect(
+        parse(
+          'target: { type: rater, rung: auto-safe }\n' +
+            'cases: [{ id: a, prompt: "rm -rf /", must_contain: [x] }]\n'
+        )
+      ).rejects.toThrow(/requires a `classification:` block/);
+    });
+
+    it('rejects the identities matrix for a rater target', async () => {
+      await expect(parse(raterSuite('identities: [admin, limited]\n'))).rejects.toThrow(
+        /`identities` matrix is not supported for a "rater" target/
+      );
+    });
+
+    it('rejects every tool assertion — there is no agent, so there is no trace', async () => {
+      for (const assertion of [
+        'must_call: [run_shell_command]',
+        'must_not_call: [run_shell_command]',
+        'must_error: [run_shell_command]',
+        'tool_result_json_path: [{ tool: run_shell_command, path: "$.a" }]',
+      ]) {
+        await expect(
+          parse(
+            'target: { type: rater, rung: auto-safe }\n' +
+              'classification: { labels: [safe], actions: [escalate] }\n' +
+              `cases: [{ id: a, prompt: "rm -rf /", expect_action: escalate, ${assertion} }]\n`
+          )
+        ).rejects.toThrow(/uses a tool assertion/);
+      }
+    });
+
+    it('ACCEPTS model_free — the first target that can honour it', async () => {
+      const suite = await parse(
+        'target: { type: rater, rung: auto-safe }\n' +
+          'classification: { labels: [safe], actions: [escalate] }\n' +
+          'cases: [{ id: a, prompt: "rm -rf /", expect_action: escalate, model_free: true }]\n'
+      );
+      expect(suite.cases[0].modelFree).toBe(true);
+    });
+
+    it('ACCEPTS a sweep — the rater runs in-process, so config overrides do move it', async () => {
+      const suite = await parse(
+        raterSuite(
+          'sweep:\n' +
+            '  axes:\n' +
+            '    - name: rung\n' +
+            '      values:\n' +
+            '        - { name: auto-safe, config: { approvals: auto-safe } }\n' +
+            '        - { name: full-auto, config: { approvals: full-auto } }\n'
+        )
+      );
+      expect(suite.sweep?.axes[0].values.map((value) => value.name)).toEqual([
+        'auto-safe',
+        'full-auto',
+      ]);
+    });
   });
 });

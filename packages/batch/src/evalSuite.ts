@@ -1,5 +1,6 @@
 import { parse as parseYaml } from 'yaml';
 import * as z from 'zod';
+import { APPROVAL_RUNGS, isApprovalRung } from '@gaunt-sloth/core/config/shell-policy.js';
 
 import { DEFAULT_EVAL_PASS_THRESHOLD } from '#src/evalTypes.js';
 import type {
@@ -221,6 +222,9 @@ const RawSuiteSchema = z.object({
     // optional debug label. Both are ignored for a `gth-agent` target.
     url: z.string().optional(),
     agent_id: z.string().optional(),
+    // BATCH-25 Half B: the approvals rung a `rater` target rates at (required for that target,
+    // validated below against the declared ladder; ignored by every other target).
+    rung: z.string().optional(),
   }),
   // BATCH-10 Task 2: optional identity profile whose model judges the cases. A top-level sibling of
   // `target`/`defaults`/`cases`, and distinct from `target.profile` (which selects the SUT and is
@@ -284,8 +288,8 @@ type RawAssertions = z.infer<typeof RawAssertionsSchema>;
  * Rejects, with a clear message, at parse time (never silently no-ops or defers to run time):
  * - Malformed YAML.
  * - A suite shape that doesn't match {@link RawSuiteSchema} (missing/wrong-typed fields).
- * - `target.type` other than `"gth-agent"`, `"adk-agent"`, or `"ag-ui"` — other pluggable CLI/HTTP
- *   targets are out of scope.
+ * - `target.type` other than `"gth-agent"`, `"adk-agent"`, `"ag-ui"`, or `"rater"` — other pluggable
+ *   CLI/HTTP targets are out of scope.
  * - `target.profile` set to anything other than `"default"`/absent — a single suite-wide profile
  *   switch is the `--identities` direction, replaced by the suite-level `identities` list.
  * - A `"adk-agent"` (BATCH-14) target missing its `url`; an `adk-agent` suite that ALSO uses the
@@ -316,6 +320,13 @@ type RawAssertions = z.infer<typeof RawAssertionsSchema>;
  * - A tool-RESULT assertion (`must_error` / `tool_result_json_path`, BATCH-21) against an
  *   `adk-agent` OR `ag-ui` target — tool results exist only on the in-process `gth-agent` target
  *   (the AG-UI wire streams call names but no result payloads; A2A exposes no tool trace at all).
+ * - A `"rater"` (BATCH-25 Half B) target missing its `rung`, naming one that is not on the approvals
+ *   ladder, or carrying a `profile`; a `rater` suite with no `classification:` block (the classifier
+ *   layer would be inert and every case would silently run through the ordinary agent); a `rater`
+ *   suite using the `identities` matrix (the classification seam is per-case, not per-identity); or
+ *   a `rater` suite using ANY tool assertion (no agent runs, so there is no trace to grade).
+ * - `model_free: true` on a case of any target EXCEPT `rater` — running a case through an agent IS
+ *   a model call, so the flag could never bite.
  * - A `judge_profile` containing a path separator or `..`.
  *
  * @param yamlText Raw suite file content.
@@ -400,12 +411,39 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
       );
     }
     target = { type: 'ag-ui', url, agentId };
+  } else if (data.target.type === 'rater') {
+    // BATCH-25 Half B: gth's own approvals rater, graded as a classifier. The `rung` is REQUIRED —
+    // the same label produces a different ACTION per rung, so a rater suite that did not say which
+    // rung it rates at would report action numbers that mean nothing. Validated against core's
+    // ladder here (not by the zod enum) so the message can list the rungs that exist.
+    const rung = data.target.rung?.trim();
+    if (!rung) {
+      throw new Error(
+        `Invalid eval suite${suffix}: a "rater" target requires a \`rung\` — the approvals rung the ` +
+          'corpus is rated at (e.g. `target: { type: rater, rung: auto-safe }`), because the same ' +
+          `outcome maps to a different action per rung. One of: ${APPROVAL_RUNGS.join(', ')}.`
+      );
+    }
+    if (!isApprovalRung(rung)) {
+      throw new Error(
+        `Invalid eval suite${suffix}: unsupported target.rung "${rung}" — the approvals ladder is ` +
+          `${APPROVAL_RUNGS.join(', ')}.`
+      );
+    }
+    if (data.target.profile !== undefined) {
+      throw new Error(
+        `Invalid eval suite${suffix}: a "rater" target does not take a \`profile\` — the model that ` +
+          "rates is the run's own (or the one `approvals.rater` names); omit `target.profile`."
+      );
+    }
+    target = { type: 'rater', rung };
   } else {
     throw new Error(
       `Invalid eval suite${suffix}: unsupported target.type "${data.target.type}" — this version ` +
         'of `gth eval` supports "gth-agent" (in-process), "adk-agent" (an external Google ADK ' +
-        'agent over A2A), and "ag-ui" (an external agent over the AG-UI protocol); other pluggable ' +
-        'CLI/HTTP targets are future scope.'
+        'agent over A2A), "ag-ui" (an external agent over the AG-UI protocol), and "rater" (gth\'s ' +
+        'own approvals rater, graded as a classifier); other pluggable CLI/HTTP targets are future ' +
+        'scope.'
     );
   }
 
@@ -466,13 +504,43 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
     );
   }
 
+  // BATCH-25 Half B — the same honest boundary for the `rater` target. The `identities` matrix runs
+  // each case once per identity, and the classifier seam (`RunClassifyFn`) takes no identity: one
+  // classifier is built from ONE config, so a matrix would run every identity through the same
+  // rater and report N identical columns as if they were evidence. The rater axis that IS
+  // meaningful — a different rating model — is the `sweep`, which this target supports.
+  if (target.type === 'rater' && identities !== undefined) {
+    throw new Error(
+      `Invalid eval suite${suffix}: the \`identities\` matrix is not supported for a "rater" ` +
+        'target — the classification seam is per-case, not per-identity, so every identity would ' +
+        'be rated by the same model. Use a `sweep` to vary the rating model/rung instead.'
+    );
+  }
+
   // BATCH-25 — the classifier layer. Parsed BEFORE the cases, because every `expect_label` /
   // `expect_action` and every metric literal is validated against these enums: a typo'd value is a
   // suite error here rather than an assertion that can never pass (or, worse, a metric that reports
   // a permanent, trusted zero).
-  const classification = buildClassificationSpec(data.classification, suffix);
+  const classification = buildClassificationSpec(
+    data.classification,
+    suffix,
+    target.type !== 'rater'
+  );
   const metrics = buildMetricSpecs(data.metrics, classification, suffix);
   const sweep = buildSweep(data.sweep, suffix);
+
+  // BATCH-25 Half B — a `rater` suite MUST declare `classification:`. Without it the whole
+  // classifier layer is inert by design (`runEvalSuite` only consults an injected classifier for a
+  // suite that declares one), so the target would be built, ignored, and every case would fall
+  // through to the ordinary agent — sending shell commands to a chat model and grading its prose.
+  // That is the one failure mode this target must never have, and it is statically detectable.
+  if (target.type === 'rater' && classification === undefined) {
+    throw new Error(
+      `Invalid eval suite${suffix}: a "rater" target requires a \`classification:\` block — it ` +
+        "declares the label/action enum the rater's verdicts are graded against. Without it the " +
+        'classifier layer is inert and the cases would be run through the ordinary agent instead.'
+    );
+  }
 
   // BATCH-25 — a config sweep overrides the gth config the SUT is built from. An `adk-agent` /
   // `ag-ui` target runs OUT OF PROCESS with its own model, tools and auth, so there is no config to
@@ -593,18 +661,17 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
     }
 
     // BATCH-25 — `model_free` requires a target that classifies DETERMINISTICALLY and reports its
-    // own model-call count. No target shipped today does (see the `RunClassifyFn` seam in
-    // evalTypes.ts): a gth-agent / adk-agent / ag-ui case IS a model call by construction. Reject it
-    // rather than accept a flag that would silently mean nothing — an assertion that cannot bite is
-    // worse than an absent one.
+    // own model-call count. Only the `rater` target does (Half B): a gth-agent / adk-agent / ag-ui
+    // case IS a model call by construction. Reject it elsewhere rather than accept a flag that
+    // would silently mean nothing — an assertion that cannot bite is worse than an absent one.
     const modelFree = rawCase.model_free === true;
-    if (modelFree) {
+    if (modelFree && target.type !== 'rater') {
       throw new Error(
         `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) declares ` +
           `\`model_free: true\`, which the "${target.type}" target cannot honour — running a case ` +
           'through an agent IS a model call. `model_free` needs a classification target that ' +
           "decides deterministically and reports its own model-call count (BATCH-25 Half B's " +
-          '`rater` target). Remove the flag, or wait for that target.'
+          '`rater` target). Remove the flag, or use `target: { type: rater, rung: … }`.'
       );
     }
 
@@ -668,6 +735,35 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
     }
   }
 
+  // BATCH-25 Half B — the honest boundary for the `rater` target: it runs NO agent and calls NO
+  // tool, so there is no tool trace and there are no tool results. `must_not_call` would pass
+  // vacuously against the empty trace (the silent false green an eval must never produce) and
+  // `must_call` would fail for a reason that has nothing to do with the rater. Reject all four,
+  // naming the case, the same way the external targets reject what their wire cannot carry.
+  if (target.type === 'rater') {
+    for (const evalCase of cases) {
+      for (const turn of evalCase.turns) {
+        for (const expectation of turn.expectations) {
+          if (
+            expectation.mustCall.length > 0 ||
+            expectation.mustNotCall.length > 0 ||
+            expectation.mustError.length > 0 ||
+            expectation.toolResultJsonPath.length > 0
+          ) {
+            throw new Error(
+              `Invalid eval suite${suffix}: case "${evalCase.id}" uses a tool assertion ` +
+                '(`must_call` / `must_not_call` / `must_error` / `tool_result_json_path`), which a ' +
+                '"rater" target cannot carry — it rates a command string and never runs an agent, ' +
+                'so there is no tool trace to grade (and a vacuous pass is worse than no ' +
+                'assertion). Grade the rating with `expect_label` / `expect_action`, or the ' +
+                "rater's own explanation with the content assertions."
+            );
+          }
+        }
+      }
+    }
+  }
+
   // Normalize a blank/whitespace-only judge_profile to undefined (= no separate judge) so the CLI's
   // resolution treats it the same as absent.
   const judgeProfile = data.judge_profile?.trim() || undefined;
@@ -699,10 +795,17 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
  * declared enum), which suits a suite whose prompt says "reply with exactly one of: …". An
  * `action_from` has NO default: without it the suite has no action dimension, and `expect_action` is
  * then a parse error rather than an assertion that could never be graded.
+ *
+ * BATCH-25 Half B — `extractsFromAnswer` is false for a target that CLASSIFIES (the `rater`), which
+ * reports its label and action directly instead of leaving them to be read out of an answer. The
+ * extractors are then irrelevant, so requiring an `action_from` alongside `actions:` would force
+ * every rater suite to write a line that is never consulted — and a config line that does nothing
+ * is one a reader will eventually believe.
  */
 function buildClassificationSpec(
   raw: z.infer<typeof RawClassificationSchema> | undefined,
-  suffix: string
+  suffix: string,
+  extractsFromAnswer: boolean
 ): EvalClassificationSpec | undefined {
   if (raw === undefined) return undefined;
 
@@ -717,7 +820,7 @@ function buildClassificationSpec(
         'ever produce "(unrecognized)".'
     );
   }
-  if (actions.length > 0 && actionFrom === undefined) {
+  if (actions.length > 0 && actionFrom === undefined && extractsFromAnswer) {
     throw new Error(
       `Invalid eval suite${suffix}: \`classification.actions\` is declared but ` +
         '`classification.action_from` is not — declare how an action is read out of the answer ' +

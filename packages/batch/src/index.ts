@@ -100,8 +100,14 @@ export type {
   ClassifyRequest,
   EvalSweep,
   EvalSweepValue,
+  RaterTarget,
   RunClassifyFn,
 } from '#src/evalTypes.js';
+
+// BATCH-25 Half B — the `rater` target: the one implementation of the `RunClassifyFn` seam, which
+// drives gth's own approvals rater over a corpus of commands.
+export { buildRaterClassifier, HARDLINE_REFUSAL_MARKER } from '#src/raterTarget.js';
+export type { RaterClassifierOptions } from '#src/raterTarget.js';
 
 // BATCH-19 — the `gth eval` reporter facility (A1 seam). These are the public plugin contract an
 // out-of-core `@gaunt-sloth/eval-reporter-*` package implements, exported from the package root so a

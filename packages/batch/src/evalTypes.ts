@@ -5,6 +5,7 @@
  * (BATCH-1's cell/outcome shapes), which documents itself as scoped to "cells and outcomes" only
  * — eval's shapes layer on top of (not into) that file.
  */
+import type { ApprovalRung } from '@gaunt-sloth/core/config/shell-policy.js';
 import type { ToolResultRecord } from '#src/types.js';
 import type {
   EvalCaseClassification,
@@ -76,11 +77,43 @@ export interface AgUiAgentTarget {
   agentId: string;
 }
 
+/**
+ * BATCH-25 Half B — gth's OWN approvals rater, evaluated as a CLASSIFIER rather than as an agent.
+ *
+ * Every case is a shell command; the target rates it with the same rating prompt production uses
+ * (`rateShellCommand`) and maps the verdict to an action with the same decision mapping
+ * (`mapVerdictToAction`), at the rung declared here. What comes back is a label + an action per
+ * round, which is exactly what the classifier layer grades — so "did repointing `approvals.rater`
+ * at a cheaper model raise the false-approve rate" becomes a number instead of a hunch.
+ *
+ * It is the ONLY target that can honour `model_free` (see {@link EvalCase.modelFree}): the
+ * deterministic layer of the gate — the rung, the ambiguity and script-env-leak preflights, and the
+ * §8 hardline floor — decides some commands outright, with no model in the loop.
+ *
+ * Unlike the agent targets this one is NOT driven by a `RunCellFn`: it supplies the
+ * {@link RunClassifyFn} seam instead (`buildRaterClassifier` in {@link ../raterTarget.js}), which
+ * the command passes to `runEvalSuite` as `options.classify`.
+ */
+export interface RaterTarget {
+  type: 'rater';
+  /**
+   * The rung the corpus is rated at, as declared by the suite — REQUIRED, so a suite says out loud
+   * which posture its numbers describe (the same label produces a different ACTION per rung).
+   *
+   * It is the suite's declaration, not the last word: a run whose config declares `approvals`
+   * overrides it, which is what makes the `rung × model` sweep work through the existing `config:`
+   * axis (a sweep cell cannot reach a `target` field). The override is announced, never silent —
+   * see {@link ../raterTarget.js}.
+   */
+  rung: ApprovalRung;
+}
+
 /** One suite's target — the in-process gth agent (default), an external ADK agent over A2A
- * (BATCH-14), or an external AG-UI agent over HTTP/SSE (BATCH-15). Discriminated by `type`; the
- * runner is target-agnostic (it consumes an injected `RunCellFn`/`RunConversationFn`), so the target
- * only changes which runner the command builds. */
-export type EvalTarget = GthAgentTarget | AdkAgentTarget | AgUiAgentTarget;
+ * (BATCH-14), an external AG-UI agent over HTTP/SSE (BATCH-15), or the in-process approvals rater
+ * graded as a classifier (BATCH-25 Half B). Discriminated by `type`; the runner is target-agnostic
+ * (it consumes an injected `RunCellFn`/`RunConversationFn`, or a `RunClassifyFn` for a classifier
+ * target), so the target only changes which runner the command builds. */
+export type EvalTarget = GthAgentTarget | AdkAgentTarget | AgUiAgentTarget | RaterTarget;
 
 /** One `json_path` assertion (BATCH-10): resolve `path` against the answer-parsed-as-JSON and check
  * it. Exactly one of `equals`/`contains` is set (enforced in {@link ../evalSuite.js}'s parse):
@@ -217,14 +250,12 @@ export type RunConversationFn = (userMessages: string[]) => Promise<TurnRunOutco
 /**
  * BATCH-25 — what an injected CLASSIFIER target is asked to decide. One request per (case × cell).
  *
- * ## This is the Half-B seam
+ * ## The Half-B seam, now filled
  *
- * TODO(BATCH-25 Half B / CFG-27): the `rater` target implements {@link RunClassifyFn} by driving the
- * approvals rating prompt + decision mapping at a declared rung. It is deliberately NOT built here:
- * it imports the three-outcome types being written concurrently on `node/CFG-27`
- * (`packages/core/src/core/shell/rater.ts`), and writing against types that do not exist yet is how
- * a seam gets bent to fit a guess. Half A ships the shape, the runner plumbing, and the tests
- * (against an injected fake); Half B supplies the one function.
+ * Half A shipped this shape, the runner plumbing and the tests (against an injected fake); Half B
+ * supplies the one function — `buildRaterClassifier` in {@link ../raterTarget.js}, the
+ * {@link RaterTarget}'s implementation, which drives the approvals rating prompt + decision mapping
+ * at a declared rung. The shape did not have to move to fit it.
  *
  * The shape is what it is because the rater's unit is not an agent turn: it is
  * `(command, rung, [user messages], [negotiation so far]) → outcome → action`. So a request carries
@@ -240,7 +271,10 @@ export interface ClassifyRequest {
   /** The case's family tags. */
   tags: string[];
   /** The case declared `model_free: true` — the target is expected to decide with no model call,
-   * and the runner FAILS the case if the returned `modelCalls` is not 0. */
+   * and the runner FAILS the case if the returned `modelCalls` is not 0. A target that honours it
+   * SHORT-CIRCUITS its model call for this case and answers from its deterministic layer alone;
+   * production is unchanged (the gate still rates at a rated rung — the short-circuit is target
+   * behaviour, not a claim about the gate). */
   modelFree: boolean;
 }
 
@@ -256,7 +290,14 @@ export interface ClassifyOutcome {
   /** `false` = the target could not produce a classification (the case is excluded from every
    * metric denominator and reported as excluded — never silently counted as a miss). */
   ok: boolean;
-  /** The label the target produced, over the suite's declared enum. */
+  /**
+   * The label the target produced, over the suite's declared enum.
+   *
+   * ABSENT when the target reached its decision without a judgement — the `rater` target reports no
+   * label on a zero-model-call decision, because the label IS the rater's judgement and it never
+   * asked. A deterministic case therefore grades on its {@link action}, and a `label` metric's
+   * denominator never silently absorbs a verdict nobody rendered.
+   */
   label?: string;
   /** The action the target's decision mapping produced. */
   action?: string;
@@ -270,7 +311,8 @@ export interface ClassifyOutcome {
 
 /**
  * BATCH-25 — the injectable "classify one case" seam, the classifier analogue of BATCH-1's
- * `RunCellFn`. Provided by a classification TARGET (Half B's `rater`); when absent, a classifier
+ * `RunCellFn`. Provided by a classification TARGET ({@link RaterTarget}, via
+ * `buildRaterClassifier`); when absent, a classifier
  * suite reads its label/action out of the ordinary agent answer via the suite's declared
  * extractors, which is what makes Half A usable on its own.
  *

@@ -70,11 +70,10 @@ export interface RunEvalSuiteOptions {
    * the target returns the label/action per round directly, plus the model-call count that makes
    * `model_free` enforceable.
    *
-   * TODO(BATCH-25 Half B / CFG-27): the `rater` target supplies this by driving the approvals rating
-   * prompt + decision mapping at a declared rung. Nothing in the tree supplies it yet — the suite
-   * parser rejects `model_free` for every target that exists today for exactly that reason — so in
-   * Half A this path is exercised by the unit suite's injected fake. That is the seam working as
-   * intended: Half B adds one function and changes nothing here.
+   * Half B's `rater` target supplies it (`buildRaterClassifier`, #src/raterTarget.js) by driving
+   * the approvals rating prompt + decision mapping at a declared rung. REQUIRED for a `rater`
+   * suite — the guard at the top of {@link runEvalSuite} rejects the run without it rather than
+   * letting the cases fall through to the agent.
    *
    * When absent, a classifier suite reads its label/action out of the ordinary agent answer via the
    * suite's declared extractors, which is what makes the facility usable on its own today.
@@ -166,6 +165,19 @@ export async function runEvalSuite(
   suite: EvalSuite,
   options: RunEvalSuiteOptions
 ): Promise<EvalSuiteSummary> {
+  // BATCH-25 Half B — a classification target that never arrived must be LOUD. `options.classify`
+  // is optional (a classifier suite can read its label out of an agent answer), so a `rater` suite
+  // whose command forgot to build the classifier would otherwise fall through to `runCell` and send
+  // every shell command to the chat model as a prompt — a full run, billed, graded against prose,
+  // and reported as if it had measured the rater. Fail before anything runs instead.
+  if (suite.target.type === 'rater' && !options.classify) {
+    throw new Error(
+      'runEvalSuite: a "rater" target needs an injected `classify` function — build it with ' +
+        '`buildRaterClassifier(suite.target, config)` (#src/raterTarget.js) and pass it as ' +
+        '`options.classify`. Without it every case would be run through the ordinary agent.'
+    );
+  }
+
   const units = buildUnits(suite);
   // I1 — dispatch AND grading are keyed by the guaranteed-unique `inputIndex` (a unit's position in
   // this array, threaded onto its `MatrixCell`/`CellResult`), NEVER by the composite `cellId`
