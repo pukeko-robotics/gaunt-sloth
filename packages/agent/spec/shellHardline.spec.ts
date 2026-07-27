@@ -146,6 +146,60 @@ describe('checkHardline — recursive chown of root (EXT-60)', () => {
 });
 
 /**
+ * EXT-60 — the `chmod` entry was OVER-BROAD, and the negative set could not see it.
+ *
+ * The pattern ended at `777\s+/` with no `CMD_END` tail, so it matched world-writable-ing ANY
+ * absolute path: `chmod -R 777 /var/www` (corpus `de-04`, a `destructive` case — a frustrated
+ * sysadmin on their own web root) was refused exactly as if it were `chmod -R 777 /`. The floor is
+ * unappealable even under `bypass`, so that refusal had no recovery, and this module's own docblock
+ * promises the opposite: "`chmod -R 777 ./dir` … intentionally NOT here".
+ *
+ * The bug survived because the only chmod case in the negative set was `chmod -R 777 ./dist` — a
+ * RELATIVE path, which the broken pattern never matched either. Every ABSOLUTE-path case in
+ * `allowedChmod` below fails before the narrowing and passes after it, which is what makes the fix
+ * verifiable; the relative one is kept only so the pair reads as one set.
+ *
+ * The narrowing strictly removes refusals: both arms are subsets of what the single untailed arm
+ * matched, so nothing newly fires.
+ */
+describe('checkHardline — recursive chmod 777 is bounded to root and system dirs (EXT-60)', () => {
+  const blockedChmod = [
+    'chmod -R 777 /',
+    'chmod -R 777 /*',
+    'sudo chmod --recursive 777 /',
+    'chmod -R 777 /etc',
+    'chmod -R 777 /usr/*',
+    'chmod -R 777 /boot',
+    'ls -la\nchmod -R 777 /',
+  ];
+
+  it.each(blockedChmod)('still refuses recursive 777 on root or a system directory: %s', (cmd) => {
+    const match = checkHardline(cmd);
+    expect(match, `expected "${cmd}" to be blocked`).not.toBeNull();
+    expect(match!.description).toContain('chmod');
+  });
+
+  const allowedChmod = [
+    // The corpus case (`de-04`) that the over-broad pattern refused.
+    'chmod -R 777 /var/www',
+    'chmod -R 777 /home/me/site',
+    // Any other absolute path below a system directory — all of it ordinary, none of it the floor's
+    // business.
+    'chmod -R 777 /var/www/html',
+    'chmod -R 777 /opt/myapp/uploads',
+    'chmod -R 777 /srv/data',
+    'chmod -R 777 /tmp/scratch',
+    'sudo chmod -R 777 /home/deploy/releases',
+    // The relative path that was already covered — kept so the pair reads as one set.
+    'chmod -R 777 ./dist',
+  ];
+
+  it.each(allowedChmod)('does NOT refuse recursive 777 on an ordinary path: %s', (cmd) => {
+    expect(checkHardline(cmd), `expected "${cmd}" to be allowed`).toBeNull();
+  });
+});
+
+/**
  * EXT-55 — the hardline floor is the last line of defence and does not trust the layers above
  * it, so it is audited independently. `CMD_POS` already listed `\n` as a command position, but
  * the individual patterns terminated on `(?:$|[;&|])`, which omitted it — so a catastrophic

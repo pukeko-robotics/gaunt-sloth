@@ -66,6 +66,35 @@ const CMD_POS =
 const CMD_END = `(?:$|[${COMMAND_SEPARATOR_CLASS}])`;
 
 /* -------------------------------------------------------------------------------------------- *
+ * EXT-60 — the shared TARGET fragments.
+ *
+ * Three families here (`rm`, `chmod`, `chown`) are catastrophic for the same reason: they are
+ * pointed at the root of the filesystem or at a system directory. They had three independent
+ * spellings of that idea, and the odd one out was wrong — the `chmod` entry ended at `777\s+/` with
+ * NO tail, so it fired on ANY absolute path, refusing `chmod -R 777 /var/www` (corpus `de-04`, a
+ * `destructive` case) as if it were `chmod -R 777 /`. The floor is unappealable even under
+ * `bypass`, so that was an unrecoverable refusal of ordinary sysadmin work — the CFG-27
+ * `curl -d @~/.ssh/id_rsa.pub` class of defect, and the exact thing this module's own docblock
+ * promises is out of scope ("`chmod -R 777 ./dir` … intentionally NOT here").
+ *
+ * One spelling each, shared by all three families, is what keeps that from recurring.
+ * -------------------------------------------------------------------------------------------- */
+
+/**
+ * The root filesystem AS A TARGET: `/`, or `/*`, and then the command ends. The `CMD_END` tail is
+ * the whole point — without it, `/` matches the first character of every absolute path.
+ */
+const ROOT_TARGET = '/\\s*\\*?\\s*' + CMD_END;
+
+/**
+ * A NAMED system directory as a target: `/etc`, `/usr/*`. The token has to END at the directory
+ * itself, so a path BELOW one — `/var/www/html`, `/home/deploy/app`, where all ordinary work
+ * happens — is deliberately out of range.
+ */
+const SYSTEM_DIR_TARGET =
+  '(?:/(?:home|root|etc|usr|var|bin|sbin|boot|lib|lib64|opt|sys|proc))(?:/\\*)?\\s*' + CMD_END;
+
+/* -------------------------------------------------------------------------------------------- *
  * EXT-60 — the pieces of the recursive-`chown`-of-root patterns.
  *
  * `chown` differs from `rm` in shape: an operand (the owner spec) sits between the options and the
@@ -116,17 +145,11 @@ const CHOWN_HEAD =
 export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   // rm -rf targeting the root filesystem (`/`, `/*`).
   // EXT-55: built with `new RegExp` so the tail comes from the shared CMD_END, not a literal.
-  [
-    new RegExp('\\brm\\s+(?:-[^\\s]*\\s+)*/\\s*\\*?\\s*' + CMD_END),
-    'recursive delete of root filesystem',
-  ],
+  // EXT-60: the target itself now comes from the shared fragment too — same regex, one spelling.
+  [new RegExp('\\brm\\s+(?:-[^\\s]*\\s+)*' + ROOT_TARGET), 'recursive delete of root filesystem'],
   // rm -rf targeting protected system directories (with optional /* suffix).
   [
-    new RegExp(
-      '\\brm\\s+(?:-[^\\s]*\\s+)*' +
-        '(?:/(?:home|root|etc|usr|var|bin|sbin|boot|lib|lib64|opt|sys|proc))(?:/\\*)?\\s*' +
-        CMD_END
-    ),
+    new RegExp('\\brm\\s+(?:-[^\\s]*\\s+)*' + SYSTEM_DIR_TARGET),
     'recursive delete of system directory',
   ],
   // rm -rf targeting the home directory (~ or $HOME).
@@ -143,27 +166,31 @@ export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/>\s*\/dev\/(?:sd|nvme|hd|mmcblk|vd|xvd)[a-z0-9]*\b/, 'redirect to raw block device'],
   // Classic fork bomb `:(){ :|:& };:`.
   [/:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/, 'fork bomb'],
-  // chmod -R 777 / (recursive world-writable on root).
+  // chmod -R 777 / (recursive world-writable on root), and the same on a named system directory.
+  // EXT-60 NARROWED this pair. It was one entry ending at `777\s+/`, with no tail, so it matched
+  // world-writable-ing ANY absolute path: `chmod -R 777 /var/www` was refused unappealably. Both
+  // arms now end at a shared target fragment, exactly as the `rm` pair above does. The narrowing
+  // strictly REMOVES refusals — every command still refused here was already refused before.
   [
-    /\bchmod\s+(?:-[^\s]*\s+)*(?:-r|--recursive)\s+(?:-[^\s]*\s+)*777\s+\//,
+    new RegExp(
+      '\\bchmod\\s+(?:-[^\\s]*\\s+)*(?:-r|--recursive)\\s+(?:-[^\\s]*\\s+)*777\\s+' + ROOT_TARGET
+    ),
     'recursive chmod 777 of root',
+  ],
+  [
+    new RegExp(
+      '\\bchmod\\s+(?:-[^\\s]*\\s+)*(?:-r|--recursive)\\s+(?:-[^\\s]*\\s+)*777\\s+' +
+        SYSTEM_DIR_TARGET
+    ),
+    'recursive chmod 777 of system directory',
   ],
   // EXT-60 — recursive chown of the root filesystem (`chown -R nobody:nobody /`, `… /*`).
   // Unrecoverable without rescue media: it strips setuid from `sudo` and re-owns every service
   // account, so the box can no longer repair itself. `chmod 777` leaves you root; this takes root
-  // away. Built in the shape of the `rm` pair above — a root arm and an enumerated system-directory
-  // arm, each TERMINATED at CMD_END — rather than the shape of the `chmod` entry beside it. The
-  // tail is what keeps the ordinary deploy command out: the target token has to END at the root or
-  // system directory, so `chown -R app:app /var/www/html` does not match while `… /var` does.
-  [new RegExp(CHOWN_HEAD + '/\\s*\\*?\\s*' + CMD_END), 'recursive chown of root filesystem'],
-  [
-    new RegExp(
-      CHOWN_HEAD +
-        '(?:/(?:home|root|etc|usr|var|bin|sbin|boot|lib|lib64|opt|sys|proc))(?:/\\*)?\\s*' +
-        CMD_END
-    ),
-    'recursive chown of system directory',
-  ],
+  // away. Same two arms, off the same shared target fragments: the target token has to END at the
+  // root or system directory, so `chown -R app:app /var/www/html` does not match while `… /var` does.
+  [new RegExp(CHOWN_HEAD + ROOT_TARGET), 'recursive chown of root filesystem'],
+  [new RegExp(CHOWN_HEAD + SYSTEM_DIR_TARGET), 'recursive chown of system directory'],
   // Kill every process on the system (`kill -1`, `kill -9 -1`).
   [/\bkill\s+(?:-[^\s]+\s+)*-1\b/, 'kill all processes'],
   // System shutdown / reboot — anchored to a command position so `echo reboot`
