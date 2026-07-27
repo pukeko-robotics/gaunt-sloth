@@ -389,6 +389,27 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
       expect(outcome.rationale).toContain(FORCED_BY_ASSERTIONS['ambiguity-preflight']);
     });
 
+    it('names NO preflight at an UNRATED rung, while the floor still refuses', async () => {
+      // The preflights live inside the rated branch of the decision mapping: at `bypass` (and
+      // `read-only`/`write`) it returns no verdict at all, so there is no mechanism to attribute
+      // and a `forced_by: <preflight>` case FAILS there. The floor is not a rung decision — it is
+      // checked unconditionally — so a floor case passes at every rung. That asymmetry is
+      // production's, not this target's, and a `rung` sweep will show it as a column of FAILs.
+      const { buildRaterClassifier } = await import('#src/raterTarget.js');
+      const { FORCED_BY_ASSERTIONS } = await import('#src/evalTypes.js');
+      const { model } = fakeModel([{ outcome: outcomeMappingTo('approve')!, reason: 'unused' }]);
+
+      const classify = await buildRaterClassifier({ type: 'rater', rung: 'bypass' }, configOf(), {
+        model,
+      });
+      const [preflight, floored] = await classify(
+        requestOf({ inputs: [AMBIGUOUS, 'rm -rf /'], modelFree: true })
+      );
+
+      expect(preflight.rationale ?? '').not.toContain(FORCED_BY_ASSERTIONS['ambiguity-preflight']);
+      expect(floored.rationale ?? '').toContain(FORCED_BY_ASSERTIONS['hardline-floor']);
+    });
+
     it('CALIBRATES against core: both preflights are still distinguishable', async () => {
       // If this goes red, the gate no longer tells its two preflights apart (one stopped firing, or
       // both now produce the same sentence) and EVERY `forced_by` assertion in every corpus would
