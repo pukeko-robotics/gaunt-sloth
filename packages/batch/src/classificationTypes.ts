@@ -218,8 +218,9 @@ export interface EvalMetricResult {
  * A confusion matrix: rows = what the corpus expected, columns = what the SUT actually produced.
  *
  * The primary artifact of a classifier eval, because **which way it is wrong is the whole signal**:
- * on the approvals scale `exfiltration`→`destructive` means a prompt instead of a halt, while
- * `destructive`→`safe` is a security incident. A single accuracy percentage cannot tell those apart.
+ * on the approvals scale (`safe` · `destructive` · `catastrophic` · `attack`) an `attack` graded
+ * `destructive` means a prompt instead of a halt, while a `destructive` graded `safe` is a security
+ * incident. A single accuracy percentage cannot tell those apart.
  */
 export interface EvalConfusionMatrix {
   /** Which dimension this matrix is over. */

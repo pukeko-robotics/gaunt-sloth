@@ -80,7 +80,7 @@ function enumFor(field: MetricField, spec: EvalClassificationSpec): string[] {
  * Accepted forms:
  * - `expected.label != safe` · `actual.action == approve`
  * - `actual.label == expected.label` (field-to-field — this is how accuracy is written)
- * - `expected.label in [destructive, exfiltration]` · `actual.action not in [approve]`
+ * - `expected.label in [destructive, catastrophic, attack]` · `actual.action not in [approve]`
  * - `has_tag(injection)` · `not has_tag(negotiation)`
  *
  * The literal `none` matches a cell where the field is absent.
