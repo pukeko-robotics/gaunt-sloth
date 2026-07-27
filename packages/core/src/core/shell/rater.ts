@@ -42,9 +42,9 @@ import { normalizeCommand } from '#src/core/shell/normalize.js';
 import { debugLog, debugLogError } from '#src/utils/debugUtils.js';
 
 /**
- * CFG-28 (spec §4.1) — the **four** outcomes the rater may return. The retired `exfiltration`
- * outcome named the halt trigger by *mechanism* while positioning it as the top *severity*; the
- * rescale (§11.1) splits that into two outcomes asking two different questions. There is no
+ * CFG-28 (spec §4.1) — the **four** outcomes the rater may return. The retired third outcome named
+ * the halt trigger by *mechanism* while positioning it as the top *severity*; the rescale (§11.1)
+ * splits that into two outcomes asking two different questions. There is no
  * ordering knob and no threshold: each outcome's consequence is fixed by the rung
  * ({@link mapVerdictToAction}).
  *
@@ -627,10 +627,10 @@ export const BELOW_DESTRUCTIVE_FLOOR: Readonly<Record<RaterOutcome, boolean>> = 
  *    {@link COULD_NOT_ASSESS_PREFIX} reason, **before the `safe` check**, so a manipulated `safe`
  *    verdict can never slip an unresolvable command through. **A rater verdict may only ever make
  *    an outcome worse, never better**, and so may a preflight: `destructive`, `catastrophic` and
- *    `attack` all pass through UNCHANGED. (Before the four-outcome rescale this branch read
- *    `outcome !== 'exfiltration'`; carried over literally it would have let a preflight hit
- *    *downgrade* a `catastrophic` verdict to `destructive` — the exact inverse of the invariant
- *    above, silently trading an unnegotiable escalation for a negotiable one at `full-auto`.)
+ *    `attack` all pass through UNCHANGED. (Before the rescale this branch excluded the single
+ *    halting outcome BY NAME. Renamed in place it would have let a preflight hit *downgrade* a
+ *    `catastrophic` verdict to `destructive` — the exact inverse of the invariant above, silently
+ *    trading an unnegotiable escalation for a negotiable one at `full-auto`.)
  * 4. `attack` → `halt`, at both rated rungs, never negotiable.
  * 5. `safe` → `approve`; `catastrophic` → `escalate` and MUST NOT enter §5; `destructive` →
  *    `escalate` (a negotiation at `full-auto` once [[EXT-29]] lands).
