@@ -595,6 +595,10 @@ export interface RaterDecision {
  * return) misses every key, and a bare lookup would answer `undefined` — "not below the floor",
  * i.e. *skip the preflight rewrite*, which is the permissive direction. The helper defaults the
  * unknown key to `true` so both the compile-time and the runtime answer fail closed.
+ *
+ * Never index this object directly, and never test the key with `in`: it is a plain object literal,
+ * so `'toString'`, `'constructor'` and `'__proto__'` all resolve through the prototype chain to
+ * something that is neither a key of this table nor a boolean.
  */
 const BELOW_DESTRUCTIVE_FLOOR: Readonly<Record<RaterOutcome, boolean>> = {
   safe: true,
@@ -609,11 +613,18 @@ const BELOW_DESTRUCTIVE_FLOOR: Readonly<Record<RaterOutcome, boolean>> = {
  * See {@link BELOW_DESTRUCTIVE_FLOOR}. An outcome that is not in the table is treated as below the
  * floor, so an out-of-band value is FLOORED to `destructive` rather than sailing past the preflight
  * carrying the model's own unvalidated reason.
+ *
+ * The lookup is OWN-PROPERTY-ONLY, and the declared `boolean` return is the reason. `outcome` is
+ * only `RaterOutcome` as far as the compiler is concerned — this helper exists to be robust to a
+ * value that lied — and a `?? undefined` default would still hand back the *inherited* value for a
+ * prototype-chain key (`'toString'` → a function, `'constructor'` → `Object`). Those happen to be
+ * truthy, so today's single caller would still floor; but a caller written as `=== true`, which is
+ * how a predicate advertised as hardened invites being consumed, would fail OPEN on exactly the
+ * class of input this function is for. `Object.hasOwn` makes the advertised invariant true rather
+ * than incidentally true.
  */
 export function isBelowDestructiveFloor(outcome: RaterOutcome): boolean {
-  // The `?? true` is NOT dead code the type proves unreachable — `outcome` is only `RaterOutcome`
-  // as far as the compiler is concerned, and this module exists to be robust to a value that lied.
-  return BELOW_DESTRUCTIVE_FLOOR[outcome] ?? true;
+  return Object.hasOwn(BELOW_DESTRUCTIVE_FLOOR, outcome) ? BELOW_DESTRUCTIVE_FLOOR[outcome] : true;
 }
 
 /**

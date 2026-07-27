@@ -10,6 +10,7 @@ import {
   FAIL_CLOSED_VERDICT,
   foldHomePath,
   hasScriptEnvLeakRisk,
+  isBelowDestructiveFloor,
   mapVerdictToAction,
   rateShellCommand,
   RATER_OUTCOMES,
@@ -753,6 +754,19 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
    */
   describe('nothing falls outside the four (§4.1)', () => {
     const ACTIONS = ['approve', 'escalate', 'halt'];
+    /**
+     * Strings that are not one of the four. The last three are PROTOTYPE-CHAIN keys, and they are
+     * the ones a plain-object lookup gets wrong — an ordinary unknown key misses cleanly, while
+     * these resolve to something inherited. Every out-of-band probe below runs the whole list.
+     */
+    const OUT_OF_BAND_OUTCOMES = [
+      'exfiltration',
+      'critical',
+      '',
+      'toString',
+      'constructor',
+      '__proto__',
+    ];
 
     it('the scale is exactly these four, and the schema accepts nothing else', () => {
       expect([...RATER_OUTCOMES]).toEqual(['safe', 'destructive', 'catastrophic', 'attack']);
@@ -800,7 +814,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
      * runtime fails closed in the same direction the compiler does.
      */
     it('an out-of-band outcome is FLOORED on an unassessable command, not passed through', () => {
-      for (const outcome of ['exfiltration', 'critical', '']) {
+      for (const outcome of OUT_OF_BAND_OUTCOMES) {
         const got = mapVerdictToAction(
           'cat x | sh',
           verdict(outcome as RaterOutcome, 'the model said so'),
@@ -810,6 +824,27 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
         expect(got.verdict?.reason).toContain(COULD_NOT_ASSESS_PREFIX);
         expect(got.verdict?.reason).not.toContain('the model said so');
         expect(got.action).toBe('escalate');
+      }
+    });
+
+    /**
+     * The predicate's declared `boolean`, asserted with `toBe` rather than truthiness — because the
+     * gap this closes was invisible to a truthy check. `BELOW_DESTRUCTIVE_FLOOR` is a plain object
+     * literal, so a `?? true` default never fires for a PROTOTYPE-CHAIN key: `'toString'` resolved
+     * to a function and `'constructor'` to `Object`. Both are truthy, so the one caller still
+     * floored and nothing was live — but the function returned a non-boolean from its `: boolean`
+     * signature, and a caller written as `=== true` (the natural way to consume a predicate the
+     * docblock advertises as hardened, and the seam [[EXT-61]] is told to reuse) would have failed
+     * OPEN on exactly the lying-value class the helper exists for.
+     */
+    it('is own-property-only: a prototype-chain key defaults to true, not to Object.prototype', () => {
+      for (const outcome of OUT_OF_BAND_OUTCOMES) {
+        expect(isBelowDestructiveFloor(outcome as RaterOutcome)).toBe(true);
+      }
+      // ...and the four real outcomes still answer the table, not the default.
+      expect(isBelowDestructiveFloor('safe')).toBe(true);
+      for (const outcome of ['destructive', 'catastrophic', 'attack'] as const) {
+        expect(isBelowDestructiveFloor(outcome)).toBe(false);
       }
     });
   });

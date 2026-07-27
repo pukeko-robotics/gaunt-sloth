@@ -77,7 +77,13 @@ test.describe('gth code TUI — EXT-52 lean shell approval prompt (real agent, s
 
     // Grant once.
     terminal.write('o');
+    // CFG-28: the title alone is no longer evidence of WHICH key was pressed — `(once)` is also
+    // what a `catastrophic` [s]/[a] renders, because §4.2 forbids a sticky grant there and the
+    // notice names the scope that took effect rather than the keystroke. This fixture rates
+    // nothing (no verdict), so the two cannot be confused here; the detail line is asserted
+    // alongside so the distinction is pinned rather than assumed if the menu changes ([[TUI-C26]]).
     await expect(terminal.getByText('Command approved (once)')).toBeVisible();
+    await expect(terminal.getByText('Approved this single invocation only.')).toBeVisible();
 
     // The resumed run executed the command (its OUTPUT marker appears) and concluded.
     await expect(

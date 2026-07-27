@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { render } from 'ink-testing-library';
+import stripAnsi from 'strip-ansi';
 import type {
   AgentStreamEvent,
   PendingToolInterrupt,
@@ -31,16 +32,12 @@ const baseProps = {
 const ESC = String.fromCharCode(27);
 
 /**
- * Rendered frames as comparable text: ANSI style runs removed and whitespace collapsed. Ink wraps
- * a long line mid-sentence AND re-opens the style run at the break, so a raw `frames.join()` does
- * not contain any phrase that happened to straddle the wrap.
+ * Rendered frames as comparable text: ANSI removed and whitespace collapsed. Ink wraps a long line
+ * mid-sentence AND re-opens the style run at the break, so a raw `frames.join()` does not contain
+ * any phrase that happened to straddle the wrap. `strip-ansi` (already used this way by
+ * `LiveTurn.spec.tsx`) covers every escape Ink can emit, not only the SGR colour runs.
  */
-const plain = (frames: string[]): string =>
-  frames
-    .join('\n')
-    // eslint-disable-next-line no-control-regex
-    .replace(/\u001b\[[0-9;]*m/g, '')
-    .replace(/\s+/g, ' ');
+const plain = (frames: string[]): string => stripAnsi(frames.join('\n')).replace(/\s+/g, ' ');
 
 /** A subscribeApproval the test can fire on demand, capturing the resolved decision. */
 function makeApprovalHarness() {
