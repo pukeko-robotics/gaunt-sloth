@@ -20,7 +20,7 @@
  * - It does not decide anything. It renders a refusal that has already been decided elsewhere; a
  *   suggestion it carries is never an approval and changes no outcome (§4.4).
  * - It does not serve a **halt** (§4.2). A halt is not a rejection and offers the model no moves,
- *   so it is an error (`ExfiltrationHaltError`) rather than a message — see `approvalStop.ts`.
+ *   so it is an error (`AttackHaltError`) rather than a message — see `approvalStop.ts`.
  * - It does not serve a **deny-list** refusal. A deny entry is the user's own hardline, and
  *   "re-call the same command with a justification" is not a move the model has there; that message
  *   stays as it is, in `GthAgentRunner.decideToolApproval`.

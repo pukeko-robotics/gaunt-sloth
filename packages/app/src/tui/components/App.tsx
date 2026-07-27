@@ -544,7 +544,7 @@ export function App(props: TuiAppProps): React.ReactElement {
     // escalation menu offers five choices — ask to explain · approve · always approve · reject ·
     // always reject — and a per-prompt change of RUNG is not one of them: the ladder has no
     // "turn the gate down from here" action, so keeping the key would have meant inventing one.
-    // [[TUI-C26]] builds the five-choice menu (and the §6.1 exfiltration banner) on this seam.
+    // [[TUI-C26]] builds the five-choice menu (and the §6.1 attack banner) on this seam.
     if (approvalQueueRef.current.length > 0) {
       const ch = input.toLowerCase();
       if (ch === 'o') resolveApproval('once');

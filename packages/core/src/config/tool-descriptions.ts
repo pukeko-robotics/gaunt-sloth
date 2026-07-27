@@ -139,7 +139,7 @@ export interface GrantedToolSummary {
  * the constrained ones confined to the working folder" — a network fetch is not. Offering it would
  * let a refused `curl`/`wget` come back as a suggestion whose §7 clause tells the model, verbatim,
  * that the alternative "will not interrupt the user": a refused egress turned into a free one,
- * through the rater rather than through the gate. Exfiltration halts before any message reaches the
+ * through the rater rather than through the gate. An `attack` halts before any message reaches the
  * model, but a merely `destructive` fetch would not. Same reasoning excludes MCP and custom tools,
  * which additionally supply text we did not author.
  */

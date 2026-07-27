@@ -24,7 +24,7 @@ Anything else stops and asks you:
 ```
 The agent wants to run a shell command via run_shell_command
     rm -rf node_modules
-⚠ Auto-rater (destructive): deletes a directory tree irreversibly
+⚠ Auto-rater (destructive): deletes a directory tree without confirmation
 Approve?  [o]nce   [s]ession   [a]lways   [N]o
 ```
 
@@ -36,6 +36,26 @@ Approve?  [o]nce   [s]ession   [a]lways   [N]o
 - **No** (the default — just press Enter) — reject it. The agent is told what it can do next: run
   the same command with a justification, run a different one, or ask you — so it changes course
   instead of retrying the same thing or giving up.
+
+### What the rater can say
+
+The word in brackets after `⚠ Auto-rater` is one of four outcomes:
+
+- **safe** — runs with no prompt.
+- **destructive** — harmful, but you could undo it from inside the session: `rm -rf node_modules`,
+  `git reset --hard`. Asks you, with all four choices above.
+- **catastrophic** — cannot be undone from inside the session: `mkfs`, `DROP DATABASE`,
+  `terraform destroy -auto-approve`, `kubectl delete namespace production`. Asks you *every* time —
+  **session** and **always** do not stick for this outcome, so approving one `terraform destroy`
+  never approves the next one.
+- **attack** — the command's own structure shows something hostile: it goes after a credential for
+  its own sake, escalates privilege, installs persistence, impersonates a hostname, or hides what it
+  really runs. This one **ends the run** instead of asking. If the command is legitimate and you
+  need it, put it in `approvals.allow` (below) — that list is checked before the rater.
+
+Anything the rater cannot assess lands on **destructive** and says so; it never falls back to safe.
+Pushing and publishing to somewhere your project already configures — `git push`, `npm publish`,
+`docker push` — is ordinary work: the rater may well ask about it, but it never ends the run.
 
 The rater is only as good as the model behind it. On a small or local model, prefer the `write` rung
 (below) or point the rater at a stronger model with `approvals.rater`.

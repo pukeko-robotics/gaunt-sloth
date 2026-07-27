@@ -10,9 +10,9 @@
  * something the model observes as a `ToolMessage` and can respond to; these two are precisely the
  * cases where the spec says the model gets no move at all:
  *
- * - **{@link ExfiltrationHaltError}** (§4.2) — an `exfiltration` outcome *halts the run*. "A halt
- *   ends the agent loop. It is not a rejection the model can respond to, and no rung except
- *   `bypass` can turn it into anything else."
+ * - **{@link AttackHaltError}** (§4.2) — an `attack` outcome *halts the run*. "A halt ends the
+ *   agent loop. It is not a rejection the model can respond to, and no rung except `bypass` can
+ *   turn it into anything else."
  * - **{@link NonInteractiveEscalationError}** (§6.2) — where no human can answer, *every*
  *   escalation is an immediate non-zero exit carrying the command, the rating and its reason.
  *   There is no prompt, no waiting, and never a timeout into approval. Teams that need specific
@@ -45,21 +45,33 @@ export abstract class ApprovalStopError extends Error {
 }
 
 /**
- * §4.2 — an `exfiltration` outcome. Ends the agent loop; the model is told nothing and offered
- * nothing. [[TUI-C26]] will present this interactively as the §6.1 red banner (`s` stop / `b`
- * bypass this one command) BEFORE the throw; until then the run simply ends with this message.
+ * §4.2 — an `attack` outcome: the command's own **structure** evidenced compromise (§4.1.1 —
+ * credential targeting, privilege escalation, persistence, deception, obfuscation). Ends the agent
+ * loop; the model is told nothing and offered nothing.
+ *
+ * [[TUI-C26]] will present this interactively as the §6.1 red banner — any key stops, typing
+ * `run anyway` runs this one command — BEFORE the throw; until then the run simply ends with this
+ * message, which is what a non-interactive session gets either way (§6.2).
+ *
+ * The recovery this message names is deliberately the **allow-list**, not `bypass`. §4.2 makes
+ * `approvals.allow` the supported way to run such a command unattended (it is consulted before the
+ * rater, so it never reaches a halt at all); `bypass` also works and is far blunter — it turns off
+ * the rater, the escalation and the halt together, for every command, for the whole run. It is a
+ * last resort, not the answer, and the wording says so in that order.
  */
-export class ExfiltrationHaltError extends ApprovalStopError {
-  /** The rater's explanation of what the command would send where. */
+export class AttackHaltError extends ApprovalStopError {
+  /** The rater's explanation of what the command's structure showed. */
   readonly reason: string;
 
   constructor(command: string, reason: string) {
     super(
-      `Run halted: the auto-rater rated this command as exfiltration, which ends the run.\n` +
+      `Run halted: the auto-rater rated this command as an attack, which ends the run.\n` +
         `  Command: ${command}\n` +
         `  Reason: ${reason}\n` +
-        `This is not negotiable, and no rung except bypass turns it into anything else. If you ` +
-        `genuinely need this operation, run it at approvals "bypass" and accept the risk.`,
+        `This is not negotiable. If this command is legitimate and you need it to run, declare ` +
+        `it in approvals.allow — that list is consulted before the auto-rater, so it never ` +
+        `reaches a halt. Dropping to approvals "bypass" also works, but it turns off the rater, ` +
+        `the prompts and the halt for every command in the run.`,
       command
     );
     this.reason = reason;

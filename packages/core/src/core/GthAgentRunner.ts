@@ -36,7 +36,7 @@ import { classifyCommand } from '#src/core/shell/arity.js';
 import { normalizeCommand } from '#src/core/shell/normalize.js';
 import {
   ApprovalStopError,
-  ExfiltrationHaltError,
+  AttackHaltError,
   NonInteractiveEscalationError,
 } from '#src/core/shell/approvalStop.js';
 import { DenylistStore } from '#src/core/shell/denylist.js';
@@ -455,9 +455,9 @@ export class GthAgentRunner {
    *    the safe-bin anti-widening re-validation, approve SILENTLY. It applies at EVERY rung
    *    except `bypass` (where it is moot) and is consulted **before** the rater, so a trusted
    *    prefix never pays for a rating call.
-   * 4. **auto-rater** (`auto-safe` / `full-auto` only) — `safe` approves, `destructive` escalates,
-   *    `exfiltration` HALTS the run ({@link ExfiltrationHaltError}). The other three rungs
-   *    consult no model at all.
+   * 4. **auto-rater** (`auto-safe` / `full-auto` only) — `safe` approves, `destructive` and
+   *    `catastrophic` escalate, and `attack` HALTS the run ({@link AttackHaltError}). The other
+   *    three rungs consult no model at all.
    * 5. **human prompt** — the approval callback; when the human grants `session`/`always` scope,
    *    the command's classified prefix is recorded so future flag-variants stop re-prompting.
    *
@@ -505,8 +505,8 @@ export class GthAgentRunner {
     }
 
     // (4) The auto-rater, at the two rated rungs only. `safe` is approved (the fatigue reducer),
-    // `destructive` falls through to the human with the verdict attached, and `exfiltration` ends
-    // the run outright.
+    // `destructive` and `catastrophic` fall through to the human with the verdict attached, and
+    // `attack` ends the run outright.
     let safetyVerdict: ShellSafetyVerdict | undefined;
     if (isShellCommand && command !== null && isRatedRung(approvals.rung)) {
       const verdict = await rateShellCommand(command, this.config as GthConfig, {
@@ -528,7 +528,7 @@ export class GthAgentRunner {
       }
       if (decision.action === 'halt') {
         // §4.2 — not a rejection the model can respond to. It ends the agent loop.
-        throw new ExfiltrationHaltError(command, decision.verdict?.reason ?? '');
+        throw new AttackHaltError(command, decision.verdict?.reason ?? '');
       }
       // Escalate: carry the verdict (the honest one — see mapVerdictToAction) to the human.
       safetyVerdict = decision.verdict;
@@ -550,7 +550,16 @@ export class GthAgentRunner {
     const decision = await this.toolApprovalCallback(pending);
 
     // Persist the human's scoped grant so future variants of the same operation skip the prompt.
-    if (decision.type === 'approve' && allowlistApplies && command) {
+    //
+    // §4.2 — **a `catastrophic` approval is NEVER sticky.** "The human may approve this one
+    // invocation, and only this one": no always-allow, and no session-scoped allow either. The
+    // surface withdraws the affordance ([[TUI-C26]] drops `always approve` from the menu for this
+    // outcome), but the allow-list WRITE is decided here, and §3 has the allow-list consulted
+    // *before* the rater — so one sticky grant would remove the command from rating permanently,
+    // and the next `terraform destroy` would never be rated at all. Clamping here means the policy
+    // does not depend on which surface asked, or on a surface that has not been built yet.
+    const catastrophic = safetyVerdict?.outcome === 'catastrophic';
+    if (decision.type === 'approve' && allowlistApplies && command && !catastrophic) {
       this.recordApproval(command, decision.scope ?? 'once');
     }
     return decision;
