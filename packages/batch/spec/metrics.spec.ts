@@ -273,7 +273,44 @@ describe('metrics', () => {
         /1 case\(s\) in the denominator do not carry every field this metric reads/
       );
       expect(result.warnings.join('\n')).toMatch(/asserts-nothing/);
-      expect(result.warnings.join('\n')).toMatch(/narrow `over:`/);
+      expect(result.warnings.join('\n')).toMatch(/counted as a miss by `actual.label != expected/);
+      expect(result.warnings.join('\n')).toMatch(/Narrow `over:`/);
+    });
+
+    it('an ACCURACY metric counts label-less cases as free HITS, and says so', async () => {
+      // BATCH-25 Half B (finding I2). A `rater` suite's model-free cases report no label — nobody
+      // rated them — and `actual.label == expected.label` treats two absent values as EQUAL. So a
+      // corpus of deterministic cases scores 100% on label accuracy while measuring nothing. The
+      // engine does NOT silently drop them (that would inflate coverage) and does not count them as
+      // misses (that would invent a verdict); it counts them, and names them, and the fix is the
+      // author's: `over: ["expected.label != none"]`.
+      const { computeMetric } = await import('#src/metrics.js');
+      const spec: EvalMetricSpec = {
+        name: 'label_accuracy',
+        where: [
+          { kind: 'compareField', field: 'actual.label', negated: false, other: 'expected.label' },
+        ],
+        gate: 'report',
+      };
+      const modelFreeCells = [cell({ id: 'fl-01' }), cell({ id: 'ob-02' })];
+
+      const unnarrowed = computeMetric(spec, modelFreeCells, []);
+      expect(unnarrowed.overall).toEqual({ numerator: 2, denominator: 2, value: 1 });
+      expect(unnarrowed.warnings.join('\n')).toMatch(/as a free HIT/);
+      expect(unnarrowed.warnings.join('\n')).toMatch(/expected.label != none/);
+
+      // ...and with the denominator the warning asks for, the metric measures nothing and says THAT
+      // rather than reporting a perfect score.
+      const narrowed = computeMetric(
+        {
+          ...spec,
+          over: [{ kind: 'compare', field: 'expected.label', negated: true, value: 'none' }],
+        },
+        modelFreeCells,
+        []
+      );
+      expect(narrowed.overall).toEqual({ numerator: 0, denominator: 0, value: null });
+      expect(narrowed.warnings.join('\n')).toMatch(/denominator is EMPTY/);
     });
 
     it('does NOT warn when every denominator case carries the fields', async () => {

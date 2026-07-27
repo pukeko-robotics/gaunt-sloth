@@ -2,7 +2,11 @@ import { parse as parseYaml } from 'yaml';
 import * as z from 'zod';
 import { APPROVAL_RUNGS, isApprovalRung } from '@gaunt-sloth/core/config/shell-policy.js';
 
-import { DEFAULT_EVAL_PASS_THRESHOLD } from '#src/evalTypes.js';
+import {
+  DEFAULT_EVAL_PASS_THRESHOLD,
+  FORCED_BY_ASSERTIONS,
+  FORCED_BY_MECHANISMS,
+} from '#src/evalTypes.js';
 import type {
   EvalCase,
   EvalExpectation,
@@ -11,6 +15,7 @@ import type {
   EvalSweepValue,
   EvalTarget,
   EvalTurn,
+  ForcedByMechanism,
 } from '#src/evalTypes.js';
 import type {
   ClassificationExtractor,
@@ -110,6 +115,9 @@ const RawAssertionsSchema = z.object({
   // Validated against the suite's `classification` enums after normalization.
   expect_label: z.string().optional(),
   expect_action: z.string().optional(),
+  // BATCH-25 Half B — assert WHICH deterministic mechanism of the approvals gate decided this
+  // round. `rater` target only; desugars to a `must_contain` on that mechanism's rationale marker.
+  forced_by: z.string().optional(),
   judge: z.string().optional(),
 });
 
@@ -268,6 +276,7 @@ const FLAT_ASSERTION_KEYS = [
   // check; omitting them would let a suite declare both surfaces and have one silently ignored.
   'expect_label',
   'expect_action',
+  'forced_by',
   'judge',
 ] as const;
 
@@ -326,7 +335,10 @@ type RawAssertions = z.infer<typeof RawAssertionsSchema>;
  *   suite using the `identities` matrix (the classification seam is per-case, not per-identity); or
  *   a `rater` suite using ANY tool assertion (no agent runs, so there is no trace to grade).
  * - `model_free: true` on a case of any target EXCEPT `rater` — running a case through an agent IS
- *   a model call, so the flag could never bite.
+ *   a model call, so the flag could never bite; and `model_free: true` on a case that ALSO declares
+ *   a `judge:` rubric, since the judge is a second model call the target's `modelCalls` cannot see.
+ * - `forced_by` on any target except `rater`, or naming something that is not a mechanism of the
+ *   approvals gate.
  * - A `judge_profile` containing a path separator or `..`.
  *
  * @param yamlText Raw suite file content.
@@ -615,6 +627,7 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
             declaredIdentities,
             identities,
             classification,
+            targetType: target.type,
           }),
         };
       });
@@ -638,6 +651,7 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
             declaredIdentities,
             identities,
             classification,
+            targetType: target.type,
           }),
         },
       ];
@@ -673,6 +687,26 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
           "decides deterministically and reports its own model-call count (BATCH-25 Half B's " +
           '`rater` target). Remove the flag, or use `target: { type: rater, rung: … }`.'
       );
+    }
+
+    // BATCH-25 Half B — `model_free` must mean NO model call from ANY path, not just from the
+    // classify path. The runner enforces it against the TARGET's reported `modelCalls`, and the
+    // judge is a second, independent model call: a case declaring both `model_free: true` and a
+    // `judge:` rubric would bill an LLM call and still report `modelCalls: 0` and PASS. A contract
+    // that exists to make a claim checkable must not have a hole in it.
+    if (modelFree) {
+      for (const turn of turns) {
+        for (const expectation of turn.expectations) {
+          if (expectation.judgeRubric !== undefined) {
+            throw new Error(
+              `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) declares ` +
+                '`model_free: true` AND a `judge:` rubric — the judge is a model call, so the case ' +
+                "would not be free and its reported model-call count (the target's, which the " +
+                'judge is not part of) would say it was. Drop the rubric, or drop `model_free`.'
+            );
+          }
+        }
+      }
     }
 
     return {
@@ -1076,6 +1110,8 @@ interface TurnContext {
   identities: string[] | undefined;
   /** BATCH-25 — the suite's classification enums, for validating `expect_label`/`expect_action`. */
   classification: EvalClassificationSpec | undefined;
+  /** BATCH-25 Half B — the suite's target type, for `forced_by` (a `rater`-only assertion). */
+  targetType: EvalTarget['type'];
 }
 
 /**
@@ -1121,6 +1157,7 @@ function buildTurnExpectations(raw: RawTurnAssertions, ctx: TurnContext): EvalEx
         blockIndex,
         declaredIdentities: ctx.declaredIdentities,
         classification: ctx.classification,
+        targetType: ctx.targetType,
       })
     );
   } else {
@@ -1134,6 +1171,7 @@ function buildTurnExpectations(raw: RawTurnAssertions, ctx: TurnContext): EvalEx
         blockIndex: undefined,
         declaredIdentities: ctx.declaredIdentities,
         classification: ctx.classification,
+        targetType: ctx.targetType,
       }),
     ];
   }
@@ -1173,6 +1211,53 @@ interface ExpectationContext {
   declaredIdentities: Set<string> | undefined;
   /** BATCH-25 — the suite's classification enums, for validating `expect_label`/`expect_action`. */
   classification: EvalClassificationSpec | undefined;
+  /** BATCH-25 Half B — the suite's target type, for `forced_by` (a `rater`-only assertion). */
+  targetType: EvalTarget['type'];
+}
+
+/**
+ * BATCH-25 Half B — desugar `forced_by: <mechanism>` into the content assertion that grades it.
+ *
+ * ## Why a case needs this at all
+ *
+ * A `model_free` case cannot be graded on its `action`. Without a verdict, core's decision mapping
+ * substitutes its fail-closed one and returns the SAME action for every command at a rated rung, so
+ * `expect_action: escalate` passes for `ls -la` exactly as it does for `rm -rf $(echo /)` — and
+ * would still pass with the hardline floor and both preflights deleted. A model-free assertion is
+ * only a regression gate if a DIFFERENT command would get it wrong, and the one signal that
+ * satisfies that is WHICH deterministic mechanism decided the command. The `rater` target reports
+ * it in the rationale; this turns the corpus's own `forced_by` / `floor_refuses` vocabulary into the
+ * `must_contain` that reads it, so transcribing a corpus case stays a copy.
+ *
+ * `rater`-only: no other target has a deterministic layer to attribute a decision to, and an
+ * assertion that can never be satisfied is as bad as one that always is.
+ */
+function forcedByAssertions(raw: string | undefined, ctx: ExpectationContext): string[] {
+  const mechanism = raw?.trim();
+  if (!mechanism) return [];
+
+  const turnPart = ctx.turnIndex === undefined ? '' : ` turn ${ctx.turnIndex}`;
+  const where =
+    ctx.blockIndex === undefined
+      ? `case "${ctx.caseId}" (index ${ctx.caseIndex})${turnPart}`
+      : `case "${ctx.caseId}" (index ${ctx.caseIndex})${turnPart} expect block ${ctx.blockIndex}`;
+
+  if (ctx.targetType !== 'rater') {
+    throw new Error(
+      `Invalid eval suite${ctx.suffix}: ${where} uses \`forced_by\`, which only the "rater" target ` +
+        `can grade — it names a deterministic mechanism of the approvals gate (${FORCED_BY_MECHANISMS.join(
+          ', '
+        )}), and a "${ctx.targetType}" target has none to report. Remove it, or use ` +
+        '`target: { type: rater, rung: … }`.'
+    );
+  }
+  if (!(FORCED_BY_MECHANISMS as readonly string[]).includes(mechanism)) {
+    throw new Error(
+      `Invalid eval suite${ctx.suffix}: ${where} declares \`forced_by: ${mechanism}\`, which is not ` +
+        `a mechanism of the approvals gate. One of: ${FORCED_BY_MECHANISMS.join(', ')}.`
+    );
+  }
+  return [FORCED_BY_ASSERTIONS[mechanism as ForcedByMechanism]];
 }
 
 /**
@@ -1214,7 +1299,7 @@ function buildExpectation(
     identities = blockIdentities;
   }
 
-  const mustContain = raw.must_contain ?? [];
+  const mustContain = [...(raw.must_contain ?? []), ...forcedByAssertions(raw.forced_by, ctx)];
   const mustNotContain = raw.must_not_contain ?? [];
   const shouldContainAny = raw.should_contain_any ?? [];
   const mustCall = raw.must_call ?? [];
@@ -1339,7 +1424,7 @@ function buildExpectation(
       `Invalid eval suite${ctx.suffix}: ${where} has no checks and no judge rubric — it must ` +
         'declare at least one of must_contain / must_not_contain / should_contain_any / must_call ' +
         '/ must_not_call / must_match / must_not_match / json_path / must_error / ' +
-        'tool_result_json_path / expect_label / expect_action, or a judge rubric.'
+        'tool_result_json_path / expect_label / expect_action / forced_by, or a judge rubric.'
     );
   }
 

@@ -339,8 +339,11 @@ export function computeMetric(
   // do not carry the field the metric is about. On a corpus mixing label-asserting and action-only
   // cases, `actual.label != expected.label` is trivially TRUE for every case with no expected
   // label — so a case that asserts nothing is counted as an error, and the metric reports an
-  // INFLATED rate rather than a flattering one. Same failure, opposite sign, same fix: say which
-  // cases, and point at the denominator.
+  // INFLATED rate. It also runs the other way, which is the more dangerous one: an ACCURACY metric
+  // (`actual.label == expected.label`) counts each of those cases as a free HIT, because two absent
+  // values compare equal. A `rater` suite's model-free cases are exactly that shape — no verdict was
+  // rendered, so no label is reported — and a corpus of them scores 100%. Same failure, both signs,
+  // same fix: say which cases, and point at the denominator.
   const fields = referencedFields([...spec.where, ...over]);
 
   // A metric whose own inputs were UNREADABLE. This warning is deliberately duplicated from the
@@ -377,9 +380,11 @@ export function computeMetric(
           .map((cell) => cell.id)
           .join(
             ', '
-          )}. An absent field still takes part in the comparison, so a case that asserts ` +
-        'nothing can be counted as a miss — narrow `over:` to the cases the metric is about (e.g. ' +
-        '`over: ["expected.label != none"]`).'
+          )}. An absent field still takes part in the comparison, and it lands on EITHER side: ` +
+        'a case that asserts nothing is counted as a miss by `actual.label != expected.label`, and ' +
+        'as a free HIT by `actual.label == expected.label` (two absent values compare equal) — ' +
+        'which is how a corpus of deterministic, unlabelled cases scores 100% on label accuracy. ' +
+        'Narrow `over:` to the cases the metric is about (e.g. `over: ["expected.label != none"]`).'
     );
   }
 
