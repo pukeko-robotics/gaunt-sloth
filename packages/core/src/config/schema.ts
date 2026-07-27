@@ -589,17 +589,18 @@ const REMOVED_COMMAND_KEYS: ReadonlyArray<readonly [string, string]> = [
  * the field is gone zod SILENTLY STRIPS it and an old config would run with its approval posture
  * quietly ignored — the worst possible failure for a safety gate.
  *
- * `judge.autoApproveLow` / `judge.blockHigh` have no 1:1 successor (the 4-tier scale replaced the
- * `low/medium/high` × `destructive` conjunction), so `judge`'s message points at both `approvals.mode`
- * and `approvals.rater.escalate`, and notes that `critical` now always rejects with no knob.
+ * `judge.autoApproveLow` / `judge.blockHigh` have no 1:1 successor (the rung replaced the
+ * `low/medium/high` × `destructive` conjunction), so `judge`'s message points at `approvals.mode`
+ * and names the outcome scale that took the tiers' place.
  */
 const RETIRED_SHELL_TOOL_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ['yolo', '"approvals": "bypass"'],
   [
     'judge',
     '"approvals": "auto-safe" (or "full-auto"), optionally with "approvals.rater" naming an ' +
-      'identity profile — the low/medium/high tiers became the safe/destructive/exfiltration ' +
-      'outcomes, and autoApproveLow/blockHigh are replaced by the rung you choose',
+      'identity profile — the low/medium/high tiers became the ' +
+      'safe/destructive/catastrophic/attack outcomes, and autoApproveLow/blockHigh are replaced ' +
+      'by the rung you choose',
   ],
   ['allowlist', '"approvals.allow" (a declared list of command prefixes)'],
   [

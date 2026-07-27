@@ -355,7 +355,7 @@ describe('config schema (GS2-1 B1)', () => {
         });
         expect(issues[0].message).toContain('auto-safe');
         expect(issues[0].message).toContain('full-auto');
-        expect(issues[0].message).toContain('safe/destructive/exfiltration');
+        expect(issues[0].message).toContain('safe/destructive/catastrophic/attack');
       });
 
       it('reports EVERY retired knob present, not just the first', () => {

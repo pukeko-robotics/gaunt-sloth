@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { render } from 'ink-testing-library';
+import stripAnsi from 'strip-ansi';
 import type {
   AgentStreamEvent,
   PendingToolInterrupt,
@@ -29,6 +30,14 @@ const baseProps = {
 };
 
 const ESC = String.fromCharCode(27);
+
+/**
+ * Rendered frames as comparable text: ANSI removed and whitespace collapsed. Ink wraps a long line
+ * mid-sentence AND re-opens the style run at the break, so a raw `frames.join()` does not contain
+ * any phrase that happened to straddle the wrap. `strip-ansi` (already used this way by
+ * `LiveTurn.spec.tsx`) covers every escape Ink can emit, not only the SGR colour runs.
+ */
+const plain = (frames: string[]): string => stripAnsi(frames.join('\n')).replace(/\s+/g, ' ');
 
 /** A subscribeApproval the test can fire on demand, capturing the resolved decision. */
 function makeApprovalHarness() {
@@ -148,6 +157,82 @@ describe('tui approval flow through <App>', () => {
       expect(frames.join('\n')).toContain(`Command approved (${scope})`);
       expect(lastFrame()).not.toContain('echo hi'); // approval prompt dismissed
     });
+    unmount();
+  });
+
+  /**
+   * CFG-28 (§4.2, §6) — a `catastrophic` approval is NEVER sticky: `GthAgentRunner` clamps the
+   * allow-list write, so `[s]`/`[a]` here grant exactly this one invocation. The notice used to
+   * name the pressed scope and promise the persistence anyway, which §6 calls the wrong failure
+   * mode — *"a control that is offered and then refused reads as a bug rather than as a policy"* —
+   * and this is its louder half: not merely offering the key, but confirming an outcome that did
+   * not happen. The keypress still SENDS its scope (core owns the clamp); only the notice changes.
+   */
+  it.each([
+    ['s', 'session'],
+    ['a', 'always'],
+  ] as const)(
+    'a catastrophic verdict: pressing %s confirms one invocation, never a persistence',
+    async (keyChar, scope) => {
+      const harness = makeApprovalHarness();
+      const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
+      const { stdin, lastFrame, frames, unmount } = render(
+        <App {...baseProps} agent={agent} subscribeApproval={harness.subscribeApproval} />
+      );
+
+      await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+      const decisionP = harness.request({
+        name: 'run_shell_command',
+        args: { command: 'terraform destroy -auto-approve' },
+        safetyVerdict: {
+          outcome: 'catastrophic',
+          reason: 'destroys every managed resource; cannot be undone from inside the session',
+        },
+      });
+      await vi.waitFor(() => expect(lastFrame()).toContain('terraform destroy'));
+
+      stdin.write(keyChar);
+      expect(await decisionP).toEqual({ type: 'approve', scope });
+
+      // Frames wrap mid-sentence and re-open the style run at the break, so compare on text with
+      // ANSI stripped and whitespace collapsed.
+      const flat = () => plain(frames);
+      await vi.waitFor(() => expect(flat()).toContain('Command approved (once)'));
+      expect(flat()).toContain('never remembered');
+      expect(flat()).toContain('will ask again');
+      expect(flat()).not.toContain(`Command approved (${scope})`);
+      expect(flat()).not.toContain('future variants will not re-prompt');
+      expect(flat()).not.toContain('saved to the project allow-list');
+      unmount();
+    }
+  );
+
+  /**
+   * The control. The clamp is scoped to `catastrophic` ALONE — `destructive` grants are still
+   * sticky — so the same keypress must still say so. Without this, a "fix" that deleted the
+   * stickiness promise outright would pass the test above.
+   */
+  it('the control: a destructive verdict still confirms the session grant sticks', async () => {
+    const harness = makeApprovalHarness();
+    const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
+    const { stdin, lastFrame, frames, unmount } = render(
+      <App {...baseProps} agent={agent} subscribeApproval={harness.subscribeApproval} />
+    );
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    const decisionP = harness.request({
+      name: 'run_shell_command',
+      args: { command: 'rm -rf build' },
+      safetyVerdict: { outcome: 'destructive', reason: 'deletes the build output' },
+    });
+    await vi.waitFor(() => expect(lastFrame()).toContain('rm -rf build'));
+
+    stdin.write('s');
+    expect(await decisionP).toEqual({ type: 'approve', scope: 'session' });
+
+    const flat = () => plain(frames);
+    await vi.waitFor(() => expect(flat()).toContain('Command approved (session)'));
+    expect(flat()).toContain('future variants will not re-prompt');
     unmount();
   });
 

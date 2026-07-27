@@ -18,9 +18,9 @@ import type { PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
  * CFG-27 dropped the `[y]` affordance ("switch to auto-approve"). Spec §6 offers the human five
  * choices — ask to explain · approve · always approve · reject · always reject — and a per-prompt
  * change of RUNG is not among them: the ladder deliberately has no "turn the gate down from
- * here" action. [[TUI-C26]] owns building that five-choice menu (and the §6.1 exfiltration
- * banner); until it lands this stays the EXT-9 scoped prompt, minus the choice the ladder no
- * longer has.
+ * here" action. [[TUI-C26]] owns building that five-choice menu (and the §6.1 attack banner, plus
+ * withdrawing `always` for a `catastrophic` outcome); until it lands this stays the EXT-9 scoped
+ * prompt, minus the choice the ladder no longer has.
  */
 export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): React.ReactElement {
   const commandText =

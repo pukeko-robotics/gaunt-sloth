@@ -433,11 +433,20 @@ no severity thresholds, no strictness levels, and no independent rater switch.
 | `approvals.allowlist` / `approvals.persistAllowlist` | `approvals.allow` / gone (as above) |
 | `run_shell_command` keeps | `enabled`, `timeout`, `maxOutputBytes` |
 
-The rater's scale changed with it: `safe` / `caution` / `danger` / `critical` became **three
-outcomes** — `safe`, `destructive` and `exfiltration`. `destructive` is the catch-all (anything
-harmful that is not exfiltration, including anything the rater cannot assess), and `exfiltration`
-— secrets leaving the machine, or data going somewhere your project did not configure — ends the
-run.
+The rater's scale changed with it: `safe` / `caution` / `danger` / `critical` became **four
+outcomes** — `safe`, `destructive`, `catastrophic` and `attack`.
+
+| Outcome | What it means | What happens |
+| --- | --- | --- |
+| `safe` | no harmful effect | runs without asking |
+| `destructive` | harmful, but undoable from inside the session — **the catch-all**, including anything the rater cannot assess | asks you |
+| `catastrophic` | cannot be undone from inside the session (`mkfs`, `DROP DATABASE`, `terraform destroy -auto-approve`) | asks you every time; *session* and *always* do not stick |
+| `attack` | the command's own structure shows something hostile — a credential targeted for its own sake, privilege escalation, persistence, an impersonated hostname, obfuscation | ends the run |
+
+Pushing and publishing to a destination your project already configures (`git push`, `npm publish`,
+`docker push`) is ordinary work: it may be rated `destructive` and asked about, but it never ends
+the run. To let a halted command run anyway, declare it in `approvals.allow` — that list is checked
+before the rater.
 
 Before:
 

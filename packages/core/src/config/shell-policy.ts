@@ -429,11 +429,12 @@ export const APPROVAL_RUNG_DESCRIPTIONS: Record<ApprovalRung, string> = {
     'reaching outside that folder or harming your system, not that nothing changes.',
   'full-auto':
     'The auto-rater steers Gaunt Sloth: it decides for itself and does not stop to ask you. This ' +
-    'is safer than bypass — the auto-rater still halts anything that would send your secrets off ' +
-    'the machine or send your data somewhere your project did not set up, and your deny list ' +
-    'still applies — but it is not safe. Gaunt Sloth will change and delete things. Use it where ' +
-    'the consequences are recoverable, and put real gates (deployment approvals, two-factor, ' +
-    'branch protection) on anything that is not.',
+    'is safer than bypass — the auto-rater still stops the run on a command that reads your keys ' +
+    'or passwords, weakens permissions, installs itself to run again later, or hides what it ' +
+    'does; it brings anything it cannot undo to you rather than deciding alone; and your deny ' +
+    'list still applies — but it is not safe. Gaunt Sloth will change and delete things. Use it ' +
+    'where the consequences are recoverable, and put real gates (deployment approvals, ' +
+    'two-factor, branch protection) on anything that is not.',
   bypass:
     'No gate. Gaunt Sloth runs whatever it decides to run, without asking and without rating. ' +
     'Only the refusals configured in the deny list in your config still apply.',
