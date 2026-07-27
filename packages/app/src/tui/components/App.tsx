@@ -368,16 +368,31 @@ export function App(props: TuiAppProps): React.ReactElement {
     } else {
       const scope: ToolApprovalScope = decision;
       head.resolve({ type: 'approve', scope });
-      const detail =
-        scope === 'once'
-          ? 'Approved this single invocation only.'
-          : scope === 'session'
-            ? 'Approved for this session — future variants will not re-prompt.'
-            : 'Approved and remembered — saved to the project allow-list.';
+      // CFG-28 (§4.2) — a `catastrophic` approval is NEVER sticky: the runner clamps the
+      // allow-list write, so a `session`/`always` keypress grants exactly this one invocation and
+      // the next variant prompts again. The scope is still sent unchanged (the clamp is core's,
+      // and is the single chokepoint for every surface); the NOTICE is what has to be true, both
+      // in its detail line and in the scope it names. §6: a control offered and then refused reads
+      // as a bug, and a confirmation of a persistence that did not happen is the same failure with
+      // the evidence hidden. Withdrawing `[a]lways` from the menu is [[TUI-C26]]'s.
+      const catastrophic = head.pending.safetyVerdict?.outcome === 'catastrophic';
+      const effectiveScope: ToolApprovalScope = catastrophic ? 'once' : scope;
+      const describe = (): string => {
+        if (catastrophic && scope !== 'once') {
+          return (
+            'Approved this once — a command rated catastrophic is never remembered, so the next ' +
+            'one like it will ask again.'
+          );
+        }
+        if (scope === 'session')
+          return 'Approved for this session — future variants will not re-prompt.';
+        if (scope === 'always') return 'Approved and remembered — saved to the project allow-list.';
+        return 'Approved this single invocation only.';
+      };
       push({
         kind: 'notice',
-        title: `Command approved (${scope})`,
-        lines: [detail],
+        title: `Command approved (${effectiveScope})`,
+        lines: [describe()],
         tone: 'info',
       });
     }
@@ -773,9 +788,7 @@ export function App(props: TuiAppProps): React.ReactElement {
           read as a distinct control zone rather than blending into the scrollback. */}
       {/* Tool-approval affordance (EXT-9 Phase B2): when an approval is pending it sits just above
           the input dock, owns the keyboard, and suspends the normal prompt below. */}
-      {pendingApproval ? <ApprovalPrompt
-          pending={pendingApproval.pending}
-        /> : null}
+      {pendingApproval ? <ApprovalPrompt pending={pendingApproval.pending} /> : null}
       <Rule />
       {/* TUI-C19 — persistent startup-advisory line. Lives here in the live (non-<Static>) chrome,
           right by the status bar, so a config-validation warning stays pinned and survives

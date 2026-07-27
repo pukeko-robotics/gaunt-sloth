@@ -56,6 +56,19 @@ describe('hasScriptEnvLeakRisk', () => {
     expect(hasScriptEnvLeakRisk('python -c $SECRET')).toBe(true);
   });
 
+  /**
+   * §11.1b narrowed clause (1) so that handing a secret to a working tool is `destructive` rather
+   * than a halt, and the whole "nothing is given up" claim rests on THIS preflight catching the
+   * commands the rater prompt names as the destructive side of that clause. The prompt names them
+   * in **flag** form (`--key $AWS_SECRET_ACCESS_KEY`); the assertion above only pinned the
+   * positional form, so an edit to `hasScriptEnvLeakRisk` that dropped flag arguments would have
+   * turned the narrowing into a real loss with the suite still green.
+   */
+  it('flags the exact commands §11.1b hands to this preflight, including the flag form', () => {
+    expect(hasScriptEnvLeakRisk('python deploy.py --key $AWS_SECRET_ACCESS_KEY')).toBe(true);
+    expect(hasScriptEnvLeakRisk('node upload.js $OPENAI_API_KEY')).toBe(true);
+  });
+
   it('does not flag benign interpreter invocations', () => {
     expect(hasScriptEnvLeakRisk('node build.js')).toBe(false);
     expect(hasScriptEnvLeakRisk('python script.py --flag value')).toBe(false);
@@ -774,6 +787,28 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
       for (const command of ['cat x | sh', 'echo $(whoami)', 'node deploy.js $TOKEN']) {
         const got = mapVerdictToAction(command, SAFE, { rung: 'auto-safe' });
         expect(got.verdict?.outcome).toBe('destructive');
+        expect(got.action).toBe('escalate');
+      }
+    });
+
+    /**
+     * The floor table's total-`Record` guard is a COMPILE-time one, so it says nothing about a
+     * value that reached the mapper without passing the type — a cast, or (before the defensive
+     * `safeParse` in `rateShellCommand`) an unvalidated model return. A bare table lookup answers
+     * `undefined` for such a key, i.e. "not below the floor", i.e. *skip the rewrite* — the
+     * permissive direction. `isBelowDestructiveFloor` defaults the unknown key to `true`, so the
+     * runtime fails closed in the same direction the compiler does.
+     */
+    it('an out-of-band outcome is FLOORED on an unassessable command, not passed through', () => {
+      for (const outcome of ['exfiltration', 'critical', '']) {
+        const got = mapVerdictToAction(
+          'cat x | sh',
+          verdict(outcome as RaterOutcome, 'the model said so'),
+          { rung: 'auto-safe' }
+        );
+        expect(got.verdict?.outcome).toBe('destructive');
+        expect(got.verdict?.reason).toContain(COULD_NOT_ASSESS_PREFIX);
+        expect(got.verdict?.reason).not.toContain('the model said so');
         expect(got.action).toBe('escalate');
       }
     });

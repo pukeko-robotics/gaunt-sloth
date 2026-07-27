@@ -168,12 +168,27 @@ export async function createInteractiveSession(
       if (answer === 'o' || answer === 'once') {
         return { type: 'approve', scope: 'once' };
       }
+      // CFG-28 (§4.2) — a `catastrophic` approval is NEVER sticky. The runner clamps the
+      // allow-list write, so `[s]` and `[a]` grant exactly this one invocation and the next
+      // variant prompts again. The decision is still returned unchanged: that clamp is the single
+      // chokepoint, in core, so the policy does not depend on which surface asked. What must change
+      // HERE is only the confirmation — §6 rejects "a control that is offered and then refused",
+      // and a confirmation that promises a persistence the gate has already discarded is that same
+      // failure with the evidence hidden. Withdrawing the key itself is [[TUI-C26]]'s.
+      const notRemembered =
+        'Approved this once — a command rated catastrophic is never remembered, so the next one ' +
+        'like it will ask again.';
+      const sticky = pending.safetyVerdict?.outcome !== 'catastrophic';
       if (answer === 's' || answer === 'session') {
-        displayInfo('Approved for this session, future variants will not re-prompt.');
+        displayInfo(
+          sticky ? 'Approved for this session, future variants will not re-prompt.' : notRemembered
+        );
         return { type: 'approve', scope: 'session' };
       }
       if (answer === 'a' || answer === 'always') {
-        displayInfo('Approved and remembered, saved to the project allow-list.');
+        displayInfo(
+          sticky ? 'Approved and remembered, saved to the project allow-list.' : notRemembered
+        );
         return { type: 'approve', scope: 'always' };
       }
       displayInfo('Command rejected.');

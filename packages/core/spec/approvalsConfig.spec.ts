@@ -175,6 +175,20 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       expect(text).toContain('deployment approvals, two-factor, branch protection');
     });
 
+    /**
+     * Rule 3 again, on the half that went stale: what this rung claims the rater still DOES has to
+     * be a claim the rater is specified to keep. It names the four structural `attack` tests (§4.1.1)
+     * and the §6.1 irreversibility question — not an outcome. The clause it replaced promised a halt
+     * on "anything that would send your secrets off the machine", which §11.1b's narrowing made
+     * false: a secret handed to a working tool rates `destructive`, so it comes to the user rather
+     * than ending the run. A description may only promise what the scale actually delivers.
+     */
+    it('rule 3: full-auto describes what the rater tests for, not an outcome it cannot guarantee', () => {
+      const text = APPROVAL_RUNG_DESCRIPTIONS['full-auto'];
+      expect(text).toContain('brings anything it cannot undo to you');
+      expect(text).toContain('reads your keys or passwords');
+    });
+
     it('§8.1: no description advertises the hardline floor — only the deny list is cited', () => {
       for (const rung of APPROVAL_RUNGS) {
         expect(APPROVAL_RUNG_DESCRIPTIONS[rung]).not.toMatch(/hardline|floor|blocklist/i);

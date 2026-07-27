@@ -589,13 +589,32 @@ export interface RaterDecision {
  * COMPILE ERROR until someone decides which side of the floor it falls on. The failure this guards
  * against is silent: the pre-rescale code excluded one outcome by name, and a fifth outcome (or, as
  * happened here, a fourth) would otherwise have been floored — i.e. downgraded — by default.
+ *
+ * That guard is COMPILE-time, so read the table through {@link isBelowDestructiveFloor} rather than
+ * indexing it: a string that reached here without passing the type (a cast, an unvalidated model
+ * return) misses every key, and a bare lookup would answer `undefined` — "not below the floor",
+ * i.e. *skip the preflight rewrite*, which is the permissive direction. The helper defaults the
+ * unknown key to `true` so both the compile-time and the runtime answer fail closed.
  */
-export const BELOW_DESTRUCTIVE_FLOOR: Readonly<Record<RaterOutcome, boolean>> = {
+const BELOW_DESTRUCTIVE_FLOOR: Readonly<Record<RaterOutcome, boolean>> = {
   safe: true,
   destructive: false,
   catastrophic: false,
   attack: false,
 };
+
+/**
+ * Is this outcome below the deterministic `destructive` floor — i.e. may a preflight rewrite it?
+ *
+ * See {@link BELOW_DESTRUCTIVE_FLOOR}. An outcome that is not in the table is treated as below the
+ * floor, so an out-of-band value is FLOORED to `destructive` rather than sailing past the preflight
+ * carrying the model's own unvalidated reason.
+ */
+export function isBelowDestructiveFloor(outcome: RaterOutcome): boolean {
+  // The `?? true` is NOT dead code the type proves unreachable — `outcome` is only `RaterOutcome`
+  // as far as the compiler is concerned, and this module exists to be robust to a value that lied.
+  return BELOW_DESTRUCTIVE_FLOOR[outcome] ?? true;
+}
 
 /**
  * CFG-27 — pure, testable mapping from a {@link ShellSafetyVerdict} + the raw command to a
@@ -623,7 +642,7 @@ export const BELOW_DESTRUCTIVE_FLOOR: Readonly<Record<RaterOutcome, boolean>> = 
  *    redirects, so its target cannot be statically resolved) and the script-env-leak preflight
  *    ({@link hasScriptEnvLeakRisk}) are both recomputed from the RAW command, independently of what
  *    the rater said. Either one rewrites a verdict that sits BELOW the floor — i.e. `safe`, and
- *    only `safe` ({@link BELOW_DESTRUCTIVE_FLOOR}) — to `destructive` with an honest
+ *    only `safe` ({@link isBelowDestructiveFloor}) — to `destructive` with an honest
  *    {@link COULD_NOT_ASSESS_PREFIX} reason, **before the `safe` check**, so a manipulated `safe`
  *    verdict can never slip an unresolvable command through. **A rater verdict may only ever make
  *    an outcome worse, never better**, and so may a preflight: `destructive`, `catastrophic` and
@@ -680,7 +699,7 @@ export function mapVerdictToAction(
   // keeping their real explanation (and any §4.4 suggestion) rather than losing it to a
   // "could not assess" note that would also be FALSE — the rater did assess those.
   let effective: ShellSafetyVerdict = verdict ?? FAIL_CLOSED_VERDICT;
-  if ((ambiguous || scriptLeak) && BELOW_DESTRUCTIVE_FLOOR[effective.outcome]) {
+  if ((ambiguous || scriptLeak) && isBelowDestructiveFloor(effective.outcome)) {
     effective = {
       outcome: 'destructive',
       reason: ambiguous
