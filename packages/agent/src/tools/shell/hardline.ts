@@ -3,7 +3,8 @@
  *
  * Unbypassable hardline blocklist for the shell tool — spec §8's **floor**. Two families are
  * refused: catastrophic, non-recoverable commands (wipe the root filesystem, format a disk,
- * overwrite a raw block device, fork-bomb, take the host down), and — since CFG-27 — the
+ * overwrite a raw block device, re-own the filesystem out from under root, fork-bomb, take the host
+ * down), and — since CFG-27 — the
  * deterministic subset of §4.1.1 `exfiltration` (a credential source and a network sink in one
  * pipeline). Both are refused inside `executeCommand` itself — BEFORE spawn — so the refusal
  * fires regardless of `approvals: "bypass"`, any allow-list, or the confirmation path. `bypass`
@@ -64,6 +65,50 @@ const CMD_POS =
  */
 const CMD_END = `(?:$|[${COMMAND_SEPARATOR_CLASS}])`;
 
+/* -------------------------------------------------------------------------------------------- *
+ * EXT-60 — the pieces of the recursive-`chown`-of-root patterns.
+ *
+ * `chown` differs from `rm` in shape: an operand (the owner spec) sits between the options and the
+ * target, and it may appear on either side of them (`chown -R nobody:nobody /`,
+ * `chown nobody:nobody -R /`). These three fragments let the target arms below skip exactly the
+ * option and owner tokens — and nothing else — on the way to the target.
+ * -------------------------------------------------------------------------------------------- */
+
+/**
+ * Whitespace that is NOT a command separator. The gaps between a command's own tokens are
+ * horizontal; a line break ENDS the command (EXT-55), so the skip loops below must not step over
+ * one. With a plain `\s+` here, `chown -R app:app conf` followed by a newline and `cat /` would
+ * read as one long `chown` invocation targeting `/` — an unrecoverable false positive assembled out
+ * of two innocent lines.
+ */
+const H_SPACE = '[^\\S\\n\\r]+';
+
+/**
+ * A recursive flag: the long form, or any short-option cluster containing `r` (`-R`, `-hR`, `-Rv`).
+ * Patterns match the LOWERCASED normalized command, so `-R` arrives here as `-r`. The `(?!-)`
+ * keeps the cluster arm off long options, so `--reference=…` is not read as recursion.
+ */
+const RECURSIVE_FLAG = '(?:--recursive|-(?!-)[^\\s]*r[^\\s]*)';
+
+/**
+ * A token the target arms may skip: an option, or the owner spec (`nobody:nobody`, `65534:65534`,
+ * `$user:$user`, `:group`). The owner arm deliberately excludes `/` and every command separator, so
+ * the skip can neither swallow a path operand nor run past the end of the command.
+ */
+const CHOWN_SKIPPABLE_ARG = `(?:-[^\\s]+|[^\\s/\`${COMMAND_SEPARATOR_CLASS}]+)`;
+
+/**
+ * `chown`, its options and its owner spec — everything up to the target. The owner is optional
+ * because `--reference=FILE` replaces it.
+ */
+const CHOWN_HEAD =
+  '\\bchown' +
+  H_SPACE +
+  `(?:${CHOWN_SKIPPABLE_ARG}${H_SPACE})*` +
+  RECURSIVE_FLAG +
+  H_SPACE +
+  `(?:${CHOWN_SKIPPABLE_ARG}${H_SPACE})*`;
+
 /**
  * Hardline patterns: [regex, human description]. Matched case-insensitively
  * against the normalized command.
@@ -102,6 +147,25 @@ export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [
     /\bchmod\s+(?:-[^\s]*\s+)*(?:-r|--recursive)\s+(?:-[^\s]*\s+)*777\s+\//,
     'recursive chmod 777 of root',
+  ],
+  // EXT-60 — recursive chown of the root filesystem (`chown -R nobody:nobody /`, `… /*`).
+  // Unrecoverable without rescue media: it strips setuid from `sudo` and re-owns every service
+  // account, so the box can no longer repair itself. `chmod 777` leaves you root; this takes root
+  // away. Built in the shape of the `rm` pair above — a root arm and an enumerated system-directory
+  // arm, each TERMINATED at CMD_END — rather than the shape of the `chmod` entry beside it. The
+  // tail is what keeps the ordinary deploy command out: the target token has to END at the root or
+  // system directory, so `chown -R app:app /var/www/html` does not match while `… /var` does.
+  [
+    new RegExp(CHOWN_HEAD + '/\\s*\\*?\\s*' + CMD_END),
+    'recursive chown of root filesystem',
+  ],
+  [
+    new RegExp(
+      CHOWN_HEAD +
+        '(?:/(?:home|root|etc|usr|var|bin|sbin|boot|lib|lib64|opt|sys|proc))(?:/\\*)?\\s*' +
+        CMD_END
+    ),
+    'recursive chown of system directory',
   ],
   // Kill every process on the system (`kill -1`, `kill -9 -1`).
   [/\bkill\s+(?:-[^\s]+\s+)*-1\b/, 'kill all processes'],

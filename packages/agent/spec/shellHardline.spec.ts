@@ -23,6 +23,7 @@ describe('checkHardline', () => {
     'init 0',
     'chmod -R 777 /',
     'kill -9 -1',
+    'chown -R nobody:nobody /',
   ];
 
   it.each(blocked)('refuses catastrophic command: %s', (cmd) => {
@@ -54,9 +55,92 @@ describe('checkHardline', () => {
     'npm test',
     'mkfsomething --help',
     'dd if=in.txt of=out.txt',
+    'chown -R app:app ./dist',
   ];
 
   it.each(allowed)('allows recoverable / benign command: %s', (cmd) => {
+    expect(checkHardline(cmd), `expected "${cmd}" to be allowed`).toBeNull();
+  });
+});
+
+/**
+ * EXT-60 — recursive `chown` of root.
+ *
+ * The floor had `chmod -R 777 /` and no `chown` sibling, so `chown -R nobody:nobody /` executed
+ * (corpus `fl-06`). It is the same class as the `chmod` entry and arguably worse: `chmod 777`
+ * leaves you root, `chown` takes root away — setuid is stripped from `sudo` and every service
+ * account is re-owned, so the machine cannot repair itself without rescue media.
+ *
+ * The pattern is built in the shape of the `rm` pair (a root arm and an enumerated system-directory
+ * arm, each terminated at `CMD_END`), which is what bounds the false-positive surface below: the
+ * target token must END at the root or system directory. Since the floor fires under `bypass`, a
+ * false positive here is unrecoverable, so the must-NOT-fire half is the half that matters — every
+ * ordinary `chown` a deploy script runs targets a path BELOW a system directory.
+ */
+describe('checkHardline — recursive chown of root (EXT-60)', () => {
+  const blockedChown = [
+    // The corpus case.
+    'chown -R nobody:nobody /',
+    // Numeric uid:gid, and the group-only and user-only owner forms.
+    'chown -R 65534:65534 /',
+    'chown -R nobody /',
+    'chown -R :nogroup /',
+    // The owner spec may be a substitution, and the flag may be a cluster or the long form.
+    'chown -R $USER:$USER /',
+    'sudo chown -hR nobody /',
+    'chown --recursive nobody:nobody /',
+    // Options may follow the operand, and `--reference=FILE` replaces the owner entirely.
+    'chown nobody:nobody -R /',
+    'chown -R --reference=/etc/passwd /',
+    // Glob form, as `rm -rf /*`.
+    'chown -R nobody:nobody /*',
+    // System directories — the same targets the `rm` pair enumerates.
+    'chown -R app:app /etc',
+    'chown -R app:app /usr/*',
+    'sudo chown -R www-data:www-data /var',
+    // Composition: a separator starts a new command, and the floor must see it (EXT-55).
+    'ls -la\nchown -R nobody:nobody /',
+    'ls && chown -R nobody:nobody / ; echo done',
+    // Obfuscation the normalizer folds away.
+    'CHOWN -R NOBODY:NOBODY /',
+    'ch\\own -R nobody:nobody /',
+  ];
+
+  it.each(blockedChown)('refuses recursive chown of root or a system directory: %s', (cmd) => {
+    const match = checkHardline(cmd);
+    expect(match, `expected "${cmd}" to be blocked`).not.toBeNull();
+    expect(match!.description).toContain('chown');
+  });
+
+  /**
+   * The false-positive half. Every one of these is ordinary deploy/dev work, and the floor is
+   * unconfigurable — a user cannot change rung to escape a wrong refusal.
+   */
+  const allowedChown = [
+    // A path BELOW a system directory is where real work happens; the CMD_END tail is what
+    // separates it from the directory itself.
+    'chown -R app:app /var/www/html',
+    'chown -R www-data:www-data /var/www',
+    'chown -R app:app /home/deploy/app',
+    'chown -R app:app /opt/myapp/data',
+    'chown -R postgres:postgres /var/lib/postgresql/data',
+    // Relative and home targets.
+    'chown -R node:node ./dist',
+    'chown -R me:me .',
+    'sudo chown -R $USER:$USER ~/.npm',
+    // Not recursive: `chown app:app /etc/myapp.conf` changes one file.
+    'chown app:app /etc/myapp.conf',
+    'chown $USER /usr/local/bin/tool',
+    'chown root:root /',
+    // A stray `/` on a LATER line must not be stitched onto an earlier chown: these are two
+    // separate commands, and the skip between a command's tokens is horizontal whitespace only.
+    'chown -R app:app conf\ncat /',
+    'chown -R app:app ./dist\nls /',
+    // A redirection target is not the operand.
+    'chown -R app:app /var/www 2>/dev/null',
+  ];
+
+  it.each(allowedChown)('allows ordinary chown work: %s', (cmd) => {
     expect(checkHardline(cmd), `expected "${cmd}" to be allowed`).toBeNull();
   });
 });
