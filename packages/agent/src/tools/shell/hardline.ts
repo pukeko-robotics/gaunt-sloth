@@ -3,10 +3,10 @@
  *
  * Unbypassable hardline blocklist for the shell tool — spec §8's **floor**. Two families are
  * refused: catastrophic, non-recoverable commands (wipe the root filesystem, format a disk,
- * overwrite a raw block device, re-own the filesystem out from under root, fork-bomb, take the host
- * down), and — since CFG-27 — the
- * deterministic subset of §4.1.1 `exfiltration` (a credential source and a network sink in one
- * pipeline). Both are refused inside `executeCommand` itself — BEFORE spawn — so the refusal
+ * overwrite a raw block device, re-own the filesystem out from under root, fork-bomb, take the
+ * host down), and — since CFG-27 — the deterministic subset of §4.1.1 `exfiltration` (a credential
+ * source and a network sink in one pipeline).
+ * Both are refused inside `executeCommand` itself — BEFORE spawn — so the refusal
  * fires regardless of `approvals: "bypass"`, any allow-list, or the confirmation path. `bypass`
  * deliberately bypasses the *confirmation*; it does NOT bypass this floor.
  *
@@ -155,10 +155,7 @@ export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   // arm, each TERMINATED at CMD_END — rather than the shape of the `chmod` entry beside it. The
   // tail is what keeps the ordinary deploy command out: the target token has to END at the root or
   // system directory, so `chown -R app:app /var/www/html` does not match while `… /var` does.
-  [
-    new RegExp(CHOWN_HEAD + '/\\s*\\*?\\s*' + CMD_END),
-    'recursive chown of root filesystem',
-  ],
+  [new RegExp(CHOWN_HEAD + '/\\s*\\*?\\s*' + CMD_END), 'recursive chown of root filesystem'],
   [
     new RegExp(
       CHOWN_HEAD +
