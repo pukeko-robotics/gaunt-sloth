@@ -3,9 +3,10 @@
  *
  * Unbypassable hardline blocklist for the shell tool — spec §8's **floor**. Two families are
  * refused: catastrophic, non-recoverable commands (wipe the root filesystem, format a disk,
- * overwrite a raw block device, fork-bomb, take the host down), and — since CFG-27 — the
- * deterministic subset of §4.1.1 `exfiltration` (a credential source and a network sink in one
- * pipeline). Both are refused inside `executeCommand` itself — BEFORE spawn — so the refusal
+ * overwrite a raw block device, re-own the filesystem out from under root, fork-bomb, take the
+ * host down), and — since CFG-27 — the deterministic subset of §4.1.1 `exfiltration` (a credential
+ * source and a network sink in one pipeline).
+ * Both are refused inside `executeCommand` itself — BEFORE spawn — so the refusal
  * fires regardless of `approvals: "bypass"`, any allow-list, or the confirmation path. `bypass`
  * deliberately bypasses the *confirmation*; it does NOT bypass this floor.
  *
@@ -64,6 +65,124 @@ const CMD_POS =
  */
 const CMD_END = `(?:$|[${COMMAND_SEPARATOR_CLASS}])`;
 
+/* -------------------------------------------------------------------------------------------- *
+ * EXT-60 — the shared TARGET fragments.
+ *
+ * Three families here (`rm`, `chmod`, `chown`) are catastrophic for the same reason: they are
+ * pointed at the root of the filesystem or at a system directory. They had three independent
+ * spellings of that idea, and the odd one out was wrong — the `chmod` entry ended at `777\s+/` with
+ * NO tail, so it fired on ANY absolute path, refusing `chmod -R 777 /var/www` (corpus `de-04`, a
+ * `destructive` case) as if it were `chmod -R 777 /`. The floor is unappealable even under
+ * `bypass`, so that was an unrecoverable refusal of ordinary sysadmin work — the CFG-27
+ * `curl -d @~/.ssh/id_rsa.pub` class of defect, and the exact thing this module's own docblock
+ * promises is out of scope ("`chmod -R 777 ./dir` … intentionally NOT here").
+ *
+ * One spelling each, shared by all three families, is what keeps that from recurring.
+ * -------------------------------------------------------------------------------------------- */
+
+/**
+ * The root filesystem AS A TARGET: `/`, or `/*`, or `//`, and then the command ends. The `CMD_END`
+ * tail is the whole point — without it, `/` matches the first character of every absolute path.
+ *
+ * EXT-60 review I1: the trailing-slash spelling is part of the target. See
+ * {@link SYSTEM_DIR_TARGET} for why.
+ */
+const ROOT_TARGET = '/\\s*(?:\\*|/)?\\s*' + CMD_END;
+
+/**
+ * A NAMED system directory as a target: `/etc`, `/etc/`, `/usr/*`. The token has to END at the
+ * directory itself, so a path BELOW one — `/var/www/html`, `/home/deploy/app`, where all ordinary
+ * work happens — is deliberately out of range.
+ *
+ * EXT-60 review I1 — the optional trailing `/` is a DELIBERATE WIDENING of the floor, not a
+ * refactor. `chmod -R 777 /etc/` is semantically identical to `chmod -R 777 /etc` and is the more
+ * natural way to write a directory, yet only the second was refused; the narrowing above dropped
+ * the first (it had been caught by accident, by the untailed pattern this node replaced) and `rm`
+ * and `chown` never caught it at all. All three families gain it here, from the one spelling.
+ * The tail still has to BIND, so `/etc/foo` and `/var/www/html` remain out of range.
+ */
+const SYSTEM_DIR_TARGET =
+  '(?:/(?:home|root|etc|usr|var|bin|sbin|boot|lib|lib64|opt|sys|proc))(?:/\\*?)?\\s*' + CMD_END;
+
+/* -------------------------------------------------------------------------------------------- *
+ * EXT-60 — the pieces of the recursive-`chown`-of-root patterns.
+ *
+ * `chown` differs from `rm` in shape: an operand (the owner spec) sits between the options and the
+ * target, and it may appear on either side of them (`chown -R nobody:nobody /`,
+ * `chown nobody:nobody -R /`). These three fragments let the target arms below skip exactly the
+ * option and owner tokens — and nothing else — on the way to the target.
+ * -------------------------------------------------------------------------------------------- */
+
+/**
+ * Whitespace that is NOT a command separator. The gaps between a command's own tokens are
+ * horizontal; a line break ENDS the command (EXT-55), so the skip loops below must not step over
+ * one. With a plain `\s+` here, `chown -R app:app conf` followed by a newline and `cat /` would
+ * read as one long `chown` invocation targeting `/` — an unrecoverable false positive assembled out
+ * of two innocent lines.
+ */
+const H_SPACE = '[^\\S\\n\\r]+';
+
+/**
+ * What may NOT appear inside a single token of one command: whitespace, a command separator, a
+ * backtick (which OPENS a command — {@link CMD_POS} lists it as a command position), and `#`
+ * (which ENDS one — everything after a comment is inert, so `chown -R app:app dist # perms under /`
+ * targets `dist`, not `/`).
+ *
+ * EXT-60 review I2 — every token matcher below is built from this instead of a bare `[^\s]`,
+ * because `[^\s]` swallows a GLUED separator. `chown -R app:app dist -v; ls /` read `-v;` as one
+ * skippable option token, walked straight past the `;`, and matched `ls /`'s argument as the chown
+ * target — the EXT-55 class of defect (a refusal assembled out of two unrelated commands),
+ * reappearing INSIDE a token rather than between tokens. {@link H_SPACE} closes it between tokens;
+ * this closes it within one. Both exclusions can only ever make the skip stop EARLIER, so they are
+ * strictly subtractive: they remove refusals and can introduce none.
+ */
+const H_TOKEN_EXCLUSIONS = `\\s\`#${COMMAND_SEPARATOR_CLASS}`;
+
+/** A character of a token belonging to this command. */
+const H_TOKEN_CHAR = `[^${H_TOKEN_EXCLUSIONS}]`;
+
+/** The same, minus `/` — for an operand that must not be a path. */
+const H_OPERAND_CHAR = `[^${H_TOKEN_EXCLUSIONS}/]`;
+
+/**
+ * A recursive flag: the long form, or any short-option cluster containing `r` (`-R`, `-hR`, `-Rv`).
+ * Patterns match the LOWERCASED normalized command, so `-R` arrives here as `-r`. The `(?!-)`
+ * keeps the cluster arm off long options, so `--reference=…` is not read as recursion.
+ */
+const RECURSIVE_FLAG = `(?:--recursive|-(?!-)${H_TOKEN_CHAR}*r${H_TOKEN_CHAR}*)`;
+
+/**
+ * A token the target arms may skip: an option, or the owner spec (`nobody:nobody`, `65534:65534`,
+ * `$user:$user`, `:group`). Neither arm can run past the end of the command
+ * ({@link H_TOKEN_EXCLUSIONS}), and the owner arm additionally excludes `/` so the skip cannot
+ * swallow a path operand. The option arm has to keep `/` — `--reference=/etc/passwd`.
+ */
+const CHOWN_SKIPPABLE_ARG = `(?:-${H_TOKEN_CHAR}+|${H_OPERAND_CHAR}+)`;
+
+/**
+ * `chown`, its options and its owner spec — everything up to the target. The owner is optional
+ * because `--reference=FILE` replaces it.
+ *
+ * EXT-60 review C1 — anchored at {@link CMD_POS}, like the shutdown family and unlike `rm`/`chmod`.
+ * Without it, `\bchown` matched the word anywhere, and {@link RECURSIVE_FLAG} accepts any
+ * `r`-bearing flag token, so `grep chown -r /etc` — pattern, flag, path, the standard invocation an
+ * agent runs when asked why permissions under `/etc` keep changing — was refused, under every rung
+ * including `bypass`, with no way for the user to proceed. That trade is not close: the floor's
+ * false positives are unappealable, while its misses are not the floor's only defence. `sh -c
+ * "chown -R nobody:nobody /"` is the miss this buys, and it is still classified `null` by the
+ * allow-list classifier, so the ambiguity preflight escalates it at both rated rungs; only under
+ * `bypass` — where the user has asked for no gate — is it unguarded. §8.1 already declines to vouch
+ * for the floor's completeness; it does not license refusing ordinary read-only work.
+ */
+const CHOWN_HEAD =
+  CMD_POS +
+  'chown' +
+  H_SPACE +
+  `(?:${CHOWN_SKIPPABLE_ARG}${H_SPACE})*` +
+  RECURSIVE_FLAG +
+  H_SPACE +
+  `(?:${CHOWN_SKIPPABLE_ARG}${H_SPACE})*`;
+
 /**
  * Hardline patterns: [regex, human description]. Matched case-insensitively
  * against the normalized command.
@@ -71,17 +190,11 @@ const CMD_END = `(?:$|[${COMMAND_SEPARATOR_CLASS}])`;
 export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   // rm -rf targeting the root filesystem (`/`, `/*`).
   // EXT-55: built with `new RegExp` so the tail comes from the shared CMD_END, not a literal.
-  [
-    new RegExp('\\brm\\s+(?:-[^\\s]*\\s+)*/\\s*\\*?\\s*' + CMD_END),
-    'recursive delete of root filesystem',
-  ],
+  // EXT-60: the target itself now comes from the shared fragment too — same regex, one spelling.
+  [new RegExp('\\brm\\s+(?:-[^\\s]*\\s+)*' + ROOT_TARGET), 'recursive delete of root filesystem'],
   // rm -rf targeting protected system directories (with optional /* suffix).
   [
-    new RegExp(
-      '\\brm\\s+(?:-[^\\s]*\\s+)*' +
-        '(?:/(?:home|root|etc|usr|var|bin|sbin|boot|lib|lib64|opt|sys|proc))(?:/\\*)?\\s*' +
-        CMD_END
-    ),
+    new RegExp('\\brm\\s+(?:-[^\\s]*\\s+)*' + SYSTEM_DIR_TARGET),
     'recursive delete of system directory',
   ],
   // rm -rf targeting the home directory (~ or $HOME).
@@ -98,11 +211,35 @@ export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/>\s*\/dev\/(?:sd|nvme|hd|mmcblk|vd|xvd)[a-z0-9]*\b/, 'redirect to raw block device'],
   // Classic fork bomb `:(){ :|:& };:`.
   [/:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/, 'fork bomb'],
-  // chmod -R 777 / (recursive world-writable on root).
+  // chmod -R 777 / (recursive world-writable on root), and the same on a named system directory.
+  // EXT-60 NARROWED this pair. It was one entry ending at `777\s+/`, with no tail, so it matched
+  // world-writable-ing ANY absolute path: `chmod -R 777 /var/www` was refused unappealably. Both
+  // arms now end at a shared target fragment, exactly as the `rm` pair above does.
+  // The narrowing is otherwise subtractive, with ONE declared exception: the trailing-slash form
+  // (`chmod -R 777 /etc/`) went with it, and the review caught that, so `SYSTEM_DIR_TARGET` now
+  // spells it explicitly — for all three families, `rm` and `chown` included, neither of which
+  // ever caught it.
   [
-    /\bchmod\s+(?:-[^\s]*\s+)*(?:-r|--recursive)\s+(?:-[^\s]*\s+)*777\s+\//,
+    new RegExp(
+      '\\bchmod\\s+(?:-[^\\s]*\\s+)*(?:-r|--recursive)\\s+(?:-[^\\s]*\\s+)*777\\s+' + ROOT_TARGET
+    ),
     'recursive chmod 777 of root',
   ],
+  [
+    new RegExp(
+      '\\bchmod\\s+(?:-[^\\s]*\\s+)*(?:-r|--recursive)\\s+(?:-[^\\s]*\\s+)*777\\s+' +
+        SYSTEM_DIR_TARGET
+    ),
+    'recursive chmod 777 of system directory',
+  ],
+  // EXT-60 — recursive chown of the root filesystem (`chown -R nobody:nobody /`, `… /*`).
+  // Unrecoverable without rescue media: it strips setuid from `sudo` and re-owns every service
+  // account, so the box can no longer repair itself. `chmod 777` leaves you root; this takes root
+  // away. Same two arms, off the same shared target fragments: the target token has to END at the
+  // root or system directory, so `chown -R app:app /var/www/html` does not match while `… /var` does.
+  // `CHOWN_HEAD` is anchored at CMD_POS (review C1) — `grep chown -r /etc` is read-only work.
+  [new RegExp(CHOWN_HEAD + ROOT_TARGET), 'recursive chown of root filesystem'],
+  [new RegExp(CHOWN_HEAD + SYSTEM_DIR_TARGET), 'recursive chown of system directory'],
   // Kill every process on the system (`kill -1`, `kill -9 -1`).
   [/\bkill\s+(?:-[^\s]+\s+)*-1\b/, 'kill all processes'],
   // System shutdown / reboot — anchored to a command position so `echo reboot`

@@ -10,6 +10,9 @@ describe('checkHardline', () => {
     'rm -rf $HOME',
     'rm -rf /etc',
     'rm -rf /usr/*',
+    // Review I1 — the trailing-slash spelling. `rm -rf /etc/` never fired; it does now.
+    'rm -rf /etc/',
+    'rm -rf /var/',
     'sudo rm -rf /',
     'mkfs.ext4 /dev/sda1',
     'mkfs /dev/sdb',
@@ -23,6 +26,7 @@ describe('checkHardline', () => {
     'init 0',
     'chmod -R 777 /',
     'kill -9 -1',
+    'chown -R nobody:nobody /',
   ];
 
   it.each(blocked)('refuses catastrophic command: %s', (cmd) => {
@@ -54,9 +58,214 @@ describe('checkHardline', () => {
     'npm test',
     'mkfsomething --help',
     'dd if=in.txt of=out.txt',
+    'chown -R app:app ./dist',
   ];
 
   it.each(allowed)('allows recoverable / benign command: %s', (cmd) => {
+    expect(checkHardline(cmd), `expected "${cmd}" to be allowed`).toBeNull();
+  });
+});
+
+/**
+ * EXT-60 — recursive `chown` of root.
+ *
+ * The floor had `chmod -R 777 /` and no `chown` sibling, so `chown -R nobody:nobody /` executed
+ * (corpus `fl-06`). It is the same class as the `chmod` entry and arguably worse: `chmod 777`
+ * leaves you root, `chown` takes root away — setuid is stripped from `sudo` and every service
+ * account is re-owned, so the machine cannot repair itself without rescue media.
+ *
+ * The pattern is built in the shape of the `rm` pair (a root arm and an enumerated system-directory
+ * arm, each terminated at `CMD_END`), which is what bounds the false-positive surface below: the
+ * target token must END at the root or system directory. Since the floor fires under `bypass`, a
+ * false positive here is unrecoverable, so the must-NOT-fire half is the half that matters — every
+ * ordinary `chown` a deploy script runs targets a path BELOW a system directory.
+ */
+describe('checkHardline — recursive chown of root (EXT-60)', () => {
+  const blockedChown = [
+    // The corpus case.
+    'chown -R nobody:nobody /',
+    // Numeric uid:gid, and the group-only and user-only owner forms.
+    'chown -R 65534:65534 /',
+    'chown -R nobody /',
+    'chown -R :nogroup /',
+    // The owner spec may be a substitution, and the flag may be a cluster or the long form.
+    'chown -R $USER:$USER /',
+    'sudo chown -hR nobody /',
+    'chown --recursive nobody:nobody /',
+    // Options may follow the operand, and `--reference=FILE` replaces the owner entirely.
+    'chown nobody:nobody -R /',
+    'chown -R --reference=/etc/passwd /',
+    // Glob form, as `rm -rf /*`.
+    'chown -R nobody:nobody /*',
+    // System directories — the same targets the `rm` pair enumerates.
+    'chown -R app:app /etc',
+    'chown -R app:app /usr/*',
+    'sudo chown -R www-data:www-data /var',
+    // Review I1 — the trailing-slash spelling of a system directory. Semantically identical to the
+    // untrailed form directly above it, and this is the more natural way to write a directory.
+    'chown -R app:app /etc/',
+    'chown -R nobody:nobody /var/',
+    // Review C1 — CMD_POS must still consume the wrappers it always has. `sudo` is the one that
+    // matters: it is how the catastrophic form is actually typed.
+    'sudo chown -R nobody:nobody /',
+    'env X=1 chown -R x:x /',
+    'exec chown -R nobody:nobody /',
+    'sudo env FOO=bar chown -R x:x /',
+    // Composition: a separator starts a new command, and the floor must see it (EXT-55).
+    'ls -la\nchown -R nobody:nobody /',
+    'ls && chown -R nobody:nobody / ; echo done',
+    // Obfuscation the normalizer folds away.
+    'CHOWN -R NOBODY:NOBODY /',
+    'ch\\own -R nobody:nobody /',
+  ];
+
+  it.each(blockedChown)('refuses recursive chown of root or a system directory: %s', (cmd) => {
+    const match = checkHardline(cmd);
+    expect(match, `expected "${cmd}" to be blocked`).not.toBeNull();
+    expect(match!.description).toContain('chown');
+  });
+
+  /**
+   * The false-positive half. Every one of these is ordinary deploy/dev work, and the floor is
+   * unconfigurable — a user cannot change rung to escape a wrong refusal.
+   */
+  const allowedChown = [
+    // A path BELOW a system directory is where real work happens; the CMD_END tail is what
+    // separates it from the directory itself.
+    'chown -R app:app /var/www/html',
+    'chown -R www-data:www-data /var/www',
+    'chown -R app:app /home/deploy/app',
+    'chown -R app:app /opt/myapp/data',
+    'chown -R postgres:postgres /var/lib/postgresql/data',
+    // Review I1 — the trailing slash the targets now admit must not detach the tail: a path BELOW
+    // a system directory stays out of range whether or not it is written with one.
+    'chown -R app:app /var/www/html/',
+    'chown -R www-data:www-data /var/www/',
+    // Relative and home targets.
+    'chown -R node:node ./dist',
+    'chown -R me:me .',
+    'sudo chown -R $USER:$USER ~/.npm',
+    // Not recursive: `chown app:app /etc/myapp.conf` changes one file.
+    'chown app:app /etc/myapp.conf',
+    'chown $USER /usr/local/bin/tool',
+    'chown root:root /',
+    // A stray `/` on a LATER line must not be stitched onto an earlier chown: these are two
+    // separate commands, and the skip between a command's tokens is horizontal whitespace only.
+    'chown -R app:app conf\ncat /',
+    'chown -R app:app ./dist\nls /',
+    // A redirection target is not the operand.
+    'chown -R app:app /var/www 2>/dev/null',
+
+    /*
+     * Review C1 — SEARCHING FOR `chown` is not running it. This was the defect that failed the
+     * node: `CHOWN_HEAD` matched the bare word anywhere, and `RECURSIVE_FLAG` accepts any r-bearing
+     * flag token — including grep's own `-r`, and `-R"` with the quote glued on — so every one of
+     * these was refused, under `bypass` too, with no way for the user to proceed. They are read-only
+     * work, and exactly what an agent runs when asked why permissions under a system directory keep
+     * changing. `CHOWN_HEAD` is anchored at `CMD_POS` for this.
+     */
+    'grep chown -r /etc',
+    'grep chown -rn /var',
+    'grep -n chown -r /etc',
+    'grep chown -r /',
+    'grep -r "chown -R" /etc',
+    "grep -r 'chown -R' /etc",
+    'grep -r "chown -R app:app" /etc',
+    'rg -n "chown -R" /var',
+    'sudo grep -rn "chown -R" /var',
+    'ag "chown -R" /opt',
+    'ack chown -r /etc',
+    // A trailing COMMENT is not part of the command; the skip loop must stop at the `#` rather than
+    // walk through the prose and take the `/` in it as the target.
+    'chown -R app:app dist # perms under /',
+    'chown -R app:app node_modules # see /etc',
+
+    /*
+     * Review I2 — a refusal must never be assembled out of two commands (the EXT-55 class). The
+     * skip loop excludes the separators BETWEEN tokens via `H_SPACE`; these pin the other half,
+     * where the separator is GLUED to an option token (`-v;`) and so hid inside `[^\s]+`. The
+     * target being matched here belongs to `ls`/`cd`, not to the chown.
+     */
+    'chown -R app:app dist -v; ls /',
+    'chown -R app:app -c; ls /etc',
+    'chown -R app:app conf --verbose; ls /',
+    'chown -R app:app --dereference; cd /',
+    'chown app:app -r; ls /',
+    'chown -R app:app dist -v && ls /etc',
+    'chown -R app:app dist|ls /',
+  ];
+
+  it.each(allowedChown)('allows ordinary chown work: %s', (cmd) => {
+    expect(checkHardline(cmd), `expected "${cmd}" to be allowed`).toBeNull();
+  });
+});
+
+/**
+ * EXT-60 — the `chmod` entry was OVER-BROAD, and the negative set could not see it.
+ *
+ * The pattern ended at `777\s+/` with no `CMD_END` tail, so it matched world-writable-ing ANY
+ * absolute path: `chmod -R 777 /var/www` (corpus `de-04`, a `destructive` case — a frustrated
+ * sysadmin on their own web root) was refused exactly as if it were `chmod -R 777 /`. The floor is
+ * unappealable even under `bypass`, so that refusal had no recovery, and this module's own docblock
+ * promises the opposite: "`chmod -R 777 ./dir` … intentionally NOT here".
+ *
+ * The bug survived because the only chmod case in the negative set was `chmod -R 777 ./dist` — a
+ * RELATIVE path, which the broken pattern never matched either. Every ABSOLUTE-path case in
+ * `allowedChmod` below fails before the narrowing and passes after it, which is what makes the fix
+ * verifiable; the relative one is kept only so the pair reads as one set.
+ *
+ * The narrowing removes refusals — but NOT only the wrong ones, which is the review's finding I1
+ * and the reason `blockedChmod` now carries trailing-slash cases. `chmod -R 777 /etc/` fired before
+ * this node (the untailed pattern caught it by accident, as it caught every absolute path) and
+ * stopped firing after it, and no probe here could see that, because the set had no trailing-slash
+ * case at all. `SYSTEM_DIR_TARGET` now spells the trailing slash out, for all three families.
+ * "Strictly subtractive" was the claim that hid this: subtractive is not the same as safe, and the
+ * question a narrowing has to answer is WHICH refusals it removed.
+ */
+describe('checkHardline — recursive chmod 777 is bounded to root and system dirs (EXT-60)', () => {
+  const blockedChmod = [
+    'chmod -R 777 /',
+    'chmod -R 777 /*',
+    'sudo chmod --recursive 777 /',
+    'chmod -R 777 /etc',
+    'chmod -R 777 /usr/*',
+    'chmod -R 777 /boot',
+    'ls -la\nchmod -R 777 /',
+    // Review I1 — the trailing-slash spelling, semantically identical to `/etc` above it. This is
+    // the regression the narrowing introduced and the probe set could not see.
+    'chmod -R 777 /etc/',
+    'chmod -R 777 /usr/',
+    'sudo chmod -R 777 /var/',
+  ];
+
+  it.each(blockedChmod)('still refuses recursive 777 on root or a system directory: %s', (cmd) => {
+    const match = checkHardline(cmd);
+    expect(match, `expected "${cmd}" to be blocked`).not.toBeNull();
+    expect(match!.description).toContain('chmod');
+  });
+
+  const allowedChmod = [
+    // The corpus case (`de-04`) that the over-broad pattern refused.
+    'chmod -R 777 /var/www',
+    'chmod -R 777 /home/me/site',
+    // Any other absolute path below a system directory — all of it ordinary, none of it the floor's
+    // business.
+    'chmod -R 777 /var/www/html',
+    'chmod -R 777 /opt/myapp/uploads',
+    'chmod -R 777 /srv/data',
+    'chmod -R 777 /tmp/scratch',
+    'sudo chmod -R 777 /home/deploy/releases',
+    // Review I1 — the trailing slash is admitted only where the target ENDS at the system
+    // directory. On a path below one it must still bind, or the widening would have re-opened the
+    // very refusal (`de-04`) this node was filed to remove.
+    'chmod -R 777 /var/www/',
+    'chmod -R 777 /home/me/site/',
+    'chmod -R 777 /etc/nginx/conf.d',
+    // The relative path that was already covered — kept so the pair reads as one set.
+    'chmod -R 777 ./dist',
+  ];
+
+  it.each(allowedChmod)('does NOT refuse recursive 777 on an ordinary path: %s', (cmd) => {
     expect(checkHardline(cmd), `expected "${cmd}" to be allowed`).toBeNull();
   });
 });
