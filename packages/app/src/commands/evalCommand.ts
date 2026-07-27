@@ -37,6 +37,7 @@ import type {
   EvalSuiteSummary,
   JudgeFn,
   RunCellFn,
+  RunClassifyFn,
   RunConversationFn,
   SweepCell,
 } from '@gaunt-sloth/batch';
@@ -653,6 +654,9 @@ export function evalCommand(
           let runConversation: RunConversationFn | undefined;
           let runCellByIdentity: Map<string, RunCellFn> | undefined;
           let runConversationByIdentity: Map<string, RunConversationFn> | undefined;
+          // BATCH-25 Half B — the CLASSIFICATION seam, built instead of a runCell for a target that
+          // decides cases itself rather than by running an agent.
+          let classify: RunClassifyFn | undefined;
           let baseConfig: GthConfig;
           if (suiteIdentities.length > 0 && parsedSuite.target.type === 'gth-agent') {
             // MATRIX (gth-agent): one runCell per identity, each from a fresh
@@ -714,6 +718,16 @@ export function evalCommand(
               await import('#src/commands/agUiEvalRunner.js');
             runCell = buildAgUiRunCell(parsedSuite.target);
             runConversation = buildAgUiRunConversation(parsedSuite.target);
+          } else if (parsedSuite.target.type === 'rater') {
+            // BATCH-25 Half B: grade gth's OWN approvals rater. Nothing is run through an agent —
+            // each case is a command the rater rates — so this branch builds the `classify` seam
+            // instead of a runCell/runConversation. It is built from the SAME per-cell config as
+            // every other target, which is what makes the sweep's `model:` and
+            // `config: { approvals: … }` axes move the rater (rung × model). The judge still grades
+            // from this config, exactly as for the external targets.
+            baseConfig = await initConfigForCell(commandLineConfigOverrides, sweepCell);
+            const { buildRaterClassifier } = await import('@gaunt-sloth/batch/raterTarget.js');
+            classify = await buildRaterClassifier(parsedSuite.target, baseConfig);
           } else {
             // gth-agent, NO identities (unchanged): one runCell/runConversation under the invoked
             // profile, from the single `initConfig(overrides)` base config (byte-for-byte as before).
@@ -780,6 +794,9 @@ export function evalCommand(
             runConversationByIdentity,
             judge,
             concurrency: options.concurrency,
+            // BATCH-25 Half B — set only by the `rater` target; `undefined` for every agent target,
+            // which is the pre-BATCH-25 behaviour byte for byte.
+            classify,
           });
 
           writeEvalOutput(suiteOutputDir, summary);

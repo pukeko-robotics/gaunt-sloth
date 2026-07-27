@@ -166,6 +166,25 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
       expect(outcome.ok).toBe(true);
     });
 
+    it('says no rating call was made, instead of core\'s "could not evaluate" placeholder', async () => {
+      // `mapVerdictToAction` treats a missing verdict as the fail-closed one, whose reason claims
+      // the rater failed. Writing that into a model-free case's output would tell a reader
+      // diagnosing the corpus that the rater is broken, when in fact it was never asked.
+      const { buildRaterClassifier, NO_RATING_CALL_MARKER } = await import('#src/raterTarget.js');
+      const { model } = fakeModel([{ outcome: FAIL_CLOSED_VERDICT.outcome, reason: 'unused' }]);
+
+      const classify = await buildRaterClassifier(
+        { type: 'rater', rung: 'auto-safe' },
+        configOf(),
+        { model }
+      );
+      const [outcome] = await classify(requestOf({ inputs: ['ls -la'], modelFree: true }));
+
+      expect(outcome.rationale).toContain(NO_RATING_CALL_MARKER);
+      expect(outcome.rationale).toContain('model_free');
+      expect(outcome.rationale).not.toContain(FAIL_CLOSED_VERDICT.reason);
+    });
+
     it('reports NO label — the label is the judgement, and no judgement was made', async () => {
       const { buildRaterClassifier } = await import('#src/raterTarget.js');
       const { model } = fakeModel([{ outcome: FAIL_CLOSED_VERDICT.outcome, reason: 'unused' }]);
@@ -274,8 +293,12 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
 
       // Production consults no model at `read-only`/`write`; billing for one here would measure
       // something the gate never does.
+      const { NO_RATING_CALL_MARKER } = await import('#src/raterTarget.js');
       expect(invoke).not.toHaveBeenCalled();
       expect(outcome.modelCalls).toBe(0);
+      // ...and the rationale says WHICH of the two zero-call reasons applied.
+      expect(outcome.rationale).toContain(NO_RATING_CALL_MARKER);
+      expect(outcome.rationale).toContain('write');
       expect(outcome.label).toBeUndefined();
       expect(outcome.action).toBe(
         mapVerdictToAction('ls -la', undefined, { rung: 'write' }).action

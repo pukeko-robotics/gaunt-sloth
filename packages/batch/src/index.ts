@@ -106,7 +106,11 @@ export type {
 
 // BATCH-25 Half B — the `rater` target: the one implementation of the `RunClassifyFn` seam, which
 // drives gth's own approvals rater over a corpus of commands.
-export { buildRaterClassifier, HARDLINE_REFUSAL_MARKER } from '#src/raterTarget.js';
+export {
+  buildRaterClassifier,
+  HARDLINE_REFUSAL_MARKER,
+  NO_RATING_CALL_MARKER,
+} from '#src/raterTarget.js';
 export type { RaterClassifierOptions } from '#src/raterTarget.js';
 
 // BATCH-19 — the `gth eval` reporter facility (A1 seam). These are the public plugin contract an

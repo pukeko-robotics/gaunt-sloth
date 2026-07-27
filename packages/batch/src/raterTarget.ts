@@ -28,7 +28,11 @@ import {
   resolveApprovals,
 } from '@gaunt-sloth/core/config/shell-policy.js';
 import type { ApprovalRung } from '@gaunt-sloth/core/config/shell-policy.js';
-import { mapVerdictToAction, rateShellCommand } from '@gaunt-sloth/core/core/shell/rater.js';
+import {
+  FAIL_CLOSED_VERDICT,
+  mapVerdictToAction,
+  rateShellCommand,
+} from '@gaunt-sloth/core/core/shell/rater.js';
 import type { ShellSafetyVerdict } from '@gaunt-sloth/core/core/shell/rater.js';
 import { resolveRaterModel } from '@gaunt-sloth/core/core/shell/raterModel.js';
 import { displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
@@ -62,6 +66,19 @@ import type {
  * silently stops firing is invisible to build, lint and unit, and visible here.
  */
 export const HARDLINE_REFUSAL_MARKER = 'hardline floor: refused';
+
+/**
+ * The marker a rationale carries when the decision cost NO rating call, followed by which of the
+ * two reasons applied (the case declared `model_free`, or the rung is not rated).
+ *
+ * It exists because the honest alternative was worse. `mapVerdictToAction` treats a missing verdict
+ * as core's fail-closed one, whose reason says the rater "could not evaluate" the command — true
+ * when a rating call failed, and a lie here, where no call was made. That sentence would have been
+ * written into every model-free case's per-case JSON, and a reader diagnosing a corpus would have
+ * concluded the rater was broken. So the placeholder reason is dropped on this path and replaced by
+ * this: what actually happened.
+ */
+export const NO_RATING_CALL_MARKER = 'no rating call';
 
 /** Overrides for {@link buildRaterClassifier}. Every one mirrors an option `rateShellCommand`
  * already takes; they exist so a test can drive the REAL rating path with a fake model instead of
@@ -114,13 +131,22 @@ function resolveRung(target: RaterTarget, config: GthConfig): ApprovalRung {
  */
 function buildRationale(
   floorDescription: string | undefined,
-  verdict: ShellSafetyVerdict | undefined
+  verdict: ShellSafetyVerdict | undefined,
+  noRatingReason: string | undefined
 ): string | undefined {
   const parts: string[] = [];
   if (floorDescription !== undefined) {
     parts.push(`${HARDLINE_REFUSAL_MARKER} (${floorDescription})`);
   }
-  if (verdict?.reason) parts.push(verdict.reason);
+  if (noRatingReason !== undefined) {
+    parts.push(`${NO_RATING_CALL_MARKER} (${noRatingReason})`);
+  }
+  // Drop core's fail-closed placeholder when nobody rated: it says the rater could not evaluate the
+  // command, which on this path never happened. A preflight's own reason IS kept — that one is a
+  // real, deterministic finding about the command.
+  const placeholder =
+    noRatingReason !== undefined && verdict?.reason === FAIL_CLOSED_VERDICT.reason;
+  if (verdict?.reason && !placeholder) parts.push(verdict.reason);
   return parts.length > 0 ? parts.join('\n') : undefined;
 }
 
@@ -164,7 +190,12 @@ async function classifyOneRound(
   // Free and deterministic, so it runs on both paths — see buildRationale.
   const floor = checkHardline(trimmed);
 
-  const deterministicOnly = request.modelFree || !isRatedRung(rung);
+  const noRatingReason = request.modelFree
+    ? 'model_free'
+    : isRatedRung(rung)
+      ? undefined
+      : `rung "${rung}" rates nothing`;
+  const deterministicOnly = noRatingReason !== undefined;
   let verdict: ShellSafetyVerdict | undefined;
   let modelCalls = 0;
   if (!deterministicOnly) {
@@ -183,7 +214,7 @@ async function classifyOneRound(
     // path — the docblock above says why.
     ...(deterministicOnly ? {} : { label: decision.verdict?.outcome }),
     action: decision.action,
-    rationale: buildRationale(floor?.description, decision.verdict),
+    rationale: buildRationale(floor?.description, decision.verdict, noRatingReason),
     modelCalls,
   };
 }
