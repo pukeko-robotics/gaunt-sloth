@@ -15,6 +15,25 @@ import { checkHardline } from '#src/tools/shell/hardline.js';
  * This spec is that diff, frozen as an assertion, so the implementation and the corpus cannot drift
  * apart again silently. It reads the corpus from the committed fixture rather than restating the
  * cases, because a hand-copied subset IS the drift it exists to prevent.
+ *
+ * ## What this spec CANNOT see (read this before trusting a green run)
+ *
+ * Both directions scan **only the 87 commands in the corpus**. So direction 2 — the false-positive
+ * direction, the one that matters, because a floor refusal fires under `bypass` and has no
+ * recovery — can only catch an over-broad pattern that happens to misfire **on a corpus case**.
+ * It caught `de-04` (`chmod -R 777 /var/www`) purely because someone had put that command in the
+ * corpus.
+ *
+ * The review of this node measured the cost of that. The first `chown` patterns written here
+ * refused `grep chown -r /etc` — an unappealable refusal of an ordinary read-only search, the
+ * single most serious defect class this floor has — and **this spec passed green throughout**,
+ * because nobody had put a `grep chown …` in the corpus. A false positive on a command the corpus
+ * does not contain is invisible here **by construction**.
+ *
+ * "The floor and the corpus agree on all 87 cases" is therefore the whole of what a green run
+ * asserts, and it is a much weaker statement than "the floor has no false positives". The corpus is
+ * thin on must-NOT-fire shapes; the hand-written negative probes in `shellHardline.spec.ts` are
+ * where that coverage actually lives, and they are what a new pattern has to be argued against.
  */
 
 /** A corpus case. Only the fields this spec reads are modelled. */
@@ -118,6 +137,13 @@ describe('checkHardline — reconciled against the approvals corpus (EXT-60)', (
     expect(refused).toEqual(Object.keys(REFUSED_BUT_UNFLAGGED).sort());
   });
 
+  /**
+   * DORMANT BY DESIGN — and it is not coverage today. `REFUSED_BUT_UNFLAGGED` is empty (that is
+   * EXT-60's finished state), so this body never executes and this test cannot fail. It is kept
+   * because it goes live on the first entry anyone adds, which is exactly when a stale entry
+   * becomes possible: an entry justified once, then left behind after the floor or the corpus was
+   * fixed, silently subtracting a case from direction 2's exact-set equality above.
+   */
   it('accounts for every entry in the expected set (no stale entry left behind after a fix)', () => {
     const ids = new Set(CORPUS.cases.map((corpusCase) => corpusCase.id));
     for (const id of Object.keys(REFUSED_BUT_UNFLAGGED)) {
