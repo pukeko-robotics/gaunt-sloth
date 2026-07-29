@@ -77,10 +77,13 @@
  *   `--author` value is a positional and `push` opens the gate. The repair ("an operand preceded by
  *   a flag is that flag's value") silences **two** evasions: `git --no-pager clone <URL>` and
  *   `git --quiet fetch <URL>`, both measured.
- * - **`http` (httpie's binary) as an ordinary word behind a wrapper** — `sudo grep -rn http
- *   example.com/`. `http` is the command httpie actually installs, so dropping it from the table
- *   loses httpie coverage entirely; the scan is already bounded to the wrapper case, which is why
- *   the same command without `sudo` is silent.
+ * - **An email address under a `git` subcommand word** — also `git config user.email
+ *   jo@example.com`, which is the measured price of putting `config` in the subcommand set (one
+ *   prompt per machine setup, against a silent global fetch-redirect).
+ *
+ * The `http`-behind-a-wrapper false positive (`sudo grep -rn http example.com/`) that was declined
+ * here in an earlier round is **gone**: it needed the scheme-less rule at a position where the
+ * command had already appeared, which is exactly what {@link HeadTier} withholds.
  *
  * And one that is intended by the rule rather than a defect: a **loopback IP** floors
  * (`nc -z -v 127.0.0.1 22`) while `localhost:3000` does not, because an IP is a host literal and a
@@ -182,6 +185,19 @@ const NETWORK_HEADS: ReadonlyMap<string, HostPosition> = new Map<string, HostPos
   // `git` only where a URL stands in for a configured remote. `git commit -m "…https://…"` and
   // `git tag -a v1 -m "see https://…"` are NOT fetches, and prompting on them would be a worse
   // annoyance regression than the one this preflight was built to avoid.
+  //
+  // **`config` is in this set deliberately, and it widens the design — do not "simplify" it out.**
+  // The rest of this module rests on *a URL under a head that cannot reach the network is not a
+  // fetch*, which is true of `git commit -m`, where the URL is prose. A config write is not prose:
+  // it is a STORED FETCH TARGET, which is the same thing `--registry` is, and
+  // `npm config set registry https://…` has always floored here. Without it git contradicted
+  // itself — `git remote set-url origin <URL>` floored while `git config remote.origin.url <URL>`,
+  // the identical write to the identical file, was auto-approved — and, worse,
+  // `git config --global url.https://evil/.insteadOf https://github.com/` silently redirected EVERY
+  // FUTURE GITHUB FETCH ON THE MACHINE, persistently, which is strictly worse than the one-shot
+  // fetch that did floor. Measured price: two false positives, both `git config user.email
+  // <address>`, i.e. one prompt per machine setup. `git config user.name`, `--list`, `--get`,
+  // `--unset`, `core.editor` and `alias.*` carry no host literal and stay silent.
   [
     'git',
     {
@@ -195,6 +211,7 @@ const NETWORK_HEADS: ReadonlyMap<string, HostPosition> = new Map<string, HostPos
         'submodule',
         'ls-remote',
         'archive',
+        'config',
       ]),
     },
   ],
@@ -214,8 +231,15 @@ const NETWORK_HEADS: ReadonlyMap<string, HostPosition> = new Map<string, HostPos
 const SCHEME_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
 /** `user@host` (`deploy@myhost:/srv/`, `git@github.com:owner/repo.git`). */
 const USER_AT_HOST_RE = /^[^@\s/]+@[a-z0-9._-]+(:|$)/i;
-/** A bare IPv4 target, with or without a port or path. */
-const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}(:|\/|$)/;
+/**
+ * A bare IPv4 target, with or without a port or path — but **not** a CIDR mask.
+ *
+ * `192.168.1.0/24` is a network range, not a counterparty, and it appears in ordinary firewall work
+ * (`ufw allow ssh from 192.168.1.0/24`, `iptables … -s 203.0.113.0/24`) where a head name also sits
+ * in an argument position. `203.0.113.9/payload` is a fetch and still matches; the exclusion is only
+ * a trailing `/` plus one or two digits and nothing else, which no fetch path realistically is.
+ */
+const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}(:|\/(?!\d{1,2}$)|$)/;
 /**
  * A bracketed IPv6 target — `[2001:db8::1]`, `[::1]:8080/x`. The scheme form already matched via
  * {@link SCHEME_RE}; this is the bare one. A bracketed operand is otherwise unheard of in a shell
@@ -285,81 +309,102 @@ function bareHead(token: string): string {
 }
 
 /**
- * At a NON-head position, resolve a token to a binary name — case-folded and `.exe`-stripped, but
- * **path-split only when the path is a program path** (a `bin`/`sbin`/`System32` directory).
- *
- * The restriction is a measured false positive, not caution. {@link bareHead} takes the last segment
- * of ANY path, which is right for argv[0] and wrong everywhere else: it read the *data directory*
- * `/usr/share/curl` in `sudo cp -r /usr/share/curl example.com/` as the head `curl`, and the command
- * was floored with `example.com/` presented to the user as its "host". Requiring a program directory
- * keeps `sudo -u root /usr/bin/curl https://…` (and its Windows `System32\curl.exe` spelling), which
- * is the shape this scan exists for, and drops the data-path one.
+ * A token that is a URL rather than a program: `https://example.com/curl`'s last path segment is
+ * `curl`, and without this it would resolve to the head `curl` at whatever position it sits in.
  */
-function scannedHead(token: string): string {
-  const folded = token.toLowerCase().replace(/\.exe$/, '');
-  if (!/[\\/]/.test(folded)) return folded;
-  const segments = folded.split(/[\\/]+/);
-  const name = segments.pop() ?? '';
-  const parent = segments.pop() ?? '';
-  return /^(bin|sbin|system32)$/.test(parent) ? name : '';
-}
+const URL_SHAPED_RE = /:\/\//;
 
-/** A position in argv that may be a network head, with the rule that applies there. */
+/**
+ * Which tier of host rules applies at a candidate head position.
+ *
+ * - `full` — every rule the head carries, **including** `bareHost`'s scheme-less `host.tld/path`.
+ * - `restricted` — the unambiguous host forms only (scheme, `user@host`, IP, `host:path`). The
+ *   scheme-less rule is withheld, because at this position we are no longer sure the head token is
+ *   the command rather than an argument to one.
+ *
+ * **This tier split is what lets every position be a candidate without handing the user a local
+ * directory as the counterparty.** `sudo cp /usr/bin/curl backup.dir/` resolves `curl` at a scanned
+ * position, and `backup.dir/` is a `label.label/` — indistinguishable from a hostname by shape. Under
+ * `restricted` it is not a candidate at all; under `full` the user would be told their own `backup.dir/`
+ * is the remote party, which {@link NETWORK_HEADS}' docblock names as the one outcome that must never
+ * happen and which defeats §4.6.1's premise that the sentence naming the host is the deliverable.
+ */
+type HeadTier = 'full' | 'restricted';
+
+/** A position in argv that may be a network head, with the rule and the tier that apply there. */
 interface HeadCandidate {
   readonly index: number;
   readonly position: HostPosition;
+  readonly tier: HeadTier;
 }
 
 /**
- * Every position in argv that may be the network head, each with its own {@link HostPosition}.
+ * Every position in argv that may be the network head, each with its own {@link HostPosition} and
+ * {@link HeadTier}.
  *
- * **Returning a LIST is the fix for the second wrapper evasion, and the distinction is the whole
- * lesson.** The first attempt stopped the wrapper loop at the first flag, so `sudo -u root curl
- * https://…` looked up `-u` and declined. The second scanned forward to *the first token that is a
- * head* — which is **re-anchoring, not over-matching**: it swaps one single candidate for another and
- * then inherits whatever that candidate's rule concludes. `sudo -u git curl https://evil/x` latched
- * onto the **username** `git`, whose `subcommand` rule found no `clone`/`push`/… among
- * `['curl', '<url>']`, and the whole command went silent. `git` is a standard system user (gitea,
- * forgejo, gitolite, `git-daemon`), and 12 of the 27 head names evaded the same way as a `-u` value.
+ * ## Why every position, and why no list of wrapper names
  *
- * Genuine over-matching considers **every** candidate position and fires if *any* of them yields a
- * host in a fetch position under *that head's own* rule ({@link matchArgv} unions the results). A
- * decoy head name can then no longer displace a real one: for `sudo -u git curl <url>` the `git`
- * position contributes nothing and the `curl` position fires. It also needs no table of which wrapper
- * flags take an operand — the ambiguity that makes "skip the flag and its operand" wrong, since
- * `sudo -E curl` would lose `curl` to `-E`'s imagined operand.
+ * This is the fourth shape of this function, and the previous three each died to the same failure:
+ * **naming the things that may precede a command.** The wrapper loop stopped at the first flag
+ * (`sudo -u root curl …` evaded); scanning to the *first* head re-anchored onto a decoy
+ * (`sudo -u git curl …` evaded, because `git` is a real system user); and gating the scan on a
+ * `WRAPPERS` membership test left `timeout 30 curl …` evading while `time curl …` floored — the
+ * near-homograph of a name that *was* in the list. Twelve more names (`nice`, `stdbuf`,
+ * `proxychains`, `torsocks`, `runuser`, `busybox`, `flock`, …) would have closed today's twelve and
+ * reopened on the thirteenth tool anyone writes.
  *
- * The scan is **bounded to the wrapper case** on purpose, and that bound is what keeps the
- * false-positive rate where it is: applying it to every command would make `cp /usr/bin/curl /tmp/`
- * and `grep -rn http example.com/` fetches. The visible consequence is an asymmetry — `sudo docker
- * exec api curl http://…` floors while the same command without `sudo` does not — which is accepted:
- * this layer raises, so the wrapped form asking is not a defect.
+ * So there is no membership test in the loop below. **Every token is a candidate head**, and the
+ * question a name would have answered — *is this token the command, or an argument to one?* — is
+ * answered by TIER instead of by exclusion, so being wrong about it costs precision rather than the
+ * whole match.
+ *
+ * ## How the tier is decided
+ *
+ * `full` applies while nothing but flags, flag values, wrappers and `VAR=value` assignments has been
+ * passed — i.e. **while the command itself has not yet appeared**. The moment a token appears that is
+ * none of those (`cp` in `sudo -u root cp /usr/bin/curl backup.dir/`), that token is the command, every
+ * later head-shaped token is one of its arguments, and the tier drops to `restricted` for the rest of
+ * the argv. A flag's *value* keeps `full` alive — that is what makes `sudo -u root curl …` and
+ * `sudo -u git curl …` behave identically — without needing to know which flags take one.
+ *
+ * **`WRAPPERS` is consulted by the tier predicate and nowhere else**, which is the whole of what is
+ * left of it. There used to be a loop here that advanced an index past leading wrappers and
+ * `VAR=value` assignments; once the tier predicate existed that loop was **provably dead** — deleting
+ * it entirely changed no test and no behaviour, because the predicate already lets a wrapper keep the
+ * `full` tier alive at the position the loop would have landed on. It is gone rather than kept as an
+ * unkillable branch. Emptying `WRAPPERS`, by contrast, turns 20 tests red: a name missing from it now
+ * costs *precision* (a scheme-less target behind that wrapper goes unseen) rather than the whole
+ * command, which is exactly the demotion that makes `timeout`-vs-`time` no longer a security bug.
  */
 function headCandidates(argv: readonly string[]): HeadCandidate[] {
-  let index = 0;
-  let sawWrapper = false;
-  while (index < argv.length) {
-    if (WRAPPERS.has(bareHead(argv[index]))) {
-      sawWrapper = true;
-      index++;
-      continue;
-    }
-    if (ENV_ASSIGNMENT_RE.test(argv[index])) {
-      index++;
-      continue;
-    }
-    break;
-  }
-
   const candidates: HeadCandidate[] = [];
-  // The TRUE head — the only position where a path prefix is read as a program path.
-  const trueHead = NETWORK_HEADS.get(bareHead(argv[index] ?? ''));
-  if (trueHead !== undefined) candidates.push({ index, position: trueHead });
-  if (!sawWrapper) return candidates;
+  const trueHead = NETWORK_HEADS.get(bareHead(argv[0] ?? ''));
+  if (trueHead !== undefined) candidates.push({ index: 0, position: trueHead, tier: 'full' });
 
-  for (let scan = index + 1; scan < argv.length; scan++) {
-    const scanned = NETWORK_HEADS.get(scannedHead(argv[scan]));
-    if (scanned !== undefined) candidates.push({ index: scan, position: scanned });
+  // Has anything other than a flag / flag value / wrapper / assignment been passed yet? Once it has,
+  // the command has appeared and every later head-shaped token is an argument to it.
+  let beforeTheCommand = true;
+  for (let scan = 1; scan < argv.length; scan++) {
+    const passed = argv[scan - 1];
+    const passedIsFlagValue = scan >= 2 && argv[scan - 2].startsWith('-');
+    if (
+      !passed.startsWith('-') &&
+      !WRAPPERS.has(bareHead(passed)) &&
+      !ENV_ASSIGNMENT_RE.test(passed) &&
+      !passedIsFlagValue
+    ) {
+      beforeTheCommand = false;
+    }
+    const token = argv[scan];
+    if (URL_SHAPED_RE.test(token)) continue;
+    const scanned = NETWORK_HEADS.get(bareHead(token));
+    if (scanned !== undefined) {
+      candidates.push({
+        index: scan,
+        position: scanned,
+        tier: beforeTheCommand ? 'full' : 'restricted',
+      });
+    }
   }
   return candidates;
 }
@@ -384,15 +429,19 @@ function inlineFlagValues(operands: readonly string[]): string[] {
     .map((operand) => operand.split(/=(.*)/)[1] ?? '');
 }
 
-/** The candidate operands for one head, under that head's own rule. */
-function candidatesFor(position: HostPosition, operands: readonly string[]): Candidate[] {
+/** The candidate operands for one head, under that head's own rule and the position's tier. */
+function candidatesFor(
+  position: HostPosition,
+  tier: HeadTier,
+  operands: readonly string[]
+): Candidate[] {
   const positional = operands.filter((operand) => !operand.startsWith('-'));
   const inline = inlineFlagValues(operands);
   const candidates: Candidate[] = [];
 
   switch (position.kind) {
     case 'all': {
-      const test = position.bareHost ? isHostLiteralOrBareHost : isHostLiteral;
+      const test = position.bareHost && tier === 'full' ? isHostLiteralOrBareHost : isHostLiteral;
       candidates.push(...[...positional, ...inline].map((value) => ({ value, test })));
       break;
     }
@@ -445,8 +494,8 @@ function candidatesFor(position: HostPosition, operands: readonly string[]): Can
  */
 function matchArgv(argv: readonly string[]): string[] {
   const hits: string[] = [];
-  for (const { index, position } of headCandidates(argv)) {
-    const candidates = candidatesFor(position, argv.slice(index + 1));
+  for (const { index, position, tier } of headCandidates(argv)) {
+    const candidates = candidatesFor(position, tier, argv.slice(index + 1));
     hits.push(...candidates.filter((c) => c.test(c.value)).map(({ value }) => value));
   }
   // De-duplicated, in first-seen order: a detached flag value (`--registry <URL>`) is also a

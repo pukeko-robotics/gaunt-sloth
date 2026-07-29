@@ -80,6 +80,10 @@ It fires on *fetching*, not on *mentioning*: `git commit -m "closes https://gith
 `grep -rn "https://" src/` and `npm install lodash` name no host to fetch from and are unaffected,
 and neither is `git push origin main` — `origin` is a name your project resolves, not a host.
 
+Saving a host counts too, not just fetching from one: `git config remote.origin.url …`,
+`git config --global url.<host>.insteadOf …` and `npm config set registry …` all ask, because a
+stored fetch target redirects every later fetch rather than one.
+
 If you fetch from the same host all day, put it in `approvals.allow` (below). That list is checked
 first, so it costs no prompt and no rating call.
 

