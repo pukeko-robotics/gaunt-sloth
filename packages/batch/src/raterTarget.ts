@@ -48,6 +48,7 @@ import type {
   ClassifyOutcome,
   ClassifyRequest,
   ForcedByMechanism,
+  PreflightMechanism,
   RaterTarget,
   RunClassifyFn,
 } from '#src/evalTypes.js';
@@ -110,10 +111,10 @@ export const NO_RATING_CALL_MARKER = 'no rating call';
  * the floor. Every command then comes back with the identical placeholder — see
  * {@link ../evalTypes.js PREFLIGHT_MECHANISMS} for the whole rule.
  */
-const MECHANISM_PROBES: Readonly<Record<ForcedByMechanism, string>> = {
+const MECHANISM_PROBES: Readonly<Record<PreflightMechanism, string>> = {
   'ambiguity-preflight': 'echo $(echo probe)',
   'script-env-leak-preflight': 'node probe.js $PROBE_ENV_VALUE',
-} as Readonly<Record<ForcedByMechanism, string>>;
+};
 
 /**
  * The reason put ON a probe verdict. It is never a sentence the gate itself writes, so "the gate
@@ -148,7 +149,7 @@ function calibrateGate(): GateCalibration {
   if (rung === undefined) return { index, permissive };
 
   for (const [mechanism, probe] of Object.entries(MECHANISM_PROBES) as [
-    ForcedByMechanism,
+    PreflightMechanism,
     string,
   ][]) {
     for (const outcome of RATER_OUTCOMES) {

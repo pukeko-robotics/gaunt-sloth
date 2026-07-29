@@ -112,10 +112,19 @@ export const FORCED_BY_ASSERTIONS: Record<ForcedByMechanism, string> = {
  * does not fire, the marker and the action go red **together**. That is the discrimination, not a
  * side effect of it.
  */
-export const PREFLIGHT_MECHANISMS: readonly ForcedByMechanism[] = [
+export const PREFLIGHT_MECHANISMS = [
   'ambiguity-preflight',
   'script-env-leak-preflight',
-];
+] as const satisfies readonly ForcedByMechanism[];
+
+/**
+ * One of {@link PREFLIGHT_MECHANISMS}. Narrower than {@link ForcedByMechanism} on purpose: the
+ * target's probe table is typed as a TOTAL record over this, so adding a preflight to the list above
+ * is a **compile error** until someone writes the probe command that observes it — the same
+ * compile-time guard core's own `BELOW_DESTRUCTIVE_FLOOR` uses, for the same reason (the failure it
+ * prevents is silent: an unprobed mechanism is simply never attributable).
+ */
+export type PreflightMechanism = (typeof PREFLIGHT_MECHANISMS)[number];
 
 /**
  * Must a round claiming this mechanism be driven with a permissive rating for the mechanism to be
@@ -124,7 +133,10 @@ export const PREFLIGHT_MECHANISMS: readonly ForcedByMechanism[] = [
  * must keep going through the gate with no verdict, or its action would change.
  */
 export function mechanismNeedsPermissiveRating(mechanism: ForcedByMechanism | undefined): boolean {
-  return mechanism !== undefined && PREFLIGHT_MECHANISMS.includes(mechanism);
+  return (
+    mechanism !== undefined &&
+    (PREFLIGHT_MECHANISMS as readonly ForcedByMechanism[]).includes(mechanism)
+  );
 }
 
 /** The in-process SUT target: an agent built from the run's own resolved config (the original and
