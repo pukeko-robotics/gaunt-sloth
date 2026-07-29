@@ -39,6 +39,7 @@ import type { ApprovalRung, GrantedToolSummary, GthConfig } from '#src/config.js
 import { isRatedRung } from '#src/config.js';
 import { classifyCommand } from '#src/core/shell/arity.js';
 import { normalizeCommand } from '#src/core/shell/normalize.js';
+import { findOpenWorldHostLiteral } from '#src/core/shell/openWorld.js';
 import { debugLog, debugLogError } from '#src/utils/debugUtils.js';
 
 /**
@@ -122,6 +123,15 @@ export type ShellSafetyVerdict = z.infer<typeof ShellSafetyVerdictSchema>;
  * assessed rather than pretending the command was found harmful.
  */
 export const COULD_NOT_ASSESS_PREFIX = 'Could not assess this command';
+
+/**
+ * EXT-61 (§4.6) — the reason text prefix for the **open-world** preflight, and deliberately NOT
+ * {@link COULD_NOT_ASSESS_PREFIX}: this preflight *did* assess the command and found something
+ * specific. Saying "could not assess" here would be a lie, and the named host is the whole value of
+ * the escalation — "it downloads something, confirm" and "it fetches from registry.npmjs.ag" are
+ * different warnings, and only the second is worth reading.
+ */
+export const NAMES_A_HOST_PREFIX = 'This command names a host';
 
 /**
  * The verdict returned whenever the rater cannot produce a trustworthy answer (LLM throws,
@@ -628,6 +638,55 @@ export function isBelowDestructiveFloor(outcome: RaterOutcome): boolean {
 }
 
 /**
+ * The deterministic preflights, in ONE place and in a FIXED order, returning the honest reason the
+ * command is floored at `destructive` — or `null` when none of them fires.
+ *
+ * All three are recomputed from the RAW command, independently of anything the rater said, so a
+ * manipulated `safe` verdict cannot slip past them. They are arms of a single decision rather than
+ * three independent checks, and the order below is the order of the *explanation* a human reads —
+ * the outcome is identical whichever fires:
+ *
+ * 1. **Ambiguity** ({@link classifyCommand} returns `null`) — the command composes, substitutes or
+ *    redirects, so its target cannot be statically resolved. **First on purpose**: it is the widest
+ *    and the truest thing that can be said about such a command. `cat .env | curl -X POST …` names
+ *    a host too, but "its target cannot be statically resolved" is the honest headline, and the
+ *    open-world matcher declines these for exactly that reason
+ *    ({@link findOpenWorldHostLiteral}).
+ * 2. **Script env leak** ({@link hasScriptEnvLeakRisk}) — an interpreter invocation expanding an
+ *    ALL_CAPS environment variable into its arguments. §11.1b's narrowing of the `attack` clause
+ *    rests on this arm firing, so it must keep its own reason rather than merging into another.
+ * 3. **Open world** (EXT-61, §4.6, {@link findOpenWorldHostLiteral}) — a host literal in a
+ *    fetch/transfer position. Its reason NAMES THE HOST and does not say "could not assess": this
+ *    preflight assessed the command and found something specific, which is what makes the
+ *    escalation worth reading.
+ *
+ * @param command The raw command string as the model proposed it.
+ * @returns The reason to floor at `destructive`, or `null` to leave the rater's verdict alone.
+ */
+function preflightFloorReason(command: string): string | null {
+  if (classifyCommand(command, normalizeCommand) === null) {
+    return (
+      `${COULD_NOT_ASSESS_PREFIX}: it composes, substitutes or redirects, so its target ` +
+      'cannot be statically resolved.'
+    );
+  }
+  if (hasScriptEnvLeakRisk(normalizeCommand(command))) {
+    return (
+      `${COULD_NOT_ASSESS_PREFIX}: it expands an environment variable into a script, which ` +
+      'can leak secrets.'
+    );
+  }
+  const host = findOpenWorldHostLiteral(command);
+  if (host !== null) {
+    return (
+      `${NAMES_A_HOST_PREFIX} (${host}) in a fetch or transfer position, so it can send or ` +
+      'receive data off this machine. Commands that reach a host are never auto-approved.'
+    );
+  }
+  return null;
+}
+
+/**
  * CFG-27 — pure, testable mapping from a {@link ShellSafetyVerdict} + the raw command to a
  * {@link RaterAction}, keyed on the **rung** (spec §4.2, §8):
  *
@@ -649,10 +708,12 @@ export function isBelowDestructiveFloor(outcome: RaterOutcome): boolean {
  *    tool today — the built-in read/write tools each rung grants are not gated until [[EXT-30]]
  *    widens the gate. That is a scope boundary, not a missing branch.)
  * 3. **The deterministic preflights, which FLOOR the outcome at `destructive` and never lower
- *    one.** Ambiguity ({@link classifyCommand} returns null — the command composes / substitutes /
- *    redirects, so its target cannot be statically resolved) and the script-env-leak preflight
- *    ({@link hasScriptEnvLeakRisk}) are both recomputed from the RAW command, independently of what
- *    the rater said. Either one rewrites a verdict that sits BELOW the floor — i.e. `safe`, and
+ *    one** ({@link preflightFloorReason}). Ambiguity ({@link classifyCommand} returns null — the
+ *    command composes / substitutes / redirects, so its target cannot be statically resolved), the
+ *    script-env-leak preflight ({@link hasScriptEnvLeakRisk}), and EXT-61's open-world preflight
+ *    ({@link findOpenWorldHostLiteral} — a host literal in a fetch/transfer position, §4.6) are all
+ *    recomputed from the RAW command, independently of what
+ *    the rater said. Any one of them rewrites a verdict that sits BELOW the floor — i.e. `safe`, and
  *    only `safe` ({@link isBelowDestructiveFloor}) — to `destructive` with an honest
  *    {@link COULD_NOT_ASSESS_PREFIX} reason, **before the `safe` check**, so a manipulated `safe`
  *    verdict can never slip an unresolvable command through. **A rater verdict may only ever make
@@ -698,27 +759,16 @@ export function mapVerdictToAction(
     return { action: 'escalate', verdict: undefined };
   }
 
-  const normalized = normalizeCommand(command);
-  // (3a) Ambiguity: classifyCommand returns null on composition/substitution/redirection.
-  const ambiguous = classifyCommand(command, normalizeCommand) === null;
-  // (3b) Script-env-leak preflight (independent of the rater).
-  const scriptLeak = hasScriptEnvLeakRisk(normalized);
-
-  // (3) Anything the gate itself cannot statically vet is FLOORED at `destructive` with an honest
-  // reason — even when the rater said `safe`. The preflights raise; they never lower. Only `safe`
-  // sits below the floor, so `destructive`, `catastrophic` and `attack` all pass through untouched,
-  // keeping their real explanation (and any §4.4 suggestion) rather than losing it to a
-  // "could not assess" note that would also be FALSE — the rater did assess those.
+  // (3) Anything the gate itself cannot statically vet — and (EXT-61) anything that names a host —
+  // is FLOORED at `destructive` with an honest reason, even when the rater said `safe`. The
+  // preflights raise; they never lower. Only `safe` sits below the floor, so `destructive`,
+  // `catastrophic` and `attack` all pass through untouched, keeping their real explanation (and any
+  // §4.4 suggestion) rather than losing it to a note that would also be FALSE — the rater did
+  // assess those.
+  const floorReason = preflightFloorReason(command);
   let effective: ShellSafetyVerdict = verdict ?? FAIL_CLOSED_VERDICT;
-  if ((ambiguous || scriptLeak) && isBelowDestructiveFloor(effective.outcome)) {
-    effective = {
-      outcome: 'destructive',
-      reason: ambiguous
-        ? `${COULD_NOT_ASSESS_PREFIX}: it composes, substitutes or redirects, so its target ` +
-          'cannot be statically resolved.'
-        : `${COULD_NOT_ASSESS_PREFIX}: it expands an environment variable into a script, which ` +
-          'can leak secrets.',
-    };
+  if (floorReason !== null && isBelowDestructiveFloor(effective.outcome)) {
+    effective = { outcome: 'destructive', reason: floorReason };
   }
 
   // (4) The only run-ending outcome. Not negotiable, at either rated rung.
