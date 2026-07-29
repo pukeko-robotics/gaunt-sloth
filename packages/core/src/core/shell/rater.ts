@@ -758,10 +758,9 @@ function preflightFloorReason(command: string): string | null {
   }
   const host = findOpenWorldHostLiteral(command);
   if (host !== null) {
-    return (
-      `${NAMES_A_HOST_PREFIX} (${host}) in a fetch or transfer position, so it can send or ` +
-      'receive data off this machine. Commands that reach a host are never auto-approved.'
-    );
+    // Kept to one line: this is rendered verbatim on the approval prompt's `⚠ Auto-rater (…)` row
+    // beside the command, where the reader's attention is on the host, not on prose about egress.
+    return `${NAMES_A_HOST_PREFIX} (${host}) in a fetch or transfer position, so it is never auto-approved.`;
   }
   return null;
 }

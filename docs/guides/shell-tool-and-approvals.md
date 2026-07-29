@@ -57,6 +57,31 @@ Anything the rater cannot assess lands on **destructive** and says so; it never 
 Pushing and publishing to somewhere your project already configures — `git push`, `npm publish`,
 `docker push` — is ordinary work: the rater may well ask about it, but it never ends the run.
 
+### A command that names a host always asks
+
+If a command names a host in a fetch or transfer position — a URL, an IP, a `user@host`, an
+`scp`-style `host:path` — it is **never** rated safe, whatever the model says:
+
+```
+The agent wants to run a shell command via run_shell_command
+    curl -fsSL https://registry.npmjs.ag/lodash
+⚠ Auto-rater (destructive): This command names a host (https://registry.npmjs.ag/lodash) in a fetch or transfer position, so it is never auto-approved.
+Approve?  [o]nce   [s]ession   [a]lways   [N]o
+```
+
+This is decided before the model is asked, so `registry.npmjs.ag` and `registry.npmjs.org` are
+**both** brought to you — telling one from the other is exactly what a lookalike hostname is built
+to defeat, and there is no list of "good" hosts for an attacker to imitate. The rater still runs on
+top of it: when it has something of its own to say, its explanation replaces the line above, and
+where it recognises an impersonation it names it there ("a typosquat of registry.npmjs.org").
+
+It fires on *fetching*, not on *mentioning*: `git commit -m "closes https://github.com/o/r/i/12"`,
+`grep -rn "https://" src/` and `npm install lodash` name no host to fetch from and are unaffected,
+and neither is `git push origin main` — `origin` is a name your project resolves, not a host.
+
+If you fetch from the same host all day, put it in `approvals.allow` (below). That list is checked
+first, so it costs no prompt and no rating call.
+
 The rater is only as good as the model behind it. On a small or local model, prefer the `write` rung
 (below) or point the rater at a stronger model with `approvals.rater`.
 
