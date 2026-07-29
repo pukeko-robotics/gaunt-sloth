@@ -578,6 +578,9 @@ describe('findOpenWorldHostLiterals — the §4.6 matcher', () => {
         '203.0.113.9',
         '203.0.113.9:4444',
         '203.0.113.9/payload',
+        '[2001:db8::1]',
+        '[2001:db8::1]:8080/x',
+        '[::1]/x',
         'build.example.com:/srv/',
       ]) {
         expect(isHostLiteral(operand), operand).toBe(true);

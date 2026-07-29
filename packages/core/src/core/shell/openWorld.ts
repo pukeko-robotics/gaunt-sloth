@@ -185,6 +185,12 @@ const USER_AT_HOST_RE = /^[^@\s/]+@[a-z0-9._-]+(:|$)/i;
 /** A bare IPv4 target, with or without a port or path. */
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}(:|\/|$)/;
 /**
+ * A bracketed IPv6 target — `[2001:db8::1]`, `[::1]:8080/x`. The scheme form already matched via
+ * {@link SCHEME_RE}; this is the bare one. A bracketed operand is otherwise unheard of in a shell
+ * command, so the false-positive cost is nil.
+ */
+const IPV6_RE = /^\[[0-9a-f:.]+\](:\d+)?(\/|$)/i;
+/**
  * scp/rsync `host.tld:path` with no scheme. The `(?!\/\/)` keeps it from re-matching a scheme.
  *
  * The final label must be **letters, two or more** — a real TLD never is anything else (RFC 3696;
@@ -219,6 +225,7 @@ export function isHostLiteral(operand: string): boolean {
     SCHEME_RE.test(operand) ||
     USER_AT_HOST_RE.test(operand) ||
     IPV4_RE.test(operand) ||
+    IPV6_RE.test(operand) ||
     HOST_COLON_PATH_RE.test(operand)
   );
 }
