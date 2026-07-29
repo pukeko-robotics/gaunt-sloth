@@ -41,7 +41,7 @@
     "@gaunt-sloth/core": "workspace:*",
     "@gaunt-sloth/eval-reporter-junit": "workspace:*",
     "@gaunt-sloth/review": "workspace:*",
-    "@langchain/anthropic": "^1.5.1",
+    "@langchain/anthropic": "^1.5.2",
     "@langchain/core": "^1.2.3",
     "@langchain/deepseek": "^1.1.5",
     "@langchain/google": "^0.2.1",
@@ -55,10 +55,10 @@
   },
   "optionalDependencies": {
     "chalk": "^5.6.2",
-    "ink": "^7.1.0",
+    "ink": "^7.1.1",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
-    "react": "^19.2.7"
+    "react": "^19.2.8"
   },
   "devDependencies": {
     "@microsoft/tui-test": "^0.0.4",

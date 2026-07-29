@@ -23,6 +23,7 @@ allowBuilds:
   '@swc/core': true
   node-pty: true
 
-minimumReleaseAgeExclude:
-  - deepagents-acp@0.1.19
-  - deepagents@1.11.0
+# Exemptions from the minimum-release-age gate, for versions we needed before they had aged in.
+# Empty: the two entries that lived here (deepagents 1.11.0, deepagents-acp 0.1.19) named exact
+# versions no longer in the tree, and their successors resolve without an exemption.
+minimumReleaseAgeExclude: []

@@ -540,9 +540,12 @@ export class GthDeepAgent extends GthAbstractAgent {
             throw e;
           }
           const message = e instanceof Error ? e.message : String(e);
-          // deepagents fs enforcement throws (middleware/fs.ts enforcePermission +
-          // permissions/enforce.ts validatePath): a permission denial, or a path that is
-          // relative / contains ".." or "~" / is empty. All are recoverable model-input errors.
+          // A permission denial, or a path that is relative / contains ".." or "~" / is empty —
+          // all recoverable model-input errors. The live source of these throws is gsloth's own
+          // realpath guard (guardFilesystemBackend); deepagents' enforcement used to throw the
+          // same messages too, but since 1.11.1 it returns the equivalent error ToolMessage
+          // itself and so never reaches this catch. Keep matching both: the observation the model
+          // sees is identical either way, and the guard still depends on this softening.
           if (
             /permission denied for (read|write)|path must (be absolute|not contain|be a non-empty string)/i.test(
               message
