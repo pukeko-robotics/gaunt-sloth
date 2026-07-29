@@ -330,7 +330,9 @@ describe('buildRaterPrompt', () => {
   it('carries both halves of §4.6.1 — report always, upgrade only when the deception is clear', () => {
     const system = buildRaterSystemPrompt();
     // (1) Report always — and the "even when" is the whole clause.
-    expect(system).toMatch(/IMPERSONATING HOSTNAMES — REPORT ALWAYS, UPGRADE ONLY WHEN IT IS CLEAR/);
+    expect(system).toMatch(
+      /IMPERSONATING HOSTNAMES — REPORT ALWAYS, UPGRADE ONLY WHEN IT IS CLEAR/
+    );
     expect(system).toMatch(/ALWAYS REPORT IT/);
     expect(system).toMatch(/EVEN WHEN THE OUTCOME\s+STAYS `destructive`/);
     expect(system).toMatch(/beware, this hostname is impersonating/);
