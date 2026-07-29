@@ -404,6 +404,31 @@ describe('findOpenWorldHostLiterals — the §4.6 matcher', () => {
      * quote-aware, so the message is ONE operand and `clone the repo, see …` is not `clone`. This is
      * the assertion that keeps C1's fix from becoming the annoyance regression §4.6 forbids.
      */
+    /**
+     * …and the other direction the widened gate could have gone wrong: a **bare, unquoted**
+     * subcommand word sitting in an operand slot — a branch, a tag or an alias literally named
+     * `clone`/`push`/`fetch`. The gate opens on these, and that is harmless because opening it is
+     * not the same as firing: a candidate still has to BE a host literal, and none of these names
+     * one. Measured rather than reasoned, because this arm is the newest code in the node.
+     */
+    it('opens harmlessly on a branch or alias named like a subcommand (no host, no floor)', () => {
+      for (const command of [
+        'git branch clone',
+        'git checkout clone',
+        'git branch push',
+        'git checkout fetch',
+        'git diff push main',
+        'git branch -d clone',
+        'git config alias.p "push origin main"',
+        'git log --grep clone',
+        'git show clone:src/index.ts',
+        'git diff clone..main',
+        'git merge clone',
+      ]) {
+        expect(findOpenWorldHostLiterals(command), command).toEqual([]);
+      }
+    });
+
     it('is not opened by a listed subcommand appearing INSIDE a quoted argument', () => {
       for (const command of [
         'git commit -m "clone the repo, see https://github.com/o/r/i/12"',
