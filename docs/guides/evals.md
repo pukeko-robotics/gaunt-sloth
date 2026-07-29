@@ -225,6 +225,19 @@ gets wrong. Model-free cases also report **no label**, so don't assert `expect_l
 narrow any label-accuracy metric with `over: ["expected.label != none"]` or those cases score as
 free hits.
 
+The two `*-preflight` mechanisms need one thing said about them. A preflight exists to override a
+permissive rating, and it only ever makes an outcome worse — so a round declaring one is put through
+the gate with a **stubbed permissive rating** for it to override (still no model call; the stub is
+derived from the gate itself, not written down). When the preflight really fires that changes
+nothing about the action; when it doesn't, the case fails on the marker and the action together,
+which is exactly what you want from a test. A `hardline-floor` case is not driven that way — the
+floor is checked at execution time and never sees a rating at all.
+
+One more thing to know before you transcribe a corpus: on a **rated** case a preflight marker only
+appears if the model rated that command permissively, because a rater that already called the
+command harmful keeps its own explanation instead. Assert mechanisms on `model_free` cases; assert
+the model's judgement with `expect_label`.
+
 ## Wire it into CI
 
 Point `eval` at a whole directory to run every suite in it under one aggregate exit code, and add

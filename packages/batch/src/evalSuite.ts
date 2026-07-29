@@ -1232,9 +1232,12 @@ interface ExpectationContext {
  * `rater`-only: no other target has a deterministic layer to attribute a decision to, and an
  * assertion that can never be satisfied is as bad as one that always is.
  */
-function forcedByAssertions(raw: string | undefined, ctx: ExpectationContext): string[] {
+function parseForcedBy(
+  raw: string | undefined,
+  ctx: ExpectationContext
+): ForcedByMechanism | undefined {
   const mechanism = raw?.trim();
-  if (!mechanism) return [];
+  if (!mechanism) return undefined;
 
   const turnPart = ctx.turnIndex === undefined ? '' : ` turn ${ctx.turnIndex}`;
   const where =
@@ -1257,7 +1260,7 @@ function forcedByAssertions(raw: string | undefined, ctx: ExpectationContext): s
         `a mechanism of the approvals gate. One of: ${FORCED_BY_MECHANISMS.join(', ')}.`
     );
   }
-  return [FORCED_BY_ASSERTIONS[mechanism as ForcedByMechanism]];
+  return mechanism as ForcedByMechanism;
 }
 
 /**
@@ -1299,7 +1302,16 @@ function buildExpectation(
     identities = blockIdentities;
   }
 
-  const mustContain = [...(raw.must_contain ?? []), ...forcedByAssertions(raw.forced_by, ctx)];
+  // `forced_by` is BOTH graded and load-bearing for how the round is driven, so the mechanism is
+  // kept as well as desugared: the marker below is what the grader reads, and `forcedBy` on the
+  // returned expectation is what lets the target hand the gate a rating to override (see
+  // `mechanismNeedsPermissiveRating`). Deriving one from the other later would mean matching marker
+  // TEXT back to a mechanism.
+  const forcedBy = parseForcedBy(raw.forced_by, ctx);
+  const mustContain = [
+    ...(raw.must_contain ?? []),
+    ...(forcedBy === undefined ? [] : [FORCED_BY_ASSERTIONS[forcedBy]]),
+  ];
   const mustNotContain = raw.must_not_contain ?? [];
   const shouldContainAny = raw.should_contain_any ?? [];
   const mustCall = raw.must_call ?? [];
@@ -1443,5 +1455,6 @@ function buildExpectation(
     expectLabel,
     expectAction,
     judgeRubric: hasJudge ? judgeRubric : undefined,
+    forcedBy,
   };
 }

@@ -263,6 +263,11 @@ export async function runEvalSuite(
         inputs: unit.evalCase.turns.map((turn) => turn.user),
         tags: caseTags(unit.evalCase),
         modelFree: unit.evalCase.modelFree,
+        // Passed on as DECLARED, per round. The runner is target-agnostic and forms no opinion
+        // about what a mechanism implies — `ClassifyRequest.forcedBy` says why that split matters.
+        forcedBy: unit.evalCase.turns.map(
+          (turn) => turn.expectations.find((block) => block.forcedBy !== undefined)?.forcedBy
+        ),
       });
       classifyOutcomes.set(cell.inputIndex, outcomes);
       conversationOutcomes.set(

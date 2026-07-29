@@ -77,6 +77,56 @@ export const FORCED_BY_ASSERTIONS: Record<ForcedByMechanism, string> = {
   'script-env-leak-preflight': `${FORCED_BY_MARKER}: script-env-leak-preflight`,
 };
 
+/**
+ * Which of {@link FORCED_BY_MECHANISMS} are **preflights of the decision mapping** — the ones that
+ * can only be observed by handing the gate a rating for them to OVERRIDE.
+ *
+ * **This is the single statement of the rule, and everything else reads it through
+ * {@link mechanismNeedsPermissiveRating}.** It is kept here, next to the mechanism list, rather than
+ * in `raterTarget.js`, so the runner can consult it without pulling `@gaunt-sloth/agent` and core's
+ * rater into the module graph — and it is pinned by a unit test to equal the target's own probe
+ * table, so the two cannot drift.
+ *
+ * ## Why the floor is not on this list (measured, CFG-28)
+ *
+ * The two preflights live INSIDE `mapVerdictToAction`, and CFG-28 narrowed them to raise only an
+ * outcome that sits below the deterministic floor. Give that mapping no verdict and it substitutes
+ * core's fail-closed one, which is *at* the floor — so no preflight rewrites anything, every command
+ * comes back with the identical placeholder sentence, and the assertion is a constant again. Handing
+ * it a permissive rating is not a hypothetical: **overriding a permissive rating is the entire job of
+ * a preflight**, so it is the one path on which the mechanism is real.
+ *
+ * The §8 hardline floor is the opposite by design. The corpus defines `floor_refuses` as a refusal
+ * *at execution time*, "regardless of the rating, the approval, or the allow-list", and explicitly
+ * "a SEPARATE assertion from `action`". The target reads it from `checkHardline`, which never sees a
+ * verdict — so a rating cannot change the answer, and supplying one buys nothing. It also costs:
+ * `mapVerdictToAction` does not consult the floor, so a permissive rating on `rm -rf /` returns
+ * `approve`, which would move the action column of **5 of the corpus's 6 `fl-*` cases** off the
+ * `escalate` they author. Measured over all 22 deterministic corpus cases; see the fix-round-2
+ * section of `handoff/task-1-report.md`.
+ *
+ * ## The property that makes this self-justifying
+ *
+ * When the claimed preflight really does fire, the rating does not move the action — every corpus
+ * case that claims one (`ob-02`…`ob-05`, `el-01`, `el-02`) is `escalate` with or without it. When it
+ * does not fire, the marker and the action go red **together**. That is the discrimination, not a
+ * side effect of it.
+ */
+export const PREFLIGHT_MECHANISMS: readonly ForcedByMechanism[] = [
+  'ambiguity-preflight',
+  'script-env-leak-preflight',
+];
+
+/**
+ * Must a round claiming this mechanism be driven with a permissive rating for the mechanism to be
+ * observable at all? See {@link PREFLIGHT_MECHANISMS} for the whole rule and why the floor is
+ * excluded. `undefined` (the round claims no mechanism) is `false`: an ordinary `model_free` case
+ * must keep going through the gate with no verdict, or its action would change.
+ */
+export function mechanismNeedsPermissiveRating(mechanism: ForcedByMechanism | undefined): boolean {
+  return mechanism !== undefined && PREFLIGHT_MECHANISMS.includes(mechanism);
+}
+
 /** The in-process SUT target: an agent built from the run's own resolved config (the original and
  * default target). */
 export interface GthAgentTarget {
@@ -240,6 +290,17 @@ export interface EvalExpectation {
   /** The judge rubric, when present and non-blank. `undefined` = no judge for this block. */
   judgeRubric?: string;
   /**
+   * BATCH-25 Half B — the deterministic mechanism this block claims decided the round (`forced_by:`),
+   * RETAINED beside the `mustContain` entry it desugars into.
+   *
+   * The `mustContain` marker is what GRADES the claim; this is what lets the round be DRIVEN so the
+   * claim can be true at all — a preflight is only observable when the gate is given a rating to
+   * override ({@link mechanismNeedsPermissiveRating}). Keeping the mechanism rather than
+   * re-deriving it from the marker text means the runner never has to reverse-engineer a
+   * `must_contain` string back into a mechanism.
+   */
+  forcedBy?: ForcedByMechanism;
+  /**
    * BATCH-25 — the expected CLASSIFICATION label for this block, over the suite's declared
    * `classification.labels` enum. `undefined` = this block asserts no label.
    *
@@ -332,6 +393,25 @@ export interface ClassifyRequest {
    * production is unchanged (the gate still rates at a rated rung — the short-circuit is target
    * behaviour, not a claim about the gate). */
   modelFree: boolean;
+  /**
+   * BATCH-25 Half B — per round, parallel to {@link inputs}: the deterministic mechanism the case
+   * declared decided that round (`forced_by:`), or `undefined` where it declared none.
+   *
+   * It is carried as the MECHANISM and not as a "stub this round" boolean on purpose. The runner is
+   * target-agnostic; deciding that some mechanisms need a permissive rating is knowledge about how
+   * to drive the approvals gate, and it belongs to the one module that drives it. So the runner
+   * passes on what the case *declared* and the target applies
+   * {@link mechanismNeedsPermissiveRating} to it.
+   *
+   * A target must NOT use this to decide its answer — that would be grading the case against its own
+   * claim. It selects how the round is driven, nothing else; the marker in the rationale still has
+   * to come back from the gate, and a case claiming the wrong mechanism still fails (asserted).
+   *
+   * Where a round carries several expectation blocks (identity-scoped, or several `expect:` blocks)
+   * the mechanism is the first one any of them declares: the request is not identity-scoped, so a
+   * per-identity distinction could not be honoured here anyway.
+   */
+  forcedBy: (ForcedByMechanism | undefined)[];
 }
 
 /**

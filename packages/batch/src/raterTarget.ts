@@ -30,6 +30,7 @@ import {
 import type { ApprovalRung } from '@gaunt-sloth/core/config/shell-policy.js';
 import {
   FAIL_CLOSED_VERDICT,
+  RATER_OUTCOMES,
   mapVerdictToAction,
   rateShellCommand,
 } from '@gaunt-sloth/core/core/shell/rater.js';
@@ -38,7 +39,11 @@ import { resolveRaterModel } from '@gaunt-sloth/core/core/shell/raterModel.js';
 import { displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { env } from '@gaunt-sloth/core/utils/systemUtils.js';
 
-import { FORCED_BY_ASSERTIONS, HARDLINE_REFUSAL_MARKER } from '#src/evalTypes.js';
+import {
+  FORCED_BY_ASSERTIONS,
+  HARDLINE_REFUSAL_MARKER,
+  mechanismNeedsPermissiveRating,
+} from '#src/evalTypes.js';
 import type {
   ClassifyOutcome,
   ClassifyRequest,
@@ -94,19 +99,77 @@ export const NO_RATING_CALL_MARKER = 'no rating call';
  *   of the *conditions*, i.e. exactly the "never re-decide the gate" rule this module opens with,
  *   and one that would keep naming a mechanism after that mechanism had been deleted from the gate.
  *
- * So: run each probe through the REAL mapping with no verdict and record the sentence it produced.
- * At a rated rung the mapping starts from core's fail-closed placeholder, so any other reason is one
- * a preflight wrote — which makes the index self-calibrating (a reworded reason moves with it) and
- * honest under deletion (a preflight that stops firing produces the placeholder, is not indexed, and
- * every case asserting it goes red).
+ * So: run each probe through the REAL mapping and record the sentence it produced. The probe is
+ * offered each outcome of core's own vocabulary in turn and the one the gate **rewrites** is kept —
+ * which both finds the sentence and derives the permissive rating, spelling neither. That makes the
+ * index self-calibrating (a reworded reason moves with it) and honest under deletion (a preflight
+ * that stops firing rewrites nothing, is not indexed, and every case asserting it goes red).
+ *
+ * The probe cannot be run with NO verdict: CFG-28 narrowed the preflights to raise only an outcome
+ * below the deterministic floor, and a missing verdict becomes core's fail-closed one, which is *at*
+ * the floor. Every command then comes back with the identical placeholder — see
+ * {@link ../evalTypes.js PREFLIGHT_MECHANISMS} for the whole rule.
  */
-const MECHANISM_PROBES: Readonly<Record<string, string>> = {
+const MECHANISM_PROBES: Readonly<Record<ForcedByMechanism, string>> = {
   'ambiguity-preflight': 'echo $(echo probe)',
   'script-env-leak-preflight': 'node probe.js $PROBE_ENV_VALUE',
-};
+} as Readonly<Record<ForcedByMechanism, string>>;
 
-/** Lazily-built reason → mechanism index; see {@link MECHANISM_PROBES}. */
-let mechanismIndex: Map<string, ForcedByMechanism> | undefined;
+/**
+ * The reason put ON a probe verdict. It is never a sentence the gate itself writes, so "the gate
+ * handed this straight back" is decidable by equality rather than by recognising core's prose — and
+ * it must never reach a rationale (asserted, including at `bypass`, where the mapping returns the
+ * verdict untouched).
+ */
+const PROBE_REASON = '__gth-eval probe: not a finding__';
+
+/** What {@link calibrateGate} learned; see {@link MECHANISM_PROBES}. */
+interface GateCalibration {
+  /** Reason sentence → the mechanism that wrote it. */
+  index: Map<string, ForcedByMechanism>;
+  /** The outcome a preflight is willing to override — i.e. the one that sits below core's
+   * deterministic floor, discovered rather than spelled. `undefined` = no probe was rewritten at
+   * all, so no mechanism is claimable and every `forced_by: <preflight>` case fails loudly. */
+  permissive: string | undefined;
+}
+
+/** Lazily-built calibration; see {@link MECHANISM_PROBES}. */
+let calibration: GateCalibration | undefined;
+
+/**
+ * Ask core which sentence each preflight produces, and index it — together with the rating those
+ * preflights are willing to override.
+ */
+function calibrateGate(): GateCalibration {
+  const index = new Map<string, ForcedByMechanism>();
+  let permissive: string | undefined;
+  // Derived, never spelled: the preflights only run at a rated rung.
+  const rung = APPROVAL_RUNGS.find((candidate) => isRatedRung(candidate));
+  if (rung === undefined) return { index, permissive };
+
+  for (const [mechanism, probe] of Object.entries(MECHANISM_PROBES) as [
+    ForcedByMechanism,
+    string,
+  ][]) {
+    for (const outcome of RATER_OUTCOMES) {
+      const reason = mapVerdictToAction(probe, { outcome, reason: PROBE_REASON }, { rung }).verdict
+        ?.reason;
+      // Handed back untouched: this outcome is one the gate accepts, so the preflight had nothing
+      // to override. Not a finding, and not this mechanism's sentence.
+      if (reason === undefined || reason === PROBE_REASON) continue;
+      permissive ??= outcome;
+      if (index.has(reason)) {
+        // Two mechanisms, one sentence: they are no longer distinguishable, so claim NEITHER rather
+        // than attribute a decision to the wrong one.
+        index.delete(reason);
+      } else {
+        index.set(reason, mechanism);
+      }
+      break;
+    }
+  }
+  return { index, permissive };
+}
 
 /**
  * Ask core which sentence each preflight produces, and index it.
@@ -116,25 +179,17 @@ let mechanismIndex: Map<string, ForcedByMechanism> | undefined;
  * That must be a red unit test rather than a surprise in someone's eval report.
  */
 export function calibrateMechanisms(): Map<string, ForcedByMechanism> {
-  const index = new Map<string, ForcedByMechanism>();
-  // Derived, never spelled: the preflights only run at a rated rung.
-  const rung = APPROVAL_RUNGS.find((candidate) => isRatedRung(candidate));
-  if (rung === undefined) return index;
+  return calibrateGate().index;
+}
 
-  for (const [mechanism, probe] of Object.entries(MECHANISM_PROBES)) {
-    const reason = mapVerdictToAction(probe, undefined, { rung }).verdict?.reason;
-    // The placeholder means nothing rewrote the verdict: this mechanism did not fire, so it is not
-    // claimable. Leaving it unindexed is the loud outcome — the assertion fails.
-    if (!reason || reason === FAIL_CLOSED_VERDICT.reason) continue;
-    if (index.has(reason)) {
-      // Two mechanisms, one sentence: they are no longer distinguishable, so claim NEITHER rather
-      // than attribute a decision to the wrong one.
-      index.delete(reason);
-      continue;
-    }
-    index.set(reason, mechanism as ForcedByMechanism);
-  }
-  return index;
+/**
+ * The rating a `forced_by: <preflight>` round is driven with, discovered from core rather than
+ * spelled — see {@link calibrateGate}. Exported for the unit suite, which pins that it is an outcome
+ * the gate APPROVES on a command with no preflight (i.e. genuinely permissive, so overriding it is a
+ * real finding), without naming one.
+ */
+export function calibratePermissiveRating(): string | undefined {
+  return calibrateGate().permissive;
 }
 
 /**
@@ -144,8 +199,13 @@ export function calibrateMechanisms(): Map<string, ForcedByMechanism> {
  */
 function forcedMechanism(verdict: ShellSafetyVerdict | undefined): ForcedByMechanism | undefined {
   if (!verdict?.reason) return undefined;
-  mechanismIndex ??= calibrateMechanisms();
-  return mechanismIndex.get(verdict.reason);
+  return calibrated().index.get(verdict.reason);
+}
+
+/** The memoized {@link calibrateGate} — core's answers do not change within a run. */
+function calibrated(): GateCalibration {
+  calibration ??= calibrateGate();
+  return calibration;
 }
 
 /** Overrides for {@link buildRaterClassifier}. Every one mirrors an option `rateShellCommand`
@@ -211,7 +271,8 @@ function resolveRung(target: RaterTarget, config: GthConfig): ApprovalRung {
 function buildRationale(
   floorDescription: string | undefined,
   verdict: ShellSafetyVerdict | undefined,
-  noRatingReason: string | undefined
+  noRatingReason: string | undefined,
+  ratingIn: ShellSafetyVerdict | undefined
 ): string | undefined {
   const parts: string[] = [];
   if (floorDescription !== undefined) {
@@ -220,13 +281,16 @@ function buildRationale(
   if (noRatingReason !== undefined) {
     parts.push(`${NO_RATING_CALL_MARKER} (${noRatingReason})`);
   }
-  // Drop core's fail-closed placeholder when nobody rated: it says the rater could not evaluate the
-  // command, which on this path never happened. A preflight's own reason IS kept — that one is a
-  // real, deterministic finding about the command — and is named with the mechanism that wrote it,
-  // which is the one signal a DIFFERENT command would get wrong.
-  const placeholder =
-    noRatingReason !== undefined && verdict?.reason === FAIL_CLOSED_VERDICT.reason;
-  if (verdict?.reason && !placeholder) {
+  // On the zero-call path the only reason worth reporting is one the GATE wrote. Two sentences are
+  // not: core's fail-closed placeholder (it says the rater could not evaluate the command, which on
+  // this path never happened) and our own probe reason (it is a lever, not a finding). Both are
+  // recognised by what went IN — "the gate handed back exactly what we gave it" — rather than by
+  // matching core's prose, which is also what keeps the probe reason out of a `bypass` rationale,
+  // where the mapping returns the verdict untouched.
+  const handedBack =
+    noRatingReason !== undefined &&
+    (verdict?.reason === ratingIn?.reason || verdict?.reason === FAIL_CLOSED_VERDICT.reason);
+  if (verdict?.reason && !handedBack) {
     const mechanism = forcedMechanism(verdict);
     parts.push(
       mechanism === undefined
@@ -264,9 +328,16 @@ function buildRationale(
  * **And a model-free case does not grade on its `action` either.** At a rated rung the action is
  * the same for every command with no verdict, so it discriminates nothing; what discriminates is
  * the mechanism, in the rationale ({@link buildRationale}).
+ *
+ * **A round claiming a preflight is driven with a permissive rating** — see
+ * {@link ../evalTypes.js PREFLIGHT_MECHANISMS}. Still no model call: the rating is a stub, derived
+ * from core, and it is the only way a preflight is observable at all since CFG-28. It does not
+ * flatter the case — when the claimed preflight really fires the action is the same either way, and
+ * when it does not, the marker and the action go red together.
  */
 async function classifyOneRound(
   command: string,
+  roundIndex: number,
   request: ClassifyRequest,
   rung: ApprovalRung,
   config: GthConfig,
@@ -295,7 +366,19 @@ async function classifyOneRound(
   const deterministicOnly = noRatingReason !== undefined;
   let verdict: ShellSafetyVerdict | undefined;
   let modelCalls = 0;
-  if (!deterministicOnly) {
+  if (deterministicOnly) {
+    // A round that claims a PREFLIGHT is driven with a rating for that preflight to override —
+    // without one there is nothing to raise, and every command comes back identical. A round that
+    // claims nothing (or claims the floor) is driven with no rating, as before: a permissive one
+    // would move its action. `mechanismNeedsPermissiveRating` is the whole of that rule.
+    const permissive = calibrated().permissive;
+    if (
+      mechanismNeedsPermissiveRating(request.forcedBy?.[roundIndex]) &&
+      permissive !== undefined
+    ) {
+      verdict = { outcome: permissive as ShellSafetyVerdict['outcome'], reason: PROBE_REASON };
+    }
+  } else {
     verdict = await rateShellCommand(trimmed, config, {
       model,
       home: options?.home ?? env?.HOME,
@@ -308,10 +391,11 @@ async function classifyOneRound(
   return {
     ok: true,
     // Opaque both ways: whatever the gate decided, reported verbatim. Omitted on the model-free
-    // path — the docblock above says why.
+    // path — the docblock above says why, and a stubbed rating does not change that: the outcome it
+    // would report is OUR lever floored by a preflight, never a judgement anyone rendered.
     ...(deterministicOnly ? {} : { label: decision.verdict?.outcome }),
     action: decision.action,
-    rationale: buildRationale(floor?.description, decision.verdict, noRatingReason),
+    rationale: buildRationale(floor?.description, decision.verdict, noRatingReason, verdict),
     modelCalls,
   };
 }
@@ -348,8 +432,10 @@ export async function buildRaterClassifier(
     // ONE outcome per round, in order, and SERIALLY: the rounds of a case are a sequence, and the
     // suite runner already parallelizes across cases (`concurrency`), so racing within a case would
     // only make the eval's own load harder to reason about.
-    for (const input of request.inputs) {
-      outcomes.push(await classifyOneRound(input, request, rung, config, model, options));
+    for (const [roundIndex, input] of request.inputs.entries()) {
+      outcomes.push(
+        await classifyOneRound(input, roundIndex, request, rung, config, model, options)
+      );
     }
     return outcomes;
   };

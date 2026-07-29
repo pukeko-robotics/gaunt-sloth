@@ -560,6 +560,21 @@ cases:
         expect(suite.cases[1].turns[0].expectations[0].mustContain).toEqual([
           FORCED_BY_ASSERTIONS['hardline-floor'],
         ]);
+        // ...and the mechanism is KEPT beside the marker it desugared into. The marker grades the
+        // claim; the mechanism is what lets the round be DRIVEN so a preflight can speak at all
+        // (see `PREFLIGHT_MECHANISMS`). Recovering it from the marker text later would mean
+        // matching core's prose backwards.
+        expect(suite.cases[0].turns[0].expectations[0].forcedBy).toBe('ambiguity-preflight');
+        expect(suite.cases[1].turns[0].expectations[0].forcedBy).toBe('hardline-floor');
+      });
+
+      it('leaves `forcedBy` undefined on a case that declares none', async () => {
+        const suite = await parse(
+          'target: { type: rater, rung: auto-safe }\n' +
+            'classification: { labels: [label-a], actions: [escalate] }\n' +
+            'cases: [{ id: a, prompt: "ls -la", model_free: true, expect_action: escalate }]\n'
+        );
+        expect(suite.cases[0].turns[0].expectations[0].forcedBy).toBeUndefined();
       });
 
       it('is a whole assertion on its own — a case needs nothing else', async () => {
