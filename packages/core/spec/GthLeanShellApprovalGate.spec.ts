@@ -255,6 +255,35 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
     expect(executed).toEqual(['git checkout main', 'git checkout -b feature']);
   });
 
+  /**
+   * EXT-61 §4.6 / §3 — **the declared allow-list is consulted BEFORE the rater, and therefore
+   * before the open-world preflight.** That ordering is the supported answer to "won't this ask
+   * constantly": a team that fetches from one internal host all day declares it once, in a list
+   * they can inspect and revoke — and the preflight, which floors every host-bearing command, must
+   * not take that escape hatch away.
+   *
+   * The assertion that matters is **`rateShellCommand` was never called**, not just that the
+   * command ran. The preflight lives inside `mapVerdictToAction`, one line after the rating call,
+   * so a gate that consulted the rater first and only then honoured the allow-list would still
+   * approve this command — and would still pay for a model call on every variant, which is the
+   * cost §3 exists to remove. Only "the rater was never reached" distinguishes the two.
+   */
+  it('allow-list: a DECLARED prefix approves a host-bearing command without reaching the rater at all', async () => {
+    const runner = await makeRunner(['curl https://internal.example.com/health'], {
+      approvals: { mode: 'auto-safe', allow: ['curl'] },
+    } as unknown as Partial<GthConfig>);
+    const human = vi.fn();
+    runner.setToolApprovalCallback(human);
+
+    await runTurn(runner, 'check the internal service');
+
+    // §3 precedes §4: no rating call, no preflight, no prompt.
+    expect(rateShellCommandMock).not.toHaveBeenCalled();
+    expect(mapVerdictToActionMock).not.toHaveBeenCalled();
+    expect(human).not.toHaveBeenCalled();
+    expect(executed).toEqual(['curl https://internal.example.com/health']);
+  });
+
   it('rater: a SAFE verdict approves with NO human prompt (and the rater is consulted with the command)', async () => {
     const verdict = { outcome: 'safe', reason: 'read-only' };
     rateShellCommandMock.mockResolvedValue(verdict);
