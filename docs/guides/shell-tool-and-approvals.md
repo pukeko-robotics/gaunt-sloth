@@ -59,8 +59,9 @@ Pushing and publishing to somewhere your project already configures — `git pus
 
 ### A command that names a host always asks
 
-If a command names a host in a fetch or transfer position — a URL, an IP, a `user@host`, an
-`scp`-style `host:path` — it is **never** rated safe, whatever the model says:
+When one of the usual network tools — `curl`, `wget`, `ssh`, `scp`, `rsync`, `nc`, `aws`, `git
+clone`/`push`/`fetch`, an `npm`/`pip` install — is pointed at a host it names outright (a URL, an IP,
+a `user@host`, an `scp`-style `host:path`), it is **never** rated safe, whatever the model says:
 
 ```
 The agent wants to run a shell command via run_shell_command
@@ -81,6 +82,11 @@ and neither is `git push origin main` — `origin` is a name your project resolv
 
 If you fetch from the same host all day, put it in `approvals.allow` (below). That list is checked
 first, so it costs no prompt and no rating call.
+
+This check is a floor, not the whole of your safety: it knows the common network tools, not every
+program that can open a socket, so something like `svn checkout https://…` or a container that
+fetches for itself reaches the rater without it. What it guarantees is the other direction — where it
+does fire, no model opinion can wave the command through.
 
 The rater is only as good as the model behind it. On a small or local model, prefer the `write` rung
 (below) or point the rater at a stronger model with `approvals.rater`.

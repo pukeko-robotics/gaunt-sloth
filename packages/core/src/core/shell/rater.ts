@@ -39,7 +39,7 @@ import type { ApprovalRung, GrantedToolSummary, GthConfig } from '#src/config.js
 import { isRatedRung } from '#src/config.js';
 import { classifyCommand } from '#src/core/shell/arity.js';
 import { normalizeCommand } from '#src/core/shell/normalize.js';
-import { findOpenWorldHostLiteral } from '#src/core/shell/openWorld.js';
+import { findOpenWorldHostLiterals } from '#src/core/shell/openWorld.js';
 import { debugLog, debugLogError } from '#src/utils/debugUtils.js';
 
 /**
@@ -484,7 +484,7 @@ export function buildRaterPrompt(
   const scriptLeak = hasScriptEnvLeakRisk(normalized);
   // §4.6 — computed from the RAW command (the matcher normalizes internally), so the note says
   // exactly what the deterministic floor decided rather than a second, drifting opinion of it.
-  const openWorldHost = findOpenWorldHostLiteral(command);
+  const openWorldHosts = findOpenWorldHostLiterals(command);
 
   const userLines = [
     'Evaluate the following shell command and return a structured safety verdict.',
@@ -501,7 +501,7 @@ export function buildRaterPrompt(
         'secrets) into the script. Treat this as at least destructive.'
     );
   }
-  if (openWorldHost !== null) {
+  if (openWorldHosts.length > 0) {
     // §4.6.1 — deliberately NOT worded like the note above. "Treat this as at least destructive"
     // would suppress the one thing this note exists to ask for: the rater is SUPPOSED to upgrade a
     // clear typosquat to `attack`, and a note that caps the outcome at `destructive` would talk it
@@ -509,8 +509,8 @@ export function buildRaterPrompt(
     // question that is still the rater's to answer.
     userLines.push(
       '',
-      `PREFLIGHT NOTE: this command names a host (${openWorldHost}) in a fetch or transfer ` +
-        'position, so it has ALREADY been floored at `destructive` deterministically and will be ' +
+      `PREFLIGHT NOTE: this command names a host (${openWorldHosts.join(', ')}) in a fetch or ` +
+        'transfer position, so it has ALREADY been floored at `destructive` deterministically and will be ' +
         'shown to the user whatever you return. You do not need a severe outcome to make that ' +
         'happen. Rate it as you otherwise would — the floor only ever RAISES a `safe` verdict, so ' +
         '`catastrophic` and `attack` still take full effect. What this command needs from you is ' +
@@ -731,11 +731,11 @@ export function isBelowDestructiveFloor(outcome: RaterOutcome): boolean {
  *    and the truest thing that can be said about such a command. `cat .env | curl -X POST …` names
  *    a host too, but "its target cannot be statically resolved" is the honest headline, and the
  *    open-world matcher declines these for exactly that reason
- *    ({@link findOpenWorldHostLiteral}).
+ *    ({@link findOpenWorldHostLiterals}).
  * 2. **Script env leak** ({@link hasScriptEnvLeakRisk}) — an interpreter invocation expanding an
  *    ALL_CAPS environment variable into its arguments. §11.1b's narrowing of the `attack` clause
  *    rests on this arm firing, so it must keep its own reason rather than merging into another.
- * 3. **Open world** (EXT-61, §4.6, {@link findOpenWorldHostLiteral}) — a host literal in a
+ * 3. **Open world** (EXT-61, §4.6, {@link findOpenWorldHostLiterals}) — a host literal in a
  *    fetch/transfer position. Its reason NAMES THE HOST and does not say "could not assess": this
  *    preflight assessed the command and found something specific, which is what makes the
  *    escalation worth reading.
@@ -756,11 +756,14 @@ function preflightFloorReason(command: string): string | null {
       'can leak secrets.'
     );
   }
-  const host = findOpenWorldHostLiteral(command);
-  if (host !== null) {
-    // Kept to one line: this is rendered verbatim on the approval prompt's `⚠ Auto-rater (…)` row
-    // beside the command, where the reader's attention is on the host, not on prose about egress.
-    return `${NAMES_A_HOST_PREFIX} (${host}) in a fetch or transfer position, so it is never auto-approved.`;
+  const hosts = findOpenWorldHostLiterals(command);
+  if (hosts.length > 0) {
+    // Kept to one line and ONE sentence shape: this is rendered verbatim on the approval prompt's
+    // `⚠ Auto-rater (…)` row beside the command, where the reader's attention is on the host, not on
+    // prose about egress — and [[BATCH-25]] Half B calibrates deterministic assertions against this
+    // exact text. Several counterparties are listed inside the same parentheses rather than
+    // pluralised into a second sentence shape, so the leading clause never varies.
+    return `${NAMES_A_HOST_PREFIX} (${hosts.join(', ')}) in a fetch or transfer position, so it is never auto-approved.`;
   }
   return null;
 }
@@ -790,7 +793,7 @@ function preflightFloorReason(command: string): string | null {
  *    one** ({@link preflightFloorReason}). Ambiguity ({@link classifyCommand} returns null — the
  *    command composes / substitutes / redirects, so its target cannot be statically resolved), the
  *    script-env-leak preflight ({@link hasScriptEnvLeakRisk}), and EXT-61's open-world preflight
- *    ({@link findOpenWorldHostLiteral} — a host literal in a fetch/transfer position, §4.6) are all
+ *    ({@link findOpenWorldHostLiterals} — a host literal in a fetch/transfer position, §4.6) are all
  *    recomputed from the RAW command, independently of what
  *    the rater said. Any one of them rewrites a verdict that sits BELOW the floor — i.e. `safe`, and
  *    only `safe` ({@link isBelowDestructiveFloor}) — to `destructive` with an honest
