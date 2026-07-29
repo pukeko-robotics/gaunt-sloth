@@ -235,8 +235,12 @@ floor is checked at execution time and never sees a rating at all.
 
 One more thing to know before you transcribe a corpus: on a **rated** case a preflight marker only
 appears if the model rated that command permissively, because a rater that already called the
-command harmful keeps its own explanation instead. Assert mechanisms on `model_free` cases; assert
-the model's judgement with `expect_label`.
+command harmful keeps its own explanation instead. So assert mechanisms on `model_free` cases.
+
+`expect_label` has a matching wrinkle on the same commands. The label reported is the outcome the
+gate settled on *after* a preflight raised it, not the rating the model gave — so on a command a
+preflight floors, a rater that answered `safe` is scored as the floored outcome and its `safe` is
+invisible to the matrix. On every other command the model's outcome passes through untouched.
 
 ## Wire it into CI
 

@@ -17,6 +17,7 @@ import type {
   RunConversationFn,
   TurnRunOutcome,
 } from '#src/evalTypes.js';
+import { mechanismNeedsPermissiveRating } from '#src/evalTypes.js';
 import type {
   ClassifiedCell,
   EvalCaseClassification,
@@ -265,8 +266,19 @@ export async function runEvalSuite(
         modelFree: unit.evalCase.modelFree,
         // Passed on as DECLARED, per round. The runner is target-agnostic and forms no opinion
         // about what a mechanism implies — `ClassifyRequest.forcedBy` says why that split matters.
+        //
+        // Where one round declares SEVERAL mechanisms (`ob-05` is the corpus case: an ambiguity
+        // preflight AND the floor), a mechanism needing a permissive rating is preferred over one
+        // that does not, rather than simply taking the first block. Taking the first made the
+        // verdict depend on BLOCK ORDER — `[ambiguity, floor]` passed and `[floor, ambiguity]`
+        // failed on identical assertions — because a round left undriven can never let its
+        // preflight speak. Preferring the preflight satisfies BOTH claims: the floor's marker comes
+        // from `checkHardline`, which is unaffected by the rating either way.
         forcedBy: unit.evalCase.turns.map(
-          (turn) => turn.expectations.find((block) => block.forcedBy !== undefined)?.forcedBy
+          (turn) =>
+            turn.expectations.find((block) => mechanismNeedsPermissiveRating(block.forcedBy))
+              ?.forcedBy ??
+            turn.expectations.find((block) => block.forcedBy !== undefined)?.forcedBy
         ),
       });
       classifyOutcomes.set(cell.inputIndex, outcomes);

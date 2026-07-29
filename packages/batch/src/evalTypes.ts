@@ -420,8 +420,14 @@ export interface ClassifyRequest {
    * to come back from the gate, and a case claiming the wrong mechanism still fails (asserted).
    *
    * Where a round carries several expectation blocks (identity-scoped, or several `expect:` blocks)
-   * the mechanism is the first one any of them declares: the request is not identity-scoped, so a
-   * per-identity distinction could not be honoured here anyway.
+   * the runner prefers a mechanism that {@link mechanismNeedsPermissiveRating}, and only otherwise
+   * takes the first declared. **Order of the blocks must not decide the verdict** — taking the
+   * first made `[ambiguity, floor]` pass and `[floor, ambiguity]` fail on identical assertions,
+   * because a round left undriven can never let its preflight speak. Preferring the preflight
+   * satisfies both claims at once, since the floor's marker does not depend on the rating.
+   *
+   * Only ONE mechanism can be carried per round regardless, because the request is not
+   * identity-scoped: a per-identity distinction could not be honoured here even if it were written.
    */
   forcedBy: (ForcedByMechanism | undefined)[];
 }
