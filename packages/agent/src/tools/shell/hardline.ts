@@ -4,8 +4,8 @@
  * Unbypassable hardline blocklist for the shell tool — spec §8's **floor**. Two families are
  * refused: catastrophic, non-recoverable commands (wipe the root filesystem, format a disk,
  * overwrite a raw block device, re-own the filesystem out from under root, fork-bomb, take the
- * host down), and — since CFG-27 — the deterministic subset of §4.1.1 `exfiltration` (a credential
- * source and a network sink in one pipeline).
+ * host down), and — since CFG-27 — the deterministic subset of the §4.1.1 `attack` outcome (a
+ * credential source and a network sink in one pipeline).
  * Both are refused inside `executeCommand` itself — BEFORE spawn — so the refusal
  * fires regardless of `approvals: "bypass"`, any allow-list, or the confirmation path. `bypass`
  * deliberately bypasses the *confirmation*; it does NOT bypass this floor.
@@ -377,9 +377,17 @@ export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
 ];
 
 /* -------------------------------------------------------------------------------------------- *
- * CFG-27 §8 — the DETERMINISTIC SUBSET OF EXFILTRATION.
+ * CFG-27 §8 — the DETERMINISTIC SUBSET OF THE `attack` OUTCOME.
  *
- * §4.2 makes `exfiltration` the one outcome that halts the run, and §3 requires that the halt
+ * **Two words that are no longer the same word, since CFG-28.** `attack` is the OUTCOME — the one
+ * the gate halts on. *Exfiltration* is a MECHANISM: secrets leaving the machine, §4.1.1 part 1.
+ * This section implements the part of the outcome that is decidable without a model, and that part
+ * happens to be exactly the mechanism — which is why {@link isDeterministicExfiltration} keeps its
+ * name while the prose around it names the outcome. `attack` is wider than exfiltration (privesc,
+ * persistence, deception, obfuscation are all in it and none of them are here), so calling this
+ * function `isDeterministicAttack` would claim a completeness it does not have.
+ *
+ * §4.2 makes `attack` the one outcome that halts the run, and §3 requires that the halt
  * "MUST NOT depend on the rater alone — its deterministic subset belongs in the hardline floor",
  * because the allow-list is consulted BEFORE the rater and would otherwise wave an allow-listed
  * credential upload straight through.
@@ -537,7 +545,7 @@ export function checkHardline(command: string): HardlineMatch | null {
       return { description };
     }
   }
-  // CFG-27 §3/§8 — the deterministic subset of `exfiltration`, so the §4.2 halt does not depend
+  // CFG-27 §3/§8 — the deterministic subset of the `attack` outcome, so the §4.2 halt does not depend
   // on a model being right (and cannot be ridden through on an allow-list entry, which is
   // consulted before the rater).
   if (isDeterministicExfiltration(normalized)) {

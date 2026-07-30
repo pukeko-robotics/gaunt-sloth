@@ -537,7 +537,12 @@ describe('checkHardline — line breaks terminate a command (EXT-55)', () => {
 });
 
 /**
- * CFG-27 §8 / §3 — the floor's DETERMINISTIC SUBSET of `exfiltration`.
+ * CFG-27 §8 / §3 — the floor's DETERMINISTIC SUBSET of the `attack` outcome.
+ *
+ * CFG-28 renamed the outcome `exfiltration` → `attack` and widened it (privesc, persistence,
+ * deception and obfuscation joined it). *Exfiltration* survives here as the name of the MECHANISM
+ * this section detects — secrets leaving the machine — which is only part 1 of the outcome. The
+ * distinction is why the cases below are named for the mechanism and the outcome is named once.
  *
  * §3 requires it because the allow-list is consulted before the rater: a halt that depended on
  * the model alone could be ridden through on an allow-list entry, and `scp *` / `aws s3 sync *`
