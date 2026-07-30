@@ -27,9 +27,19 @@
  * command-position prefix ({@link CMD_POS}) and the target tail ({@link TARGET_TOKEN_END}) are
  * built from the one shared `COMMAND_SEPARATOR_CLASS` in core so they cannot disagree.
  *
- * EXT-62 — every destructive-verb pattern is anchored at {@link CMD_POS}, so the floor refuses a
- * command and never a MENTION of one. It used to refuse `grep -c mkfs docs/*.md` and
- * `echo never run rm -rf /`, unappealably, at every rung.
+ * EXT-62 — every destructive-verb pattern is anchored at {@link CMD_POS}, so a verb sitting in an
+ * ORDINARY ARGUMENT is no longer a refusal: `grep -c mkfs docs/*.md` and `echo never run rm -rf /`
+ * used to be refused unappealably, at every rung, and are not.
+ *
+ * **That is the whole of the claim, and it is narrower than "the floor never refuses a mention."**
+ * `CMD_POS` is a lexical test that knows nothing about quoting, so a mention that happens to follow
+ * a separator or a backtick still matches even where the shell would treat that character as
+ * literal: `echo "step 1; rm -rf / is fatal"` and ``git commit -m 'see `rm -rf /` docs'`` are both
+ * still refused. Those are PRE-EXISTING and deliberately not fixed here — teaching this file to
+ * parse quoting is a second command parser, which is a second place for the floor to be bypassed
+ * (EXT-56 forbids it for the classifier for the same reason, and a quote-aware scanner built for
+ * exactly this was measured leaking 6 of 12 attacks where the blunt one leaked 0). The residuals
+ * are pinned as tests rather than left to be rediscovered — see `shellHardline.spec.ts`.
  *
  * This floor is deliberately INDEPENDENT of the allow-list classifier above it: it must block
  * a catastrophic command even if every layer above wrongly decided the command was safe.

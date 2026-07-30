@@ -323,6 +323,42 @@ describe('checkHardline — anchored at a command position, terminated at a toke
   });
 
   /**
+   * The RESIDUAL, pinned so it is a known limit rather than a surprise.
+   *
+   * `CMD_POS` is lexical: it knows that `;`, `&`, `|`, `$(` and a backtick begin a command, and it
+   * knows nothing about quoting. So a mention that happens to sit after one of those characters is
+   * still refused even where the shell would treat the character as literal. Anchoring fixed the
+   * mentions that sit in an ordinary argument, which was the measured bulk of them; it did not and
+   * cannot fix these.
+   *
+   * **They are deliberately not fixed.** The obvious remedy is to make this file quote-aware, and
+   * that is a second command parser — a second place for the floor to be bypassed. [[EXT-56]]
+   * forbids exactly that for the allow-list classifier, and a quote- and heredoc-aware scanner
+   * built for this class was measured leaking 6 of 12 attacks where the blunt one leaked 0. The
+   * right trade for an unappealable layer is a residual false positive on a quoted mention, not a
+   * parser that can be talked past.
+   *
+   * A change that DOES fix these must delete this test and argue for the new precision claim, which
+   * is the point of pinning it: it cannot be fixed by accident.
+   */
+  it('still refuses a mention that follows a separator or backtick, even when quoted', () => {
+    expect(
+      checkHardline('echo "step 1; rm -rf / is fatal"'),
+      'a quoted `;` is still a command position to CMD_POS'
+    ).not.toBeNull();
+    expect(
+      checkHardline("git commit -m 'see `rm -rf /` docs'"),
+      'single quotes make backticks inert in bash; CMD_POS cannot see that'
+    ).not.toBeNull();
+    // The counterpart that DOES pass, so the pair shows where the boundary actually is: no
+    // separator precedes the verb, so the anchor does not bind.
+    expect(
+      checkHardline("git commit -m 'cleanup: rm -rf /etc do not do this'"),
+      'no separator before the verb — this is the class anchoring fixed'
+    ).toBeNull();
+  });
+
+  /**
    * The other side of the same anchor. `CMD_POS` consumes the wrappers and admits every separator
    * position, so anchoring must cost none of these — this is the assertion that stops a future
    * "fix" for the false positives above from being a hole.
