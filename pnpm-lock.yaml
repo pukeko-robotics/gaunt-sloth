@@ -102,11 +102,11 @@ importers:
         specifier: ^1.30.0
         version: 1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)
       deepagents:
-        specifier: ^1.11.1
-        version: 1.11.1(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(@langchain/langgraph-checkpoint@1.1.3(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1)))(@langchain/langgraph-sdk@1.9.26(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8))(@langchain/langgraph@1.4.8(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8)(zod@4.4.3))(langchain@1.5.4(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(react@19.2.8)(ws@8.21.1))(langsmith@0.8.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))
+        specifier: ^1.12.0
+        version: 1.12.0(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(@langchain/langgraph-checkpoint@1.1.3(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1)))(@langchain/langgraph-sdk@1.9.26(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8))(@langchain/langgraph@1.4.8(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8)(zod@4.4.3))(langchain@1.5.4(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(react@19.2.8)(ws@8.21.1))(langsmith@0.8.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))
       deepagents-acp:
-        specifier: ^0.1.20
-        version: 0.1.20(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(@langchain/langgraph-checkpoint@1.1.3(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1)))(@langchain/langgraph-sdk@1.9.26(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8))(@langchain/langgraph@1.4.8(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8)(zod@4.4.3))(langchain@1.5.4(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(react@19.2.8)(ws@8.21.1))(langsmith@0.8.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(zod@4.4.3)
+        specifier: ^0.1.21
+        version: 0.1.21(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(@langchain/langgraph-checkpoint@1.1.3(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1)))(@langchain/langgraph-sdk@1.9.26(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8))(@langchain/langgraph@1.4.8(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8)(zod@4.4.3))(langchain@1.5.4(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(react@19.2.8)(ws@8.21.1))(langsmith@0.8.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(zod@4.4.3)
       diff:
         specifier: ^9.0.0
         version: 9.0.0
@@ -191,8 +191,8 @@ importers:
         version: 4.0.0(@types/react@19.2.17)
     optionalDependencies:
       chalk:
-        specifier: ^5.6.2
-        version: 5.6.2
+        specifier: ^6.0.0
+        version: 6.0.0
       ink:
         specifier: ^7.1.1
         version: 7.1.1(@types/react@19.2.17)(react@19.2.8)
@@ -1245,6 +1245,10 @@ packages:
     resolution: {integrity: sha512-7NzBL0rN6fMUW+f7A6Io4h40qQlG+xGmtMxfbnH/K7TAtt8JQWVQK+6g0UXKMeVJoyV5EkkNsErQ8pVD3bLHbA==}
     engines: {node: ^12.17.0 || ^14.13 || >=16.0.0}
 
+  chalk@6.0.0:
+    resolution: {integrity: sha512-2uNTXIuTTxk7ciZgAU1BQcgnchcG0xXnrs6jzkQfj9SsRa9M2s5zE8WT96hS6KmG4MzWHSrvH43DF1m4XRkrFg==}
+    engines: {node: '>=22'}
+
   ci-info@3.9.0:
     resolution: {integrity: sha512-NIxF55hv4nSqQswkAeiOi1r83xy8JldOFDTWiug55KBu9Jnblncd2U6ViHmYgHf01TPZS77NJBhBMKdWj9HQMQ==}
     engines: {node: '>=8'}
@@ -1338,15 +1342,15 @@ packages:
   deep-is@0.1.4:
     resolution: {integrity: sha512-oIPzksmTg4/MriiaYGO+okXDT7ztn/w3Eptv/+gSIdMdKsJo0u4CfYNFJPy+4SKMuCqGw2wxnA+URMg3t8a/bQ==}
 
-  deepagents-acp@0.1.20:
-    resolution: {integrity: sha512-h0k5k7rSn4f9MwzEd/U506wiqzJ2ET0Uiu9q47/l63dVUllN7RZh3QrVN4fi4q+bbJZZlzsakGtyVW3QwD1WTw==}
+  deepagents-acp@0.1.21:
+    resolution: {integrity: sha512-hiGUbKr21NU/tTe9tkxZbX7soCs0HFQkrmJmb6LHP+DgKiF45VvcofqB9ZfN17IAazNF8Z/Fo+RAN8iUHwEblw==}
     hasBin: true
     peerDependencies:
       '@langchain/core': ^1.2.1
       '@langchain/langgraph': ^1.2.9
 
-  deepagents@1.11.1:
-    resolution: {integrity: sha512-qBdQ+rmQteHsGgDjqubbBEaY6qcCyQdhKHYKs3f4G7FMnfGMWo/OvbzGncDGIjQLqSl1pF7tD/XkQmfVCU/fhQ==}
+  deepagents@1.12.0:
+    resolution: {integrity: sha512-HE4MQZIlfMsW2IOW5ojtzd5SNBuROf+Kk4z0V4mkxCUudkEJ1m5Zxv4vpWf2mcRbtnBEvB6rCS6p7F+4CkugZg==}
     peerDependencies:
       '@langchain/core': ^1.2.1
       '@langchain/langgraph': ^1.4.4
@@ -2235,8 +2239,8 @@ packages:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
 
-  postcss@8.5.24:
-    resolution: {integrity: sha512-8RyVklq0owXUTa4xlpzu4l9AaVKIdQvAcOHZWaMh98HgySsUtxRVf/chRe3dsSLqb6i40BzGRzEUddRaI+9TSw==}
+  postcss@8.5.25:
+    resolution: {integrity: sha512-DTPx3RWSSnWyzLxQnlH0rJP+EW5ekl16ZU4/psbIhA0e53kJfdgaN5vKM+xP7yJtXVu+nfdVFmlgFDEKAe4Pyw==}
     engines: {node: ^10 || ^12 || >=14}
 
   prelude-ls@1.2.1:
@@ -3630,6 +3634,9 @@ snapshots:
 
   chalk@5.6.2: {}
 
+  chalk@6.0.0:
+    optional: true
+
   ci-info@3.9.0: {}
 
   cli-boxes@4.0.1:
@@ -3700,12 +3707,12 @@ snapshots:
 
   deep-is@0.1.4: {}
 
-  deepagents-acp@0.1.20(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(@langchain/langgraph-checkpoint@1.1.3(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1)))(@langchain/langgraph-sdk@1.9.26(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8))(@langchain/langgraph@1.4.8(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8)(zod@4.4.3))(langchain@1.5.4(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(react@19.2.8)(ws@8.21.1))(langsmith@0.8.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(zod@4.4.3):
+  deepagents-acp@0.1.21(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(@langchain/langgraph-checkpoint@1.1.3(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1)))(@langchain/langgraph-sdk@1.9.26(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8))(@langchain/langgraph@1.4.8(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8)(zod@4.4.3))(langchain@1.5.4(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(react@19.2.8)(ws@8.21.1))(langsmith@0.8.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(zod@4.4.3):
     dependencies:
       '@agentclientprotocol/sdk': 1.3.0(zod@4.4.3)
       '@langchain/core': 1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1)
       '@langchain/langgraph': 1.4.8(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8)(zod@4.4.3)
-      deepagents: 1.11.1(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(@langchain/langgraph-checkpoint@1.1.3(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1)))(@langchain/langgraph-sdk@1.9.26(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8))(@langchain/langgraph@1.4.8(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8)(zod@4.4.3))(langchain@1.5.4(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(react@19.2.8)(ws@8.21.1))(langsmith@0.8.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))
+      deepagents: 1.12.0(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(@langchain/langgraph-checkpoint@1.1.3(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1)))(@langchain/langgraph-sdk@1.9.26(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8))(@langchain/langgraph@1.4.8(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8)(zod@4.4.3))(langchain@1.5.4(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(react@19.2.8)(ws@8.21.1))(langsmith@0.8.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))
     transitivePeerDependencies:
       - '@langchain/langgraph-checkpoint'
       - '@langchain/langgraph-sdk'
@@ -3713,7 +3720,7 @@ snapshots:
       - langsmith
       - zod
 
-  deepagents@1.11.1(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(@langchain/langgraph-checkpoint@1.1.3(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1)))(@langchain/langgraph-sdk@1.9.26(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8))(@langchain/langgraph@1.4.8(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8)(zod@4.4.3))(langchain@1.5.4(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(react@19.2.8)(ws@8.21.1))(langsmith@0.8.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1)):
+  deepagents@1.12.0(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(@langchain/langgraph-checkpoint@1.1.3(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1)))(@langchain/langgraph-sdk@1.9.26(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8))(@langchain/langgraph@1.4.8(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8)(zod@4.4.3))(langchain@1.5.4(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(react@19.2.8)(ws@8.21.1))(langsmith@0.8.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1)):
     dependencies:
       '@langchain/core': 1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1)
       '@langchain/langgraph': 1.4.8(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(react@19.2.8)(zod@4.4.3)
@@ -4584,7 +4591,7 @@ snapshots:
 
   pkce-challenge@5.0.1: {}
 
-  postcss@8.5.24:
+  postcss@8.5.25:
     dependencies:
       nanoid: 3.3.16
       picocolors: 1.1.1
@@ -4942,7 +4949,7 @@ snapshots:
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.5
-      postcss: 8.5.24
+      postcss: 8.5.25
       rolldown: 1.1.5
       tinyglobby: 0.2.17
     optionalDependencies:
