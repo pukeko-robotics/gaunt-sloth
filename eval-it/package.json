@@ -10,7 +10,7 @@
     "eval:broken": "./run-authz-eval.sh authz-broken.suite.yaml"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.0.0"
   }
 }

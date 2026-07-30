@@ -48,6 +48,25 @@ async function buildFsTools(cwd: string, permissions: unknown) {
   return byName;
 }
 
+/**
+ * Assert that DEEPAGENTS' OWN permission enforcement rejected a call.
+ *
+ * Since deepagents 1.11.1 that enforcement returns an error `ToolMessage` (`status: 'error'`,
+ * content `Error: permission denied for …` / `Error: path must not contain ".."…`) instead of
+ * throwing: a denied or malformed path is a recoverable model-input error, not a run-ending one.
+ * The model-facing observation is unchanged — gsloth's `GthDeepFsDenialSoftening` middleware built
+ * exactly this ToolMessage out of the old throw — only who builds it moved upstream. Enforcement
+ * itself is untouched: the path is still rejected before it reaches the backend.
+ *
+ * gsloth's OWN realpath guard (`guardFilesystemBackend`, the symlink cases below) still throws and
+ * is still softened by that middleware, so those cases keep asserting the throw directly.
+ */
+async function expectDeniedByDeepagents(invocation: Promise<any>, pattern: RegExp) {
+  const result = await invocation;
+  expect(result?.status).toBe('error');
+  expect(String(result?.content)).toMatch(pattern);
+}
+
 // EXT-16: on Windows the real cwd (`D:\...`) is never used in real (non-virtual) mode — the
 // backend runs in virtualMode there instead, since deepagents' validatePath requires POSIX
 // `/`-rooted paths. This whole file drives the real, non-virtual backend directly
@@ -99,18 +118,20 @@ describe.skipIf(process.platform === 'win32')(
 
     it('reading OUTSIDE cwd (real absolute path) is denied by the catch-all deny', async () => {
       const { tools } = await defaultTools();
-      // read_file throws permission denied; gsloth's runner softens it to a ToolMessage, but here
-      // we assert the raw enforcement (the throw) the softening middleware relies on.
-      await expect(
-        tools.read_file.invoke({ file_path: path.join(outside, 'secret.txt') })
-      ).rejects.toThrow(/permission denied for read/i);
+      // read_file reports permission denied as an error ToolMessage; here we assert that raw
+      // enforcement, which is what gsloth's model-facing observation is built from.
+      await expectDeniedByDeepagents(
+        tools.read_file.invoke({ file_path: path.join(outside, 'secret.txt') }),
+        /permission denied for read/i
+      );
     });
 
     it('writing OUTSIDE cwd (real absolute path) is denied', async () => {
       const { tools } = await defaultTools();
-      await expect(
-        tools.write_file.invoke({ file_path: path.join(outside, 'pwn.txt'), content: 'x' })
-      ).rejects.toThrow(/permission denied for write/i);
+      await expectDeniedByDeepagents(
+        tools.write_file.invoke({ file_path: path.join(outside, 'pwn.txt'), content: 'x' }),
+        /permission denied for write/i
+      );
     });
 
     it('a raw ".." escape is rejected by deepagents validatePath (independent of the globs)', async () => {
@@ -119,7 +140,8 @@ describe.skipIf(process.platform === 'win32')(
       // deepagents validatePath rejects any literal ".." segment outright, before the allow/deny
       // globs even run. This guard exists in BOTH virtualMode and the new real-path mode.
       const escape = `${cwd}/../outside/secret.txt`;
-      await expect(tools.read_file.invoke({ file_path: escape })).rejects.toThrow(
+      await expectDeniedByDeepagents(
+        tools.read_file.invoke({ file_path: escape }),
         /must not contain/i
       );
     });
@@ -129,17 +151,19 @@ describe.skipIf(process.platform === 'win32')(
       const tools = await buildFsTools(cwd, buildPermissions({ filesystem: 'read' }));
       const read = await tools.read_file.invoke({ file_path: path.join(cwd, 'inside.txt') });
       expect(JSON.stringify(read)).toContain('INSIDE');
-      await expect(
-        tools.write_file.invoke({ file_path: path.join(cwd, 'nope.txt'), content: 'x' })
-      ).rejects.toThrow(/permission denied for write/i);
+      await expectDeniedByDeepagents(
+        tools.write_file.invoke({ file_path: path.join(cwd, 'nope.txt'), content: 'x' }),
+        /permission denied for write/i
+      );
     });
 
     it('"none" mode denies reads and writes even inside cwd', async () => {
       const { buildPermissions } = await import('#src/core/deepAgentPermissions.js');
       const tools = await buildFsTools(cwd, buildPermissions({ filesystem: 'none' }));
-      await expect(
-        tools.read_file.invoke({ file_path: path.join(cwd, 'inside.txt') })
-      ).rejects.toThrow(/permission denied for read/i);
+      await expectDeniedByDeepagents(
+        tools.read_file.invoke({ file_path: path.join(cwd, 'inside.txt') }),
+        /permission denied for read/i
+      );
     });
 
     it('.aiignore deny rules win over the cwd allow rule (anchored at real cwd)', async () => {
@@ -149,9 +173,10 @@ describe.skipIf(process.platform === 'win32')(
         cwd,
         buildPermissions({ filesystem: 'all', aiignore: { enabled: true, patterns: ['*.env'] } })
       );
-      await expect(
-        tools.read_file.invoke({ file_path: path.join(cwd, 'secrets.env') })
-      ).rejects.toThrow(/permission denied for read/i);
+      await expectDeniedByDeepagents(
+        tools.read_file.invoke({ file_path: path.join(cwd, 'secrets.env') }),
+        /permission denied for read/i
+      );
       // a non-ignored file in cwd is still readable
       const ok = await tools.read_file.invoke({ file_path: path.join(cwd, 'inside.txt') });
       expect(JSON.stringify(ok)).toContain('INSIDE');

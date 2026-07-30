@@ -10,7 +10,7 @@ it by hand.
 
 ## What it proves
 
-- `gth`'s `adk-agent` target (which drives `@a2a-js/sdk`'s `A2AClient`) can resolve a real
+- `gth`'s `adk-agent` target (which drives `@a2a-js/sdk`'s `ClientFactory`) can resolve a real
   google-adk agent card and reach its JSON-RPC endpoint, and grade the answer with the SAME
   assertion surface (`must_contain`/`must_not_contain`/`judge`) used for the `gth-agent` target;
 - the A2A **`contextId`** is threaded across turns, so a multi-turn conversation keeps memory
@@ -24,28 +24,34 @@ tool alone emits (`SHIP-DELIVERED-7Q`, `SHIP-INTRANSIT-3B`), asserted with `must
 
 ## THE load-bearing detail — the A2A card-schema alignment
 
-`gth`'s adk-agent target bundles **`@a2a-js/sdk` 0.3.14**, whose deprecated `new A2AClient(url)`
-resolves the card at `<url>/.well-known/agent-card.json` and reads the **top-level `url`** field as
-the JSON-RPC service endpoint.
+`gth`'s adk-agent target bundles **`@a2a-js/sdk` 1.0.1**. Historically it bundled **0.3.14**, whose
+deprecated `new A2AClient(url)` resolved the card at `<url>/.well-known/agent-card.json` and read the
+**top-level `url`** field as the JSON-RPC service endpoint.
 
 google-adk 2.5.0 *by default* pulls **a2a-sdk 1.1.x**, which serves the **new** A2A card schema —
 `supportedInterfaces: [{url, protocolBinding, protocolVersion: "1.0"}]`, with **no top-level `url`**.
-Against that card the 0.3.14 client hard-fails at resolution:
+Against that card the 0.3.14 client hard-failed at resolution:
 
 ```
 Fetched Agent Card does not contain a valid 'url' for the service endpoint.
 ```
 
-The fix is a **one-line pin** (`requirements.txt`): `a2a-sdk==0.3.26`. google-adk 2.5.0 allows
+The fix was a **one-line pin** (`requirements.txt`): `a2a-sdk==0.3.26`. google-adk 2.5.0 allows
 `a2a-sdk>=0.3.4,<2`, so it runs unchanged on the 0.3 generation, which emits the **classic 0.3.0
-card** the JS client speaks:
+card**:
 
 ```json
 { "url": "http://127.0.0.1:41539", "preferredTransport": "JSONRPC", "protocolVersion": "0.3.0", ... }
 ```
 
-Same protocol generation on both ends → the whole exchange (card + `message/send` + `Task` shape) is
-honestly compatible. The bed adapts to the target; the target and `@a2a-js/sdk` are untouched.
+**That pin is still in place, and the bed still runs on the 0.3 generation.** It is, however, no
+longer the only thing making the exchange work. `A2AClientWrapper` now builds its client through
+`ClientFactory` with the SDK's **v0.3 compatibility layer enabled** on the card resolver and on both
+transport factories, so the JS side detects a v0.3-shaped card, translates it to the v1.0 data model
+and selects the v0.3 wire transport — while a native v1.0 card is served by the v1.0 transports
+instead. In principle the client now speaks to **either** generation, so lifting the `a2a-sdk` pin
+should be possible; that has **not been validated against a live agent on a2a-sdk 1.1.x**, so the pin
+stays until someone runs this bed unpinned.
 
 The `url` in both suites must match the port the agent is served on (`ADK_A2A_PORT`, default `41539`).
 

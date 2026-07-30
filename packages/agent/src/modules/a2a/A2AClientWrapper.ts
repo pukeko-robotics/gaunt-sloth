@@ -3,15 +3,24 @@
  * Wrapper for A2A (Agent-to-Agent) protocol client.
  * @experimental A2A support is experimental and may change.
  */
-import { A2AClient } from '@a2a-js/sdk/client';
-import type { Message, Part, Task } from '@a2a-js/sdk';
+import {
+  ClientFactory,
+  ClientFactoryOptions,
+  DefaultAgentCardResolver,
+  JsonRpcTransportFactory,
+  RestTransportFactory,
+  type Client,
+} from '@a2a-js/sdk/client';
+import { Role, type Message, type Part, type Task } from '@a2a-js/sdk';
 import { debugLog, debugLogError } from '@gaunt-sloth/core/utils/debugUtils.js';
 import { v4 as uuidv4 } from 'uuid';
 
-/** The A2A spec's well-known agent-card path. `A2AClient.fromCardUrl` needs the full CARD url,
- * whereas {@link A2AClientConfig.agentUrl} is the agent's BASE url — so we append this, exactly as
- * the deprecated `new A2AClient(url)` string constructor did internally (its `resolveAgentCardUrl`
- * used the same default). Keeps the fetched card URL byte-identical across the migration. */
+/** The A2A spec's well-known agent-card path. The SDK's resolver needs the full CARD url, whereas
+ * {@link A2AClientConfig.agentUrl} is the agent's BASE url — so we append this ourselves and hand
+ * the resolver an empty relative path, keeping the fetched card URL byte-identical to what the
+ * pre-1.0 `A2AClient` string constructor produced. (Letting the resolver append its own default
+ * would resolve the path RELATIVE to the base url, silently dropping a base path segment: for
+ * `http://host/a2a` it would fetch `http://host/.well-known/agent-card.json`.) */
 const AGENT_CARD_PATH = '.well-known/agent-card.json';
 
 /** Configuration for A2A client */
@@ -50,17 +59,32 @@ export interface A2ASendContext {
  * @experimental
  */
 export class A2AClientWrapper {
-  private clientPromise: Promise<A2AClient>;
+  private clientPromise: Promise<Client>;
   private config: A2AClientConfig;
 
   constructor(config: A2AClientConfig) {
     this.config = config;
-    // Construct via the non-deprecated `A2AClient.fromCardUrl(cardUrl)` (the string `new
-    // A2AClient(url)` constructor is deprecated and console.warns). `fromCardUrl` is async, so we
-    // hold the promise and await it per send. The agent card is fetched from the well-known path
-    // appended to the base agent URL — reproducing the old constructor's fetch target exactly.
+    // `@a2a-js/sdk` 1.0 removed the `A2AClient` class outright; a client is now built by a
+    // `ClientFactory` from the agent card. `legacyCompat` is enabled on the card resolver AND on
+    // every transport factory so we keep talking to agents still on protocol v0.3 — which is what
+    // Google ADK agents (our only real A2A peer today, see adk-eval-it/) currently speak. With it
+    // on, the resolver detects a v0.3-shaped card, translates it to the v1.0 model and stamps each
+    // synthesized interface `protocolVersion: '0.3'`, and the matching factory then instantiates
+    // the v0.3 wire transport. A v1.0 agent is served by the native transports unchanged, so this
+    // wrapper speaks to both.
+    const factory = new ClientFactory(
+      ClientFactoryOptions.createFrom(ClientFactoryOptions.default, {
+        cardResolver: new DefaultAgentCardResolver({ legacyCompat: { enabled: true } }),
+        transports: [
+          new JsonRpcTransportFactory({ legacyCompat: { enabled: true } }),
+          new RestTransportFactory({ legacyCompat: { enabled: true } }),
+        ],
+      })
+    );
+    // Client construction is async (it fetches the card), so we hold the promise and await it per
+    // send. Empty path = "the base url IS the card url" — see AGENT_CARD_PATH.
     const cardUrl = `${config.agentUrl.replace(/\/+$/, '')}/${AGENT_CARD_PATH}`;
-    this.clientPromise = A2AClient.fromCardUrl(cardUrl);
+    this.clientPromise = factory.createFromUrl(cardUrl, '');
     // Guard against an unhandled rejection if the wrapper is constructed but never used; real
     // callers still observe the rejection when they await `clientPromise` inside a send method.
     void this.clientPromise.catch(() => undefined);
@@ -77,37 +101,13 @@ export class A2AClientWrapper {
     );
     try {
       const client = await this.clientPromise;
-      const messageId = uuidv4();
-      const response = await client.sendMessage({
-        message: {
-          kind: 'message',
-          messageId: messageId,
-          role: 'user',
-          parts: [{ kind: 'text', text: messageText }],
-        },
-      });
+      const result = await client.sendMessage(
+        A2AClientWrapper.buildSendRequest(messageText, uuidv4())
+      );
 
-      debugLog(`Received response from A2A agent: ${JSON.stringify(response)}`);
+      debugLog(`Received response from A2A agent: ${JSON.stringify(result)}`);
 
-      // Check for error response
-      if ('error' in response) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        throw new Error(`A2A Error: ${JSON.stringify((response as any).error)}`);
-      }
-
-      // Extract text from response
-      // The result is likely a TaskStatus which contains a message
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = response.result as any;
-
-      if (result.message && result.message.parts && result.message.parts.length > 0) {
-        // Assuming the first part is text for now
-        return result.message.parts[0].text || JSON.stringify(result.message.parts);
-      } else if (result.state) {
-        return `Task state: ${result.state}`;
-      }
-
-      return JSON.stringify(result);
+      return A2AClientWrapper.extractResult(result).text;
     } catch (error) {
       debugLogError('Error sending message to A2A agent', error);
       throw error;
@@ -116,12 +116,12 @@ export class A2AClientWrapper {
 
   /**
    * BATCH-14 — send one message and return its text ALONG WITH the A2A `contextId`/`taskId` needed to
-   * thread a multi-turn conversation. Reads the real `@a2a-js/sdk` result shapes rather than the
-   * loose envelope {@link sendMessage} uses:
+   * thread a multi-turn conversation. Reads the real `@a2a-js/sdk` result shapes rather than a
+   * loose envelope:
    *
-   * - A **Message** result (`kind: 'message'`) carries its text in `parts` and `contextId`/`taskId`
-   *   directly (both optional).
-   * - A **Task** result (`kind: 'task'`) — what Google ADK agents commonly return — carries text in
+   * - A **Message** result carries its text in `parts` and `contextId`/`taskId` directly (both
+   *   optional, and empty-string when absent in the v1.0 proto model).
+   * - A **Task** result — what Google ADK agents commonly return — carries text in
    *   `status.message.parts` (falling back to the last artifact's parts), `contextId` (required), and
    *   the taskId as `Task.id`.
    *
@@ -143,26 +143,12 @@ export class A2AClientWrapper {
     );
     try {
       const client = await this.clientPromise;
-      const response = await client.sendMessage({
-        message: {
-          kind: 'message',
-          messageId: uuidv4(),
-          role: 'user',
-          parts: [{ kind: 'text', text: messageText }],
-          // Attach continuity handles only when present, so a first-turn send is unchanged.
-          ...(context?.contextId ? { contextId: context.contextId } : {}),
-          ...(context?.taskId ? { taskId: context.taskId } : {}),
-        },
-      });
+      const result = await client.sendMessage(
+        A2AClientWrapper.buildSendRequest(messageText, uuidv4(), context)
+      );
 
-      debugLog(`Received response from A2A agent: ${JSON.stringify(response)}`);
+      debugLog(`Received response from A2A agent: ${JSON.stringify(result)}`);
 
-      if ('error' in response) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        throw new Error(`A2A Error: ${JSON.stringify((response as any).error)}`);
-      }
-
-      const result = response.result as Message | Task;
       return A2AClientWrapper.extractResult(result);
     } catch (error) {
       debugLogError('Error sending message (with context) to A2A agent', error);
@@ -170,20 +156,64 @@ export class A2AClientWrapper {
     }
   }
 
+  /** Build the outgoing `SendMessageRequest`. The v1.0 data model is generated from the A2A
+   * protobufs, so every field is required rather than optional: `role` is the numeric {@link Role}
+   * enum (not `'user'`), a text part is `{ content: { $case: 'text', value } }` (not
+   * `{ kind: 'text', text }`), and the continuity handles are empty strings rather than absent
+   * when there is no conversation to continue. */
+  private static buildSendRequest(
+    messageText: string,
+    messageId: string,
+    context?: A2ASendContext
+  ) {
+    const message: Message = {
+      messageId,
+      contextId: context?.contextId ?? '',
+      taskId: context?.taskId ?? '',
+      role: Role.ROLE_USER,
+      parts: [
+        {
+          content: { $case: 'text', value: messageText },
+          metadata: undefined,
+          filename: '',
+          mediaType: 'text/plain',
+        },
+      ],
+      metadata: undefined,
+      extensions: [],
+      referenceTaskIds: [],
+    };
+    return { tenant: '', message, configuration: undefined, metadata: undefined };
+  }
+
   /** Normalize a `Message | Task` A2A result into text + continuity handles (BATCH-14). Static +
    * tolerant of missing optional fields so it can be reused and unit-tested directly. */
   private static extractResult(result: Message | Task): A2AMessageResult {
-    if (result && result.kind === 'task') {
-      const task = result as Task;
-      const statusParts = task.status?.message?.parts;
-      const artifactParts = task.artifacts?.[task.artifacts.length - 1]?.parts;
+    if (A2AClientWrapper.isTask(result)) {
+      const statusParts = result.status?.message?.parts;
+      const artifactParts = result.artifacts?.[result.artifacts.length - 1]?.parts;
       const text =
-        A2AClientWrapper.extractText(statusParts ?? artifactParts) || JSON.stringify(task);
-      return { text, contextId: task.contextId, taskId: task.id };
+        A2AClientWrapper.extractText(statusParts ?? artifactParts) || JSON.stringify(result);
+      return {
+        text,
+        contextId: result.contextId || undefined,
+        taskId: result.id || undefined,
+      };
     }
-    const message = result as Message;
-    const text = A2AClientWrapper.extractText(message?.parts) || JSON.stringify(result);
-    return { text, contextId: message?.contextId, taskId: message?.taskId };
+    const text = A2AClientWrapper.extractText(result?.parts) || JSON.stringify(result);
+    // The proto model uses '' (not undefined) for an absent id; normalize back to undefined so a
+    // caller can't thread an empty handle into the next turn.
+    return {
+      text,
+      contextId: result?.contextId || undefined,
+      taskId: result?.taskId || undefined,
+    };
+  }
+
+  /** v1.0 dropped the `kind` discriminator that told a Message from a Task, so discriminate
+   * structurally: `messageId` is required on every Message and never present on a Task. */
+  private static isTask(result: Message | Task): result is Task {
+    return typeof (result as Message)?.messageId !== 'string';
   }
 
   /** Concatenate the text of every {@link https://github.com/a2aproject/A2A TextPart} in `parts`
@@ -191,8 +221,8 @@ export class A2AClientWrapper {
   private static extractText(parts: Part[] | undefined): string {
     if (!parts || parts.length === 0) return '';
     return parts
-      .filter((part): part is Extract<Part, { kind: 'text' }> => part?.kind === 'text')
-      .map((part) => part.text)
+      .filter((part) => part?.content?.$case === 'text')
+      .map((part) => part.content?.value as string)
       .join('\n');
   }
 }
