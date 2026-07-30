@@ -121,9 +121,12 @@ the ready message.
   emits its string through `displayLaunchBanner`. The two surfaces cannot drift, and the column maths
   is unit-tested without a terminal — the same split as `ruleWidth` vs `Rule`.
 - **Nothing may wrap (DL-7).** A wrapped line restarts at column 0 and collides with the face, so
-  every dynamic field is truncated to the width left on its own line (the directory from the *left*,
-  keeping the informative leaf). Below 45 columns the right-hand column is dropped and the face
-  prints alone; an unknown width falls back to 80.
+  every dynamic field is bounded by the width left on its own line. The model/provider and directory
+  lines **truncate** with `…` (the directory from the *left*, keeping the informative leaf); the
+  **version is dropped instead of truncated**, because `v2.0…` reads as a real, different version
+  rather than as a clipped one, and a wrong version in a bug report costs more than an absent one.
+  Below 45 columns the right-hand column is dropped and the face prints alone; an unknown width falls
+  back to 80.
 - **Colour is the 16-colour `magenta` slot and nothing else (DL-7, DL-8).** That slot adopts the
   user's own terminal theme violet, so the sloth looks native in light and dark schemes alike — never
   a 256-colour or 24-bit escape. The right-hand column carries no escape at all, and with colour off

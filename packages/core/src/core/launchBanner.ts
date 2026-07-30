@@ -39,19 +39,29 @@
  * The face is 16 columns wide and the right column starts at 21, leaving a 5-column gutter. The
  * version label sits three columns after the widest wordmark line, i.e. at {@link VERSION_COLUMN}.
  *
- * ## Why every dynamic field is truncated
+ * ## Why every dynamic field is bounded, and why the version is the one that is DROPPED
  *
  * A wrapped line SHATTERS the art: the continuation starts back at column 0 and collides with the
  * face, so the sloth grows an extra row of model id. Wrapping is therefore not allowed to happen at
- * all, and each field is truncated to what is left of the terminal on its own line — `columns - 21`
- * for the model/provider and directory lines, `columns - 43` for the version. The directory is
- * truncated from the LEFT (`…/dev/takahe`), because the leaf directory is the informative end;
- * everything else keeps its head and loses its tail.
+ * all, and each field is bounded by what is left of the terminal on its own line — `columns - 21`
+ * for the model/provider and directory lines, `columns - 43` for the version.
+ *
+ * The model/provider and directory lines TRUNCATE to that budget: a clipped model id or path is
+ * still honest, it visibly ends in `…`. The directory is truncated from the LEFT
+ * (`…/dev/takahe`), because the leaf directory is the informative end; the model keeps its head and
+ * loses its tail.
+ *
+ * A VERSION that does not fit is dropped entirely instead ({@link fitOrDrop}) — never truncated.
+ * A clipped version number is not merely less informative, it is MISLEADING: `v2.0…` reads as a
+ * real, different version (2.0.1, say) rather than as a clipped `2.0.0-alpha.25`, and a wrong
+ * version in a bug report costs more than an absent one. The model/provider line already sets that
+ * drop-rather-than-mislead precedent by omitting itself when nothing resolves.
  *
  * Below {@link MIN_BANNER_COLUMNS} the right column cannot fit at all, so the face prints alone
  * rather than wrapping the wordmark into rubble.
  */
 import { homedir } from 'node:os';
+import { ELLIPSIS } from '#src/core/toolDisplay.js';
 import { ANSI_COLORS } from '#src/utils/consoleUtils.js';
 import { getProjectDir, getSlothVersion } from '#src/utils/systemUtils.js';
 
@@ -100,16 +110,6 @@ export const MIN_BANNER_COLUMNS = 45;
 /** Width assumed when the terminal width is unknown (non-TTY / tests) — as in `ruleWidth`. */
 const DEFAULT_COLUMNS = 80;
 
-/** Truncation marker. One column wide, so it costs exactly one character of budget. */
-const ELLIPSIS = '…';
-
-/**
- * Fewest columns a TRUNCATED field may occupy. At 1–2 columns a truncated value is all marker and
- * no information (`v…`, `…e`), which is worse than an absent line, so such a field is dropped
- * instead. A field that FITS is never subject to this floor.
- */
-const MIN_FIELD_COLUMNS = 3;
-
 /** The live values the banner reports, plus the terminal geometry it has to fit inside. */
 export interface LaunchBannerInput {
   /** Gaunt Sloth version, WITHOUT the `v` prefix (this module adds it). */
@@ -151,8 +151,9 @@ function resolveColumns(columns: number | undefined): number {
 
 /**
  * Truncate `text` to `budget` columns, losing the TAIL (`gemini-3.1-pro-experi…`). Returns
- * `undefined` when the field cannot be shown at all — no budget, or so little budget that only the
- * marker would survive (see {@link MIN_FIELD_COLUMNS}).
+ * `undefined` only when there is no budget at all; that guard keeps the function total (at
+ * `budget === 0` the slice below would otherwise drop a character and return a bare marker) and is
+ * not reachable from {@link launchBannerRows}, whose narrowest field budget is `45 - 21 = 24`.
  *
  * Slicing goes through `[...text]` rather than `String.slice` so a value containing an astral
  * character (an emoji in a directory name) cannot be cut in half into a lone surrogate.
@@ -161,7 +162,6 @@ function truncateTail(text: string, budget: number): string | undefined {
   if (budget <= 0) return undefined;
   const chars = [...text];
   if (chars.length <= budget) return text;
-  if (budget < MIN_FIELD_COLUMNS) return undefined;
   return chars.slice(0, budget - 1).join('') + ELLIPSIS;
 }
 
@@ -173,8 +173,16 @@ function truncateHead(text: string, budget: number): string | undefined {
   if (budget <= 0) return undefined;
   const chars = [...text];
   if (chars.length <= budget) return text;
-  if (budget < MIN_FIELD_COLUMNS) return undefined;
   return ELLIPSIS + chars.slice(chars.length - (budget - 1)).join('');
+}
+
+/**
+ * All-or-nothing: `text` if it fits `budget` columns in full, otherwise `undefined`. Used for the
+ * VERSION label, which must never be truncated — see the module docs on why a clipped version
+ * number is misleading rather than merely terse.
+ */
+function fitOrDrop(text: string, budget: number): string | undefined {
+  return [...text].length <= budget ? text : undefined;
 }
 
 /**
@@ -220,10 +228,10 @@ export function launchBannerRows(input: LaunchBannerInput): LaunchBannerRow[] {
   }
 
   // Every field is budgeted against ITS OWN start column, because the version starts further right
-  // than the other two.
+  // than the other two. The version is the only fit-or-drop field; the other two truncate.
   const fieldBudget = columns - RIGHT_COLUMN;
   const version = input.version?.trim()
-    ? truncateTail(`v${input.version.trim()}`, columns - VERSION_COLUMN)
+    ? fitOrDrop(`v${input.version.trim()}`, columns - VERSION_COLUMN)
     : undefined;
   const model = modelProviderLabel(input.model, input.provider);
   const modelLine = model ? truncateTail(model, fieldBudget) : undefined;

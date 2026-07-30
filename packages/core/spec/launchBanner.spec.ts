@@ -10,6 +10,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const RIGHT = 21;
 /** Column at which the version label starts on row 2. */
 const VERSION = 43;
+/** The two escapes the colour split is built from (`ANSI_COLORS.magenta` / `.reset`). */
+const MAGENTA = '\x1b[35m';
+const RESET = '\x1b[0m';
 
 /** The rendered line's columns from `at` onwards, counted in characters rather than UTF-16 units. */
 const columnsFrom = (line: string, at: number): string => [...line].slice(at).join('');
@@ -106,21 +109,37 @@ describe('core/launchBanner', () => {
     expect(right.endsWith('gaunt-sloth')).toBe(true);
   });
 
-  it('truncates the version against its own column-43 budget', async () => {
+  it('DROPS a version that does not fit its column-43 budget, rather than truncating it', async () => {
     const { launchBannerRows } = await import('#src/core/launchBanner.js');
-    // 55 columns leaves 12 for the label, so `v2.0.0-alpha.25` (15) loses its tail.
-    const right = launchBannerRows({ version: '2.0.0-alpha.25', columns: 55 })[1].right;
-    expect(right.slice(-12)).toBe('v2.0.0-alph…');
-    expect([...right].length).toBe(55 - RIGHT);
+    const version = '2.0.0-alpha.25'; // `v2.0.0-alpha.25` — 15 columns with the prefix
+    const bare = '┃┓┏┓┓┏┏┓╋  ┗┓┃┏┓╋┣┓';
+    const row = (columns: number): string => launchBannerRows({ version, columns })[1].right;
+
+    // 55 columns leaves 12 for the label. A truncated `v2.0.0-alph…` would read as a real,
+    // different version, so the label goes entirely and row 2 is the bare wordmark.
+    expect(row(55)).toBe(bare);
+    expect(row(55)).not.toContain('…');
+    // Exactly enough (43 + 15) shows it in full; one column less drops it. Off-by-one either way
+    // would either clip the version or hide one that fits.
+    expect(row(VERSION + 15)).toBe(`${bare}   v${version}`);
+    expect(row(VERSION + 14)).toBe(bare);
+    // At 45 columns there are 2 columns for the label — likewise nothing at all.
+    expect(row(45)).toBe(bare);
   });
 
-  it('drops a field entirely when truncation would leave only the marker', async () => {
+  it('still truncates the model and directory, which are terse rather than misleading when clipped', async () => {
     const { launchBannerRows } = await import('#src/core/launchBanner.js');
-    // At 45 columns the version has 2 columns to live in; `v…` is all marker and no information.
-    const rows = launchBannerRows({ version: '2.0.0-alpha.25', model: 'm', columns: 45 });
-    expect(rows[1].right).toBe('┃┓┏┓┓┏┏┓╋  ┗┓┃┏┓╋┣┓');
-    // A field that FITS is not subject to that floor.
-    expect(rows[3].right).toBe('m');
+    // Same 45-column terminal that drops the version keeps both other fields, truncated.
+    const rows = launchBannerRows({
+      version: '2.0.0-alpha.25',
+      model: 'some-absurdly-long-model-identifier',
+      directory: '/home/mari/dev/takahe/packages/core',
+      homeDir: '/home/mari',
+      columns: 45,
+    });
+    expect(rows[1].right).toBe('┃┓┏┓┓┏┏┓╋  ┗┓┃┏┓╋┣┓'); // version dropped
+    expect(rows[3].right).toBe('some-absurdly-long-mode…'); // 45 - 21 = 24 columns, tail lost
+    expect(rows[4].right).toBe('…ev/takahe/packages/core'); // 24 columns, head lost
   });
 
   it('drops the right column entirely below 45 columns', async () => {
@@ -173,23 +192,32 @@ describe('core/launchBanner', () => {
   });
 
   it('paints the face magenta and leaves the right column uncoloured', async () => {
-    const { launchBannerText } = await import('#src/core/launchBanner.js');
-    const lines = launchBannerText({
+    const { launchBannerRows, launchBannerText } = await import('#src/core/launchBanner.js');
+    const input = {
       version: '2.0.0',
       model: 'gpt-5',
       directory: '/home/mari',
       homeDir: '/home/mari',
       columns: 120,
       colour: true,
-    }).split('\n');
+    };
+    const rows = launchBannerRows(input);
+    const lines = launchBannerText(input).split('\n');
 
-    for (const line of lines) {
-      // Exactly one magenta..reset pair per row, and it closes before the right column starts.
-      expect(line.startsWith('\x1b[35m')).toBe(true);
+    lines.forEach((line, index) => {
+      const { right } = rows[index];
+      // Exactly one magenta..reset pair per row…
+      expect(line.startsWith(MAGENTA)).toBe(true);
       expect(line.match(/\x1b\[35m/g)).toHaveLength(1);
       expect(line.match(/\x1b\[0m/g)).toHaveLength(1);
-      expect(line.slice(line.indexOf('\x1b[0m') + '\x1b[0m'.length)).not.toContain('\x1b');
-    }
+      // …and — the assertion that actually bites — it CLOSES AT COLUMN 21. Counting the pair is
+      // not enough: wrapping the whole row (`magenta + face + right + reset`) also yields one
+      // pair with nothing after the reset, while painting the right column magenta too.
+      expect(line.indexOf(RESET)).toBe(MAGENTA.length + RIGHT);
+      // Everything past the reset is this row's right column, verbatim and unpainted.
+      expect(line.slice(line.indexOf(RESET) + RESET.length)).toBe(right);
+      expect(right).not.toBe(''); // every row of this input has right-hand content to protect
+    });
     // The colour slot is the shared 16-colour magenta, never a 256-colour/24-bit escape.
     expect(lines.join('\n')).not.toMatch(/\x1b\[[34]8;/);
   });

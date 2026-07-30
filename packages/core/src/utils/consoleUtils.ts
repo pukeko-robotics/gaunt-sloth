@@ -31,6 +31,10 @@ const consoleLevelState: ConsoleLevelState = {
  * Exported so the surfaces that build their own pre-styled blocks (rather than passing a whole
  * message through {@link colorText}) still draw from this one table — see
  * `core/launchBanner.ts`, which paints only the face half of each banner row.
+ *
+ * `as const` because `packages/core` publishes `"./*.js": "./dist/*.js"`, so this is PUBLIC API of a
+ * published package: without it any consumer could assign `ANSI_COLORS.magenta` and repaint the
+ * whole CLI from the outside. Read-only, one table, no remote control.
  */
 export const ANSI_COLORS = {
   red: '\x1b[31m',
@@ -39,7 +43,7 @@ export const ANSI_COLORS = {
   magenta: '\x1b[35m',
   dim: '\x1b[2m',
   reset: '\x1b[0m',
-};
+} as const;
 
 // Helper functions for ANSI coloring
 function colorText(text: string, color: keyof typeof ANSI_COLORS): string {
