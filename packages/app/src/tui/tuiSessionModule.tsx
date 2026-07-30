@@ -253,6 +253,10 @@ export async function createTuiSession(
       <App
         agent={createFixtureTuiAgent(fixturePath)}
         mode={sessionConfig.mode}
+        // TUI-C33: the banner is chrome, not model output, so the hermetic e2e branch shows it too
+        // — that is what lets the PTY suite prove the art actually paints. No config here, so it
+        // renders without the model/provider line.
+        showLaunchBanner={!!stdout.isTTY}
         readyMessage={sessionConfig.readyMessage}
         exitMessage={sessionConfig.exitMessage}
         initialMessage={message}
@@ -452,6 +456,11 @@ export async function createTuiSession(
         agent={tuiAgent}
         mode={sessionConfig.mode}
         modelDisplayName={config.modelDisplayName}
+        // TUI-C33: the banner names the provider too, which the status bar does not.
+        modelProviderType={config.modelProviderType}
+        // TUI-C33: same stdout.isTTY gate as the viewport bump above — piped/non-TTY runs get no
+        // banner. The App additionally scopes it to the intro (pre-first-exchange) frame.
+        showLaunchBanner={!!stdout.isTTY}
         initialApprovals={runner.getSessionApprovals()}
         configSummary={formatConfigSummary(config, sessionConfig.mode)}
         resolvedConfig={config}

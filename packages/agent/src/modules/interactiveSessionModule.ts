@@ -3,6 +3,7 @@ import {
   defaultStatusCallback,
   display,
   displayInfo,
+  displayLaunchBanner,
   displayWarning,
   flushSessionLog,
   formatInputPrompt,
@@ -11,6 +12,7 @@ import {
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
 import { GthAbstractAgent } from '@gaunt-sloth/core/core/GthAbstractAgent.js';
+import { launchBannerFields, launchBannerText } from '@gaunt-sloth/core/core/launchBanner.js';
 import { buildRejectionMessage } from '@gaunt-sloth/core/core/shell/rejection.js';
 import { writeDebugDump } from '@gaunt-sloth/core/utils/debugDump.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
@@ -23,6 +25,7 @@ import {
   error,
   exit,
   getProjectDir,
+  getUseColour,
   refStdin,
   setRawMode,
   stdin as input,
@@ -390,6 +393,23 @@ export async function createInteractiveSession(
     if (message) {
       await processMessage(message);
     } else {
+      // TUI-C33 — the ASCII-art launch banner, ABOVE the untouched ready message. Only on this
+      // branch: an `-m` run goes straight to work, which is the readline twin of the TUI hiding
+      // its intro when it mounts with an initialMessage.
+      //
+      // Gated on `stdout.isTTY` (as the TUI's viewport bump is) so piped, redirected and non-TTY
+      // runs stay clean, and on `getUseColour()` for the escapes, so a monochrome session degrades
+      // the banner to plain text instead of dropping it. `stdout.columns` is what every field is
+      // truncated against — see launchBanner.ts on why a wrapped line would shatter the art.
+      if (output.isTTY) {
+        displayLaunchBanner(
+          launchBannerText({
+            ...launchBannerFields(config.modelDisplayName, config.modelProviderType),
+            columns: output.columns,
+            colour: getUseColour(),
+          })
+        );
+      }
       display(sessionConfig.readyMessage);
       displayInfo(sessionConfig.exitMessage);
     }

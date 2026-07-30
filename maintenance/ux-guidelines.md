@@ -104,6 +104,32 @@ On interactive launch (**TTY only**), bump the screen with the same `viewportBum
 session opens at a clean top while preserving anything already in the user's scrollback. Do not bump
 in non-TTY / piped contexts.
 
+## Launch banner (DL-6 cross-surface consistency, DL-7 graceful degradation, TUI-C33)
+
+Interactive sessions (`chat`, `code`) open with an ASCII-art banner — a magenta sloth face beside the
+`GAUNT SLOTH` wordmark, the version, the model/provider and the working directory — printed **above**
+the ready message.
+
+- **Interactive only, TTY only.** `chat` and `code`, and only when `stdout.isTTY`. The one-shot verbs
+  (`ask`, `review`, `pr`, `get`, `eval`, `batch`, `api`, `init`) pipe their stdout into files, diffs
+  and CI, where a banner is corruption. It is also **not** written to the session log: that log is a
+  transcript, not a screenshot.
+- **An intro, not a fixture (DL-2).** It renders under the same `showIntro` condition as the ready
+  message, so it greets the user on arrival and stops occupying rows once the conversation starts.
+- **One pure layout module, two thin renderers (DL-6).** All the geometry lives in
+  `@gaunt-sloth/core/core/launchBanner.js`; the TUI maps its rows to `<Text>` and the plain surface
+  emits its string through `displayLaunchBanner`. The two surfaces cannot drift, and the column maths
+  is unit-tested without a terminal — the same split as `ruleWidth` vs `Rule`.
+- **Nothing may wrap (DL-7).** A wrapped line restarts at column 0 and collides with the face, so
+  every dynamic field is truncated to the width left on its own line (the directory from the *left*,
+  keeping the informative leaf). Below 45 columns the right-hand column is dropped and the face
+  prints alone; an unknown width falls back to 80.
+- **Colour is the 16-colour `magenta` slot and nothing else (DL-7, DL-8).** That slot adopts the
+  user's own terminal theme violet, so the sloth looks native in light and dark schemes alike — never
+  a 256-colour or 24-bit escape. The right-hand column carries no escape at all, and with colour off
+  (`useColour: false` on the plain surface, Ink's colour-support detection in the TUI) the banner is
+  plain text with zero escape sequences.
+
 ## Tool-call panels (DL-2 progressive disclosure, DL-4 transparency)
 
 Tool calls render as **collapsible panels** (`tui/components/LiveTurn.tsx`), with the per-tool
@@ -301,7 +327,7 @@ Colour is **meaningful, not decorative**. Use the shared palette consistently:
 - **yellow** — warning/caution (warn-tone notices, the running spinner, list bullets).
 - **green** — the user's own prompt line (`You ›`).
 - **red** — error (failed tool calls).
-- **magenta** — a completed tool call (and H1 in markdown).
+- **magenta** — a completed tool call (and H1 in markdown; and the launch-banner sloth face).
 - **dim** — secondary/contextual text: body lines, rules, the status bar, system lines.
 - **bold** — the load-bearing line (the notice title; the *what*).
 

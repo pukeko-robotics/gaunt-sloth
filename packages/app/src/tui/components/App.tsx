@@ -20,6 +20,7 @@ import { NoticeBar, McpFailureBar } from '#src/tui/components/NoticeBar.js';
 import { PromptInput } from '#src/tui/components/PromptInput.js';
 import { Rule } from '#src/tui/components/Rule.js';
 import { ClearBanner } from '#src/tui/components/ClearBanner.js';
+import { LaunchBanner } from '#src/tui/components/LaunchBanner.js';
 import {
   DebugPanel,
   debugPanelLines,
@@ -759,6 +760,12 @@ export function App(props: TuiAppProps): React.ReactElement {
     <Box flexDirection="column">
       <Transcript items={transcript} toolsExpanded={toolsExpanded} />
       {clearedBanner ? <ClearBanner /> : null}
+      {/* TUI-C33 — the ASCII-art launch banner, ABOVE the ready message and on the same intro
+          lifecycle, so it greets the user on arrival and gets out of the way once the conversation
+          starts. `showLaunchBanner` carries the session module's stdout.isTTY gate. */}
+      {showIntro && props.showLaunchBanner ? (
+        <LaunchBanner model={modelDisplayName} provider={props.modelProviderType} />
+      ) : null}
       {showIntro ? <Text dimColor>{readyMessage.trim()}</Text> : null}
       {live ? <LiveTurn turn={live} toolsExpanded={toolsExpanded} streaming /> : null}
       {/* Docked debug/subagent panel: full-width, below the transcript / live turn and above

@@ -87,6 +87,20 @@ export interface TuiAppProps {
   /** Model/provider display name for the status bar and `/model` (from `config.modelDisplayName`). */
   modelDisplayName?: string;
   /**
+   * TUI-C33 — the configured provider type (`config.modelProviderType`, e.g. `google-genai`), for
+   * the launch banner's `model (provider)` line. Threaded alongside {@link modelDisplayName}
+   * because the banner names the provider the status bar does not. Absent for module configs (which
+   * hand us an already-built model) and in the fixture branch, where the banner renders the model
+   * half alone — or omits the line entirely when neither resolves.
+   */
+  modelProviderType?: string;
+  /**
+   * TUI-C33 — whether to render the ASCII-art launch banner above the ready message. Carries the
+   * session module's `stdout.isTTY` gate (the same gate gutting the TUI-C13 viewport bump), so
+   * piped/redirected/non-TTY runs and the component specs stay clean. Absent ⇒ no banner.
+   */
+  showLaunchBanner?: boolean;
+  /**
    * CFG-27 — the RESOLVED approvals posture at session start, so the status bar names the real
    * rung from the very first frame. The session module seeds it from
    * `runner.getSessionApprovals()`; the App keeps its own state after that.
