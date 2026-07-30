@@ -310,6 +310,34 @@ describe('consoleUtils', () => {
       });
     });
 
+    describe('displayLaunchBanner (TUI-C33)', () => {
+      it('prints the pre-styled banner verbatim and keeps it OUT of the session log', async () => {
+        systemUtilsMock.getUseColour.mockReturnValue(true); // must NOT trigger an outer colour wrap
+        const { displayLaunchBanner } = await import('#src/utils/consoleUtils.js');
+
+        // The block colours its own face halves; the right column is deliberately bare.
+        const banner = '\x1b[35m  ▄█▀▀▀▀▀▀▀▀█▄     \x1b[0m┏┓         ┏┓┓   ┓';
+        displayLaunchBanner(banner);
+
+        // stdout channel, verbatim — an outer wrap would be broken by the inner resets.
+        expect(systemUtilsMock.log).toHaveBeenCalledWith(banner);
+        // Requirement 6: the session log is a transcript of the conversation, not a screenshot of
+        // the screen. Session logging is ENABLED in this block (see the outer beforeEach), so a
+        // reinstated writeToSessionLog call would be caught here.
+        expect(systemUtilsMock.writeToLogStream).not.toHaveBeenCalled();
+      });
+
+      it('is gated at DISPLAY level like the plain display() it shares a channel with', async () => {
+        const { displayLaunchBanner, setConsoleLevel } = await import('#src/utils/consoleUtils.js');
+        setConsoleLevel(StatusLevel.SUCCESS); // one step above DISPLAY
+
+        displayLaunchBanner('  ▀██████████▀');
+
+        expect(systemUtilsMock.log).not.toHaveBeenCalled();
+        expect(systemUtilsMock.writeToLogStream).not.toHaveBeenCalled();
+      });
+    });
+
     describe('display', () => {
       it('should display plain message and log to session', async () => {
         // Import the function after mocks are set up

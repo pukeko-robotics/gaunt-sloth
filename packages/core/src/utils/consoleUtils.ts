@@ -23,15 +23,27 @@ const consoleLevelState: ConsoleLevelState = {
   currentLevel: StatusLevel.INFO, // Default to INFO level, not debug
 };
 
-// ANSI color codes
-const ANSI_COLORS = {
+/**
+ * ANSI color codes — the 16-colour slots only, deliberately. A 16-colour slot is rendered with the
+ * user's OWN terminal theme colour, so output looks native in light and dark schemes alike; a
+ * 256-colour or 24-bit escape would pin us to one palette and clash with half of them.
+ *
+ * Exported so the surfaces that build their own pre-styled blocks (rather than passing a whole
+ * message through {@link colorText}) still draw from this one table — see
+ * `core/launchBanner.ts`, which paints only the face half of each banner row.
+ *
+ * `as const` because `packages/core` publishes `"./*.js": "./dist/*.js"`, so this is PUBLIC API of a
+ * published package: without it any consumer could assign `ANSI_COLORS.magenta` and repaint the
+ * whole CLI from the outside. Read-only, one table, no remote control.
+ */
+export const ANSI_COLORS = {
   red: '\x1b[31m',
   yellow: '\x1b[33m',
   green: '\x1b[32m',
   magenta: '\x1b[35m',
   dim: '\x1b[2m',
   reset: '\x1b[0m',
-};
+} as const;
 
 // Helper functions for ANSI coloring
 function colorText(text: string, color: keyof typeof ANSI_COLORS): string {
@@ -184,6 +196,19 @@ export function displayToolIndication(message: string): void {
   if (!shouldDisplayLevel(StatusLevel.INFO)) return;
   writeToSessionLog(message + '\n');
   su.info(message);
+}
+
+/**
+ * TUI-C33 — print the interactive-launch banner (the pre-styled block built by
+ * `core/launchBanner.ts`) on the plain surface. Same DISPLAY-level gate and stdout channel as
+ * {@link display}, so a quieted console silences it too, but deliberately NOT routed through
+ * {@link writeToSessionLog}: the session log is a transcript of the conversation, not a screenshot
+ * of the screen, and a five-row sloth at the top of it is noise. The block also styles itself (the
+ * face half of each row carries the colour), so no outer wrap is applied.
+ */
+export function displayLaunchBanner(message: string): void {
+  if (!shouldDisplayLevel(StatusLevel.DISPLAY)) return;
+  su.log(message);
 }
 
 export function formatInputPrompt(message: string): string {

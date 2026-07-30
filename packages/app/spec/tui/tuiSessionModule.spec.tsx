@@ -84,6 +84,12 @@ vi.mock('@gaunt-sloth/agent/core/GthDeepAgent.js', () => ({ GthDeepAgent: vi.fn(
 
 // ── tui-local deps ─────────────────────────────────────────────────────────────
 vi.mock('#src/tui/components/App.js', () => ({ App: vi.fn(() => null) }));
+// The hermetic e2e seam (GTH_TUI_E2E_FIXTURE) — mocked so the fixture branch's own copy of the
+// TTY gate is reachable from a unit test.
+const createFixtureTuiAgentMock = vi.fn();
+vi.mock('#src/tui/fixtureAgent.js', () => ({
+  createFixtureTuiAgent: createFixtureTuiAgentMock,
+}));
 vi.mock('#src/tui/debugRender.js', () => ({
   renderHistory: vi.fn(),
   renderSystemDetails: vi.fn(),
@@ -150,7 +156,8 @@ describe('createTuiSession — launch bump (TUI-C13)', () => {
     // config.agent.backend is still honored — not a hardcoded factory.
     expect(resolveAgentFactoryMock).toHaveBeenCalledWith(backendConfig, 'lean');
     // …and the resolved factory is the one handed to the runner as the 3rd ctor arg.
-    const runnerCall = (GthAgentRunner as unknown as { mock: { calls: unknown[][] } }).mock.calls[0];
+    const runnerCall = (GthAgentRunner as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0];
     expect(runnerCall[2]).toBe(resolvedFactory);
   });
 
@@ -194,6 +201,63 @@ describe('createTuiSession — launch bump (TUI-C13)', () => {
     expect(systemUtilsMock.stdout.write).not.toHaveBeenCalled();
     // The session still mounts the app — only the cosmetic bump is suppressed.
     expect(renderMock).toHaveBeenCalledTimes(1);
+  });
+
+  // TUI-C33 — the banner is terminal chrome, so it must be gated on stdout being a real TTY on
+  // BOTH interactive surfaces. The plain surface's half of this is proved in
+  // interactiveSessionModule.banner.spec.ts; this is the TUI's half.
+  it('TUI-C33: gates showLaunchBanner on stdout being a TTY', async () => {
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+    const bannerProp = async (isTTY: boolean): Promise<boolean> => {
+      renderMock.mockClear();
+      systemUtilsMock.stdout.isTTY = isTTY;
+      await createTuiSession(sessionConfig, overrides);
+      return (renderMock.mock.calls[0][0] as { props: { showLaunchBanner: boolean } }).props
+        .showLaunchBanner;
+    };
+
+    expect(await bannerProp(true)).toBe(true);
+    // Piped/redirected stdout gets no banner — and the prop is a strict boolean, never `undefined`.
+    expect(await bannerProp(false)).toBe(false);
+  });
+
+  it('TUI-C33: gates showLaunchBanner on a TTY in the hermetic e2e branch too', async () => {
+    // The fixture seam mounts its own <App> with its own copy of the gate, so it needs its own
+    // assertion — otherwise a regression there is invisible until the PTY suite runs.
+    systemUtilsMock.env = { GTH_TUI_E2E_FIXTURE: '/fixtures/session.json' };
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    systemUtilsMock.stdout.isTTY = false;
+    await createTuiSession(sessionConfig, overrides);
+    expect(
+      (renderMock.mock.calls[0][0] as { props: { showLaunchBanner: boolean } }).props
+        .showLaunchBanner
+    ).toBe(false);
+    // The fixture branch never reaches initConfig — it is the pre-config seam.
+    expect(initConfigMock).not.toHaveBeenCalled();
+
+    renderMock.mockClear();
+    systemUtilsMock.stdout.isTTY = true;
+    await createTuiSession(sessionConfig, overrides);
+    expect(
+      (renderMock.mock.calls[0][0] as { props: { showLaunchBanner: boolean } }).props
+        .showLaunchBanner
+    ).toBe(true);
+  });
+
+  it('TUI-C33: threads modelProviderType from the resolved config into <App>', async () => {
+    // The banner names the provider, which the status bar does not — so this is the only path by
+    // which the provider reaches the screen.
+    initConfigMock.mockResolvedValue({ modelDisplayName: 'gpt-5', modelProviderType: 'openai' });
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await createTuiSession(sessionConfig, overrides);
+
+    const { props } = renderMock.mock.calls[0][0] as {
+      props: { modelDisplayName?: string; modelProviderType?: string };
+    };
+    expect(props.modelProviderType).toBe('openai');
+    expect(props.modelDisplayName).toBe('gpt-5');
   });
 
   it('TUI-C17: runTurn merges live tool output emitted mid-run into the event stream', async () => {

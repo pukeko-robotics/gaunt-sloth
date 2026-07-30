@@ -51,6 +51,25 @@ test.describe('gth chat TUI — greeting fixture', () => {
     await expect(terminal.getByText('>')).toBeVisible();
   });
 
+  // (1b) TUI-C33 -> the ASCII-art launch banner paints above the ready message on arrival, and
+  // clears once the first exchange is underway (it is an intro, not a permanent fixture). The
+  // glyphs are asserted from a real terminal because that is the only place the art's rendering
+  // (and its ANSI/width handling) is actually exercised.
+  test('paints the ASCII-art launch banner and drops it after the first turn', async ({
+    terminal,
+  }) => {
+    // The face's bottom row (a bare `██████` matches two of its rows, which trips strict mode)
+    // and the GAUNT SLOTH wordmark.
+    await expect(terminal.getByText('▀██████████▀')).toBeVisible();
+    await expect(terminal.getByText('┗┛┗┻┗┻┛┗┗')).toBeVisible();
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    terminal.write('hello');
+    terminal.submit();
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+    await expect(terminal.getByText('┗┛┗┻┗┻┛┗┗')).not.toBeVisible();
+  });
+
   // (2) type a prompt -> the tool-call line and streamed assistant text appear.
   test('streams a tool call and assistant text after a prompt', async ({ terminal }) => {
     await expect(terminal.getByText('ready to chat')).toBeVisible();

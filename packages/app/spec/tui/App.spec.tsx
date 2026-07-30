@@ -71,6 +71,54 @@ describe('tui <App>', () => {
     unmount();
   });
 
+  it('renders the launch banner above the untouched ready message (TUI-C33)', async () => {
+    const agent = scriptedAgent([]);
+    const { lastFrame, unmount } = render(<App {...baseProps} agent={agent} showLaunchBanner />);
+
+    await vi.waitFor(() => {
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('┗┛┗┻┗┻┛┗┗'); // the GAUNT SLOTH wordmark
+      expect(frame).toContain('Gaunt Sloth is ready to chat'); // the ready line, unchanged
+      // The banner is a greeting, so it sits ABOVE the ready message, not below it.
+      expect(frame.indexOf('┗┛┗┻┗┻┛┗┗')).toBeLessThan(frame.indexOf('ready to chat'));
+    });
+
+    unmount();
+  });
+
+  it('omits the launch banner when stdout is not a TTY (no showLaunchBanner)', async () => {
+    // The session module carries the stdout.isTTY gate; without it the frame stays banner-free so
+    // piped/redirected runs are untouched.
+    const agent = scriptedAgent([]);
+    const { lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
+
+    await vi.waitFor(() => {
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('ready to chat');
+      expect(frame).not.toContain('┗┛┗┻┗┻┛┗┗');
+    });
+
+    unmount();
+  });
+
+  it('drops the launch banner once the first exchange is underway (TUI-C33)', async () => {
+    // Same intro lifecycle as the ready message: an initialMessage starts a turn immediately, so
+    // neither greeting should be padding the dock.
+    const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
+    const { lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} showLaunchBanner initialMessage="go" />
+    );
+
+    await vi.waitFor(() => {
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('turns: 1');
+      expect(frame).not.toContain('┗┛┗┻┗┻┛┗┗');
+      expect(frame).not.toContain('ready to chat');
+    });
+
+    unmount();
+  });
+
   it('surfaces /help in the idle exit hint (TUI-C12)', async () => {
     // The idle hint is the exitMessage; it now also points at /help for command discovery.
     const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
