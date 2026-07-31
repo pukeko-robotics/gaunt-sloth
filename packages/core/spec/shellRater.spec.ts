@@ -1011,13 +1011,22 @@ describe('rateShellCommand — the timeout is configurable, and a timeout says s
     expect(RATER_DEFAULT_TIMEOUT_MS).toBe(30_000);
     const { model } = hangingModel();
     const config = { approvals: 'full-auto' } as unknown as GthConfig;
-    // Prove the DEFAULT is what an unset config resolves to, without waiting 30s for it: the
-    // reason names the budget it used, so the resolution is observable without the elapsed time.
-    const raced = await Promise.race([
-      rateShellCommand('ls -la', config, { model }),
-      new Promise((r) => setTimeout(() => r('still-running'), 50)),
-    ]);
-    expect(raced, 'a 30s budget has not elapsed after 50ms').toBe('still-running');
+    // The budget has to be OBSERVED, not merely outlasted. This test used to race the call against
+    // a 50ms timer and assert it was "still-running" — which is true of ANY budget above 50ms, so
+    // it passed unchanged with the fallback mutated to 777_000ms and proved only that 30s is not
+    // 50ms. Its own comment said the reason names the budget, and then never read the reason.
+    // Fake timers make the real thing observable: advance exactly the default and require the
+    // verdict to name it, the same discriminator the two tests above use.
+    vi.useFakeTimers();
+    try {
+      const pending = rateShellCommand('ls -la', config, { model });
+      await vi.advanceTimersByTimeAsync(RATER_DEFAULT_TIMEOUT_MS);
+      const result = await pending;
+      expect(isRaterTimeout(result), 'the default budget was honoured').toBe(true);
+      expect(result.reason).toContain(`${RATER_DEFAULT_TIMEOUT_MS}ms`);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   /**
