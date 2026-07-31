@@ -64,6 +64,23 @@ test.describe('gth chat TUI — greeting fixture', () => {
     await expect(terminal.getByText('┗┛┗┻┗┻┛┗┗')).toBeVisible();
     await expect(terminal.getByText('ready to chat')).toBeVisible();
 
+    // TUI-C36 — the padding, read off the painted cells: a blank row above and below the block,
+    // and one column of left margin on the art. A real terminal is the only place this is
+    // observable end-to-end (the Ink component can render a padding row that measures zero-high).
+    // `serialize()` frames the viewport in a box, so each row arrives as `│<cells>│`.
+    const lines = terminal
+      .serialize()
+      .view.split('\n')
+      .map((line) => line.replace(/^│/, '').replace(/│$/, ''));
+    const top = lines.findIndex((line) => line.includes('▄█▀▀▀▀▀▀▀▀█▄'));
+    const bottom = lines.findIndex((line) => line.includes('▀██████████▀'));
+    expect(top).toBeGreaterThan(0);
+    expect(lines[top - 1].trim()).toBe('');
+    expect(lines[bottom + 1].trim()).toBe('');
+    // Three leading columns: the one-column margin plus the art's own two.
+    expect(lines[top].startsWith('   ▄█')).toBe(true);
+    expect(lines[bottom].startsWith('   ▀█')).toBe(true);
+
     terminal.write('hello');
     terminal.submit();
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();

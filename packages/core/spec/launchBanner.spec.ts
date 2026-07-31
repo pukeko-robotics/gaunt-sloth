@@ -6,10 +6,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * colour split are all provable without a terminal, a config or a mounted renderer.
  */
 
-/** Column at which the right-hand column starts on every row. */
-const RIGHT = 21;
-/** Column at which the version label starts on row 2. */
-const VERSION = 43;
+/** Column at which the right-hand column starts on every row (TUI-C36 shifted it by the margin). */
+const RIGHT = 22;
+/** Column at which the version label starts on the second art row. */
+const VERSION = 44;
+/** Narrowest terminal that still gets the right column. */
+const MIN_COLUMNS = 46;
+/** Index of the first art row: row 0 is TUI-C36's blank padding row. */
+const ART = 1;
 /** The two escapes the colour split is built from (`ANSI_COLORS.magenta` / `.reset`). */
 const MAGENTA = '\x1b[35m';
 const RESET = '\x1b[0m';
@@ -23,14 +27,15 @@ describe('core/launchBanner', () => {
   });
 
   it('exposes the split columns the layout is expressed in', async () => {
-    const { RIGHT_COLUMN, VERSION_COLUMN, MIN_BANNER_COLUMNS } =
+    const { LEFT_PAD, RIGHT_COLUMN, VERSION_COLUMN, MIN_BANNER_COLUMNS } =
       await import('#src/core/launchBanner.js');
+    expect(LEFT_PAD).toBe(1);
     expect(RIGHT_COLUMN).toBe(RIGHT);
     expect(VERSION_COLUMN).toBe(VERSION);
-    expect(MIN_BANNER_COLUMNS).toBe(45);
+    expect(MIN_BANNER_COLUMNS).toBe(MIN_COLUMNS);
   });
 
-  it('starts the right column at 21 on every row and the version at 43', async () => {
+  it('starts the right column at 22 on every art row and the version at 44', async () => {
     const { launchBannerRows, launchBannerText } = await import('#src/core/launchBanner.js');
     const input = {
       version: '2.0.0-alpha.25',
@@ -42,31 +47,63 @@ describe('core/launchBanner', () => {
     };
 
     const rows = launchBannerRows(input);
-    expect(rows).toHaveLength(5);
-    // Every row's face half is padded to exactly the split column, so `right` begins at 21.
-    for (const row of rows) {
+    expect(rows).toHaveLength(7);
+    // Every ART row's face half is padded to exactly the split column, so `right` begins at 22.
+    for (const row of rows.slice(ART, ART + 5)) {
       expect([...row.face].length).toBe(RIGHT);
     }
 
     const lines = launchBannerText(input).split('\n');
     lines.forEach((line, index) => {
-      // The rendered line is exactly face-then-right, so the right column begins at column 21
-      // and the gutter column before it is blank on every row.
+      // The rendered line is exactly face-then-right, so the right column begins at column 22
+      // and the gutter column before it is blank on every art row.
       expect(columnsFrom(line, RIGHT)).toBe(rows[index].right);
-      expect([...line][RIGHT - 1]).toBe(' ');
+      if (rows[index].right) expect([...line][RIGHT - 1]).toBe(' ');
     });
-    // The version sits three columns past the 19-wide wordmark, i.e. at column 43.
-    expect(columnsFrom(lines[1], VERSION)).toBe('v2.0.0-alpha.25');
-    expect([...lines[1]][VERSION - 1]).toBe(' ');
-    // Rows 4 and 5 carry the two remaining fields, both flush at the split column.
-    expect(columnsFrom(lines[3], RIGHT)).toBe('gemini-3.1-pro (google-genai)');
-    expect(columnsFrom(lines[4], RIGHT)).toBe('~/dev/takahe');
+    // The version sits three columns past the 19-wide wordmark, i.e. at column 44.
+    expect(columnsFrom(lines[ART + 1], VERSION)).toBe('v2.0.0-alpha.25');
+    expect([...lines[ART + 1]][VERSION - 1]).toBe(' ');
+    // The last two art rows carry the remaining fields, both flush at the split column.
+    expect(columnsFrom(lines[ART + 3], RIGHT)).toBe('gemini-3.1-pro (google-genai)');
+    expect(columnsFrom(lines[ART + 4], RIGHT)).toBe('~/dev/takahe');
+  });
+
+  it('pads the block: a blank row above and below, and a one-column left margin (TUI-C36)', async () => {
+    const { launchBannerRows, launchBannerText } = await import('#src/core/launchBanner.js');
+    const input = {
+      version: '2.0.0-alpha.25',
+      model: 'gemini-3.1-pro',
+      provider: 'google-genai',
+      directory: '/home/mari/dev/takahe',
+      homeDir: '/home/mari',
+      columns: 120,
+    };
+
+    const rows = launchBannerRows(input);
+    // First and last rows are padding: empty on BOTH halves, so they carry no margin of their own
+    // and cannot end in whitespace.
+    expect(rows[0]).toEqual({ face: '', right: '' });
+    expect(rows[6]).toEqual({ face: '', right: '' });
+    // Every art row opens with the one-column margin, and no art row is blank.
+    for (const row of rows.slice(ART, ART + 5)) {
+      expect(row.face.startsWith(' ')).toBe(true);
+      expect(row.face.trim()).not.toBe('');
+    }
+    // The margin is a real shift, not a re-indent of the art: the widest face row used to start at
+    // column 0 and now starts at column 1.
+    expect(rows[ART + 1].face.slice(0, 2)).toBe(' ▄');
+
+    // …and on the text surface the padding rows are empty lines.
+    const lines = launchBannerText(input).split('\n');
+    expect(lines).toHaveLength(7);
+    expect(lines[0]).toBe('');
+    expect(lines[6]).toBe('');
   });
 
   it('renders model and provider together, alone, or drops the line when neither resolves', async () => {
     const { launchBannerRows } = await import('#src/core/launchBanner.js');
     const modelRow = (input: { model?: string; provider?: string }): string =>
-      launchBannerRows({ ...input, columns: 120 })[3].right;
+      launchBannerRows({ ...input, columns: 120 })[ART + 3].right;
 
     expect(modelRow({ model: 'gpt-5', provider: 'openai' })).toBe('gpt-5 (openai)');
     expect(modelRow({ model: 'gpt-5' })).toBe('gpt-5');
@@ -79,21 +116,21 @@ describe('core/launchBanner', () => {
   it('omits the version label when no version resolves', async () => {
     const { launchBannerRows } = await import('#src/core/launchBanner.js');
     // Row 2 is then the bare wordmark line, with nothing trailing it.
-    expect(launchBannerRows({ columns: 120 })[1].right).toBe('┃┓┏┓┓┏┏┓╋  ┗┓┃┏┓╋┣┓');
+    expect(launchBannerRows({ columns: 120 })[ART + 1].right).toBe('┃┓┏┓┓┏┏┓╋  ┗┓┃┏┓╋┣┓');
   });
 
   it('truncates an over-long model id to the remaining width, keeping the head', async () => {
     const { launchBannerRows } = await import('#src/core/launchBanner.js');
     const model = 'some-absurdly-long-model-identifier-from-a-router';
     const columns = 50;
-    const right = launchBannerRows({ model, columns })[3].right;
+    const right = launchBannerRows({ model, columns })[ART + 3].right;
 
     expect([...right].length).toBe(columns - RIGHT);
     expect(right.endsWith('…')).toBe(true);
     expect(right.startsWith('some-absurdly-long')).toBe(true);
     // The whole line still fits the terminal, which is the only reason this matters: a wrapped
     // continuation would restart at column 0 and collide with the face.
-    expect([...(launchBannerRows({ model, columns })[3].face + right)].length).toBe(columns);
+    expect([...(launchBannerRows({ model, columns })[ART + 3].face + right)].length).toBe(columns);
   });
 
   it('truncates a deep directory from the LEFT, keeping the leaf', async () => {
@@ -102,47 +139,47 @@ describe('core/launchBanner', () => {
     const right = launchBannerRows({
       directory: '/home/mari/dev/takahe/_worktrees/TUI-C33/gaunt-sloth',
       columns,
-    })[4].right;
+    })[ART + 4].right;
 
     expect([...right].length).toBe(columns - RIGHT);
     expect(right.startsWith('…')).toBe(true);
     expect(right.endsWith('gaunt-sloth')).toBe(true);
   });
 
-  it('DROPS a version that does not fit its column-43 budget, rather than truncating it', async () => {
+  it('DROPS a version that does not fit its column-44 budget, rather than truncating it', async () => {
     const { launchBannerRows } = await import('#src/core/launchBanner.js');
     const version = '2.0.0-alpha.25'; // `v2.0.0-alpha.25` — 15 columns with the prefix
     const bare = '┃┓┏┓┓┏┏┓╋  ┗┓┃┏┓╋┣┓';
-    const row = (columns: number): string => launchBannerRows({ version, columns })[1].right;
+    const row = (columns: number): string => launchBannerRows({ version, columns })[ART + 1].right;
 
-    // 55 columns leaves 12 for the label. A truncated `v2.0.0-alph…` would read as a real,
-    // different version, so the label goes entirely and row 2 is the bare wordmark.
+    // 55 columns leaves 11 for the label. A truncated `v2.0.0-alp…` would read as a real,
+    // different version, so the label goes entirely and the row is the bare wordmark.
     expect(row(55)).toBe(bare);
     expect(row(55)).not.toContain('…');
-    // Exactly enough (43 + 15) shows it in full; one column less drops it. Off-by-one either way
+    // Exactly enough (44 + 15) shows it in full; one column less drops it. Off-by-one either way
     // would either clip the version or hide one that fits.
     expect(row(VERSION + 15)).toBe(`${bare}   v${version}`);
     expect(row(VERSION + 14)).toBe(bare);
-    // At 45 columns there are 2 columns for the label — likewise nothing at all.
-    expect(row(45)).toBe(bare);
+    // At the narrowest banner there are 2 columns for the label — likewise nothing at all.
+    expect(row(MIN_COLUMNS)).toBe(bare);
   });
 
   it('still truncates the model and directory, which are terse rather than misleading when clipped', async () => {
     const { launchBannerRows } = await import('#src/core/launchBanner.js');
-    // Same 45-column terminal that drops the version keeps both other fields, truncated.
+    // The same narrowest terminal that drops the version keeps both other fields, truncated.
     const rows = launchBannerRows({
       version: '2.0.0-alpha.25',
       model: 'some-absurdly-long-model-identifier',
       directory: '/home/mari/dev/takahe/packages/core',
       homeDir: '/home/mari',
-      columns: 45,
+      columns: MIN_COLUMNS,
     });
-    expect(rows[1].right).toBe('┃┓┏┓┓┏┏┓╋  ┗┓┃┏┓╋┣┓'); // version dropped
-    expect(rows[3].right).toBe('some-absurdly-long-mode…'); // 45 - 21 = 24 columns, tail lost
-    expect(rows[4].right).toBe('…ev/takahe/packages/core'); // 24 columns, head lost
+    expect(rows[ART + 1].right).toBe('┃┓┏┓┓┏┏┓╋  ┗┓┃┏┓╋┣┓'); // version dropped
+    expect(rows[ART + 3].right).toBe('some-absurdly-long-mode…'); // 46 - 22 = 24 columns, tail lost
+    expect(rows[ART + 4].right).toBe('…ev/takahe/packages/core'); // 24 columns, head lost
   });
 
-  it('drops the right column entirely below 45 columns', async () => {
+  it('drops the right column entirely below the narrowest banner width', async () => {
     const { launchBannerRows, launchBannerText } = await import('#src/core/launchBanner.js');
     const input = {
       version: '2.0.0',
@@ -150,18 +187,21 @@ describe('core/launchBanner', () => {
       provider: 'openai',
       directory: '/home/mari/dev',
       homeDir: '/home/mari',
-      columns: 44,
+      columns: MIN_COLUMNS - 1,
     };
 
     const rows = launchBannerRows(input);
-    expect(rows.map((r) => r.right)).toEqual(['', '', '', '', '']);
-    // The face prints alone and unpadded — no wordmark rubble, no trailing whitespace.
+    expect(rows.map((r) => r.right)).toEqual(['', '', '', '', '', '', '']);
+    // The face prints alone — no wordmark rubble, no trailing whitespace — but it keeps the left
+    // margin and the blank rows, because the padding is not a function of the width.
     expect(launchBannerText(input).split('\n')).toEqual([
-      '  ▄█▀▀▀▀▀▀▀▀█▄',
-      '▄▀█▄█▀▀▀▀▀▀█▄█▀▄',
-      '█  ▀█▄▀  ▀▄█▀  █',
-      '▀▄▀▀ ██████ ▀▀▄▀',
-      '  ▀██████████▀',
+      '',
+      '   ▄█▀▀▀▀▀▀▀▀█▄',
+      ' ▄▀█▄█▀▀▀▀▀▀█▄█▀▄',
+      ' █  ▀█▄▀  ▀▄█▀  █',
+      ' ▀▄▀▀ ██████ ▀▀▄▀',
+      '   ▀██████████▀',
+      '',
     ]);
   });
 
@@ -172,14 +212,14 @@ describe('core/launchBanner', () => {
 
     for (const columns of [undefined, Number.NaN, Number.POSITIVE_INFINITY]) {
       const rows = launchBannerRows({ model, columns });
-      expect([...rows[3].right].length).toBe(budget);
+      expect([...rows[ART + 3].right].length).toBe(budget);
     }
   });
 
   it('collapses the home prefix to ~ only on a path boundary, on both separators', async () => {
     const { launchBannerRows } = await import('#src/core/launchBanner.js');
     const dir = (directory: string, homeDir: string): string =>
-      launchBannerRows({ directory, homeDir, columns: 200 })[4].right;
+      launchBannerRows({ directory, homeDir, columns: 200 })[ART + 4].right;
 
     expect(dir('/home/mari/dev/takahe', '/home/mari')).toBe('~/dev/takahe');
     expect(dir('/home/mari', '/home/mari')).toBe('~');
@@ -204,7 +244,13 @@ describe('core/launchBanner', () => {
     const rows = launchBannerRows(input);
     const lines = launchBannerText(input).split('\n');
 
-    lines.forEach((line, index) => {
+    // The two TUI-C36 padding rows carry no glyph, so they carry no escape either — an empty line
+    // wrapped in a magenta/reset pair is two escapes painting nothing.
+    expect(lines[0]).toBe('');
+    expect(lines[lines.length - 1]).toBe('');
+
+    lines.slice(ART, ART + 5).forEach((line, offset) => {
+      const index = ART + offset;
       const { right } = rows[index];
       // Exactly one magenta..reset pair per row…
       expect(line.startsWith(MAGENTA)).toBe(true);
