@@ -1,0 +1,4 @@
+{
+  "llm": { "type": "anthropic", "model": "claude-haiku-4-5-20251001", "temperature": 0 },
+  "approvals": { "mode": "full-auto", "rater": "haiku" }
+}

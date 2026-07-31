@@ -672,6 +672,22 @@ sweep:
 
 The axes are crossed, so that is four cells. Each value sets `model:` (rebuilds the model through its provider — the supported path to a genuinely fresh instance) and/or `config:` (deep-merged onto the resolved config; objects merge, arrays and scalars replace). `config.llm` is rejected — use `model:`.
 
+**`model:` moves the model, not the provider.** It rebuilds through the provider your config already declares, exactly as `--model` does, so a cell naming a model from a *different* provider will not switch to it — the two example cells above only work if `gemini-3.6-flash` and `gemma4:12b` are reachable through the same `llm.type`. To sweep across providers, give each one an [identity profile](configuration/profiles.md) carrying its own `llm` block and make the axis a `config:` override that selects the profile. On a **rater** suite that is `approvals.rater`, which is the same mechanism a session uses:
+
+```yaml
+sweep:
+  axes:
+    - name: rater
+      values:
+        - { name: haiku, config: { approvals: { mode: full-auto, rater: haiku } } }
+        - { name: flash, config: { approvals: { mode: full-auto, rater: flash } } }
+        - { name: gemma, config: { approvals: { mode: full-auto, rater: gemma } } }
+```
+
+with `.gsloth/.gsloth-settings/{haiku,flash,gemma}/.gsloth.config.json` each declaring its own `type` and `model`.
+
+One thing to check before believing a cross-provider comparison: **a rating call that times out is reported as `destructive`**, so a slow provider's column can read as agreement when it is really the gate's fail-closed default. The per-case `rationale` says which — a reason of *"could not evaluate"* is a call that did not finish, not a judgement.
+
 **Sweeping `model:` moves the judge too.** By default `judge:` rubrics are graded by the SUT's own model, so a model axis changes the grader along with the thing graded and the comparison's `pass rate` row is no longer comparable across cells. Set `judge_profile:` (or `--judge`) to pin the grader to one model whenever you sweep `model:` on a suite that uses rubrics.
 
 Each cell writes into its own `<output>/<axis-value>__<axis-value>/` subdir. The comparison table has one row per metric (plus per-tag rows) and one column per cell, and marks any cell where a gate failed. A sweep is not supported for `adk-agent`/`ag-ui` targets — those agents run out of process, so gth config overrides would change nothing about them.

@@ -4,8 +4,8 @@
  * Unbypassable hardline blocklist for the shell tool — spec §8's **floor**. Two families are
  * refused: catastrophic, non-recoverable commands (wipe the root filesystem, format a disk,
  * overwrite a raw block device, re-own the filesystem out from under root, fork-bomb, take the
- * host down), and — since CFG-27 — the deterministic subset of §4.1.1 `exfiltration` (a credential
- * source and a network sink in one pipeline).
+ * host down), and — since CFG-27 — the deterministic subset of the §4.1.1 `attack` outcome (a
+ * credential source and a network sink in one pipeline).
  * Both are refused inside `executeCommand` itself — BEFORE spawn — so the refusal
  * fires regardless of `approvals: "bypass"`, any allow-list, or the confirmation path. `bypass`
  * deliberately bypasses the *confirmation*; it does NOT bypass this floor.
@@ -24,8 +24,22 @@
  * obfuscation (ANSI/fullwidth/backslash splits/whitespace padding) cannot bypass them.
  * The normalized form PRESERVES line breaks (EXT-55) — they are command separators, not
  * padding — so a pattern must terminate on one just as it does on `;`/`&`/`|`. Both the
- * command-position prefix ({@link CMD_POS}) and the pattern tail ({@link CMD_END}) are built
- * from the one shared `COMMAND_SEPARATOR_CLASS` in core so they cannot disagree.
+ * command-position prefix ({@link CMD_POS}) and the target tail ({@link TARGET_TOKEN_END}) are
+ * built from the one shared `COMMAND_SEPARATOR_CLASS` in core so they cannot disagree.
+ *
+ * EXT-62 — every destructive-verb pattern is anchored at {@link CMD_POS}, so a verb sitting in an
+ * ORDINARY ARGUMENT is no longer a refusal: `grep -c mkfs docs/*.md` and `echo never run rm -rf /`
+ * used to be refused unappealably, at every rung, and are not.
+ *
+ * **That is the whole of the claim, and it is narrower than "the floor never refuses a mention."**
+ * `CMD_POS` is a lexical test that knows nothing about quoting, so a mention that happens to follow
+ * a separator or a backtick still matches even where the shell would treat that character as
+ * literal: `echo "step 1; rm -rf / is fatal"` and ``git commit -m 'see `rm -rf /` docs'`` are both
+ * still refused. Those are PRE-EXISTING and deliberately not fixed here — teaching this file to
+ * parse quoting is a second command parser, which is a second place for the floor to be bypassed
+ * (EXT-56 forbids it for the classifier for the same reason, and a quote-aware scanner built for
+ * exactly this was measured leaking 6 of 12 attacks where the blunt one leaked 0). The residuals
+ * are pinned as tests rather than left to be rediscovered — see `shellHardline.spec.ts`.
  *
  * This floor is deliberately INDEPENDENT of the allow-list classifier above it: it must block
  * a catastrophic command even if every layer above wrongly decided the command was safe.
@@ -50,20 +64,65 @@ const CMD_POS =
   '\\s*';
 
 /**
- * EXT-55 — the tail of a hardline pattern: the command ends here, either at end of input or at a
- * separator that starts a NEW command.
+ * The end of a target TOKEN, as a zero-width lookahead: end of input, whitespace, a separator that
+ * starts a new command, or a substitution closer.
  *
- * This used to be the literal `(?:$|[;&|])`, which omitted the newline that {@link CMD_POS}
- * already listed. The two halves of this module therefore disagreed about what a separator is,
- * and `checkHardline('ls\nrm -rf /\nls -la')` returned null while `checkHardline('rm -rf /')`
- * blocked. Both halves are now built from the ONE shared
- * {@link COMMAND_SEPARATOR_CLASS} so they cannot drift apart again.
+ * **EXT-55 built the ancestor of this, `CMD_END`,** as the tail of a hardline pattern — the point
+ * where the *command* ends. It replaced the literal `(?:$|[;&|])`, which omitted the newline that
+ * {@link CMD_POS} already listed, so the two halves of this module disagreed about what a separator
+ * is and `checkHardline('ls\nrm -rf /\nls -la')` returned null while `checkHardline('rm -rf /')`
+ * blocked. Both halves have been built from the ONE shared {@link COMMAND_SEPARATOR_CLASS} ever
+ * since, and this constant keeps that property — it is the same class, widened, never a second
+ * spelling of it. (JS `$` without the `m` flag matches only true end-of-input, so the explicit line
+ * break in the class is genuinely required; the `m` flag is NOT an alternative — it would also
+ * change `^` in {@link CMD_POS}.)
  *
- * (JS `$` without the `m` flag matches only true end-of-input, so the explicit line break in the
- * class is genuinely required; the `m` flag is NOT an alternative — it would also change `^` in
- * {@link CMD_POS}.)
+ * **EXT-62 replaced it here** because "the command ends" was the wrong question. Requiring the root
+ * or system-directory path to be the **last token on the line** meant anything after it defeated
+ * the pattern, so `rm -rf / --no-preserve-root` executed while the bare `rm -rf /` was refused — **the floor
+ * refused the form GNU coreutils declines anyway and allowed the form that actually deletes the
+ * filesystem.** `rm -rf / /tmp` and `rm -rf /etc /var` were allowed for the same reason.
+ *
+ * A lookahead is what distinguishes "the token ends here" from "the command ends here". It still
+ * has to BIND — that is the whole reason the old tail existed, since a bare `/` otherwise matches
+ * the first character of every absolute path — so `/var/www/html` and `/home/deploy/app`, where all
+ * ordinary work happens, remain out of range: after `/var` comes `/`, which is neither whitespace
+ * nor a separator.
+ *
+ * This is a WIDENING of an unappealable layer, so it is covered by its own must-NOT-fire probes
+ * (`rm -rf ./build --verbose`, `chown -R app:app /var/www/html extra`) rather than by the
+ * must-refuse ones alone.
+ *
+ * **The class also ends the token at a substitution CLOSER — `)` and a backtick.** {@link CMD_POS}
+ * has treated `$(` and a backtick as command *openers* since CFG-27; the closers were never the
+ * symmetric case, so a target's tail could not bind inside a substitution and `echo $(rm -rf /)`,
+ * `` echo `rm -rf /` `` and even the bare `$(rm -rf /)` were ALLOWED — verified against the built
+ * module before this change. **That is the 30 July incident's own shape**: a destructive command
+ * wrapped in a substitution inside another command's quoted argument, which the shell expands
+ * before the outer program runs. The floor knew where such a command begins and not where it ends.
+ *
+ * Not to be confused with the credential section's `TOKEN_END` further down. That one ends a PATH
+ * token — it consumes an optional trailing slash and stops only at whitespace — and the two are
+ * deliberately separate: this one has to treat `;`/`&`/`|` and the substitution closers as ending
+ * the token, because a target is the last thing before the enclosing construct resumes.
  */
-const CMD_END = `(?:$|[${COMMAND_SEPARATOR_CLASS}])`;
+const TARGET_TOKEN_END = `(?=$|[\\s)\`${COMMAND_SEPARATOR_CLASS}])`;
+
+/**
+ * EXT-62 — a target path, in the three spellings a shell accepts for the same file: bare, in double
+ * quotes, in single quotes. `rm -rf "/"` deletes exactly what `rm -rf /` deletes, and only the
+ * second was refused.
+ *
+ * The quotes are tolerated HERE rather than folded in `normalizeCommand`, and that choice is
+ * deliberate: the normalizer feeds the allow-list classifier and `hasUnsafeComposition` as well as
+ * this floor, so stripping quotes there would change what `classifyCommand` resolves — a quoted
+ * `;` would stop being fail-closed. Tolerating them in three target arms is local and bounded;
+ * folding them globally is not.
+ *
+ * Each spelling still ends at {@link TARGET_TOKEN_END}, so a quote that merely *starts* the token does not
+ * make the whole token a target: `rm -rf /"var"/www` is not `rm -rf /`.
+ */
+const quotedOrBare = (path: string): string => `(?:"${path}"|'${path}'|${path})${TARGET_TOKEN_END}`;
 
 /* -------------------------------------------------------------------------------------------- *
  * EXT-60 — the shared TARGET fragments.
@@ -86,8 +145,12 @@ const CMD_END = `(?:$|[${COMMAND_SEPARATOR_CLASS}])`;
  *
  * EXT-60 review I1: the trailing-slash spelling is part of the target. See
  * {@link SYSTEM_DIR_TARGET} for why.
+ *
+ * EXT-62: the tail is now {@link TARGET_TOKEN_END} rather than {@link CMD_END}, so the target must end the
+ * TOKEN and no longer the LINE — `rm -rf / --no-preserve-root` is refused. Quoted spellings via
+ * {@link quotedOrBare}.
  */
-const ROOT_TARGET = '/\\s*(?:\\*|/)?\\s*' + CMD_END;
+const ROOT_TARGET = quotedOrBare('/\\s*(?:\\*|/)?');
 
 /**
  * A NAMED system directory as a target: `/etc`, `/etc/`, `/usr/*`. The token has to END at the
@@ -101,8 +164,9 @@ const ROOT_TARGET = '/\\s*(?:\\*|/)?\\s*' + CMD_END;
  * and `chown` never caught it at all. All three families gain it here, from the one spelling.
  * The tail still has to BIND, so `/etc/foo` and `/var/www/html` remain out of range.
  */
-const SYSTEM_DIR_TARGET =
-  '(?:/(?:home|root|etc|usr|var|bin|sbin|boot|lib|lib64|opt|sys|proc))(?:/\\*?)?\\s*' + CMD_END;
+const SYSTEM_DIR_TARGET = quotedOrBare(
+  '(?:/(?:home|root|etc|usr|var|bin|sbin|boot|lib|lib64|opt|sys|proc))(?:/\\*?)?'
+);
 
 /* -------------------------------------------------------------------------------------------- *
  * EXT-60 — the pieces of the recursive-`chown`-of-root patterns.
@@ -186,27 +250,68 @@ const CHOWN_HEAD =
 /**
  * Hardline patterns: [regex, human description]. Matched case-insensitively
  * against the normalized command.
+ *
+ * ## EXT-62 — every destructive-verb pattern is anchored at {@link CMD_POS}
+ *
+ * They used to anchor at a word boundary (`\brm`), or — `mkfs`, `dd` and `kill` — at nothing at all.
+ * A word boundary matches the verb ANYWHERE, including inside prose and inside another command's
+ * arguments, so the floor refused ordinary read-only work **unappealably, under every rung including
+ * `bypass`**. Measured against the built module over 30 legitimate commands, 10 were refused:
+ * `echo never run rm -rf /`, `echo "the mkfs family is refused outright"`,
+ * `grep -c mkfs docs/*.md`, `rg -n "dd of=/dev/sd" scripts/`, `grep -rn "kill -1" packages/` and
+ * more. **The floor refused commands that talk about the floor** — the same shape as the commit
+ * message that became a command, inverted. `mkfs` was the worst of them: the bare word, no operand
+ * required, no tail, so any mention anywhere refused.
+ *
+ * `CMD_POS` already consumes the `sudo` / `env VAR=VAL` / `exec` / `nohup` / `setsid` / `time`
+ * wrappers and admits every separator position, so `sudo rm -rf /`, `ls -la; rm -rf /` and
+ * `ls\nrm -rf /` all keep refusing.
+ *
+ * **The trade, and it is not close.** Anchoring loses the interpreter-wrapper forms —
+ * `sh -c "rm -rf /"`, `bash -c "mkfs.ext4 /dev/sda1"`, `xargs rm -rf /`. EXT-62's original text
+ * claimed the ambiguity preflight covers those; **measured, it does not** — `classifyCommand`
+ * resolves them to the prefixes `sh`, `bash` and `xargs` respectively, so no deterministic layer
+ * sees them. What covers them is the RATER, which rates them `catastrophic`, so both rated rungs
+ * escalate; only `bypass` is unguarded, and there the user has asked for no gate. A false positive
+ * in this layer has no recovery at any rung; a miss here still has three other layers. So the floor
+ * stays narrow and accepts the misses, which is what §8.1 means by declining to vouch for its own
+ * completeness.
+ *
+ * Two patterns are deliberately NOT anchored, because neither is a command-position construct: the
+ * `>`-redirect-to-device arm (a redirection operator appears mid-command by definition) and the
+ * fork-bomb literal (the string *is* the fork bomb).
  */
 export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   // rm -rf targeting the root filesystem (`/`, `/*`).
-  // EXT-55: built with `new RegExp` so the tail comes from the shared CMD_END, not a literal.
+  // EXT-55: built with `new RegExp` so the tail comes from the shared separator class, not a literal.
   // EXT-60: the target itself now comes from the shared fragment too — same regex, one spelling.
-  [new RegExp('\\brm\\s+(?:-[^\\s]*\\s+)*' + ROOT_TARGET), 'recursive delete of root filesystem'],
+  // EXT-62: anchored at CMD_POS, so `echo never run rm -rf /` is not a refusal.
+  [
+    new RegExp(CMD_POS + 'rm\\s+(?:-[^\\s]*\\s+)*' + ROOT_TARGET),
+    'recursive delete of root filesystem',
+  ],
   // rm -rf targeting protected system directories (with optional /* suffix).
   [
-    new RegExp('\\brm\\s+(?:-[^\\s]*\\s+)*' + SYSTEM_DIR_TARGET),
+    new RegExp(CMD_POS + 'rm\\s+(?:-[^\\s]*\\s+)*' + SYSTEM_DIR_TARGET),
     'recursive delete of system directory',
   ],
   // rm -rf targeting the home directory (~ or $HOME).
   // Note: patterns match the LOWERCASED normalized command, so $HOME → $home.
   [
-    new RegExp('\\brm\\s+(?:-[^\\s]*\\s+)*(?:~|\\$home)(?:/\\*)?\\s*' + CMD_END),
+    new RegExp(CMD_POS + 'rm\\s+(?:-[^\\s]*\\s+)*(?:~|\\$home)(?:/\\*)?' + TARGET_TOKEN_END),
     'recursive delete of home directory',
   ],
-  // Filesystem format.
-  [/\bmkfs(?:\.[a-z0-9]+)?\b/, 'format filesystem (mkfs)'],
-  // dd writing to a raw block device.
-  [/\bdd\b[^\n]*\bof=\/dev\/(?:sd|nvme|hd|mmcblk|vd|xvd)[a-z0-9]*/, 'dd to raw block device'],
+  // Filesystem format. EXT-62: `\bmkfs` refused any MENTION — a grep for it, an echo about it, a
+  // `gh issue create --title "mkfs is refused"`. Anchored, `mkfs --help` is still refused, which is
+  // accepted: a usage query is not work anyone loses, and requiring a device operand would trade a
+  // trivial false positive for a real miss.
+  [new RegExp(CMD_POS + 'mkfs(?:\\.[a-z0-9]+)?\\b'), 'format filesystem (mkfs)'],
+  // dd writing to a raw block device. EXT-62: anchored — `rg -n "dd of=/dev/sd" scripts/` is a
+  // source search, and the unanchored form refused it.
+  [
+    new RegExp(CMD_POS + 'dd\\b[^\\n]*\\bof=/dev/(?:sd|nvme|hd|mmcblk|vd|xvd)[a-z0-9]*'),
+    'dd to raw block device',
+  ],
   // Shell redirection to a raw block device (`> /dev/sda`).
   [/>\s*\/dev\/(?:sd|nvme|hd|mmcblk|vd|xvd)[a-z0-9]*\b/, 'redirect to raw block device'],
   // Classic fork bomb `:(){ :|:& };:`.
@@ -219,18 +324,37 @@ export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   // (`chmod -R 777 /etc/`) went with it, and the review caught that, so `SYSTEM_DIR_TARGET` now
   // spells it explicitly — for all three families, `rm` and `chown` included, neither of which
   // ever caught it.
+  //
+  // EXT-62 makes three changes to this pair, each closing a shape that executed:
+  //  - anchored at CMD_POS, like every other verb here;
+  //  - the recursive flag comes from the shared cluster-tolerant `RECURSIVE_FLAG` that EXT-60 built
+  //    for `chown`, because the standalone `(?:-r|--recursive)` this used to require meant
+  //    `chmod -Rv 777 /` was not matched;
+  //  - the mode is any 3- or 4-digit octal instead of the literal `777`, so `chmod -R 000 /` is
+  //    caught. **Every recursive chmod of `/` is catastrophic, not only the world-writable one:**
+  //    `755` on `/usr/bin/sudo` strips its setuid bit just as `000` does, and the box can no longer
+  //    repair itself. The description therefore no longer names a mode.
+  // The target arms are unchanged, which is what keeps `chmod -R 777 /var/www` (corpus `de-04`, a
+  // deliberately UN-floored case) out of range: the target token must END at the system directory.
   [
     new RegExp(
-      '\\bchmod\\s+(?:-[^\\s]*\\s+)*(?:-r|--recursive)\\s+(?:-[^\\s]*\\s+)*777\\s+' + ROOT_TARGET
+      CMD_POS +
+        'chmod\\s+(?:-[^\\s]*\\s+)*' +
+        RECURSIVE_FLAG +
+        '\\s+(?:-[^\\s]*\\s+)*[0-7]{3,4}\\s+' +
+        ROOT_TARGET
     ),
-    'recursive chmod 777 of root',
+    'recursive chmod of root filesystem',
   ],
   [
     new RegExp(
-      '\\bchmod\\s+(?:-[^\\s]*\\s+)*(?:-r|--recursive)\\s+(?:-[^\\s]*\\s+)*777\\s+' +
+      CMD_POS +
+        'chmod\\s+(?:-[^\\s]*\\s+)*' +
+        RECURSIVE_FLAG +
+        '\\s+(?:-[^\\s]*\\s+)*[0-7]{3,4}\\s+' +
         SYSTEM_DIR_TARGET
     ),
-    'recursive chmod 777 of system directory',
+    'recursive chmod of system directory',
   ],
   // EXT-60 — recursive chown of the root filesystem (`chown -R nobody:nobody /`, `… /*`).
   // Unrecoverable without rescue media: it strips setuid from `sudo` and re-owns every service
@@ -240,8 +364,17 @@ export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   // `CHOWN_HEAD` is anchored at CMD_POS (review C1) — `grep chown -r /etc` is read-only work.
   [new RegExp(CHOWN_HEAD + ROOT_TARGET), 'recursive chown of root filesystem'],
   [new RegExp(CHOWN_HEAD + SYSTEM_DIR_TARGET), 'recursive chown of system directory'],
-  // Kill every process on the system (`kill -1`, `kill -9 -1`).
-  [/\bkill\s+(?:-[^\s]+\s+)*-1\b/, 'kill all processes'],
+  // Kill every process on the system (`kill -9 -1`, `kill -- -1`).
+  //
+  // EXT-62 makes two changes. Anchored at CMD_POS, because the unanchored form refused
+  // `grep -rn "kill -1" packages/` and `echo "kill -1 sends SIGHUP to every process"`. And the
+  // option loop is now `+` rather than `*`, because `-1` only means "every process" in the PID
+  // OPERAND position — something has to precede it. With `*` the pattern also matched `kill -1`'s
+  // own SIGNAL position, so `kill -1 12345`, an ordinary SIGHUP to one process, was refused
+  // unappealably (pre-existing on trunk; found by probing rather than by reading). Requiring a
+  // preceding token keeps `kill -9 -1`, `kill -HUP -1` and `kill -- -1` and drops only `kill -1`
+  // with no PID, which is a usage error rather than a kill-all.
+  [new RegExp(CMD_POS + 'kill\\s+(?:-[^\\s]+\\s+)+-1\\b'), 'kill all processes'],
   // System shutdown / reboot — anchored to a command position so `echo reboot`
   // and `grep shutdown log` don't trip it.
   [new RegExp(CMD_POS + '(?:shutdown|reboot|halt|poweroff)\\b'), 'system shutdown/reboot'],
@@ -254,9 +387,17 @@ export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
 ];
 
 /* -------------------------------------------------------------------------------------------- *
- * CFG-27 §8 — the DETERMINISTIC SUBSET OF EXFILTRATION.
+ * CFG-27 §8 — the DETERMINISTIC SUBSET OF THE `attack` OUTCOME.
  *
- * §4.2 makes `exfiltration` the one outcome that halts the run, and §3 requires that the halt
+ * **Two words that are no longer the same word, since CFG-28.** `attack` is the OUTCOME — the one
+ * the gate halts on. *Exfiltration* is a MECHANISM: secrets leaving the machine, §4.1.1 part 1.
+ * This section implements the part of the outcome that is decidable without a model, and that part
+ * happens to be exactly the mechanism — which is why {@link isDeterministicExfiltration} keeps its
+ * name while the prose around it names the outcome. `attack` is wider than exfiltration (privesc,
+ * persistence, deception, obfuscation are all in it and none of them are here), so calling this
+ * function `isDeterministicAttack` would claim a completeness it does not have.
+ *
+ * §4.2 makes `attack` the one outcome that halts the run, and §3 requires that the halt
  * "MUST NOT depend on the rater alone — its deterministic subset belongs in the hardline floor",
  * because the allow-list is consulted BEFORE the rater and would otherwise wave an allow-listed
  * credential upload straight through.
@@ -414,7 +555,7 @@ export function checkHardline(command: string): HardlineMatch | null {
       return { description };
     }
   }
-  // CFG-27 §3/§8 — the deterministic subset of `exfiltration`, so the §4.2 halt does not depend
+  // CFG-27 §3/§8 — the deterministic subset of the `attack` outcome, so the §4.2 halt does not depend
   // on a model being right (and cannot be ridden through on an allow-list entry, which is
   // consulted before the rater).
   if (isDeterministicExfiltration(normalized)) {

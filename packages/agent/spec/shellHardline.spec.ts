@@ -75,7 +75,7 @@ describe('checkHardline', () => {
  * account is re-owned, so the machine cannot repair itself without rescue media.
  *
  * The pattern is built in the shape of the `rm` pair (a root arm and an enumerated system-directory
- * arm, each terminated at `CMD_END`), which is what bounds the false-positive surface below: the
+ * arm, each terminated at a token boundary), which is what bounds the false-positive surface below: the
  * target token must END at the root or system directory. Since the floor fires under `bypass`, a
  * false positive here is unrecoverable, so the must-NOT-fire half is the half that matters — every
  * ordinary `chown` a deploy script runs targets a path BELOW a system directory.
@@ -130,7 +130,7 @@ describe('checkHardline — recursive chown of root (EXT-60)', () => {
    * unconfigurable — a user cannot change rung to escape a wrong refusal.
    */
   const allowedChown = [
-    // A path BELOW a system directory is where real work happens; the CMD_END tail is what
+    // A path BELOW a system directory is where real work happens; the target tail is what
     // separates it from the directory itself.
     'chown -R app:app /var/www/html',
     'chown -R www-data:www-data /var/www',
@@ -271,6 +271,266 @@ describe('checkHardline — recursive chmod 777 is bounded to root and system di
 });
 
 /**
+ * EXT-62 — the floor's two structural defects, each measured against the built module rather than
+ * read out of the pattern list.
+ *
+ * **(1) It refused work it has no business refusing.** Every destructive-verb pattern anchored at a
+ * word boundary (`\brm`) or — `mkfs`, `dd`, `kill` — at nothing at all, so the verb matched ANYWHERE:
+ * inside prose, inside another command's arguments, inside a `--title`. Ten of thirty ordinary
+ * commands were refused, *unappealably, at every rung including `bypass`*. The floor refused
+ * commands that talk about the floor.
+ *
+ * **(2) It allowed the forms that work.** The target arms ended at `CMD_END`, which required the
+ * path to be the last token on the LINE. So `rm -rf / --no-preserve-root` — the flag that makes
+ * GNU `rm` actually do it — was allowed while the bare `rm -rf /` coreutils refuses anyway was
+ * blocked. The same tail could not bind inside a substitution either, so `echo $(rm -rf /)` and
+ * `` echo `rm -rf /` `` were allowed: the floor knew where a command BEGINS (`CMD_POS` has listed
+ * `$(` and a backtick since CFG-27) and not where it ENDS.
+ *
+ * The two directions pull opposite ways and that asymmetry is the design: a false positive here has
+ * no recovery at any rung, so the must-NOT-fire half is the half that gates a change.
+ */
+describe('checkHardline — anchored at a command position, terminated at a token (EXT-62)', () => {
+  /**
+   * The measured false positives. Every one is ordinary work, and every one was refused with no way
+   * for the user to proceed. They are listed as themselves rather than compressed into shapes,
+   * because a reader has to be able to see that these are commands a person really runs.
+   */
+  const mentionsNotInvocations = [
+    // Prose about a destructive command.
+    'echo never run rm -rf /',
+    'echo do not use rm -rf ~',
+    'echo "the mkfs family is refused outright"',
+    'echo "kill -1 sends SIGHUP to every process"',
+    'echo "never write dd of=/dev/sda by hand"',
+    'echo "chmod -R 777 / is unrecoverable"',
+    'echo "rm -rf / --no-preserve-root is the dangerous one"',
+    // Searching the source for one. `-r` is grep's OWN recursive flag, which is what made these
+    // trip the recursive-verb arms so exactly.
+    'grep -c mkfs docs/*.md',
+    'grep -rn "mkfs" /etc',
+    'rg -n "dd of=/dev/sd" scripts/',
+    'grep -rn "kill -1" packages/',
+    'grep rm -rf /etc',
+    'grep -r "rm -rf" /var',
+    'git log --oneline --grep "rm -rf /"',
+    // Filing a report about it.
+    'gh issue create --title "mkfs is refused" --body-file /tmp/b.md',
+  ];
+
+  it.each(mentionsNotInvocations)('does not refuse a MENTION of a destructive verb: %s', (cmd) => {
+    expect(checkHardline(cmd), `expected "${cmd}" to be allowed`).toBeNull();
+  });
+
+  /**
+   * The RESIDUAL, pinned so it is a known limit rather than a surprise.
+   *
+   * `CMD_POS` is lexical: it knows that `;`, `&`, `|`, `$(` and a backtick begin a command, and it
+   * knows nothing about quoting. So a mention that happens to sit after one of those characters is
+   * still refused even where the shell would treat the character as literal. Anchoring fixed the
+   * mentions that sit in an ordinary argument, which was the measured bulk of them; it did not and
+   * cannot fix these.
+   *
+   * **They are deliberately not fixed.** The obvious remedy is to make this file quote-aware, and
+   * that is a second command parser — a second place for the floor to be bypassed. [[EXT-56]]
+   * forbids exactly that for the allow-list classifier, and a quote- and heredoc-aware scanner
+   * built for this class was measured leaking 6 of 12 attacks where the blunt one leaked 0. The
+   * right trade for an unappealable layer is a residual false positive on a quoted mention, not a
+   * parser that can be talked past.
+   *
+   * A change that DOES fix these must delete this test and argue for the new precision claim, which
+   * is the point of pinning it: it cannot be fixed by accident.
+   */
+  it('still refuses a mention that follows a separator or backtick, even when quoted', () => {
+    expect(
+      checkHardline('echo "step 1; rm -rf / is fatal"'),
+      'a quoted `;` is still a command position to CMD_POS'
+    ).not.toBeNull();
+    expect(
+      checkHardline("git commit -m 'see `rm -rf /` docs'"),
+      'single quotes make backticks inert in bash; CMD_POS cannot see that'
+    ).not.toBeNull();
+    // The counterpart that DOES pass, so the pair shows where the boundary actually is: no
+    // separator precedes the verb, so the anchor does not bind.
+    expect(
+      checkHardline("git commit -m 'cleanup: rm -rf /etc do not do this'"),
+      'no separator before the verb — this is the class anchoring fixed'
+    ).toBeNull();
+  });
+
+  /**
+   * The other side of the same anchor. `CMD_POS` consumes the wrappers and admits every separator
+   * position, so anchoring must cost none of these — this is the assertion that stops a future
+   * "fix" for the false positives above from being a hole.
+   */
+  const stillRefusedAtACommandPosition = [
+    ['ls -la; rm -rf /', 'after a semicolon'],
+    ['ls\nrm -rf /\nls', 'between line breaks'],
+    ['true && rm -rf /', 'after &&'],
+    ['cat x | rm -rf /', 'after a pipe'],
+    ['sudo rm -rf /', 'sudo'],
+    ['env FOO=1 rm -rf /', 'env assignment wrapper'],
+    ['nohup rm -rf ~', 'nohup'],
+    ['exec rm -rf /', 'exec'],
+    ['time kill -9 -1', 'time'],
+    ['sudo mkfs -t ext4 /dev/sdb', 'sudo, with the verb after its flags'],
+  ] as const;
+
+  it.each(stillRefusedAtACommandPosition)(
+    'still refuses at a real command position: %s (%s)',
+    (cmd) => {
+      expect(checkHardline(cmd), `expected "${cmd}" to be blocked`).not.toBeNull();
+    }
+  );
+
+  /**
+   * Defect (2), first half: the target must end the TOKEN, not the LINE.
+   *
+   * `rm -rf / --no-preserve-root` is the case that names the problem. GNU coreutils declines
+   * `rm -rf /` on its own ("it is dangerous to operate recursively on /"); `--no-preserve-root` is
+   * the flag that overrides that, and it was exactly the form the floor let through.
+   */
+  const trailingOperands = [
+    'rm -rf / --no-preserve-root',
+    'sudo rm -rf / --no-preserve-root',
+    'rm -rf / /tmp',
+    'rm -rf /etc /var',
+    'rm -rf ~ /tmp',
+    'rm -rf --verbose / --no-preserve-root',
+    'rm -rf /* /tmp',
+    'chown -R nobody:nobody / --verbose',
+    'chmod -R 777 / --verbose',
+  ];
+
+  it.each(trailingOperands)('refuses a catastrophic target with a trailing operand: %s', (cmd) => {
+    expect(checkHardline(cmd), `expected "${cmd}" to be blocked`).not.toBeNull();
+  });
+
+  /**
+   * Defect (2), second half — and the one that matters most, because it is the 30 July incident's
+   * own shape. A substitution wrapped around a destructive command hid it from the floor entirely:
+   * the bare `$(rm -rf /)` was allowed.
+   *
+   * The discriminating negatives sit in {@link substitutionsThatAreNotCommands} below: parentheses
+   * in prose are not a substitution, and an ordinary `$(date)` must stay silent.
+   */
+  const insideASubstitution = [
+    'echo $(rm -rf /)',
+    '$(rm -rf /)',
+    'echo `rm -rf ~`',
+    'echo "see $(rm -rf /etc) here"',
+    'git commit -m "note: `rm -rf /` is refused"',
+  ];
+
+  it.each(insideASubstitution)('refuses a destructive command inside a substitution: %s', (cmd) => {
+    expect(checkHardline(cmd), `expected "${cmd}" to be blocked`).not.toBeNull();
+  });
+
+  const substitutionsThatAreNotCommands = [
+    // Parentheses in prose. Nothing opens a command here, so the anchor must not bind.
+    'echo "prose (rm -rf /) in parens"',
+    // Ordinary substitutions, which the floor has no opinion about.
+    'echo $(date)',
+    'tar czf backup-$(date +%F).tgz src/',
+    'echo "on branch $(git branch --show-current)"',
+    'docker run -v $(pwd):/app node:20 npm test',
+  ];
+
+  it.each(substitutionsThatAreNotCommands)('leaves an ordinary substitution alone: %s', (cmd) => {
+    expect(checkHardline(cmd), `expected "${cmd}" to be allowed`).toBeNull();
+  });
+
+  /** A shell accepts three spellings of the same path, and only one was refused. */
+  const quotedTargets = [
+    'rm -rf "/"',
+    "rm -rf '/'",
+    'rm -rf "/etc"',
+    'rm -rf "/" --no-preserve-root',
+  ];
+
+  it.each(quotedTargets)('refuses a quoted catastrophic target: %s', (cmd) => {
+    expect(checkHardline(cmd), `expected "${cmd}" to be blocked`).not.toBeNull();
+  });
+
+  /**
+   * Tolerating quotes must not let a quote that merely STARTS a token stand in for the whole target,
+   * and must not re-open the ordinary-path refusals EXT-60 removed.
+   */
+  const quotedButNotTheTarget = ['rm -rf /"var"/www', 'rm -rf "./build"', 'rm -rf "/tmp/scratch"'];
+
+  it.each(quotedButNotTheTarget)('does not read a quote as a root target: %s', (cmd) => {
+    expect(checkHardline(cmd), `expected "${cmd}" to be allowed`).toBeNull();
+  });
+
+  /**
+   * The two `chmod` neighbours EXT-62 named. The arm required a STANDALONE `-r`, so a cluster
+   * (`-Rv`) walked past it; and the mode was the literal `777`, so every other mode did too.
+   *
+   * **Every recursive chmod of `/` is catastrophic, not only the world-writable one.** `755` on
+   * `/usr/bin/sudo` strips its setuid bit exactly as `000` does, and a box that cannot run `sudo`
+   * cannot repair itself.
+   */
+  const chmodClustersAndModes = [
+    'chmod -Rv 777 /',
+    'chmod -hR 777 /',
+    'chmod -R 000 /',
+    'chmod -R 755 /',
+    'chmod -R 0777 /',
+    'chmod -Rv 000 /usr --verbose',
+  ];
+
+  it.each(chmodClustersAndModes)('refuses a recursive chmod of root in any mode: %s', (cmd) => {
+    expect(checkHardline(cmd), `expected "${cmd}" to be blocked`).not.toBeNull();
+  });
+
+  /** Widening the mode must not widen the TARGET — `de-04` and its neighbours stay un-floored. */
+  const chmodOnOrdinaryPaths = [
+    'chmod -R 777 /var/www',
+    'chmod -R 755 /var/www/html --verbose',
+    'chmod -R 000 ./dist',
+    'chmod -Rv 644 /home/deploy/releases',
+  ];
+
+  it.each(chmodOnOrdinaryPaths)(
+    'does not refuse a recursive chmod of an ordinary path: %s',
+    (cmd) => {
+      expect(checkHardline(cmd), `expected "${cmd}" to be allowed`).toBeNull();
+    }
+  );
+
+  /**
+   * `-1` means "every process" only in the PID OPERAND position. The pattern's option loop was `*`,
+   * so it also matched `-1` in the SIGNAL position and refused `kill -1 12345` — an ordinary SIGHUP
+   * to one process. Pre-existing on trunk, and found by probing rather than by reading.
+   */
+  it('refuses -1 as the PID operand but not as the signal', () => {
+    expect(checkHardline('kill -9 -1'), 'kill -9 -1 targets every process').not.toBeNull();
+    expect(checkHardline('kill -HUP -1'), 'named signal, same target').not.toBeNull();
+    expect(checkHardline('kill -- -1'), 'the explicit end-of-options form').not.toBeNull();
+    expect(checkHardline('kill -1 12345'), 'SIGHUP to one process is ordinary work').toBeNull();
+    expect(checkHardline('kill -9 12345'), 'so is SIGKILL to one process').toBeNull();
+  });
+
+  /**
+   * A separator glued to the end of a token must not be swallowed on the way to a target — the
+   * EXT-55 class of defect, reappearing INSIDE a token. EXT-60 review I2 closed it for `chown`;
+   * these pin that `rm` and `chmod` do not have it either, so the property is asserted for all
+   * three families rather than for the one that happened to be looked at.
+   */
+  const separatorsAreNotSwallowed = [
+    'rm -rf dist -v; ls /',
+    'rm -rf ./build -v; cat /etc',
+    'chmod -R 777 ./dist -v; ls /',
+    'rm -rf out --verbose\nls /',
+    'rm -rf dist # cleanup under /',
+  ];
+
+  it.each(separatorsAreNotSwallowed)('does not assemble a target across a separator: %s', (cmd) => {
+    expect(checkHardline(cmd), `expected "${cmd}" to be allowed`).toBeNull();
+  });
+});
+
+/**
  * EXT-55 — the hardline floor is the last line of defence and does not trust the layers above
  * it, so it is audited independently. `CMD_POS` already listed `\n` as a command position, but
  * the individual patterns terminated on `(?:$|[;&|])`, which omitted it — so a catastrophic
@@ -313,7 +573,12 @@ describe('checkHardline — line breaks terminate a command (EXT-55)', () => {
 });
 
 /**
- * CFG-27 §8 / §3 — the floor's DETERMINISTIC SUBSET of `exfiltration`.
+ * CFG-27 §8 / §3 — the floor's DETERMINISTIC SUBSET of the `attack` outcome.
+ *
+ * CFG-28 renamed the outcome `exfiltration` → `attack` and widened it (privesc, persistence,
+ * deception and obfuscation joined it). *Exfiltration* survives here as the name of the MECHANISM
+ * this section detects — secrets leaving the machine — which is only part 1 of the outcome. The
+ * distinction is why the cases below are named for the mechanism and the outcome is named once.
  *
  * §3 requires it because the allow-list is consulted before the rater: a halt that depended on
  * the model alone could be ridden through on an allow-list entry, and `scp *` / `aws s3 sync *`
