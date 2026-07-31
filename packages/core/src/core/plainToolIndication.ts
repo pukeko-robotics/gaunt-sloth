@@ -15,9 +15,12 @@
  * Stream discipline (matches how the plain surface prints tool activity today): the block is
  * emitted at INFO level through `displayToolIndication` — same stdout channel, same
  * `consoleLevel` gate and session-log treatment as the existing tool notices — so scripted
- * consumers that already silence INFO chatter silence this too. Colour is used only when
- * `useColour` is on AND stdout is a TTY; otherwise the block degrades to clean monochrome
- * (DL-7), with diff lines still readable via their `+`/`-` prefixes.
+ * consumers that already silence INFO chatter silence this too. Colour is used exactly when the
+ * resolved `useColour` (the CFG-30 ladder in `config/colour.ts`) says so — TUI-C35 removed the
+ * local `&& stdout.isTTY` narrowing this module used to apply on top, which was redundant against
+ * the ladder's own rung-4 TTY auto-detection everywhere except `FORCE_COLOR` on a pipe, the one
+ * case that variable exists to serve. An ordinary piped run is therefore still clean monochrome
+ * (DL-7) — rung 4 decides that — with diff lines readable via their `+`/`-` prefixes.
  *
  * Live-output dedupe: shell-shaped results (`<COMMAND_OUTPUT>`) belong to tools whose child
  * output ALREADY streamed raw via the channel's default sink, so those render with
@@ -34,7 +37,7 @@ import {
   summariseToolCall,
 } from '#src/core/toolDisplay.js';
 import { displayToolIndication } from '#src/utils/consoleUtils.js';
-import { getUseColour, stdout } from '#src/utils/systemUtils.js';
+import { getUseColour } from '#src/utils/systemUtils.js';
 
 const INDENT = '    ';
 
@@ -83,9 +86,12 @@ export function createPlainToolIndication(
     const result =
       typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
     const isError = message.status === 'error';
-    // Colour only when configured AND stdout is a real terminal — piped output stays clean
-    // monochrome (unlike consoleUtils' blanket dim, this block is asserted non-TTY-clean).
-    const colour = getUseColour() && !!stdout.isTTY;
+    // TUI-C35 — colour is exactly what the resolved ladder says, with no local narrowing.
+    // This used to AND in `stdout.isTTY`, which was redundant in every case but one: rung 4 of
+    // `config/colour.ts` already auto-detects from stdout's TTY status, so an unconfigured piped
+    // run is monochrome either way. The one case it changed was `FORCE_COLOR` into a pipe — which
+    // it suppressed, defeating the only thing that variable is for.
+    const colour = getUseColour();
 
     const statusGlyph = isError
       ? colour

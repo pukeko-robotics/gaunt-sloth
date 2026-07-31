@@ -1,6 +1,7 @@
 import React from 'react';
 import { render } from 'ink';
 import { type CommandLineConfigOverrides, initConfig } from '@gaunt-sloth/core/config.js';
+import { resolveUseColour } from '@gaunt-sloth/core/config/colour.js';
 import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
 import {
   mergeToolOutputIntoEvents,
@@ -38,6 +39,7 @@ import type { SessionConfig } from '@gaunt-sloth/agent/modules/interactiveSessio
 import type { BaseMessage } from '@langchain/core/messages';
 import { writeDebugDump } from '@gaunt-sloth/core/utils/debugDump.js';
 import { App } from '#src/tui/components/App.js';
+import { applyTuiColour } from '#src/tui/colour.js';
 import {
   formatConfigSummary,
   type DebugDumpInput,
@@ -245,6 +247,17 @@ export async function createTuiSession(
   // Production never takes this branch (the env var is set only by the PTY e2e harness).
   const fixturePath = env.GTH_TUI_E2E_FIXTURE;
   if (fixturePath) {
+    // TUI-C35 — this branch deliberately never loads config, so there is no resolved answer to
+    // consume; ask the CFG-30 ladder directly with the same inputs the loader would have given
+    // it. Consuming the shared helper, not a second policy. Without this the PTY suite would run
+    // on chalk's unclamped detection and so would never exercise the hook at all.
+    applyTuiColour(
+      resolveUseColour({
+        forceColor: env.FORCE_COLOR,
+        noColor: env.NO_COLOR,
+        stdoutIsTTY: !!stdout.isTTY,
+      })
+    );
     const { createFixtureTuiAgent } = await import('#src/tui/fixtureAgent.js');
     // Holder so `onResetFrame` can reach the not-yet-created render instance (App writes the
     // /clear scroll/clear escapes itself, then asks Ink to forget its last frame — TUI-C12).
@@ -286,6 +299,11 @@ export async function createTuiSession(
   } finally {
     startupAdvisories = endWarningCapture();
   }
+  // TUI-C35 — the TUI's one colour decision, taken here because it must precede every render.
+  // `config.useColour` is what `resolveUseColour` already produced inside `initConfig`, so the
+  // TUI honours NO_COLOR / FORCE_COLOR / `useColour` exactly as the plain surface does instead of
+  // leaving chalk (which implements none of them but FORCE_COLOR) to decide on its own.
+  applyTuiColour(config.useColour);
   const checkpointSaver = new MemorySaver();
   // GS2-19: one conversation per TUI session; each completed turn (logTurn) is stamped with its id
   // so the whole chat groups under one conversation. Opt-in / fail-soft (undefined unless history

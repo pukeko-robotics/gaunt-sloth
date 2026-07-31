@@ -107,14 +107,46 @@ describe('plainToolIndication (TUI-C30 — the --no-tui / piped surface)', () =>
     expect(text).not.toContain('✓');
   });
 
-  it('is clean monochrome on a non-TTY even when useColour is on', async () => {
-    systemUtilsMock.getUseColour.mockReturnValue(true);
+  /**
+   * The monochrome guarantee for an ordinary piped run, which is what the surface's users
+   * actually rely on. It is pinned separately from the case below BECAUSE that one moved: with
+   * the local `&& stdout.isTTY` gone, this is now the assertion carrying "captured output stays
+   * clean", and it holds through the ladder rather than through a local TTY check — rung 4 of
+   * `config/colour.ts` auto-detects colour OFF for a non-TTY stdout, so `getUseColour()` is false
+   * here in production and no ANSI is emitted.
+   */
+  it('is clean monochrome on a piped run — the ladder resolved colour off', async () => {
+    systemUtilsMock.getUseColour.mockReturnValue(false);
     systemUtilsMock.stdout.isTTY = false;
     const { createPlainToolIndication } = await import('#src/core/plainToolIndication.js');
     const sink = vi.fn();
     const observer = createPlainToolIndication(sink);
     for (const chunk of readFileRound()) observer.observe(chunk);
     expect(sink.mock.calls[0][0]).not.toMatch(/\x1b\[/); // no ANSI at all
+  });
+
+  /**
+   * TUI-C35 — MANDATED BEHAVIOUR CHANGE, not a test bent to fit a new implementation.
+   *
+   * This case previously asserted the exact opposite ("is clean monochrome on a non-TTY even when
+   * useColour is on"). This module used to AND `getUseColour()` with `stdout.isTTY`, which is
+   * redundant against the ladder in every case but one: `FORCE_COLOR` into a pipe. The ladder's
+   * rung 1 resolves that to colour ON — forcing colour through a pipe being the whole purpose of
+   * the variable — and the local narrowing then threw the answer away. TUI-C35 removed the
+   * narrowing, so the forced case now reaches the output. The unforced piped case is unaffected
+   * and stays pinned above.
+   *
+   * The state mocked here (useColour true, stdout not a TTY) is reachable in production ONLY via
+   * `FORCE_COLOR` — rung 4 makes every other non-TTY route resolve false.
+   */
+  it('colours a piped run when FORCE_COLOR resolved the ladder on (behaviour changed by TUI-C35)', async () => {
+    systemUtilsMock.getUseColour.mockReturnValue(true);
+    systemUtilsMock.stdout.isTTY = false;
+    const { createPlainToolIndication } = await import('#src/core/plainToolIndication.js');
+    const sink = vi.fn();
+    const observer = createPlainToolIndication(sink);
+    for (const chunk of readFileRound()) observer.observe(chunk);
+    expect(sink.mock.calls[0][0]).toMatch(/\x1b\[/); // colour survives the pipe, as asked for
   });
 
   it('colours the block (dim summary, green/red diff) on a colour TTY', async () => {
