@@ -7,10 +7,7 @@ This file provides guidance to any AI coding agent (Claude Code, Cursor, etc.) w
 NodeJS · Typescript · Vitest for tests · LangChain and LangGraph · Ink for the terminal UI · Zod
 for schemas.
 
-**No version numbers here on purpose — `package.json` is the source of truth.** This list used to
-carry them and every single one had gone stale (Vitest 3 when it was 4, LangGraph 0.3 when it was
-1.x). A wrong version in this file is worse than no version: it reads as authoritative, so it gets
-trusted instead of checked, whereas its absence forces a lookup that is always right.
+**No version numbers here on purpose — `package.json` is the source of truth.**
 
 Where to look, since a monorepo makes it less obvious than one file:
 
@@ -24,6 +21,19 @@ Where to look, since a monorepo makes it less obvious than one file:
 ## Core Development Principles
 
 Vendor and system abstractions and wrappers should be used in most cases.
+
+### Documentation
+
+Docs in this repo are **normative**: they state what is true and what to do now. They are not a
+changelog. `README.md` especially is the face of the project, not a memorial.
+
+Do not write what a value used to be, when it changed, which ticket changed it, or how a bug came
+to be found. Avoid "previously…", "this used to…", "as of `<date>`…", and incident retellings.
+
+Keep the *operative* reason a rule exists — the one that stops someone quietly reverting it — and
+drop the narrative around it. History belongs in the commit message, the release notes (see
+[Release Notes](#release-notes)) and the issue tracker. When one change both fixes something and
+updates a doc: the corrected statement goes in the doc, the story goes in the commit message.
 
 ### UX / TUI guidelines
 
