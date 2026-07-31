@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { Chalk } from 'chalk';
+import chalk, { Chalk } from 'chalk';
 import { resolveUseColour } from '@gaunt-sloth/core/config/colour.js';
 import { applyTuiColour, clampedChalkLevel } from '#src/tui/colour.js';
 
@@ -178,5 +178,42 @@ describe('TUI-C35 — clampedChalkLevel clamps down only', () => {
     applyTuiColour(true, instance);
     expect(instance.level).toBe(1);
     expect(instance.red('x')).not.toBe('x');
+  });
+
+  /**
+   * THE CLAIM THE WHOLE NODE RESTS ON, and the only case that exercises the production call
+   * shape. Every other case here hands `applyTuiColour` an explicit instance, which proves the
+   * arithmetic but NOT that the knob production turns is the shared `chalk` default export — the
+   * very module Ink imports in `colorize.js` and `render-border.js`. Production calls
+   * `applyTuiColour(useColour)` with no second argument, so that default parameter is what
+   * reaches Ink, and without this case it would be asserted nowhere.
+   *
+   * The identity assertion is the load-bearing half: it fails if `tui/colour.ts` is ever changed
+   * to construct its own `new Chalk()` (which would clamp nothing anybody renders through), and
+   * it fails if the scoped `ink>chalk` overrides are dropped and the module splits.
+   *
+   * Restores the level in a `finally` — this mutates a module-global shared with every other
+   * consumer in this worker.
+   */
+  it('clamps the SHARED default chalk export — the instance Ink renders through', async () => {
+    const { default: chalkSeenByHook } = (await import(
+      pathToFileURL(require_.resolve('chalk')).href
+    )) as { default: typeof chalk };
+    // Same physical module object the hook mutates, not merely an equal-looking one.
+    expect(chalkSeenByHook).toBe(chalk);
+
+    const before = chalk.level;
+    try {
+      chalk.level = 3;
+      applyTuiColour(false);
+      expect(chalk.level).toBe(0);
+      expect(chalk.red('x')).toBe('x');
+
+      applyTuiColour(true);
+      expect(chalk.level).toBe(1);
+      expect(chalk.red('x')).not.toBe('x');
+    } finally {
+      chalk.level = before;
+    }
   });
 });

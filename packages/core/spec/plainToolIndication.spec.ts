@@ -6,9 +6,14 @@ const consoleUtilsMock = {
 };
 vi.mock('#src/utils/consoleUtils.js', () => consoleUtilsMock);
 
+/**
+ * TUI-C35 — `stdout` is deliberately ABSENT. `plainToolIndication` no longer reads it: colour is
+ * now exactly what the resolved ladder says, with no local TTY narrowing on top. Leaving a
+ * `stdout.isTTY` here would let each case set a value that decides nothing, which reads as though
+ * TTY-ness were still load-bearing. `env` stays — `toolDisplay` imports it.
+ */
 const systemUtilsMock = {
   getUseColour: vi.fn(),
-  stdout: { isTTY: false } as { isTTY: boolean },
   env: {} as Record<string, string | undefined>,
 };
 vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
@@ -41,7 +46,6 @@ describe('plainToolIndication (TUI-C30 — the --no-tui / piped surface)', () =>
     vi.resetAllMocks();
     vi.resetModules();
     systemUtilsMock.getUseColour.mockReturnValue(false);
-    systemUtilsMock.stdout.isTTY = false;
     systemUtilsMock.env = {};
   });
 
@@ -117,7 +121,6 @@ describe('plainToolIndication (TUI-C30 — the --no-tui / piped surface)', () =>
    */
   it('is clean monochrome on a piped run — the ladder resolved colour off', async () => {
     systemUtilsMock.getUseColour.mockReturnValue(false);
-    systemUtilsMock.stdout.isTTY = false;
     const { createPlainToolIndication } = await import('#src/core/plainToolIndication.js');
     const sink = vi.fn();
     const observer = createPlainToolIndication(sink);
@@ -136,12 +139,12 @@ describe('plainToolIndication (TUI-C30 — the --no-tui / piped surface)', () =>
    * narrowing, so the forced case now reaches the output. The unforced piped case is unaffected
    * and stays pinned above.
    *
-   * The state mocked here (useColour true, stdout not a TTY) is reachable in production ONLY via
-   * `FORCE_COLOR` — rung 4 makes every other non-TTY route resolve false.
+   * A resolved `true` on a piped run is reachable in production ONLY via `FORCE_COLOR` — rung 4
+   * makes every other non-TTY route resolve false — so that single mocked value is the whole
+   * scenario, and there is no TTY flag left for this case to set.
    */
   it('colours a piped run when FORCE_COLOR resolved the ladder on (behaviour changed by TUI-C35)', async () => {
     systemUtilsMock.getUseColour.mockReturnValue(true);
-    systemUtilsMock.stdout.isTTY = false;
     const { createPlainToolIndication } = await import('#src/core/plainToolIndication.js');
     const sink = vi.fn();
     const observer = createPlainToolIndication(sink);
@@ -149,9 +152,8 @@ describe('plainToolIndication (TUI-C30 — the --no-tui / piped surface)', () =>
     expect(sink.mock.calls[0][0]).toMatch(/\x1b\[/); // colour survives the pipe, as asked for
   });
 
-  it('colours the block (dim summary, green/red diff) on a colour TTY', async () => {
+  it('colours the block (dim summary, green/red diff) when the ladder resolved colour on', async () => {
     systemUtilsMock.getUseColour.mockReturnValue(true);
-    systemUtilsMock.stdout.isTTY = true;
     const { createPlainToolIndication } = await import('#src/core/plainToolIndication.js');
     const sink = vi.fn();
     const observer = createPlainToolIndication(sink);
