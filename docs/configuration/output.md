@@ -134,8 +134,7 @@ Lower levels are more verbose. Valid values for JSON configs:
 
 ## Colour (useColour, NO_COLOR, FORCE_COLOR)
 
-Say you pipe a review into a file for a CI artifact and the file is full of `←[31m` noise. Turn the
-colour off for that run without touching your config:
+Turn colour off for a single run, without touching your config:
 
 ```bash
 NO_COLOR=1 gth review > review.txt
