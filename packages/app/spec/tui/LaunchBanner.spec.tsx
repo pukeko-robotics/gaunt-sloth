@@ -7,8 +7,15 @@ import { LaunchBanner } from '#src/tui/components/LaunchBanner.js';
  * TUI-C33 — the Ink half of the launch banner. The geometry itself is proved in
  * `packages/core/spec/launchBanner.spec.ts`; what matters here is that this component renders the
  * shared rows faithfully, follows the live terminal width across a resize (as <Rule> does), and
- * tidies its subscription up on unmount.
+ * tidies its subscription up on unmount. TUI-C36 added the padding, whose one Ink-specific risk —
+ * an empty row measuring zero-high and vanishing — is asserted here rather than in core.
  */
+
+/** Column at which the right-hand column starts, after TUI-C36's left margin. */
+const RIGHT = 22;
+/** Index of the first art row: row 0 is the blank padding row. */
+const ART = 1;
+
 describe('tui <LaunchBanner>', () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -20,12 +27,30 @@ describe('tui <LaunchBanner>', () => {
     );
 
     const lines = (lastFrame() ?? '').split('\n');
-    expect(lines).toHaveLength(5);
-    expect(lines[0]).toContain('▄█▀▀▀▀▀▀▀▀█▄');
+    expect(lines).toHaveLength(7);
+    expect(lines[ART]).toContain('▄█▀▀▀▀▀▀▀▀█▄');
     // The wordmark begins at the split column on each of its three rows.
-    expect([...lines[0]].slice(21).join('')).toBe('┏┓         ┏┓┓   ┓');
-    expect([...lines[2]].slice(21).join('')).toBe('┗┛┗┻┗┻┛┗┗  ┗┛┗┗┛┗┛┗');
-    expect(lines[3]).toContain('gemini-3.1-pro (google-genai)');
+    expect([...lines[ART]].slice(RIGHT).join('')).toBe('┏┓         ┏┓┓   ┓');
+    expect([...lines[ART + 2]].slice(RIGHT).join('')).toBe('┗┛┗┻┗┻┛┗┗  ┗┛┗┗┛┗┛┗');
+    expect(lines[ART + 3]).toContain('gemini-3.1-pro (google-genai)');
+
+    unmount();
+  });
+
+  it('paints the TUI-C36 padding: a blank line above and below, and the left margin', () => {
+    const { lastFrame, unmount } = render(
+      <LaunchBanner model="gemini-3.1-pro" provider="google-genai" />
+    );
+
+    const lines = (lastFrame() ?? '').split('\n');
+    // A blank row is an empty line in the frame, not a line of spaces — Ink drops a zero-high
+    // <Text>, so this is what proves the padding rows actually paint.
+    expect(lines[0]).toBe('');
+    expect(lines[6]).toBe('');
+    // Every art row opens with the one-column margin.
+    for (const line of lines.slice(ART, ART + 5)) {
+      expect(line.startsWith(' ')).toBe(true);
+    }
 
     unmount();
   });
@@ -34,9 +59,9 @@ describe('tui <LaunchBanner>', () => {
     const { lastFrame, unmount } = render(<LaunchBanner />);
 
     const lines = (lastFrame() ?? '').split('\n');
-    expect(lines[3].trim()).toBe('▀▄▀▀ ██████ ▀▀▄▀');
-    // The directory still resolves, so row 5 keeps its field.
-    expect(lines[4].length).toBeGreaterThan(21);
+    expect(lines[ART + 3].trim()).toBe('▀▄▀▀ ██████ ▀▀▄▀');
+    // The directory still resolves, so the last art row keeps its field.
+    expect(lines[ART + 4].length).toBeGreaterThan(RIGHT);
 
     unmount();
   });

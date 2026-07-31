@@ -7,6 +7,9 @@ import type { SessionConfig } from '#src/modules/interactiveSessionModule.js';
 // the session has no initial message to run, through the non-session-logging emitter, and carrying
 // the live model/provider from the resolved config.
 
+/** Index of the first art row: row 0 is TUI-C36's blank padding row. */
+const ART = 1;
+
 // readline / stdin — the main '  > ' prompt returns 'exit' so the session sets up and ends.
 const rlQuestionMock = vi.fn(async (prompt: string) => {
   if (typeof prompt === 'string' && prompt.includes('>')) return 'exit';
@@ -102,12 +105,15 @@ describe('interactiveSessionModule launch banner (TUI-C33)', () => {
     expect(displayLaunchBannerMock).toHaveBeenCalledTimes(1);
     const banner = displayLaunchBannerMock.mock.calls[0][0] as string;
     const lines = banner.split('\n');
-    expect(lines).toHaveLength(5);
-    expect(lines[0]).toContain('┏┓         ┏┓┓   ┓'); // the wordmark
-    expect(lines[3]).toContain('gemini-3.1-pro (google-genai)'); // config-driven, not hardcoded
+    // Seven lines: TUI-C36's blank padding row, the five art rows, and the closing padding row.
+    expect(lines).toHaveLength(7);
+    expect(lines[0]).toBe('');
+    expect(lines[6]).toBe('');
+    expect(lines[ART]).toContain('┏┓         ┏┓┓   ┓'); // the wordmark
+    expect(lines[ART + 3]).toContain('gemini-3.1-pro (google-genai)'); // config-driven, not hardcoded
     // getProjectDir() — reported as-is here because the real homedir() is not its prefix; the
     // home-to-`~` collapse itself is pinned in packages/core/spec/launchBanner.spec.ts.
-    expect(lines[4]).toContain('/home/mari/dev/takahe');
+    expect(lines[ART + 4]).toContain('/home/mari/dev/takahe');
 
     // The ready message is untouched, and the banner was emitted BEFORE it.
     expect(displayMock).toHaveBeenCalledWith('\nGaunt Sloth is ready to chat. Type your prompt.');
@@ -149,8 +155,8 @@ describe('interactiveSessionModule launch banner (TUI-C33)', () => {
     await createInteractiveSession(sessionConfig, {});
 
     const lines = (displayLaunchBannerMock.mock.calls[0][0] as string).split('\n');
-    // Row 4 is the bare face — never an empty pair of parentheses.
-    expect(lines[3].trimEnd()).toBe('▀▄▀▀ ██████ ▀▀▄▀');
-    expect(lines[3]).not.toContain('(');
+    // The fourth art row is the bare face — never an empty pair of parentheses.
+    expect(lines[ART + 3].trimEnd()).toBe(' ▀▄▀▀ ██████ ▀▀▄▀');
+    expect(lines[ART + 3]).not.toContain('(');
   });
 });

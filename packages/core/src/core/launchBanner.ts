@@ -4,11 +4,12 @@
  * (`gth chat` / `gth code`): a sloth face on the left, the `GAUNT SLOTH` wordmark plus three live
  * fields (version, model/provider, working directory) on the right.
  *
- *     ▄█▀▀▀▀▀▀▀▀█▄       ┏┓         ┏┓┓   ┓
- *   ▄▀█▄█▀▀▀▀▀▀█▄█▀▄     ┃┓┏┓┓┏┏┓╋  ┗┓┃┏┓╋┣┓   v2.0.0-alpha.25
- *   █  ▀█▄▀  ▀▄█▀  █     ┗┛┗┻┗┻┛┗┗  ┗┛┗┗┛┗┛┗
- *   ▀▄▀▀ ██████ ▀▀▄▀     gemini-3.1-pro (google-genai)
- *     ▀██████████▀       ~/dev/takahe
+ *
+ *      ▄█▀▀▀▀▀▀▀▀█▄       ┏┓         ┏┓┓   ┓
+ *    ▄▀█▄█▀▀▀▀▀▀█▄█▀▄     ┃┓┏┓┓┏┏┓╋  ┗┓┃┏┓╋┣┓   v2.0.0-alpha.25
+ *    █  ▀█▄▀  ▀▄█▀  █     ┗┛┗┻┗┻┛┗┗  ┗┛┗┗┛┗┛┗
+ *    ▀▄▀▀ ██████ ▀▀▄▀     gemini-3.1-pro (google-genai)
+ *      ▀██████████▀       ~/dev/takahe
  *
  * It is deliberately NOT emitted by the one-shot verbs (`ask`, `review`, `pr`, `get`, `eval`,
  * `batch`, `api`, `init`): their stdout is piped into files, diffs and CI, where a banner is
@@ -36,8 +37,22 @@
  * box-drawing, the face is block elements, and the moment a field value contained a `▀` (or the art
  * gained a non-block glyph) a classifier would mis-colour it. A fixed column cannot.
  *
- * The face is 16 columns wide and the right column starts at 21, leaving a 5-column gutter. The
- * version label sits three columns after the widest wordmark line, i.e. at {@link VERSION_COLUMN}.
+ * The face is 16 columns wide and the right column starts at {@link RIGHT_COLUMN}, leaving a
+ * 5-column gutter. The version label sits three columns after the widest wordmark line, i.e. at
+ * {@link VERSION_COLUMN}.
+ *
+ * ## Why the padding is part of the layout rather than of either surface
+ *
+ * TUI-C36 — the block is a splash, so it gets breathing room: one blank row above, one blank row
+ * below, and a {@link LEFT_PAD}-column left margin on every art row. That padding lives HERE, with
+ * the rest of the geometry, for the same reason the columns do — the Ink surface and the readline
+ * surface must show the same block, and a margin added by one renderer is a margin the other one
+ * lacks. The blank rows are genuinely empty (no pad, no escape): a padding row that carried
+ * trailing spaces would be visible the moment anything selected or copied it.
+ *
+ * The pad column shifts every column constant by exactly one, which is why they are all derived
+ * from {@link LEFT_PAD} rather than written as literals. The field budgets are expressed against
+ * those constants (`columns - RIGHT_COLUMN`), so they absorb the shift without changing.
  *
  * ## Why every dynamic field is bounded, and why the version is the one that is DROPPED
  *
@@ -92,20 +107,42 @@ const WORDMARK_WIDTH = Math.max(...WORDMARK_LINES.map((line) => [...line].length
 const VERSION_GAP = 3;
 
 /**
- * Column at which the right-hand column begins on EVERY row — the single number the whole layout
- * and the colour split are expressed in terms of.
+ * Blank columns prepended to every art row (TUI-C36). One column of left margin, so the block does
+ * not sit flush against the edge of the terminal.
  */
-export const RIGHT_COLUMN = 21;
+export const LEFT_PAD = 1;
 
-/** Column at which the version label begins on row 2 (right column + wordmark + gap = 43). */
+/** The prepended margin itself, applied to art rows only — never to the blank padding rows. */
+const PAD = ' '.repeat(LEFT_PAD);
+
+/** Columns the face field occupies, after the margin. */
+const FACE_WIDTH = 16;
+
+/** Blank columns between the face field and the right column. */
+const FACE_GAP = 5;
+
+/**
+ * Column at which the right-hand column begins on EVERY row — the single number the whole layout
+ * and the colour split are expressed in terms of (margin + face + gutter = 22).
+ */
+export const RIGHT_COLUMN = LEFT_PAD + FACE_WIDTH + FACE_GAP;
+
+/** Column at which the version label begins on row 2 (right column + wordmark + gap = 44). */
 export const VERSION_COLUMN = RIGHT_COLUMN + WORDMARK_WIDTH + VERSION_GAP;
 
 /**
- * Narrowest terminal that still gets the right column. The wordmark itself ends at column 39, so
+ * Field budget the narrowest banner still affords the right column — the widest wordmark line plus
+ * a few columns of field, which is what the original threshold of 45 amounted to at
+ * {@link RIGHT_COLUMN} 21.
+ */
+const MIN_FIELD_BUDGET = 24;
+
+/**
+ * Narrowest terminal that still gets the right column. The wordmark itself ends at column 40, so
  * anything narrower than this leaves no usable room for the fields beside it; below the threshold
  * the face prints alone (see the module docs on why wrapping is not an option).
  */
-export const MIN_BANNER_COLUMNS = 45;
+export const MIN_BANNER_COLUMNS = RIGHT_COLUMN + MIN_FIELD_BUDGET;
 
 /** Width assumed when the terminal width is unknown (non-TTY / tests) — as in `ruleWidth`. */
 const DEFAULT_COLUMNS = 80;
@@ -134,9 +171,10 @@ export interface LaunchBannerInput {
  */
 export interface LaunchBannerRow {
   /**
-   * Columns 0–20: the face, right-padded to {@link RIGHT_COLUMN} when this row has right-hand
-   * content (and left unpadded when it does not, so no row ends in trailing whitespace).
-   * Rendered in magenta.
+   * Columns 0–21: the {@link LEFT_PAD} margin and the face, right-padded to {@link RIGHT_COLUMN}
+   * when this row has right-hand content (and left unpadded when it does not, so no row ends in
+   * trailing whitespace). Rendered in magenta — the margin is blank, so painting it is a no-op.
+   * Empty on the two blank padding rows, which carry nothing at all.
    */
   face: string;
   /** Columns 21+: wordmark, version, model/provider or directory. Default foreground, no colour. */
@@ -214,17 +252,29 @@ function modelProviderLabel(model?: string, provider?: string): string | undefin
   return m || p || undefined;
 }
 
+/** A padding row: no margin and no content, so it is an empty line on every surface. */
+function blankRow(): LaunchBannerRow {
+  return { face: '', right: '' };
+}
+
+/** Wrap the five art rows in the blank row above and below that make the block a splash. */
+function withPaddingRows(art: LaunchBannerRow[]): LaunchBannerRow[] {
+  return [blankRow(), ...art, blankRow()];
+}
+
 /**
- * Assemble the banner as {@link LaunchBannerRow}s: five rows, each pre-split at
- * {@link RIGHT_COLUMN}. Pure — every input arrives as an argument, so the geometry is testable
- * without a terminal, a config or a process.
+ * Assemble the banner as {@link LaunchBannerRow}s: a blank row, the five art rows each pre-split at
+ * {@link RIGHT_COLUMN}, and a blank row. Pure — every input arrives as an argument, so the geometry
+ * is testable without a terminal, a config or a process.
  */
 export function launchBannerRows(input: LaunchBannerInput): LaunchBannerRow[] {
   const columns = resolveColumns(input.columns);
 
-  // Too narrow for the right column: the face alone, with no padding and no fields.
+  // Too narrow for the right column: the face alone, with no fields. It keeps its left margin and
+  // its blank rows — the padding is what makes it a splash, and it costs one column, not the
+  // gutter's five.
   if (columns < MIN_BANNER_COLUMNS) {
-    return FACE_LINES.map((face) => ({ face, right: '' }));
+    return withPaddingRows(FACE_LINES.map((face) => ({ face: PAD + face, right: '' })));
   }
 
   // Every field is budgeted against ITS OWN start column, because the version starts further right
@@ -249,12 +299,15 @@ export function launchBannerRows(input: LaunchBannerInput): LaunchBannerRow[] {
     directory ?? '',
   ];
 
-  return FACE_LINES.map((face, index) => {
-    const right = rightLines[index] ?? '';
-    // Pad the face out to the split column only when something follows it, so a row whose field
-    // was omitted (or truncated away) does not end in a run of spaces.
-    return { face: right ? face.padEnd(RIGHT_COLUMN) : face, right };
-  });
+  return withPaddingRows(
+    FACE_LINES.map((face, index) => {
+      const right = rightLines[index] ?? '';
+      const padded = PAD + face;
+      // Pad the face out to the split column only when something follows it, so a row whose field
+      // was omitted (or truncated away) does not end in a run of spaces.
+      return { face: right ? padded.padEnd(RIGHT_COLUMN) : padded, right };
+    })
+  );
 }
 
 /**
@@ -272,9 +325,15 @@ export function launchBannerRows(input: LaunchBannerInput): LaunchBannerRow[] {
  */
 export function launchBannerText(input: LaunchBannerInput): string {
   return launchBannerRows(input)
-    .map(({ face, right }) =>
-      input.colour ? `${ANSI_COLORS.magenta}${face}${ANSI_COLORS.reset}${right}` : face + right
-    )
+    .map(({ face, right }) => {
+      // A padding row is an empty line and nothing else: wrapping it in the colour pair would put
+      // two escapes on a row that has no glyph to paint, which the colour-off guarantee and the
+      // one-pair-per-row assertion both read as a bug.
+      if (!face && !right) return '';
+      return input.colour
+        ? `${ANSI_COLORS.magenta}${face}${ANSI_COLORS.reset}${right}`
+        : face + right;
+    })
     .join('\n');
 }
 

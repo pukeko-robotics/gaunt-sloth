@@ -58,13 +58,21 @@ export function LaunchBanner({
 
   return (
     <Box flexDirection="column">
-      {rows.map((row, index) => (
-        // Row index is a stable key: the banner is always the same five rows in the same order.
-        <Text key={index}>
-          <Text color="magenta">{row.face}</Text>
-          {row.right}
-        </Text>
-      ))}
+      {rows.map((row, index) =>
+        // Row index is a stable key: the banner is always the same seven rows in the same order.
+        // TUI-C36's blank padding rows are rendered as an explicit one-line-high box rather than an
+        // empty <Text>: a <Text> with no content measures zero-high in Yoga and the padding row
+        // simply vanishes, whereas a sized box is a real line and needs no whitespace to hold it
+        // open (which would leave the frame with a trailing space).
+        row.face || row.right ? (
+          <Text key={index}>
+            <Text color="magenta">{row.face}</Text>
+            {row.right}
+          </Text>
+        ) : (
+          <Box key={index} height={1} />
+        )
+      )}
     </Box>
   );
 }
