@@ -581,6 +581,7 @@ describe('config schema (GS2-1 B1)', () => {
             'deny',
             'mode',
             'rater',
+            'raterTimeoutMs',
           ]);
           // A refinement has no JSON Schema representation; nothing of that shape may appear.
           expect(JSON.stringify(approvals)).not.toContain('not');

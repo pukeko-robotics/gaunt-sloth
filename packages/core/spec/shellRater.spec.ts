@@ -8,6 +8,10 @@ import {
   buildRaterSystemPrompt,
   COULD_NOT_ASSESS_PREFIX,
   FAIL_CLOSED_VERDICT,
+  failClosedVerdict,
+  RATER_DEFAULT_TIMEOUT_MS,
+  isFailClosed,
+  isRaterTimeout,
   foldHomePath,
   hasScriptEnvLeakRisk,
   isBelowDestructiveFloor,
@@ -528,9 +532,11 @@ describe('rateShellCommand', () => {
       throw new Error('boom');
     });
     const result = await rateShellCommand('ls -la', CONFIG, { model });
-    expect(result).toEqual(FAIL_CLOSED_VERDICT);
+    expect(result).toEqual(failClosedVerdict('threw'));
     expect(result.outcome).toBe('destructive');
     expect(result.reason).toContain(COULD_NOT_ASSESS_PREFIX);
+    expect(isFailClosed(result)).toBe(true);
+    expect(isRaterTimeout(result), 'a throw is not a timeout').toBe(false);
   });
 
   it('never fails closed to `attack` or `catastrophic` — a failure to assess must not halt', () => {
@@ -548,31 +554,41 @@ describe('rateShellCommand', () => {
   it('fails closed when the model returns the RETIRED `exfiltration` outcome', async () => {
     const { model } = fakeModel(() => ({ outcome: 'exfiltration', reason: 'sends a key' }));
     expect(await rateShellCommand('cat ~/.ssh/id_rsa', CONFIG, { model })).toEqual(
-      FAIL_CLOSED_VERDICT
+      failClosedVerdict('unparseable')
     );
   });
 
   it('fails closed when the model returns garbage', async () => {
     const { model } = fakeModel(() => ({ not: 'a verdict' }));
-    expect(await rateShellCommand('ls -la', CONFIG, { model })).toEqual(FAIL_CLOSED_VERDICT);
+    expect(await rateShellCommand('ls -la', CONFIG, { model })).toEqual(
+      failClosedVerdict('unparseable')
+    );
   });
 
   it('fails closed when the model returns a RETIRED four-tier verdict', async () => {
     const { model } = fakeModel(() => ({ tier: 'caution', reason: 'ok' }));
-    expect(await rateShellCommand('ls -la', CONFIG, { model })).toEqual(FAIL_CLOSED_VERDICT);
+    expect(await rateShellCommand('ls -la', CONFIG, { model })).toEqual(
+      failClosedVerdict('unparseable')
+    );
   });
 
   it('fails closed when the model is unusable', async () => {
     expect(
       await rateShellCommand('ls -la', CONFIG, { model: {} as unknown as BaseChatModel })
-    ).toEqual(FAIL_CLOSED_VERDICT);
+    ).toEqual(failClosedVerdict('no-model'));
   });
 
   it('fails closed on timeout', async () => {
     const { model } = fakeModel(() => new Promise(() => {})); // never resolves
-    expect(await rateShellCommand('ls -la', CONFIG, { model, timeoutMs: 5 })).toEqual(
-      FAIL_CLOSED_VERDICT
-    );
+    const result = await rateShellCommand('ls -la', CONFIG, { model, timeoutMs: 5 });
+    expect(result).toEqual(failClosedVerdict('timeout', 5));
+    // EXT-66 — the point of the split. Before it, this verdict was byte-identical to the one a
+    // model returns after looking at the command and calling it destructive, so an eval column and
+    // a session summary both read a gate that gave up as a gate that worked.
+    expect(result.outcome, 'still fails CLOSED').toBe('destructive');
+    expect(isRaterTimeout(result)).toBe(true);
+    expect(result.reason).toContain('5ms');
+    expect(result.reason).toContain('approvals.raterTimeoutMs');
   });
 
   it('defaults the rater model to config.llm', async () => {
@@ -957,5 +973,97 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
         expect(isBelowDestructiveFloor(outcome)).toBe(false);
       }
     });
+  });
+});
+
+/**
+ * EXT-66 — the timeout is a number the user owns, and a timeout is not a judgement.
+ *
+ * Two defects, measured 2026-07-31 while sweeping the EXT-62 anchoring across three raters.
+ * `RATER_DEFAULT_TIMEOUT_MS` was a hardcoded 30s with no config key, which is a hosted-model
+ * number: `gemma4:12b` over a local GPU took 6.0s–114.7s on the same corpus and was cut off on 3
+ * of 18 calls in one run and 9 of 17 in the next. And every one of those cut-offs was reported as
+ * `{ outcome: 'destructive' }` with a reason indistinguishable from a real judgement, so the sweep
+ * read a gate that had given up as a gate that had worked.
+ */
+describe('rateShellCommand — the timeout is configurable, and a timeout says so (EXT-66)', () => {
+  const hangingModel = () => fakeModel(() => new Promise(() => {}));
+
+  it('takes the timeout from approvals config when no option is given', async () => {
+    const { model } = hangingModel();
+    const config = { approvals: { mode: 'full-auto', raterTimeoutMs: 7 } } as unknown as GthConfig;
+    const result = await rateShellCommand('ls -la', config, { model });
+    expect(isRaterTimeout(result), 'the configured budget was honoured').toBe(true);
+    expect(result.reason).toContain('7ms');
+  });
+
+  it('lets an explicit option override the configured budget', async () => {
+    const { model } = hangingModel();
+    const config = {
+      approvals: { mode: 'full-auto', raterTimeoutMs: 900_000 },
+    } as unknown as GthConfig;
+    // Without the override this would hang for fifteen minutes rather than fail the test.
+    const result = await rateShellCommand('ls -la', config, { model, timeoutMs: 4 });
+    expect(result.reason).toContain('4ms');
+  });
+
+  it('falls back to the default when neither is set', async () => {
+    expect(RATER_DEFAULT_TIMEOUT_MS).toBe(30_000);
+    const { model } = hangingModel();
+    const config = { approvals: 'full-auto' } as unknown as GthConfig;
+    // Prove the DEFAULT is what an unset config resolves to, without waiting 30s for it: the
+    // reason names the budget it used, so the resolution is observable without the elapsed time.
+    const raced = await Promise.race([
+      rateShellCommand('ls -la', config, { model }),
+      new Promise((r) => setTimeout(() => r('still-running'), 50)),
+    ]);
+    expect(raced, 'a 30s budget has not elapsed after 50ms').toBe('still-running');
+  });
+
+  /**
+   * The distinction the whole node exists for. All four causes fail CLOSED — that part is correct
+   * and must not move — but they are no longer the same sentence, so a caller can tell an
+   * unanswered gate from a rendered judgement.
+   */
+  it('distinguishes the four fail-closed causes while all four still fail closed', async () => {
+    const causes = ['no-model', 'timeout', 'unparseable', 'threw'] as const;
+    const reasons = new Set(causes.map((c) => failClosedVerdict(c, 1234).reason));
+    expect(reasons.size, 'each cause has its own reason').toBe(causes.length);
+    for (const cause of causes) {
+      const verdict = failClosedVerdict(cause, 1234);
+      expect(verdict.outcome, `${cause} still fails closed`).toBe('destructive');
+      expect(isFailClosed(verdict), `${cause} is recognisable as a gate failure`).toBe(true);
+      expect(
+        mapVerdictToAction('ls -la', verdict, { rung: 'full-auto' }).action,
+        `${cause} never approves and never halts`
+      ).toBe('escalate');
+    }
+    expect(isRaterTimeout(failClosedVerdict('timeout', 1234))).toBe(true);
+    expect(isRaterTimeout(failClosedVerdict('threw'))).toBe(false);
+    expect(isRaterTimeout(failClosedVerdict('unparseable'))).toBe(false);
+    expect(isRaterTimeout(failClosedVerdict('no-model'))).toBe(false);
+  });
+
+  /**
+   * A real rater verdict that happens to be `destructive` must NOT be mistaken for a gate failure.
+   * This is the false-positive direction of `isFailClosed`, and it is the one that would quietly
+   * suppress genuine findings if the predicate were sloppy.
+   */
+  it('does not mistake a real destructive verdict for a gate failure', async () => {
+    const { model } = fakeModel(() => ({
+      outcome: 'destructive',
+      reason: 'Deletes the build directory.',
+    }));
+    const result = await rateShellCommand('rm -rf ./build', CONFIG, { model });
+    expect(result.outcome).toBe('destructive');
+    expect(isFailClosed(result), 'a rendered judgement is not a gate failure').toBe(false);
+    expect(isRaterTimeout(result)).toBe(false);
+  });
+
+  it('legacy FAIL_CLOSED_VERDICT is still recognised as a gate failure', () => {
+    // It remains exported and is still produced by `mapVerdictToAction`'s preflights, so the
+    // predicate must cover it or those paths become invisible the moment anything reads it.
+    expect(isFailClosed(FAIL_CLOSED_VERDICT)).toBe(true);
+    expect(isRaterTimeout(FAIL_CLOSED_VERDICT), 'but it is not a timeout').toBe(false);
   });
 });

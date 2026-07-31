@@ -124,8 +124,15 @@ const APPROVAL_RUNG_VALUES = ['read-only', 'write', 'auto-safe', 'full-auto', 'b
  * - **The scalar form is exactly sugar for `{ "mode": <value> }`** (§9.1). The union exists so the
  *   extras have a home when they are needed, not so there are two ways to say the same thing.
  * - `rater` is a **bare identity-profile name**, not an object (strict resolution, GS2-62: a name
- *   that does not resolve is a hard config error, never a silent fallback). It is the only rater
- *   knob; nesting a one-field object is what this design removed.
+ *   that does not resolve is a hard config error, never a silent fallback).
+ * - `raterTimeoutMs` (EXT-66) is the wall-clock budget for ONE rating call, defaulting to
+ *   `RATER_DEFAULT_TIMEOUT_MS` (30s) at the read site. **It exists because 30s is a hosted-model
+ *   number and a local model is knowably slower**: measured 2026-07-31, `gemma4:12b` over Ollama
+ *   answered a 23-case corpus in 6.0s–114.7s, and at the fixed limit 3 of 18 calls in one run and
+ *   9 of 17 in the next were cut off — so a local `full-auto` session degraded toward escalating
+ *   everything, which is the opposite of what the rung is for. Deliberately a number the user owns
+ *   rather than a provider→timeout table: a table is a guess about someone else's hardware, and
+ *   the failure it causes is silent.
  * - `allow`/`deny` are **read-only input**: merged with the runtime stores the escalation menu
  *   writes, and never written back to config.
  * - The retired `strictness` / `escalate` / `allowlist` / `persistAllowlist` keys and the retired
@@ -145,6 +152,13 @@ const approvalsSchema = z.union([
     rater: z.string().optional(),
     allow: z.array(z.string()).optional(),
     deny: z.array(z.string()).optional(),
+    // EXT-66 — wall-clock budget (ms) for one rating call. See the note on the union above for
+    // why this is a user-owned number rather than a per-provider table.
+    // `.min(1)`, not `.positive()`: the latter emits `exclusiveMinimum`, a JSON-Schema draft
+    // keyword this repo avoids on principle (GS2-57 — Google GenAI rejects it outright in tool
+    // declarations). This schema is not a tool declaration, but one spelling everywhere is what
+    // stops the wrong one being copied into somewhere that is.
+    raterTimeoutMs: z.number().int().min(1).optional(),
   }),
 ]);
 

@@ -594,6 +594,130 @@ describe('GthAgentRunner', () => {
       expect(runner.getSessionApprovals().rung).toBe('write');
     });
 
+    /**
+     * EXT-66 — the rater timeout is part of the resolved posture, and a call that runs out of it is
+     * SAID OUT LOUD rather than laundered into the escalation.
+     *
+     * Both halves matter and neither is cosmetic. The budget had no config key at all, so a local
+     * rater — measured at 6.0s–114.7s per call on `gemma4:12b` — was cut off by a 30s constant it
+     * could not reach, and `full-auto` drifted toward escalating everything, which is the failure
+     * the rung exists to prevent. And because the timeout produced a verdict byte-identical to a
+     * real `destructive` judgement, every layer reported success while it happened: the only
+     * symptom was the gate becoming mysteriously more talkative.
+     */
+    it('carries the rater timeout into the resolved posture', async () => {
+      resolveRaterModelMock.mockResolvedValue({ withStructuredOutput: vi.fn() } as any);
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      await runner.init('code', {
+        ...mockConfig,
+        approvals: { mode: 'full-auto', rater: 'safety-rater', raterTimeoutMs: 120_000 },
+      } as unknown as typeof mockConfig);
+      expect(runner.getSessionApprovals().raterTimeoutMs).toBe(120_000);
+    });
+
+    it('leaves the rater timeout undefined when config does not set one', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      await runner.init('code', {
+        ...mockConfig,
+        approvals: 'full-auto',
+      } as unknown as typeof mockConfig);
+      // Undefined, not 30000: the default belongs to the rater, so the effective-config snapshot
+      // does not churn and an unset key stays visibly unset.
+      expect(runner.getSessionApprovals().raterTimeoutMs).toBeUndefined();
+    });
+
+    /**
+     * EXT-66 — the PER-COMMAND budget, and the reason the runner passes the timeout explicitly
+     * rather than letting `rateShellCommand` resolve it alone.
+     *
+     * `rateShellCommand` resolves `approvals` with no command, so it can only ever see the ROOT
+     * value. A `commands.code.approvals.raterTimeoutMs` reaches it exclusively through the runner,
+     * which resolved the posture WITH the command. Found by deleting the runner's pass-through and
+     * watching the suite stay green — the two paths agree on the root value, so nothing else here
+     * could tell them apart.
+     */
+    it('honours a per-command rater timeout, which only the runner can resolve', async () => {
+      const invoke = vi.fn(() => new Promise(() => {}));
+      resolveRaterModelMock.mockResolvedValue({
+        withStructuredOutput: () => ({ invoke }),
+      } as any);
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue({
+        async *[Symbol.asyncIterator]() {
+          yield 'working';
+        },
+      });
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'ls -la' } }])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamResume = vi.fn().mockResolvedValue({
+        async *[Symbol.asyncIterator]() {
+          yield ' done';
+        },
+      });
+      await runner.init('code', {
+        ...mockConfig,
+        streamOutput: true,
+        // Root says a budget long enough to hang the test; the per-command value is the one that
+        // must win, exactly as the rung does.
+        approvals: { mode: 'full-auto', rater: 'slow-rater', raterTimeoutMs: 900_000 },
+        commands: {
+          code: { approvals: { mode: 'full-auto', rater: 'slow-rater', raterTimeoutMs: 6 } },
+        },
+      } as unknown as typeof mockConfig);
+      runner.setToolApprovalCallback(vi.fn().mockResolvedValue({ type: 'approve' }));
+
+      await runner.processMessages([new HumanMessage('run ls')]);
+
+      const said = statusUpdateCallback.mock.calls.map(([, message]) => String(message));
+      const notice = said.find((m) => m.includes('did not answer in time'));
+      expect(
+        notice,
+        `expected the per-command budget to apply; saw: ${JSON.stringify(said)}`
+      ).toBeDefined();
+      expect(notice).toContain('6ms');
+    });
+
+    it('warns the user when the rater runs out of time, instead of escalating silently', async () => {
+      // A rater model that never answers, with a 5ms budget — the shape of a local model on a
+      // hard command, compressed.
+      resolveRaterModelMock.mockResolvedValue({
+        withStructuredOutput: () => ({ invoke: () => new Promise(() => {}) }),
+      } as any);
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue({
+        async *[Symbol.asyncIterator]() {
+          yield 'working';
+        },
+      });
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'ls -la' } }])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamResume = vi.fn().mockResolvedValue({
+        async *[Symbol.asyncIterator]() {
+          yield ' done';
+        },
+      });
+      await runner.init('code', {
+        ...mockConfig,
+        streamOutput: true,
+        approvals: { mode: 'full-auto', rater: 'slow-rater', raterTimeoutMs: 5 },
+      } as unknown as typeof mockConfig);
+      runner.setToolApprovalCallback(vi.fn().mockResolvedValue({ type: 'approve' }));
+
+      await runner.processMessages([new HumanMessage('run ls')]);
+
+      const said = statusUpdateCallback.mock.calls.map(([, message]) => String(message));
+      const notice = said.find((m) => m.includes('did not answer in time'));
+      expect(notice, `expected a timeout notice among: ${JSON.stringify(said)}`).toBeDefined();
+      expect(notice).toContain('5ms');
+      expect(notice).toContain('approvals.raterTimeoutMs');
+      // It must not claim the command was judged — that is the whole distinction.
+      expect(notice).not.toMatch(/\bdestructive\b/);
+    });
+
     it('init seeds the whole posture (rung + rater profile + declared lists) from config', async () => {
       resolveRaterModelMock.mockResolvedValue({ withStructuredOutput: vi.fn() } as any);
       const runner = new GthAgentRunner(statusUpdateCallback);

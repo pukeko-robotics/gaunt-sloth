@@ -21,6 +21,7 @@ import {
   GthRunStats,
   Message,
   PendingToolInterrupt,
+  StatusLevel,
   StatusUpdateCallback,
   ToolApprovalCallback,
   ToolApprovalDecision,
@@ -41,7 +42,9 @@ import {
 } from '#src/core/shell/approvalStop.js';
 import { DenylistStore } from '#src/core/shell/denylist.js';
 import {
+  isRaterTimeout,
   mapVerdictToAction,
+  RATER_DEFAULT_TIMEOUT_MS,
   rateShellCommand,
   type ShellSafetyVerdict,
 } from '#src/core/shell/rater.js';
@@ -126,6 +129,13 @@ export class GthAgentRunner {
    * `undefined` means no profile is configured and the rater uses the session model.
    */
   private raterModel: BaseChatModel | undefined;
+
+  /**
+   * EXT-66 — how many rating calls this session gave up on. Counted so the notice can say "3 times
+   * this session" rather than repeating an identical line, and so a silent drift toward
+   * escalate-everything has a number attached to it.
+   */
+  private raterTimeouts = 0;
 
   private readonly sessionAllowlist = new AllowlistStore();
 
@@ -520,7 +530,27 @@ export class GthAgentRunner {
         // than cached at init, because `/approvals <rung>` moves the rung mid-session and a stale
         // list would offer a tool that is no longer granted.
         grantedTools: this.getGrantedBuiltInTools(),
+        // EXT-66 — the user-owned budget for ONE rating call, `undefined` when unset so
+        // rateShellCommand applies RATER_DEFAULT_TIMEOUT_MS. 30s is a hosted-model number and a
+        // local rater is knowably slower; without this a local `full-auto` session drifts toward
+        // escalating everything, which is the failure the rung exists to prevent.
+        timeoutMs: approvals.raterTimeoutMs,
       });
+      // EXT-66 — a timeout is the gate giving up, not a judgement, and the two were previously
+      // indistinguishable in the action column. Say it once per occurrence: the only symptom
+      // otherwise is the gate becoming mysteriously more talkative, which reads as the rater
+      // working rather than as the rater never being heard from.
+      if (isRaterTimeout(verdict)) {
+        this.raterTimeouts += 1;
+        this.statusUpdate(
+          StatusLevel.WARNING,
+          `The command safety rater did not answer in time (${
+            approvals.raterTimeoutMs ?? RATER_DEFAULT_TIMEOUT_MS
+          }ms), so this command was escalated without being rated` +
+            (this.raterTimeouts > 1 ? ` — ${this.raterTimeouts} times this session` : '') +
+            '. Raise approvals.raterTimeoutMs if the rater is a local model.'
+        );
+      }
       const decision = mapVerdictToAction(command, verdict, { rung: approvals.rung });
       if (decision.action === 'approve') {
         // Scope `once`: rater approvals are NEVER persisted to the allow-list.

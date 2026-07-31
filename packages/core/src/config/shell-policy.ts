@@ -469,6 +469,13 @@ export interface ApprovalsObjectConfig {
   allow?: string[];
   /** §3 — declared deny-list: command prefixes never to run. Read-only input; applies under `bypass`. */
   deny?: string[];
+  /**
+   * EXT-66 — wall-clock budget (ms) for ONE rating call. Absent = {@link RATER_DEFAULT_TIMEOUT_MS}
+   * (30s), which is a hosted-model number: a local rater is knowably slower, and when it runs out
+   * of time the gate escalates, so an unreachable timeout turns the permissive rung into one that
+   * asks about everything while every layer reports success.
+   */
+  raterTimeoutMs?: number;
 }
 
 /** On-disk `approvals` value: the rung on its own, or the object when the extras are needed. */
@@ -488,6 +495,12 @@ export interface ResolvedApprovals {
   allow: string[];
   /** Declared deny-list prefixes (§3). Empty when none are declared. */
   deny: string[];
+  /**
+   * EXT-66 — wall-clock budget (ms) for one rating call, or `undefined` to let the rater apply
+   * `RATER_DEFAULT_TIMEOUT_MS`. Left `undefined` rather than defaulted here so the effective-config
+   * snapshot does not churn, exactly as `rater` is.
+   */
+  raterTimeoutMs?: number;
 }
 
 /**
@@ -543,6 +556,7 @@ export function resolveApprovals(
     rater: raw?.rater,
     allow: raw?.allow ?? [],
     deny: raw?.deny ?? [],
+    raterTimeoutMs: raw?.raterTimeoutMs,
   };
 }
 

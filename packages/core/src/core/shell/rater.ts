@@ -36,7 +36,7 @@ import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import * as z from 'zod';
 
 import type { ApprovalRung, GrantedToolSummary, GthConfig } from '#src/config.js';
-import { isRatedRung } from '#src/config.js';
+import { isRatedRung, resolveApprovals } from '#src/config.js';
 import { classifyCommand } from '#src/core/shell/arity.js';
 import { normalizeCommand } from '#src/core/shell/normalize.js';
 import { findOpenWorldHostLiterals } from '#src/core/shell/openWorld.js';
@@ -145,9 +145,72 @@ export const FAIL_CLOSED_VERDICT: ShellSafetyVerdict = {
 };
 
 /**
+ * EXT-66 — why the gate failed closed. **Every one of these is a fact about the GATE, not about the
+ * command**, which is the whole point of naming them: {@link FAIL_CLOSED_VERDICT} collapsed four
+ * different gate failures into one verdict that reads, downstream and in every eval report, exactly
+ * like a model that looked at the command and judged it `destructive`.
+ *
+ * That is not hypothetical. The EXT-62 anchoring sweep read its first `gemma4:12b` column as full
+ * coverage of the interpreter-wrapper misses; 3 of those escalations were the gate defaulting after
+ * 30 seconds, not the model judging, and only the reason string distinguished them.
+ *
+ * The outcome stays `destructive` for all four — failing closed is right and stays right, and a
+ * failure to assess must not manufacture `catastrophic`/`attack` any more than it may manufacture
+ * an approval. What changes is that the reason now says which failure happened. [[EXT-64]] routes
+ * the `timeout` and `no-model` causes onto its `abstain` ACTION by reading this, rather than
+ * re-deriving it; this module deliberately does not anticipate that vocabulary.
+ */
+export type FailClosedCause = 'no-model' | 'timeout' | 'unparseable' | 'threw';
+
+/**
+ * The fail-closed verdict for a specific {@link FailClosedCause}. Keeps
+ * {@link COULD_NOT_ASSESS_PREFIX} — the statement "this was not assessed" is still true and is what
+ * downstream keys on — and appends what actually went wrong.
+ *
+ * The timeout arm names the budget, because "the rater timed out" is not actionable and "the rater
+ * did not answer within 30000ms" points straight at `approvals.raterTimeoutMs`.
+ */
+export function failClosedVerdict(cause: FailClosedCause, timeoutMs?: number): ShellSafetyVerdict {
+  const detail: Record<FailClosedCause, string> = {
+    'no-model': 'no usable rater model is configured, so nothing evaluated it.',
+    timeout: `the auto-rater did not answer within ${timeoutMs ?? RATER_DEFAULT_TIMEOUT_MS}ms, so nothing evaluated it. This is the gate giving up, not a judgement about the command — raise approvals.raterTimeoutMs if the rater is a local model.`,
+    unparseable: 'the auto-rater returned output that did not match the verdict schema.',
+    threw: 'the auto-rater call failed.',
+  };
+  return { outcome: 'destructive', reason: `${COULD_NOT_ASSESS_PREFIX}: ${detail[cause]}` };
+}
+
+/**
+ * Whether a verdict is one this gate produced because it could not obtain a rating, as opposed to
+ * one a rater actually returned. Keys on {@link COULD_NOT_ASSESS_PREFIX} — the same
+ * reason-prefix-as-identity idiom {@link NAMES_A_HOST_PREFIX} already uses — so it covers the
+ * legacy {@link FAIL_CLOSED_VERDICT} as well as every {@link failClosedVerdict} cause.
+ *
+ * Exported so a caller can tell "the gate defaulted" from "the model judged" without string
+ * matching at the call site, which is the distinction an eval column and a session summary both
+ * need and neither could previously make.
+ */
+export function isFailClosed(verdict: ShellSafetyVerdict | undefined): boolean {
+  return verdict?.reason?.startsWith(COULD_NOT_ASSESS_PREFIX) === true;
+}
+
+/** Whether a verdict is specifically the {@link FailClosedCause} `timeout` arm. */
+export function isRaterTimeout(verdict: ShellSafetyVerdict | undefined): boolean {
+  return isFailClosed(verdict) && verdict?.reason?.includes('did not answer within') === true;
+}
+
+/**
  * Default wall-clock budget (ms) for the rater LLM call. Kept low so a slow/hung rater can't
  * wedge the approval flow — on timeout we fail closed. Mirrors openclaw's low exec-reviewer
  * timeout minimum.
+ *
+ * **EXT-66 — this is a HOSTED-model number, and it is now a default rather than the only value.**
+ * `claude-haiku-4-5` and `gemini-3.6-flash` answered a 23-case corpus well inside it, 0 fail-closed.
+ * `gemma4:12b` over a local GPU took 6.0s–114.7s on the same corpus, and the harder the command the
+ * longer it thought — so the fixed limit preferentially clipped exactly the commands that most
+ * needed rating (3 of 18 calls in one run, 9 of 17 in the next; all of them returned real verdicts
+ * at 120s, including a correct `catastrophic` returned 85 seconds after the gate had given up).
+ * Override with `approvals.raterTimeoutMs`.
  */
 export const RATER_DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -579,7 +642,16 @@ export async function rateShellCommand(
   }
 ): Promise<ShellSafetyVerdict> {
   const model = options?.model ?? config.llm;
-  const timeoutMs = options?.timeoutMs ?? RATER_DEFAULT_TIMEOUT_MS;
+  // EXT-66 — precedence: an explicit option (tests, and `gth eval`'s rater target) wins, then the
+  // user's `approvals.raterTimeoutMs`, then the hosted-model default. Reading the CONFIG here
+  // rather than only the option is what makes a `gth eval` sweep axis of
+  // `config: { approvals: { raterTimeoutMs: … } }` take effect without every caller re-plumbing it
+  // — which matters because a suite could not previously measure a local rater without patching
+  // core, i.e. the one thing you would want to measure was the one thing you could not.
+  const timeoutMs =
+    options?.timeoutMs ??
+    resolveApprovals(config, undefined).raterTimeoutMs ??
+    RATER_DEFAULT_TIMEOUT_MS;
   const { system, user } = buildRaterPrompt(command, {
     home: options?.home,
     grantedTools: options?.grantedTools,
@@ -589,7 +661,7 @@ export async function rateShellCommand(
   try {
     if (!model || typeof model.withStructuredOutput !== 'function') {
       debugLog('rateShellCommand: no usable model for the auto-rater; failing closed.');
-      return FAIL_CLOSED_VERDICT;
+      return failClosedVerdict('no-model');
     }
 
     const structured = model.withStructuredOutput(ShellSafetyVerdictSchema);
@@ -603,7 +675,7 @@ export async function rateShellCommand(
     const raced = await Promise.race([raterPromise, timeoutPromise]);
     if (raced === TIMEOUT) {
       debugLog(`rateShellCommand: rater timed out after ${timeoutMs}ms; failing closed.`);
-      return FAIL_CLOSED_VERDICT;
+      return failClosedVerdict('timeout', timeoutMs);
     }
 
     // withStructuredOutput already coerces to the schema, but re-validate defensively: a fake or
@@ -611,12 +683,12 @@ export async function rateShellCommand(
     const parsed = ShellSafetyVerdictSchema.safeParse(raced);
     if (!parsed.success) {
       debugLog('rateShellCommand: rater returned unparseable output; failing closed.');
-      return FAIL_CLOSED_VERDICT;
+      return failClosedVerdict('unparseable');
     }
     return validateSuggestedTool(parsed.data, options?.grantedTools);
   } catch (error) {
     debugLogError('rateShellCommand', error);
-    return FAIL_CLOSED_VERDICT;
+    return failClosedVerdict('threw');
   } finally {
     if (timer) clearTimeout(timer);
   }
