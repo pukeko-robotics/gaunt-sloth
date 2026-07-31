@@ -166,10 +166,16 @@ stay monochrome in a terminal, `true` to keep colour in output you are piping in
 { "useColour": false }
 ```
 
-**The interactive TUI does not follow this ladder.** `gth chat` and `gth code` render through Ink,
-whose colour support is decided by chalk, and chalk reads `FORCE_COLOR` but **not** `NO_COLOR`. So
-`NO_COLOR=1 gth chat` still shows a coloured TUI. Use `FORCE_COLOR=0`, which both surfaces honour,
-or `--no-tui` to get the plain surface.
+**The interactive TUI follows the same ladder.** `gth chat` and `gth code` render through Ink, whose
+colour support is decided by chalk — and chalk reads `FORCE_COLOR` but **not** `NO_COLOR`, so the TUI
+used to stay coloured under `NO_COLOR=1`. It no longer does: the TUI now applies the resolved answer
+to chalk at startup, so `NO_COLOR=1 gth chat` gives you a monochrome TUI and every row of the table
+above means the same thing on both surfaces.
+
+Colour is only ever turned **down**, never up. With colour on, the TUI keeps whatever colour depth
+your terminal reports rather than forcing 24-bit escapes into a terminal that cannot show them; the
+one exception is `FORCE_COLOR` where no colour support was detected at all, which gets basic
+16-colour output.
 
 ## Run Header (output.header)
 

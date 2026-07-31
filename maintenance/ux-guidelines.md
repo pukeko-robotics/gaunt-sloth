@@ -130,13 +130,22 @@ the ready message.
 - **Colour is the 16-colour `magenta` slot and nothing else (DL-7, DL-8).** That slot adopts the
   user's own terminal theme violet, so the sloth looks native in light and dark schemes alike — never
   a 256-colour or 24-bit escape. The right-hand column carries no escape at all, and with colour off
-  the banner is plain text with zero escape sequences. What "colour off" means differs by surface,
-  and the two do not fully agree: the plain surface resolves it through the CFG-30 ladder
-  (`config/colour.ts` — `FORCE_COLOR`, then `NO_COLOR`, then an explicit `useColour`, then stdout's
-  TTY status; documented for users in [Output & files](../docs/configuration/output.md#colour-usecolour-no_color-force_color)),
-  while the TUI takes chalk's own detection, which reads `FORCE_COLOR` but **not** `NO_COLOR`. So
-  `NO_COLOR=1` blanks the plain surface and leaves the TUI coloured — measured, and pinned by
-  `packages/app/spec/colourCrossSurface.e2e.spec.ts`.
+  the banner is plain text with zero escape sequences. **"Colour off" means the same thing on both
+  surfaces (DL-6).** One ladder decides it — the CFG-30 `config/colour.ts` (`FORCE_COLOR`, then
+  `NO_COLOR`, then an explicit `useColour`, then stdout's TTY status; documented for users in
+  [Output & files](../docs/configuration/output.md#colour-usecolour-no_color-force_color)) — and the
+  TUI consumes that answer rather than deriving its own. It has to: chalk's own detection reads
+  `FORCE_COLOR` but **not** `NO_COLOR`, in any version, so left alone the TUI stayed coloured under
+  `NO_COLOR=1` while the plain surface went monochrome. TUI-C35 closed that with a single startup
+  hook (`tui/colour.ts`) that clamps the shared chalk instance from the resolved config before the
+  first render; agreement is pinned by `packages/app/spec/colourCrossSurface.e2e.spec.ts`.
+- **A new TUI colour path must go through that hook, never around it.** Do not add a second read of
+  `NO_COLOR`/`FORCE_COLOR` anywhere under `tui/`, and do not give Ink its own chalk: the hook works
+  only because Ink and our markdown renderer share one physical chalk module, which the scoped
+  `ink>chalk` / `ink-text-input>chalk` overrides in `pnpm-workspace.yaml` exist to guarantee. The
+  clamp is **downward only** — colour off means level 0, colour on keeps whatever depth chalk
+  detected (floored at basic 16-colour when it detected none), and never promotes a terminal to a
+  depth it did not report.
 
 ## Tool-call panels (DL-2 progressive disclosure, DL-4 transparency)
 
