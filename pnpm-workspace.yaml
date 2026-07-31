@@ -13,6 +13,20 @@ packages:
 overrides:
   '@langchain/core': ^1.2.1
 
+  # TUI-C35 — keep the chalk the TUI touches a SINGLE physical module while moving it to chalk 6.
+  # The app renders through Ink and through its own markdown renderer, and both reach the same
+  # `chalk` default export; that shared instance is what the TUI's startup colour clamp mutates
+  # (see packages/app/src/tui/colour.ts). ink 7.1.1 declares chalk ^5.6.2 and ink-text-input 6.0.0
+  # declares ^5.3.0, so bumping only packages/app would leave Ink on chalk 5 — a second instance
+  # the clamp cannot reach, i.e. exactly the second colour policy this work exists to remove.
+  #
+  # These are SCOPED on purpose; a blanket `chalk` override is wrong here. It would also rewrite
+  # @microsoft/tui-test (chalk 5.6.2) — the PTY harness that gates this very change — and the
+  # chalk 4.1.2 copies the jest packages under it still use. chalk 4 is consumed as CommonJS and
+  # chalk 6 is ESM-only, so a blanket override is a hard break rather than an upgrade.
+  'ink>chalk': ^6.0.0
+  'ink-text-input>chalk': ^6.0.0
+
 # Dependencies with install/build scripts pnpm is allowed to run (the pnpm
 # equivalent of npm's allow-scripts approval). These are transitive dev/test
 # deps: node-pty + @swc/core come from @microsoft/tui-test (the TUI e2e harness).
