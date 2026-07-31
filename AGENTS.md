@@ -4,13 +4,22 @@ This file provides guidance to any AI coding agent (Claude Code, Cursor, etc.) w
 
 ## Technologies Used
 
-- NodeJS 24 (`engines` requires `>=24.0.0`; CI runs 24.x and latest)
-- Vitest 4 for tests
-- Typescript 6
-- LangChain 1.x and LangGraph 1.x
+NodeJS · Typescript · Vitest for tests · LangChain and LangGraph · Ink for the terminal UI · Zod
+for schemas.
 
-Please refer to package.json to check exact versions — and trust it over this list, which is
-majors-only precisely so it drifts slowly.
+**No version numbers here on purpose — `package.json` is the source of truth.** This list used to
+carry them and every single one had gone stale (Vitest 3 when it was 4, LangGraph 0.3 when it was
+1.x). A wrong version in this file is worse than no version: it reads as authoritative, so it gets
+trusted instead of checked, whereas its absence forces a lookup that is always right.
+
+Where to look, since a monorepo makes it less obvious than one file:
+
+- **Node**: the `engines` field. **Vitest / Typescript / lint + format**: the root `package.json`.
+- **Everything else**: `packages/*/package.json` — the runtime deps live per package (LangChain
+  across several, Ink only in the app).
+- **When the exact version matters, read the installed package, not the declared range.**
+  `pnpm-workspace.yaml` carries `overrides` that deliberately override what a package asks for, so
+  the range in a `package.json` is not always what resolves.
 
 ## Core Development Principles
 
