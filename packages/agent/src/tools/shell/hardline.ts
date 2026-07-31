@@ -41,6 +41,14 @@
  * exactly this was measured leaking 6 of 12 attacks where the blunt one leaked 0). The residuals
  * are pinned as tests rather than left to be rediscovered — see `shellHardline.spec.ts`.
  *
+ * EXT-69 — anchoring is only as good as the set of positions it recognises, and {@link CMD_POS} is
+ * an ENUMERATION. EXT-62 shipped with a short one, so thirteen wrapped invocations that the old
+ * match-anywhere patterns had caught by accident began to execute; `timeout 5 rm -rf /` is the
+ * emblem, because the wrapper list held `time` and not `timeout`. The wrappers are now one
+ * repeatable list ({@link WRAPPER_ARMS}) whose order cannot matter. **The compound-command openers
+ * are still not modelled, and that is now a measured decision rather than an omission** — the table
+ * and the exposure it accepts are on {@link CMD_POS}.
+ *
  * This floor is deliberately INDEPENDENT of the allow-list classifier above it: it must block
  * a catastrophic command even if every layer above wrongly decided the command was safe.
  *
@@ -51,16 +59,139 @@ import {
   normalizeCommand,
 } from '@gaunt-sloth/core/core/shell/normalize.js';
 
-// Matches a position where the shell would begin parsing a NEW command: start of
-// string, after a separator (; & | newline), after `$(` or backtick, optionally
-// consuming leading wrappers (sudo/env VAR=VAL/exec/nohup/setsid/time). Used by
-// the shutdown-family patterns so they don't false-positive on `echo reboot`.
+/**
+ * A run of flag tokens. Bounded per token by the required trailing whitespace, and unable to
+ * consume the wrapped command because every iteration must start with `-`.
+ */
+const WRAPPER_FLAGS = '(?:-[^\\s]+\\s+)*';
+
+/**
+ * EXT-69 — the wrapper programs that may sit between a command position and the command itself,
+ * as ONE list, because the enumeration is the defect this table exists to bound.
+ *
+ * {@link CMD_POS} used to spell its wrappers as three fixed, ordered, non-repeating groups —
+ * `sudo?` then `env?` then `(exec|nohup|setsid|time)*`. That shape had two independent holes and
+ * [[EXT-62]]'s anchoring turned both from "narrower than ideal" into real misses, because the
+ * unanchored patterns it replaced had matched a destructive verb ANYWHERE and so caught these by
+ * accident:
+ *
+ * - **The list was short.** `eval`, `command`, `timeout`, `nice`, `ionice`, `stdbuf` and `xargs`
+ *   were absent, so `timeout 5 rm -rf /` executed. `timeout` is the emblem of the whole defect:
+ *   the list contained `time` and not `timeout`.
+ * - **The order was fixed.** `env FOO=1 sudo rm -rf /` and `nohup sudo rm -rf /` missed even
+ *   before EXT-62, purely because the groups were written in one sequence. One repeatable group
+ *   fixes ordering for free and cannot regress in that direction again.
+ *
+ * **Each entry carries the operands it takes**, and that is deliberate rather than incidental. The
+ * tempting shortcut — "after a wrapper, skip tokens until one looks like a command" — is what turns
+ * `timeout 5 echo rm -rf /` into an unappealable refusal of an `echo`. A wrapper is only allowed to
+ * consume the operand shape it actually defines, so anything else ends the prefix and the verb has
+ * to sit at a genuine command position to match.
+ *
+ * Value-taking short flags are listed BEFORE the generic flag run in each alternation, because
+ * `-[^\s]+` would otherwise match `-u` and leave its value where the command should be — which is
+ * why `sudo -u root rm -rf /` missed before this table existed.
+ *
+ * **The generic run then EXCLUDES those same flags by lookahead, and that is a correctness
+ * requirement rather than a tidy-up.** Listing the value-taking branch first only makes it
+ * *preferred*; the generic branch could still match `-u ` on backtracking, so a run of `-u ` tokens
+ * partitioned two ways per pair — Fibonacci-many parses of the same input. When the overall match
+ * failed the engine walked all of them, and since {@link CMD_POS} is shared by every
+ * destructive-verb pattern, the whole floor inherited it: `sudo ` + `-u `×40 took 2.5 seconds and
+ * ×60 did not finish. `-(?![ugpUCDhRT]\s)` makes the two branches mutually exclusive, which removes
+ * the ambiguity at the source instead of bounding its cost. Clustered (`-u10`) and long (`--user`)
+ * spellings are unaffected — the character after the flag letter is not whitespace, so they still
+ * fall to the generic run as intended.
+ *
+ * The lookahead also makes the value interpretation FORCED rather than merely preferred, which
+ * deliberately narrows seven forms: `sudo -u rm -rf /` and its siblings no longer match, because
+ * `-u rm` names the *user* and the command that actually runs is `/`. That is the shell's own
+ * reading, and refusing it was the EXT-62 false-positive class, so the narrowing is the point and
+ * not a cost. Pinned below.
+ *
+ * **These arms are reachable only from a command position**, so they are strictly additive: they
+ * widen what counts as a prefix, never where a prefix may start. A wrapper name in an ordinary
+ * argument (`man timeout`, `which eval command timeout`, `grep -rn "timeout 5 rm -rf /" docs/`) is
+ * not preceded by a separator and cannot reach this table at all.
+ */
+const WRAPPER_ARMS: readonly string[] = [
+  // `-u root` / `-g grp` take a value; the generic run would eat the flag and leave the value.
+  `sudo\\s+(?:-[ugpUCDhRT]\\s+\\S+\\s+|-(?![ugpUCDhRT]\\s)[^\\s]+\\s+)*`,
+  // `env -i`, `env -u VAR`, then any number of VAR=VAL assignments. The flags came first in the
+  // real syntax and last in the old pattern, which is why `env -i rm -rf /` executed.
+  `env\\s+(?:-u\\s+\\S+\\s+|-(?!u\\s)[^\\s]+\\s+)*(?:\\w+=\\S*\\s+)*`,
+  // `timeout [flags] DURATION cmd` — the duration operand is what the flag run cannot express.
+  // Longest-first against `time` below; both require trailing whitespace, so neither can claim
+  // the other's name.
+  `timeout\\s+(?:-[sk]\\s+\\S+\\s+|-(?![sk]\\s)[^\\s]+\\s+)*[0-9]+(?:\\.[0-9]+)?[smhd]?\\s+`,
+  // `nice -n 10` / `ionice -c 3`; the clustered spellings (`-c3`, `-o0`) fall to the generic run.
+  `nice\\s+(?:-n\\s+\\S+\\s+|-(?!n\\s)[^\\s]+\\s+)*`,
+  `ionice\\s+(?:-[cnp]\\s+\\S+\\s+|-(?![cnp]\\s)[^\\s]+\\s+)*`,
+  `stdbuf\\s+${WRAPPER_FLAGS}`,
+  // Bare forms only. `eval "rm -rf /"` and `xargs -I{} sh -c "…"` put the command inside a quoted
+  // ARGUMENT, which needs CFG-29 span extraction rather than another entry here — see the residual
+  // note in the module docblock. `eval rm -rf /` and `xargs rm -rf /` are the forms covered.
+  `(?:eval|command|builtin|exec|nohup|setsid|time|xargs)\\s+${WRAPPER_FLAGS}`,
+];
+
+/**
+ * Matches a position where the shell would begin parsing a NEW command: start of string, after a
+ * separator (`;` `&` `|` newline), after `$(` or a backtick, optionally consuming any run of the
+ * leading wrappers in {@link WRAPPER_ARMS}. Used by every destructive-verb pattern so a verb in an
+ * ordinary argument (`echo reboot`, `grep -c mkfs docs/*.md`) is not a refusal.
+ *
+ * **What this deliberately does NOT model — a decision, made from a measurement, not an oversight.**
+ *
+ * **Compound-command openers: `(`, `{`, `)` for a `case` arm, and the `then`/`else`/`elif`/`do`
+ * keyword positions.** A shell begins a command at every one of them, so `(rm -rf /)`,
+ * `{ rm -rf /; }`, `if true; then rm -rf /; fi` and `for f in a; do rm -rf /; done` all execute and
+ * none is refused here. Adding them was tried and measured, per opener, against prose whose only
+ * crime is describing shell syntax — the class the 30 July incident came from and the class EXT-62
+ * spent its whole budget freeing. **Every opener costs legitimate commands, and there is no free
+ * one:**
+ *
+ * | opener | invocations bought | prose refused (of 20) |
+ * |---|---|---|
+ * | `(` | 1 | 4 |
+ * | `{` + space | 1 | 3 |
+ * | `)` (case arm) | 1 | 3 |
+ * | `then` | 2 | 2 |
+ * | `do` | 2 | 2 |
+ * | `else` | 1 | 1 |
+ *
+ * Among the refused: `` gh pr create --body "fixes the case where (rm -rf /) was allowed" `` — a
+ * refusal of the commit that documents this very module, which is EXT-62's own finding restated.
+ * `)` is the sharpest: it is the only way to reach a `case` arm and it refuses
+ * `echo "(a) rm -rf / is bad"`, so the two cannot both hold lexically.
+ *
+ * **What decides it is the asymmetry between the two errors, measured on both sides.** A miss here
+ * is not naked: `classifyCommand` returns `null` for seven of the eight forms — `;` inside them
+ * makes the command unclassifiable — so they cannot be auto-matched and they escalate at
+ * `auto-safe` and `full-auto`, where the rater then rates them (measured `catastrophic` on
+ * `claude-haiku-4-5`, `gemini-3.6-flash`, `gemini-3.5-flash-lite` and `google/gemma-3-12b-it`).
+ * A false positive here is unappealable at EVERY rung, including `read-only`, and the user cannot
+ * proceed at all. `(rm -rf /)` is the eighth and resolves to prefix `(rm`, which no allow-list will
+ * hold; it was also allowed BEFORE EXT-62, so it is not a regression.
+ *
+ * **The residual exposure, stated plainly: `bypass` consults no rater and no classifier, so these
+ * seven forms are uncovered there.** That is a real reduction against the floor of a week ago and
+ * it is accepted knowingly — `bypass` is the rung whose whole meaning is "stop asking me", and the
+ * floor's promise there is a courtesy backstop, not the safety story. A user who wants the
+ * catastrophic set actually stopped belongs on `read-only`. Closing this properly needs the
+ * [[CFG-29]] span extractor, not more entries in a lexical enumeration.
+ *
+ * **Quoting** is out for the same reason it has always been out: this is a lexical test, and
+ * teaching it to parse quotes is a second command parser and a second place for the floor to be
+ * bypassed (see the module docblock). `sh -c "…"`, `bash -c "…"` and `eval "…"` put the command
+ * inside an argument and stay uncovered on that basis — also a CFG-29 consumer, not an entry here.
+ *
+ * Both halves are pinned in `shellHardline.spec.ts`, so a later widening has to go red against the
+ * prose before it can go green against the invocations.
+ */
 const CMD_POS =
   `(?:^|[${COMMAND_SEPARATOR_CLASS}\`]|\\$\\()` +
   '\\s*' +
-  '(?:sudo\\s+(?:-[^\\s]+\\s+)*)?' +
-  '(?:env\\s+(?:\\w+=\\S*\\s+)*)?' +
-  '(?:(?:exec|nohup|setsid|time)\\s+)*' +
+  `(?:${WRAPPER_ARMS.join('|')})*` +
   '\\s*';
 
 /**
