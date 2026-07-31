@@ -436,6 +436,11 @@
               "items": {
                 "type": "string"
               }
+            },
+            "raterTimeoutMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
             }
           }
         }
@@ -714,6 +719,11 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "raterTimeoutMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
                     }
                   }
                 }
@@ -972,6 +982,11 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "raterTimeoutMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
                     }
                   }
                 }
@@ -1221,6 +1236,11 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "raterTimeoutMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
                     }
                   }
                 }
@@ -1450,6 +1470,11 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "raterTimeoutMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
                     }
                   }
                 }
@@ -1679,6 +1704,11 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "raterTimeoutMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
                     }
                   }
                 }
@@ -1908,6 +1938,11 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "raterTimeoutMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
                     }
                   }
                 }
@@ -2137,6 +2172,11 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "raterTimeoutMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
                     }
                   }
                 }

@@ -686,7 +686,17 @@ sweep:
 
 with `.gsloth/.gsloth-settings/{haiku,flash,gemma}/.gsloth.config.json` each declaring its own `type` and `model`.
 
-One thing to check before believing a cross-provider comparison: **a rating call that times out is reported as `destructive`**, so a slow provider's column can read as agreement when it is really the gate's fail-closed default. The per-case `rationale` says which — a reason of *"could not evaluate"* is a call that did not finish, not a judgement.
+One thing to check before believing a cross-provider comparison: **a rating call that times out is still reported as `destructive`**, so a slow provider's column can read as agreement when it is really the gate's fail-closed default. The per-case `rationale` is what distinguishes them — a timeout now says *"the auto-rater did not answer within Nms"* and names the budget, where a real judgement explains the command.
+
+If that is what you are seeing, raise the budget rather than reading the column. One rating call gets 30 seconds by default, which is a hosted-model number; a 12B over Ollama measured 6s to nearly two minutes on the same commands, and the harder the command the longer it thought — so the default clips exactly the cases worth comparing. It is a normal config key, so a sweep axis sets it like any other:
+
+```yaml
+target: { type: rater, rung: full-auto }
+sweep:
+  rater:
+    - { config: { approvals: { mode: full-auto, rater: haiku } } }
+    - { config: { approvals: { mode: full-auto, rater: local, raterTimeoutMs: 120000 } } }
+```
 
 **Sweeping `model:` moves the judge too.** By default `judge:` rubrics are graded by the SUT's own model, so a model axis changes the grader along with the thing graded and the comparison's `pass rate` row is no longer comparable across cells. Set `judge_profile:` (or `--judge`) to pin the grader to one model whenever you sweep `model:` on a suite that uses rubrics.
 

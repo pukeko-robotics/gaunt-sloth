@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   FAIL_CLOSED_VERDICT,
+  failClosedVerdict,
   RATER_OUTCOMES,
   mapVerdictToAction,
 } from '@gaunt-sloth/core/core/shell/rater.js';
@@ -234,8 +235,14 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
       expect(invoke).toHaveBeenCalledTimes(1);
       // Core's own fail-closed verdict, passed through — this package never invents one.
       expect(outcome.label).toBe(FAIL_CLOSED_VERDICT.outcome);
-      expect(outcome.rationale).toContain(FAIL_CLOSED_VERDICT.reason);
+      expect(outcome.rationale).toContain(failClosedVerdict('timeout', 5).reason);
       expect(outcome.modelCalls).toBe(1);
+      // EXT-66 — a suite reading this column has to be able to tell a rating from a default. The
+      // label is `destructive` either way (fail-closed is correct), so the RATIONALE is the only
+      // place the distinction can live, and an eval that reports the escalation as coverage
+      // without reading it is measuring the timeout. The EXT-62 sweep did exactly that.
+      expect(outcome.rationale).toContain('did not answer within');
+      expect(outcome.rationale).toContain('approvals.raterTimeoutMs');
     });
   });
 

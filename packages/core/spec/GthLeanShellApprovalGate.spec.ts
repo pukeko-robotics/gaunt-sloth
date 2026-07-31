@@ -33,7 +33,12 @@ import type {
 // CFG-26 rater — scripted per test so the rater layer is observable without an LLM call.
 const rateShellCommandMock = vi.fn();
 const mapVerdictToActionMock = vi.fn();
-vi.mock('#src/core/shell/rater.js', () => ({
+// EXT-66 — the two decision functions are stubbed; everything else stays REAL via importOriginal,
+// including `isRaterTimeout` and `RATER_DEFAULT_TIMEOUT_MS`, which the runner now consults to tell
+// "the gate gave up" from "the model judged". Listing exports by hand is what made this mock go
+// stale the moment the module grew one.
+vi.mock('#src/core/shell/rater.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('#src/core/shell/rater.js')>()),
   rateShellCommand: rateShellCommandMock,
   mapVerdictToAction: mapVerdictToActionMock,
 }));

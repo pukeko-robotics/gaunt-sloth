@@ -57,6 +57,12 @@ Anything the rater cannot assess lands on **destructive** and says so; it never 
 Pushing and publishing to somewhere your project already configures — `git push`, `npm publish`,
 `docker push` — is ordinary work: the rater may well ask about it, but it never ends the run.
 
+**Read the sentence, not just the word in brackets.** Because "could not assess" also lands on
+**destructive**, the bracketed word alone cannot tell you whether a model looked at the command and
+judged it, or whether the gate never got an answer. The reason says which — "could not assess this
+command: the auto-rater did not answer within 30000ms" is the gate giving up, not a finding about
+your command. If you see that one, the fix is a bigger budget (below), not a safer command.
+
 ### A command that names a host always asks
 
 When one of the usual network tools — `curl`, `wget`, `ssh`, `scp`, `rsync`, `nc`, `aws`, `git
@@ -94,6 +100,31 @@ does fire, no model opinion can wave the command through.
 
 The rater is only as good as the model behind it. On a small or local model, prefer the `write` rung
 (below) or point the rater at a stronger model with `approvals.rater`.
+
+### Give a local rater enough time
+
+One rating call gets **30 seconds** by default, and that is a hosted-model number. A local model is
+slower, and — awkwardly — the harder the command, the longer it thinks, so a fixed budget cuts off
+exactly the commands that most needed rating. Measured on a 12B over Ollama, the same set of
+commands took anywhere from 6 seconds to nearly two minutes.
+
+When the rater runs out of time the command is escalated rather than approved, which is safe but is
+also the opposite of what `auto-safe` and `full-auto` are for: you end up being asked about
+everything, and nothing tells you why. So gth says so, once per occurrence, and you can raise the
+budget:
+
+```json
+{
+  "approvals": {
+    "mode": "full-auto",
+    "rater": "local-rater",
+    "raterTimeoutMs": 120000
+  }
+}
+```
+
+It is a number you set rather than one gth guesses from the provider, because a guess about your
+hardware that turns out wrong fails quietly.
 
 To have the agent run tests *without* any of this, give it the fixed `run_tests` dev-command tool:
 you set the exact command, and because there is nothing for the model to choose, it runs with **no
