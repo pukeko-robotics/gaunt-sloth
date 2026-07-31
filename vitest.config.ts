@@ -125,6 +125,15 @@ export default defineConfig({
   test: {
     include: ['packages/*/spec/**/*.{ts,tsx}'],
     environment: 'node',
+    // OPS-33 — clamp chalk to level 0 before any spec loads, so no test depends on ambient
+    // terminal capability. Six Ink-rendering specs compare frames to un-escaped strings and go
+    // red for anyone who exports FORCE_COLOR (the one thing that overrides chalk's non-TTY early
+    // return, and now a documented knob since TUI-C35). Under vitest chalk is already at level 0,
+    // so this is an identity operation everywhere the suite passes today. The setup file explains
+    // why it clamps via the shipped hook instead of pinning FORCE_COLOR=0 in `env` — those are
+    // NOT equivalent; FORCE_COLOR=0 is rung 1 of the CFG-30 ladder several specs exercise.
+    // Relative, not an absolute path literal, so the Windows cell resolves it too.
+    setupFiles: ['./packages/app/vitest.setup.ts'],
     server: {
       deps: {
         // Import the repo-root release helper the way Node does, not through Vitest's inline
