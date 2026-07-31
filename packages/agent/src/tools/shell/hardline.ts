@@ -19,16 +19,12 @@
  * `rm -rf ./build`, `chmod -R 777 ./dir`, `curl | sh`) are deliberately not here either — those are
  * the confirmation dialog's job.
  *
- * **How it may grow (spec §8, and it binds).** A new case must be **stress-tested for side effects**
- * against ordinary legitimate commands, not only against the attack that motivated it. **If the
- * false positives cannot be avoided without making this code too complicated and entangled, the
- * case is DROPPED** — the expected outcome, not a failure. This file does not grow into an
- * enumeration of every variation. What decides it: **a false positive here is unappealable at EVERY
- * rung including `bypass`, while a miss still has the rater and the escalation behind it at every
- * rung but `bypass`.** Where recognising a command needs real structure — an interpreter's quoted
- * argument, a compound-statement body — the answer is CFG-29 span extraction over the quote-aware
- * tokenizer in `arity.ts`, giving the rater the right unit of analysis, never another lexical entry
- * here. {@link CMD_POS} carries the worked example of a case measured and dropped.
+ * **How it may grow: spec §8.0 states the rules and they bind — read it before adding a pattern.**
+ * In short: stress-test a new case for side effects, and drop it if the false positives cannot be
+ * avoided cheaply. **What decides every one of those calls is the asymmetry — a false positive here
+ * is unappealable at EVERY rung including `bypass`, while a miss still has the rater and the
+ * escalation behind it at every rung but `bypass`.** {@link CMD_POS} carries the worked example of
+ * a case measured and dropped.
  *
  * §8.1 — **the floor is never advertised.** It is documented for people reading the code and the
  * spec, never offered to a user as a reason to feel safe; user-facing copy cites only protections
