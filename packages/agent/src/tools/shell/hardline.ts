@@ -92,6 +92,23 @@ const WRAPPER_FLAGS = '(?:-[^\\s]+\\s+)*';
  * `-[^\s]+` would otherwise match `-u` and leave its value where the command should be — which is
  * why `sudo -u root rm -rf /` missed before this table existed.
  *
+ * **The generic run then EXCLUDES those same flags by lookahead, and that is a correctness
+ * requirement rather than a tidy-up.** Listing the value-taking branch first only makes it
+ * *preferred*; the generic branch could still match `-u ` on backtracking, so a run of `-u ` tokens
+ * partitioned two ways per pair — Fibonacci-many parses of the same input. When the overall match
+ * failed the engine walked all of them, and since {@link CMD_POS} is shared by every
+ * destructive-verb pattern, the whole floor inherited it: `sudo ` + `-u `×40 took 2.5 seconds and
+ * ×60 did not finish. `-(?![ugpUCDhRT]\s)` makes the two branches mutually exclusive, which removes
+ * the ambiguity at the source instead of bounding its cost. Clustered (`-u10`) and long (`--user`)
+ * spellings are unaffected — the character after the flag letter is not whitespace, so they still
+ * fall to the generic run as intended.
+ *
+ * The lookahead also makes the value interpretation FORCED rather than merely preferred, which
+ * deliberately narrows seven forms: `sudo -u rm -rf /` and its siblings no longer match, because
+ * `-u rm` names the *user* and the command that actually runs is `/`. That is the shell's own
+ * reading, and refusing it was the EXT-62 false-positive class, so the narrowing is the point and
+ * not a cost. Pinned below.
+ *
  * **These arms are reachable only from a command position**, so they are strictly additive: they
  * widen what counts as a prefix, never where a prefix may start. A wrapper name in an ordinary
  * argument (`man timeout`, `which eval command timeout`, `grep -rn "timeout 5 rm -rf /" docs/`) is
@@ -99,17 +116,17 @@ const WRAPPER_FLAGS = '(?:-[^\\s]+\\s+)*';
  */
 const WRAPPER_ARMS: readonly string[] = [
   // `-u root` / `-g grp` take a value; the generic run would eat the flag and leave the value.
-  `sudo\\s+(?:-[ugpUCDhRT]\\s+\\S+\\s+|-[^\\s]+\\s+)*`,
+  `sudo\\s+(?:-[ugpUCDhRT]\\s+\\S+\\s+|-(?![ugpUCDhRT]\\s)[^\\s]+\\s+)*`,
   // `env -i`, `env -u VAR`, then any number of VAR=VAL assignments. The flags came first in the
   // real syntax and last in the old pattern, which is why `env -i rm -rf /` executed.
-  `env\\s+(?:-u\\s+\\S+\\s+|-[^\\s]+\\s+)*(?:\\w+=\\S*\\s+)*`,
+  `env\\s+(?:-u\\s+\\S+\\s+|-(?!u\\s)[^\\s]+\\s+)*(?:\\w+=\\S*\\s+)*`,
   // `timeout [flags] DURATION cmd` — the duration operand is what the flag run cannot express.
   // Longest-first against `time` below; both require trailing whitespace, so neither can claim
   // the other's name.
-  `timeout\\s+(?:-s\\s+\\S+\\s+|-k\\s+\\S+\\s+|-[^\\s]+\\s+)*[0-9]+(?:\\.[0-9]+)?[smhd]?\\s+`,
+  `timeout\\s+(?:-[sk]\\s+\\S+\\s+|-(?![sk]\\s)[^\\s]+\\s+)*[0-9]+(?:\\.[0-9]+)?[smhd]?\\s+`,
   // `nice -n 10` / `ionice -c 3`; the clustered spellings (`-c3`, `-o0`) fall to the generic run.
-  `nice\\s+(?:-n\\s+\\S+\\s+|-[^\\s]+\\s+)*`,
-  `ionice\\s+(?:-[cnp]\\s+\\S+\\s+|-[^\\s]+\\s+)*`,
+  `nice\\s+(?:-n\\s+\\S+\\s+|-(?!n\\s)[^\\s]+\\s+)*`,
+  `ionice\\s+(?:-[cnp]\\s+\\S+\\s+|-(?![cnp]\\s)[^\\s]+\\s+)*`,
   `stdbuf\\s+${WRAPPER_FLAGS}`,
   // Bare forms only. `eval "rm -rf /"` and `xargs -I{} sh -c "…"` put the command inside a quoted
   // ARGUMENT, which needs CFG-29 span extraction rather than another entry here — see the residual

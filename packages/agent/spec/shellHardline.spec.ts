@@ -944,16 +944,47 @@ describe('checkHardline — the openers not modelled, and the prose that decides
   /**
    * A repeatable group over overlapping alternations, each with a nested quantifier, is the
    * catastrophic-backtracking shape — and this runs on agent-supplied input on a layer no rung can
-   * appeal. Every arm must consume its literal wrapper name before it can loop, which is what bounds
-   * it; this asserts the bound rather than trusting the reasoning.
+   * appeal.
+   *
+   * **This test used to assert the bound with vectors that could not reach it,** which is worth
+   * stating because the reasoning it encoded sounded right: "every arm must consume its literal
+   * wrapper name before it can loop, which is what bounds it". The wrapper name bounds the OUTER
+   * loop and says nothing about the flag run INSIDE an arm, and that is where the ambiguity was —
+   * the value-taking branch and the generic branch could both match `-u `, so N such tokens had
+   * Fibonacci-many parses. The old vectors used `-x`, which only the generic branch matches, so
+   * they exercised the one shape that was never ambiguous and passed in microseconds.
+   *
+   * The vectors below are the ones that actually discriminate. Against the pre-fix arms they take
+   * 2.5s at 40 repetitions and do not finish at 60; the whole floor was affected rather than one
+   * pattern, since `CMD_POS` is shared by every destructive-verb entry. **If a later edit
+   * reintroduces an overlapping branch, these go red and the `-x` ones still would not.**
    */
   it('does not backtrack catastrophically on adversarial input', () => {
     const adversarial = [
+      // Original vectors: an unambiguous flag run and the outer wrapper loop. Kept as controls.
       'sudo '.repeat(2000) + 'x',
       'env ' + 'A=1 '.repeat(2000) + 'x',
       'timeout ' + '-x '.repeat(2000) + 'x',
       'sudo env nice timeout '.repeat(500) + 'x',
       '('.repeat(5000) + 'x',
+      // A value-taking flag, repeated: the branch overlap, one arm at a time.
+      'sudo ' + '-u '.repeat(2000) + 'x',
+      'sudo ' + '-g '.repeat(2000) + 'x',
+      'env ' + '-u '.repeat(2000) + 'x',
+      'timeout ' + '-k '.repeat(2000) + 'x',
+      'timeout ' + '-s '.repeat(2000) + 'x',
+      'nice ' + '-n '.repeat(2000) + 'x',
+      'ionice ' + '-c '.repeat(2000) + 'x',
+      // The same overlap reached ACROSS arms, where the flag's value is another wrapper's name so
+      // the outer loop can re-enter at a different arm. Not among the vectors the PR #419 review
+      // named; found by enumerating the grammar rather than the report.
+      'sudo -u env '.repeat(500) + 'x',
+      'env -u sudo '.repeat(500) + 'x',
+      'nice -n sudo '.repeat(500) + 'x',
+      'ionice -c sudo '.repeat(500) + 'x',
+      // A near-miss tail: the prefix parses, then the verb fails, which is what forces the engine
+      // to exhaust every partition rather than stopping at the first success.
+      'sudo ' + '-u '.repeat(2000) + 'rm -rf /tmp/safe',
     ];
     for (const cmd of adversarial) {
       const started = performance.now();
@@ -964,5 +995,48 @@ describe('checkHardline — the openers not modelled, and the prose that decides
         `"${cmd.slice(0, 24)}…" (${cmd.length} chars) took ${elapsed}ms`
       ).toBeLessThan(250);
     }
+  });
+
+  /**
+   * The lookahead that removes the overlap also makes the value interpretation FORCED rather than
+   * preferred, and these seven forms are what that changes. Each one reads as a destructive command
+   * only if you ignore that the flag before it takes a value: `sudo -u rm -rf /` names `rm` as the
+   * USER and runs `/`. The shell never runs `rm` here, so refusing it was a false positive of
+   * exactly the EXT-62 class — unappealable at every rung, including `read-only`.
+   *
+   * Pinned so the narrowing is a decision on the record rather than a side effect noticed later.
+   */
+  const valueIsNotTheCommand = [
+    'sudo -u rm -rf /',
+    'sudo -g rm -rf /',
+    'sudo -p rm -rf /',
+    'sudo -U rm -rf /',
+    'env -u rm -rf /',
+    'nice -n rm -rf /',
+    'ionice -c rm -rf /',
+  ];
+
+  it.each(valueIsNotTheCommand)(
+    'does not refuse a verb name used as a wrapper flag VALUE: %s',
+    (cmd) => {
+      expect(checkHardline(cmd), `expected "${cmd}" to be allowed`).toBeNull();
+    }
+  );
+
+  /**
+   * The counterpart, so the narrowing above cannot quietly widen into a miss: once the flag's value
+   * is consumed, a real command in the real command position is still refused.
+   */
+  const stillRefusedAfterAValue = [
+    'sudo -u root rm -rf /',
+    'sudo -u rm rm -rf /',
+    'env -u FOO rm -rf /',
+    'nice -n 10 rm -rf /',
+    'ionice -c 3 rm -rf /',
+    'timeout -k 1 5 rm -rf /',
+  ];
+
+  it.each(stillRefusedAfterAValue)('still refuses past a consumed flag value: %s', (cmd) => {
+    expect(checkHardline(cmd), `expected "${cmd}" to be refused`).not.toBeNull();
   });
 });
