@@ -274,6 +274,16 @@ export const setUseColour = (useColour: boolean): void => {
 
 export const isTTY = (): boolean => !!stdin.isTTY;
 
+/**
+ * Whether STDOUT is a terminal — distinct from {@link isTTY}, which reports on STDIN.
+ *
+ * Colour is a property of where output GOES, so the colour auto-detection (CFG-30 rung 4, see
+ * `config/colour.ts`) asks this one: `gth ask … > out.txt` keeps an interactive stdin while stdout
+ * is a file, and that run must not emit escapes. Read at call time so a test can declare the
+ * terminal it wants in setup.
+ */
+export const isStdoutTTY = (): boolean => !!stdout.isTTY;
+
 export const exit = (code?: number): never => process.exit(code || 0);
 export const stdin = process.stdin;
 export const stdout = process.stdout;

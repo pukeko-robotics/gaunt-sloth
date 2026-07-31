@@ -29,6 +29,10 @@ const systemUtilsMock = {
   getInstallDir: vi.fn(),
   setUseColour: vi.fn(),
   isTTY: vi.fn(),
+  // CFG-30 — colour now auto-detects from stdout when nothing else decides. Declared per-test
+  // (see beforeEach) so these merge assertions describe a terminal run rather than inheriting
+  // whatever stdout the test runner happens to have.
+  isStdoutTTY: vi.fn(),
   env: {},
 };
 vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
@@ -60,6 +64,7 @@ describe('Config merging', () => {
     systemUtilsMock.getProjectDir.mockReturnValue('/mock/current/dir');
     systemUtilsMock.getInstallDir.mockReturnValue('/mock/install/dir');
     systemUtilsMock.isTTY.mockReturnValue(true);
+    systemUtilsMock.isStdoutTTY.mockReturnValue(true);
   });
 
   describe('pr command config merging', () => {

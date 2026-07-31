@@ -430,6 +430,10 @@ export const rawGthConfigSchema = z.looseObject({
   streamOutput: z.boolean().optional(),
   writeOutputToFile: z.union([z.boolean(), z.string()]).optional(),
   writeBinaryOutputsToFile: z.boolean().optional(),
+  // CFG-30 — rung 3 of the colour ladder (`config/colour.ts`), NOT the final say: `FORCE_COLOR`
+  // and `NO_COLOR` outrank it, and when it is absent colour auto-detects from stdout's TTY status.
+  // MUST stay `.optional()` — absence is what distinguishes "the user chose true" from the `true`
+  // in `defaults.ts`, and the ladder collapses without that. User docs: docs/configuration/output.md
   useColour: z.boolean().optional(),
   streamSessionInferenceLog: z.boolean().optional(),
   canInterruptInferenceWithEsc: z.boolean().optional(),

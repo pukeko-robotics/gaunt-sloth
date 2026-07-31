@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,8 +12,14 @@ import { resolveConfig } from '#src/config/loader.js';
  * resolves, the snapshot breaks. The example configs use only canonical names (2.0 rejects the
  * deprecated shapes outright — see GS2-28), so no pre-map step is involved.
  *
- * `resolveConfig` is the pure merge (no LLM instantiation, no global side effects), so `llm`
+ * `resolveConfig` writes no globals (no LLM instantiation, no `set*` side effects), so `llm`
  * stays the raw spec object — fine for a deterministic snapshot.
+ *
+ * It does READ the environment, though: CFG-30 resolves `useColour` from `FORCE_COLOR` /
+ * `NO_COLOR` / stdout's TTY status. The snapshot pins the merge policy, not the machine it ran on,
+ * so the setup below DECLARES that environment — a terminal with neither colour variable set —
+ * rather than inheriting the runner's piped stdout or a CI image that exports `FORCE_COLOR`.
+ * Without this the committed `useColour` would flip with the ambient shell.
  */
 const here = resolve(fileURLToPath(import.meta.url), '..');
 const repoRoot = resolve(here, '..', '..', '..');
@@ -27,6 +33,20 @@ function readExample(relPath: string): Record<string, unknown> {
 }
 
 describe('effective-merged acceptance (B2b)', () => {
+  let realIsTTY: boolean | undefined;
+
+  beforeEach(() => {
+    realIsTTY = process.stdout.isTTY;
+    process.stdout.isTTY = true;
+    vi.stubEnv('NO_COLOR', undefined);
+    vi.stubEnv('FORCE_COLOR', undefined);
+  });
+
+  afterEach(() => {
+    process.stdout.isTTY = realIsTTY as boolean;
+    vi.unstubAllEnvs();
+  });
+
   it.each([
     'examples/jira-mcp/.gsloth.config.json',
     'examples/lmstudio/.gsloth.config.json',

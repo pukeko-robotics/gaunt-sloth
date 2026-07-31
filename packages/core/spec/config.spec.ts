@@ -57,6 +57,10 @@ const systemUtilsMock = {
   getInstallDir: vi.fn(),
   setUseColour: vi.fn(),
   isTTY: vi.fn(),
+  // CFG-30 — colour now auto-detects from stdout when nothing else decides. Declared per-test
+  // (see beforeEach) so the `useColour` expectations below describe a terminal run rather than
+  // inheriting the test runner's piped stdout.
+  isStdoutTTY: vi.fn(),
   // CFG-14: createProjectConfig now resolves the init model via modelDiscovery, which reads
   // `env` to look for provider API keys. An empty env means no keys → no live discovery →
   // resolveInitModel returns undefined and `init` is called with model=undefined (omit).
@@ -104,6 +108,7 @@ describe('config', async () => {
     systemUtilsMock.getProjectDir.mockReturnValue(MOCK_CWD);
     systemUtilsMock.getInstallDir.mockReturnValue('/mock/install/dir');
     systemUtilsMock.isTTY.mockReturnValue(true);
+    systemUtilsMock.isStdoutTTY.mockReturnValue(true);
     // Default: global config path is absent (sentinel never matched by fs mocks).
     globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
       () => '/mock/global-absent/no-such-config'

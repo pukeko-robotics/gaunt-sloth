@@ -37,13 +37,16 @@ import { parseJsonc } from '#src/config/jsonc.js';
 import { getGslothConfigReadPath, importExternalFile } from '#src/utils/fileUtils.js';
 import { getGlobalGslothConfigReadPath } from '#src/utils/globalConfigUtils.js';
 import {
+  env,
   error,
   exit,
   getCurrentWorkDir,
+  isStdoutTTY,
   isTTY,
   setProjectDir,
   setUseColour,
 } from '#src/utils/systemUtils.js';
+import { resolveUseColour } from '#src/config/colour.js';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -1035,17 +1038,29 @@ function resolvePrecedencePickedField(
 
 /**
  * Resolve a fully-merged {@link GthConfig} from a partial config + CLI overrides WITHOUT
- * any global side effects (a pure transform). It deep-merges defaults, applies CLI overrides,
- * resolves the numeric `consoleLevel` (warning + defaulting to INFO on an invalid value), and
- * computes `canInterruptInferenceWithEsc`. The process-global setters (`setUseColour` /
+ * any global side effects. It deep-merges defaults, applies CLI overrides, resolves the numeric
+ * `consoleLevel` (warning + defaulting to INFO on an invalid value), and computes
+ * `canInterruptInferenceWithEsc` and `useColour`. The process-global setters (`setUseColour` /
  * `setConsoleLevel`) are applied separately by {@link mergeConfig}, so this function can be
  * reasoned about and reused without touching global state.
+ *
+ * It WRITES nothing globally, but it does READ the environment: `canInterruptInferenceWithEsc`
+ * consults stdin's TTY status, and (CFG-30) `useColour` consults `FORCE_COLOR`, `NO_COLOR` and
+ * stdout's TTY status. So it is deterministic for a given environment rather than a pure function
+ * of its arguments — a test that pins a resolved config should declare the terminal and the colour
+ * environment it expects in its setup. The ladder itself is a pure helper
+ * ({@link resolveUseColour}) so it can be tested rung by rung without process globals.
  */
 export function resolveConfig(
   partialConfig: Omit<Partial<GthConfig>, 'consoleLevel'> & { consoleLevel?: ConsoleLevelInput },
   commandLineConfigOverrides: CommandLineConfigOverrides
 ): GthConfig {
   const config = partialConfig as GthConfig;
+
+  // CFG-30 — capture whether the user set `useColour` AT ALL, while the config is still raw.
+  // `DEFAULT_CONFIG.useColour` is merged in below, after which an explicit `true` and the default
+  // `true` are the same value and rung 3 can no longer be told from rung 4. Read it here or lose it.
+  const explicitUseColour = config?.useColour;
 
   // Deep merge command configs while preserving defaults
   // Type complexity from DEFAULT_CONFIG.commands 'as const' requires any cast for deep merge result
@@ -1140,6 +1155,16 @@ export function resolveConfig(
   }
 
   mergedConfig.canInterruptInferenceWithEsc = mergedConfig.canInterruptInferenceWithEsc && isTTY();
+
+  // CFG-30 — resolve colour through the four-rung ladder (FORCE_COLOR > NO_COLOR > explicit config
+  // > stdout auto-detect). `useColour` is top-level only (it is not one of the
+  // PRECEDENCE_PICKED_COMMAND_FIELDS), so there is no per-command variant to reconcile.
+  mergedConfig.useColour = resolveUseColour({
+    forceColor: env.FORCE_COLOR,
+    noColor: env.NO_COLOR,
+    explicitUseColour,
+    stdoutIsTTY: isStdoutTTY(),
+  });
 
   return mergedConfig;
 }

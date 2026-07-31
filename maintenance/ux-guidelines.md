@@ -130,8 +130,13 @@ the ready message.
 - **Colour is the 16-colour `magenta` slot and nothing else (DL-7, DL-8).** That slot adopts the
   user's own terminal theme violet, so the sloth looks native in light and dark schemes alike — never
   a 256-colour or 24-bit escape. The right-hand column carries no escape at all, and with colour off
-  (`useColour: false` on the plain surface, Ink's colour-support detection in the TUI) the banner is
-  plain text with zero escape sequences.
+  the banner is plain text with zero escape sequences. What "colour off" means differs by surface,
+  and the two do not fully agree: the plain surface resolves it through the CFG-30 ladder
+  (`config/colour.ts` — `FORCE_COLOR`, then `NO_COLOR`, then an explicit `useColour`, then stdout's
+  TTY status; documented for users in [Output & files](../docs/configuration/output.md#colour-usecolour-no_color-force_color)),
+  while the TUI takes chalk's own detection, which reads `FORCE_COLOR` but **not** `NO_COLOR`. So
+  `NO_COLOR=1` blanks the plain surface and leaves the TUI coloured — measured, and pinned by
+  `packages/app/spec/colourCrossSurface.e2e.spec.ts`.
 
 ## Tool-call panels (DL-2 progressive disclosure, DL-4 transparency)
 
