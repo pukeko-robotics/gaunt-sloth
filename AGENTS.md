@@ -4,12 +4,13 @@ This file provides guidance to any AI coding agent (Claude Code, Cursor, etc.) w
 
 ## Technologies Used
 
-- NodeJS 22 (LTS)
-- Vitest 3 for tests
-- Typescript 5
-- LangChain and LangGraph 0.3
+- NodeJS 24 (`engines` requires `>=24.0.0`; CI runs 24.x and latest)
+- Vitest 4 for tests
+- Typescript 6
+- LangChain 1.x and LangGraph 1.x
 
-Please refer to package.json to check exact versions
+Please refer to package.json to check exact versions — and trust it over this list, which is
+majors-only precisely so it drifts slowly.
 
 ## Core Development Principles
 
