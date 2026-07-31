@@ -132,6 +132,46 @@ Lower levels are more verbose. Valid values for JSON configs:
 }
 ```
 
+## Colour (useColour, NO_COLOR, FORCE_COLOR)
+
+Say you pipe a review into a file for a CI artifact and the file is full of `←[31m` noise. Turn the
+colour off for that run without touching your config:
+
+```bash
+NO_COLOR=1 gth review > review.txt
+```
+
+Gaunt Sloth honours [`NO_COLOR`](https://no-color.org) and `FORCE_COLOR`, the same variables chalk,
+ripgrep, fd and delta use, so it behaves like the rest of your toolchain. Four things decide whether
+colour is emitted, **highest first** — the first one that applies wins:
+
+| | Condition | Result |
+|---|---|---|
+| 1 | `FORCE_COLOR` is set to `0` or `false` | off |
+| 2 | `FORCE_COLOR` is set to anything else — including empty | on |
+| 3 | `NO_COLOR` is set to any non-empty value | off |
+| 4 | `useColour` is set in your config | that value |
+| 5 | otherwise | on when stdout is a terminal, off when it is piped or redirected |
+
+Rows 1 and 2 are the same rung: `FORCE_COLOR` outranks everything below it, so it re-enables colour
+over a `NO_COLOR` inherited from your shell profile or a CI image (`FORCE_COLOR=1 gth review`), and
+`FORCE_COLOR=0` disables colour even where `NO_COLOR` is absent. For `NO_COLOR` the *presence* of
+the variable is the signal, not its value — `NO_COLOR=0` still turns colour off, and only an empty
+`NO_COLOR=` is ignored.
+
+The last row means captured output is clean by default: redirect or pipe a run and you get no escape
+sequences without configuring anything. Set `useColour` when you want to override that — `false` to
+stay monochrome in a terminal, `true` to keep colour in output you are piping into a pager:
+
+```json
+{ "useColour": false }
+```
+
+**The interactive TUI does not follow this ladder.** `gth chat` and `gth code` render through Ink,
+whose colour support is decided by chalk, and chalk reads `FORCE_COLOR` but **not** `NO_COLOR`. So
+`NO_COLOR=1 gth chat` still shows a coloured TUI. Use `FORCE_COLOR=0`, which both surfaces honour,
+or `--no-tui` to get the plain surface.
+
 ## Run Header (output.header)
 
 Non-TUI text runs — `ask`, `exec`, `eval`, `pr`, `review`, and `chat`/`code` with `--no-tui` or

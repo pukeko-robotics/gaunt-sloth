@@ -45,6 +45,11 @@ const systemUtilsMock = {
   getInstallDir: vi.fn(),
   setUseColour: vi.fn(),
   isTTY: vi.fn(),
+  // CFG-30 — colour now auto-detects from stdout when nothing else decides, and consults the
+  // environment. Both are declared here (empty env = neither NO_COLOR nor FORCE_COLOR set) so
+  // these tests are insulated from the ambient terminal and shell.
+  isStdoutTTY: vi.fn(),
+  env: {} as Record<string, string | undefined>,
 };
 vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
 
@@ -67,6 +72,7 @@ describe('config B2b behavior changes', () => {
     systemUtilsMock.getProjectDir.mockReturnValue('/mock/current/dir');
     systemUtilsMock.getInstallDir.mockReturnValue('/mock/install/dir');
     systemUtilsMock.isTTY.mockReturnValue(true);
+    systemUtilsMock.isStdoutTTY.mockReturnValue(true);
     globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
       () => '/mock/global-absent/no-such-config'
     );
