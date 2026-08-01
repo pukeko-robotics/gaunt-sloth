@@ -129,8 +129,9 @@ export class HitRegionRegistry {
     let found: HitRegion | undefined;
     let smallest = Number.POSITIVE_INFINITY;
     for (const { region } of this.regions.values()) {
-      // A zero-area claim is a component that has not been laid out yet; it can never be clicked.
-      if (region.width <= 0 || region.height <= 0) continue;
+      // A not-yet-measured claim is zero-area, and {@link regionContains} already excludes those —
+      // its half-open bounds cannot admit a point when the extent is 0 — so there is no separate
+      // guard here to drift out of step with that math.
       if (!regionContains(region, row, column, origin)) continue;
       const area = region.width * region.height;
       if (area < smallest) {

@@ -159,9 +159,13 @@ describe('HitRegionRegistry', () => {
   });
 
   it('never treats a not-yet-laid-out (zero-area) claim as a hit', () => {
+    // The property comes from `regionContains`'s half-open bounds rather than from a guard here, so
+    // what this actually protects is that boundary math: widening either comparison to `<=` would
+    // make an unmeasured component swallow a click at its origin.
     const handler = vi.fn();
     registry.register(region({ id: 'unmeasured', width: 0, height: 0 }), handler);
 
+    expect(regionContains(region({ width: 0, height: 0 }), 20, 0, 20)).toBe(false);
     expect(registry.dispatch(press(20, 0), 20)).toBe(false);
     expect(handler).not.toHaveBeenCalled();
   });

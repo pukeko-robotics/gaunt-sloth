@@ -1,5 +1,20 @@
+import os from 'node:os';
 import path from 'node:path';
 import { test, expect } from '@microsoft/tui-test';
+
+/**
+ * Windows ConPTY parses and re-encodes input escape sequences rather than passing raw bytes to the
+ * application, so a test cannot hand it half a mouse report and have the other half arrive: the
+ * incomplete first write is swallowed and the remainder is delivered as literal text. That makes
+ * the two split-simulation tests below a measurement of the harness rather than of our code on this
+ * platform, so they run only where the PTY is byte-transparent.
+ *
+ * The behaviour they cover is NOT untested on Windows — the chunk-boundary cases are asserted
+ * deterministically in `spec/tui/mouseStdin.spec.ts`, which runs on both Windows cells of the unit
+ * matrix. Only the terminal-level restatement is conditional. Every other test in this file,
+ * including whole reports, drags, wheel and the `/mouse` command, runs everywhere.
+ */
+const PTY_PASSES_RAW_BYTES = os.platform() !== 'win32';
 
 // tui-test keeps process.cwd() at the invocation dir (this folder); the cli lives one level up.
 const e2eDir = process.cwd();
@@ -80,36 +95,42 @@ test.describe('gth chat TUI — mouse input (greeting fixture)', () => {
     expect(terminal.serialize().view).not.toContain('[<');
   });
 
-  test('a report split across two writes is still not typed into the prompt', async ({
-    terminal,
-  }) => {
-    // The chunk-boundary case, end to end: the halves must not surface as text.
-    await expect(terminal.getByText('ready to chat')).toBeVisible();
+  test.when(
+    PTY_PASSES_RAW_BYTES,
+    'a report split across two writes is still not typed into the prompt',
+    async ({ terminal }) => {
+      // The chunk-boundary case, end to end: the halves must not surface as text.
+      await expect(terminal.getByText('ready to chat')).toBeVisible();
 
-    terminal.write('\x1b[<0;12');
-    terminal.write(';8M');
-    terminal.write('split');
+      terminal.write('\x1b[<0;12');
+      terminal.write(';8M');
+      terminal.write('split');
 
-    await expect(terminal.getByText('> split')).toBeVisible();
-    const view = terminal.serialize().view;
-    expect(view).not.toContain('0;12');
-    expect(view).not.toContain('[<');
-  });
+      await expect(terminal.getByText('> split')).toBeVisible();
+      const view = terminal.serialize().view;
+      expect(view).not.toContain('0;12');
+      expect(view).not.toContain('[<');
+    }
+  );
 
-  test('a report split right after the CSI introducer is still not typed', async ({ terminal }) => {
-    // The nastier boundary: the split falls between `ESC[` and `<`, so the second half no longer
-    // looks like a report at all and would be inserted into the prompt verbatim.
-    await expect(terminal.getByText('ready to chat')).toBeVisible();
+  test.when(
+    PTY_PASSES_RAW_BYTES,
+    'a report split right after the CSI introducer is still not typed',
+    async ({ terminal }) => {
+      // The nastier boundary: the split falls between `ESC[` and `<`, so the second half no longer
+      // looks like a report at all and would be inserted into the prompt verbatim.
+      await expect(terminal.getByText('ready to chat')).toBeVisible();
 
-    terminal.write('\x1b[');
-    terminal.write('<0;14;9M');
-    terminal.write('csi');
+      terminal.write('\x1b[');
+      terminal.write('<0;14;9M');
+      terminal.write('csi');
 
-    await expect(terminal.getByText('> csi')).toBeVisible();
-    const view = terminal.serialize().view;
-    expect(view).not.toContain('0;14');
-    expect(view).not.toContain('<0;');
-  });
+      await expect(terminal.getByText('> csi')).toBeVisible();
+      const view = terminal.serialize().view;
+      expect(view).not.toContain('0;14');
+      expect(view).not.toContain('<0;');
+    }
+  );
 
   test('an ordinary escape sequence is not mangled into the prompt', async ({ terminal }) => {
     // The filter holds back a trailing `ESC[` so a split report can be reassembled. An arrow key
