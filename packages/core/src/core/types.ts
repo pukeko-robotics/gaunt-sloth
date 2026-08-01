@@ -168,14 +168,27 @@ export interface PendingToolInterrupt {
    * Absent whenever the escalation came from the rung or the rater instead.
    */
   escalatedBy?: string;
+  /**
+   * EXT-71 §6 — **what a sticky choice will store**, rendered in the object form the user would
+   * write in a config file, e.g. `{ "type": "shell", "matcher": "exact", "pattern": "npm test" }`.
+   * The menu MUST show this at the moment of the choice, on every surface: the user is shown the
+   * thing they are agreeing to rather than a generalization of it, which is what makes the display
+   * honest and cheap at once.
+   *
+   * Absent exactly where no sticky grant is on offer — a `catastrophic` outcome (§4.2 withdraws
+   * the persistent grants), a non-shell call, or a rung that remembers nothing — so a prompt never
+   * advertises a control that has already been withdrawn.
+   */
+  grantPreview?: string;
 }
 
 /**
- * Persistence scope for an `approve` decision (EXT-9 Tier-2 allow-list ergonomics):
+ * Persistence scope for an `approve` decision (spec §6):
  * - `once`    — run this single invocation only; remember nothing (the default).
- * - `session` — remember the command's classified prefix for the life of this runner
- *   instance, so flag-variants of the same operation auto-approve without re-prompting.
- * - `always`  — additionally persist the prefix to the project allow-list
+ * - `session` — remember **this command**, as an `exact` entry (§3.1), for the life of this runner
+ *   instance, so the same command stops re-prompting. A longer variant of it still asks: the menu
+ *   never widens, and breadth is something a human writes in a config file.
+ * - `always`  — additionally persist that entry to the project store
  *   (`.gsloth/.gsloth-settings/shell-allowlist.json`) so it survives across runs.
  */
 export type ToolApprovalScope = 'once' | 'session' | 'always';

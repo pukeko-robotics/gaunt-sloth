@@ -130,6 +130,39 @@ describe('tui <ApprovalPrompt>', () => {
     unmount();
   });
 
+  /**
+   * EXT-71 §6 — **the menu must display what it is about to store**, at the moment of the choice,
+   * on every surface. Under §3.1 that is the command itself as a fully-explicit exact entry, so
+   * what the user is shown is the thing they are agreeing to rather than a generalization of it.
+   */
+  it('shows what a sticky choice will store', () => {
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt
+        pending={{
+          name: 'run_shell_command',
+          args: { command: 'npm test' },
+          grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "npm test" }',
+        }}
+      />
+    );
+    const f = lastFrame() ?? '';
+    expect(f).toContain('will remember exactly this command');
+    expect(f).toContain('"matcher": "exact"');
+    unmount();
+  });
+
+  it('shows no such line when no sticky grant is on offer', () => {
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt pending={{ name: 'run_shell_command', args: { command: 'ls -la' } }} />
+    );
+    const f = lastFrame() ?? '';
+    expect(f).not.toContain('will remember exactly this command');
+    // Control: the prompt still renders, so the assertion above is about the grant row and not
+    // about the component having failed to draw anything.
+    expect(f).toContain('[o]nce');
+    unmount();
+  });
+
   it('falls back to JSON of args when there is no command string', () => {
     const { lastFrame, unmount } = render(
       <ApprovalPrompt pending={{ name: 'run_shell_command', args: { foo: 'bar' } }} />
@@ -230,7 +263,7 @@ describe('tui approval flow through <App>', () => {
       expect(flat()).toContain('never remembered');
       expect(flat()).toContain('will ask again');
       expect(flat()).not.toContain(`Command approved (${scope})`);
-      expect(flat()).not.toContain('future variants will not re-prompt');
+      expect(flat()).not.toContain('will not ask again this session');
       expect(flat()).not.toContain('saved to the project allow-list');
       unmount();
     }
@@ -261,7 +294,7 @@ describe('tui approval flow through <App>', () => {
 
     const flat = () => plain(frames);
     await vi.waitFor(() => expect(flat()).toContain('Command approved (session)'));
-    expect(flat()).toContain('future variants will not re-prompt');
+    expect(flat()).toContain('will not ask again this session');
     unmount();
   });
 

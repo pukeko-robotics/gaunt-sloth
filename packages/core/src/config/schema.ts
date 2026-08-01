@@ -108,7 +108,10 @@ const APPROVAL_RUNG_VALUES = ['read-only', 'write', 'auto-safe', 'full-auto', 'b
 /**
  * EXT-71 §3.1 — the **subject** axis of a rule entry, and only that: `shell` is a command, `tool`
  * a built-in or custom in-process tool, `mcpTool` a server's tool. The hand-written twin is
- * `ApprovalEntryType` in `shell-policy.ts`; `configSchema.spec.ts` pins the two together.
+ * `ApprovalEntryType` in `shell-policy.ts`. What holds the two together is
+ * `approvalEntrySchema.spec.ts`, where a list of `ApprovalEntry`-typed literals is parsed by this
+ * schema: a value either side stops accepting fails there. That is a weaker pin than a direct
+ * equality assertion — it catches a narrowing, not a widening on one side alone.
  */
 export const APPROVAL_ENTRY_TYPES = ['shell', 'tool', 'mcpTool'] as const;
 
@@ -322,8 +325,8 @@ const mcpToolEntrySchema = z.discriminatedUnion('matcher', [
  * than a silently-ignored key that would widen what the entry matches.
  *
  * The `id` is what makes the emitted JSON Schema hoist this union into `$defs` and reference it,
- * instead of inlining all eleven arms into each of the twenty-seven places a rule list appears
- * (three lists × root + eight commands). That is the difference between a schema an editor loads
+ * instead of inlining all eleven arms into each of the twenty-four places a rule list appears
+ * (three lists × the root plus seven commands). That is the difference between a schema an editor loads
  * and one it chokes on, and `$ref` is the standard spelling every JSON Schema consumer already
  * understands.
  */
@@ -335,12 +338,38 @@ export const approvalEntrySchema = z
 const APPROVAL_LIST_KEYS = ['allow', 'deny', 'escalate'] as const;
 
 /**
+ * EXT-71 §3.1 — render an entry in the object form the user would write in a config file, with the
+ * fields in grammar order (`type`, `server`, `matcher`, `pattern`, then the optional bounds).
+ *
+ * The ONE place that spelling is produced, because it is shown in two very different moments that
+ * must agree: the load-time error that tells a user what to write instead of their bare string, and
+ * the escalation menu's *this is what will be stored* line (§6). A grant the menu describes one way
+ * and stores another is exactly the drift this design cannot afford.
+ */
+export function renderApprovalEntryObject(entry: {
+  type: string;
+  matcher: string;
+  pattern: unknown;
+  server?: string;
+  host?: string;
+  rate?: boolean;
+}): string {
+  const fields: [string, unknown][] = [['type', entry.type]];
+  if (entry.server !== undefined) fields.push(['server', entry.server]);
+  fields.push(['matcher', entry.matcher], ['pattern', entry.pattern]);
+  if (entry.host !== undefined) fields.push(['host', entry.host]);
+  if (entry.rate !== undefined) fields.push(['rate', entry.rate]);
+  const rendered = fields.map(([key, value]) => `${JSON.stringify(key)}: ${JSON.stringify(value)}`);
+  return `{ ${rendered.join(', ')} }`;
+}
+
+/**
  * EXT-71 §2.3/§9.1 — render the object form of a bare string found in a rule list, so the
  * migration error shows the user the entry they should have written *for their own string*
  * rather than a generic example.
  */
 export function renderApprovalEntryForString(pattern: string): string {
-  return `{ "type": "shell", "matcher": "exact", "pattern": ${JSON.stringify(pattern)} }`;
+  return renderApprovalEntryObject({ type: 'shell', matcher: 'exact', pattern });
 }
 
 /**

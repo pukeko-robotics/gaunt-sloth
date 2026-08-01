@@ -323,9 +323,11 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     unmount();
   });
 
-  it('allow-list auto-approve: a pre-approved command runs with NO prompt', async () => {
-    // Persist off; pre-seed nothing — instead grant 'session' on the first command, then a variant
-    // auto-approves without a second prompt. We model this with TWO suspends in one turn.
+  it('allow-list auto-approve: a granted command runs again with NO prompt', async () => {
+    // Persist off; pre-seed nothing — instead grant 'session' on the first command, then THE SAME
+    // command auto-approves without a second prompt. We model this with TWO suspends in one turn.
+    // EXT-71 §3.1: a grant is exactly the command the human saw, so the second suspend has to be
+    // that command — a variant would re-prompt, and asserting it did not would assert nothing.
     let phase = 0;
     const agent: GthAgentInterface = {
       async init() {},
@@ -341,8 +343,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       async getPendingToolInterrupts(): Promise<PendingToolInterrupt[]> {
         phase += 1;
         if (phase === 1) return [{ name: 'run_shell_command', args: { command: 'git status' } }];
-        if (phase === 2)
-          return [{ name: 'run_shell_command', args: { command: 'git status --short' } }];
+        if (phase === 2) return [{ name: 'run_shell_command', args: { command: 'git status' } }];
         return [];
       },
       async *streamWithEventsResume(): AsyncGenerator<AgentStreamEvent> {
@@ -374,7 +375,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     await vi.waitFor(() => expect(lastFrame()).toContain('git status'));
     stdin.write('s');
 
-    // The second command (a variant of the same operation) must auto-approve with NO prompt.
+    // The second call of the granted command must auto-approve with NO prompt.
     await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
     expect(promptCount).toBe(1); // only the first command ever reached the human prompt
 

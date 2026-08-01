@@ -36,6 +36,11 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
   // did. It is the provenance that makes the question traceable to the line the user wrote; an
   // escalation they cannot trace reads as the gate malfunctioning rather than as their own rule.
   const escalatedBy = pending.escalatedBy;
+  // EXT-71 §6 — what a sticky choice will store, shown at the moment of the choice on every
+  // surface. Under §3.1 it is the command itself as a fully-explicit exact entry, not a pattern
+  // derived from it; showing the user the thing they are agreeing to is what makes the display
+  // honest. Absent whenever no sticky grant is on offer (e.g. a `catastrophic` outcome, §4.2).
+  const grantPreview = pending.grantPreview;
   return (
     <Box flexDirection="column">
       <Rule />
@@ -48,6 +53,9 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
       ) : null}
       {escalatedBy ? (
         <Text color="yellow">{`⚠ Your approvals.escalate list matched this call: ${escalatedBy}`}</Text>
+      ) : null}
+      {grantPreview ? (
+        <Text dimColor>{`[s]/[a] will remember exactly this command: ${grantPreview}`}</Text>
       ) : null}
       <Text dimColor>{'Approve?  [o]nce   [s]ession   [a]lways   [N]o'}</Text>
     </Box>

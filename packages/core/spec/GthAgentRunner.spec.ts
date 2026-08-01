@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 import { HumanMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import type { GthConfig } from '#src/config.js';
-import type { StatusUpdateCallback } from '#src/core/types.js';
+import type { PendingToolInterrupt, StatusUpdateCallback } from '#src/core/types.js';
 import { AttackHaltError, NonInteractiveEscalationError } from '#src/core/shell/approvalStop.js';
 
 // Mock the GthLangChainAgent - using a simplified approach
@@ -343,6 +343,9 @@ describe('GthAgentRunner', () => {
       expect(approve).toHaveBeenCalledWith({
         name: 'run_shell_command',
         args: { command: 'ls -la' },
+        // EXT-71 §6 — the prompt is told what a sticky choice would store, so it can show the user
+        // the thing they are agreeing to before they agree to it.
+        grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "ls -la" }',
       });
       // Resume sent the HITL decisions array shape humanInTheLoopMiddleware expects.
       expect(streamResume).toHaveBeenCalledWith(
@@ -402,34 +405,134 @@ describe('GthAgentRunner', () => {
       },
     };
 
-    it('records a session-scoped approval, then auto-approves a variant without re-prompting', async () => {
+    /**
+     * EXT-71 §3.1/§6 — **a session grant is exactly the command the human saw, and both halves of
+     * that are asserted here.** The same command stops asking; a command that merely starts with it
+     * asks again. The menu never widens, so the only thing that grew broader than one command is
+     * something a human typed into a config file.
+     *
+     * Both directions in one test on purpose: the narrowing half alone would pass against a gate
+     * that had simply stopped remembering anything, and the grant half alone was what the retired
+     * prefix store already did.
+     */
+    it('a session grant is EXACTLY that command: the same one stops asking, a longer one still asks', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       mockAgent.stream.mockResolvedValue(streamOf('first'));
-      // Two suspends: first on `git checkout main`, then (after resume) on `git checkout -b x`.
       (mockAgent as any).getPendingToolInterrupts = vi
         .fn()
         .mockResolvedValueOnce([
           { name: 'run_shell_command', args: { command: 'git checkout main' } },
         ])
+        // A longer command that starts with the granted one — the §3.1 case that used to ride the
+        // grant, and must not.
         .mockResolvedValueOnce([
-          { name: 'run_shell_command', args: { command: 'git checkout -b x' } },
+          { name: 'run_shell_command', args: { command: 'git checkout main --force' } },
+        ])
+        // The granted command itself, again: it must NOT prompt, or the grant does nothing.
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'git checkout main' } },
         ])
         .mockResolvedValueOnce([]);
       (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
 
       await runner.init('code', { ...mockConfig, ...ALLOWLIST_CONFIG });
-      // Human grants 'session' on the first command only.
       const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'session' });
       runner.setToolApprovalCallback(human);
 
       await runner.processMessages([new HumanMessage('checkout')]);
 
-      // Human prompted ONCE (first command); the variant auto-approved from the allow-list.
-      expect(human).toHaveBeenCalledTimes(1);
-      expect(human).toHaveBeenCalledWith({
-        name: 'run_shell_command',
-        args: { command: 'git checkout main' },
+      // Two prompts: the first command, then the longer variant. The repeat of the granted command
+      // never reached the human.
+      expect(human).toHaveBeenCalledTimes(2);
+      expect(
+        human.mock.calls.map((call: unknown[]) => (call[0] as PendingToolInterrupt).args)
+      ).toEqual([{ command: 'git checkout main' }, { command: 'git checkout main --force' }]);
+    });
+
+    /**
+     * §3.1 — **the escalation menu writes what the human saw, and the prompt shows it first.** The
+     * preview is rendered from the very entry the grant will store, so it cannot promise one thing
+     * and remember another; the assertion below is on the round trip, not on an object literal.
+     */
+    it('§6 — the prompt is shown the entry a sticky choice will store, and that is what is stored', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([
+          // Padded spelling: what is stored is the command in the form every comparison runs over,
+          // which is what makes the grant match the very call that produced it.
+          { name: 'run_shell_command', args: { command: 'npm   test\n' } },
+        ])
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'npm test' } }])
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'npm test --watch' } },
+        ])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+      await runner.init('code', { ...mockConfig, ...ALLOWLIST_CONFIG });
+      const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'session' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('test')]);
+
+      const first = human.mock.calls[0][0] as PendingToolInterrupt;
+      expect(first.grantPreview).toBe(
+        '{ "type": "shell", "matcher": "exact", "pattern": "npm test" }'
+      );
+      // The round trip: what the preview promised is what auto-approves, and only that. `npm test`
+      // never prompts again; `npm test --watch` does.
+      expect(human).toHaveBeenCalledTimes(2);
+      expect((human.mock.calls[1][0] as PendingToolInterrupt).args).toEqual({
+        command: 'npm test --watch',
       });
+    });
+
+    /**
+     * EXT-71 §3.1 — **there is no second-guessing layer on top of a match.** The retired
+     * `WIDENING_FLAGS` set refused a match whenever the command carried a flag from a hardcoded
+     * deny-set (`-o`, `--output`, `-c`, `--exec`, …). It existed to bound a grant the MACHINE had
+     * widened on a human's behalf, and after §3.1 there are none left to bound: an exact entry is
+     * the command itself. Overruling a grant the user made for exactly this command would be a
+     * control offered and then refused.
+     *
+     * Asserted as a behaviour change and not as a missing symbol: the grant is made, and the very
+     * same command runs without a second prompt. The control is the neighbouring command that
+     * differs only in the flag's VALUE — it still asks, so this is not merely "the gate stopped
+     * checking anything".
+     */
+    it('§3.1 — a grant for a command carrying a once-"widening" flag is honoured, not second-guessed', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'curl -o out.txt https://x/y' } },
+        ])
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'curl -o out.txt https://x/y' } },
+        ])
+        // Control: a different output path is a different command, and still asks.
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'curl -o other.txt https://x/y' } },
+        ])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+      await runner.init('code', { ...mockConfig, ...ALLOWLIST_CONFIG });
+      const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'session' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('fetch')]);
+
+      expect(human).toHaveBeenCalledTimes(2);
+      expect(
+        human.mock.calls.map((call: unknown[]) => (call[0] as PendingToolInterrupt).args)
+      ).toEqual([
+        { command: 'curl -o out.txt https://x/y' },
+        { command: 'curl -o other.txt https://x/y' },
+      ]);
     });
 
     it('prompts the human for a non-matching command', async () => {
@@ -1187,6 +1290,11 @@ describe('GthAgentRunner', () => {
      *
      * The scope granted below is `session`, which is the in-memory store: the test proves the clamp
      * without touching the on-disk allow-list at all.
+     *
+     * The second command is the SAME command, not a variant. Under §3.1 a grant covers exactly the
+     * command it was made for, so a variant would prompt again whether or not the clamp exists —
+     * an assertion that cannot fail. Repeating the identical command is what makes the second
+     * prompt evidence of the clamp and nothing else.
      */
     it('NEVER records a sticky grant for a CATASTROPHIC command, even when the human says session', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
@@ -1197,7 +1305,7 @@ describe('GthAgentRunner', () => {
           { name: 'run_shell_command', args: { command: 'terraform destroy -auto-approve' } },
         ])
         .mockResolvedValueOnce([
-          { name: 'run_shell_command', args: { command: 'terraform destroy -target=x' } },
+          { name: 'run_shell_command', args: { command: 'terraform destroy -auto-approve' } },
         ])
         .mockResolvedValueOnce([]);
       (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
@@ -1226,8 +1334,10 @@ describe('GthAgentRunner', () => {
         .mockResolvedValueOnce([
           { name: 'run_shell_command', args: { command: 'terraform destroy -auto-approve' } },
         ])
+        // The same command, so the only reason it could prompt again is the clamp — which is what
+        // this control exists to show does NOT fire here.
         .mockResolvedValueOnce([
-          { name: 'run_shell_command', args: { command: 'terraform destroy -target=x' } },
+          { name: 'run_shell_command', args: { command: 'terraform destroy -auto-approve' } },
         ])
         .mockResolvedValueOnce([]);
       (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
@@ -1473,15 +1583,16 @@ describe('GthAgentRunner', () => {
     it('allow-list hit wins: the rater is NOT called for a command a human already trusted', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       mockAgent.stream.mockResolvedValue(streamOf('x'));
-      // First `git checkout main` is approved at session scope; the variant must approve via the
-      // allow-list WITHOUT the rater running.
+      // First `git checkout main` is approved at session scope; the SAME command must then approve
+      // from the grant WITHOUT the rater running. (§3.1: a grant is that command, so the repeat is
+      // what a grant covers — a variant would be rated again, and rightly.)
       (mockAgent as any).getPendingToolInterrupts = vi
         .fn()
         .mockResolvedValueOnce([
           { name: 'run_shell_command', args: { command: 'git checkout main' } },
         ])
         .mockResolvedValueOnce([
-          { name: 'run_shell_command', args: { command: 'git checkout -b x' } },
+          { name: 'run_shell_command', args: { command: 'git checkout main' } },
         ])
         .mockResolvedValueOnce([]);
       (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
@@ -1494,13 +1605,15 @@ describe('GthAgentRunner', () => {
         approvals: 'auto-safe',
         commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
       } as any);
-      // The human grants session on the first; the variant should hit the allow-list, not the rater.
+      // The human grants session on the first; the repeat should hit the grant, not the rater.
       const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'session' });
       runner.setToolApprovalCallback(human);
 
       await runner.processMessages([new HumanMessage('go')]);
-      // The rater ran for the first (not allow-listed) command but NOT for the allow-listed variant.
+      // The rater ran for the first (ungranted) command but NOT for the granted repeat, and the
+      // human was asked exactly once — the two halves of "an allow match settles the human's part".
       expect(withStructuredOutput).toHaveBeenCalledTimes(1);
+      expect(human).toHaveBeenCalledTimes(1);
     });
 
     it('bypass outranks the rater: no rater call, no prompt', async () => {
@@ -2387,6 +2500,7 @@ describe('GthAgentRunner', () => {
       expect(approve).toHaveBeenCalledWith({
         name: 'run_shell_command',
         args: { command: 'ls -la' },
+        grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "ls -la" }',
       });
       // Resume sent the HITL `{ decisions }` shape humanInTheLoopMiddleware expects.
       expect(streamWithEventsResume).toHaveBeenCalledWith(

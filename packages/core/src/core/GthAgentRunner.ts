@@ -25,14 +25,16 @@ import {
   StatusUpdateCallback,
   ToolApprovalCallback,
   ToolApprovalDecision,
+  type ToolApprovalScope,
 } from '#src/core/types.js';
 import { GthLangChainAgent } from '#src/core/GthLangChainAgent.js';
 import {
-  AllowlistStore,
-  PersistedAllowlist,
-  matchesApproval,
-  type ApprovalScope,
-} from '#src/core/shell/allowlist.js';
+  ApprovalGrantStore,
+  type ApprovalGrantScope,
+  PersistedApprovalGrants,
+  shellGrantEntry,
+} from '#src/core/approvals/grants.js';
+import { renderApprovalEntryObject } from '#src/config/schema.js';
 import { classifyCommand } from '#src/core/shell/arity.js';
 import { normalizeCommand } from '#src/core/shell/normalize.js';
 import {
@@ -40,7 +42,6 @@ import {
   AttackHaltError,
   NonInteractiveEscalationError,
 } from '#src/core/shell/approvalStop.js';
-import { DenylistStore } from '#src/core/shell/denylist.js';
 import {
   isRaterTimeout,
   mapAllowMatchedVerdictToAction,
@@ -51,6 +52,7 @@ import {
 } from '#src/core/shell/rater.js';
 import {
   type ApprovalRuleDecision,
+  type ApprovalRuleLists,
   type ApprovalSubject,
   describeApprovalEntry,
   resolveApprovalRules,
@@ -127,11 +129,6 @@ export class GthAgentRunner {
   };
 
   /**
-   * EXT-9 Tier-2 session allow-list — approved command prefixes that auto-approve for the
-   * life of THIS runner instance. Instance-scoped (not module-global) so concurrent
-   * sessions (ACP / AG-UI multi-session) cannot stomp each other's approvals.
-   */
-  /**
    * CFG-26 — the model the AI rater rates with, when `approvals.rater.profile` names an identity
    * profile. Resolved ONCE at {@link init} (never mid-turn) and handed to `rateShellCommand`;
    * `undefined` means no profile is configured and the rater uses the session model.
@@ -145,23 +142,29 @@ export class GthAgentRunner {
    */
   private raterTimeouts = 0;
 
-  private readonly sessionAllowlist = new AllowlistStore();
+  /**
+   * EXT-71 §3.1/§6 — what the escalation menu granted at run time, for the life of THIS runner
+   * instance: {@link ApprovalEntry} objects, never prefixes, and never anything from config (the
+   * declared lists are read-only input consulted straight from the posture). Instance-scoped so
+   * concurrent sessions (ACP / AG-UI multi-session) cannot stomp each other's approvals.
+   */
+  private readonly sessionGrants = new ApprovalGrantStore();
 
   /**
-   * CFG-27 §3 — the session deny list: the entries declared in `approvals.deny` (read-only config
-   * input, seeded at {@link init}) merged with whatever the escalation menu's *always reject*
-   * choice adds at runtime ([[TUI-C26]] wires that writer). Consulted BEFORE the allow-list and
-   * BEFORE the rater, and — uniquely — it still applies under `bypass`.
+   * CFG-27 §3 — what the escalation menu's *always reject* choice adds at run time, in the same
+   * grammar ([[TUI-C26]] wires that writer; the store speaks it already). The entries DECLARED in
+   * `approvals.deny` are not here — they are read-only config input, matched from the posture — and
+   * both are handed to the same matcher, so a runtime refusal and a declared one are one list.
    */
-  private denylist = new DenylistStore();
+  private denyGrants = new ApprovalGrantStore();
 
   /**
-   * EXT-9 Tier-2 persisted (`always`) allow-list, loaded lazily on first use from
-   * `.gsloth/.gsloth-settings/shell-allowlist.json`. Null until the shell tool is gated
-   * and the allow-list is enabled; null also when persistence is disabled by config.
+   * The persisted (`always`) grant store, loaded lazily on first use from
+   * `.gsloth/.gsloth-settings/shell-allowlist.json`. Null until a gated call actually needs it, and
+   * null when the file cannot be loaded at all (in which case `always` grants degrade to session).
    */
-  private persistedAllowlist: PersistedAllowlist | null = null;
-  private persistedAllowlistLoaded = false;
+  private persistedGrants: PersistedApprovalGrants | null = null;
+  private persistedGrantsLoaded = false;
 
   /**
    * @param agentFactory Produces the {@link GthAgentInterface} the runner drives.
@@ -215,13 +218,13 @@ export class GthAgentRunner {
    * caller renders as `—` rather than a misleading `0`.
    */
   public getAllowlistCounts(): AllowlistCounts {
-    const always = this.persistedAllowlistLoaded
-      ? (this.persistedAllowlist?.list().length ?? undefined)
+    const always = this.persistedGrantsLoaded
+      ? (this.persistedGrants?.size() ?? undefined)
       : undefined;
     // EXT-71 §3 — every list MUST be inspectable, and the declared entries are in force for this
     // session exactly as the human's own grants are. They are counted alongside them rather than
     // hidden, which is what the count meant before the declared lists stopped seeding the store.
-    const session = this.sessionAllowlist.list().length + this.sessionApprovals.allow.length;
+    const session = this.sessionGrants.size() + this.sessionApprovals.allow.length;
     return { session, always };
   }
 
@@ -231,7 +234,7 @@ export class GthAgentRunner {
    * run time. Both refuse a call, so both are shown.
    */
   public getDenylist(): string[] {
-    return [...this.sessionApprovals.deny.map(describeApprovalEntry), ...this.denylist.list()];
+    return [...this.sessionApprovals.deny, ...this.denyGrants.entries()].map(describeApprovalEntry);
   }
 
   /**
@@ -264,12 +267,10 @@ export class GthAgentRunner {
     this.sessionApprovals = resolveApprovals(configIn, command);
 
     // §3/§9.1 — the DECLARED lists are read-only config input, consulted through the EXT-71 rule
-    // matcher (`core/approvals/matcher.ts`) and NEVER copied into the prefix stores. Copying them
-    // there is what used to make a declared `exact` entry behave as a token-aligned PREFIX, so an
-    // entry for `npm test` also covered `npm test --watch` — fail-open on the allow side, and the
-    // opposite of what §3.1 says an exact entry means. The stores below now hold only what the
-    // escalation menu grants at run time.
-    this.denylist = new DenylistStore();
+    // matcher (`core/approvals/matcher.ts`) and NEVER copied into the runtime stores, which hold
+    // only what the escalation menu grants at run time. Both are handed to the same matcher, so
+    // there is one grammar and one comparison, not a config path and a runtime path.
+    this.denyGrants = new ApprovalGrantStore();
 
     // CFG-26 — resolve the rater's own model when a profile is named, so the documented mitigation
     // for a weak model ("point approvals.rater at a stronger one") actually takes effect.
@@ -484,8 +485,8 @@ export class GthAgentRunner {
    * human prompt**, with the hardline floor at exec time regardless. The two adjacencies that carry
    * the design are that deny comes BEFORE `bypass` and escalate comes AFTER it:
    *
-   * 1. **deny** (§3) — a declared entry (`core/approvals/matcher.ts`) or a runtime `always reject`
-   *    prefix is refused with no prompt and no rating call. It is consulted FIRST, and it is the one
+   * 1. **deny** (§3) — a declared entry or a runtime *always reject* grant is refused with no
+   *    prompt and no rating call. It is consulted FIRST, and it is the one
    *    check that **still applies under `bypass`**: choosing `bypass` says *"stop asking me"*, not
    *    *"forget what I told you never to do"*. A deny entry MAY match a compound command, because a
    *    prohibition that catches something unresolvable errs in the direction that costs nothing.
@@ -496,9 +497,9 @@ export class GthAgentRunner {
    *    enters the `full-auto` negotiation. It is **inert at `bypass`**, which is why it sits below
    *    the rung check: the rung chosen for this session wins, and a stop that must survive `bypass`
    *    is a deny entry and only that.
-   * 4. **allow** (§3, §3.2) — a declared entry (matched against the whole normalized command, and
-   *    only when that command statically resolves) or an EXT-9 Tier-2 prefix the human granted this
-   *    session / persisted. An allow match settles the human's part: no prompt. Whether the rater
+   * 4. **allow** (§3, §3.2) — a declared entry or a grant the human made at an earlier prompt this
+   *    session (or persisted), matched against the whole normalized command and only when that
+   *    command statically resolves. An allow match settles the human's part: no prompt. Whether the rater
    *    still reviews the call is the entry's own `rate` (§3.2) — honored at the rater rungs and
    *    inert at the deterministic ones, so no entry can smuggle a model call into `read-only` or
    *    `write` — and a rated allow match is a TRIPWIRE, not a re-adjudication
@@ -507,7 +508,8 @@ export class GthAgentRunner {
    *    `catastrophic` escalate, and `attack` HALTS the run ({@link AttackHaltError}). The other
    *    three rungs consult no model at all.
    * 6. **human prompt** — the approval callback; when the human grants `session`/`always` scope,
-   *    the command's classified prefix is recorded so future flag-variants stop re-prompting.
+   *    **that command** is recorded as an `exact` entry (§3.1/§6 — the menu never widens), so the
+   *    same command stops re-prompting and a longer variant of it still asks.
    *
    * §6.2 — where no human can answer (CI, a one-shot run, a server), an escalation is **not** a
    * rejection handed back to the model: it is an immediate non-zero exit
@@ -524,11 +526,13 @@ export class GthAgentRunner {
     const isShellCommand = tool.name === SHELL_TOOL_NAME && command !== null;
     const approvals = this.sessionApprovals;
 
-    // The declared lists, resolved most-restrictive-wins in ONE pass, so author order and the order
-    // the lists were concatenated in cannot change the outcome.
+    // The declared lists AND the runtime grant stores, resolved most-restrictive-wins in ONE pass
+    // through the ONE comparison engine, so author order and the order the lists were concatenated
+    // in cannot change the outcome — and a grant the menu wrote is compared exactly as a line the
+    // user typed into their config is.
     const rule: ApprovalRuleDecision | null = resolveApprovalRules(
       this.approvalSubjectFor(tool, command),
-      approvals,
+      this.approvalRuleLists(),
       { onNotice: (notice) => this.statusUpdate(notice.level, notice.message) }
     );
 
@@ -540,17 +544,6 @@ export class GthAgentRunner {
           `Refused: your deny list forbids this call (matched "${describeApprovalEntry(rule.entry)}"). ` +
           'Remove the entry from approvals.deny if you want it to run.',
       };
-    }
-    if (isShellCommand && command !== null) {
-      const denied = this.denylist.match(command);
-      if (denied !== null) {
-        return {
-          type: 'reject',
-          message:
-            `Refused: your deny list forbids this command (matched "${denied}"). ` +
-            'Remove the entry from approvals.deny if you want it to run.',
-        };
-      }
     }
 
     // (2) `bypass` (config or `/approvals bypass`): approve a gated shell command WITHOUT
@@ -596,10 +589,6 @@ export class GthAgentRunner {
       }
       // `catastrophic` — the one outcome the tripwire escalates. Fall through to the human.
       safetyVerdict = tripwire.verdict;
-    } else if (allowlistApplies && isShellCommand && this.isApprovedByAllowlist(command)) {
-      // The EXT-9 Tier-2 stores: prefixes the human granted at an escalation prompt this session,
-      // or persisted. The menu writes the command the human saw (§6), so these carry no rating.
-      return { type: 'approve', scope: 'session' };
     }
 
     // (5) The auto-rater, at the two rated rungs only. `safe` is approved (the fatigue reducer),
@@ -639,20 +628,6 @@ export class GthAgentRunner {
       );
     }
 
-    // Surface the rater's verdict — and the escalate entry that fired, as provenance (§3.2) — to
-    // the human prompt, without mutating the original interrupt object the caller holds.
-    const pending: PendingToolInterrupt =
-      safetyVerdict || escalatedBy
-        ? {
-            ...tool,
-            ...(safetyVerdict ? { safetyVerdict } : {}),
-            ...(escalatedBy ? { escalatedBy } : {}),
-          }
-        : tool;
-    const decision = await this.toolApprovalCallback(pending);
-
-    // Persist the human's scoped grant so future variants of the same operation skip the prompt.
-    //
     // §4.2 — **a `catastrophic` approval is NEVER sticky.** "The human may approve this one
     // invocation, and only this one": no always-allow, and no session-scoped allow either. The
     // surface withdraws the affordance ([[TUI-C26]] drops `always approve` from the menu for this
@@ -662,6 +637,33 @@ export class GthAgentRunner {
     // does not depend on which surface asked, or on a surface that has not been built yet.
     const catastrophic = safetyVerdict?.outcome === 'catastrophic';
     const recordable = isShellCommand && approvals.rung !== 'bypass';
+
+    // §6 — **the menu must display what it is about to store**, at the moment of the choice, on
+    // every surface. It is rendered from the very entry {@link recordApproval} will write (one
+    // function, {@link shellGrantEntry}), because a menu that describes a grant one way and stores
+    // it another is the drift this design cannot afford. Absent exactly where no sticky grant is
+    // available — a `catastrophic` outcome, or a call nothing would remember — so the prompt never
+    // advertises a control that has already been withdrawn.
+    const grantPreview =
+      recordable && command && !catastrophic
+        ? renderApprovalEntryObject(shellGrantEntry(command))
+        : undefined;
+
+    // Surface the rater's verdict, the escalate entry that fired as provenance (§3.2), and what a
+    // sticky choice would store (§6) — without mutating the original interrupt object the caller
+    // holds.
+    const pending: PendingToolInterrupt =
+      safetyVerdict || escalatedBy || grantPreview
+        ? {
+            ...tool,
+            ...(safetyVerdict ? { safetyVerdict } : {}),
+            ...(escalatedBy ? { escalatedBy } : {}),
+            ...(grantPreview ? { grantPreview } : {}),
+          }
+        : tool;
+    const decision = await this.toolApprovalCallback(pending);
+
+    // Record the human's scoped grant so the same command stops re-prompting.
     if (decision.type === 'approve' && recordable && command && !catastrophic) {
       this.recordApproval(command, decision.scope ?? 'once');
     }
@@ -745,47 +747,78 @@ export class GthAgentRunner {
   }
 
   /**
-   * Lazily load (once per instance) the persisted `always` allow-list.
+   * §3/§3.3 — the three rule lists this session decides by: the DECLARED entries from config
+   * (read-only input) concatenated with the runtime grants the escalation menu made. One set of
+   * lists, handed to the one comparison engine; the concatenation cannot change any outcome
+   * because `resolveApprovalRules` consults every deny entry before any escalate entry and every
+   * escalate entry before any allow entry.
+   *
+   * The persisted store is loaded here rather than at {@link init} — lazily, once per instance, and
+   * NEVER at `bypass`, where the allow list is moot and a session that has switched the gate off
+   * should not be reading or rewriting the project's grant file.
+   */
+  private approvalRuleLists(): ApprovalRuleLists {
+    const approvals = this.sessionApprovals;
+    const persisted = approvals.rung === 'bypass' ? null : this.getPersistedGrants();
+    return {
+      deny: [...approvals.deny, ...this.denyGrants.entries()],
+      escalate: approvals.escalate,
+      allow: [...approvals.allow, ...this.sessionGrants.entries(), ...(persisted?.entries() ?? [])],
+    };
+  }
+
+  /**
+   * Lazily load (once per instance) the persisted `always` grant store.
    *
    * CFG-27 removed the `persistAllowlist` switch: §3 makes persistence a per-decision choice in
    * the escalation menu (`approve` forgets, `always approve` persists), and a global "never
    * persist" setting would only duplicate a keystroke. Returns null when the store cannot be
    * loaded at all, in which case `always` grants degrade to `session` (in-memory only).
+   *
+   * The v1→v2 migration notice is routed to `statusUpdate` from here, which is the only place that
+   * knows how to reach the user.
    */
-  private getPersistedAllowlist(): PersistedAllowlist | null {
-    if (this.persistedAllowlistLoaded) return this.persistedAllowlist;
-    this.persistedAllowlistLoaded = true;
+  private getPersistedGrants(): PersistedApprovalGrants | null {
+    if (this.persistedGrantsLoaded) return this.persistedGrants;
+    this.persistedGrantsLoaded = true;
     try {
       const filePath = getGslothConfigWritePath(SHELL_ALLOWLIST_FILE);
-      this.persistedAllowlist = new PersistedAllowlist(filePath);
+      this.persistedGrants = new PersistedApprovalGrants(filePath, {
+        onNotice: (notice) => this.statusUpdate(notice.level, notice.message),
+      });
     } catch (e) {
       // Path/IO failure → behave as no persisted store (still safe: just prompts more).
-      debugLogError('Loading persisted shell allow-list', e);
-      this.persistedAllowlist = null;
+      debugLogError('Loading persisted shell approvals', e);
+      this.persistedGrants = null;
     }
-    return this.persistedAllowlist;
-  }
-
-  /** Check the command against the session + persisted stores (with anti-widening re-validation). */
-  private isApprovedByAllowlist(command: string): boolean {
-    return matchesApproval(command, {
-      session: this.sessionAllowlist,
-      always: this.getPersistedAllowlist() ?? undefined,
-    });
+    return this.persistedGrants;
   }
 
   /**
-   * Record a human-granted approval at the given scope. `once` persists nothing. `session`
-   * adds the classified prefix to the in-memory store. `always` additionally persists it (or
-   * falls back to session-only when persistence is disabled).
+   * §3.1/§6 — record a human-granted approval at the given scope. `once` remembers nothing.
+   * `session` adds the entry to the in-memory store; `always` additionally persists it (falling
+   * back to session-only when the file cannot be written).
+   *
+   * **What is recorded is the command itself, as an `exact` entry** — never a prefix, never a
+   * pattern. Breadth is always something a human typed into a config file.
+   *
+   * A command that does not statically resolve (composition, substitution, redirection) is not
+   * recorded at all. It could not be stored harmfully — no allow entry of any matcher matches an
+   * unresolvable command, so the entry would be inert — but an inert entry sitting in a list §3
+   * requires to be inspectable would tell the user something is in force when nothing is.
    */
-  private recordApproval(command: string, scope: ApprovalScope): void {
+  private recordApproval(command: string, scope: ToolApprovalScope): void {
     if (scope === 'once') return;
-    const classification = classifyCommand(command, normalizeCommand);
-    if (!classification) return; // unclassifiable (composition/redirection) → never remember.
-    this.sessionAllowlist.add(classification.prefix);
+    if (classifyCommand(command, normalizeCommand) === null) return;
+    const grantScope: ApprovalGrantScope = scope;
+    const grant = {
+      entry: shellGrantEntry(command),
+      grantedAt: new Date().toISOString(),
+      scope: grantScope,
+    };
+    this.sessionGrants.add(grant);
     if (scope === 'always') {
-      this.getPersistedAllowlist()?.add(classification.prefix);
+      this.getPersistedGrants()?.add(grant);
     }
   }
 

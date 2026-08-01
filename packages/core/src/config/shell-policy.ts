@@ -452,7 +452,10 @@ export function isRatedRung(rung: ApprovalRung): boolean {
 
 /**
  * EXT-71 §3.1 — the **subject** axis of a rule entry, and only that. The schema twin is
- * `APPROVAL_ENTRY_TYPES` in `config/schema.ts`; `configSchema.spec.ts` pins the two together.
+ * `APPROVAL_ENTRY_TYPES` in `config/schema.ts`. What holds the two together is
+ * `approvalEntrySchema.spec.ts`, where a list of `ApprovalEntry`-typed literals is parsed by that
+ * schema: a value either side stops accepting fails there. That is a weaker pin than a direct
+ * equality assertion — it catches a narrowing, not a widening on one side alone.
  */
 export type ApprovalEntryType = 'shell' | 'tool' | 'mcpTool';
 

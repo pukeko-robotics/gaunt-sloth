@@ -25,12 +25,16 @@ Anything else stops and asks you:
 The agent wants to run a shell command via run_shell_command
     rm -rf node_modules
 ⚠ Auto-rater (destructive): deletes a directory tree without confirmation
+[s]/[a] will remember exactly this command: { "type": "shell", "matcher": "exact", "pattern": "rm -rf node_modules" }
 Approve?  [o]nce   [s]ession   [a]lways   [N]o
 ```
 
 - **once** — run this one command, then keep asking.
-- **session** — run it and auto-approve the same operation (e.g. any `npm test …`) for the rest of
-  this session, without re-prompting.
+- **session** — run it and stop asking about **that exact command** for the rest of this session.
+  It is remembered as the entry shown on the prompt, so a longer command that merely starts with it
+  (`rm -rf node_modules dist`) asks again. To trust a whole family of commands at once, write a
+  pattern in `approvals.allow` yourself (below) — breadth is always something you choose in a file
+  you can read, never something inferred from one answer to one prompt.
 - **always** — same as session, but also remembered across future sessions (persisted to
   `.gsloth/.gsloth-settings/shell-allowlist.json`).
 - **No** (the default — just press Enter) — reject it. The agent is told what it can do next: run

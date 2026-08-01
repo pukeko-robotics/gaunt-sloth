@@ -70,6 +70,7 @@ type PendingLike = {
   args: Record<string, unknown>;
   safetyVerdict?: { outcome: string; reason: string };
   escalatedBy?: string;
+  grantPreview?: string;
 };
 let capturedApprovalCallback:
   | ((_pending: PendingLike) => Promise<{ type: string; scope?: string; message?: string }>)
@@ -157,7 +158,7 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
 
       const out = printed();
       // The falsehoods the clamp created. Neither may be printed.
-      expect(out).not.toContain('future variants will not re-prompt');
+      expect(out).not.toContain('will not ask again this session');
       expect(out).not.toContain('saved to the project allow-list');
       expect(out).not.toContain('Approved and remembered');
       // And the honest sentence in their place.
@@ -173,13 +174,15 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
   it('on a destructive verdict, "s" still promises the session grant sticks', async () => {
     await startSession();
     await answer('s', DESTRUCTIVE);
-    expect(printed()).toContain('Approved for this session, future variants will not re-prompt.');
+    expect(printed()).toContain('Approved — this exact command will not ask again this session.');
   });
 
   it('on a destructive verdict, "a" still promises the allow-list write', async () => {
     await startSession();
     await answer('a', DESTRUCTIVE);
-    expect(printed()).toContain('Approved and remembered, saved to the project allow-list.');
+    expect(printed()).toContain(
+      'Approved and remembered — this exact command is saved to the project allow-list.'
+    );
   });
 
   /**
@@ -218,5 +221,32 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
     // Control: the rater row IS still printed on the same surface, so the assertion above is
     // about the escalate row rather than about warnings being suppressed altogether.
     expect(warned()).toContain('Auto-rater (destructive)');
+  });
+
+  /**
+   * EXT-71 §6 — **the menu must display what it is about to store**, at the moment of the choice,
+   * on every surface. Under §3.1 that is the command itself as a fully-explicit exact entry, so the
+   * user is shown the thing they are agreeing to rather than a generalization of it.
+   */
+  it('shows what a sticky choice will store', async () => {
+    await startSession();
+    rlQuestionMock.mockResolvedValueOnce('n');
+    await capturedApprovalCallback!({
+      name: 'run_shell_command',
+      args: { command: 'npm test' },
+      grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "npm test" }',
+    });
+    expect(printed()).toContain('will remember exactly this command');
+    expect(printed()).toContain('"matcher": "exact"');
+  });
+
+  it('shows no such line when no sticky grant is on offer', async () => {
+    await startSession();
+    rlQuestionMock.mockResolvedValueOnce('n');
+    await capturedApprovalCallback!({ name: 'run_shell_command', args: { command: 'npm test' } });
+    expect(printed()).not.toContain('will remember exactly this command');
+    // Control: this surface still printed its own line on the same path, so the assertion above is
+    // about the grant row and not about output being suppressed altogether.
+    expect(printed()).toContain('Command rejected.');
   });
 });

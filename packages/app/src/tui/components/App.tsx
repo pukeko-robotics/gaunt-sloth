@@ -385,9 +385,12 @@ export function App(props: TuiAppProps): React.ReactElement {
             'one like it will ask again.'
           );
         }
+        // EXT-71 §3.1 — a grant is exactly the command the human saw, so the confirmation says
+        // that and not "this operation". A longer command that merely starts with it asks again.
         if (scope === 'session')
-          return 'Approved for this session — future variants will not re-prompt.';
-        if (scope === 'always') return 'Approved and remembered — saved to the project allow-list.';
+          return 'Approved — this exact command will not ask again this session.';
+        if (scope === 'always')
+          return 'Approved and remembered — this exact command is saved to the project allow-list.';
         return 'Approved this single invocation only.';
       };
       push({

@@ -247,17 +247,35 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
     expect(model.callCount).toBe(1);
   });
 
-  it('allow-list: a session-scoped approval auto-approves a variant of the same operation without re-prompting', async () => {
-    const runner = await makeRunner(['git checkout main', 'git checkout -b feature']);
+  /**
+   * EXT-71 §3.1/§6 — the same property as the runner's unit test, through a **real `createAgent`
+   * graph**: a session grant is the command the human saw and nothing more. The repeat runs
+   * unprompted; the longer command asks again and runs only because the human said so a second
+   * time. Both commands still execute, so this is a test about who was asked, not about what ran.
+   */
+  it('allow-list: a session grant covers exactly that command — the repeat is silent, a longer one asks', async () => {
+    const runner = await makeRunner([
+      'git checkout main',
+      'git checkout main',
+      'git checkout main --force',
+    ]);
     const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'session' });
     runner.setToolApprovalCallback(human);
 
     await runTurn(runner, 'checkout main'); // human grants session scope
-    await runTurn(runner, 'new branch'); // variant must NOT re-prompt
+    await runTurn(runner, 'checkout main again'); // the granted command must NOT re-prompt
+    await runTurn(runner, 'force it'); // a longer command is a different command
 
-    expect(human).toHaveBeenCalledTimes(1);
-    expect(human.mock.calls[0][0].args).toEqual({ command: 'git checkout main' });
-    expect(executed).toEqual(['git checkout main', 'git checkout -b feature']);
+    expect(human).toHaveBeenCalledTimes(2);
+    expect(human.mock.calls.map((call) => call[0].args)).toEqual([
+      { command: 'git checkout main' },
+      { command: 'git checkout main --force' },
+    ]);
+    expect(executed).toEqual([
+      'git checkout main',
+      'git checkout main',
+      'git checkout main --force',
+    ]);
   });
 
   /**

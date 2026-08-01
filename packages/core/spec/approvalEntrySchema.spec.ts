@@ -489,6 +489,12 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
    * One row of the §2.2 table is deliberately absent here and only enforced at load: **whether a
    * regexp COMPILES**, which JSON Schema has no way to express. Its length cap is expressible and
    * is checked below, so the two halves are: `maxLength` in the schema, compilation at load.
+   *
+   * That is a statement about the ENTRY grammar's rows, not about the node's load-time checks as a
+   * whole — the other one is the reserved `mcpServers` key `*`, which is a rule about a config
+   * record's key rather than about an entry field, and is likewise refused only at load
+   * (`findApprovalsGrammarIssues`). Reworking a shared permissive subschema for one reserved name
+   * would be a poor trade when the load already fails closed on it.
    */
   describe('the emitted JSON Schema round-trips', () => {
     const ajv = new Ajv2020({ strict: false, allErrors: true });
