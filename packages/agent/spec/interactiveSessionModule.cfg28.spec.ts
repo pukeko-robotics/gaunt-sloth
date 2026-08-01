@@ -265,4 +265,40 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
     // about the grant row and not about output being suppressed altogether.
     expect(printed()).toContain('Command rejected.');
   });
+
+  /** The prompt string this surface actually asked with — the menu, as the human read it. */
+  const asked = (): string =>
+    rlQuestionMock.mock.calls.map((call: unknown[]) => String(call[0])).join('\n');
+
+  /**
+   * EXT-70 §6 — **a sticky control is shown only where a sticky grant is on offer**, and is
+   * ABSENT rather than disabled: "a control that is offered and then refused reads as a bug rather
+   * than as a policy". Both halves are in one test, because asserting only the absence would pass
+   * on a menu that never offered `[s]`/`[a]` at all.
+   */
+  it('offers the sticky choices with a grant and not without one', async () => {
+    await startSession();
+    rlQuestionMock.mockResolvedValueOnce('n');
+    await capturedApprovalCallback!({
+      name: 'run_shell_command',
+      args: { command: 'npm test' },
+      grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "npm test" }',
+      grantSummary: 'npm test',
+    });
+    expect(asked()).toContain('[s]ession');
+    expect(asked()).toContain('[a]lways');
+
+    rlQuestionMock.mockClear();
+    rlQuestionMock.mockResolvedValueOnce('n');
+    await capturedApprovalCallback!({
+      name: 'run_shell_command',
+      args: { command: 'ls && rm -rf build' },
+    });
+    expect(asked()).not.toContain('[s]ession');
+    expect(asked()).not.toContain('[a]lways');
+    // Still a menu: the one-shot choices remain, so the absence above is about the sticky pair and
+    // not about the prompt having collapsed.
+    expect(asked()).toContain('[o]nce');
+    expect(asked()).toContain('[N]o');
+  });
 });
