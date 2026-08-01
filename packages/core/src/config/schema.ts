@@ -1181,18 +1181,24 @@ export function findDeprecatedConfigIssues(raw: Record<string, unknown>): Deprec
 const RESERVED_MCP_SERVER_NAME = '*';
 
 /**
- * EXT-71 §3.1/§9.1 — scan one `approvals` value (root or per command) for BARE STRINGS in the
- * three rule lists, pushing one issue per occurrence with the object form of that same string.
+ * EXT-71 §3.1/§9.1 — validate every entry in one `approvals` value's three rule lists (root or per
+ * command), pushing one issue per problem with a path that points at the exact entry and field.
  *
- * The message is the whole migration affordance, so it renders the entry for the string that was
- * actually found rather than a generic example: what the user needs is the line they can paste
- * back over the one they wrote.
+ * **Why the entries are checked HERE rather than left to the schema parse**, given that
+ * `approvalsSchema` already carries {@link approvalEntrySchema}: the `approvals` value is a union
+ * (the §9.1 scalar-or-object sugar), and zod reports a failing union as ONE issue at the union's
+ * own path — `approvals: Invalid input` — with every arm's real diagnosis nested out of reach of
+ * the formatter. That is exactly the wrong message for this grammar, where the whole requirement is
+ * that a rejection names the offending field, key or pattern. Parsing each entry on its own gets
+ * the precise issue back, and because this runs BEFORE the parse the precise message is the only
+ * one the user sees. The schema keeps the entries too, so it stays the authority and the emitted
+ * JSON Schema still describes them.
  *
- * Detected pre-parse rather than left to the union, for the reason the rest of this family exists:
- * `approvalEntrySchema` would report "expected object, received string", which states what broke
- * and not one word about how to fix it.
+ * A bare string is handled separately from the rest, because its message is the migration
+ * affordance: it renders the entry for the string that was actually found rather than a generic
+ * example, since what the user needs is the line they can paste back over the one they wrote.
  */
-function collectBareApprovalEntryIssues(
+function collectApprovalEntryIssues(
   approvals: unknown,
   pathPrefix: string,
   issues: DeprecatedConfigIssue[]
@@ -1204,27 +1210,40 @@ function collectBareApprovalEntryIssues(
     const list = block[listKey];
     if (!Array.isArray(list)) continue;
     list.forEach((entry, index) => {
-      if (typeof entry !== 'string') return;
-      issues.push({
-        path: `${pathPrefix}.${listKey}[${index}]`,
-        message:
-          'bare strings are no longer accepted in an approvals rule list. Write the entry ' +
-          `explicitly: ${renderApprovalEntryForString(entry)} — type, matcher and pattern are ` +
-          `always required, and "matcher" may be exact, glob or regexp. ${MIGRATION_HINT}`,
-      });
+      const entryPath = `${pathPrefix}.${listKey}[${index}]`;
+
+      if (typeof entry === 'string') {
+        issues.push({
+          path: entryPath,
+          message:
+            'bare strings are no longer accepted in an approvals rule list. Write the entry ' +
+            `explicitly: ${renderApprovalEntryForString(entry)} — type, matcher and pattern are ` +
+            `always required, and "matcher" may be exact, glob or regexp. ${MIGRATION_HINT}`,
+        });
+        return;
+      }
+
+      const parsed = approvalEntrySchema.safeParse(entry);
+      if (parsed.success) return;
+      for (const issue of parsed.error.issues) {
+        issues.push({
+          path: issue.path.length > 0 ? `${entryPath}.${issue.path.join('.')}` : entryPath,
+          message: issue.message,
+        });
+      }
     });
   }
 }
 
 /**
- * EXT-71 §3.1 — the rule-grammar errors that cannot be expressed as a schema type: a bare string
- * in `allow`/`deny`/`escalate` (which needs a message showing the object form of that same
- * string), and a configured `mcpServers` key named `*` (which needs to see `mcpServers`, a sibling
- * of `approvals`, not a field of it).
+ * EXT-71 §3.1 — every hard error the rule grammar defines, found on the RAW input: each entry in
+ * `allow`/`deny`/`escalate` validated with a path that names the offending field
+ * ({@link collectApprovalEntryIssues}), and a configured `mcpServers` key named `*` (which needs
+ * to see `mcpServers`, a sibling of `approvals`, not a field of it).
  *
- * Both are HARD errors, reported the same way {@link findDeprecatedConfigIssues} reports its own,
- * and — like it — this runs on the RAW input BEFORE the schema parse so the good message is the
- * only one the user sees.
+ * All of them are HARD errors, reported the same way {@link findDeprecatedConfigIssues} reports
+ * its own, and — like it — this runs BEFORE the schema parse so the precise message is the only
+ * one the user sees.
  *
  * PURE: it only reads the object. Kept separate from {@link findDeprecatedConfigIssues} because
  * these are not removed pre-2.0 shapes; they are rules of the current grammar.
@@ -1250,13 +1269,13 @@ export function findApprovalsGrammarIssues(raw: Record<string, unknown>): Deprec
     });
   }
 
-  collectBareApprovalEntryIssues(raw.approvals, 'approvals', issues);
+  collectApprovalEntryIssues(raw.approvals, 'approvals', issues);
 
   const commands = raw.commands;
   if (commands && typeof commands === 'object' && !Array.isArray(commands)) {
     for (const [name, cmd] of Object.entries(commands as Record<string, unknown>)) {
       if (cmd && typeof cmd === 'object' && !Array.isArray(cmd)) {
-        collectBareApprovalEntryIssues(
+        collectApprovalEntryIssues(
           (cmd as Record<string, unknown>).approvals,
           `commands.${name}.approvals`,
           issues
