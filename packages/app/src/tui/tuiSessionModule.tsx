@@ -127,7 +127,12 @@ function dumpDebugSession(input: DebugDumpInput): { archiveDir: string } {
 }
 
 /**
- * TUI-C37 — the session's mouse plumbing, or `undefined` when mouse is off.
+ * TUI-C37 — the session's mouse plumbing.
+ *
+ * Built for every TUI session, whatever the starting state, because the stdin filter has to be in
+ * place before Ink is rendered and Ink can never be handed a different stdin afterwards. Only
+ * {@link MouseSession.setEnabled} — and therefore only the terminal's reporting mode — changes when
+ * the user toggles `/mouse`.
  *
  * Three things have to be torn down together and in order, which is why they are created together:
  * the terminal's reporting mode, the stdin filter sitting in front of Ink, and the event fan-out.
@@ -142,15 +147,18 @@ interface MouseSession {
   dispose: () => void;
 }
 
-function createMouseSession(): MouseSession {
+function createMouseSession(enabled: boolean): MouseSession {
   const listeners = new Set<(event: MouseEvent) => void>();
-  // The filter stays installed even while reporting is off: with tracking disabled the terminal
-  // sends nothing, so the filter costs an untaken branch, and leaving it in place means `/mouse on`
-  // does not have to hand Ink a different stdin mid-session (which it cannot do).
+  // The filter is installed for the whole session regardless of the starting state. Ink is handed
+  // its stdin exactly once, at render, and cannot be given a different one later — so a session
+  // that started with mouse off could never turn it on if the filter were conditional. With
+  // tracking disabled the terminal sends no reports, so the filter costs an untaken branch.
   const mouseStdin = createMouseStdin(stdin, (event) => {
     for (const listener of listeners) listener(event);
   });
-  let reporting: MouseReportingHandle | undefined = installMouseReporting();
+  // Reporting, unlike the filter, IS conditional: it decides whether any escape bytes reach the
+  // terminal, so a session starting with mouse off writes none.
+  let reporting: MouseReportingHandle | undefined = enabled ? installMouseReporting() : undefined;
   return {
     subscribe: (listener) => {
       listeners.add(listener);
@@ -323,7 +331,7 @@ export async function createTuiSession(
       stdoutIsTTY: !!stdout.isTTY,
       stdinIsTTY: !!stdin.isTTY,
     });
-    const fixtureMouse = fixtureUseMouse ? createMouseSession() : undefined;
+    const fixtureMouse = createMouseSession(fixtureUseMouse);
     // Holder so `onResetFrame` can reach the not-yet-created render instance (App writes the
     // /clear scroll/clear escapes itself, then asks Ink to forget its last frame — TUI-C12).
     let resetFrame: (() => void) | undefined;
@@ -332,8 +340,8 @@ export async function createTuiSession(
         agent={createFixtureTuiAgent(fixturePath)}
         mode={sessionConfig.mode}
         mouseEnabled={fixtureUseMouse}
-        subscribeMouse={fixtureMouse?.subscribe}
-        onSetMouse={(enabled) => fixtureMouse?.setEnabled(enabled)}
+        subscribeMouse={fixtureMouse.subscribe}
+        onSetMouse={(enabled) => fixtureMouse.setEnabled(enabled)}
         // TUI-C33: the banner is chrome, not model output, so the hermetic e2e branch shows it too
         // — that is what lets the PTY suite prove the art actually paints. No config here, so it
         // renders without the model/provider line.
@@ -349,7 +357,7 @@ export async function createTuiSession(
         dumpDebugSession={dumpDebugSession}
         onResetFrame={() => resetFrame?.()}
       />,
-      fixtureMouse ? { stdin: fixtureMouse.stdin } : undefined
+      { stdin: fixtureMouse.stdin }
     );
     resetFrame = () => instance.clear();
     try {
@@ -549,7 +557,9 @@ export async function createTuiSession(
     // TUI-C37 — mouse plumbing, built only when the resolved ladder says so. When it is off,
     // nothing is installed and Ink receives the real stdin, so the session is byte-identical to one
     // built before mouse existed — which is what keeps the non-TTY and piped cases honest.
-    mouseSession = config.useMouse ? createMouseSession() : undefined;
+    // Always built, started in the config's state: `/mouse on` has to work in a session that began
+    // with mouse off, and Ink can only ever be handed one stdin.
+    mouseSession = createMouseSession(config.useMouse);
     const instance = render(
       <App
         agent={tuiAgent}
@@ -588,7 +598,7 @@ export async function createTuiSession(
       />,
       // TUI-C37 — Ink reads the FILTERED stdin so mouse reports never reach its keyboard path and
       // get typed into the prompt. Absent when mouse is off, in which case Ink takes the real one.
-      mouseSession ? { stdin: mouseSession.stdin } : undefined
+      { stdin: mouseSession.stdin }
     );
     resetFrame = () => instance.clear();
 

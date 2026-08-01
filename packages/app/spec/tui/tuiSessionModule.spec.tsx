@@ -347,13 +347,36 @@ describe('createTuiSession — mouse wiring (TUI-C37)', () => {
     expect(written).not.toContain('1000h');
   });
 
-  it('hands Ink the REAL stdin when mouse is off, so the keyboard path is untouched', async () => {
+  it('still installs the stdin filter when mouse is off, so /mouse on can work later', async () => {
+    // The filter has to be in front of Ink before render, and Ink can never be handed a different
+    // stdin afterwards. Making it conditional is what silently broke `/mouse on` in a session that
+    // started with mouse off: the state flipped, the notice printed, and nothing happened.
     initConfigMock.mockResolvedValue({ useMouse: false });
     const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
 
     await createTuiSession(sessionConfig, overrides);
 
-    expect(renderMock.mock.calls[0][1]).toBeUndefined();
+    const options = renderMock.mock.calls[0][1] as { stdin: unknown };
+    expect(options.stdin).toBeDefined();
+    expect(options.stdin).not.toBe(systemUtilsMock.stdin);
+  });
+
+  it('lets a session that started with mouse off turn reporting on', async () => {
+    initConfigMock.mockResolvedValue({ useMouse: false });
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await createTuiSession(sessionConfig, overrides);
+    const before = systemUtilsMock.stdout.write.mock.calls.map((c) => c[0] as string).join('');
+    expect(before).not.toContain('\x1b[?1006h');
+
+    // The App asks the session module to apply the toggle; this is that call.
+    const appElement = renderMock.mock.calls[0][0] as {
+      props: { onSetMouse?: (enabled: boolean) => void };
+    };
+    appElement.props.onSetMouse?.(true);
+
+    const after = systemUtilsMock.stdout.write.mock.calls.map((c) => c[0] as string).join('');
+    expect(after).toContain('\x1b[?1006h');
   });
 
   it('enables reporting and hands Ink the FILTERED stdin when mouse is on', async () => {
