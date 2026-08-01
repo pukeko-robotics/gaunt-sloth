@@ -16,7 +16,10 @@
  * rater module is mocked (its verdicts are scripted per test); prompt composition is stubbed so
  * nothing reads the on-disk gsloth config.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { MemorySaver } from '@langchain/langgraph';
@@ -24,6 +27,7 @@ import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import type { GthConfig } from '#src/config.js';
 import { AttackHaltError, NonInteractiveEscalationError } from '#src/core/shell/approvalStop.js';
+import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
 import type {
   AgentStreamEvent,
   PendingToolInterrupt,
@@ -134,10 +138,26 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
     includeCurrentDateAfterGuidelines: true,
   };
 
+  // EXT-71 — clamp the anchor the persisted grant store resolves from, through the production hook
+  // (`setProjectDir`), or a gated call here reads and — on a v1 file — REWRITES the real
+  // `.gsloth/.gsloth-settings/shell-allowlist.json` of whoever runs the suite. Measured, not assumed.
+  const projectDir = mkdtempSync(join(tmpdir(), 'gth-lean-gate-spec-'));
+  let priorProjectDir: string | undefined;
+
   beforeEach(async () => {
     vi.resetAllMocks();
+    priorProjectDir = peekProjectDir();
+    setProjectDir(projectDir);
     executed = [];
     ({ GthAgentRunner } = await import('#src/core/GthAgentRunner.js'));
+  });
+
+  afterEach(() => {
+    setProjectDir(priorProjectDir);
+  });
+
+  afterAll(() => {
+    rmSync(projectDir, { recursive: true, force: true });
   });
 
   /** A real run_shell_command tool that records what it ran (never mocked — execution is the observable). */

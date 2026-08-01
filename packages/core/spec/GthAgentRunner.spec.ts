@@ -1,9 +1,14 @@
-import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { HumanMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import type { GthConfig } from '#src/config.js';
 import type { PendingToolInterrupt, StatusUpdateCallback } from '#src/core/types.js';
 import { AttackHaltError, NonInteractiveEscalationError } from '#src/core/shell/approvalStop.js';
+import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
+import { SHELL_ALLOWLIST_FILE } from '#src/constants.js';
 
 // Mock the GthLangChainAgent - using a simplified approach
 const mockAgent = {
@@ -31,10 +36,23 @@ vi.mock('#src/core/GthLangChainAgent.js', () => ({
   StatusUpdateCallback: vi.fn(),
 }));
 
+/**
+ * EXT-71 — **the persisted grant store is anchored at the PROJECT DIR, so a spec that drives a
+ * gated call must clamp that anchor or it reads (and, on a v1 file, rewrites) the real
+ * `.gsloth/.gsloth-settings/shell-allowlist.json` of whoever is running the suite.**
+ *
+ * Clamped through the production hook (`setProjectDir` — the same call config discovery makes)
+ * rather than by mocking `fileUtils`, so the resolution under test is the real one and only its
+ * input is pinned. Measured, not assumed: with a v1 file in place this suite rewrote it to v2 and
+ * three unrelated tests went red on the ambient grants (the OPS-33 class).
+ */
+const projectDir = mkdtempSync(join(tmpdir(), 'gth-runner-spec-'));
+
 describe('GthAgentRunner', () => {
   let GthAgentRunner: typeof import('#src/core/GthAgentRunner.js').GthAgentRunner;
   let statusUpdateCallback: Mock<StatusUpdateCallback>;
   let mockConfig: GthConfig;
+  let priorProjectDir: string | undefined;
 
   const BASE_GTH_CONFIG: Pick<
     GthConfig,
@@ -64,6 +82,10 @@ describe('GthAgentRunner', () => {
   beforeEach(async () => {
     vi.resetAllMocks();
 
+    priorProjectDir = peekProjectDir();
+    setProjectDir(projectDir);
+    rmSync(join(projectDir, SHELL_ALLOWLIST_FILE), { force: true });
+
     // Reset mock implementations
     mockAgent.init.mockClear();
     mockAgent.setVerbose.mockClear();
@@ -87,6 +109,14 @@ describe('GthAgentRunner', () => {
     };
 
     ({ GthAgentRunner } = await import('#src/core/GthAgentRunner.js'));
+  });
+
+  afterEach(() => {
+    setProjectDir(priorProjectDir);
+  });
+
+  afterAll(() => {
+    rmSync(projectDir, { recursive: true, force: true });
   });
 
   describe('init', () => {
@@ -618,6 +648,52 @@ describe('GthAgentRunner', () => {
       await runner.processMessages([new HumanMessage('go')]);
 
       expect(runner.getAllowlistCounts().always).toBeUndefined();
+    });
+
+    /**
+     * §2.4 — the v1 migration **through the runner**: the file the product actually resolves, the
+     * notice on the surface the product actually reports to (`statusUpdate`), and the narrowed
+     * grant honoured by the gate itself.
+     *
+     * It doubles as the guard on the project-dir clamp above: this only passes because the runner's
+     * real path resolution lands inside the temp dir. Remove the clamp and this reads someone's
+     * actual allow-list instead.
+     */
+    it('§2.4 — migrates a v1 store on first use, reports it once, and grants only the exact command', async () => {
+      const storePath = join(projectDir, SHELL_ALLOWLIST_FILE);
+      writeFileSync(storePath, JSON.stringify({ version: 1, prefixes: ['npm install'] }), 'utf8');
+
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'npm install' } }])
+        // The v1 prefix used to cover this too. It must ask now.
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'npm install left-pad' } },
+        ])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+      await runner.init('code', { ...mockConfig, ...ALLOWLIST_CONFIG });
+      const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('install')]);
+
+      // The migrated grant covered the exact command (no prompt) but not the longer one.
+      expect(human).toHaveBeenCalledTimes(1);
+      expect((human.mock.calls[0][0] as PendingToolInterrupt).args).toEqual({
+        command: 'npm install left-pad',
+      });
+      // The notice reached the user, once, naming the file.
+      const notices = statusUpdateCallback.mock.calls
+        .map((call: unknown[]) => String(call[1]))
+        .filter((message: string) => message.includes('older format'));
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toContain(storePath);
+      // …and the file itself is now v2, so the next session says nothing.
+      expect(JSON.parse(readFileSync(storePath, 'utf8')).version).toBe(2);
     });
 
     it('prompts the human for a non-matching command', async () => {

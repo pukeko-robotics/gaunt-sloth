@@ -1,8 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { HumanMessage } from '@langchain/core/messages';
 import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
+import { peekProjectDir, setProjectDir } from '@gaunt-sloth/core/utils/systemUtils.js';
 import type {
   AgentStreamEvent,
   GthAgentInterface,
@@ -152,8 +156,24 @@ const FULL_CONFIG = {
 };
 
 describe('EXT-11 TUI approval e2e (event-stream path)', () => {
+  // EXT-71 — clamp the anchor the persisted grant store resolves from, through the production hook
+  // (`setProjectDir`), or a gated call here reads and — on a v1 file — REWRITES the real
+  // `.gsloth/.gsloth-settings/shell-allowlist.json` of whoever runs the suite. Measured, not assumed.
+  const projectDir = mkdtempSync(join(tmpdir(), 'gth-approval-e2e-spec-'));
+  let priorProjectDir: string | undefined;
+
   beforeEach(() => {
     vi.resetAllMocks();
+    priorProjectDir = peekProjectDir();
+    setProjectDir(projectDir);
+  });
+
+  afterEach(() => {
+    setProjectDir(priorProjectDir);
+  });
+
+  afterAll(() => {
+    rmSync(projectDir, { recursive: true, force: true });
   });
 
   it('interrupt → ApprovalPrompt renders → approve → streamWithEventsResume → command executes and output renders', async () => {
