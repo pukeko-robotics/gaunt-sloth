@@ -424,9 +424,11 @@ export class GthAgentRunner {
           grant.annotations !== undefined
       )
       .filter((grant) => {
-        // The source contract admits "cannot answer"; this one never does (it falls back to the
-        // fail-closed constant), and a source that could not answer says nothing about a grant
-        // either way — so no answer is no prediction rather than a prediction of the worst.
+        // `EffectiveToolAnnotationSource` admits `undefined` for a source that genuinely cannot
+        // answer; `createEffectiveToolAnnotationSource` never returns it — a tool nothing has
+        // declared for resolves to the fail-closed constant, which for a grant made under anything
+        // softer reads as a weakening. The guard is therefore a type-level obligation and not a
+        // live branch: it discharges the union the contract declares, and nothing reaches it.
         const current = source({
           kind: 'mcpTool',
           server,

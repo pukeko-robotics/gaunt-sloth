@@ -573,6 +573,11 @@ const GRANT_DISPLAY_LIMIT = 10;
  * is an approval of a tool *as annotated*, so a user asked to believe that has to be able to see
  * what they believed. Each entry is rendered by `describeApprovalEntry` — the same one-liner the
  * escalation menu names the grant with and the withdrawal notice names it with.
+ *
+ * **The heading claims no scope**, because the list spans both: `getGrants` reports the persisted
+ * store's `always` grants alongside this session's, and an `always` grant was made in whatever
+ * session the user made it in — often not this one. Each line carries its own scope and the instant
+ * it was granted, which is where that question is answered.
  */
 function describeGrants(grants: readonly ApprovalGrant[]): string[] {
   if (grants.length === 0) return [];
@@ -583,7 +588,7 @@ function describeGrants(grants: readonly ApprovalGrant[]): string[] {
     return `  ${describeApprovalEntry(grant.entry)} — ${grant.scope}, granted ${grant.grantedAt}${annotations}`;
   });
   const rest = grants.length - shown.length;
-  return [`Granted this session:`, ...shown, ...(rest > 0 ? [`  …and ${rest} more.`] : [])];
+  return [`Granted approvals:`, ...shown, ...(rest > 0 ? [`  …and ${rest} more.`] : [])];
 }
 
 /**

@@ -663,10 +663,40 @@ describe('tui/slashCommands /approvals trust (EXT-70 §4.7.1)', () => {
       expect(body).toContain('jira — nothing');
     });
 
+    /**
+     * §4.7.4 — **the heading may not claim a scope the list does not have.** `getGrants` reports the
+     * persisted store's `always` grants next to this session's, and an `always` grant was made in
+     * whatever session the user made it in, which is usually not this one. A heading that said
+     * "this session" would be a plain falsehood about every persisted line under it, and the display
+     * is fed pre-rendered here, so nothing else in the suite would notice.
+     *
+     * Asserted on the heading LINE, not on the joined body: the allow/deny line legitimately says
+     * "this session" about the counts, so a body-wide search for the phrase could not tell a true
+     * use from a false one.
+     */
+    it('does not call a remembered grant one made this session', async () => {
+      const { approvalsStatusNotice } = await load();
+      const lines = approvalsStatusNotice(posture, { session: 0, always: 1 }, [], [
+        {
+          entry: { type: 'mcpTool', server: 'jira', matcher: 'exact', pattern: 'search' },
+          scope: 'always',
+          grantedAt: '2026-07-14T11:02:00.000Z',
+        },
+      ] as never).lines;
+      const heading = lines.find((line) => line.endsWith('Granted approvals:'));
+      expect(heading, 'the grant block is headed').toBeDefined();
+      expect(heading, 'a persisted grant was not granted this session').not.toContain(
+        'this session'
+      );
+      // CONTROL: the line itself still says which session it belongs to and when it was made — the
+      // heading drops the claim because the per-line answer is the true one, not because it is gone.
+      expect(lines.join(' ')).toContain('always, granted 2026-07-14T11:02:00.000Z');
+    });
+
     it('says nothing about grants when there are none', async () => {
       const { approvalsStatusNotice } = await load();
       const body = approvalsStatusNotice(posture, { session: 0, always: 0 }).lines.join(' ');
-      expect(body).not.toContain('Granted this session');
+      expect(body).not.toContain('Granted approvals');
       // CONTROL: the display still rendered, so the absence is about the grant block.
       expect(body).toContain('Auto-rater:');
     });

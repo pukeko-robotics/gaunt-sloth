@@ -3576,13 +3576,26 @@ describe('GthAgentRunner', () => {
         if (call?.before) call.before(runner);
         return call ? [{ name: call.name, args: call.args ?? {} }] : [];
       });
-      // After the sequence ends the servers go on declaring whatever they last declared — which is
-      // what an accessor called AFTER the run (a `/approvals` display, a trust change) reads. The
-      // bare `calls[index]` form returned an empty map there, so every held grant read as though
-      // its server had withdrawn every annotation it ever made.
-      const declared = vi.fn(
-        () => new Map(Object.entries((calls[index] ?? calls[calls.length - 1])?.declaring ?? {}))
-      );
+      // **Every connected server declares, not just the one being called.** The production accessor
+      // reports what all registered tools declare, so the map accumulates every declaration made up
+      // to and including the current call, later declarations of the SAME tool winning — which is
+      // how a sequence still models a tool that changes what it says about itself between calls.
+      //
+      // Two things depend on it. An accessor called AFTER the run (a `/approvals` display, a trust
+      // change) reads the whole set rather than an empty map, so a held grant is not read as though
+      // its server had withdrawn every annotation it ever made. And in a sequence that touches TWO
+      // servers, the first server goes on declaring after the second one's call — without that, its
+      // grant reads as maximally weakened whatever the user's trust says, and any assertion about
+      // WHY it was invalidated passes for the wrong reason.
+      const declared = vi.fn(() => {
+        const map = new Map<string, Record<string, unknown>>();
+        for (const call of calls.slice(0, Math.min(index + 1, calls.length))) {
+          for (const [name, annotations] of Object.entries(call.declaring ?? {})) {
+            map.set(name, annotations);
+          }
+        }
+        return map;
+      });
       (mockAgent as any).getPendingToolInterrupts = pending;
       (mockAgent as any).getDeclaredMcpToolAnnotations = declared;
       const streamResume = vi.fn().mockResolvedValue(streamOf(''));
@@ -4365,7 +4378,20 @@ describe('GthAgentRunner', () => {
           ]);
         });
 
-        it('names only THIS server’s grants — another server’s same-named tool is not affected', async () => {
+        /**
+         * Two claims, and the test has to carry both: the listing names only the server whose trust
+         * moved, **and it names it because of the withdrawal**. The second is the one a scoping test
+         * gets for free and should not: `invalidates` compares each grant's snapshot against the set
+         * in force NOW, so a jira grant that read as weakened for some reason of its own would be
+         * listed under any withdrawal at all, and the assertion would pass without trust having
+         * decided anything.
+         *
+         * So the causal half runs FIRST and on the same runner: `idempotentHint` is the one hint no
+         * weakening move names, and withdrawing it must list nothing. Order matters — the comparison
+         * is snapshot-versus-now rather than before-versus-after, so once `readOnlyHint` is gone the
+         * grant stays weakened and every later withdrawal would list it too.
+         */
+        it('names only THIS server’s grants, and only because the withdrawal weakened them', async () => {
           let runner!: GthAgentRunner;
           await driveCalls(
             toolConfig({
@@ -4389,6 +4415,16 @@ describe('GthAgentRunner', () => {
             ]
           );
           expect(runner.getGrants(), 'both were granted').toHaveLength(2);
+
+          const harmless = runner.setMcpAnnotationTrust('jira', ['idempotentHint'], false);
+          expect(harmless.removed, 'it really was believed, and really was withdrawn').toEqual([
+            'idempotentHint',
+          ]);
+          expect(
+            harmless.invalidates,
+            'a withdrawal that weakens nothing lists nothing — so the line below is caused by the trust move'
+          ).toEqual([]);
+
           const change = runner.setMcpAnnotationTrust('jira', ['readOnlyHint'], false);
           expect(change.invalidates).toEqual([jiraSearchGrantLine]);
         });
@@ -4398,24 +4434,37 @@ describe('GthAgentRunner', () => {
          * believed; the user withdraws belief mid-session, exactly as `/approvals untrust` does; the
          * next call to that very tool is invalidated with the §4.7.4 notice and asks again. Nothing
          * about the server's declaration changed — the trust did.
+         *
+         * Once per hint whose withdrawal weakens on this declaration, because the whole sequence is
+         * what a row proves: a checker that answered for `readOnlyHint` alone would leave the other
+         * covered only as far as `change.invalidates` and never as far as the second call actually
+         * being asked about.
+         *
+         * **`destructiveHint` is the third such hint and has no row here — a stated boundary, not a
+         * claim of coverage.** It is asserted only as far as `change.invalidates`, by the three-row
+         * `it.each` above, which is also where the not-read-only declaration it needs belongs. So
+         * nothing below that level is proved for it, and adding the row is the way to prove it.
          */
-        it('a mid-session withdrawal invalidates the grant at the next call, with the notice', async () => {
-          const prompts = await driveCalls(believingJira(), [
-            { name: 'mcp__jira__search', declaring: { mcp__jira__search: SAFE_DECL } },
-            {
-              name: 'mcp__jira__search',
-              declaring: { mcp__jira__search: SAFE_DECL },
-              before: (r) => {
-                r.setMcpAnnotationTrust('jira', ['readOnlyHint'], false);
+        it.each(['readOnlyHint', 'openWorldHint'] as const)(
+          'a mid-session withdrawal of %s invalidates the grant at the next call, with the notice',
+          async (hint) => {
+            const prompts = await driveCalls(believingJira(), [
+              { name: 'mcp__jira__search', declaring: { mcp__jira__search: SAFE_DECL } },
+              {
+                name: 'mcp__jira__search',
+                declaring: { mcp__jira__search: SAFE_DECL },
+                before: (r) => {
+                  r.setMcpAnnotationTrust('jira', [hint], false);
+                },
               },
-            },
-          ]);
-          expect(prompts[0], 'the first call asks and grants').not.toBeNull();
-          expect(prompts[1], 'the withdrawal made the tool ask again').not.toBeNull();
-          const said = warningsSaid();
-          expect(said).toContain(jiraSearchGrantLine);
-          expect(said).toContain('readOnlyHint');
-        });
+            ]);
+            expect(prompts[0], 'the first call asks and grants').not.toBeNull();
+            expect(prompts[1], 'the withdrawal made the tool ask again').not.toBeNull();
+            const said = warningsSaid();
+            expect(said).toContain(jiraSearchGrantLine);
+            expect(said).toContain(hint);
+          }
+        );
 
         /**
          * CONTROL for the above: withdrawing the one hint no weakening move names leaves the grant

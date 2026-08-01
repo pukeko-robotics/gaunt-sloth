@@ -738,7 +738,17 @@ export interface McpAnnotationTrustChange extends McpServerAnnotationTrust {
    * everything it ever declared, and the grants would go. Listing them is safe where deleting them
    * is not.
    *
-   * Empty is therefore not "nothing is at risk" but "nothing this session can see is": with
+   * **It over-reports in two distinct ways, and both are the same trade.** The comparison is each
+   * grant's recorded snapshot against the set in force *now*, not the set before this change against
+   * the set after it. So (1) a server that is offline when trust moves declares nothing, resolves to
+   * the fail-closed constant, and every grant it holds is named; and (2) a grant already weakened
+   * for some other reason — an earlier withdrawal, a `tools/list` that took a hint back — is named
+   * under whichever withdrawal happens to run next, including one that moved nothing relevant to it.
+   * A named grant is therefore one that the trust now in force weakens, which is what the user needs
+   * to know; it is not a claim that *this* withdrawal is what weakened it. Reading it as the latter
+   * is how a test comes to assert causation the field never promised.
+   *
+   * Empty is likewise not "nothing is at risk" but "nothing this session can see is": with
    * {@link weakening} non-empty the rule still holds for any grant made while those hints were
    * believed, which is what the notice says in that case. Counted read-only, like
    * {@link AllowlistCounts}: the persisted store is consulted only when it is already loaded.

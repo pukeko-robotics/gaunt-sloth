@@ -198,7 +198,8 @@ test.describe('gth code TUI — EXT-52/CFG-27 rung switching restores prompting 
     await expect(terminal.getByText('Approvals: Write')).toBeVisible();
 
     // Turn 2: the per-command prompt is BACK (not a placebo). Reject to finish cleanly — pressing
-    // [a]/always here would write shell-allowlist.json into the tracked fixtures dir.
+    // [a]/always here would write shell-allowlist.json into the tracked fixtures dir. See the EXT-70
+    // describe below for why the HOME clamp does not cover it, and what to clamp instead.
     terminal.write('run it again');
     await expect(terminal.getByText('> run it again')).toBeVisible();
     terminal.submit();
@@ -230,8 +231,18 @@ test.describe('gth code TUI — EXT-70 §6 the menu names what it will store, an
    * The pair is in one test on purpose: asserting only that the compound command hides `[s]`/`[a]`
    * would pass on a menu that never rendered them at all.
    *
-   * Nothing here presses `[a]` — that would write `shell-allowlist.json` into the tracked fixtures
-   * dir, since the allow-list path resolves against the PROJECT dir and not the throwaway HOME.
+   * **No test in this file may press `[a]` as it stands, and every one of them answers `n` or `[o]`
+   * for that reason.** `realAgentEnv` clamps HOME to a throwaway dir, but the allow-list is a
+   * PROJECT artifact: `--config` sets the project dir to the config file's own directory, which is
+   * the tracked `fixtures/` folder, so an `[a]lways` grant writes
+   * `.gsloth/.gsloth-settings/shell-allowlist.json` into the repo — and, worse, the next run of the
+   * suite reads it back and the prompt under test silently stops appearing.
+   *
+   * **The remedy, for whoever needs to press it:** clamp the project dir the same way HOME is
+   * clamped, by copying (or generating) the config into the per-suite `mkdtemp` and pointing
+   * `-c` at the copy. `tui-test`'s `program` option takes no `cwd`, so the config path is the lever;
+   * assert afterwards that the store landed under the temp dir, which also makes the persistence
+   * itself testable instead of merely avoided.
    */
   test('a resolvable command names its grant and offers the sticky controls', async ({
     terminal,
