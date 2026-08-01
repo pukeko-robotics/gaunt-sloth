@@ -167,6 +167,32 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
     });
   });
 
+  describe('a list that is not a list', () => {
+    it.each(['allow', 'deny'] as const)(
+      'refuses a scalar %s naming the shape it wants, while the array form loads',
+      (list) => {
+        const message = expectRejected(validate({ mode: 'auto-safe', [list]: 'npm test' }));
+        expect(message).toContain(`approvals.${list}`);
+        expect(message).toContain('must be a LIST of rule entries');
+        // Not the union's bland fallback, which is what this whole surface exists to replace.
+        expect(message).not.toContain('approvals: Invalid input');
+
+        expectAccepted(
+          validate({
+            mode: 'auto-safe',
+            [list]: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
+          })
+        );
+      }
+    );
+
+    it('leaves a scalar escalate to the retired-threshold message, which is more specific', () => {
+      const message = expectRejected(validate({ mode: 'auto-safe', escalate: 'danger' }));
+      expect(message).toContain('third rule LIST');
+      expect(message).not.toContain('must be a LIST of rule entries');
+    });
+  });
+
   describe('the three required fields', () => {
     it.each(['type', 'matcher', 'pattern'] as const)(
       'refuses an entry missing %s, naming that field, while the complete entry loads',

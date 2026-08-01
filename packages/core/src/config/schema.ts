@@ -1208,7 +1208,25 @@ function collectApprovalEntryIssues(
 
   for (const listKey of APPROVAL_LIST_KEYS) {
     const list = block[listKey];
-    if (!Array.isArray(list)) continue;
+    if (list === undefined) continue;
+
+    // A list written as something other than an array would otherwise fall back to the union's
+    // bland "approvals: Invalid input" — the same message this whole function exists to replace.
+    // `escalate` is exempt: its non-array shape is the retired severity threshold and gets its own
+    // migration message from `collectRetiredApprovalsIssues`.
+    if (!Array.isArray(list)) {
+      if (listKey !== 'escalate') {
+        issues.push({
+          path: `${pathPrefix}.${listKey}`,
+          message:
+            `must be a LIST of rule entries, not ${typeof list === 'object' ? 'an object' : `a ${typeof list}`}. ` +
+            `Write it as an array, e.g. [ ${renderApprovalEntryForString('npm test')} ]. ` +
+            MIGRATION_HINT,
+        });
+      }
+      continue;
+    }
+
     list.forEach((entry, index) => {
       const entryPath = `${pathPrefix}.${listKey}[${index}]`;
 

@@ -535,6 +535,93 @@ describe('config', async () => {
       );
     });
 
+    /**
+     * EXT-71 §2.2 — "a hard config error" means the config **fails to load**, so the rule-grammar
+     * scan has to be wired into the LOADER, not only into the pure read-side validator that
+     * `gth config validate` calls. Every other test of this grammar goes through
+     * `validateRawGthConfig`, which would stay green if the loader forgot to call the scan — the
+     * config would then load with a rule list the runtime cannot honour, which for a safety gate
+     * is the worst available failure. This is the one test that only the loader call site can
+     * satisfy.
+     */
+    it('Should HARD-reject a bare-string approvals entry at LOAD, showing the object form (EXT-71)', async () => {
+      const jsonConfig = {
+        llm: { type: 'vertexai' },
+        approvals: { mode: 'auto-safe', deny: ['npm publish'] },
+      } as unknown as RawGthConfig;
+
+      fsMock.existsSync.mockImplementation((path: string) => {
+        return path && path.includes('.gsloth.config.json');
+      });
+      fsMock.readFileSync.mockImplementation((path: string) => {
+        if (path && path.includes('.gsloth.config.json')) return JSON.stringify(jsonConfig);
+        return '';
+      });
+      fileUtilsMock.getGslothConfigReadPath.mockImplementation((filename: string) => {
+        return `/mock/read/${filename}`;
+      });
+
+      vi.doMock('#src/providers/vertexai.js', () => ({
+        processJsonConfig: vi.fn().mockResolvedValue({ type: 'vertexai' }),
+        postProcessJsonConfig: undefined,
+      }));
+
+      const { initConfig } = await import('#src/config.js');
+      try {
+        await initConfig({});
+      } catch {
+        // Expected: downstream code may throw after the mocked exit(1).
+      }
+
+      const errorOutput = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
+      expect(errorOutput).toContain('Invalid configuration');
+      expect(errorOutput).toContain('approvals.deny[0]');
+      expect(errorOutput).toContain(
+        '{ "type": "shell", "matcher": "exact", "pattern": "npm publish" }'
+      );
+      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+    });
+
+    /**
+     * The control for the test above: the very entry that message told the user to write must
+     * LOAD. Without it, a loader that rejected every `approvals` block outright would pass.
+     */
+    it('Should LOAD the object form of that same approvals entry (EXT-71 control)', async () => {
+      const jsonConfig = {
+        llm: { type: 'vertexai' },
+        approvals: {
+          mode: 'auto-safe',
+          deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
+        },
+      } as unknown as RawGthConfig;
+
+      fsMock.existsSync.mockImplementation((path: string) => {
+        return path && path.includes('.gsloth.config.json');
+      });
+      fsMock.readFileSync.mockImplementation((path: string) => {
+        if (path && path.includes('.gsloth.config.json')) return JSON.stringify(jsonConfig);
+        return '';
+      });
+      fileUtilsMock.getGslothConfigReadPath.mockImplementation((filename: string) => {
+        return `/mock/read/${filename}`;
+      });
+
+      vi.doMock('#src/providers/vertexai.js', () => ({
+        processJsonConfig: vi.fn().mockResolvedValue({ type: 'vertexai' }),
+        postProcessJsonConfig: undefined,
+      }));
+
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({});
+
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+      expect(config.approvals).toEqual({
+        mode: 'auto-safe',
+        deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
+      });
+    });
+
     it('Should HARD-reject a top-level command key naming commands.<cmd> (GS2-28)', async () => {
       // A command config placed at the config ROOT (the removed pre-2.0 shape) must move under
       // `commands.<cmd>`; it hard-fails rather than being kept as a warn-only unknown key.
