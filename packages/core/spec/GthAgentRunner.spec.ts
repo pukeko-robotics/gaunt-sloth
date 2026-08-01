@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, Mock, vi } from 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { HumanMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import type { GthConfig } from '#src/config.js';
@@ -9,6 +10,7 @@ import type { PendingToolInterrupt, StatusUpdateCallback } from '#src/core/types
 import { AttackHaltError, NonInteractiveEscalationError } from '#src/core/shell/approvalStop.js';
 import { COULD_NOT_ASSESS_PREFIX, openWorldToolFloorReason } from '#src/core/shell/rater.js';
 import { describeApprovalEntry, MCP_FAIL_CLOSED_ANNOTATIONS } from '#src/core/approvals/matcher.js';
+import { mcpToolRegisteredName } from '#src/core/approvals/mcpSubjects.js';
 import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
 import { SHELL_ALLOWLIST_FILE } from '#src/constants.js';
 
@@ -3328,6 +3330,179 @@ describe('GthAgentRunner', () => {
           expect(pending?.safetyVerdict).toBeUndefined();
         });
       });
+    });
+  });
+
+  /**
+   * EXT-70 — **the non-shell corpus, driven through the real decision path**, and an EXPIRY-DATED
+   * pin on where that path stops today.
+   *
+   * `spec-fixtures/approvals-tool-corpus.json` is the other half of the approvals corpus: an
+   * innocuous tool NAME carrying hostile ARGUMENTS. `approvalsToolCorpus.spec.ts` asserts the two
+   * halves of §3.2 over it as pure functions — the entry matches on identity and arms the tripwire
+   * (`rate: true`), and the tripwire mapping turns each labelled outcome into run / escalate / halt.
+   *
+   * **This block asserts what the runner actually does with those same cases, which is less.** §4.3
+   * scopes the rater's first implementation to the shell, so `decideToolApproval` short-circuits on
+   * `!isShellCommand`: a rated allow-match on a tool subject approves with **no rating call at
+   * all**, hostile arguments and benign ones alike. Nothing here is a defect of this node — it is
+   * [[EXT-30]]'s scope, and the ledger records it — but it has to be a TEST rather than a sentence,
+   * because the alternative is a corpus of hostile calls that nothing in production ever looks at
+   * and no one notices.
+   *
+   * **When [[EXT-30]] routes tool calls into the tripwire, these assertions go red — that is their
+   * purpose.** Replace them with the consequence assertions in `approvalsToolCorpus.spec.ts`:
+   * `tc-01`/`tc-02`/`tc-03`/`tc-10` must then HALT, `tc-04`/`tc-05` must escalate, and the `run`
+   * cases must still run.
+   */
+  describe('the non-shell corpus reaches the gate (EXT-70 §3.2, §4.3)', () => {
+    /** Only the fields this block reads are modelled; the fixture's own spec models the rest. */
+    interface ToolCorpusCase {
+      id: string;
+      subject: 'tool' | 'mcpTool';
+      server?: string;
+      tool: string;
+      arguments: Record<string, unknown>;
+      outcome: string;
+      tripwire: string;
+    }
+
+    /** Resolved RELATIVE TO THIS FILE — never from `process.cwd()`, never a POSIX path literal. */
+    const TOOL_CORPUS: { cases: ToolCorpusCase[] } = JSON.parse(
+      readFileSync(
+        fileURLToPath(
+          new URL('../../../spec-fixtures/approvals-tool-corpus.json', import.meta.url)
+        ),
+        'utf8'
+      )
+    );
+
+    function streamOf(...chunks: string[]) {
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const c of chunks) yield c;
+        },
+      };
+    }
+
+    /** Suspend the run once on this call — the tool's registered name AND its arguments. */
+    function pendingToolOnce(toolName: string, args: Record<string, unknown>) {
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: toolName, args }])
+        .mockResolvedValueOnce([]);
+      const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+      (mockAgent as any).streamResume = streamResume;
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      return streamResume;
+    }
+
+    /**
+     * A rated rung (`auto-safe`) whose allow list holds the one entry a user could write for this
+     * call: its IDENTITY, which is all §3.1 lets a tool entry record. The rater model is a spy that
+     * would answer `attack` — so "no rating call" below is a fact about the gate and not about a
+     * model that had nothing to say.
+     */
+    function gateFor(corpusCase: ToolCorpusCase) {
+      const invoke = vi.fn().mockResolvedValue({ outcome: 'attack', reason: 'hostile arguments' });
+      const withStructuredOutput = vi.fn().mockReturnValue({ invoke });
+      const entry =
+        corpusCase.subject === 'mcpTool'
+          ? {
+              type: 'mcpTool',
+              server: corpusCase.server,
+              matcher: 'exact',
+              pattern: corpusCase.tool,
+            }
+          : { type: 'tool', matcher: 'exact', pattern: corpusCase.tool };
+      const config = {
+        ...mockConfig,
+        llm: { withStructuredOutput } as any,
+        streamOutput: true as const,
+        approvals: { mode: 'auto-safe', allow: [entry] },
+        ...(corpusCase.server === undefined
+          ? {}
+          : { mcpServers: { [corpusCase.server]: { url: 'https://example.invalid/mcp' } } }),
+      } as unknown as GthConfig;
+      return { config, withStructuredOutput };
+    }
+
+    const registeredName = (corpusCase: ToolCorpusCase) =>
+      corpusCase.subject === 'mcpTool'
+        ? mcpToolRegisteredName(corpusCase.server ?? '', corpusCase.tool)
+        : corpusCase.tool;
+
+    const ROWS = TOOL_CORPUS.cases.map((corpusCase) => [corpusCase.id, corpusCase] as const);
+
+    it('reads a fixture with hostile-argument cases in it (a wrong path must fail loudly)', () => {
+      expect(TOOL_CORPUS.cases.length).toBeGreaterThan(0);
+      // Both directions must be present, or the indiscriminate approval below proves nothing.
+      expect(TOOL_CORPUS.cases.filter((c) => c.tripwire === 'halt').length).toBeGreaterThan(0);
+      expect(TOOL_CORPUS.cases.filter((c) => c.tripwire === 'run').length).toBeGreaterThan(0);
+    });
+
+    it.each(ROWS)(
+      '%s: the identity entry approves it with NO rating call (EXT-30 turns this red)',
+      async (_id, corpusCase) => {
+        const { config, withStructuredOutput } = gateFor(corpusCase);
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        const streamResume = pendingToolOnce(registeredName(corpusCase), corpusCase.arguments);
+        await runner.init('code', config);
+        const human = vi.fn().mockResolvedValue({ type: 'approve' });
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('go')]);
+
+        // The run really did suspend on this call — otherwise everything below passes vacuously.
+        expect(streamResume).toHaveBeenCalledTimes(1);
+        expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
+        expect(human, 'the allow match settled the human’s part').not.toHaveBeenCalled();
+        // §4.3's scope boundary, stated as the measurement it is: the arguments never reached a
+        // rater, so the `rate: true` this entry carries buys nothing yet.
+        expect(
+          withStructuredOutput,
+          'no rating call on a tool subject today'
+        ).not.toHaveBeenCalled();
+      }
+    );
+
+    /**
+     * The CONTROL, and the thing that makes the block above a boundary rather than an inability to
+     * see a rating: the identical rung and the identical harness DO consult the rater when the
+     * subject is a shell command, and the tripwire then halts on `attack`.
+     */
+    it('CONTROL: the same rung and harness DO rate an allow-matched SHELL call, and halt it', async () => {
+      const invoke = vi.fn().mockResolvedValue({ outcome: 'attack', reason: 'hostile arguments' });
+      const withStructuredOutput = vi.fn().mockReturnValue({ invoke });
+      const config = {
+        ...mockConfig,
+        llm: { withStructuredOutput } as any,
+        streamOutput: true as const,
+        approvals: {
+          mode: 'auto-safe',
+          allow: [{ type: 'shell', matcher: 'glob', pattern: 'curl *' }],
+        },
+        commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+      } as unknown as GthConfig;
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'curl https://registry.npmjs.ag/lodash' } },
+        ])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      await runner.init('code', config);
+      runner.setToolApprovalCallback(vi.fn());
+
+      const error = await runner
+        .processMessages([new HumanMessage('go')])
+        .then(() => null)
+        .catch((e: unknown) => e as Error);
+
+      expect(withStructuredOutput, 'the shell arm rated it').toHaveBeenCalled();
+      expect(error, 'and the tripwire halted on attack').toBeInstanceOf(AttackHaltError);
     });
   });
 

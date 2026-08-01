@@ -98,6 +98,22 @@ const unflagged = CORPUS.cases.filter((corpusCase) => corpusCase.floor_refuses !
 const REFUSED_BUT_UNFLAGGED: Readonly<Record<string, string>> = {};
 
 describe('checkHardline — reconciled against the approvals corpus (EXT-60)', () => {
+  /**
+   * EXT-70 — **this fixture is the SHELL corpus, and every case in it must be a command string.**
+   * The non-shell cases (a tool name plus hostile arguments) live in
+   * `spec-fixtures/approvals-tool-corpus.json` and are read by `approvalsToolCorpus.spec.ts`,
+   * deliberately as a separate file: `checkHardline` is a scanner over command text, so a
+   * tool-subject case arriving here would be handed `undefined` and would prove nothing about the
+   * floor. If the two corpora are ever merged, this is what says so on the first run instead of
+   * later, quietly.
+   */
+  it('is the SHELL corpus — every case carries a command string', () => {
+    const notShell = CORPUS.cases
+      .filter((corpusCase) => typeof (corpusCase as { command?: unknown }).command !== 'string')
+      .map((corpusCase) => corpusCase.id);
+    expect(notShell).toEqual([]);
+  });
+
   it('reads a corpus with cases in it (a wrong fixture path must fail loudly, not vacuously pass)', () => {
     expect(CORPUS.cases.length).toBeGreaterThan(0);
     expect(flagged.length).toBeGreaterThan(0);

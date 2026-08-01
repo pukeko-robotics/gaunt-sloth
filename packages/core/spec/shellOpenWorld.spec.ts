@@ -123,6 +123,21 @@ describe('findOpenWorldHostLiterals — the §4.6 matcher', () => {
      * A vacuously-green `it.each` over an empty array reports as a pass. If `open_world` is ever
      * renamed in the generator, or the fixture path breaks, this is what says so.
      */
+    /**
+     * EXT-70 — **this fixture is the SHELL corpus, and every case in it must be a command string.**
+     * The non-shell cases (an innocuous tool name with hostile arguments) live in
+     * `spec-fixtures/approvals-tool-corpus.json`, read by `approvalsToolCorpus.spec.ts`, and are a
+     * separate file on purpose. Everything in this spec tokenizes and classifies command TEXT, so a
+     * tool-subject case arriving here would be partitioned by `classifyCommand(undefined)` and
+     * silently counted as coverage it is not. If the two corpora are ever merged, this says so.
+     */
+    it('is the SHELL corpus — every case carries a command string', () => {
+      const notShell = CORPUS.cases
+        .filter((corpusCase) => typeof (corpusCase as { command?: unknown }).command !== 'string')
+        .map((corpusCase) => corpusCase.id);
+      expect(notShell).toEqual([]);
+    });
+
     it('yields open_world cases in BOTH partitions', () => {
       expect(CORPUS.cases.length).toBeGreaterThan(0);
       expect(openWorldCases.length).toBeGreaterThan(0);
