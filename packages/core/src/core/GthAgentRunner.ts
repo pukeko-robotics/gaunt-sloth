@@ -665,29 +665,41 @@ export class GthAgentRunner {
     // shell does and nowhere else: `bypass` and the two deterministic rungs consult neither the
     // rater nor a preflight, and at those rungs the human is asked regardless.
     if (isRatedRung(approvals.rung) && escalatedBy === undefined && safetyVerdict === undefined) {
-      if (isShellCommand && command !== null) {
+      // **The SUBJECT is what splits the two arms, not a second reading of the tool name.**
+      // `approvalSubjectFor` returns `kind: 'shell'` under exactly the condition `isShellCommand`
+      // states, so branching on the discriminant says the same thing once instead of twice — and
+      // any future divergence in that function sends the call to the FLOOR (fail-closed) rather
+      // than silently past it. It is also what carries the command as a non-null string.
+      if (subject.kind === 'shell') {
         // The auto-rater. `safe` is approved (the fatigue reducer), `destructive` and
         // `catastrophic` fall through to the human with the verdict attached, and `attack` ends
         // the run outright. §4.6's deterministic preflights are applied inside
         // `mapVerdictToAction`, ahead of the `safe` check.
-        const verdict = await this.rateCommand(command, { allowMatched: false });
-        const decision = mapVerdictToAction(command, verdict, { rung: approvals.rung });
+        const verdict = await this.rateCommand(subject.command, { allowMatched: false });
+        const decision = mapVerdictToAction(subject.command, verdict, { rung: approvals.rung });
         if (decision.action === 'approve') {
           // Scope `once`: rater approvals are NEVER persisted to the allow-list.
           return { type: 'approve', scope: 'once' };
         }
         if (decision.action === 'halt') {
           // §4.2 — not a rejection the model can respond to. It ends the agent loop.
-          throw new AttackHaltError(command, decision.verdict?.reason ?? '');
+          throw new AttackHaltError(subject.command, decision.verdict?.reason ?? '');
         }
         // Escalate: carry the verdict (the honest one — see mapVerdictToAction) to the human.
         safetyVerdict = decision.verdict;
-      } else if (subject.kind !== 'shell') {
+      } else {
         // EXT-70 §4.7.2/§4.7.3 — a tool call whose EFFECTIVE `openWorldHint` is true is floored at
         // `destructive`, through the SAME `applyDestructiveFloor` the shell path reaches via
         // `mapVerdictToAction`. No rating call: §4.3's scope boundary keeps the rater on the shell
         // until [[EXT-30]], and the floor is deterministic anyway — §4.6 states it as coming
         // *before* any model call, so it does not wait for one.
+        //
+        // **This is the branch a malformed `run_shell_command` lands in**, and it is the one shape
+        // that reaches this floor under today's gate: a call with no `command` argument, or one
+        // that is not a string, has nothing to rate, so it presents as a `tool` subject — and
+        // `run_shell_command` carries no authored annotations, so its effective set is the
+        // fail-closed one and it floors. That is the right direction: a shell call whose command
+        // cannot even be read is not one anything can say something reassuring about.
         //
         // The annotations are the effective set (§4.7.1), read through the same source the `hint`
         // matcher just used, so an untrusted server's `openWorldHint: false` has already collapsed

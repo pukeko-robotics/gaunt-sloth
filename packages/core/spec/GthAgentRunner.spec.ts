@@ -3134,8 +3134,13 @@ describe('GthAgentRunner', () => {
 
       /**
        * §4.6's fourth bullet, unchanged for tools: the allow-list is consulted BEFORE the rater and
-       * therefore before this floor, and lifts it — including where the entry keeps the rater
-       * involved with `rate: true`.
+       * therefore before this floor, and lifts it — including where the entry carries `rate: true`.
+       *
+       * **The `rate: true` case matches the shell on the floor and NOT on the tripwire, and the
+       * second test's name says only the first.** §4.6 pairs floor-lifting with the rating still
+       * seeing the call, but step (4) short-circuits to approve for a non-shell subject, so no
+       * tripwire runs for a tool. That half does not exist while §4.3 keeps the rater on the shell;
+       * [[EXT-30]] is what brings it, and asserting it here would be asserting a wish.
        */
       it('an allow entry lifts the floor on an open-world tool', async () => {
         const config = rated({
@@ -3144,7 +3149,7 @@ describe('GthAgentRunner', () => {
         expect(await shownToTheHuman(config, 'gth_web_fetch')).toBeNull();
       });
 
-      it('and lifts it just the same when the entry keeps the rater involved', async () => {
+      it('and lifts it just the same when the allow entry sets rate true', async () => {
         const config = rated({
           allow: [{ type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch', rate: true }],
         });
@@ -3190,6 +3195,116 @@ describe('GthAgentRunner', () => {
           expect(pending?.safetyVerdict).toBeUndefined();
         }
       );
+
+      /**
+       * **The path on which this floor is reachable under today's gate**, and the reason the
+       * rest of this block is not merely a rehearsal for [[EXT-30]].
+       *
+       * `run_shell_command` is the only tool either backend puts in `interruptOn`, so it is the
+       * only call that suspends. When the model emits it with a MISSING or non-string `command`
+       * there is nothing to rate: `isShellCommand` is false, the call presents as a `tool` subject
+       * named `run_shell_command`, and — since that name is deliberately absent from our authored
+       * annotation table — its effective set is the fail-closed one, whose `openWorldHint` is true.
+       * So the tool arm floors it.
+       *
+       * That is the fail-closed direction and it is correct: a shell call whose command we cannot
+       * even read is not a call anything can say something reassuring about. The ACTION is
+       * unchanged — it escalated before this floor existed and it escalates now — so what these
+       * assertions pin is the VERDICT the human and the §6.2 exit carry.
+       */
+      describe('a malformed run_shell_command reaches the tool arm', () => {
+        const RATER_SAID = 'the rater was consulted';
+
+        /**
+         * A rated rung whose rater would answer `outcome`. Supplied so "floored" can be told
+         * apart from "the rater happened to say destructive" — the floor's own reason is compared
+         * by equality below, and the rater's is a different sentence.
+         */
+        function shellGateConfig(approvals: Record<string, unknown>, outcome: string) {
+          const invoke = vi.fn().mockResolvedValue({ outcome, reason: RATER_SAID });
+          const withStructuredOutput = vi.fn().mockReturnValue({ invoke });
+          const config = {
+            ...mockConfig,
+            llm: { withStructuredOutput } as any,
+            streamOutput: true as const,
+            approvals,
+            commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+          } as unknown as GthConfig;
+          return { config, withStructuredOutput };
+        }
+
+        /** Suspend once on `run_shell_command` carrying exactly these args, then complete. */
+        function pendingShellOnce(args: Record<string, unknown>) {
+          (mockAgent as any).getPendingToolInterrupts = vi
+            .fn()
+            .mockResolvedValueOnce([{ name: 'run_shell_command', args }])
+            .mockResolvedValueOnce([]);
+          const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+          (mockAgent as any).streamResume = streamResume;
+          mockAgent.stream.mockResolvedValue(streamOf('x'));
+          return streamResume;
+        }
+
+        /** Drive one gated shell call; report what the human saw and whether the rater ran. */
+        async function decideOn(
+          args: Record<string, unknown>,
+          approvals: Record<string, unknown> = { mode: 'auto-safe' },
+          outcome = 'safe'
+        ) {
+          const { config, withStructuredOutput } = shellGateConfig(approvals, outcome);
+          const runner = new GthAgentRunner(statusUpdateCallback);
+          const streamResume = pendingShellOnce(args);
+          await runner.init('code', config);
+          const human = vi.fn().mockResolvedValue({ type: 'approve' });
+          runner.setToolApprovalCallback(human);
+          await runner.processMessages([new HumanMessage('go')]);
+          expect(streamResume).toHaveBeenCalledTimes(1);
+          return {
+            pending:
+              human.mock.calls.length > 0 ? (human.mock.calls[0][0] as PendingToolInterrupt) : null,
+            raterRan: withStructuredOutput.mock.calls.length > 0,
+          };
+        }
+
+        it.each([
+          ['no command argument at all', {}],
+          ['a non-string command argument', { command: 42 }],
+          ['a null command argument', { command: null }],
+        ])('%s — floored as a tool, with no rating call', async (_label, args) => {
+          const { pending, raterRan } = await decideOn(args);
+          expect(pending, 'the human is still asked').not.toBeNull();
+          expect(raterRan, 'there is no command to rate, so nothing rated it').toBe(false);
+          expect(pending?.safetyVerdict?.outcome).toBe('destructive');
+          // Equality against the floor's own builder: a rater verdict, or a second floor written
+          // inline, would say something else.
+          expect(pending?.safetyVerdict?.reason).toBe(FLOOR_REASON);
+        });
+
+        /**
+         * The control that makes the pair discriminating: the SAME tool at the SAME rung, and only
+         * the argument differs. Without it every assertion above passes on a gate that floors
+         * every `run_shell_command`.
+         */
+        it('CONTROL: the very same tool WITH a string command is rated, not floored', async () => {
+          const { pending, raterRan } = await decideOn({ command: 'ls -la' });
+          expect(raterRan, 'the shell arm consulted the rater').toBe(true);
+          expect(pending, 'a `safe` command runs without asking').toBeNull();
+        });
+
+        it('CONTROL: a rated malformed call carries the FLOOR reason, never the rater’s', async () => {
+          // The rater would have said `destructive` too, so outcome alone cannot tell the two
+          // apart — the reason can, and it is the floor's.
+          const { pending } = await decideOn({}, { mode: 'auto-safe' }, 'destructive');
+          expect(pending?.safetyVerdict?.reason).not.toContain(RATER_SAID);
+          expect(pending?.safetyVerdict?.reason).toBe(FLOOR_REASON);
+        });
+
+        it('CONTROL: at an unrated rung the same malformed call carries no verdict', async () => {
+          const { pending } = await decideOn({}, { mode: 'write' });
+          expect(pending, 'still gated').not.toBeNull();
+          expect(pending?.safetyVerdict).toBeUndefined();
+        });
+      });
     });
   });
 
