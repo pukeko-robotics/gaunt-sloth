@@ -244,6 +244,9 @@ export function createToolLoopGuardMiddleware(
               const id = tc?.id;
               if (typeof id === 'string') {
                 const name = typeof tc.name === 'string' ? tc.name : '';
+                // TODO(OPS-34): the delimiter below is a literal NUL byte, which makes this whole
+                // file binary to ripgrep and ugrep - they skip it in silence, so nothing in this
+                // file is findable by a repo-wide search. Replace it with the \u0000 escape.
                 callById.set(id, { sig: `${name} ${stableStringify(tc.args ?? {})}`, name });
               }
             }
