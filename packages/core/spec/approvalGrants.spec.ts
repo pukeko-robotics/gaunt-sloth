@@ -263,8 +263,17 @@ describe('annotationWeakenings — what invalidates a grant (§4.7.4)', () => {
     );
   });
 
-  /** §4.7.4 — the notice names the tool, the server and the hint that moved. */
-  it('the notice names the tool, the server and the hint', () => {
+  /**
+   * §4.7.4 — the notice names the tool, the server and **the hint that moved**.
+   *
+   * The absence half is what makes the presence half mean anything. A notice built from the four
+   * hints rather than from the `weakened` list satisfies every `toContain` below and reads
+   * *"openWorldHint changed from false to false"* — the gate telling the human about a change that
+   * did not happen, which is worse than saying nothing. `annotationWeakenings` is what decides which
+   * hints those are, and it is proven exactly-that-hint above; this is what stops the notice
+   * quietly not inheriting it.
+   */
+  it('the notice names the tool, the server and the hint that MOVED — and no other', () => {
     const message = describeWeakenedGrant(
       toolGrantEntry(mcpSubject('jira', 'search'))!,
       ['readOnlyHint'],
@@ -276,6 +285,10 @@ describe('annotationWeakenings — what invalidates a grant (§4.7.4)', () => {
     expect(message).toContain('readOnlyHint');
     expect(message).toContain('true');
     expect(message).toContain('false');
+    // The three that stayed exactly where they were, in both snapshots.
+    expect(message).not.toContain('openWorldHint');
+    expect(message).not.toContain('destructiveHint');
+    expect(message).not.toContain('idempotentHint');
   });
 
   /**

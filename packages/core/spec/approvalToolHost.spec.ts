@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { toolCallHost, toolCallHosts } from '#src/core/approvals/toolHost.js';
+import { toolCallHosts } from '#src/core/approvals/toolHost.js';
 
 /**
  * EXT-70 §4.7.4 — the host a tool call reaches, read off the call's own arguments.
@@ -23,8 +23,8 @@ describe('toolCallHosts — which counterparties a tool call names', () => {
       'docs.internal.example',
     ]);
     // …so two spellings of one host are one host, and the second call matches the first's grant.
-    expect(toolCallHost({ url: 'https://docs.internal.example/a' })).toBe(
-      toolCallHost({ url: 'http://DOCS.internal.example/b' })
+    expect(toolCallHosts({ url: 'https://docs.internal.example/a' })).toEqual(
+      toolCallHosts({ url: 'http://DOCS.internal.example/b' })
     );
   });
 
@@ -69,48 +69,57 @@ describe('toolCallHosts — which counterparties a tool call names', () => {
     expect(toolCallHosts({ url: 'https://inherited.example/x' })).toEqual(['inherited.example']);
   });
 
-  it('bounds its work on a pathological argument object rather than spinning', () => {
-    // Deeper than the walk goes, and wider than its value budget.
+  it('stops descending past its depth budget, and finds the same host within it', () => {
+    // Deeper than the walk goes.
     let deep: Record<string, unknown> = { url: 'https://buried.example/x' };
     for (let i = 0; i < 40; i++) deep = { nested: deep };
     expect(toolCallHosts(deep)).toEqual([]);
-
-    const wide: Record<string, unknown> = {};
-    for (let i = 0; i < 5000; i++) wide[`k${i}`] = `value ${i}`;
-    wide.url = 'https://late.example/x';
-    expect(toolCallHosts(wide).length).toBeLessThanOrEqual(1);
 
     // CONTROL: within the budget the very same host is found.
     expect(toolCallHosts({ a: { b: { url: 'https://buried.example/x' } } })).toEqual([
       'buried.example',
     ]);
   });
-});
 
-describe('toolCallHost — the ONE host, or none', () => {
-  it('answers with the single host a call names', () => {
-    expect(toolCallHost({ url: 'https://a.example/x' })).toBe('a.example');
+  /**
+   * The value budget, asserted by what it **misses**. Two hosts are present and only the one inside
+   * the budget is reported, so this fails the moment the budget stops biting — where a single
+   * planted host could not tell a working budget from an absent one, the bound holding either way.
+   *
+   * It pins the budget's *effect*, not its value: it must be wide enough to reach an early argument
+   * and narrow enough to give up before a five-thousandth one.
+   */
+  it('gives up part-way through a pathological argument object, so it finds fewer hosts than exist', () => {
+    const wide: Record<string, unknown> = {};
+    for (let i = 0; i < 5000; i++) wide[`k${i}`] = `value ${i}`;
+    wide.k10 = 'https://early.example/x';
+    wide.k4000 = 'https://late.example/y';
+
+    expect(toolCallHosts(wide)).toEqual(['early.example']);
+    // CONTROL: the host it gave up before IS one this module recognizes — it is the budget that
+    // hid it, not the value.
+    expect(toolCallHosts({ k4000: wide.k4000 })).toEqual(['late.example']);
   });
 
   /**
-   * Both ways of having no single host answer `undefined` here, and that is what makes the two
-   * indistinguishable to the rule matcher — an entry naming a host must not match either. The
-   * escalation menu needs to tell them apart and therefore reads `toolCallHosts`, which is asserted
-   * end to end in the runner spec.
+   * The length cap, which is **not cosmetic**: an unrecognized value means no host, and no host
+   * means the call takes the tool-only arm and gets the BROADER grant. So the cap has to be a
+   * deliberate reading of "not something a grant should be keyed on", and it needs to be visible
+   * when someone changes it.
    */
-  it('answers undefined for a call naming none, and for one naming several', () => {
-    expect(toolCallHost({ note: 'nothing here' })).toBeUndefined();
-    expect(
-      toolCallHost({ from: 'https://a.example/x', to: 'https://b.example/y' })
-    ).toBeUndefined();
-    // CONTROL: one host of that very pair, alone, does answer.
-    expect(toolCallHost({ from: 'https://a.example/x' })).toBe('a.example');
+  it('does not read a host out of an absurdly long value — the broader-grant direction', () => {
+    const overLong = `https://long.example/${'x'.repeat(20000)}`;
+    expect(toolCallHosts({ url: overLong })).toEqual([]);
+    // CONTROL: the identical host in an ordinary-length URL is found, so this is the length and
+    // nothing else about the value.
+    expect(toolCallHosts({ url: 'https://long.example/x' })).toEqual(['long.example']);
   });
 
-  it('answers undefined for arguments that are not an object at all', () => {
-    expect(toolCallHost(undefined)).toBeUndefined();
-    expect(toolCallHost(null)).toBeUndefined();
+  it('walks arguments that are not an object at all without inventing a host', () => {
+    expect(toolCallHosts(undefined)).toEqual([]);
+    expect(toolCallHosts(null)).toEqual([]);
+    expect(toolCallHosts(42)).toEqual([]);
     // A bare string IS walked, so a tool whose whole argument is a URL still carries its host.
-    expect(toolCallHost('https://a.example/x')).toBe('a.example');
+    expect(toolCallHosts('https://a.example/x')).toEqual(['a.example']);
   });
 });

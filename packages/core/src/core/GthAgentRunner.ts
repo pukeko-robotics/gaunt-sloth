@@ -944,12 +944,22 @@ export class GthAgentRunner {
    *    auto-approves every future call whose command cannot even be read. This exclusion is what
    *    stops that, not a side effect of anything else, and it must survive [[EXT-30]] widening the
    *    gate.
-   * 3. **A call naming more than one distinct host.** There is no honest single-host entry for it:
-   *    the grammar's `host` is one exact string, and §6 requires the menu to display exactly what it
-   *    will store. Recording one of the hosts would display a bound the grant does not have, and
-   *    recording none would silently widen the very call that demonstrated the tool reaches several
-   *    counterparties. Stated on §6's display rule rather than on `openWorldHint`, so it holds
-   *    whatever the user's trust config says and stays true when [[EXT-30]] lands.
+   * 3. **A call naming more than one distinct host.** The grammar has no entry for it. `host` is a
+   *    single optional string on every tool arm of `approvalEntrySchema`, and every arm is a
+   *    `z.strictObject`, so recording the *set* is not a policy this code may choose — a `hosts`
+   *    array is an unrecognized-key error, and writing one would be a §3.1 grammar change. Of the
+   *    two entries that would parse, the host-bound one displays a bound the grant does not have,
+   *    which §6 forbids (the menu shows exactly what will be stored). And a grammar that did record
+   *    the set, matching only when all of it recurred, would fail §4.7.4's opening test anyway: a
+   *    tool whose host set varies per call would get a grant that never matches a second time — not
+   *    a narrower grant, the useless one §4.7.4 rejects by name.
+   *
+   *    **What this arm does not claim.** It is not a narrowing. A hostless entry imposes no host
+   *    condition at all (`resolveApprovalRules`), so the tool-only grant that any host-less call to
+   *    the same tool produces already auto-approves a multi-host one. Refusing here withholds a
+   *    grant; it does not close a hole, and the reason to keep it is the grammar above rather than
+   *    any breadth it prevents. Asserted, so this cannot drift back into a claim the system does not
+   *    support.
    * 4. **An MCP call whose server could not be resolved** ({@link toolGrantEntry} returns `null`) —
    *    a call nobody can attribute is not one anything can remember.
    */
@@ -1040,6 +1050,14 @@ export class GthAgentRunner {
     // session that has switched the gate off should not be rewriting the project's grant file.
     const persisted = this.sessionApprovals.rung === 'bypass' ? null : this.getPersistedGrants();
     for (const entry of candidates) {
+      // The session store wins, and a session grant with no snapshot therefore hides a persisted one
+      // that has one. Safe only because all three of these hold, and each is a premise a later change
+      // could break silently: (1) every tool grant this runner writes carries a snapshot — a call with
+      // no readable effective set is refused a grant at all ({@link stickyGrantFor}); (2) a `shell`
+      // subject, the one kind whose grant has no snapshot by design, never reaches this method; and
+      // (3) a persisted grant already in force auto-approves the call, so no prompt happens and no
+      // session grant is written over it. Break any one of them and this line starts skipping a
+      // weakening it should have caught — check both stores then, rather than the first that answers.
       const held = this.sessionGrants.find(entry) ?? persisted?.find(entry);
       if (!held?.annotations) continue;
       const weakened = annotationWeakenings(held.annotations, effective);

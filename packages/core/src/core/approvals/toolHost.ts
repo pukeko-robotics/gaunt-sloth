@@ -21,17 +21,20 @@
  * value either parses as a URL with a host or it does not, with no tokenization, no quoting and no
  * heuristics about operand position.
  *
- * ## Exactly one host, or none
+ * ## The COUNT is the answer, which is why nothing here returns a single host
  *
  * A grant's `host` is one exact string, so only a call naming **exactly one** host has a host to
- * record. {@link toolCallHost} answers just that case; {@link toolCallHosts} keeps the count,
- * because the two ways of having no single host are not the same question for the escalation menu:
- * a call naming **no** host gets a tool-only grant (§6's *always approve `mcp__jira__create_issue`*,
- * where no host is involved), while a call naming **several** gets none at all, since the menu may
- * not display one bound and store another.
+ * record — but the decision needs the count and not just that one host, because the two ways of
+ * having no single host are opposite outcomes: a call naming **no** host gets a tool-only grant
+ * (§6's *always approve `mcp__jira__create_issue`*, where no host is involved), while a call naming
+ * **several** gets no grant at all, since the menu may not display one bound and store another.
+ * A convenience that collapsed both to "no host" would hand a caller the one distinction this
+ * module exists to preserve, already discarded — so {@link toolCallHosts} is the whole surface, and
+ * a caller that wants *the* host reads `hosts.length === 1 ? hosts[0] : …` at the point where it
+ * also decides what the other two cases mean.
  *
- * A value this module fails to recognize as a host therefore costs a re-prompt or a broader grant
- * than the call deserved, never a narrower one that silently fails to match.
+ * A value this module fails to recognize as a host costs a re-prompt or a broader grant than the
+ * call deserved, never a narrower one that silently fails to match.
  */
 
 /**
@@ -103,20 +106,4 @@ export function toolCallHosts(args: unknown): string[] {
 
   walk(args, 0);
   return hosts;
-}
-
-/**
- * §4.7.4 — the one host this call reaches, or `undefined` when it names none or names several.
- *
- * "Several" answering `undefined` is not a gap: a grant is one entry with one `host`, so a call
- * naming two hosts has no honest single-host grant to offer, and the menu may not display one thing
- * and store another (§6).
- *
- * The reading for a surface that wants *the* host and nothing more — the §6 menu line, a display of
- * what a grant covers. A decision that must distinguish "named none" from "named several" reads
- * {@link toolCallHosts} instead, because both answer `undefined` here.
- */
-export function toolCallHost(args: unknown): string | undefined {
-  const hosts = toolCallHosts(args);
-  return hosts.length === 1 ? hosts[0] : undefined;
 }

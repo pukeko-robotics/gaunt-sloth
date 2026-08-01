@@ -8,7 +8,7 @@ import type { GthConfig } from '#src/config.js';
 import type { PendingToolInterrupt, StatusUpdateCallback } from '#src/core/types.js';
 import { AttackHaltError, NonInteractiveEscalationError } from '#src/core/shell/approvalStop.js';
 import { COULD_NOT_ASSESS_PREFIX, openWorldToolFloorReason } from '#src/core/shell/rater.js';
-import { MCP_FAIL_CLOSED_ANNOTATIONS } from '#src/core/approvals/matcher.js';
+import { describeApprovalEntry, MCP_FAIL_CLOSED_ANNOTATIONS } from '#src/core/approvals/matcher.js';
 import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
 import { SHELL_ALLOWLIST_FILE } from '#src/constants.js';
 
@@ -604,8 +604,13 @@ describe('GthAgentRunner', () => {
      * harmfully (no allow entry of any matcher matches an unresolvable command, so the entry would
      * be inert), but an inert entry sitting in a list §3 requires to be inspectable would tell the
      * user something is in force when nothing is.
+     *
+     * **And it is not offered either**, which is the half that matters to the human: §6 shows the
+     * menu the entry a sticky choice will store, so a preview for a command nothing would store is a
+     * control offered and then silently refused. Both halves are asserted here because the storage
+     * one alone passes on a gate that shows the preview and then declines to write it.
      */
-    it('records nothing for a command that does not statically resolve', async () => {
+    it('neither offers nor records a grant for a command that does not statically resolve', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       mockAgent.stream.mockResolvedValue(streamOf('x'));
       (mockAgent as any).getPendingToolInterrupts = vi
@@ -622,6 +627,21 @@ describe('GthAgentRunner', () => {
       runner.setToolApprovalCallback(human);
 
       await runner.processMessages([new HumanMessage('go')]);
+
+      const compound = human.mock.calls[0][0] as PendingToolInterrupt;
+      const ordinary = human.mock.calls[1][0] as PendingToolInterrupt;
+      expect(compound.args, 'the compound command is the one that was asked about first').toEqual({
+        command: 'ls; rm -rf /tmp/x',
+      });
+      expect(
+        compound.grantPreview,
+        'nothing is offered where nothing would be stored'
+      ).toBeUndefined();
+      // CONTROL: the ordinary command that followed IS shown the entry it will store, so the
+      // absence above is this command's unresolvability and not a preview that never renders.
+      expect(ordinary.grantPreview).toBe(
+        '{ "type": "shell", "matcher": "exact", "pattern": "ls -la" }'
+      );
 
       // The compound command left nothing behind; the ordinary one that followed did.
       expect(runner.getAllowlistCounts().session).toBe(1);
@@ -3393,6 +3413,22 @@ describe('GthAgentRunner', () => {
     const warningsSaid = () =>
       statusUpdateCallback.mock.calls.map(([, message]) => String(message)).join('\n');
 
+    /**
+     * **What every "nothing was withdrawn" assertion below anchors on.** The notice's prose is not
+     * pinned by anything, so a negative keyed on a phrase from it (*"was removed"*) goes vacuous the
+     * moment someone rewords the message — and every such negative in this block would go vacuous
+     * together, silently. This is the one fragment the notice cannot be reworded out of, because
+     * `describeWeakenedGrant` renders it with this very function: the grant it withdrew. Nothing
+     * else the runner reports about an auto-approved call renders an entry, so its presence means an
+     * invalidation and its absence means none.
+     */
+    const jiraSearchGrantLine = describeApprovalEntry({
+      type: 'mcpTool',
+      server: 'jira',
+      matcher: 'exact',
+      pattern: 'search',
+    });
+
     afterEach(() => {
       delete (mockAgent as any).getDeclaredMcpToolAnnotations;
     });
@@ -3484,6 +3520,28 @@ describe('GthAgentRunner', () => {
         expect(prompts[0]?.grantPreview).toContain('a.example');
         expect(prompts[1]).toBeNull();
       });
+
+      /**
+       * **What refusing the multi-host grant does NOT do, pinned so the rule's stated reason cannot
+       * drift back into claiming it.** A host-less entry imposes no host condition at all, so the
+       * tool-only grant that any host-less call produces auto-approves a call naming two hosts — the
+       * identical breadth this arm declines to grant, handed out the moment one argument fails to
+       * parse as a URL. The arm survives on the §3.1 grammar (one optional `host` string, strict
+       * arms, so a set is unrepresentable) and on §4.7.4's useless-grant test, never on breadth.
+       *
+       * Both tests above hold the host count at TWO across their calls, which is exactly why neither
+       * can see this: the grant and the call it covers have to differ in host COUNT, not in host.
+       */
+      it('a tool-only grant from a HOSTLESS call already covers a multi-host one', async () => {
+        const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'gth_web_fetch', args: { input: 'not a url' } },
+          { name: 'gth_web_fetch', args: twoHosts },
+        ]);
+        expect(prompts[0]?.grantPreview, 'the hostless call takes the tool-only arm').toBe(
+          '{ "type": "tool", "matcher": "exact", "pattern": "gth_web_fetch" }'
+        );
+        expect(prompts[1], 'and that grant covers a call naming two hosts').toBeNull();
+      });
     });
 
     /**
@@ -3559,38 +3617,52 @@ describe('GthAgentRunner', () => {
         openWorldHint: false,
       };
 
+      /**
+       * The fourth column is the hint that MOVED; the fifth is one that stayed exactly where it was
+       * (`false` on both sides of this row), and naming it is what makes the fourth mean something.
+       * A notice built from the four hints rather than from the moved ones reads *"openWorldHint
+       * changed from false to false"* — the gate reporting a change that did not happen — and passes
+       * every `toContain` here. Only the absence assertion sees it.
+       */
       it.each([
         [
           'readOnlyHint true → false',
           { ...LOCAL_WRITE, readOnlyHint: true },
           LOCAL_WRITE,
           'readOnlyHint',
+          'openWorldHint',
         ],
         [
           'openWorldHint false → true',
           LOCAL_WRITE,
           { ...LOCAL_WRITE, openWorldHint: true },
           'openWorldHint',
+          'readOnlyHint',
         ],
         [
           'destructiveHint false → true',
           LOCAL_WRITE,
           { ...LOCAL_WRITE, destructiveHint: true },
           'destructiveHint',
+          'readOnlyHint',
         ],
-      ])('%s invalidates, and the notice names it', async (_label, before, after, hint) => {
-        const prompts = await driveCalls(trustingJira(), [
-          { name: 'mcp__jira__search', declaring: { mcp__jira__search: before } },
-          { name: 'mcp__jira__search', declaring: { mcp__jira__search: after } },
-        ]);
-        expect(prompts[0], 'the first call asks and grants').not.toBeNull();
-        expect(prompts[1], 'the weakened tool asks again').not.toBeNull();
+      ])(
+        '%s invalidates, and the notice names it and no hint that stayed put',
+        async (_label, before, after, hint, stayed) => {
+          const prompts = await driveCalls(trustingJira(), [
+            { name: 'mcp__jira__search', declaring: { mcp__jira__search: before } },
+            { name: 'mcp__jira__search', declaring: { mcp__jira__search: after } },
+          ]);
+          expect(prompts[0], 'the first call asks and grants').not.toBeNull();
+          expect(prompts[1], 'the weakened tool asks again').not.toBeNull();
 
-        const said = warningsSaid();
-        expect(said).toContain('search');
-        expect(said).toContain('jira');
-        expect(said).toContain(hint);
-      });
+          const said = warningsSaid();
+          expect(said).toContain('search');
+          expect(said).toContain('jira');
+          expect(said).toContain(hint);
+          expect(said, 'a hint that did not move is not something to report').not.toContain(stayed);
+        }
+      );
 
       it.each([
         ['readOnlyHint false → true', LOCAL_WRITE, { ...LOCAL_WRITE, readOnlyHint: true }],
@@ -3608,7 +3680,7 @@ describe('GthAgentRunner', () => {
             { name: 'mcp__jira__search', declaring: { mcp__jira__search: after } },
           ]);
           expect(prompts[1], 'a safer tool is still covered').toBeNull();
-          expect(warningsSaid()).not.toContain('was removed');
+          expect(warningsSaid(), 'and nothing was withdrawn').not.toContain(jiraSearchGrantLine);
         }
       );
 
@@ -3685,7 +3757,7 @@ describe('GthAgentRunner', () => {
           },
         ]);
         expect(prompts[1], 'nothing the server says can move a constant').toBeNull();
-        expect(warningsSaid()).not.toContain('was removed');
+        expect(warningsSaid(), 'and nothing was withdrawn').not.toContain(jiraSearchGrantLine);
       });
 
       it('CONTROL: the very same declaration pair from a TRUSTED server does invalidate', async () => {
