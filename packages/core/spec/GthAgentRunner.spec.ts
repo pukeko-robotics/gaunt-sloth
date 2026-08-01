@@ -1926,6 +1926,61 @@ describe('GthAgentRunner', () => {
         expect(human.mock.calls[0][0].escalatedBy).toBe('terraform apply');
       });
 
+      /**
+       * The three-list resolution already puts escalate above allow for DECLARED entries, so the
+       * test above passes even if the runner stops guarding the second allow source — the EXT-9
+       * Tier-2 prefix store the escalation menu writes. This is that second source: a grant the
+       * human made at a prompt must not answer an escalate entry either, or the very first
+       * *always approve* would silently retire the rule the user wrote.
+       */
+      it('outranks a RUNTIME session grant for the same command', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        mockAgent.stream.mockResolvedValue(streamOf('x'));
+        (mockAgent as any).getPendingToolInterrupts = vi
+          .fn()
+          // `terraform apply` prompts (the escalate entry), the human grants `session` scope, and
+          // the SAME command comes back: the recorded prefix must not answer for it.
+          .mockResolvedValueOnce([
+            { name: 'run_shell_command', args: { command: 'terraform apply' } },
+          ])
+          .mockResolvedValueOnce([
+            { name: 'run_shell_command', args: { command: 'terraform apply' } },
+          ])
+          .mockResolvedValueOnce([]);
+        (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+        const { config } = gateConfig({ mode: 'write', escalate: ESCALATE_TERRAFORM });
+        await runner.init('code', config);
+        const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'session' });
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('go')]);
+        expect(human).toHaveBeenCalledTimes(2);
+      });
+
+      it('CONTROL: without the escalate entry, the runtime grant DOES answer the second call', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        mockAgent.stream.mockResolvedValue(streamOf('x'));
+        (mockAgent as any).getPendingToolInterrupts = vi
+          .fn()
+          .mockResolvedValueOnce([
+            { name: 'run_shell_command', args: { command: 'terraform apply' } },
+          ])
+          .mockResolvedValueOnce([
+            { name: 'run_shell_command', args: { command: 'terraform apply' } },
+          ])
+          .mockResolvedValueOnce([]);
+        (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+        const { config } = gateConfig({ mode: 'write' });
+        await runner.init('code', config);
+        const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'session' });
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('go')]);
+        expect(human).toHaveBeenCalledTimes(1);
+      });
+
       it('CONTROL: the allow entry alone approves without a prompt', async () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         const streamResume = pendingOnce('terraform apply');

