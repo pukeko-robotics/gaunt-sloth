@@ -413,8 +413,9 @@ describe('config schema (GS2-1 B1)', () => {
         const approvals = {
           mode: 'auto-safe',
           rater: 'safety-rater',
-          allow: ['npm test', 'git status'],
-          deny: ['git push --force', 'npm publish'],
+          allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
+          deny: [{ type: 'shell', matcher: 'glob', pattern: 'npm publish*' }],
+          escalate: [{ type: 'shell', matcher: 'exact', pattern: 'terraform apply' }],
         };
         const result = parse(approvals);
         expect(result.success).toBe(true);
@@ -457,7 +458,9 @@ describe('config schema (GS2-1 B1)', () => {
        * posture quietly ignored, which is the worst possible failure for a safety gate.
        */
       describe('retired approvals keys and mode values (CFG-27)', () => {
-        const RETIRED_KEYS = ['strictness', 'escalate', 'allowlist', 'persistAllowlist'] as const;
+        // EXT-71 gave `escalate` back as the third rule LIST, so it is no longer in this table;
+        // its retired THRESHOLD shape is pinned separately below.
+        const RETIRED_KEYS = ['strictness', 'allowlist', 'persistAllowlist'] as const;
 
         for (const key of RETIRED_KEYS) {
           it(`hard-errors on ${key} at the ROOT approvals value`, () => {
@@ -551,11 +554,61 @@ describe('config schema (GS2-1 B1)', () => {
           ]);
         });
 
+        /**
+         * EXT-71 — `escalate` is the one retired name that came BACK, as the third rule list. The
+         * pair below is the whole rule: the retired THRESHOLD shape (a string) still errors with a
+         * message naming the rung that expresses the old intent, and the new LIST shape does not
+         * error at all. Testing only the first would pass just as well if `escalate` were still
+         * banned outright, which is the exact thing this node changed.
+         */
+        it('hard-errors on the retired escalate THRESHOLD (a non-array), naming the new shape', () => {
+          const issues = findDeprecatedConfigIssues({
+            llm: { type: 'openai' },
+            approvals: { mode: 'auto-safe', escalate: 'danger' },
+          });
+          expect(issues).toHaveLength(1);
+          expect(issues[0].path).toBe('approvals.escalate');
+          expect(issues[0].message).toContain('third rule LIST');
+          expect(issues[0].message).toContain('not a severity threshold');
+          expect(issues[0].message).toContain(MIGRATION_DOC_URL);
+        });
+
+        it('hard-errors on the retired escalate threshold at commands.<cmd>.approvals too', () => {
+          const issues = findDeprecatedConfigIssues({
+            llm: { type: 'openai' },
+            commands: { code: { approvals: { mode: 'auto-safe', escalate: 'danger' } } },
+          });
+          expect(issues).toHaveLength(1);
+          expect(issues[0].path).toBe('commands.code.approvals.escalate');
+        });
+
+        it('does NOT fire on the new escalate LIST — the control for the row above', () => {
+          expect(
+            findDeprecatedConfigIssues({
+              llm: { type: 'openai' },
+              approvals: {
+                mode: 'auto-safe',
+                escalate: [{ type: 'shell', matcher: 'exact', pattern: 'terraform apply' }],
+              },
+            })
+          ).toEqual([]);
+          expect(
+            findDeprecatedConfigIssues({
+              llm: { type: 'openai' },
+              approvals: { mode: 'auto-safe', escalate: [] },
+            })
+          ).toEqual([]);
+        });
+
         it('does not fire on a valid ladder config, scalar or object', () => {
           expect(findDeprecatedConfigIssues({ approvals: 'auto-safe' })).toEqual([]);
           expect(
             findDeprecatedConfigIssues({
-              approvals: { mode: 'full-auto', rater: 'safety-rater', allow: ['npm test'] },
+              approvals: {
+                mode: 'full-auto',
+                rater: 'safety-rater',
+                allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
+              },
             })
           ).toEqual([]);
         });
@@ -579,6 +632,7 @@ describe('config schema (GS2-1 B1)', () => {
           expect(Object.keys(arms[1].properties as object).sort()).toEqual([
             'allow',
             'deny',
+            'escalate',
             'mode',
             'rater',
             'raterTimeoutMs',

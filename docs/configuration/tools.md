@@ -212,7 +212,9 @@ setting — not here.
 ### `approvals`
 
 Approvals are a **top-level** key (settable per command as `commands.<cmd>.approvals`, which
-replaces the root value wholesale). It takes one of five rung names — `read-only`, `write`,
+overrides only the fields it names: `mode`, `rater`, `raterTimeoutMs` and `allow` replace the
+root's, while `deny` and `escalate` add to it rather than replacing it — a command may narrow what
+runs unprompted, never widen what is prohibited). It takes one of five rung names — `read-only`, `write`,
 `auto-safe` (the default), `full-auto`, `bypass` — either on its own or as `mode` inside an object
 carrying the extras. See
 [Migration](../MIGRATION.md#i-approvals-and-the-ai-rater-hard) for the retired keys.
@@ -222,12 +224,14 @@ carrying the extras. See
   rung the session starts on.
 - `rater` — the **name** of an identity profile whose model rates, instead of the session model. A
   name that does not resolve is a config error. Only consulted at `auto-safe` and `full-auto`.
-- `allow` — command prefixes you trust. Checked before the rater at every rung except `bypass`.
-- `deny` — command prefixes never to run. Checked before `allow` and before the rater, and it still
-  applies under `bypass`.
+- `allow` — what you trust. Checked before the rater at every rung except `bypass`.
+- `deny` — what never runs. Checked before `allow` and before the rater, and it still applies under
+  `bypass`.
+- `escalate` — what always asks you, whatever the rung would have done.
 
-`allow` and `deny` are read-only input: they are merged with what you approve or reject at the
-prompt, and never written back to your config.
+Entries in all three are explicit objects (`type`, `matcher` and `pattern` are always required);
+where more than one list matches, the most restrictive wins. The three are read-only input: they
+are merged with what you approve or reject at the prompt, and never written back to your config.
 
 ```json
 { "approvals": "auto-safe" }
@@ -238,7 +242,10 @@ prompt, and never written back to your config.
   "approvals": {
     "mode": "full-auto",
     "rater": "safety-rater",
-    "deny": ["npm publish", "git push --force"]
+    "deny": [
+      { "type": "shell", "matcher": "glob", "pattern": "npm publish*" },
+      { "type": "shell", "matcher": "glob", "pattern": "git push --force*" }
+    ]
   }
 }
 ```

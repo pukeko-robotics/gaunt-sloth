@@ -40,12 +40,13 @@ vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => ({
 
 // ── @gaunt-sloth/core/utils/consoleUtils.js ───────────────────────────────────
 const displayInfoMock = vi.fn();
+const displayWarningMock = vi.fn();
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
   defaultStatusCallback: vi.fn(),
   display: vi.fn(),
   displayInfo: displayInfoMock,
   displayLaunchBanner: vi.fn(),
-  displayWarning: vi.fn(),
+  displayWarning: displayWarningMock,
   flushSessionLog: vi.fn(),
   formatInputPrompt: vi.fn((v: string) => v),
   initSessionLogging: vi.fn(),
@@ -68,6 +69,8 @@ type PendingLike = {
   name: string;
   args: Record<string, unknown>;
   safetyVerdict?: { outcome: string; reason: string };
+  escalatedBy?: string;
+  grantPreview?: string;
 };
 let capturedApprovalCallback:
   | ((_pending: PendingLike) => Promise<{ type: string; scope?: string; message?: string }>)
@@ -110,6 +113,10 @@ const DESTRUCTIVE = { outcome: 'destructive', reason: 'deletes a build directory
 const printed = (): string =>
   displayInfoMock.mock.calls.map((call: unknown[]) => String(call[0])).join('\n');
 
+/** Everything WARNED by the approval callback — where the rater and escalate rows go. */
+const warned = (): string =>
+  displayWarningMock.mock.calls.map((call: unknown[]) => String(call[0])).join('\n');
+
 describe('interactiveSessionModule CFG-28 — the readline confirmation tells the truth', () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -131,6 +138,7 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
     await createInteractiveSession(sessionConfig, {});
     expect(capturedApprovalCallback).toBeTypeOf('function');
     displayInfoMock.mockClear(); // only record what the approval callback itself prints
+    displayWarningMock.mockClear();
   };
 
   const answer = async (key: string, safetyVerdict: PendingLike['safetyVerdict']) => {
@@ -150,7 +158,7 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
 
       const out = printed();
       // The falsehoods the clamp created. Neither may be printed.
-      expect(out).not.toContain('future variants will not re-prompt');
+      expect(out).not.toContain('will not ask again this session');
       expect(out).not.toContain('saved to the project allow-list');
       expect(out).not.toContain('Approved and remembered');
       // And the honest sentence in their place.
@@ -166,13 +174,15 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
   it('on a destructive verdict, "s" still promises the session grant sticks', async () => {
     await startSession();
     await answer('s', DESTRUCTIVE);
-    expect(printed()).toContain('Approved for this session, future variants will not re-prompt.');
+    expect(printed()).toContain('Approved — this exact command will not ask again this session.');
   });
 
   it('on a destructive verdict, "a" still promises the allow-list write', async () => {
     await startSession();
     await answer('a', DESTRUCTIVE);
-    expect(printed()).toContain('Approved and remembered, saved to the project allow-list.');
+    expect(printed()).toContain(
+      'Approved and remembered — this exact command is saved to the project allow-list.'
+    );
   });
 
   /**
@@ -184,5 +194,59 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
     await startSession();
     expect(await answer('s', CATASTROPHIC)).toEqual({ type: 'approve', scope: 'session' });
     expect(await answer('a', CATASTROPHIC)).toEqual({ type: 'approve', scope: 'always' });
+  });
+
+  /**
+   * EXT-71 §3.2 — an escalate match asks the human whatever the rung would have done, so the prompt
+   * MUST show the entry that fired. Without it the user is asked about a command their rung would
+   * have approved, with nothing on screen tying the question to the line they wrote — which reads
+   * as the gate malfunctioning rather than as their own rule working.
+   */
+  it('shows the approvals.escalate entry that brought the call here', async () => {
+    await startSession();
+    rlQuestionMock.mockResolvedValueOnce('n');
+    await capturedApprovalCallback!({
+      name: 'run_shell_command',
+      args: { command: 'terraform apply' },
+      escalatedBy: 'terraform apply',
+    });
+    expect(warned()).toContain('approvals.escalate');
+    expect(warned()).toContain('terraform apply');
+  });
+
+  it('says nothing about approvals.escalate when no such entry fired', async () => {
+    await startSession();
+    await answer('n', DESTRUCTIVE);
+    expect(warned()).not.toContain('approvals.escalate');
+    // Control: the rater row IS still printed on the same surface, so the assertion above is
+    // about the escalate row rather than about warnings being suppressed altogether.
+    expect(warned()).toContain('Auto-rater (destructive)');
+  });
+
+  /**
+   * EXT-71 §6 — **the menu must display what it is about to store**, at the moment of the choice,
+   * on every surface. Under §3.1 that is the command itself as a fully-explicit exact entry, so the
+   * user is shown the thing they are agreeing to rather than a generalization of it.
+   */
+  it('shows what a sticky choice will store', async () => {
+    await startSession();
+    rlQuestionMock.mockResolvedValueOnce('n');
+    await capturedApprovalCallback!({
+      name: 'run_shell_command',
+      args: { command: 'npm test' },
+      grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "npm test" }',
+    });
+    expect(printed()).toContain('will remember exactly this command');
+    expect(printed()).toContain('"matcher": "exact"');
+  });
+
+  it('shows no such line when no sticky grant is on offer', async () => {
+    await startSession();
+    rlQuestionMock.mockResolvedValueOnce('n');
+    await capturedApprovalCallback!({ name: 'run_shell_command', args: { command: 'npm test' } });
+    expect(printed()).not.toContain('will remember exactly this command');
+    // Control: this surface still printed its own line on the same path, so the assertion above is
+    // about the grant row and not about output being suppressed altogether.
+    expect(printed()).toContain('Command rejected.');
   });
 });

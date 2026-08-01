@@ -153,6 +153,20 @@ export async function createInteractiveSession(
           `⚠ Auto-rater (${pending.safetyVerdict.outcome}): ${pending.safetyVerdict.reason}`
         );
       }
+      // EXT-71 §3.2 — when a declared `approvals.escalate` entry is what brought this call here,
+      // the prompt shows THE ENTRY THAT FIRED. Without it the user is asked about a command their
+      // rung would have approved, with nothing on screen tying the question to the line they wrote
+      // — which reads as the gate malfunctioning rather than as their own rule working.
+      if (pending.escalatedBy) {
+        displayWarning(`⚠ Your approvals.escalate list matched this call: ${pending.escalatedBy}`);
+      }
+      // EXT-71 §6 — the menu MUST show what a sticky choice will store, at the moment of the
+      // choice. Under §3.1 that is the command itself as a fully-explicit exact entry, not a
+      // pattern derived from it, which is what makes the display honest and cheap at once: the
+      // user sees the thing they are agreeing to. Absent when no sticky grant is on offer.
+      if (pending.grantPreview) {
+        displayInfo(`[s]/[a] will remember exactly this command: ${pending.grantPreview}`);
+      }
       setRawMode(false); // ensure typed input is echoed for this confirm
       // EXT-18: wrap the prompt in try/finally so the raw-mode/ref state is not left wedged if
       // rl.question throws. The subsequent streamResume run re-establishes raw mode + ref, but be
@@ -184,13 +198,15 @@ export async function createInteractiveSession(
       const sticky = pending.safetyVerdict?.outcome !== 'catastrophic';
       if (answer === 's' || answer === 'session') {
         displayInfo(
-          sticky ? 'Approved for this session, future variants will not re-prompt.' : notRemembered
+          sticky ? 'Approved — this exact command will not ask again this session.' : notRemembered
         );
         return { type: 'approve', scope: 'session' };
       }
       if (answer === 'a' || answer === 'always') {
         displayInfo(
-          sticky ? 'Approved and remembered, saved to the project allow-list.' : notRemembered
+          sticky
+            ? 'Approved and remembered — this exact command is saved to the project allow-list.'
+            : notRemembered
         );
         return { type: 'approve', scope: 'always' };
       }

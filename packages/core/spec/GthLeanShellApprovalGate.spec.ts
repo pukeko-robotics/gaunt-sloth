@@ -16,7 +16,10 @@
  * rater module is mocked (its verdicts are scripted per test); prompt composition is stubbed so
  * nothing reads the on-disk gsloth config.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { MemorySaver } from '@langchain/langgraph';
@@ -24,6 +27,7 @@ import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import type { GthConfig } from '#src/config.js';
 import { AttackHaltError, NonInteractiveEscalationError } from '#src/core/shell/approvalStop.js';
+import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
 import type {
   AgentStreamEvent,
   PendingToolInterrupt,
@@ -134,10 +138,26 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
     includeCurrentDateAfterGuidelines: true,
   };
 
+  // EXT-71 — clamp the anchor the persisted grant store resolves from, through the production hook
+  // (`setProjectDir`), or a gated call here reads and — on a v1 file — REWRITES the real
+  // `.gsloth/.gsloth-settings/shell-allowlist.json` of whoever runs the suite. Measured, not assumed.
+  const projectDir = mkdtempSync(join(tmpdir(), 'gth-lean-gate-spec-'));
+  let priorProjectDir: string | undefined;
+
   beforeEach(async () => {
     vi.resetAllMocks();
+    priorProjectDir = peekProjectDir();
+    setProjectDir(projectDir);
     executed = [];
     ({ GthAgentRunner } = await import('#src/core/GthAgentRunner.js'));
+  });
+
+  afterEach(() => {
+    setProjectDir(priorProjectDir);
+  });
+
+  afterAll(() => {
+    rmSync(projectDir, { recursive: true, force: true });
   });
 
   /** A real run_shell_command tool that records what it ran (never mocked — execution is the observable). */
@@ -247,17 +267,35 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
     expect(model.callCount).toBe(1);
   });
 
-  it('allow-list: a session-scoped approval auto-approves a variant of the same operation without re-prompting', async () => {
-    const runner = await makeRunner(['git checkout main', 'git checkout -b feature']);
+  /**
+   * EXT-71 §3.1/§6 — the same property as the runner's unit test, through a **real `createAgent`
+   * graph**: a session grant is the command the human saw and nothing more. The repeat runs
+   * unprompted; the longer command asks again and runs only because the human said so a second
+   * time. Both commands still execute, so this is a test about who was asked, not about what ran.
+   */
+  it('allow-list: a session grant covers exactly that command — the repeat is silent, a longer one asks', async () => {
+    const runner = await makeRunner([
+      'git checkout main',
+      'git checkout main',
+      'git checkout main --force',
+    ]);
     const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'session' });
     runner.setToolApprovalCallback(human);
 
     await runTurn(runner, 'checkout main'); // human grants session scope
-    await runTurn(runner, 'new branch'); // variant must NOT re-prompt
+    await runTurn(runner, 'checkout main again'); // the granted command must NOT re-prompt
+    await runTurn(runner, 'force it'); // a longer command is a different command
 
-    expect(human).toHaveBeenCalledTimes(1);
-    expect(human.mock.calls[0][0].args).toEqual({ command: 'git checkout main' });
-    expect(executed).toEqual(['git checkout main', 'git checkout -b feature']);
+    expect(human).toHaveBeenCalledTimes(2);
+    expect(human.mock.calls.map((call) => call[0].args)).toEqual([
+      { command: 'git checkout main' },
+      { command: 'git checkout main --force' },
+    ]);
+    expect(executed).toEqual([
+      'git checkout main',
+      'git checkout main',
+      'git checkout main --force',
+    ]);
   });
 
   /**
@@ -273,9 +311,16 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
    * approve this command — and would still pay for a model call on every variant, which is the
    * cost §3 exists to remove. Only "the rater was never reached" distinguishes the two.
    */
-  it('allow-list: a DECLARED prefix approves a host-bearing command without reaching the rater at all', async () => {
+  it('allow-list: a DECLARED entry approves a host-bearing command without reaching the rater at all', async () => {
     const runner = await makeRunner(['curl https://internal.example.com/health'], {
-      approvals: { mode: 'auto-safe', allow: ['curl'] },
+      approvals: {
+        mode: 'auto-safe',
+        // EXT-71 §3.1 — an `exact` entry is the COMMAND, so it is written out in full. §3.2 then
+        // defaults it to `rate: false`, which is why this costs no model call.
+        allow: [
+          { type: 'shell', matcher: 'exact', pattern: 'curl https://internal.example.com/health' },
+        ],
+      },
     } as unknown as Partial<GthConfig>);
     const human = vi.fn();
     runner.setToolApprovalCallback(human);
@@ -287,6 +332,33 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
     expect(mapVerdictToActionMock).not.toHaveBeenCalled();
     expect(human).not.toHaveBeenCalled();
     expect(executed).toEqual(['curl https://internal.example.com/health']);
+  });
+
+  /**
+   * EXT-71 §3.1 — **the control for the test above, and the behaviour that separates an `exact`
+   * entry from the token-aligned prefix the runtime store holds.** `exact` is the whole command:
+   * an entry for `curl` does NOT cover `curl <a url>`, so this run is rated and escalated exactly as
+   * if nothing had been declared. §3.1 states that cost outright — *"a missed allow entry escalates
+   * … neither is an execution"* — and it is the reason both lists can share one narrow default.
+   */
+  it('allow-list: an exact entry does NOT cover a longer command that merely starts with it', async () => {
+    const verdict = { outcome: 'destructive', reason: 'fetches from a host' };
+    rateShellCommandMock.mockResolvedValue(verdict);
+    mapVerdictToActionMock.mockReturnValue({ action: 'escalate', verdict });
+    const runner = await makeRunner(['curl https://internal.example.com/health'], {
+      approvals: {
+        mode: 'auto-safe',
+        allow: [{ type: 'shell', matcher: 'exact', pattern: 'curl' }],
+      },
+    } as unknown as Partial<GthConfig>);
+    const human = vi.fn().mockResolvedValue({ type: 'reject' });
+    runner.setToolApprovalCallback(human);
+
+    await runTurn(runner, 'check the internal service');
+
+    expect(rateShellCommandMock).toHaveBeenCalledTimes(1);
+    expect(human).toHaveBeenCalledTimes(1);
+    expect(executed).toEqual([]);
   });
 
   it('rater: a SAFE verdict approves with NO human prompt (and the rater is consulted with the command)', async () => {
@@ -400,7 +472,12 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
    */
   it('the declared deny list still refuses under bypass, on the real graph', async () => {
     const runner = await makeRunner(['npm publish --access public'], {
-      approvals: { mode: 'bypass', deny: ['npm publish'] },
+      approvals: {
+        mode: 'bypass',
+        // §3.1 — under `bypass` the deny list is one of only two checks left, so a failure to match
+        // is not a re-prompt but the command running. A user relying on it there writes a GLOB.
+        deny: [{ type: 'shell', matcher: 'glob', pattern: 'npm publish*' }],
+      },
     } as unknown as Partial<GthConfig>);
     const human = vi.fn();
     runner.setToolApprovalCallback(human);
@@ -409,6 +486,193 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
 
     expect(human).not.toHaveBeenCalled();
     expect(executed).toEqual([]);
+  });
+
+  /**
+   * The control for the test above, and the reason it uses a glob. A gate that refused everything
+   * under `bypass` would pass that assertion too; this proves the refusal came from the entry.
+   */
+  it('bypass runs a command the deny list does NOT match, on the real graph', async () => {
+    const runner = await makeRunner(['rm -rf node_modules'], {
+      approvals: {
+        mode: 'bypass',
+        deny: [{ type: 'shell', matcher: 'glob', pattern: 'npm publish*' }],
+      },
+    } as unknown as Partial<GthConfig>);
+    const human = vi.fn();
+    runner.setToolApprovalCallback(human);
+
+    await runTurn(runner, 'clean');
+
+    expect(human).not.toHaveBeenCalled();
+    expect(executed).toEqual(['rm -rf node_modules']);
+  });
+
+  /**
+   * §9.1/§11.1f, end to end on the real graph — **a per-command rung does not discard the root's
+   * deny list.** This is the exact config the amendment was ratified over: a root `auto-safe` with
+   * one prohibition, and the friendly per-command spelling `"code": { "approvals": "bypass" }`,
+   * which reads as "let the code command run without prompting me" and must not also mean "and
+   * forget everything I forbade". `bypass` is where it matters: the deny list and the §8 floor are
+   * the only checks left there, so a list that silently empties is a command that runs.
+   */
+  it('a per-command bypass keeps the ROOT deny list, on the real graph', async () => {
+    const runner = await makeRunner(['npm publish --access public'], {
+      approvals: {
+        mode: 'auto-safe',
+        deny: [{ type: 'shell', matcher: 'glob', pattern: 'npm publish*' }],
+      },
+      commands: { code: { approvals: 'bypass' } },
+    } as unknown as Partial<GthConfig>);
+    const human = vi.fn();
+    runner.setToolApprovalCallback(human);
+
+    // CONTROL — the per-command override really took effect for this session. Without it the
+    // refusal below would be equally satisfied by a config still sitting at the root's `auto-safe`,
+    // where a refusal proves nothing about `bypass`.
+    expect(runner.getSessionApprovals().rung).toBe('bypass');
+
+    await runTurn(runner, 'ship it');
+
+    expect(human).not.toHaveBeenCalled(); // bypass: nobody was asked…
+    expect(executed).toEqual([]); // …and the root's deny entry still refused it
+  });
+
+  /**
+   * The control for the test above: the rung really is `bypass` and the gate is not simply
+   * refusing everything. A command the root deny list does not name runs unprompted and unrated —
+   * which at `auto-safe` it could not, since the rater would have been consulted.
+   */
+  it('a per-command bypass still RUNS a command the root deny list does not name', async () => {
+    const runner = await makeRunner(['rm -rf node_modules'], {
+      approvals: {
+        mode: 'auto-safe',
+        deny: [{ type: 'shell', matcher: 'glob', pattern: 'npm publish*' }],
+      },
+      commands: { code: { approvals: 'bypass' } },
+    } as unknown as Partial<GthConfig>);
+    const human = vi.fn();
+    runner.setToolApprovalCallback(human);
+
+    await runTurn(runner, 'clean');
+
+    expect(human).not.toHaveBeenCalled();
+    expect(executed).toEqual(['rm -rf node_modules']);
+  });
+
+  /**
+   * §9.1 — and an explicit per-command `deny` ADDS to the root's rather than standing in for it,
+   * which is the case §11.1f specifically settled: the alternative reading leaves the same
+   * silent-loss footgun one keystroke away, needing only a command-specific entry to trigger it.
+   */
+  it('a per-command deny adds to the root deny — both entries refuse, on the real graph', async () => {
+    const configExtra = {
+      approvals: {
+        mode: 'auto-safe',
+        deny: [{ type: 'shell', matcher: 'glob', pattern: 'npm publish*' }],
+      },
+      commands: {
+        code: {
+          approvals: {
+            mode: 'bypass',
+            deny: [{ type: 'shell', matcher: 'glob', pattern: 'git push --force*' }],
+          },
+        },
+      },
+    } as unknown as Partial<GthConfig>;
+
+    const rootDenied = await makeRunner(['npm publish --access public'], configExtra);
+    rootDenied.setToolApprovalCallback(vi.fn());
+    await runTurn(rootDenied, 'ship it');
+    expect(executed).toEqual([]); // the ROOT entry bit at bypass
+
+    const commandDenied = await makeRunner(['git push --force origin main'], configExtra);
+    commandDenied.setToolApprovalCallback(vi.fn());
+    await runTurn(commandDenied, 'force it');
+    expect(executed).toEqual([]); // …and so did the PER-COMMAND one
+
+    // CONTROL — neither is a refuse-everything: a command named by neither list still runs.
+    const allowed = await makeRunner(['echo hi'], configExtra);
+    allowed.setToolApprovalCallback(vi.fn());
+    await runTurn(allowed, 'greet');
+    expect(executed).toEqual(['echo hi']);
+  });
+
+  /**
+   * §9.1/§11.1f — the permissive half, on the real graph, and the one that is a SECURITY assertion
+   * rather than a merge assertion: a command that states its own `allow` no longer auto-approves
+   * what the root trusted. Driven at `write`, the unrated rung, so the only two outcomes are "ran
+   * without asking" and "asked" — which is exactly the distinction an inherited grant erases.
+   */
+  it('a per-command allow replaces the root one, so an inherited grant no longer runs unprompted', async () => {
+    const runner = await makeRunner(['npm test'], {
+      approvals: {
+        mode: 'write',
+        allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
+      },
+      commands: {
+        code: {
+          approvals: { allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm run build' }] },
+        },
+      },
+    } as unknown as Partial<GthConfig>);
+    const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
+    runner.setToolApprovalCallback(human);
+
+    await runTurn(runner, 'test it');
+
+    // The root's grant did NOT carry into a command that declared its own list: the human was asked.
+    expect(human).toHaveBeenCalledTimes(1);
+    expect(executed).toEqual(['npm test']); // …and ran only because they said so
+  });
+
+  /**
+   * The control, and the half that proves the assertion above is about REPLACEMENT rather than
+   * about the allow-list being broken: the command's OWN entry still auto-approves, unprompted.
+   */
+  it('the per-command allow list itself still approves without asking', async () => {
+    const runner = await makeRunner(['npm run build'], {
+      approvals: {
+        mode: 'write',
+        allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
+      },
+      commands: {
+        code: {
+          approvals: { allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm run build' }] },
+        },
+      },
+    } as unknown as Partial<GthConfig>);
+    const human = vi.fn();
+    runner.setToolApprovalCallback(human);
+
+    await runTurn(runner, 'build it');
+
+    expect(human).not.toHaveBeenCalled();
+    expect(executed).toEqual(['npm run build']);
+  });
+
+  /**
+   * §3.1, stated as a cost the spec accepts and therefore pinned rather than left to be discovered:
+   * an **exact** deny entry for `npm publish` does not stop `npm publish --access public`. Under
+   * `bypass` — where the deny list is one of only two checks left — that means the command RUNS.
+   * This is why the entry above is a glob, and why the approvals UI says so where the list is
+   * edited. Breaking this test by widening `exact` back into a prefix would reopen the fail-open on
+   * the allow side, which shares the same matcher.
+   */
+  it('an exact deny entry does not stop a flag-suffixed sibling, so under bypass it runs', async () => {
+    const runner = await makeRunner(['npm publish --access public'], {
+      approvals: {
+        mode: 'bypass',
+        deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
+      },
+    } as unknown as Partial<GthConfig>);
+    const human = vi.fn();
+    runner.setToolApprovalCallback(human);
+
+    await runTurn(runner, 'ship it');
+
+    expect(human).not.toHaveBeenCalled();
+    expect(executed).toEqual(['npm publish --access public']);
   });
 
   it('string path parity (readline/exec surface): processMessages suspends, approves and resumes to the final answer', async () => {

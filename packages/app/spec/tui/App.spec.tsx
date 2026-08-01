@@ -233,7 +233,8 @@ describe('tui <App>', () => {
     extra?: Partial<TuiAgent>
   ): { agent: TuiAgent; rung: () => string } => {
     let rung = initial;
-    const posture = () => ({ rung, rater: undefined, allow: [], deny: [] }) as any;
+    const posture = () =>
+      ({ rung, rater: undefined, allow: [], deny: [], escalate: [] }) as any;
     return {
       rung: () => rung,
       agent: {

@@ -106,6 +106,273 @@ const binaryFormatsSchema = z.union([z.literal(false), z.array(binaryFormatConfi
 const APPROVAL_RUNG_VALUES = ['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'] as const;
 
 /**
+ * EXT-71 §3.1 — the **subject** axis of a rule entry, and only that: `shell` is a command, `tool`
+ * a built-in or custom in-process tool, `mcpTool` a server's tool. The hand-written twin is
+ * `ApprovalEntryType` in `shell-policy.ts`. What holds the two together is
+ * `approvalEntrySchema.spec.ts`, where a list of `ApprovalEntry`-typed literals is parsed by this
+ * schema: a value either side stops accepting fails there. That is a weaker pin than a direct
+ * equality assertion — it catches a narrowing, not a widening on one side alone.
+ */
+export const APPROVAL_ENTRY_TYPES = ['shell', 'tool', 'mcpTool'] as const;
+
+/**
+ * EXT-71 §3.1 — the **comparison** axis of a rule entry, and only that. `exact`/`glob`/`regexp`
+ * take a string pattern; `hint` takes an object over the annotation names and is valid on tool
+ * subjects only (on `shell` it is a config error — see {@link shellEntrySchema}).
+ */
+export const APPROVAL_ENTRY_MATCHERS = ['exact', 'glob', 'regexp', 'hint'] as const;
+
+/**
+ * EXT-71 §3.1 / §4.7 — the four MCP `ToolAnnotations` booleans a `hint` pattern may name. This is
+ * the whole vocabulary: an unknown name is a config error, never an ignored key, because a hint
+ * pattern that quietly drops a constraint matches MORE than its author wrote.
+ */
+export const HINT_ANNOTATION_KEYS = [
+  'readOnlyHint',
+  'destructiveHint',
+  'idempotentHint',
+  'openWorldHint',
+] as const;
+
+/**
+ * EXT-71 §3.1 — the length cap on a `regexp` pattern, enforced when the config LOADS.
+ *
+ * 200 characters. The longest pattern the spec itself writes is under 40, and every rule entry
+ * names one command or tool shape rather than a grammar, so 200 is an order of magnitude of
+ * headroom over real use while still bounding what the matcher can ever be handed. The cap is a
+ * cheap load-time bound, NOT a backtracking defence — a short pattern can backtrack
+ * catastrophically too, and the run-time match budget is the separate backstop for that. What the
+ * cap buys is that a pattern nobody could have read and reviewed cannot be smuggled past load.
+ */
+export const APPROVAL_REGEXP_MAX_LENGTH = 200;
+
+/**
+ * EXT-71 §3.1 — a `hint` pattern: an object over {@link HINT_ANNOTATION_KEYS} mapping each named
+ * annotation to the boolean it must effectively hold. All named hints must match (AND within the
+ * entry); hints not named are unconstrained; `false` is the spelling of negation.
+ *
+ * Strict, and non-empty: an empty object or an unknown name is a hard config error and **never a
+ * match-everything**. `minProperties` is attached as metadata rather than being left to the
+ * refinement alone so the constraint survives into the emitted JSON Schema (zod drops refinements
+ * there), which is what the hosted schema channels and editor validation actually read.
+ */
+const hintPatternSchema = z
+  .strictObject({
+    readOnlyHint: z.boolean().optional(),
+    destructiveHint: z.boolean().optional(),
+    idempotentHint: z.boolean().optional(),
+    openWorldHint: z.boolean().optional(),
+  })
+  .meta({ minProperties: 1 })
+  .refine((pattern) => Object.keys(pattern).length > 0, {
+    message:
+      'a hint pattern must name at least one of ' +
+      HINT_ANNOTATION_KEYS.join(', ') +
+      ' — an empty object is a config error, never a match-everything',
+  });
+
+/**
+ * EXT-71 §3.1 — a `regexp` pattern: capped at {@link APPROVAL_REGEXP_MAX_LENGTH} and required to
+ * COMPILE when the config loads, never when it first runs. Both failures name the offending
+ * pattern in the message: an entry the user cannot trace back to the line they wrote is
+ * indistinguishable from a bug.
+ *
+ * `.max()` is kept alongside the refinement so the cap emits as `maxLength` in the JSON Schema
+ * (refinements do not survive `z.toJSONSchema`); the refinement is what produces the message that
+ * quotes the pattern.
+ */
+const regexpPatternSchema = z
+  .string()
+  .max(APPROVAL_REGEXP_MAX_LENGTH)
+  .superRefine((pattern, ctx) => {
+    if (pattern.length > APPROVAL_REGEXP_MAX_LENGTH) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          `regexp pattern ${JSON.stringify(pattern)} is ${pattern.length} characters, over the ` +
+          `${APPROVAL_REGEXP_MAX_LENGTH}-character cap for an approvals rule pattern`,
+      });
+      return;
+    }
+    try {
+      new RegExp(pattern);
+    } catch (e) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          `regexp pattern ${JSON.stringify(pattern)} does not compile: ` +
+          `${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+  });
+
+/** `rate` (§3.2) — optional on EVERY entry type, and the only optional field they all share. */
+const rateField = { rate: z.boolean().optional() };
+
+/**
+ * `host` (§4.7.4) — optional on TOOL subjects only, exact-match. Forbidden on `shell`, where the
+ * host is already inside the command string; the shell arms are strict objects, so writing it
+ * there is an unrecognized-key error.
+ */
+const hostField = { host: z.string().min(1).optional() };
+
+/**
+ * EXT-71 §3.1 — a `shell` entry. `matcher` deliberately omits `hint`: a command carries no tool
+ * annotations, so `{"type":"shell","matcher":"hint"}` is a discriminator error naming the three
+ * matchers a command actually supports. Neither `server` nor `host` exists here.
+ */
+const shellEntrySchema = z.discriminatedUnion('matcher', [
+  z.strictObject({
+    type: z.literal('shell'),
+    matcher: z.literal('exact'),
+    pattern: z.string(),
+    ...rateField,
+  }),
+  z.strictObject({
+    type: z.literal('shell'),
+    matcher: z.literal('glob'),
+    pattern: z.string(),
+    ...rateField,
+  }),
+  z.strictObject({
+    type: z.literal('shell'),
+    matcher: z.literal('regexp'),
+    pattern: regexpPatternSchema,
+    ...rateField,
+  }),
+]);
+
+/** EXT-71 §3.1 — a `tool` entry: a built-in or custom in-process tool, matched on its name. */
+const toolEntrySchema = z.discriminatedUnion('matcher', [
+  z.strictObject({
+    type: z.literal('tool'),
+    matcher: z.literal('exact'),
+    pattern: z.string(),
+    ...hostField,
+    ...rateField,
+  }),
+  z.strictObject({
+    type: z.literal('tool'),
+    matcher: z.literal('glob'),
+    pattern: z.string(),
+    ...hostField,
+    ...rateField,
+  }),
+  z.strictObject({
+    type: z.literal('tool'),
+    matcher: z.literal('regexp'),
+    pattern: regexpPatternSchema,
+    ...hostField,
+    ...rateField,
+  }),
+  z.strictObject({
+    type: z.literal('tool'),
+    matcher: z.literal('hint'),
+    pattern: hintPatternSchema,
+    ...hostField,
+    ...rateField,
+  }),
+]);
+
+/**
+ * EXT-71 §3.1 — an `mcpTool` entry. `server` is **required** here and exists nowhere else: it is
+ * the user's own key in `mcpServers` (§4.7.5), the only stable, unique, user-authored identity a
+ * server has. The literal `*` is reserved to mean every server, which is why a configured server
+ * may not be named `*` ({@link findApprovalsGrammarIssues}).
+ */
+const mcpToolEntrySchema = z.discriminatedUnion('matcher', [
+  z.strictObject({
+    type: z.literal('mcpTool'),
+    matcher: z.literal('exact'),
+    server: z.string().min(1),
+    pattern: z.string(),
+    ...hostField,
+    ...rateField,
+  }),
+  z.strictObject({
+    type: z.literal('mcpTool'),
+    matcher: z.literal('glob'),
+    server: z.string().min(1),
+    pattern: z.string(),
+    ...hostField,
+    ...rateField,
+  }),
+  z.strictObject({
+    type: z.literal('mcpTool'),
+    matcher: z.literal('regexp'),
+    server: z.string().min(1),
+    pattern: regexpPatternSchema,
+    ...hostField,
+    ...rateField,
+  }),
+  z.strictObject({
+    type: z.literal('mcpTool'),
+    matcher: z.literal('hint'),
+    server: z.string().min(1),
+    pattern: hintPatternSchema,
+    ...hostField,
+    ...rateField,
+  }),
+]);
+
+/**
+ * EXT-71 §3.1 — **one** entry in `allow`, `deny` or `escalate`. All three lists take the same
+ * shape, so there is one schema and the list a rule sits in decides only what a match DOES.
+ *
+ * `type`, `matcher` and `pattern` are required on every arm: no field is inferred, and no entry
+ * reads two ways. Every arm is a strict object, so any field the grammar does not define — a typo,
+ * a `server` on a `shell` entry, a `host` on a `shell` entry — is an unrecognized-key error rather
+ * than a silently-ignored key that would widen what the entry matches.
+ *
+ * The `id` is what makes the emitted JSON Schema hoist this union into `$defs` and reference it,
+ * instead of inlining all eleven arms into each of the twenty-four places a rule list appears
+ * (three lists × the root plus seven commands). That is the difference between a schema an editor loads
+ * and one it chokes on, and `$ref` is the standard spelling every JSON Schema consumer already
+ * understands.
+ */
+export const approvalEntrySchema = z
+  .discriminatedUnion('type', [shellEntrySchema, toolEntrySchema, mcpToolEntrySchema])
+  .meta({ id: 'ApprovalEntry' });
+
+/** The three rule lists, keyed as they appear under `approvals` (§3, §9). */
+const APPROVAL_LIST_KEYS = ['allow', 'deny', 'escalate'] as const;
+
+/**
+ * EXT-71 §3.1 — render an entry in the object form the user would write in a config file, with the
+ * fields in grammar order (`type`, `server`, `matcher`, `pattern`, then the optional bounds).
+ *
+ * The ONE place that spelling is produced, because it is shown in two very different moments that
+ * must agree: the load-time error that tells a user what to write instead of their bare string, and
+ * the escalation menu's *this is what will be stored* line (§6). A grant the menu describes one way
+ * and stores another is exactly the drift this design cannot afford.
+ */
+export function renderApprovalEntryObject(entry: {
+  type: string;
+  matcher: string;
+  pattern: unknown;
+  server?: string;
+  host?: string;
+  rate?: boolean;
+}): string {
+  const fields: [string, unknown][] = [['type', entry.type]];
+  if (entry.server !== undefined) fields.push(['server', entry.server]);
+  fields.push(['matcher', entry.matcher], ['pattern', entry.pattern]);
+  if (entry.host !== undefined) fields.push(['host', entry.host]);
+  if (entry.rate !== undefined) fields.push(['rate', entry.rate]);
+  const rendered = fields.map(([key, value]) => `${JSON.stringify(key)}: ${JSON.stringify(value)}`);
+  return `{ ${rendered.join(', ')} }`;
+}
+
+/**
+ * EXT-71 §2.3/§9.1 — render the object form of a bare string found in a rule list, so the
+ * migration error shows the user the entry they should have written *for their own string*
+ * rather than a generic example.
+ */
+export function renderApprovalEntryForString(pattern: string): string {
+  return renderApprovalEntryObject({ type: 'shell', matcher: 'exact', pattern });
+}
+
+/**
  * CFG-27 — the `approvals` value: **either the rung name on its own, or an object when the extras
  * are needed** (spec §9). There are no other approvals keys.
  *
@@ -116,8 +383,9 @@ const APPROVAL_RUNG_VALUES = ['read-only', 'write', 'auto-safe', 'full-auto', 'b
  * { "approvals": {
  *     "mode": "auto-safe",
  *     "rater": "safety-rater",                     // identity profile the rater runs under
- *     "allow": ["npm test", "git status"],         // declared allow-list (§3)
- *     "deny":  ["git push --force", "npm publish"] // declared deny-list (§3)
+ *     "allow":    [ { "type": "shell", "matcher": "exact", "pattern": "npm test" } ],
+ *     "deny":     [ { "type": "shell", "matcher": "glob",  "pattern": "npm publish*" } ],
+ *     "escalate": [ { "type": "shell", "matcher": "exact", "pattern": "terraform apply" } ]
  * } }
  * ```
  *
@@ -133,11 +401,16 @@ const APPROVAL_RUNG_VALUES = ['read-only', 'write', 'auto-safe', 'full-auto', 'b
  *   everything, which is the opposite of what the rung is for. Deliberately a number the user owns
  *   rather than a provider→timeout table: a table is a guess about someone else's hardware, and
  *   the failure it causes is silent.
- * - `allow`/`deny` are **read-only input**: merged with the runtime stores the escalation menu
- *   writes, and never written back to config.
- * - The retired `strictness` / `escalate` / `allowlist` / `persistAllowlist` keys and the retired
- *   `auto` / `ask` mode values are hard migration errors naming their replacement — see
- *   `RETIRED_APPROVALS_KEYS` / `RETIRED_APPROVAL_MODES` in {@link findDeprecatedConfigIssues}.
+ * - `allow`/`deny`/`escalate` are **read-only input**: merged with the runtime stores the
+ *   escalation menu writes, and never written back to config. Every entry is the §3.1 object
+ *   ({@link approvalEntrySchema}); a bare string in any of the three is a hard config error whose
+ *   message shows the object form of that same string ({@link findApprovalsGrammarIssues}).
+ * - `escalate` is the third list (§3, §3.2): a match always asks the human, whatever the rung
+ *   would have done. It takes the same entries as the other two.
+ * - The retired `strictness` / `allowlist` / `persistAllowlist` keys and the retired `auto` / `ask`
+ *   mode values are hard migration errors naming their replacement — see `RETIRED_APPROVALS_KEYS` /
+ *   `RETIRED_APPROVAL_MODES` in {@link findDeprecatedConfigIssues}. So is a NON-ARRAY `escalate`,
+ *   which is the retired severity threshold rather than the new list.
  *
  * Defaults are applied at the READ site (`resolveApprovals` in `shell-policy.ts`), not in
  * DEFAULT_CONFIG, so the effective-config snapshot never churns (à la GS2-34/GS2-63).
@@ -150,8 +423,11 @@ const approvalsSchema = z.union([
   z.object({
     mode: z.enum(APPROVAL_RUNG_VALUES).optional(),
     rater: z.string().optional(),
-    allow: z.array(z.string()).optional(),
-    deny: z.array(z.string()).optional(),
+    // EXT-71 §3.1 — the three rule lists. Same entry grammar in all three; the list decides only
+    // what a match DOES (§3: deny over escalate over allow).
+    allow: z.array(approvalEntrySchema).optional(),
+    deny: z.array(approvalEntrySchema).optional(),
+    escalate: z.array(approvalEntrySchema).optional(),
     // EXT-66 — wall-clock budget (ms) for one rating call. See the note on the union above for
     // why this is a user-owned number rather than a per-provider table.
     // `.min(1)`, not `.positive()`: the latter emits `exclusiveMinimum`, a JSON-Schema draft
@@ -254,7 +530,8 @@ const prCommandSchema = z.object({
   requirementSource: z.string().optional(),
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-27 — per-command approvals rung; replaces the root value wholesale when set.
+  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
+  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -268,7 +545,8 @@ const reviewCommandSchema = z.object({
   requirementSource: z.string().optional(),
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-27 — per-command approvals rung; replaces the root value wholesale when set.
+  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
+  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -279,7 +557,8 @@ const reviewCommandSchema = z.object({
 const askCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-27 — per-command approvals rung; replaces the root value wholesale when set.
+  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
+  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -289,7 +568,8 @@ const askCommandSchema = z.object({
 const chatCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-27 — per-command approvals rung; replaces the root value wholesale when set.
+  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
+  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -299,7 +579,8 @@ const chatCommandSchema = z.object({
 const codeCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-27 — per-command approvals rung; replaces the root value wholesale when set.
+  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
+  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -309,7 +590,8 @@ const codeCommandSchema = z.object({
 const execCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-27 — per-command approvals rung; replaces the root value wholesale when set.
+  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
+  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -319,7 +601,8 @@ const execCommandSchema = z.object({
 const apiCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-27 — per-command approvals rung; replaces the root value wholesale when set.
+  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
+  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
   approvals: approvalsSchema.optional(),
   port: z.number().optional(),
   cors: z
@@ -419,8 +702,9 @@ export const rawGthConfigSchema = z.looseObject({
   builtInTools: builtInToolsSchema.optional(),
   // CFG-27 — the approvals ladder: a rung name, or an object carrying the rater profile and the
   // declared allow/deny lists. Settable at the root or per command
-  // (`commands.<command>.approvals`, which REPLACES the root value wholesale, mirroring
-  // `builtInTools`). Absent = `auto-safe` (`resolveApprovals` in shell-policy.ts).
+  // (`commands.<command>.approvals`, which per §9.1 overrides only the fields it names — the
+  // restrictive lists concatenate across scopes, `allow` replaces). Absent = `auto-safe`
+  // (`resolveApprovals` in shell-policy.ts).
   approvals: approvalsSchema.optional(),
   // Live tool instances / toolkits in JS configs — kept permissive.
   tools: z.array(z.unknown()).optional(),
@@ -624,7 +908,7 @@ const RETIRED_SHELL_TOOL_PAIRS: ReadonlyArray<readonly [string, string]> = [
       'safe/destructive/catastrophic/attack outcomes, and autoApproveLow/blockHigh are replaced ' +
       'by the rung you choose',
   ],
-  ['allowlist', '"approvals.allow" (a declared list of command prefixes)'],
+  ['allowlist', '"approvals.allow" (a declared list of rule entries)'],
   [
     'persistAllowlist',
     'nothing — persistence is a per-decision choice at the approval prompt (approve forgets, ' +
@@ -644,8 +928,12 @@ const SHELL_TOOL_REGISTRY_KEY = 'run_shell_command';
  * would otherwise run with its declared posture quietly ignored — the worst possible failure for a
  * safety gate, and exactly what CFG-26 fixed for the per-tool knobs.
  *
- * `strictness` and `escalate` are **deleted, not remapped**: there are no severity thresholds and
- * no independent rater switch, so each message points at the rung that expresses the intent.
+ * `strictness` is **deleted, not remapped**: there are no severity thresholds and no independent
+ * rater switch, so the message points at the rung that expresses the intent.
+ *
+ * The retired severity threshold `escalate` is NOT in this table, because EXT-71 gave the name back
+ * as the third rule list (§3). A non-array `escalate` — the shape the threshold had — is still
+ * caught, with the same message, by {@link RETIRED_ESCALATE_THRESHOLD_MESSAGE}.
  */
 const RETIRED_APPROVALS_KEYS: ReadonlyArray<readonly [string, string]> = [
   [
@@ -654,18 +942,24 @@ const RETIRED_APPROVALS_KEYS: ReadonlyArray<readonly [string, string]> = [
       '"read-only"/"write" never rate, "auto-safe" escalates anything not rated safe, ' +
       '"full-auto" lets the auto-rater decide',
   ],
-  [
-    'escalate',
-    'nothing — there is no escalate threshold any more. "auto-safe" escalates everything the ' +
-      'auto-rater does not rate safe; "full-auto" does not stop to ask',
-  ],
-  ['allowlist', '"approvals.allow" (a declared list of command prefixes)'],
+  ['allowlist', '"approvals.allow" (a declared list of rule entries)'],
   [
     'persistAllowlist',
     'nothing — persistence is a per-decision choice at the approval prompt (approve forgets, ' +
       'always approve persists)',
   ],
 ];
+
+/**
+ * EXT-71 — `approvals.escalate` used to be a SEVERITY THRESHOLD (a string), and is now the third
+ * rule LIST (an array of §3.1 entries). Only the old shape is an error, so the name could be
+ * reused without stranding anyone: a non-array value gets the message that names the rung which
+ * expresses the old intent, instead of a bare "expected array, received string".
+ */
+const RETIRED_ESCALATE_THRESHOLD_MESSAGE =
+  'is now the third rule LIST (an array of {type, matcher, pattern} entries that always ask the ' +
+  'human), not a severity threshold. There is no escalate threshold any more: "auto-safe" ' +
+  'escalates everything the auto-rater does not rate safe, and "full-auto" does not stop to ask.';
 
 /**
  * CFG-27 — retired `approvals.mode` VALUES → the rung that replaced them. The three-mode
@@ -779,6 +1073,16 @@ function collectRetiredApprovalsIssues(
           `and each rung fully determines behaviour. Use ${replacement}. ${MIGRATION_HINT}`,
       });
     }
+  }
+
+  // EXT-71 — `escalate` reused for the third rule list; only the retired THRESHOLD shape errors.
+  if (block.escalate !== undefined && !Array.isArray(block.escalate)) {
+    issues.push({
+      path: `${pathPrefix}.escalate`,
+      message:
+        `Config property "escalate" in ${pathPrefix} ${RETIRED_ESCALATE_THRESHOLD_MESSAGE} ` +
+        MIGRATION_HINT,
+    });
   }
 
   // `rater` flattened from an object to a bare identity-profile name.
@@ -898,6 +1202,139 @@ export function findDeprecatedConfigIssues(raw: Record<string, unknown>): Deprec
         );
         // (F, CFG-27) retired approvals keys / mode values in this command's approvals value.
         collectRetiredApprovalsIssues(
+          (cmd as Record<string, unknown>).approvals,
+          `commands.${name}.approvals`,
+          issues
+        );
+      }
+    }
+  }
+
+  return issues;
+}
+
+/**
+ * EXT-71 §3.1 — the reserved MCP server name. `*` in an entry's `server` field means *every
+ * server*, so a server actually CALLED `*` would make `{ "server": "*" }` ambiguous — it could not
+ * be read as either "every server" or "that one server" without picking, and a rule whose scope
+ * depends on which reading won is worse than no rule. The name is therefore refused at load.
+ */
+const RESERVED_MCP_SERVER_NAME = '*';
+
+/**
+ * EXT-71 §3.1/§9.1 — validate every entry in one `approvals` value's three rule lists (root or per
+ * command), pushing one issue per problem with a path that points at the exact entry and field.
+ *
+ * **Why the entries are checked HERE rather than left to the schema parse**, given that
+ * `approvalsSchema` already carries {@link approvalEntrySchema}: the `approvals` value is a union
+ * (the §9.1 scalar-or-object sugar), and zod reports a failing union as ONE issue at the union's
+ * own path — `approvals: Invalid input` — with every arm's real diagnosis nested out of reach of
+ * the formatter. That is exactly the wrong message for this grammar, where the whole requirement is
+ * that a rejection names the offending field, key or pattern. Parsing each entry on its own gets
+ * the precise issue back, and because this runs BEFORE the parse the precise message is the only
+ * one the user sees. The schema keeps the entries too, so it stays the authority and the emitted
+ * JSON Schema still describes them.
+ *
+ * A bare string is handled separately from the rest, because its message is the migration
+ * affordance: it renders the entry for the string that was actually found rather than a generic
+ * example, since what the user needs is the line they can paste back over the one they wrote.
+ */
+function collectApprovalEntryIssues(
+  approvals: unknown,
+  pathPrefix: string,
+  issues: DeprecatedConfigIssue[]
+): void {
+  if (!approvals || typeof approvals !== 'object' || Array.isArray(approvals)) return;
+  const block = approvals as Record<string, unknown>;
+
+  for (const listKey of APPROVAL_LIST_KEYS) {
+    const list = block[listKey];
+    if (list === undefined) continue;
+
+    // A list written as something other than an array would otherwise fall back to the union's
+    // bland "approvals: Invalid input" — the same message this whole function exists to replace.
+    // `escalate` is exempt: its non-array shape is the retired severity threshold and gets its own
+    // migration message from `collectRetiredApprovalsIssues`.
+    if (!Array.isArray(list)) {
+      if (listKey !== 'escalate') {
+        issues.push({
+          path: `${pathPrefix}.${listKey}`,
+          message:
+            `must be a LIST of rule entries, not ${typeof list === 'object' ? 'an object' : `a ${typeof list}`}. ` +
+            `Write it as an array, e.g. [ ${renderApprovalEntryForString('npm test')} ]. ` +
+            MIGRATION_HINT,
+        });
+      }
+      continue;
+    }
+
+    list.forEach((entry, index) => {
+      const entryPath = `${pathPrefix}.${listKey}[${index}]`;
+
+      if (typeof entry === 'string') {
+        issues.push({
+          path: entryPath,
+          message:
+            'bare strings are no longer accepted in an approvals rule list. Write the entry ' +
+            `explicitly: ${renderApprovalEntryForString(entry)} — type, matcher and pattern are ` +
+            `always required, and "matcher" may be exact, glob or regexp. ${MIGRATION_HINT}`,
+        });
+        return;
+      }
+
+      const parsed = approvalEntrySchema.safeParse(entry);
+      if (parsed.success) return;
+      for (const issue of parsed.error.issues) {
+        issues.push({
+          path: issue.path.length > 0 ? `${entryPath}.${issue.path.join('.')}` : entryPath,
+          message: issue.message,
+        });
+      }
+    });
+  }
+}
+
+/**
+ * EXT-71 §3.1 — every hard error the rule grammar defines, found on the RAW input: each entry in
+ * `allow`/`deny`/`escalate` validated with a path that names the offending field
+ * ({@link collectApprovalEntryIssues}), and a configured `mcpServers` key named `*` (which needs
+ * to see `mcpServers`, a sibling of `approvals`, not a field of it).
+ *
+ * All of them are HARD errors, reported the same way {@link findDeprecatedConfigIssues} reports
+ * its own, and — like it — this runs BEFORE the schema parse so the precise message is the only
+ * one the user sees.
+ *
+ * PURE: it only reads the object. Kept separate from {@link findDeprecatedConfigIssues} because
+ * these are not removed pre-2.0 shapes; they are rules of the current grammar.
+ */
+export function findApprovalsGrammarIssues(raw: Record<string, unknown>): DeprecatedConfigIssue[] {
+  const issues: DeprecatedConfigIssue[] = [];
+
+  const mcpServers = raw.mcpServers;
+  if (
+    mcpServers &&
+    typeof mcpServers === 'object' &&
+    !Array.isArray(mcpServers) &&
+    Object.prototype.hasOwnProperty.call(mcpServers, RESERVED_MCP_SERVER_NAME)
+  ) {
+    issues.push({
+      path: `mcpServers.${RESERVED_MCP_SERVER_NAME}`,
+      message:
+        `"${RESERVED_MCP_SERVER_NAME}" is a reserved MCP server name: an approvals rule entry ` +
+        `uses it to mean EVERY server, so a server of that name would make ` +
+        `{ "type": "mcpTool", "server": "${RESERVED_MCP_SERVER_NAME}", ... } ambiguous. ` +
+        'Rename the server to anything else. ' +
+        MIGRATION_HINT,
+    });
+  }
+
+  collectApprovalEntryIssues(raw.approvals, 'approvals', issues);
+
+  const commands = raw.commands;
+  if (commands && typeof commands === 'object' && !Array.isArray(commands)) {
+    for (const [name, cmd] of Object.entries(commands as Record<string, unknown>)) {
+      if (cmd && typeof cmd === 'object' && !Array.isArray(cmd)) {
+        collectApprovalEntryIssues(
           (cmd as Record<string, unknown>).approvals,
           `commands.${name}.approvals`,
           issues
@@ -1040,6 +1477,17 @@ export function validateRawGthConfig(
         ok: false,
         warnings: [],
         errorMessage: formatDeprecatedConfigIssues(deprecatedIssues),
+      };
+    }
+
+    // EXT-71 — the rule-grammar errors that need to be seen before the schema parse, so the
+    // message that explains the fix is the only one the user reads.
+    const grammarIssues = findApprovalsGrammarIssues(raw);
+    if (grammarIssues.length > 0) {
+      return {
+        ok: false,
+        warnings: [],
+        errorMessage: formatDeprecatedConfigIssues(grammarIssues),
       };
     }
 

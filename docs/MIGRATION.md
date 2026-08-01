@@ -240,11 +240,16 @@ export async function configure() {
 
 When both a global config (`~/.gsloth/...`) and a project config are present, they are
 deep-merged (project wins). In 2.0, arrays **replace** by default instead of merging across
-layers. The only exceptions are two genuinely-cumulative lists, which still concatenate and
+layers. The only exceptions are the genuinely-cumulative lists, which still concatenate and
 de-duplicate:
 
 - `allowDirs`
 - `aiignore.patterns`
+- `approvals.deny` and `approvals.escalate` — wherever they appear, including under
+  `commands.<cmd>.approvals`. These are the rules you forbid, and a prohibition another layer can
+  quietly delete is not a prohibition, so no layer can narrow another's, only add to them.
+  `approvals.allow` is **not** additive: it is the permissive list, so it keeps replace semantics
+  and a layer that states its own replaces the layer below.
 
 Every other array (`allowedTools`, `builtInTools`, `tools`, `middleware`, `binaryFormats`,
 and so on) is now taken wholesale from the higher-precedence layer. So if you were leaning
@@ -478,11 +483,22 @@ Or, if you want to name the rater's model and declare what it may and may not ru
   "approvals": {
     "mode": "auto-safe",
     "rater": "safety-rater",
-    "allow": ["npm test", "git status"],
-    "deny": ["npm publish", "git push --force"]
+    "allow": [
+      { "type": "shell", "matcher": "exact", "pattern": "npm test" },
+      { "type": "shell", "matcher": "glob", "pattern": "git status*" }
+    ],
+    "deny": [
+      { "type": "shell", "matcher": "glob", "pattern": "npm publish*" },
+      { "type": "shell", "matcher": "glob", "pattern": "git push --force*" }
+    ]
   }
 }
 ```
+
+Every entry in `allow`, `deny` and `escalate` is one explicit object — `type`, `matcher` and
+`pattern` are always required, and a bare string is a config error whose message shows you the
+object to write instead. The fields are listed in
+[Shell tool & approvals](guides/shell-tool-and-approvals.md).
 
 **Two behaviour changes to expect.**
 

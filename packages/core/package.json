@@ -80,5 +80,8 @@
   ],
   "publishConfig": {
     "tag": "alpha"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0"
   }
 }

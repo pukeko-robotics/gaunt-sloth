@@ -258,7 +258,7 @@ export function tokenize(command: string): string[] | null {
       continue;
     }
     // EXT-55: line breaks are whitespace here too, so a token can never be glued across a line
-    // (`ls\n-o` must tokenize as `ls` + `-o`, or `hasWideningFlag` would not see the flag).
+    // (`ls\n-o` must tokenize as `ls` + `-o`, or a caller inspecting the argv would miss the flag).
     if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
       if (inToken) {
         tokens.push(current);

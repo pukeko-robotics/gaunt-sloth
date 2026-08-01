@@ -65,7 +65,11 @@ export type PromptsConfig = Partial<Record<PromptSegmentName, PromptSegmentSetti
 export interface CommandToolingConfig {
   filesystem?: string[] | 'all' | 'read' | 'none';
   builtInTools?: BuiltInToolsSetting;
-  /** CFG-26 — per-command approvals posture; REPLACES the root block wholesale when set. */
+  /**
+   * §9.1 — per-command approvals posture. It overrides only the fields it NAMES: `mode`,
+   * `rater`, `raterTimeoutMs` and `allow` replace the root's, while `deny` and `escalate`
+   * concatenate with it. See {@link GthConfig.approvals}.
+   */
   approvals?: ApprovalsConfig;
   customTools?: CustomToolsConfig | false;
   /** See {@link GthConfig.allowedTools}. */
@@ -197,8 +201,13 @@ export interface GthConfig {
    * determines behaviour — there are no severity thresholds, no strictness levels and no
    * independent rater switch.
    *
-   * Settable at the root or per command (`commands.<command>.approvals`); a per-command value
-   * replaces the top-level one wholesale. Absent = `auto-safe`, resolved by `resolveApprovals`.
+   * Settable at the root or per command (`commands.<command>.approvals`). §9.1 — a per-command
+   * value overrides only the fields it NAMES. `mode`, `rater` and `raterTimeoutMs` replace the
+   * root's; `deny` and `escalate` CONCATENATE across every scope, so a per-command rung can never
+   * discard the root's prohibitions; `allow` is REPLACED when the command states its own and
+   * inherited when it does not, so a scope may narrow what runs unprompted and may never widen
+   * what is prohibited (§3.1: a too-broad allow entry runs unrated, a missed deny entry does not).
+   * Absent = `auto-safe`, resolved by `resolveApprovals`.
    */
   approvals?: ApprovalsConfig;
   tools?: StructuredToolInterface[] | BaseToolkit[] | ServerTool[];
@@ -372,7 +381,11 @@ export interface GthConfig {
     api?: {
       filesystem?: string[] | 'all' | 'read' | 'none';
       builtInTools?: BuiltInToolsSetting;
-      /** CFG-26 — per-command approvals posture; REPLACES the root block wholesale when set. */
+      /**
+       * §9.1 — per-command approvals posture. It overrides only the fields it NAMES: `mode`,
+       * `rater`, `raterTimeoutMs` and `allow` replace the root's, while `deny` and `escalate`
+       * concatenate with it. See {@link GthConfig.approvals}.
+       */
       approvals?: ApprovalsConfig;
       port?: number;
       cors?: {

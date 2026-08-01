@@ -87,18 +87,33 @@ export class NonInteractiveEscalationError extends ApprovalStopError {
   readonly outcome: string | undefined;
   /** The rater's explanation, when a rating existed. */
   readonly reason: string | undefined;
+  /**
+   * EXT-71 §3.2 — the declared `approvals.escalate` entry that sent this call to a human, when one
+   * did. It changes the recovery the message names: pointing someone at `approvals.allow` when they
+   * themselves wrote an escalate entry sends them to a list that cannot win, since a match on
+   * `escalate` outranks a match on `allow`.
+   */
+  readonly escalatedBy: string | undefined;
 
-  constructor(command: string, outcome?: string, reason?: string) {
+  constructor(command: string, outcome?: string, reason?: string, escalatedBy?: string) {
     super(
       `Approval required, but this session has no one to ask.\n` +
         `  Command: ${command}\n` +
         (outcome ? `  Rating: ${outcome}\n` : '') +
         (reason ? `  Reason: ${reason}\n` : '') +
-        `Declare the commands this run is allowed to execute in approvals.allow — that list is ` +
-        `consulted before the auto-rater and never escalates.`,
+        (escalatedBy
+          ? `  Matched approvals.escalate: ${escalatedBy}\n` +
+            `An escalate entry always asks a human, whatever the rung would have done, so no ` +
+            `entry in approvals.allow can answer it. Remove the escalate entry if this command ` +
+            `should run unattended.`
+          : `Declare the commands this run is allowed to execute in approvals.allow — write each ` +
+            `one as an explicit entry, for example { "type": "shell", "matcher": "exact", ` +
+            `"pattern": "npm test" }. That list is consulted before the auto-rater and never ` +
+            `escalates.`),
       command
     );
     this.outcome = outcome;
     this.reason = reason;
+    this.escalatedBy = escalatedBy;
   }
 }

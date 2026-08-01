@@ -101,6 +101,68 @@ describe('tui <ApprovalPrompt>', () => {
     unmount();
   });
 
+  /**
+   * EXT-71 §3.2 — an escalate match asks the human whatever the rung would have done, so the prompt
+   * MUST show the entry that fired. Without it the user is asked about a command their rung would
+   * have approved with nothing tying the question to the line they wrote.
+   */
+  it('shows the approvals.escalate entry that brought the call here', () => {
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt
+        pending={{
+          name: 'run_shell_command',
+          args: { command: 'terraform apply' },
+          escalatedBy: 'terraform apply',
+        }}
+      />
+    );
+    const f = lastFrame() ?? '';
+    expect(f).toContain('approvals.escalate');
+    expect(f).toContain('terraform apply');
+    unmount();
+  });
+
+  it('says nothing about approvals.escalate when no such entry fired', () => {
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt pending={{ name: 'run_shell_command', args: { command: 'ls -la' } }} />
+    );
+    expect(lastFrame() ?? '').not.toContain('approvals.escalate');
+    unmount();
+  });
+
+  /**
+   * EXT-71 §6 — **the menu must display what it is about to store**, at the moment of the choice,
+   * on every surface. Under §3.1 that is the command itself as a fully-explicit exact entry, so
+   * what the user is shown is the thing they are agreeing to rather than a generalization of it.
+   */
+  it('shows what a sticky choice will store', () => {
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt
+        pending={{
+          name: 'run_shell_command',
+          args: { command: 'npm test' },
+          grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "npm test" }',
+        }}
+      />
+    );
+    const f = lastFrame() ?? '';
+    expect(f).toContain('will remember exactly this command');
+    expect(f).toContain('"matcher": "exact"');
+    unmount();
+  });
+
+  it('shows no such line when no sticky grant is on offer', () => {
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt pending={{ name: 'run_shell_command', args: { command: 'ls -la' } }} />
+    );
+    const f = lastFrame() ?? '';
+    expect(f).not.toContain('will remember exactly this command');
+    // Control: the prompt still renders, so the assertion above is about the grant row and not
+    // about the component having failed to draw anything.
+    expect(f).toContain('[o]nce');
+    unmount();
+  });
+
   it('falls back to JSON of args when there is no command string', () => {
     const { lastFrame, unmount } = render(
       <ApprovalPrompt pending={{ name: 'run_shell_command', args: { foo: 'bar' } }} />
@@ -201,7 +263,7 @@ describe('tui approval flow through <App>', () => {
       expect(flat()).toContain('never remembered');
       expect(flat()).toContain('will ask again');
       expect(flat()).not.toContain(`Command approved (${scope})`);
-      expect(flat()).not.toContain('future variants will not re-prompt');
+      expect(flat()).not.toContain('will not ask again this session');
       expect(flat()).not.toContain('saved to the project allow-list');
       unmount();
     }
@@ -232,7 +294,7 @@ describe('tui approval flow through <App>', () => {
 
     const flat = () => plain(frames);
     await vi.waitFor(() => expect(flat()).toContain('Command approved (session)'));
-    expect(flat()).toContain('future variants will not re-prompt');
+    expect(flat()).toContain('will not ask again this session');
     unmount();
   });
 

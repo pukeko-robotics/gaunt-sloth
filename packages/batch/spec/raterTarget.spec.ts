@@ -784,7 +784,9 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
 
       const classify = await buildRaterClassifier(
         { type: 'rater', rung: 'bypass' },
-        configOf({ approvals: { allow: ['ls'] } }),
+        configOf({
+          approvals: { allow: [{ type: 'shell', matcher: 'exact', pattern: 'ls' }] },
+        }),
         { model }
       );
       const [outcome] = await classify(requestOf());

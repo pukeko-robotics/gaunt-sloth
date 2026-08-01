@@ -451,6 +451,85 @@ export function isRatedRung(rung: ApprovalRung): boolean {
 }
 
 /**
+ * EXT-71 §3.1 — the **subject** axis of a rule entry, and only that. The schema twin is
+ * `APPROVAL_ENTRY_TYPES` in `config/schema.ts`. What holds the two together is
+ * `approvalEntrySchema.spec.ts`, where a list of `ApprovalEntry`-typed literals is parsed by that
+ * schema: a value either side stops accepting fails there. That is a weaker pin than a direct
+ * equality assertion — it catches a narrowing, not a widening on one side alone.
+ */
+export type ApprovalEntryType = 'shell' | 'tool' | 'mcpTool';
+
+/** EXT-71 §3.1 — the **comparison** axis of a rule entry, and only that. */
+export type ApprovalMatcher = 'exact' | 'glob' | 'regexp' | 'hint';
+
+/**
+ * EXT-71 §3.1 — a `hint` pattern: the four MCP `ToolAnnotations` booleans, each mapped to the
+ * value it must EFFECTIVELY hold (§4.7.1). All named hints must match (AND within the entry);
+ * hints not named are unconstrained; `false` is the spelling of negation. At least one must be
+ * named — an empty object is a config error, never a match-everything.
+ */
+export interface ApprovalHintPattern {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+}
+
+/** Fields every rule entry may carry, whatever its subject. */
+interface ApprovalEntryCommon {
+  /**
+   * §3.2 — whether the rater still reviews a call this entry matched, honored at the rater rungs
+   * and inert at the deterministic ones. Valid on EVERY type. Absent takes the §3.2 default: an
+   * entry skips the rater only to the extent that it recorded what the rater would have seen, so
+   * `shell` + `exact` defaults to `false` and everything else to `true`.
+   */
+  rate?: boolean;
+}
+
+/** §3.1 — a `shell` entry: a command, compared against the normalized command string. */
+export interface ShellApprovalEntry extends ApprovalEntryCommon {
+  type: 'shell';
+  /** `hint` is absent on purpose — a command carries no tool annotations. */
+  matcher: 'exact' | 'glob' | 'regexp';
+  pattern: string;
+}
+
+/** §3.1 — a `tool` entry: a built-in or custom in-process tool, compared against the tool name. */
+export interface ToolApprovalEntry extends ApprovalEntryCommon {
+  type: 'tool';
+  matcher: ApprovalMatcher;
+  pattern: string | ApprovalHintPattern;
+  /** §4.7.4 — optional exact-match bound on the call's host. Tool subjects only. */
+  host?: string;
+}
+
+/** §3.1 — an `mcpTool` entry: one server's tool. */
+export interface McpToolApprovalEntry extends ApprovalEntryCommon {
+  type: 'mcpTool';
+  matcher: ApprovalMatcher;
+  pattern: string | ApprovalHintPattern;
+  /**
+   * §4.7.5 — **required**, and the user's own key in `mcpServers`: the only identity a server has
+   * that is stable, unique and user-authored. The literal `*` means every server, which is why a
+   * configured server may not be named `*`.
+   */
+  server: string;
+  /** §4.7.4 — optional exact-match bound on the call's host. */
+  host?: string;
+}
+
+/**
+ * EXT-71 §3.1 — **one entry** in `allow`, `deny` or `escalate`. All three lists take the same
+ * shape; the list an entry sits in decides only what a match DOES (deny over escalate over allow).
+ *
+ * `type`, `matcher` and `pattern` are always required — no field is inferred and no entry reads
+ * two ways. The runtime validator is `approvalEntrySchema` in `config/schema.ts`, which is
+ * stricter than TypeScript can be: it rejects unknown fields, an empty or unknown-key `hint`
+ * pattern, and a `regexp` that does not compile or is over the length cap.
+ */
+export type ApprovalEntry = ShellApprovalEntry | ToolApprovalEntry | McpToolApprovalEntry;
+
+/**
  * On-disk `approvals` object form (root or per command). The **scalar form is exactly sugar for
  * `{ mode: <value> }`** (§9.1) — the union exists so the extras have a home when they are needed,
  * not so there are two ways to say the same thing.
@@ -465,10 +544,15 @@ export interface ApprovalsObjectConfig {
    * design removed.
    */
   rater?: string;
-  /** §3 — declared allow-list: command prefixes the human trusts. Read-only input. */
-  allow?: string[];
-  /** §3 — declared deny-list: command prefixes never to run. Read-only input; applies under `bypass`. */
-  deny?: string[];
+  /** §3 — declared allow-list: what the human has trusted. Read-only input. */
+  allow?: ApprovalEntry[];
+  /** §3 — declared deny-list: what never runs. Read-only input; applies under `bypass` too. */
+  deny?: ApprovalEntry[];
+  /**
+   * §3/§3.2 — declared escalate list: a match always asks the human, whatever the rung would have
+   * done, and with no rating call. Read-only input; inert under `bypass` (§2.5).
+   */
+  escalate?: ApprovalEntry[];
   /**
    * EXT-66 — wall-clock budget (ms) for ONE rating call. Absent = {@link RATER_DEFAULT_TIMEOUT_MS}
    * (30s), which is a hosted-model number: a local rater is knowably slower, and when it runs out
@@ -482,19 +566,21 @@ export interface ApprovalsObjectConfig {
 export type ApprovalsConfig = ApprovalRung | ApprovalsObjectConfig;
 
 /**
- * The fully-defaulted approvals posture for one command. `allow`/`deny` are the **declared**
- * lists straight from config — read-only input that the runner merges with the runtime stores the
- * escalation menu writes, and that is never written back to config (§9.1).
+ * The fully-defaulted approvals posture for one command. `allow`/`deny`/`escalate` are the
+ * **declared** lists straight from config — read-only input that the runner merges with the
+ * runtime stores the escalation menu writes, and that is never written back to config (§9.1).
  */
 export interface ResolvedApprovals {
   /** The rung in force. */
   rung: ApprovalRung;
   /** Identity profile the rater runs under, or `undefined` for the session model. */
   rater?: string;
-  /** Declared allow-list prefixes (§3). Empty when none are declared. */
-  allow: string[];
-  /** Declared deny-list prefixes (§3). Empty when none are declared. */
-  deny: string[];
+  /** Declared allow-list entries (§3.1). Empty when none are declared. */
+  allow: ApprovalEntry[];
+  /** Declared deny-list entries (§3.1). Empty when none are declared. */
+  deny: ApprovalEntry[];
+  /** Declared escalate-list entries (§3.1). Empty when none are declared. */
+  escalate: ApprovalEntry[];
   /**
    * EXT-66 — wall-clock budget (ms) for one rating call, or `undefined` to let the rater apply
    * `RATER_DEFAULT_TIMEOUT_MS`. Left `undefined` rather than defaulted here so the effective-config
@@ -532,12 +618,45 @@ function toApprovalsObject(raw: ApprovalsConfig | undefined): ApprovalsObjectCon
 /**
  * CFG-27 — resolve the effective {@link ResolvedApprovals} for the active command.
  *
- * There is no defaults *matrix* any more: §1.1 makes `auto-safe` the default in every context, so
- * this resolver neither detects nor accepts a "context". Precedence is the only thing it decides:
- * a per-command `approvals` value **replaces the root one wholesale** (no merge), mirroring how
- * `builtInTools` resolves in {@link getEffectiveDevToolsConfig}. Defaults are applied HERE, at the
- * read site, rather than in `DEFAULT_CONFIG` — so the effective-config snapshot the `/config`
- * panel renders never churns (à la GS2-34 `injectModelContext` / GS2-63 `output.header`).
+ * There is no defaults *matrix*: §1.1 makes `auto-safe` the default in every context, so this
+ * resolver neither detects nor accepts a "context". Precedence is the only thing it decides, and
+ * §9.1 splits it in two:
+ *
+ * - **The scalars — `mode`, `rater`, `raterTimeoutMs` — are replaced** when the per-command value
+ *   states them and **inherited from the root when it does not**. So the scalar sugar
+ *   `"code": { "approvals": "bypass" }` is exactly `{ mode: 'bypass' }` merged over the root: it
+ *   sets the rung and nothing else.
+ * - **`deny` and `escalate` never replace: they CONCATENATE across every scope.** A
+ *   command-specific `deny` *adds to* the root's. Removing an inherited prohibition for one command
+ *   is deliberately not expressible.
+ * - **`allow` is REPLACED when the per-command value states its own, and inherited when it does
+ *   not.** A per-command scope may therefore narrow what runs unprompted, and may never widen what
+ *   is prohibited.
+ *
+ * **The two halves differ because the costs differ (§3.1), not for tidiness.** A missed allow entry
+ * escalates and a missed deny entry falls through to the rater — neither is an execution — while a
+ * too-broad allow entry *runs, unrated and unprompted*. Concatenating the restrictive lists fails
+ * toward a prompt; concatenating the permissive one fails toward an execution, and would leave a
+ * deliberately restrictive per-command rung with no way to shed the root's standing grants. Do not
+ * "regularize" these three into one policy: the direction each list fails in is the whole design.
+ *
+ * On the restrictive side the pressure runs the other way (§11.1f). Were the per-command value to
+ * replace the root wholesale, the friendliest spelling of "stop asking me about `code`" would also
+ * delete every `deny` entry — at the one rung where the deny list and the §8 floor are the only
+ * checks left. A prohibition a nested config key can quietly delete is not a hardline.
+ *
+ * Concatenation order cannot change any outcome (`resolveApprovalRules` consults every deny entry
+ * before any escalate entry and every escalate entry before any allow entry), so root-first is a
+ * convention for readability — matching `GthAgentRunner.approvalRuleLists`, where the declared
+ * entries precede the runtime grants — and never a precedence.
+ *
+ * Defaults are applied HERE, at the read site, rather than in `DEFAULT_CONFIG` — so the
+ * effective-config snapshot the `/config` panel renders never churns (à la GS2-34
+ * `injectModelContext` / GS2-63 `output.header`).
+ *
+ * This is the per-command half. The cross-LAYER half (a project config's lists adding to a global
+ * config's rather than replacing them) is the additive-array policy in `config/loader.ts`; both are
+ * needed, since either alone still loses a list silently.
  *
  * @param command The active command; selects the per-command block.
  */
@@ -545,18 +664,23 @@ export function resolveApprovals(
   config: Pick<GthConfig, 'commands' | 'approvals'> | undefined,
   command: GthCommand | undefined
 ): ResolvedApprovals {
-  const perCommand = command
-    ? (config?.commands as Record<string, { approvals?: ApprovalsConfig }> | undefined)?.[command]
-        ?.approvals
-    : undefined;
-  const raw = toApprovalsObject(perCommand ?? config?.approvals);
+  const root = toApprovalsObject(config?.approvals);
+  const perCommand = toApprovalsObject(
+    command
+      ? (config?.commands as Record<string, { approvals?: ApprovalsConfig }> | undefined)?.[command]
+          ?.approvals
+      : undefined
+  );
 
   return {
-    rung: raw?.mode ?? DEFAULT_APPROVAL_RUNG,
-    rater: raw?.rater,
-    allow: raw?.allow ?? [],
-    deny: raw?.deny ?? [],
-    raterTimeoutMs: raw?.raterTimeoutMs,
+    rung: perCommand?.mode ?? root?.mode ?? DEFAULT_APPROVAL_RUNG,
+    rater: perCommand?.rater ?? root?.rater,
+    // `??`, so an EXPLICIT empty list is honoured: `allow: []` on a command states "nothing is
+    // pre-trusted here" and must not read as "said nothing, inherit the root's".
+    allow: perCommand?.allow ?? root?.allow ?? [],
+    deny: [...(root?.deny ?? []), ...(perCommand?.deny ?? [])],
+    escalate: [...(root?.escalate ?? []), ...(perCommand?.escalate ?? [])],
+    raterTimeoutMs: perCommand?.raterTimeoutMs ?? root?.raterTimeoutMs,
   };
 }
 
