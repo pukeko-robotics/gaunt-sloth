@@ -37,9 +37,35 @@ describe('MouseInputFilter', () => {
       expect(second.events[0]).toMatchObject({ type: 'press', column: 9, row: 3 });
     });
 
-    it('splits at the very first byte of the sequence', () => {
+    it('splits after the report marker', () => {
       expect(filter.push('\x1b[<').rest).toBe('');
       expect(filter.push('0;1;1M').events).toHaveLength(1);
+    });
+
+    it('splits immediately after the CSI introducer', () => {
+      // The boundary that used to leak: releasing `ESC[` leaves the next chunk starting at
+      // `<0;10;10M`, which no longer looks like a report and gets typed into the prompt verbatim.
+      expect(filter.push('\x1b[').rest).toBe('');
+      const next = filter.push('<0;10;10M');
+      expect(next.rest).toBe('');
+      expect(next.events[0]).toMatchObject({ type: 'press', column: 9, row: 9 });
+    });
+
+    it('lets a split arrow key through unchanged rather than eating it', () => {
+      // `ESC[` is held because it cannot be a complete keypress, but it must be released intact the
+      // moment the next chunk shows it was never a mouse report.
+      expect(filter.push('\x1b[').rest).toBe('');
+      expect(filter.push('A')).toEqual({ events: [], rest: '\x1b[A' });
+    });
+
+    it('passes a whole arrow key straight through without holding it', () => {
+      expect(filter.push('\x1b[A')).toEqual({ events: [], rest: '\x1b[A' });
+    });
+
+    it('delivers a lone Escape immediately, because it is the interrupt key', () => {
+      // Deliberately NOT buffered: holding it would mean Escape pressed to stop a running turn did
+      // nothing until the user typed something else.
+      expect(filter.push('\x1b')).toEqual({ events: [], rest: '\x1b' });
     });
 
     it('keeps the typing that preceded the partial report', () => {

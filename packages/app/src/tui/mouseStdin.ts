@@ -25,8 +25,22 @@ import { parseMouseReports, type MouseEvent } from '#src/tui/mouseParser.js';
  */
 const MAX_PARTIAL = 24;
 
-/** A trailing fragment that could still become a complete report once more bytes arrive. */
-const PARTIAL_REPORT = /\x1b\[<\d{0,5}(?:;\d{0,5}){0,2}$/;
+/**
+ * A trailing fragment that could still become a complete report once more bytes arrive.
+ *
+ * It matches from `ESC[` onward, not just from `ESC[<`, because a chunk boundary can fall anywhere:
+ * a split right after `ESC[` would otherwise release those two bytes to Ink and leave the next chunk
+ * starting at `<0;10;10M`, which no longer looks like a report and gets typed into the prompt
+ * verbatim. `ESC[` alone is never a complete keypress, so holding it costs nothing.
+ *
+ * **A lone trailing `ESC` is deliberately NOT held.** That byte is genuinely ambiguous — it is
+ * either the Escape key or the first byte of some sequence — and only a timer can resolve it. Escape
+ * is this TUI's interrupt key, so buffering it would mean a keypress meant to stop a running turn
+ * did nothing until the user typed something else. Ink's own `useInput` resolves the same ambiguity
+ * the same way for arrow keys, so this matches the behaviour the keyboard path already has rather
+ * than introducing a second, timing-dependent one.
+ */
+const PARTIAL_REPORT = /\x1b\[(?:<\d{0,5}(?:;\d{0,5}){0,2})?$/;
 
 /**
  * Splits a byte stream into mouse events and everything else, across chunk boundaries.

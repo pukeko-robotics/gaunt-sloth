@@ -96,6 +96,37 @@ test.describe('gth chat TUI — mouse input (greeting fixture)', () => {
     expect(view).not.toContain('[<');
   });
 
+  test('a report split right after the CSI introducer is still not typed', async ({ terminal }) => {
+    // The nastier boundary: the split falls between `ESC[` and `<`, so the second half no longer
+    // looks like a report at all and would be inserted into the prompt verbatim.
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    terminal.write('\x1b[');
+    terminal.write('<0;14;9M');
+    terminal.write('csi');
+
+    await expect(terminal.getByText('> csi')).toBeVisible();
+    const view = terminal.serialize().view;
+    expect(view).not.toContain('0;14');
+    expect(view).not.toContain('<0;');
+  });
+
+  test('an ordinary escape sequence is not mangled into the prompt', async ({ terminal }) => {
+    // The filter holds back a trailing `ESC[` so a split report can be reassembled. An arrow key
+    // shares that prefix and is NOT a mouse report, so it must still reach Ink intact: the cursor
+    // moves and nothing like `[D` shows up as text. One arrow, sent on its own — Ink coalesces
+    // keystrokes written together into a single input event and drops the rest.
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    terminal.write('abc');
+    await expect(terminal.getByText('> abc')).toBeVisible();
+    terminal.keyLeft();
+    terminal.write('d');
+
+    await expect(terminal.getByText('> abdc')).toBeVisible();
+    expect(terminal.serialize().view).not.toContain('[D');
+  });
+
   test('typing and Enter still work normally with mouse on', async ({ terminal }) => {
     // The keyboard model must be untouched — mouse is additive or it is a regression.
     await expect(terminal.getByText('ready to chat')).toBeVisible();
