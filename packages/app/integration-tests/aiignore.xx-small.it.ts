@@ -4,7 +4,7 @@ import { runCommandWithArgs } from './support/commandRunner';
 describe('Aiignore Integration Tests', () => {
   it('should hide aiignore entries when listing the current directory', async () => {
     const output = await runCommandWithArgs('npx', [
-      'gth',
+      'gaunt-sloth',
       'ask',
       '"Use the list_directory tool on . and return the raw tool output only. ' +
         'Do not add commentary or omit entries."',

@@ -72,7 +72,7 @@ describe('AG-UI Server Integration Tests (OpenAI)', () => {
   it('should emit tool call events for show_a2ui_surface', async () => {
     serverProc = startChildProcess(
       'npx',
-      ['gth', 'api', 'ag-ui', '--port', String(SERVER_PORT)],
+      ['gaunt-sloth', 'api', 'ag-ui', '--port', String(SERVER_PORT)],
       'ignore',
       WORKDIR
     );

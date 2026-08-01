@@ -6,7 +6,7 @@ describe('Ask Command Integration Tests', () => {
   // Test for the ask command
   it('should respond correctly to basic programming question', async () => {
     const output = await runCommandWithArgs('npx', [
-      'gth',
+      'gaunt-sloth',
       'ask',
       '"Which programming language does JS stand for?"',
     ]);
@@ -17,7 +17,7 @@ describe('Ask Command Integration Tests', () => {
 
   it('should use file read tool', async () => {
     const output = await runCommandWithArgs('npx', [
-      'gth',
+      'gaunt-sloth',
       'ask',
       '"read file filewithgoodcode.js"',
     ]);
@@ -28,7 +28,7 @@ describe('Ask Command Integration Tests', () => {
 
   it('should use multiple tools', async () => {
     const output = await runCommandWithArgs('npx', [
-      'gth',
+      'gaunt-sloth',
       'ask',
       '"list current dir and present list of files; read file filewithgoodcode.js"',
     ]);
@@ -39,7 +39,7 @@ describe('Ask Command Integration Tests', () => {
   });
 
   it('--verbose should set LangChain to verbose mode in llmUtils invoke', async () => {
-    const output = await runCommandWithArgs('npx', ['gth', '--verbose', 'ask', '"ping"']);
+    const output = await runCommandWithArgs('npx', ['gaunt-sloth', '--verbose', 'ask', '"ping"']);
 
     // Check for expected content in the response
     expect(checkOutputForExpectedContent(output, 'Entering LLM run with input: {')).toBe(true);

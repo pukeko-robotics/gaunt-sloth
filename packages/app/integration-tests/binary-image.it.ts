@@ -12,7 +12,7 @@ const hasBinaryFormats = configContent.includes('binaryFormats');
 describe('Binary Image Integration Tests', () => {
   it.skipIf(!hasBinaryFormats)('should recognize the image content (ball)', async () => {
     const output = await runCommandWithArgs('npx', [
-      'gth',
+      'gaunt-sloth',
       'ask',
       '"Use the gth_read_binary tool on image.png. What is on the picture image.png?"',
     ]);
@@ -24,7 +24,7 @@ describe('Binary Image Integration Tests', () => {
 
   it.skipIf(!hasBinaryFormats)('should recognize the image content (bicycle)', async () => {
     const output = await runCommandWithArgs('npx', [
-      'gth',
+      'gaunt-sloth',
       'ask',
       '"Use the gth_read_binary tool on image2.png. What is on the picture image2.png?"',
     ]);

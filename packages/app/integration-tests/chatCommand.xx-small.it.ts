@@ -13,7 +13,7 @@ describe('Chat Command Integration Tests', () => {
     // still exercises the session-logging path.
     const output = await runCommandWithArgs(
       'npx',
-      ['gth', '-w', 'true', 'chat', '"Hello, can you help me?"'],
+      ['gaunt-sloth', '-w', 'true', 'chat', '"Hello, can you help me?"'],
       ' >'
     );
 
@@ -35,7 +35,7 @@ describe('Chat Command Integration Tests', () => {
   });
 
   it('should start interactive session without initial message', async () => {
-    const output = await runCommandWithArgs('npx', ['gth', 'chat'], ' >');
+    const output = await runCommandWithArgs('npx', ['gaunt-sloth', 'chat'], ' >');
 
     // Check for expected content in the response
     expect(
@@ -47,7 +47,7 @@ describe('Chat Command Integration Tests', () => {
   });
 
   it('should answer to users questions, should have memory', async () => {
-    const child = startChildProcess('npx', ['gth', '--nopipe', 'chat'], 'pipe');
+    const child = startChildProcess('npx', ['gaunt-sloth', '--nopipe', 'chat'], 'pipe');
     const stderr = collectStderr(child);
 
     try {
@@ -67,7 +67,11 @@ describe('Chat Command Integration Tests', () => {
   });
 
   it('--verbose should set LangChain to verbose mode in interactiveSessionModule', async () => {
-    const child = startChildProcess('npx', ['gth', '--verbose', '--nopipe', 'chat'], 'pipe');
+    const child = startChildProcess(
+      'npx',
+      ['gaunt-sloth', '--verbose', '--nopipe', 'chat'],
+      'pipe'
+    );
     const stderr = collectStderr(child);
 
     try {

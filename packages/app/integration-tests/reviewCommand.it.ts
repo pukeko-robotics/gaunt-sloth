@@ -7,7 +7,7 @@ describe('Review Command Integration Tests', () => {
   it('should identify issues in bad code and exit with code 1', async () => {
     const { output, exitCode } = await runCommandExpectingExitCode(
       'npx',
-      ['gth', 'review', 'filewithbadcode.js'],
+      ['gaunt-sloth', 'review', 'filewithbadcode.js'],
       1
     );
 

@@ -8,7 +8,7 @@ describe('Review Command Integration Tests', () => {
   it('should work with default profile', async () => {
     const output = await runCommandWithArgs(
       'npx',
-      ['gth', 'ask', '"what is your name?"'],
+      ['gaunt-sloth', 'ask', '"what is your name?"'],
       undefined,
       PROFILES_WORKDIR
     );
@@ -17,7 +17,7 @@ describe('Review Command Integration Tests', () => {
 
     const favouriteFishOutput = await runCommandWithArgs(
       'npx',
-      ['gth', 'ask', '"What is your favourite fish?"'],
+      ['gaunt-sloth', 'ask', '"What is your favourite fish?"'],
       undefined,
       PROFILES_WORKDIR
     );
@@ -28,7 +28,7 @@ describe('Review Command Integration Tests', () => {
   it('should work with sorcerer profile name', async () => {
     const nameOutput = await runCommandWithArgs(
       'npx',
-      ['gth', '-i sorcerer', 'ask', '"what is your name?"'],
+      ['gaunt-sloth', '-i sorcerer', 'ask', '"what is your name?"'],
       undefined,
       PROFILES_WORKDIR
     );
@@ -38,7 +38,7 @@ describe('Review Command Integration Tests', () => {
   it('should approve good spell with sorcerer profile', async () => {
     const spellReviewOutput = await runCommandWithArgs(
       'npx',
-      ['gth', '-i sorcerer', 'review', 'good-spell.js'],
+      ['gaunt-sloth', '-i sorcerer', 'review', 'good-spell.js'],
       undefined,
       PROFILES_WORKDIR
     );
@@ -48,7 +48,7 @@ describe('Review Command Integration Tests', () => {
   it('should reject bad spell with sorcerer profile', async () => {
     const failedSpellOutput = await runCommandExpectingExitCode(
       'npx',
-      ['gth', '-i sorcerer', 'review', 'bad-spell.js'],
+      ['gaunt-sloth', '-i sorcerer', 'review', 'bad-spell.js'],
       1,
       PROFILES_WORKDIR
     );
@@ -64,7 +64,7 @@ describe('Review Command Integration Tests', () => {
   it('should work with fisher-alt profile', async () => {
     const output = await runCommandWithArgs(
       'npx',
-      ['gth', '-i fisher-alt', 'ask', '"what is your name?"'],
+      ['gaunt-sloth', '-i fisher-alt', 'ask', '"what is your name?"'],
       undefined,
       PROFILES_WORKDIR
     );
@@ -76,7 +76,7 @@ describe('Review Command Integration Tests', () => {
 
     const favouriteFishOutput = await runCommandWithArgs(
       'npx',
-      ['gth', '-i fisher-alt', 'ask', '"What is your favourite fish?"'],
+      ['gaunt-sloth', '-i fisher-alt', 'ask', '"What is your favourite fish?"'],
       undefined,
       PROFILES_WORKDIR
     );

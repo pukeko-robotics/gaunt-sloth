@@ -12,7 +12,7 @@ describe('PR Command Integration Tests', () => {
     // Use real PR data instead of mock files
     const { output, exitCode } = await runCommandExpectingExitCode(
       'npx',
-      ['gth', '--write-output-to-file', 'testreview.md', 'pr', '130', '133'],
+      ['gaunt-sloth', '--write-output-to-file', 'testreview.md', 'pr', '130', '133'],
       0
     );
 

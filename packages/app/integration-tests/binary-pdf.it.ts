@@ -12,7 +12,7 @@ const hasBinaryFormats = configContent.includes('binaryFormats');
 describe('Binary File Integration Tests', () => {
   it.skipIf(!hasBinaryFormats)('should read the title of PDF (Hello boys and girls!)', async () => {
     const output = await runCommandWithArgs('npx', [
-      'gth',
+      'gaunt-sloth',
       'ask',
       '"Use the gth_read_binary tool on file.pdf; What is the text in this document?"',
     ]);

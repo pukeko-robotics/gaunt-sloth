@@ -24,8 +24,9 @@ import { checkOutputForExpectedContent } from './support/outputChecker';
  * Topology (load-bearing): the provider config is discovered UP-TREE at
  * `workdir/.gsloth.config.json`, while file reads anchor on the CLI's cwd (the case subdir). So the
  * marker MUST live in the subdir, and the subdir MUST be under `workdir/` for the up-tree walk to
- * find workdir's config. `npx gth` resets INIT_CWD to the spawn cwd, so discovery starts at the
- * subdir (this is why the harness uses `npx gth`, not `node cli.js`, which would leak INIT_CWD).
+ * find workdir's config. `npx gaunt-sloth` resets INIT_CWD to the spawn cwd, so discovery starts at
+ * the subdir (this is why the harness spawns through npx, not `node cli.js`, which would leak
+ * INIT_CWD).
  *
  * temperature:0 (ollama config) makes each verb deterministic; retry:2 (vitest-it.config.ts) only
  * absorbs residual nondeterminism — neither is re-implemented here.
@@ -63,7 +64,7 @@ afterAll(() => {
 describe('xx-small marker/synthesis smoke (QA-8, ported from the QA-7 ollama smoke)', () => {
   it('ask: reads a planted file and synthesizes its unique marker', async () => {
     const { dir, marker } = plantCase('ask', MARKER_FILE);
-    const output = await runCommandWithArgs('npx', ['gth', 'ask', PROMPT], undefined, dir);
+    const output = await runCommandWithArgs('npx', ['gaunt-sloth', 'ask', PROMPT], undefined, dir);
     expect(checkOutputForExpectedContent(output, 'Requested tools:'), 'a tool must have run').toBe(
       true
     );
@@ -75,7 +76,12 @@ describe('xx-small marker/synthesis smoke (QA-8, ported from the QA-7 ollama smo
 
   it('exec -m: reads a planted file and synthesizes its unique marker', async () => {
     const { dir, marker } = plantCase('exec', MARKER_FILE);
-    const output = await runCommandWithArgs('npx', ['gth', 'exec', '-m', PROMPT], undefined, dir);
+    const output = await runCommandWithArgs(
+      'npx',
+      ['gaunt-sloth', 'exec', '-m', PROMPT],
+      undefined,
+      dir
+    );
     expect(checkOutputForExpectedContent(output, 'Requested tools:'), 'a tool must have run').toBe(
       true
     );
@@ -89,7 +95,7 @@ describe('xx-small marker/synthesis smoke (QA-8, ported from the QA-7 ollama smo
     const { dir, marker } = plantCase('code', MARKER_FILE);
     const output = await runCommandWithArgs(
       'npx',
-      ['gth', 'code', '--no-tui', PROMPT],
+      ['gaunt-sloth', 'code', '--no-tui', PROMPT],
       undefined,
       dir
     );
@@ -126,7 +132,7 @@ describe('xx-small marker/synthesis smoke (QA-8, ported from the QA-7 ollama smo
       'utf8'
     );
     createdDirs.push(dir);
-    const output = await runCommandWithArgs('npx', ['gth', 'ask', PROMPT], undefined, dir);
+    const output = await runCommandWithArgs('npx', ['gaunt-sloth', 'ask', PROMPT], undefined, dir);
     // The tool DID run (reproduces GS2-59's "successful tool call") — so an absent marker below is
     // specifically a broken/empty synthesis, not a crash or a no-tool-call.
     expect(checkOutputForExpectedContent(output, 'Requested tools:'), 'a tool must have run').toBe(

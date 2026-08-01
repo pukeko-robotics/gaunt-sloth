@@ -8,7 +8,7 @@ describe('Code Command Integration Tests', () => {
     // still exercises the session-logging path.
     const output = await runCommandWithArgs(
       'npx',
-      ['gth', '-w', 'true', 'code', '"Hello, can you help me with some code?"'],
+      ['gaunt-sloth', '-w', 'true', 'code', '"Hello, can you help me with some code?"'],
       ' >'
     );
 
@@ -22,7 +22,7 @@ describe('Code Command Integration Tests', () => {
   });
 
   it('should start interactive session without initial message', async () => {
-    const output = await runCommandWithArgs('npx', ['gth', 'code'], ' >');
+    const output = await runCommandWithArgs('npx', ['gaunt-sloth', 'code'], ' >');
 
     // Check for expected content in the response
     expect(checkOutputForExpectedContent(output, 'ready to code')).toBe(true);

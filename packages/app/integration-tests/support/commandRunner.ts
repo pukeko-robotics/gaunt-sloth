@@ -5,13 +5,21 @@ import type { ChildProcess } from 'node:child_process';
 
 /**
  * npm 12 prints `npm notice run <pkg> npx` / `npm notice run '<bin>' <args>` to **stderr** on every
- * `npx` invocation (npm 11 did not). The ITs spawn `npx gth …`, and several of them treat any
- * stderr byte as a failure, so the default `notice` loglevel turns a clean run red. `warn` drops
+ * `npx` invocation (npm 11 did not). The ITs spawn `npx gaunt-sloth …`, and several of them treat
+ * any stderr byte as a failure, so the default `notice` loglevel turns a clean run red. `warn` drops
  * the run notices while keeping npm's own warnings and errors — a genuine npx resolution failure
  * still reaches stderr. Must be applied *after* the `process.env` spread: `it.js` runs under pnpm,
  * which exports its own `npm_config_*` vars.
  */
 const NPM_QUIET_ENV = { npm_config_loglevel: 'warn' } as const;
+
+/**
+ * The ITs invoke this package by its FULL NAME (`gaunt-sloth`), never the short `gth` bin alias,
+ * and that is load-bearing rather than stylistic: `npx` falls back to the public registry whenever
+ * a name does not resolve locally or on PATH, and `gth` is a real, unrelated published package,
+ * while `gaunt-sloth` is this very package. So a resolution miss can only ever reach our own code.
+ * Do not shorten these back to `gth`.
+ */
 
 function isVerboseCommandRunnerEnabled(): boolean {
   const value = process.env.GSLOTH_IT_VERBOSE?.trim().toLowerCase();
