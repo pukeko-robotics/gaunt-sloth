@@ -17,7 +17,7 @@
  *
  * Reuse it for DENY and the identical code fails **open**: `git push --force; ls` is
  * unclassifiable, so it would match no deny entry and sail straight past a declared
- * `deny: ["git push --force"]`. A prohibition that any trailing `; ls` defeats is not a
+ * a declared deny entry for `git push --force`. A prohibition that any trailing `; ls` defeats is not a
  * prohibition.
  *
  * So the deny matcher fails in the other direction on purpose:

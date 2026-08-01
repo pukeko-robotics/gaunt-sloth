@@ -11,7 +11,7 @@ import { AllowlistStore } from '#src/core/shell/allowlist.js';
  * that composes / substitutes / redirects. For ALLOW that is fail-closed and right: an
  * unclassifiable command matches nothing and gets no free pass. Reuse it for DENY and the same
  * code fails OPEN — `git push --force; ls` would match no entry and sail past a declared
- * `deny: ["git push --force"]`. The first describe block pins exactly that.
+ * a declared deny entry for `git push --force`. The first describe block pins exactly that.
  */
 describe('matchesDenylist', () => {
   const DENY = ['git push --force', 'npm publish'];
