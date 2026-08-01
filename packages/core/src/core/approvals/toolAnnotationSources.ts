@@ -58,10 +58,12 @@ const LOCAL_READ = authored({
 });
 
 /**
- * Replaces something in the working folder that may already exist — so it can destroy — while
- * leaving the same end state when repeated with the same arguments.
+ * Leaves the working folder in a state its **arguments alone** determine — overwriting or removing
+ * whatever happened to be at the path — so it destroys, and repeating the identical call lands the
+ * same end state. Covers writing a whole file and deleting a file or a directory: what they have in
+ * common is that neither reads what is there first, and both discard it.
  */
-const LOCAL_OVERWRITE = authored({
+const LOCAL_ABSOLUTE_CHANGE = authored({
   readOnlyHint: false,
   destructiveHint: true,
   idempotentHint: true,
@@ -80,10 +82,26 @@ const LOCAL_RELATIVE_CHANGE = authored({
 });
 
 /**
- * Adds something that was not there, destroying nothing, and settles into the same state when
- * repeated.
+ * Adds something to the working folder that was not there, destroying nothing, and settles into the
+ * same state when repeated.
  */
 const LOCAL_ADDITIVE_CHANGE = authored({
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+});
+
+/**
+ * Writes state that belongs to **this session** — the agent's own plan, a surface rendered for the
+ * user — rather than to the working folder. Replacing such state destroys nothing outside the
+ * session, and re-sending the same state leaves the same state.
+ *
+ * Deliberately a separate constant from {@link LOCAL_ADDITIVE_CHANGE} despite carrying the same
+ * four values: the two describe different things, so a future correction to one must not silently
+ * move the other's tools.
+ */
+const SESSION_STATE_CHANGE = authored({
   readOnlyHint: false,
   destructiveHint: false,
   idempotentHint: true,
@@ -115,7 +133,10 @@ const LOCAL_ADDITIVE_CHANGE = authored({
  *   can.
  * - `idempotentHint` says whether repeating the identical call changes anything further. It has no
  *   built-in consumer (§4.7.2) and is recorded so the vocabulary round-trips and a user's own
- *   `hint` entry can reference it.
+ *   `hint` entry can reference it. MCP defines it, like `destructiveHint`, as meaningful only when
+ *   `readOnlyHint` is false, so on a read row it is **moot and stated `true`**: a tool that changes
+ *   nothing cannot change anything further on a second call, and a read row claiming otherwise
+ *   would contradict itself.
  */
 export const BUILT_IN_TOOL_ANNOTATIONS: Readonly<Record<string, AuthoredToolAnnotations>> =
   Object.freeze({
@@ -139,7 +160,7 @@ export const BUILT_IN_TOOL_ANNOTATIONS: Readonly<Record<string, AuthoredToolAnno
     // ---- Local writes. -----------------------------------------------------------------------
     // Writes the whole file, so it destroys whatever was there; the same bytes twice leave the
     // same file.
-    write_file: LOCAL_OVERWRITE,
+    write_file: LOCAL_ABSOLUTE_CHANGE,
     // A targeted edit destroys the text it replaces, and re-applying it either fails or lands a
     // second time.
     edit_file: LOCAL_RELATIVE_CHANGE,
@@ -148,8 +169,8 @@ export const BUILT_IN_TOOL_ANNOTATIONS: Readonly<Record<string, AuthoredToolAnno
     // A move removes the source, and the second call no longer has one.
     move_file: LOCAL_RELATIVE_CHANGE,
     // Deletion destroys by definition; the second call finds nothing left to change.
-    delete_file: LOCAL_OVERWRITE,
-    delete_directory: LOCAL_OVERWRITE,
+    delete_file: LOCAL_ABSOLUTE_CHANGE,
+    delete_directory: LOCAL_ABSOLUTE_CHANGE,
 
     // ---- The open-world read (§4.7.3): read-only locally, and on the network. -----------------
     gth_web_fetch: authored({
@@ -160,20 +181,23 @@ export const BUILT_IN_TOOL_ANNOTATIONS: Readonly<Record<string, AuthoredToolAnno
     }),
 
     // ---- Tools that touch only this session's own surfaces. ----------------------------------
-    // Prints one line for the user. It changes no state anywhere — but a second call prints a
-    // second line, so it is not idempotent.
+    // Prints one line for the user and changes no state anywhere, so it is a read. `idempotentHint`
+    // is then MOOT for exactly the reason `destructiveHint` is — MCP defines both as meaningful
+    // only when `readOnlyHint` is false — and a moot hint states the value consistent with the
+    // read: a tool that changes nothing cannot change anything *further* when called again.
+    // Stating `false` here would have this row contradict itself.
     gth_status_update: authored({
       readOnlyHint: true,
       destructiveHint: false,
-      idempotentHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     }),
     // Replaces the agent's own plan state: a write, destroying nothing outside the session, and
     // re-sending the same checklist leaves the same checklist.
-    gth_checklist: LOCAL_ADDITIVE_CHANGE,
+    gth_checklist: SESSION_STATE_CHANGE,
     // Renders a UI surface on the client — it changes what the user sees rather than nothing at
     // all, and re-rendering the same surface is the same surface.
-    show_a2ui_surface: LOCAL_ADDITIVE_CHANGE,
+    show_a2ui_surface: SESSION_STATE_CHANGE,
   });
 
 /**

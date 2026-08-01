@@ -50,6 +50,7 @@ import {
   type McpToolApprovalSubject,
   type ToolApprovalSubject,
 } from '#src/core/approvals/matcher.js';
+import { UNRESOLVED_MCP_SERVER } from '#src/core/approvals/mcpSubjects.js';
 
 /**
  * What a tool **declares** about itself: the four MCP `ToolAnnotations` booleans, each optional
@@ -111,11 +112,22 @@ export interface EffectiveToolAnnotationOptions {
  * this same block it lands fail-OPEN, because an absent `expose` means "expose every tool". A
  * server's identity is the user's own config key (§4.7.5) and every such key must resolve by the
  * same rule.
+ *
+ * **{@link UNRESOLVED_MCP_SERVER} trusts nothing, whatever `defaults` says.** A call whose server
+ * could not be resolved has no identity, so there is no relationship for it to inherit: it is not
+ * a server the user declined to name, it is a server nobody can name. Because the sentinel is
+ * `z.string().min(1)`-unspellable it can never appear under `servers`, so without this it would
+ * fall through to `defaults` and a permissive default would hand an *unattributable* tool the
+ * trust its user granted to real, identified ones — believing a tool that claims to be harmless
+ * precisely where we cannot say whose claim it is. The guard belongs here, where §4.7.5's "no
+ * trust can be granted to it" is asserted, rather than only in whichever lookup happens to run
+ * next.
  */
 export function trustedAnnotationHints(
   mcp: McpApprovalsConfig | undefined,
   server: string
 ): readonly ToolAnnotationHint[] {
+  if (server === UNRESOLVED_MCP_SERVER) return [];
   const servers = mcp?.servers;
   const named = servers && Object.hasOwn(servers, server) ? servers[server] : undefined;
   const relationship = named ?? mcp?.defaults;

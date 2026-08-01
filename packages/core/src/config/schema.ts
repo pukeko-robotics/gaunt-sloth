@@ -1282,6 +1282,18 @@ export function findDeprecatedConfigIssues(raw: Record<string, unknown>): Deprec
 const RESERVED_MCP_SERVER_NAME = '*';
 
 /**
+ * EXT-70 §4.7.5 — the MCP server name that cannot be written about. A server key is
+ * `z.string().min(1)` both under `approvals.mcp.servers` (§9) and on an `mcpTool` entry's `server`
+ * field (§3.1), so a server keyed with the empty string is one no approvals rule and no trust
+ * relationship can ever refer to by name. Its tools resolve to the unattributable-server sentinel:
+ * fail-closed, which is safe, but also silently un-configurable — the user would get a server whose
+ * every call is gated with no way to say anything about it and no error explaining why. Refused at
+ * load, for the same reason as {@link RESERVED_MCP_SERVER_NAME}: a name whose rules cannot be
+ * expressed is worse than a rejected config.
+ */
+const UNNAMEABLE_MCP_SERVER_NAME = '';
+
+/**
  * EXT-71 §3.1/§9.1 — validate every entry in one `approvals` value's three rule lists (root or per
  * command), pushing one issue per problem with a path that points at the exact entry and field.
  *
@@ -1386,8 +1398,10 @@ function collectMcpApprovalsIssues(
  * EXT-71 §3.1 — every hard error the rule grammar defines, found on the RAW input: each entry in
  * `allow`/`deny`/`escalate` validated with a path that names the offending field
  * ({@link collectApprovalEntryIssues}), the `approvals.mcp` block ({@link collectMcpApprovalsIssues}),
- * and a configured `mcpServers` key named `*` (which needs to see `mcpServers`, a sibling of
- * `approvals`, not a field of it).
+ * and the two `mcpServers` keys no rule can refer to — `*` ({@link RESERVED_MCP_SERVER_NAME}, which
+ * an entry already reads as "every server") and the empty name
+ * ({@link UNNAMEABLE_MCP_SERVER_NAME}, which no entry's `server` field can hold). Both need to see
+ * `mcpServers`, a sibling of `approvals` rather than a field of it.
  *
  * All of them are HARD errors, reported the same way {@link findDeprecatedConfigIssues} reports
  * its own, and — like it — this runs BEFORE the schema parse so the precise message is the only
@@ -1400,21 +1414,30 @@ export function findApprovalsGrammarIssues(raw: Record<string, unknown>): Deprec
   const issues: DeprecatedConfigIssue[] = [];
 
   const mcpServers = raw.mcpServers;
-  if (
-    mcpServers &&
-    typeof mcpServers === 'object' &&
-    !Array.isArray(mcpServers) &&
-    Object.prototype.hasOwnProperty.call(mcpServers, RESERVED_MCP_SERVER_NAME)
-  ) {
-    issues.push({
-      path: `mcpServers.${RESERVED_MCP_SERVER_NAME}`,
-      message:
-        `"${RESERVED_MCP_SERVER_NAME}" is a reserved MCP server name: an approvals rule entry ` +
-        `uses it to mean EVERY server, so a server of that name would make ` +
-        `{ "type": "mcpTool", "server": "${RESERVED_MCP_SERVER_NAME}", ... } ambiguous. ` +
-        'Rename the server to anything else. ' +
-        MIGRATION_HINT,
-    });
+  if (mcpServers && typeof mcpServers === 'object' && !Array.isArray(mcpServers)) {
+    if (Object.prototype.hasOwnProperty.call(mcpServers, RESERVED_MCP_SERVER_NAME)) {
+      issues.push({
+        path: `mcpServers.${RESERVED_MCP_SERVER_NAME}`,
+        message:
+          `"${RESERVED_MCP_SERVER_NAME}" is a reserved MCP server name: an approvals rule entry ` +
+          `uses it to mean EVERY server, so a server of that name would make ` +
+          `{ "type": "mcpTool", "server": "${RESERVED_MCP_SERVER_NAME}", ... } ambiguous. ` +
+          'Rename the server to anything else. ' +
+          MIGRATION_HINT,
+      });
+    }
+    if (Object.prototype.hasOwnProperty.call(mcpServers, UNNAMEABLE_MCP_SERVER_NAME)) {
+      issues.push({
+        path: 'mcpServers.""',
+        message:
+          'an MCP server may not be keyed with an empty name: both an approvals rule entry ' +
+          '({ "type": "mcpTool", "server": ... }) and a trust relationship under ' +
+          '"approvals.mcp.servers" require a server name of at least one character, so nothing ' +
+          "could ever be written about this server's tools — every call it makes would be gated " +
+          'with no way to say otherwise. Give the server a name. ' +
+          MIGRATION_HINT,
+      });
+    }
   }
 
   const collect = (approvals: unknown, prefix: string): void => {

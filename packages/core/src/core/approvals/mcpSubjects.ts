@@ -39,10 +39,16 @@ const MCP_NAME_PREFIX = `${MCP_TOOL_NAME_PREFIX}${NAME_SEPARATOR}`;
  *
  * **The empty string, and that is load-bearing rather than arbitrary.** A server key is
  * `z.string().min(1)` both under `approvals.mcp.servers` (§9) and on an `mcpTool` rule entry
- * (§3.1), so this value is the one identity a user *cannot spell in config*: no trust can be
- * granted to it, and no entry can name it. An unresolvable call is therefore matchable only by the
- * reserved `server: "*"` (which means every server and is correct here) and can never be handed a
- * relationship someone wrote for a real server.
+ * (§3.1), so this value is the one identity a user *cannot spell in config*: no entry can name it.
+ * An unresolvable call is therefore matchable only by the reserved `server: "*"` (which means every
+ * server and is correct here).
+ *
+ * Being unspellable is what makes it unnameable; it is **not** by itself what makes it untrusted,
+ * because a lookup that misses under `servers` falls through to `approvals.mcp.defaults`. That
+ * second half is enforced in `trustedAnnotationHints`, which refuses this value outright, and in
+ * `mcpDeclaredAnnotationLookup`, which will not look a declaration up under it. Both are required:
+ * the first stops a permissive `defaults` reaching an unattributable call, the second stops one
+ * being found by string arithmetic on the sentinel.
  */
 export const UNRESOLVED_MCP_SERVER = '';
 

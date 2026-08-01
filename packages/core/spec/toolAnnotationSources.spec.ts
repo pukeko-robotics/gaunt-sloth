@@ -95,19 +95,38 @@ describe('approvalSubjectForToolName (EXT-70 §4.7.5) — provenance is decided 
 
   /**
    * The §2 fail-open, stated as a property: there is NO MCP name for which this returns the trusted
-   * provenance. The three rows are the three ways resolution can go — clean, unknown, ambiguous —
-   * and the control above is what stops a resolver that answers `mcpTool` for everything passing.
+   * provenance. The rows are the ways resolution can go — clean, unknown, ambiguous, and the two
+   * degenerate names — and the control above is what stops a resolver that answers `mcpTool` for
+   * everything passing.
    */
   it.each([
-    ['a resolvable name', 'mcp__jira__delete_issue', ['jira']],
-    ['a name no configured server explains', 'mcp__unknown__delete_issue', ['jira']],
-    ['an ambiguous name', 'mcp__a__b__c', ['a', 'a__b']],
-    ['a name with an empty tool part', 'mcp__jira__', ['jira']],
-    ['the bare namespace', 'mcp__', ['jira']],
-  ])('%s is never a `tool` subject', (_why, toolName, servers) => {
-    const subject = approvalSubjectForToolName(toolName, servers);
-    expect(subject.kind).toBe('mcpTool');
-    expect(subject.kind).not.toBe('tool');
+    ['a resolvable name', 'mcp__jira__delete_issue', ['jira'], 'jira', 'delete_issue'],
+    [
+      'a name no configured server explains',
+      'mcp__unknown__delete_issue',
+      ['jira'],
+      UNRESOLVED_MCP_SERVER,
+      'mcp__unknown__delete_issue',
+    ],
+    ['an ambiguous name', 'mcp__a__b__c', ['a', 'a__b'], UNRESOLVED_MCP_SERVER, 'mcp__a__b__c'],
+    [
+      'a name with an empty tool part',
+      'mcp__jira__',
+      ['jira'],
+      UNRESOLVED_MCP_SERVER,
+      'mcp__jira__',
+    ],
+    ['the bare namespace', 'mcp__', ['jira'], UNRESOLVED_MCP_SERVER, 'mcp__'],
+  ])('%s is never a `tool` subject', (_why, toolName, servers, expectedServer, expectedName) => {
+    // The whole subject, not just its `kind`: asserting `kind` twice over (is `mcpTool`, is not
+    // `tool`) cannot fail in two ways, while the server and name are what the trust lookup and
+    // the declaration lookup are actually keyed by — a resolver that answered `mcpTool` with the
+    // wrong server would pass a `kind`-only check and hand a tool another server's belief.
+    expect(approvalSubjectForToolName(toolName, servers)).toEqual({
+      kind: 'mcpTool',
+      server: expectedServer,
+      name: expectedName,
+    });
   });
 
   describe('a server key containing the separator resolves to THAT server', () => {
@@ -236,6 +255,79 @@ describe('BUILT_IN_TOOL_ANNOTATIONS (EXT-70 §4.7) — what OUR OWN tools declar
     const created = effectiveBuiltIn('create_directory');
     expect(created.readOnlyHint).toBe(false);
     expect(created.destructiveHint).toBe(false);
+  });
+
+  /**
+   * The four-tuple, per tool, for every tool that shares an authored constant with another.
+   *
+   * The rows above pin one or two hints each, which a shared constant can satisfy while quietly
+   * describing the wrong thing: re-point `gth_checklist` at the constant the deletes use and it
+   * becomes a destroyer of the working folder with nothing to say so. What each constant MEANS is
+   * a doc comment and cannot be asserted, so what is asserted instead is that each tool still has
+   * the values that comment describes — which is what a mis-shared constant would move.
+   */
+  describe('every tool sharing an authored constant keeps its own four-tuple', () => {
+    const LOCAL_ABSOLUTE = {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    };
+    const LOCAL_RELATIVE = {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    };
+    const NON_DESTRUCTIVE = {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    };
+
+    it.each(['write_file', 'delete_file', 'delete_directory'])(
+      '%s discards what was at the path, and the same call twice lands the same end state',
+      (name) => {
+        expect(effectiveBuiltIn(name)).toEqual(LOCAL_ABSOLUTE);
+      }
+    );
+
+    it.each(['edit_file', 'move_file'])(
+      '%s depends on what is there now, so repeating it is NOT the same call twice',
+      (name) => {
+        expect(effectiveBuiltIn(name)).toEqual(LOCAL_RELATIVE);
+      }
+    );
+
+    it('create_directory adds to the working folder and destroys nothing', () => {
+      expect(effectiveBuiltIn('create_directory')).toEqual(NON_DESTRUCTIVE);
+    });
+
+    it.each(['gth_checklist', 'show_a2ui_surface'])(
+      '%s writes state this session owns, destroying nothing in the working folder',
+      (name) => {
+        expect(effectiveBuiltIn(name)).toEqual(NON_DESTRUCTIVE);
+      }
+    );
+
+    /**
+     * MCP defines `idempotentHint`, like `destructiveHint`, as meaningful only when `readOnlyHint`
+     * is false. A row claiming to change nothing while also claiming a second call changes
+     * something further contradicts itself, so on a read row the moot hint reads `true`.
+     */
+    it('gth_status_update is a read, and its moot idempotentHint agrees with that', () => {
+      expect(effectiveBuiltIn('gth_status_update')).toEqual({
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      });
+      // CONTROL: the same rule read off a row that was never in question, so the assertion above
+      // is about `gth_status_update` rather than about every row being a read.
+      expect(effectiveBuiltIn('gth_grep').idempotentHint).toBe(true);
+      expect(effectiveBuiltIn('edit_file').idempotentHint).toBe(false);
+    });
   });
 
   /**

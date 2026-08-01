@@ -11,7 +11,8 @@ import {
   resolveApprovalRules,
   type ToolApprovalSubject,
 } from '#src/core/approvals/matcher.js';
-import type { McpApprovalsConfig } from '#src/config/shell-policy.js';
+import { type McpApprovalsConfig, TOOL_ANNOTATION_HINTS } from '#src/config/shell-policy.js';
+import { UNRESOLVED_MCP_SERVER } from '#src/core/approvals/mcpSubjects.js';
 
 /**
  * EXT-70 §4.7.1 — the effective annotation set: the ONE derivation, and the only place trust is
@@ -124,6 +125,43 @@ describe('effective tool annotations (EXT-70 §4.7.1)', () => {
       // trusts nothing. A "fix" that simply stopped looking servers up would fail here.
       expect(trustedAnnotationHints(mcp, 'other')).toEqual([]);
       expect(source(mcpSubject('other')).readOnlyHint).toBe(false);
+    });
+  });
+
+  /**
+   * §4.7.5 — a call whose server could not be attributed to any configured key. Unlike every other
+   * key, it is one nobody can write, so it is not a server the user declined to name; it is a
+   * server they cannot name. `defaults` covers "servers not named under `servers`", and the
+   * sentinel is trivially such a server, so without the refusal a permissive `defaults` reaches
+   * an *unattributable* tool — believing a claim to be harmless exactly where whose claim it is
+   * cannot be said.
+   *
+   * The stub lookup here is the point: it answers for every server INCLUDING the sentinel, which
+   * the production `mcpDeclaredAnnotationLookup` refuses to do. That refusal is a second, separate
+   * layer; this suite pins the one in `trustedAnnotationHints`, so neither layer can be removed on
+   * the grounds that the other happens to cover it.
+   */
+  describe('an unattributable server trusts nothing, however permissive defaults is', () => {
+    const permissive: McpApprovalsConfig = {
+      defaults: { trustAnnotations: [...TOOL_ANNOTATION_HINTS] },
+    };
+
+    it('grants the sentinel NO hint, while defaults grants all four', () => {
+      expect(trustedAnnotationHints(permissive, UNRESOLVED_MCP_SERVER)).toEqual([]);
+      // CONTROL: an ordinary key, likewise UNNAMED under `servers`, still takes `defaults` — this
+      // is what a "fix" that simply stopped consulting `defaults` would fail.
+      expect(trustedAnnotationHints(permissive, 'jira')).toEqual([...TOOL_ANNOTATION_HINTS]);
+    });
+
+    it('resolves fail-closed even when the declared lookup DOES answer for it', () => {
+      const source = createEffectiveToolAnnotationSource({
+        mcp: permissive,
+        declared: declaringMcp(DECLARES_HARMLESS),
+      });
+      expect(source(mcpSubject(UNRESOLVED_MCP_SERVER))).toEqual(MCP_FAIL_CLOSED_ANNOTATIONS);
+      // CONTROL: same declaration, same defaults, a server that HAS an identity — so the line
+      // above is about attribution rather than about the source answering the constant always.
+      expect(source(mcpSubject('jira'))).toEqual(DECLARES_HARMLESS);
     });
   });
 
