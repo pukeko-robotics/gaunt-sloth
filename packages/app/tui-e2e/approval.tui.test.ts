@@ -260,8 +260,8 @@ test.describe('gth code TUI — EXT-70 §6 the menu names what it will store, an
   }) => {
     await expect(terminal.getByText('ready to code')).toBeVisible();
 
-    terminal.write('run it compound');
-    await expect(terminal.getByText('> run it compound')).toBeVisible();
+    terminal.write('run it unresolvable-compound');
+    await expect(terminal.getByText('> run it unresolvable-compound')).toBeVisible();
     terminal.submit();
 
     await expect(

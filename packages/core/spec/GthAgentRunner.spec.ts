@@ -4037,11 +4037,14 @@ describe('GthAgentRunner', () => {
          */
         it('an unbelieved hint stays fail-closed in the set a grant is made under', async () => {
           let runner!: GthAgentRunner;
-          await driveCalls(believingJira(['readOnlyHint']), [
+          // Believed FROM THE TUI, on a session whose config believes nothing — so this pins the
+          // affordance itself and not the config path Task 1 already covers.
+          await driveCalls(toolConfig({ mode: 'write' }), [
             {
               name: 'mcp__jira__search',
               declaring: { mcp__jira__search: SAFE_DECL },
               before: (r) => {
+                r.setMcpAnnotationTrust('jira', ['readOnlyHint'], true);
                 runner = r;
               },
             },
