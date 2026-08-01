@@ -561,9 +561,19 @@ export class GthAgentRunner {
       return { type: 'approve', scope: 'once' };
     }
 
-    // (3) Escalate — §2.5 makes it inert at `bypass` (above), and §3.2 sends it straight to the
-    // human with no rating call, outranking any allow entry that also matched.
-    const escalatedBy = rule?.action === 'escalate' ? describeApprovalEntry(rule.entry) : undefined;
+    // (3) Escalate — §3.2 sends it straight to the human with no rating call, outranking any allow
+    // entry that also matched.
+    //
+    // The `bypass` term is deliberate and not redundant with the early return above. That return
+    // only covers a SHELL call, so without this term a non-shell subject would still carry an
+    // escalate match into the prompt at `bypass` — unreachable while `run_shell_command` is the
+    // only gated tool, but §2.5's rule is about the rung, not about which tool asked. Make the
+    // invariant true rather than incidentally true, so [[EXT-30]] widening the gate cannot quietly
+    // break it.
+    const escalatedBy =
+      rule?.action === 'escalate' && approvals.rung !== 'bypass'
+        ? describeApprovalEntry(rule.entry)
+        : undefined;
 
     // (4) Approve from the allow list without prompting. It ALWAYS wins over the rater — a
     // human-trusted call shouldn't pay for an LLM call on every variant — but never over escalate.

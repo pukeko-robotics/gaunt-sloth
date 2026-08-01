@@ -716,6 +716,60 @@ describe('GthAgentRunner', () => {
       expect(notice).toContain('approvals.raterTimeoutMs');
       // It must not claim the command was judged — that is the whole distinction.
       expect(notice).not.toMatch(/\bdestructive\b/);
+      // It reports the action that actually happened: with no allow entry, the call escalated.
+      expect(notice).toContain('was escalated without being rated');
+    });
+
+    /**
+     * EXT-71 §3.2 — the same timeout on an ALLOW-matched call does not escalate: the rating is a
+     * tripwire, the fail-closed verdict is `destructive`, and `destructive` runs. So the notice
+     * must say what happened rather than reuse the escalation wording, which would be simply
+     * false. A notice that misreports the action it accompanies is worse than none.
+     */
+    it('says the call RAN on its allow match when the tripwire is the thing that timed out', async () => {
+      resolveRaterModelMock.mockResolvedValue({
+        withStructuredOutput: () => ({ invoke: () => new Promise(() => {}) }),
+      } as any);
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue({
+        async *[Symbol.asyncIterator]() {
+          yield 'working';
+        },
+      });
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'ls -la' } }])
+        .mockResolvedValueOnce([]);
+      const streamResume = vi.fn().mockResolvedValue({
+        async *[Symbol.asyncIterator]() {
+          yield ' done';
+        },
+      });
+      (mockAgent as any).streamResume = streamResume;
+      await runner.init('code', {
+        ...mockConfig,
+        streamOutput: true,
+        approvals: {
+          mode: 'full-auto',
+          rater: 'slow-rater',
+          raterTimeoutMs: 5,
+          // A glob, so §3.2 keeps the rater involved — which is what makes the timeout reachable.
+          allow: [{ type: 'shell', matcher: 'glob', pattern: 'ls*' }],
+        },
+      } as unknown as typeof mockConfig);
+      const human = vi.fn();
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('run ls')]);
+
+      const said = statusUpdateCallback.mock.calls.map(([, message]) => String(message));
+      const notice = said.find((m) => m.includes('did not answer in time'));
+      expect(notice, `expected a timeout notice among: ${JSON.stringify(said)}`).toBeDefined();
+      expect(notice).toContain('ran on its approvals.allow match alone');
+      expect(notice).not.toContain('was escalated without being rated');
+      // And the action it describes is the one that happened: no prompt, the call ran.
+      expect(human).not.toHaveBeenCalled();
+      expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
     });
 
     it('init seeds the whole posture (rung + rater profile + declared lists) from config', async () => {
@@ -1895,6 +1949,60 @@ describe('GthAgentRunner', () => {
 
         expect(human).not.toHaveBeenCalled();
         expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
+      });
+
+      /**
+       * §2.5's rule is about the RUNG, not about which tool asked. The test above only proves the
+       * shell path, because the `bypass` early return is scoped to a shell call — so a non-shell
+       * gated call would carry an escalate match into the prompt at `bypass` unless the escalate
+       * term says otherwise. No non-shell tool is gated until [[EXT-30]], so what is observable
+       * today is the provenance rather than the prompt itself; pinning it now is what stops EXT-30
+       * quietly inheriting the gap.
+       */
+      it('§2.5 — is inert at bypass for a NON-shell subject too, not just via the shell path', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        (mockAgent as any).getPendingToolInterrupts = vi
+          .fn()
+          .mockResolvedValueOnce([{ name: 'gth_web_fetch', args: { url: 'https://example.com' } }])
+          .mockResolvedValueOnce([]);
+        (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+        mockAgent.stream.mockResolvedValue(streamOf('x'));
+
+        const { config } = gateConfig({
+          mode: 'bypass',
+          escalate: [{ type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch' }],
+        });
+        await runner.init('code', config);
+        const human = vi.fn().mockResolvedValue({ type: 'reject' });
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('go')]);
+
+        expect(human).toHaveBeenCalledTimes(1);
+        expect(human.mock.calls[0][0].escalatedBy).toBeUndefined();
+      });
+
+      it('CONTROL: the same tool entry DOES carry its provenance at write', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        (mockAgent as any).getPendingToolInterrupts = vi
+          .fn()
+          .mockResolvedValueOnce([{ name: 'gth_web_fetch', args: { url: 'https://example.com' } }])
+          .mockResolvedValueOnce([]);
+        (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+        mockAgent.stream.mockResolvedValue(streamOf('x'));
+
+        const { config } = gateConfig({
+          mode: 'write',
+          escalate: [{ type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch' }],
+        });
+        await runner.init('code', config);
+        const human = vi.fn().mockResolvedValue({ type: 'reject' });
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('go')]);
+
+        expect(human).toHaveBeenCalledTimes(1);
+        expect(human.mock.calls[0][0].escalatedBy).toBe('tool gth_web_fetch');
       });
 
       it('CONTROL: the same entry DOES escalate at write, so bypass is what made it inert', async () => {

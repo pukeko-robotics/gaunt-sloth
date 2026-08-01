@@ -40,12 +40,13 @@ vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => ({
 
 // ── @gaunt-sloth/core/utils/consoleUtils.js ───────────────────────────────────
 const displayInfoMock = vi.fn();
+const displayWarningMock = vi.fn();
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
   defaultStatusCallback: vi.fn(),
   display: vi.fn(),
   displayInfo: displayInfoMock,
   displayLaunchBanner: vi.fn(),
-  displayWarning: vi.fn(),
+  displayWarning: displayWarningMock,
   flushSessionLog: vi.fn(),
   formatInputPrompt: vi.fn((v: string) => v),
   initSessionLogging: vi.fn(),
@@ -68,6 +69,7 @@ type PendingLike = {
   name: string;
   args: Record<string, unknown>;
   safetyVerdict?: { outcome: string; reason: string };
+  escalatedBy?: string;
 };
 let capturedApprovalCallback:
   | ((_pending: PendingLike) => Promise<{ type: string; scope?: string; message?: string }>)
@@ -110,6 +112,10 @@ const DESTRUCTIVE = { outcome: 'destructive', reason: 'deletes a build directory
 const printed = (): string =>
   displayInfoMock.mock.calls.map((call: unknown[]) => String(call[0])).join('\n');
 
+/** Everything WARNED by the approval callback — where the rater and escalate rows go. */
+const warned = (): string =>
+  displayWarningMock.mock.calls.map((call: unknown[]) => String(call[0])).join('\n');
+
 describe('interactiveSessionModule CFG-28 — the readline confirmation tells the truth', () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -131,6 +137,7 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
     await createInteractiveSession(sessionConfig, {});
     expect(capturedApprovalCallback).toBeTypeOf('function');
     displayInfoMock.mockClear(); // only record what the approval callback itself prints
+    displayWarningMock.mockClear();
   };
 
   const answer = async (key: string, safetyVerdict: PendingLike['safetyVerdict']) => {
@@ -184,5 +191,32 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
     await startSession();
     expect(await answer('s', CATASTROPHIC)).toEqual({ type: 'approve', scope: 'session' });
     expect(await answer('a', CATASTROPHIC)).toEqual({ type: 'approve', scope: 'always' });
+  });
+
+  /**
+   * EXT-71 §3.2 — an escalate match asks the human whatever the rung would have done, so the prompt
+   * MUST show the entry that fired. Without it the user is asked about a command their rung would
+   * have approved, with nothing on screen tying the question to the line they wrote — which reads
+   * as the gate malfunctioning rather than as their own rule working.
+   */
+  it('shows the approvals.escalate entry that brought the call here', async () => {
+    await startSession();
+    rlQuestionMock.mockResolvedValueOnce('n');
+    await capturedApprovalCallback!({
+      name: 'run_shell_command',
+      args: { command: 'terraform apply' },
+      escalatedBy: 'terraform apply',
+    });
+    expect(warned()).toContain('approvals.escalate');
+    expect(warned()).toContain('terraform apply');
+  });
+
+  it('says nothing about approvals.escalate when no such entry fired', async () => {
+    await startSession();
+    await answer('n', DESTRUCTIVE);
+    expect(warned()).not.toContain('approvals.escalate');
+    // Control: the rater row IS still printed on the same surface, so the assertion above is
+    // about the escalate row rather than about warnings being suppressed altogether.
+    expect(warned()).toContain('Auto-rater (destructive)');
   });
 });

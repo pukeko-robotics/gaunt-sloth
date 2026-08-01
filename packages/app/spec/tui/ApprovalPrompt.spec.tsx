@@ -101,6 +101,35 @@ describe('tui <ApprovalPrompt>', () => {
     unmount();
   });
 
+  /**
+   * EXT-71 §3.2 — an escalate match asks the human whatever the rung would have done, so the prompt
+   * MUST show the entry that fired. Without it the user is asked about a command their rung would
+   * have approved with nothing tying the question to the line they wrote.
+   */
+  it('shows the approvals.escalate entry that brought the call here', () => {
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt
+        pending={{
+          name: 'run_shell_command',
+          args: { command: 'terraform apply' },
+          escalatedBy: 'terraform apply',
+        }}
+      />
+    );
+    const f = lastFrame() ?? '';
+    expect(f).toContain('approvals.escalate');
+    expect(f).toContain('terraform apply');
+    unmount();
+  });
+
+  it('says nothing about approvals.escalate when no such entry fired', () => {
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt pending={{ name: 'run_shell_command', args: { command: 'ls -la' } }} />
+    );
+    expect(lastFrame() ?? '').not.toContain('approvals.escalate');
+    unmount();
+  });
+
   it('falls back to JSON of args when there is no command string', () => {
     const { lastFrame, unmount } = render(
       <ApprovalPrompt pending={{ name: 'run_shell_command', args: { foo: 'bar' } }} />
