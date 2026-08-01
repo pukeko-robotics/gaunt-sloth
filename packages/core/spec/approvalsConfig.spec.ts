@@ -3,6 +3,8 @@ import {
   APPROVAL_RUNG_DESCRIPTIONS,
   APPROVAL_RUNG_LABELS,
   APPROVAL_RUNGS,
+  type ApprovalEntry,
+  declaredShellPrefixes,
   DEFAULT_APPROVAL_RUNG,
   isApprovalRung,
   isRatedRung,
@@ -31,6 +33,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
         rater: undefined,
         allow: [],
         deny: [],
+        escalate: [],
       });
     });
 
@@ -62,7 +65,12 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
     it('a per-command value REPLACES the root one wholesale', () => {
       const resolved = resolveApprovals(
         {
-          approvals: { mode: 'bypass', allow: ['npm test'], deny: ['npm publish'] },
+          approvals: {
+            mode: 'bypass',
+            allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
+            deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
+            escalate: [{ type: 'shell', matcher: 'exact', pattern: 'terraform apply' }],
+          },
           commands: { pr: { approvals: 'read-only' } },
         } as unknown as ApprovalsInput,
         'pr'
@@ -71,6 +79,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       // The root value's lists came from the REPLACED value, so they do not leak through.
       expect(resolved.allow).toEqual([]);
       expect(resolved.deny).toEqual([]);
+      expect(resolved.escalate).toEqual([]);
     });
 
     it('a per-command scalar override resolves wholesale (the §9 example)', () => {
@@ -90,7 +99,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
     });
   });
 
-  describe('§9.1 — rater is a bare profile name; allow/deny are read-only input', () => {
+  describe('§9.1 — rater is a bare profile name; the three lists are read-only input', () => {
     it('carries the rater profile through as a plain string', () => {
       const resolved = resolveApprovals(
         { approvals: { mode: 'auto-safe', rater: 'safety-rater' } } as ApprovalsInput,
@@ -99,19 +108,64 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       expect(resolved.rater).toBe('safety-rater');
     });
 
-    it('carries the declared allow and deny lists through', () => {
+    it('carries the declared allow, deny and escalate lists through unchanged (EXT-71 §3.1)', () => {
+      const allow: ApprovalEntry[] = [
+        { type: 'shell', matcher: 'exact', pattern: 'npm test' },
+        { type: 'shell', matcher: 'glob', pattern: 'git status*', rate: false },
+      ];
+      const deny: ApprovalEntry[] = [
+        { type: 'shell', matcher: 'exact', pattern: 'git push --force' },
+        { type: 'mcpTool', server: 'jira', matcher: 'exact', pattern: 'delete_issue' },
+      ];
+      const escalate: ApprovalEntry[] = [
+        { type: 'mcpTool', server: '*', matcher: 'hint', pattern: { destructiveHint: true } },
+      ];
       const resolved = resolveApprovals(
-        {
-          approvals: {
-            mode: 'auto-safe',
-            allow: ['npm test', 'git status'],
-            deny: ['git push --force', 'npm publish'],
-          },
-        } as ApprovalsInput,
+        { approvals: { mode: 'auto-safe', allow, deny, escalate } } as ApprovalsInput,
         'code'
       );
-      expect(resolved.allow).toEqual(['npm test', 'git status']);
-      expect(resolved.deny).toEqual(['git push --force', 'npm publish']);
+      expect(resolved.allow).toEqual(allow);
+      expect(resolved.deny).toEqual(deny);
+      expect(resolved.escalate).toEqual(escalate);
+    });
+  });
+
+  /**
+   * EXT-71 — the INTERIM bridge from the declared entries to the prefix-string stores the runner
+   * still uses. It is deliberately narrow, and these pin both halves of that: what it carries and
+   * what it drops. When the matcher engine lands, the dropped rows are what must start matching.
+   */
+  describe('declaredShellPrefixes (the interim bridge)', () => {
+    it('carries the pattern of every shell + exact entry, in order', () => {
+      expect(
+        declaredShellPrefixes([
+          { type: 'shell', matcher: 'exact', pattern: 'npm test' },
+          { type: 'shell', matcher: 'exact', pattern: 'git status' },
+        ])
+      ).toEqual(['npm test', 'git status']);
+    });
+
+    it('drops every entry the prefix stores cannot represent', () => {
+      expect(
+        declaredShellPrefixes([
+          { type: 'shell', matcher: 'glob', pattern: 'npm publish*' },
+          { type: 'shell', matcher: 'regexp', pattern: '^gh release create\\b' },
+          { type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch' },
+          { type: 'mcpTool', server: 'jira', matcher: 'exact', pattern: 'delete_issue' },
+          { type: 'mcpTool', server: 'jira', matcher: 'hint', pattern: { destructiveHint: true } },
+        ])
+      ).toEqual([]);
+    });
+
+    it('keeps the shell + exact entries out of a mixed list without reordering them', () => {
+      expect(
+        declaredShellPrefixes([
+          { type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch' },
+          { type: 'shell', matcher: 'exact', pattern: 'npm test' },
+          { type: 'shell', matcher: 'glob', pattern: 'git *' },
+          { type: 'shell', matcher: 'exact', pattern: 'ls' },
+        ])
+      ).toEqual(['npm test', 'ls']);
     });
   });
 

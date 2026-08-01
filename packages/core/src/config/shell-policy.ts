@@ -451,6 +451,82 @@ export function isRatedRung(rung: ApprovalRung): boolean {
 }
 
 /**
+ * EXT-71 §3.1 — the **subject** axis of a rule entry, and only that. The schema twin is
+ * `APPROVAL_ENTRY_TYPES` in `config/schema.ts`; `configSchema.spec.ts` pins the two together.
+ */
+export type ApprovalEntryType = 'shell' | 'tool' | 'mcpTool';
+
+/** EXT-71 §3.1 — the **comparison** axis of a rule entry, and only that. */
+export type ApprovalMatcher = 'exact' | 'glob' | 'regexp' | 'hint';
+
+/**
+ * EXT-71 §3.1 — a `hint` pattern: the four MCP `ToolAnnotations` booleans, each mapped to the
+ * value it must EFFECTIVELY hold (§4.7.1). All named hints must match (AND within the entry);
+ * hints not named are unconstrained; `false` is the spelling of negation. At least one must be
+ * named — an empty object is a config error, never a match-everything.
+ */
+export interface ApprovalHintPattern {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+}
+
+/** Fields every rule entry may carry, whatever its subject. */
+interface ApprovalEntryCommon {
+  /**
+   * §3.2 — whether the rater still reviews a call this entry matched, honored at the rater rungs
+   * and inert at the deterministic ones. Valid on EVERY type. Absent takes the §3.2 default: an
+   * entry skips the rater only to the extent that it recorded what the rater would have seen, so
+   * `shell` + `exact` defaults to `false` and everything else to `true`.
+   */
+  rate?: boolean;
+}
+
+/** §3.1 — a `shell` entry: a command, compared against the normalized command string. */
+export interface ShellApprovalEntry extends ApprovalEntryCommon {
+  type: 'shell';
+  /** `hint` is absent on purpose — a command carries no tool annotations. */
+  matcher: 'exact' | 'glob' | 'regexp';
+  pattern: string;
+}
+
+/** §3.1 — a `tool` entry: a built-in or custom in-process tool, compared against the tool name. */
+export interface ToolApprovalEntry extends ApprovalEntryCommon {
+  type: 'tool';
+  matcher: ApprovalMatcher;
+  pattern: string | ApprovalHintPattern;
+  /** §4.7.4 — optional exact-match bound on the call's host. Tool subjects only. */
+  host?: string;
+}
+
+/** §3.1 — an `mcpTool` entry: one server's tool. */
+export interface McpToolApprovalEntry extends ApprovalEntryCommon {
+  type: 'mcpTool';
+  matcher: ApprovalMatcher;
+  pattern: string | ApprovalHintPattern;
+  /**
+   * §4.7.5 — **required**, and the user's own key in `mcpServers`: the only identity a server has
+   * that is stable, unique and user-authored. The literal `*` means every server, which is why a
+   * configured server may not be named `*`.
+   */
+  server: string;
+  /** §4.7.4 — optional exact-match bound on the call's host. */
+  host?: string;
+}
+
+/**
+ * EXT-71 §3.1 — **one entry** in `allow`, `deny` or `escalate`. All three lists take the same
+ * shape; the list an entry sits in decides only what a match DOES (deny over escalate over allow).
+ *
+ * `type`, `matcher` and `pattern` are always required — no field is inferred and no entry reads
+ * two ways. The runtime validator is `approvalEntrySchema` in `config/schema.ts`, which is
+ * stricter than TypeScript can be: it rejects unknown fields, an empty or unknown-key `hint`
+ * pattern, and a `regexp` that does not compile or is over the length cap.
+ */
+export type ApprovalEntry = ShellApprovalEntry | ToolApprovalEntry | McpToolApprovalEntry;
+
+/**
  * On-disk `approvals` object form (root or per command). The **scalar form is exactly sugar for
  * `{ mode: <value> }`** (§9.1) — the union exists so the extras have a home when they are needed,
  * not so there are two ways to say the same thing.
@@ -465,10 +541,15 @@ export interface ApprovalsObjectConfig {
    * design removed.
    */
   rater?: string;
-  /** §3 — declared allow-list: command prefixes the human trusts. Read-only input. */
-  allow?: string[];
-  /** §3 — declared deny-list: command prefixes never to run. Read-only input; applies under `bypass`. */
-  deny?: string[];
+  /** §3 — declared allow-list: what the human has trusted. Read-only input. */
+  allow?: ApprovalEntry[];
+  /** §3 — declared deny-list: what never runs. Read-only input; applies under `bypass` too. */
+  deny?: ApprovalEntry[];
+  /**
+   * §3/§3.2 — declared escalate list: a match always asks the human, whatever the rung would have
+   * done, and with no rating call. Read-only input; inert under `bypass` (§2.5).
+   */
+  escalate?: ApprovalEntry[];
   /**
    * EXT-66 — wall-clock budget (ms) for ONE rating call. Absent = {@link RATER_DEFAULT_TIMEOUT_MS}
    * (30s), which is a hosted-model number: a local rater is knowably slower, and when it runs out
@@ -482,19 +563,21 @@ export interface ApprovalsObjectConfig {
 export type ApprovalsConfig = ApprovalRung | ApprovalsObjectConfig;
 
 /**
- * The fully-defaulted approvals posture for one command. `allow`/`deny` are the **declared**
- * lists straight from config — read-only input that the runner merges with the runtime stores the
- * escalation menu writes, and that is never written back to config (§9.1).
+ * The fully-defaulted approvals posture for one command. `allow`/`deny`/`escalate` are the
+ * **declared** lists straight from config — read-only input that the runner merges with the
+ * runtime stores the escalation menu writes, and that is never written back to config (§9.1).
  */
 export interface ResolvedApprovals {
   /** The rung in force. */
   rung: ApprovalRung;
   /** Identity profile the rater runs under, or `undefined` for the session model. */
   rater?: string;
-  /** Declared allow-list prefixes (§3). Empty when none are declared. */
-  allow: string[];
-  /** Declared deny-list prefixes (§3). Empty when none are declared. */
-  deny: string[];
+  /** Declared allow-list entries (§3.1). Empty when none are declared. */
+  allow: ApprovalEntry[];
+  /** Declared deny-list entries (§3.1). Empty when none are declared. */
+  deny: ApprovalEntry[];
+  /** Declared escalate-list entries (§3.1). Empty when none are declared. */
+  escalate: ApprovalEntry[];
   /**
    * EXT-66 — wall-clock budget (ms) for one rating call, or `undefined` to let the rater apply
    * `RATER_DEFAULT_TIMEOUT_MS`. Left `undefined` rather than defaulted here so the effective-config
@@ -556,8 +639,35 @@ export function resolveApprovals(
     rater: raw?.rater,
     allow: raw?.allow ?? [],
     deny: raw?.deny ?? [],
+    escalate: raw?.escalate ?? [],
     raterTimeoutMs: raw?.raterTimeoutMs,
   };
+}
+
+/**
+ * EXT-71 — the INTERIM adapter between the declared rule entries and the prefix-string stores the
+ * runner still uses (`AllowlistStore` / `DenylistStore`). It returns the pattern of every
+ * `shell` + `exact` entry, in order, and drops everything else.
+ *
+ * **This is a bridge, and it is deliberately narrower than the grammar it reads from.** Two gaps
+ * are known and belong to the matcher engine, not here:
+ *
+ * 1. The prefix stores match TOKEN-ALIGNED PREFIXES, so an `exact` entry bridged through them is
+ *    broader than `exact`: `{"matcher":"exact","pattern":"npm test"}` currently also covers
+ *    `npm test --watch`, which §3.1 says it must not. On the deny side that direction is
+ *    fail-safe; on the allow side it is not, which is exactly why closing it is a matcher-engine
+ *    job rather than something to approximate here.
+ * 2. `glob` / `regexp` / `hint` entries, and every `tool` / `mcpTool` entry, are parsed and
+ *    validated but match nothing yet.
+ *
+ * Keeping the bridge this thin is the point: it preserves today's behaviour exactly, so the
+ * existing gate tests keep asserting something real instead of quietly becoming assertions about
+ * a half-built matcher.
+ */
+export function declaredShellPrefixes(entries: readonly ApprovalEntry[]): string[] {
+  return entries
+    .filter((entry) => entry.type === 'shell' && entry.matcher === 'exact')
+    .map((entry) => entry.pattern as string);
 }
 
 /** A status notice a backend should surface after resolving the shell approval gate. */

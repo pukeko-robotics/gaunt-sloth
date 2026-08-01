@@ -428,13 +428,19 @@
             "allow": {
               "type": "array",
               "items": {
-                "type": "string"
+                "$ref": "#/$defs/ApprovalEntry"
               }
             },
             "deny": {
               "type": "array",
               "items": {
-                "type": "string"
+                "$ref": "#/$defs/ApprovalEntry"
+              }
+            },
+            "escalate": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ApprovalEntry"
               }
             },
             "raterTimeoutMs": {
@@ -711,13 +717,19 @@
                     "allow": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "$ref": "#/$defs/ApprovalEntry"
                       }
                     },
                     "deny": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "$ref": "#/$defs/ApprovalEntry"
+                      }
+                    },
+                    "escalate": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ApprovalEntry"
                       }
                     },
                     "raterTimeoutMs": {
@@ -974,13 +986,19 @@
                     "allow": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "$ref": "#/$defs/ApprovalEntry"
                       }
                     },
                     "deny": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "$ref": "#/$defs/ApprovalEntry"
+                      }
+                    },
+                    "escalate": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ApprovalEntry"
                       }
                     },
                     "raterTimeoutMs": {
@@ -1228,13 +1246,19 @@
                     "allow": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "$ref": "#/$defs/ApprovalEntry"
                       }
                     },
                     "deny": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "$ref": "#/$defs/ApprovalEntry"
+                      }
+                    },
+                    "escalate": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ApprovalEntry"
                       }
                     },
                     "raterTimeoutMs": {
@@ -1462,13 +1486,19 @@
                     "allow": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "$ref": "#/$defs/ApprovalEntry"
                       }
                     },
                     "deny": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "$ref": "#/$defs/ApprovalEntry"
+                      }
+                    },
+                    "escalate": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ApprovalEntry"
                       }
                     },
                     "raterTimeoutMs": {
@@ -1696,13 +1726,19 @@
                     "allow": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "$ref": "#/$defs/ApprovalEntry"
                       }
                     },
                     "deny": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "$ref": "#/$defs/ApprovalEntry"
+                      }
+                    },
+                    "escalate": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ApprovalEntry"
                       }
                     },
                     "raterTimeoutMs": {
@@ -1930,13 +1966,19 @@
                     "allow": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "$ref": "#/$defs/ApprovalEntry"
                       }
                     },
                     "deny": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "$ref": "#/$defs/ApprovalEntry"
+                      }
+                    },
+                    "escalate": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ApprovalEntry"
                       }
                     },
                     "raterTimeoutMs": {
@@ -2164,13 +2206,19 @@
                     "allow": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "$ref": "#/$defs/ApprovalEntry"
                       }
                     },
                     "deny": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "$ref": "#/$defs/ApprovalEntry"
+                      }
+                    },
+                    "escalate": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ApprovalEntry"
                       }
                     },
                     "raterTimeoutMs": {
@@ -2302,5 +2350,385 @@
       }
     }
   },
-  "additionalProperties": {}
+  "additionalProperties": {},
+  "$defs": {
+    "ApprovalEntry": {
+      "oneOf": [
+        {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "shell"
+                },
+                "matcher": {
+                  "type": "string",
+                  "const": "exact"
+                },
+                "pattern": {
+                  "type": "string"
+                },
+                "rate": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type",
+                "matcher",
+                "pattern"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "shell"
+                },
+                "matcher": {
+                  "type": "string",
+                  "const": "glob"
+                },
+                "pattern": {
+                  "type": "string"
+                },
+                "rate": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type",
+                "matcher",
+                "pattern"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "shell"
+                },
+                "matcher": {
+                  "type": "string",
+                  "const": "regexp"
+                },
+                "pattern": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "rate": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type",
+                "matcher",
+                "pattern"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "tool"
+                },
+                "matcher": {
+                  "type": "string",
+                  "const": "exact"
+                },
+                "pattern": {
+                  "type": "string"
+                },
+                "host": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rate": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type",
+                "matcher",
+                "pattern"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "tool"
+                },
+                "matcher": {
+                  "type": "string",
+                  "const": "glob"
+                },
+                "pattern": {
+                  "type": "string"
+                },
+                "host": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rate": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type",
+                "matcher",
+                "pattern"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "tool"
+                },
+                "matcher": {
+                  "type": "string",
+                  "const": "regexp"
+                },
+                "pattern": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "host": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rate": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type",
+                "matcher",
+                "pattern"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "tool"
+                },
+                "matcher": {
+                  "type": "string",
+                  "const": "hint"
+                },
+                "pattern": {
+                  "type": "object",
+                  "properties": {
+                    "readOnlyHint": {
+                      "type": "boolean"
+                    },
+                    "destructiveHint": {
+                      "type": "boolean"
+                    },
+                    "idempotentHint": {
+                      "type": "boolean"
+                    },
+                    "openWorldHint": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "minProperties": 1
+                },
+                "host": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rate": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type",
+                "matcher",
+                "pattern"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "mcpTool"
+                },
+                "matcher": {
+                  "type": "string",
+                  "const": "exact"
+                },
+                "server": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "pattern": {
+                  "type": "string"
+                },
+                "host": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rate": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type",
+                "matcher",
+                "server",
+                "pattern"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "mcpTool"
+                },
+                "matcher": {
+                  "type": "string",
+                  "const": "glob"
+                },
+                "server": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "pattern": {
+                  "type": "string"
+                },
+                "host": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rate": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type",
+                "matcher",
+                "server",
+                "pattern"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "mcpTool"
+                },
+                "matcher": {
+                  "type": "string",
+                  "const": "regexp"
+                },
+                "server": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "pattern": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "host": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rate": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type",
+                "matcher",
+                "server",
+                "pattern"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "mcpTool"
+                },
+                "matcher": {
+                  "type": "string",
+                  "const": "hint"
+                },
+                "server": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "pattern": {
+                  "type": "object",
+                  "properties": {
+                    "readOnlyHint": {
+                      "type": "boolean"
+                    },
+                    "destructiveHint": {
+                      "type": "boolean"
+                    },
+                    "idempotentHint": {
+                      "type": "boolean"
+                    },
+                    "openWorldHint": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "minProperties": 1
+                },
+                "host": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rate": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type",
+                "matcher",
+                "server",
+                "pattern"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      ]
+    }
+  }
 }

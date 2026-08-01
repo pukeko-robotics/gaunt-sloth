@@ -275,7 +275,10 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
    */
   it('allow-list: a DECLARED prefix approves a host-bearing command without reaching the rater at all', async () => {
     const runner = await makeRunner(['curl https://internal.example.com/health'], {
-      approvals: { mode: 'auto-safe', allow: ['curl'] },
+      approvals: {
+        mode: 'auto-safe',
+        allow: [{ type: 'shell', matcher: 'exact', pattern: 'curl' }],
+      },
     } as unknown as Partial<GthConfig>);
     const human = vi.fn();
     runner.setToolApprovalCallback(human);
@@ -400,7 +403,10 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
    */
   it('the declared deny list still refuses under bypass, on the real graph', async () => {
     const runner = await makeRunner(['npm publish --access public'], {
-      approvals: { mode: 'bypass', deny: ['npm publish'] },
+      approvals: {
+        mode: 'bypass',
+        deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
+      },
     } as unknown as Partial<GthConfig>);
     const human = vi.fn();
     runner.setToolApprovalCallback(human);

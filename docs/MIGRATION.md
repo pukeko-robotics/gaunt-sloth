@@ -478,11 +478,22 @@ Or, if you want to name the rater's model and declare what it may and may not ru
   "approvals": {
     "mode": "auto-safe",
     "rater": "safety-rater",
-    "allow": ["npm test", "git status"],
-    "deny": ["npm publish", "git push --force"]
+    "allow": [
+      { "type": "shell", "matcher": "exact", "pattern": "npm test" },
+      { "type": "shell", "matcher": "glob", "pattern": "git status*" }
+    ],
+    "deny": [
+      { "type": "shell", "matcher": "glob", "pattern": "npm publish*" },
+      { "type": "shell", "matcher": "glob", "pattern": "git push --force*" }
+    ]
   }
 }
 ```
+
+Every entry in `allow`, `deny` and `escalate` is one explicit object — `type`, `matcher` and
+`pattern` are always required, and a bare string is a config error whose message shows you the
+object to write instead. The fields are listed in
+[Shell tool & approvals](guides/shell-tool-and-approvals.md).
 
 **Two behaviour changes to expect.**
 

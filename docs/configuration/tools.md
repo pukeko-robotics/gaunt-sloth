@@ -222,12 +222,14 @@ carrying the extras. See
   rung the session starts on.
 - `rater` — the **name** of an identity profile whose model rates, instead of the session model. A
   name that does not resolve is a config error. Only consulted at `auto-safe` and `full-auto`.
-- `allow` — command prefixes you trust. Checked before the rater at every rung except `bypass`.
-- `deny` — command prefixes never to run. Checked before `allow` and before the rater, and it still
-  applies under `bypass`.
+- `allow` — what you trust. Checked before the rater at every rung except `bypass`.
+- `deny` — what never runs. Checked before `allow` and before the rater, and it still applies under
+  `bypass`.
+- `escalate` — what always asks you, whatever the rung would have done.
 
-`allow` and `deny` are read-only input: they are merged with what you approve or reject at the
-prompt, and never written back to your config.
+Entries in all three are explicit objects (`type`, `matcher` and `pattern` are always required);
+where more than one list matches, the most restrictive wins. The three are read-only input: they
+are merged with what you approve or reject at the prompt, and never written back to your config.
 
 ```json
 { "approvals": "auto-safe" }
@@ -238,7 +240,10 @@ prompt, and never written back to your config.
   "approvals": {
     "mode": "full-auto",
     "rater": "safety-rater",
-    "deny": ["npm publish", "git push --force"]
+    "deny": [
+      { "type": "shell", "matcher": "glob", "pattern": "npm publish*" },
+      { "type": "shell", "matcher": "glob", "pattern": "git push --force*" }
+    ]
   }
 }
 ```

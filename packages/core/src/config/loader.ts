@@ -22,6 +22,7 @@ import {
   setConsoleLevel,
 } from '#src/utils/consoleUtils.js';
 import {
+  findApprovalsGrammarIssues,
   findApprovalsRaterProfiles,
   findDeprecatedConfigIssues,
   findUnknownTopLevelKeys,
@@ -71,6 +72,10 @@ import type {
  *    {@link findDeprecatedConfigIssues} — is a HARD error naming the canonical replacement +
  *    migration path, then exit. 2.0 dropped back-compat coercion, so these fail rather than
  *    remap. Runs FIRST so a deprecated name never merely surfaces as an unknown-key warning.
+ * 1b. Approvals rule-grammar reject (EXT-71): a bare string in `allow`/`deny`/`escalate`, or a
+ *    configured `mcpServers` key named `*`, detected by {@link findApprovalsGrammarIssues} — a
+ *    HARD error, before the parse so its message (which shows the object form of the string the
+ *    user wrote) is the only one they see.
  * 2. Unknown top-level keys: warn (do NOT fail) so likely typos are surfaced while
  *    forward-compatible / extension keys still pass through untouched.
  * 3. Schema parse: on a genuine type mismatch on a known field, emit a friendly,
@@ -94,6 +99,19 @@ function validateRawConfigLayer<T extends Record<string, unknown>>(raw: T, sourc
       exit(1);
       // Unreachable past exit(1) in production; keeps the mocked-exit test path from falling
       // through into the schema parse below.
+      return raw;
+    }
+
+    // EXT-71 — the rule-grammar errors that must be seen BEFORE the schema parse: a bare string in
+    // a rule list (whose message shows the object form of that same string) and a reserved `*`
+    // MCP server name. Checked in the same place as the deprecated scan, and in `gth config
+    // validate` too, so the validator can never green-light a config a real run refuses.
+    const grammarIssues = findApprovalsGrammarIssues(raw);
+    if (grammarIssues.length > 0) {
+      displayError(
+        `Invalid configuration in ${sourceLabel}:\n${formatDeprecatedConfigIssues(grammarIssues)}`
+      );
+      exit(1);
       return raw;
     }
 

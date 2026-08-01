@@ -1,6 +1,7 @@
 import {
   type AllowlistCounts,
   type ApprovalRung,
+  declaredShellPrefixes,
   DEFAULT_APPROVAL_RUNG,
   describeGrantedBuiltInTools,
   type GrantedToolSummary,
@@ -116,6 +117,7 @@ export class GthAgentRunner {
     rung: DEFAULT_APPROVAL_RUNG,
     allow: [],
     deny: [],
+    escalate: [],
   };
 
   /**
@@ -250,8 +252,12 @@ export class GthAgentRunner {
     // §3/§9.1 — the DECLARED lists are read-only config input. `allow` is merged into the session
     // allow-list store (which the human's `session` grants also write to) and `deny` seeds the
     // deny store; neither is ever written back to config.
-    this.denylist = new DenylistStore(this.sessionApprovals.deny);
-    for (const prefix of this.sessionApprovals.allow) {
+    //
+    // EXT-71 — both stores still hold prefix STRINGS, so the declared entries pass through
+    // `declaredShellPrefixes`: shell + exact entries only, everything else inert until the matcher
+    // engine lands. See that function for the two gaps this bridge knowingly leaves open.
+    this.denylist = new DenylistStore(declaredShellPrefixes(this.sessionApprovals.deny));
+    for (const prefix of declaredShellPrefixes(this.sessionApprovals.allow)) {
       const trimmed = prefix.trim();
       if (trimmed.length > 0) this.sessionAllowlist.add(trimmed);
     }

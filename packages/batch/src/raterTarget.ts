@@ -235,7 +235,7 @@ export interface RaterClassifierOptions {
  * at the ROOT (no `commands.<name>.approvals` block applies): `gth eval` runs no gated tool, so
  * there is no active command whose per-command posture could honestly be said to be in force.
  *
- * Only a config that declares a RUNG overrides. `approvals: { allow: [...] }` with no `mode` says
+ * Only a config that declares a RUNG overrides. An `approvals` block with lists but no `mode` says
  * nothing about the rung, and treating it as an override would replace the suite's declared rung
  * with the ladder default while announcing it as "from this run's approvals config" — a rung the
  * config never asked for. (The scalar form is core's documented sugar for `{ mode: <value> }`.)

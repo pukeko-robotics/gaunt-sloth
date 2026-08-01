@@ -258,7 +258,13 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
   it('approvalsStatusNotice shows the rung, the rater and the allow/deny sizes (— when not loaded)', async () => {
     const { approvalsStatusNotice } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const notice = approvalsStatusNotice(
-      { rung: 'auto-safe', rater: 'safety-rater', allow: [], deny: ['npm publish'] } as any,
+      {
+        rung: 'auto-safe',
+        rater: 'safety-rater',
+        allow: [],
+        deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
+        escalate: [],
+      } as any,
       { session: 3, always: undefined },
       ['npm publish']
     );

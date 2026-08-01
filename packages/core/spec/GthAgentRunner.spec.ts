@@ -726,29 +726,59 @@ describe('GthAgentRunner', () => {
         approvals: {
           mode: 'full-auto',
           rater: 'safety-rater',
-          allow: ['npm test'],
-          deny: ['npm publish'],
+          allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
+          deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
+          escalate: [{ type: 'shell', matcher: 'exact', pattern: 'terraform apply' }],
         },
       } as unknown as typeof mockConfig);
       expect(runner.getSessionApprovals()).toEqual({
         rung: 'full-auto',
         rater: 'safety-rater',
-        allow: ['npm test'],
-        deny: ['npm publish'],
+        allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
+        deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
+        escalate: [{ type: 'shell', matcher: 'exact', pattern: 'terraform apply' }],
       });
-      // §3 — the DECLARED lists are merged into the runtime stores at init.
+      // §3 — the DECLARED lists are merged into the runtime stores at init. The stores still hold
+      // prefix strings, so what reaches them is what `declaredShellPrefixes` carries.
       expect(runner.getDenylist()).toEqual(['npm publish']);
       expect(runner.getAllowlistCounts().session).toBe(1);
+    });
+
+    /**
+     * EXT-71 — the interim bridge's SILENT half, pinned so it cannot be mistaken for working
+     * behaviour: a `glob` deny entry parses and is carried in the posture, but reaches no store
+     * yet. This test is the marker the matcher engine must flip.
+     */
+    it('carries a glob entry in the posture while the prefix stores stay empty (interim)', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      await runner.init('code', {
+        ...mockConfig,
+        approvals: {
+          mode: 'write',
+          allow: [{ type: 'shell', matcher: 'glob', pattern: 'git status*' }],
+          deny: [{ type: 'shell', matcher: 'glob', pattern: 'npm publish*' }],
+        },
+      } as unknown as typeof mockConfig);
+      expect(runner.getSessionApprovals().deny).toEqual([
+        { type: 'shell', matcher: 'glob', pattern: 'npm publish*' },
+      ]);
+      expect(runner.getDenylist()).toEqual([]);
+      expect(runner.getAllowlistCounts().session).toBe(0);
     });
 
     it('switching rungs never rewrites the declared lists — they are config input, not state', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       await runner.init('code', {
         ...mockConfig,
-        approvals: { mode: 'write', deny: ['npm publish'] },
+        approvals: {
+          mode: 'write',
+          deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
+        },
       } as unknown as typeof mockConfig);
       runner.setSessionApprovalRung('bypass');
-      expect(runner.getSessionApprovals().deny).toEqual(['npm publish']);
+      expect(runner.getSessionApprovals().deny).toEqual([
+        { type: 'shell', matcher: 'exact', pattern: 'npm publish' },
+      ]);
       expect(runner.getDenylist()).toEqual(['npm publish']);
     });
 
@@ -1305,7 +1335,10 @@ describe('GthAgentRunner', () => {
         ...mockConfig,
         llm: model,
         streamOutput: true,
-        approvals: { mode: 'auto-safe', allow: ['npm test'] },
+        approvals: {
+          mode: 'auto-safe',
+          allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
+        },
         commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
       } as any);
       const human = vi.fn();
@@ -1522,9 +1555,15 @@ describe('GthAgentRunner', () => {
       return streamResume;
     }
 
+    // EXT-71 §3.1 — the declared deny list is a list of explicit entries. The call sites below all
+    // want a shell + exact entry, which is what the interim bridge carries into the deny store.
+    function shellExact(...patterns: string[]): unknown[] {
+      return patterns.map((pattern) => ({ type: 'shell', matcher: 'exact', pattern }));
+    }
+
     function denyConfig(
       rung: string,
-      deny: string[],
+      deny: unknown[],
       verdict: unknown = { outcome: 'safe', reason: 'ok' }
     ) {
       const invoke = vi.fn().mockResolvedValue(verdict);
@@ -1546,7 +1585,7 @@ describe('GthAgentRunner', () => {
       async (rung) => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         const streamResume = pendingOnce('npm publish --access public');
-        const { config, withStructuredOutput } = denyConfig(rung, ['npm publish']);
+        const { config, withStructuredOutput } = denyConfig(rung, shellExact('npm publish'));
         await runner.init('code', config);
         const human = vi.fn();
         runner.setToolApprovalCallback(human);
@@ -1566,7 +1605,7 @@ describe('GthAgentRunner', () => {
     it('§2.5 — bypass keeps the deny list; everything else there is approved', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       const streamResume = pendingOnce('rm -rf node_modules');
-      const { config } = denyConfig('bypass', ['npm publish']);
+      const { config } = denyConfig('bypass', shellExact('npm publish'));
       await runner.init('code', config);
       runner.setToolApprovalCallback(vi.fn());
 
@@ -1578,7 +1617,7 @@ describe('GthAgentRunner', () => {
       for (const command of ['git push --force; ls', 'ls && git push --force origin main']) {
         const runner = new GthAgentRunner(statusUpdateCallback);
         const streamResume = pendingOnce(command);
-        const { config } = denyConfig('bypass', ['git push --force']);
+        const { config } = denyConfig('bypass', shellExact('git push --force'));
         await runner.init('code', config);
         runner.setToolApprovalCallback(vi.fn());
 
@@ -1590,7 +1629,7 @@ describe('GthAgentRunner', () => {
     it('does not refuse a command that merely shares a prefix token', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       const streamResume = pendingOnce('git push origin main');
-      const { config } = denyConfig('bypass', ['git push --force']);
+      const { config } = denyConfig('bypass', shellExact('git push --force'));
       await runner.init('code', config);
       runner.setToolApprovalCallback(vi.fn());
 

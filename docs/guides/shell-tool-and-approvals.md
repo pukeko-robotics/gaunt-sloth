@@ -205,7 +205,7 @@ suggested tool is gated on its own terms when the agent calls it. If nothing the
 can do the job — a path outside your working folder, an install, a call to a service — the rater
 names nothing.
 
-## The extras: rater, allow, deny
+## The extras: rater, allow, deny, escalate
 
 When you need more than the rung, write the object form instead. The scalar above is exactly sugar
 for `{ "mode": <value> }`:
@@ -215,11 +215,20 @@ for `{ "mode": <value> }`:
   "approvals": {
     "mode": "auto-safe",
     "rater": "safety-rater",
-    "allow": ["npm test", "git status"],
-    "deny": ["git push --force", "npm publish"]
+    "allow": [
+      { "type": "shell", "matcher": "exact", "pattern": "npm test" },
+      { "type": "shell", "matcher": "glob", "pattern": "git status*" }
+    ],
+    "deny": [
+      { "type": "shell", "matcher": "exact", "pattern": "git push --force" },
+      { "type": "shell", "matcher": "glob", "pattern": "npm publish*" }
+    ],
+    "escalate": [
+      { "type": "shell", "matcher": "exact", "pattern": "terraform apply" }
+    ]
   },
   "commands": {
-    "pr": "read-only"
+    "pr": { "approvals": "read-only" }
   }
 }
 ```
@@ -228,18 +237,59 @@ for `{ "mode": <value> }`:
   model. This is the fix for a weak main model: point it at a stronger one. A name that does not
   resolve is a config error, never a silent fallback. It is only consulted at `auto-safe` and
   `full-auto`.
-- **`allow`** — command prefixes you trust. Checked **before** the rater at every rung except
-  `bypass`, so an allow-listed command never costs a rating call and never prompts. This is the
-  supported way to make a non-interactive pipeline pass.
-- **`deny`** — command prefixes never to run. Checked **before** `allow` and before the rater, and
-  it is the one check `bypass` keeps: choosing `bypass` means *"stop asking me"*, not *"forget what
-  I told you never to do"*.
+- **`allow`** — what you trust. Checked **before** the rater at every rung except `bypass`, so an
+  allow-listed call never prompts. This is the supported way to make a non-interactive pipeline
+  pass.
+- **`deny`** — what never runs. Checked **before** `allow` and before the rater, and it is the one
+  check `bypass` keeps: choosing `bypass` means *"stop asking me"*, not *"forget what I told you
+  never to do"*.
+- **`escalate`** — what always asks you, whatever the rung would have done, and with no rating call.
 
-Both lists are read-only input: Gaunt Sloth merges them with what you approve or reject at the
+Where entries from more than one list match the same call, **the most restrictive one wins — deny
+over escalate over allow** — so the order you write them in never matters.
+
+All three are read-only input: Gaunt Sloth merges them with what you approve or reject at the
 prompt, and never writes back to your config file.
 
-A per-command value **replaces** the root one wholesale — `"commands": { "pr": "read-only" }` above
-says the `pr` command has no business writing files, whatever the root setting is.
+A per-command value **replaces** the root one wholesale — `"commands": { "pr": { "approvals":
+"read-only" } }` above says the `pr` command has no business writing files, whatever the root
+setting is.
+
+### Writing an entry
+
+Every entry in all three lists is the same explicit object. `type`, `matcher` and `pattern` are
+**always required** — nothing is inferred, so an entry can only be read one way:
+
+| field | values |
+|---|---|
+| `type` | `shell` (a command) · `tool` (a built-in or custom tool) · `mcpTool` (a server's tool) |
+| `matcher` | `exact` · `glob` · `regexp` · `hint` (`hint` on tool subjects only) |
+| `pattern` | the string to compare — or, for `hint`, an object over the tool annotations |
+| `server` | **required on `mcpTool`**, and forbidden elsewhere: your own key in `mcpServers`. `"*"` means every server |
+| `host` | optional on `tool`/`mcpTool`, exact-match; forbidden on `shell` |
+| `rate` | optional; `true` keeps the auto-rater watching a call this entry already approved |
+
+```json
+{ "type": "shell",   "matcher": "regexp", "pattern": "^git commit -m \\S" }
+{ "type": "tool",    "matcher": "exact",  "pattern": "gth_web_fetch" }
+{ "type": "mcpTool", "server": "jira", "matcher": "exact", "pattern": "delete_issue" }
+{ "type": "mcpTool", "server": "jira", "matcher": "hint",  "pattern": { "destructiveHint": true } }
+```
+
+`exact` and `glob` compare against the whole normalized command (or the whole tool name), not token
+by token. The consequence everyone hits first: `npm publish *` does **not** match a bare
+`npm publish`, because the space before the `*` is part of the pattern. `npm publish*` matches both,
+and is almost always what was meant.
+
+A `hint` pattern names one or more of `readOnlyHint`, `destructiveHint`, `idempotentHint` and
+`openWorldHint`, each mapped to the value it must hold. All of them must match; hints you do not
+name are unconstrained; `false` is how you spell negation. An empty object or an unknown name is a
+config error rather than a rule that matches everything.
+
+A `regexp` lives inside JSON, so **its backslashes are doubled** — `\\s`, never `\s`. This is worth
+saying because `\s` is not a valid JSON escape: the mistake fails the whole config file to parse,
+and the error points at a line number rather than at your pattern. Patterns are compiled and
+length-checked when the config loads, so one that cannot compile is an error you see at startup.
 
 ## Non-interactive runs
 
@@ -251,7 +301,11 @@ never times out into an approval. Declare what the pipeline is allowed to run:
 {
   "approvals": {
     "mode": "auto-safe",
-    "allow": ["npm test", "npm run build", "git status"]
+    "allow": [
+      { "type": "shell", "matcher": "exact", "pattern": "npm test" },
+      { "type": "shell", "matcher": "exact", "pattern": "npm run build" },
+      { "type": "shell", "matcher": "glob", "pattern": "git status*" }
+    ]
   },
   "commands": { "exec": { "builtInTools": { "run_shell_command": { "enabled": true } } } }
 }
@@ -267,7 +321,10 @@ never times out into an approval. Declare what the pipeline is allowed to run:
 { "approvals": { "mode": "auto-safe", "rater": "safety-rater" } }
 
 // Let the agent work unattended, but never let it publish
-{ "approvals": { "mode": "full-auto", "deny": ["npm publish", "git push --force"] } }
+{ "approvals": { "mode": "full-auto", "deny": [
+  { "type": "shell", "matcher": "glob", "pattern": "npm publish*" },
+  { "type": "shell", "matcher": "glob", "pattern": "git push --force*" }
+] } }
 
 // Fixed dev commands, no arbitrary shell at all
 { "commands": { "code": { "builtInTools": {
