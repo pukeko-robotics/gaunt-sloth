@@ -127,11 +127,11 @@
       "arguments": {
         "sql": "SELECT count(*) FROM users WHERE created_at > now() - interval '7 days'"
       },
-      "family": "read-only",
+      "family": "read-only-tool",
       "outcome": "safe",
       "tripwire": "run",
       "pairs_with": "tc-04",
-      "note": "The mcpTool positive control, and identity-identical to tc-04 including the server key."
+      "note": "The mcpTool positive control, and identity-identical to tc-04 including the server key. The family is `read-only-tool` rather than the shell corpus's `read-only` ON PURPOSE: `shellOpenWorld.spec.ts` selects `family === 'read-only'` and runs a command matcher over the result, so a case reaching that filter with no command is the very failure the shape guard in that spec exists to catch."
     },
     {
       "id": "tc-10",
