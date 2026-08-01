@@ -93,6 +93,115 @@ const FACE_LINES = [
   '  ▀██████████▀',
 ] as const;
 
+/**
+ * TUI-C40 — the resting face, under the name the animation layer refers to it by.
+ *
+ * Every frame below is the same five lines and the same 16-column field, so swapping one in changes
+ * nothing about the layout: the right column still starts at {@link RIGHT_COLUMN} and the
+ * truncation budgets are untouched. That invariant is what makes an animation a data change rather
+ * than a geometry change, and it is asserted per frame in the specs.
+ */
+export const RESTING_FACE = FACE_LINES;
+
+/**
+ * The extra faces, authored in takahē (`websites/ascii-art.md`) and transcribed here so the art has
+ * one home in this repo, exactly as the resting frame does. Names match the source file's blocks.
+ */
+const BLINK_HALF = [
+  '  ▄█▀▀▀▀▀▀▀██▄',
+  '▄▀█▄█▀▀▀▀▀▀███▀▄',
+  '█  ▀█▄▀  ▀▄█▀  █',
+  '▀▄▀▀▀▐████▌▀▀▀▄▀',
+  '  ▀██████████▀',
+] as const;
+
+const BLINK_SHUT = [
+  '  ▄█▀▀▀▀▀▀███▄',
+  '▄▀█▄█▀▀▀▀▀▀███▀▄',
+  '█  ▀█▄▀  ▀▄█▀  █',
+  '▀▄▀▀▀▐████▌   ▄▀',
+  '  ▀██████████▀',
+] as const;
+
+const NOD_DOWN = [
+  '  ▄██████████▄',
+  '▄██▀▄▄▄▄▄▄▄▄▀██▄',
+  '█ ▀██ ▄  ▄ ██▀ █',
+  '█ ▄▄▀█▄▄▄▄█▀▄▄ █',
+  '  ▄▄▄██████▄▄▄',
+] as const;
+
+const LOOK_LEFT = [
+  '  ▄██████████▄',
+  '▄██▀▄▄▄▄▄▄▄████▄',
+  '█ ▀██ ▄  ▄ ██▀ █',
+  '█  ▄▀█▄▄▄▄█▀ ▄ █',
+  '  ▄▄▄██████▄▄▄',
+] as const;
+
+const LOOK_RIGHT = [
+  '  ▄██████████▄',
+  '▄████▄▄▄▄▄▄▄▀██▄',
+  '█ ▀██ ▄  ▄ ██▀ █',
+  '█ ▄ ▀█▄▄▄▄█▀▄  █',
+  '  ▄▄▄██████▄▄▄',
+] as const;
+
+const EYEROLL = [
+  '  ▄█▀▀▀▀▀▀▀▀█▄',
+  '▄▀█▄█▀▀▀▀▀▀█▄█▀▄',
+  '█ ▀██▄▀  ▀▄██▀ █',
+  '▀▌ ▄ ▐████▌ ▄ ▐▀',
+  '  ▀██████████▀',
+] as const;
+
+/** The animations a click can play. This list is the complete set. */
+export const SLOTH_ANIMATIONS = ['blink', 'nod', 'look-around', 'eyeroll'] as const;
+
+export type SlothAnimation = (typeof SLOTH_ANIMATIONS)[number];
+
+/** One frame of an animation and how long it stays on screen. */
+export interface SlothAnimationStep {
+  face: readonly string[];
+  holdMs: number;
+}
+
+/**
+ * The four sequences, as the frames shown AFTER the resting face.
+ *
+ * Playback always settles back on {@link RESTING_FACE} once the last step's hold elapses, so no
+ * sequence lists a trailing rest — but `nod` lists rest in the MIDDLE, because nodding twice means
+ * returning to level between the two dips. None of them loops, and a click plays exactly one.
+ */
+export const SLOTH_ANIMATION_STEPS: Record<SlothAnimation, readonly SlothAnimationStep[]> = {
+  // Quick, because a blink that lingers reads as a squint.
+  blink: [
+    { face: BLINK_HALF, holdMs: 90 },
+    { face: BLINK_SHUT, holdMs: 110 },
+  ],
+  nod: [
+    { face: NOD_DOWN, holdMs: 160 },
+    { face: RESTING_FACE, holdMs: 130 },
+    { face: NOD_DOWN, holdMs: 160 },
+  ],
+  'look-around': [
+    { face: LOOK_LEFT, holdMs: 190 },
+    { face: LOOK_RIGHT, holdMs: 230 },
+  ],
+  // The longest hold: the joke only lands if you get to see it.
+  eyeroll: [{ face: EYEROLL, holdMs: 300 }],
+};
+
+/**
+ * Pick one animation at random. `random` is injectable so a test can pin the choice — the
+ * production call passes nothing and gets `Math.random`.
+ */
+export function pickSlothAnimation(random: () => number = Math.random): SlothAnimation {
+  const index = Math.floor(random() * SLOTH_ANIMATIONS.length);
+  // Guard the boundary: a `random()` of exactly 1 (or a stub returning it) would index past the end.
+  return SLOTH_ANIMATIONS[Math.min(index, SLOTH_ANIMATIONS.length - 1)];
+}
+
 /** The `GAUNT SLOTH` wordmark, occupying rows 1–3 of the right column. */
 const WORDMARK_LINES = [
   '┏┓         ┏┓┓   ┓',
@@ -163,6 +272,13 @@ export interface LaunchBannerInput {
   columns?: number;
   /** Emit ANSI colour. Only {@link launchBannerText} reads this; Ink colours rows itself. */
   colour?: boolean;
+  /**
+   * TUI-C40 — which face to draw. Defaults to {@link RESTING_FACE}, so every existing caller is
+   * unaffected and a plain launch is byte-identical to before. An animation frame differs only in
+   * these five lines: the geometry below reads the face's width from the constants, never from the
+   * strings, so a swapped frame cannot move the right column or change a truncation budget.
+   */
+  face?: readonly string[];
 }
 
 /**
@@ -269,12 +385,14 @@ function withPaddingRows(art: LaunchBannerRow[]): LaunchBannerRow[] {
  */
 export function launchBannerRows(input: LaunchBannerInput): LaunchBannerRow[] {
   const columns = resolveColumns(input.columns);
+  // TUI-C40 — the face is the one part a caller may swap; everything below is unchanged geometry.
+  const face = input.face ?? RESTING_FACE;
 
   // Too narrow for the right column: the face alone, with no fields. It keeps its left margin and
   // its blank rows — the padding is what makes it a splash, and it costs one column, not the
   // gutter's five.
   if (columns < MIN_BANNER_COLUMNS) {
-    return withPaddingRows(FACE_LINES.map((face) => ({ face: PAD + face, right: '' })));
+    return withPaddingRows(face.map((line) => ({ face: PAD + line, right: '' })));
   }
 
   // Every field is budgeted against ITS OWN start column, because the version starts further right
@@ -300,9 +418,9 @@ export function launchBannerRows(input: LaunchBannerInput): LaunchBannerRow[] {
   ];
 
   return withPaddingRows(
-    FACE_LINES.map((face, index) => {
+    face.map((line, index) => {
       const right = rightLines[index] ?? '';
-      const padded = PAD + face;
+      const padded = PAD + line;
       // Pad the face out to the split column only when something follows it, so a row whose field
       // was omitted (or truncated away) does not end in a run of spaces.
       return { face: right ? padded.padEnd(RIGHT_COLUMN) : padded, right };

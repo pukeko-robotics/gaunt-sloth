@@ -31,3 +31,23 @@ between turns in `Transcript` and to bracket the input dock in `App`.
   must know the command or run `/help`). Pairs with EXT-5 (slash-command catalog).
 - `SlashCommandResult` is synchronous by design; commands needing async side
   effects (e.g. `/save`) will need an effect-callback extension to the result type.
+
+## Where the live frame sits on screen — a known gap in mouse hit-testing (TUI-C37/C40)
+
+Mapping a click to a component needs the frame's first row in absolute screen coordinates, and Ink
+does not report it: it paints wherever the cursor happens to be. Two states are known exactly, and
+`MouseProvider`'s `anchor` prop selects between them:
+
+- **Nothing committed yet** — the TUI-C13 viewport bump has homed the cursor, so the frame starts at
+  row 0 with empty screen below. This is the launch state, and the one the clickable launch banner
+  lives in.
+- **Output has scrolled the screen** — the frame ends on the last row, so it starts at
+  `rows - frameHeight`.
+
+Between them there is a window the code cannot resolve: a couple of short turns on a tall terminal
+leave the frame neither at row 0 nor at the bottom, and a click there can land a few rows off its
+target. Getting it right needs the number of rows Ink has written into `<Static>`, which Ink keeps
+to itself — a `<Static>`-aware count, or a one-shot cursor-position query (`ESC[6n`) when mouse is
+enabled, are the two plausible routes. Worth doing before any affordance that lives *below* a
+growing transcript becomes clickable; the banner is unaffected because it only exists before the
+first exchange.

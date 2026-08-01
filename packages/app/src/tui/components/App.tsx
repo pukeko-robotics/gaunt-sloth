@@ -793,7 +793,15 @@ export function App(props: TuiAppProps): React.ReactElement {
   return (
     // TUI-C37 — the provider measures this frame and owns the hit-region registry, so a component
     // anywhere below can claim a clickable rectangle without knowing where the frame sits on screen.
-    <MouseProvider subscribe={props.subscribeMouse} enabled={mouseEnabled}>
+    <MouseProvider
+      subscribe={props.subscribeMouse}
+      enabled={mouseEnabled}
+      // TUI-C40 — until something is committed to <Static>, the launch bump has homed the cursor
+      // and Ink paints this frame from row 0 with empty screen below. Once output starts scrolling
+      // past, the frame ends on the last row instead. Getting this wrong puts every hit region a
+      // dozen rows from where it is drawn, which is exactly what the banner click surfaced.
+      anchor={transcript.length === 0 ? 'top' : 'bottom'}
+    >
       <Transcript items={transcript} toolsExpanded={toolsExpanded} />
       {clearedBanner ? <ClearBanner /> : null}
       {/* TUI-C33 — the ASCII-art launch banner, ABOVE the ready message and on the same intro

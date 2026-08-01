@@ -28,9 +28,33 @@ const region = (over: Partial<HitRegion> = {}): HitRegion => ({
 });
 
 describe('liveRegionOrigin', () => {
-  it('places the live frame at the bottom of the viewport', () => {
-    // A 24-row terminal showing a 6-row live frame: the frame starts at absolute row 18.
-    expect(liveRegionOrigin(24, 6)).toBe(18);
+  it('places the live frame at the bottom once output has scrolled the screen', () => {
+    // A 24-row terminal showing a 6-row live frame, with plenty above it: it starts at row 18.
+    expect(liveRegionOrigin(24, 6, Number.MAX_SAFE_INTEGER)).toBe(18);
+  });
+
+  describe('before anything has been committed', () => {
+    // The launch state, and the one the banner is clickable in. The viewport bump homes the cursor,
+    // so Ink paints the first frame at row 0 with the rest of the screen empty BELOW it. Assuming
+    // the bottom here put every hit region a dozen rows under where it was drawn — the banner click
+    // did nothing at all until this was fixed, and no render-only test could see it.
+    it('starts the frame at row 0, not at the bottom of the screen', () => {
+      expect(liveRegionOrigin(30, 14, 0)).toBe(0);
+    });
+
+    it('defaults to that, so a caller that says nothing gets the launch case', () => {
+      expect(liveRegionOrigin(30, 14)).toBe(0);
+    });
+  });
+
+  it('follows the committed output down as it accumulates', () => {
+    expect(liveRegionOrigin(30, 6, 4)).toBe(4);
+    expect(liveRegionOrigin(30, 6, 12)).toBe(12);
+  });
+
+  it('stops at the bottom once the content would overflow the screen', () => {
+    // 20 rows above a 6-row frame does not fit in 24 rows, so the terminal has scrolled.
+    expect(liveRegionOrigin(24, 6, 20)).toBe(18);
   });
 
   it('goes negative when the frame is taller than the window, rather than clamping', () => {

@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Box, Text, useStdout } from 'ink';
 import { launchBannerFields, launchBannerRows } from '@gaunt-sloth/core/core/launchBanner.js';
+import type { SlothAnimation } from '@gaunt-sloth/core/core/launchBanner.js';
+import { useHitRegion } from '#src/tui/useMouse.js';
+import { useSlothAnimation } from '#src/tui/useSlothAnimation.js';
 
 /**
  * TUI-C33 — the ASCII-art launch banner at the top of an interactive TUI session: a magenta sloth
@@ -27,6 +30,7 @@ export function LaunchBanner({
   model,
   provider,
   columns,
+  pickAnimation,
 }: {
   /** `config.modelDisplayName`; absent in the fixture/e2e branch, where the line is omitted. */
   model?: string;
@@ -34,6 +38,8 @@ export function LaunchBanner({
   provider?: string;
   /** Override for the live terminal width. */
   columns?: number;
+  /** TUI-C40 — pin which animation a click plays. Tests only; production takes the random pick. */
+  pickAnimation?: () => SlothAnimation;
 }): React.ReactElement {
   const { stdout } = useStdout();
   // Re-render on resize, exactly as <Rule> does: keep the live column count in state and refresh
@@ -54,10 +60,22 @@ export function LaunchBanner({
   // Version / project dir / home dir are fixed for the life of the session, so resolve them once
   // (the version read touches the filesystem).
   const fields = useMemo(() => launchBannerFields(model, provider), [model, provider]);
-  const rows = launchBannerRows({ ...fields, columns: columns ?? liveColumns });
+
+  // TUI-C40 — the animation is a swap of the face only; every other input to the geometry is
+  // unchanged, so the fields cannot move and the truncation budgets cannot shift mid-play.
+  const { face, play } = useSlothAnimation(pickAnimation);
+  const rows = launchBannerRows({ ...fields, columns: columns ?? liveColumns, face });
+
+  // Claim the whole block as clickable. `useHitRegion` is inert when mouse is off or the surface has
+  // no mouse layer, so this costs a keyboard-only session nothing. The banner lives in the live
+  // region at launch and scrolls into <Static> once the conversation starts, at which point it is
+  // out of reach — expected, and the same boundary every other click affordance has.
+  const ref = useHitRegion('launch-banner', (event) => {
+    if (event.type === 'press') play();
+  });
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" ref={ref}>
       {rows.map((row, index) =>
         // Row index is a stable key: the banner is always the same seven rows in the same order.
         // TUI-C36's blank padding rows are rendered as an explicit one-line-high box rather than an

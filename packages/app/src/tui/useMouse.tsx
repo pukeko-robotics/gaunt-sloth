@@ -42,6 +42,21 @@ export interface MouseProviderProps {
   /** The session's event source; absent when mouse is off. */
   subscribe?: MouseSubscribe;
   enabled: boolean;
+  /**
+   * Where the live frame currently sits on screen.
+   *
+   * `top` — nothing has been committed yet, so the frame is painted from row 0 with empty screen
+   * below it. That is the state at launch, right after the viewport bump, and it is when the launch
+   * banner is clickable.
+   *
+   * `bottom` (the default) — output has scrolled the screen, so the frame ends on the last row.
+   *
+   * A session briefly sits between the two: one short turn committed on a tall terminal leaves the
+   * frame neither at row 0 nor at the bottom, and clicks in that window can land a few rows off.
+   * Narrowing that needs the count of rows Ink has written into `<Static>`, which Ink does not
+   * expose; it is recorded in `NOTES.md` rather than guessed at here.
+   */
+  anchor?: 'top' | 'bottom';
   children: React.ReactNode;
 }
 
@@ -52,7 +67,7 @@ export interface MouseProviderProps {
  * or the window resizes — the two things that would otherwise silently shift every registered
  * region by a few rows and make clicks land one panel off.
  */
-export function MouseProvider({ subscribe, enabled, children }: MouseProviderProps) {
+export function MouseProvider({ subscribe, enabled, anchor, children }: MouseProviderProps) {
   const registryRef = useRef(new HitRegionRegistry());
   const liveRef = useRef<DOMElement | null>(null);
   const { stdout } = useStdout();
@@ -69,9 +84,12 @@ export function MouseProvider({ subscribe, enabled, children }: MouseProviderPro
     const registry = registryRef.current;
     return subscribe((event) => {
       const rows = stdout?.rows ?? FALLBACK_TERMINAL_ROWS;
-      registry.dispatch(event, liveRegionOrigin(rows, heightRef.current));
+      // `bottom` is expressed as "as far down as it will go", which `liveRegionOrigin` then clamps
+      // to the screen — so the two anchors share one formula rather than branching on the caller.
+      const rowsAbove = anchor === 'top' ? 0 : Number.MAX_SAFE_INTEGER;
+      registry.dispatch(event, liveRegionOrigin(rows, heightRef.current, rowsAbove));
     });
-  }, [enabled, subscribe, stdout]);
+  }, [enabled, subscribe, stdout, anchor]);
 
   return (
     <MouseContext.Provider value={{ registry: registryRef.current, enabled }}>
