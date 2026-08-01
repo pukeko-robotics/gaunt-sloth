@@ -445,9 +445,9 @@ class ConfigExtendsError extends Error {}
  * profile config declares `extends: "<base>"`, the base profile's config resolves FIRST
  * (recursively — a base may itself extend another, so base-of-base resolves first), then this
  * profile's own fields merge on top with last-wins semantics: the child overrides the base, nested
- * objects merge, arrays REPLACE except the additive-array fields (`allowDirs`, `aiignore.patterns`,
- * see {@link ADDITIVE_ARRAY_FIELDS}) which accumulate base+child. The `extends` key itself is
- * consumed and never leaks into the composed output.
+ * objects merge, arrays REPLACE except the additive-array fields (`allowDirs`, `aiignore.patterns`
+ * and the three `approvals` rule lists, see {@link isAdditiveArrayField}) which accumulate
+ * base+child. The `extends` key itself is consumed and never leaks into the composed output.
  *
  * A config WITHOUT `extends` is returned UNCHANGED — every non-inheriting config (the vast
  * majority) is untouched and behaves exactly as before.
@@ -918,19 +918,20 @@ export async function tryJsonConfig(
  * REPLACE semantics, because those express "this is THE set" and silently unioning them across
  * global + project would surprise users.
  *
- * | array field          | policy   | rationale                                            |
- * | -------------------- | -------- | ---------------------------------------------------- |
- * | `allowDirs`          | ADDITIVE | extra sandbox roots accumulate across layers         |
- * | `aiignore.patterns`  | ADDITIVE | ignore patterns accumulate across layers             |
- * | `allowedTools`       | replace  | the explicit allow-list IS the set                   |
- * | `builtInTools`       | replace  | the explicit tool selection IS the set               |
- * | `tools`              | replace  | live tool instances; union would be surprising       |
- * | `middleware`         | replace  | ordered pipeline; union would reorder/duplicate      |
- * | `binaryFormats`      | replace  | the declared format policy IS the set                |
- * | (every other array)  | replace  | default; preserves historical behaviour              |
+ * | array field                  | policy   | rationale                                        |
+ * | ---------------------------- | -------- | ------------------------------------------------ |
+ * | `allowDirs`                  | ADDITIVE | extra sandbox roots accumulate across layers     |
+ * | `aiignore.patterns`          | ADDITIVE | ignore patterns accumulate across layers         |
+ * | `approvals.allow`/`deny`/`escalate` | ADDITIVE | see {@link isAdditiveArrayField}          |
+ * | `allowedTools`               | replace  | the explicit allow-list IS the set               |
+ * | `builtInTools`               | replace  | the explicit tool selection IS the set           |
+ * | `tools`                      | replace  | live tool instances; union would be surprising   |
+ * | `middleware`                 | replace  | ordered pipeline; union would reorder/duplicate  |
+ * | `binaryFormats`              | replace  | the declared format policy IS the set            |
+ * | (every other array)          | replace  | default; preserves historical behaviour          |
  *
- * NOTE: the additive fields only live at the config ROOT, so they are triggered only by the
- * `deepMerge` calls that START at the config root (path === ''). There are TWO such sites: the
+ * NOTE: these keys only live at the config ROOT, so they are triggered only by the `deepMerge`
+ * calls that START at the config root (path === ''). There are TWO such sites: the
  * `applyGlobalConfigBase(global, project)` merge, and — as of GS2-41 — the root-level `deepMerge`
  * inside {@link resolveConfigExtends} that composes an `extends` base with its child profile. The
  * per-command `deepMerge` calls start at command scope and never reach these paths.
@@ -938,16 +939,70 @@ export async function tryJsonConfig(
  * NAMESPACE CAVEAT: these keys are config-ROOT-relative, but the per-command
  * `deepMerge(DEFAULT_CONFIG.commands.X, …)` calls also start at `path === ''`. No command
  * default carries `allowDirs`/`aiignore`, so there is no collision today — but do NOT add a
- * key here that could also appear as a per-command field, or it would silently become additive
- * inside command merges too.
+ * key to THIS SET that could also appear as a per-command field, or it would silently become
+ * additive inside command merges too. The approvals rule lists are the deliberate exception and
+ * are therefore matched by path SHAPE ({@link isAdditiveArrayField}) rather than listed here:
+ * for them, additive at every scope is the rule and not an accident.
  */
 const ADDITIVE_ARRAY_FIELDS: ReadonlySet<string> = new Set(['allowDirs', 'aiignore.patterns']);
 
 /**
+ * §9.1/§11.1f — the three approvals rule lists, wherever they appear. `deny` and `escalate` are
+ * PROHIBITIONS, and a prohibition another config layer can quietly delete is not a hardline: §3's
+ * "an appended entry can never perturb an existing outcome" has to hold across layers or it holds
+ * nowhere. So they add up rather than replace, and no layer can narrow another's lists.
+ *
+ * Matched by path SHAPE rather than by an exact root-relative path, because `approvals` is settable
+ * at the root AND per command — `commands.code.approvals.deny` has to add up across the global and
+ * project layers for exactly the same reason `approvals.deny` does, and listing only the root path
+ * would leave the identical silent loss one keystroke away.
+ */
+const APPROVAL_RULE_LIST_PATH = /(^|\.)approvals\.(allow|deny|escalate)$/;
+
+/** Whether the array at this dotted path accumulates across layers instead of being replaced. */
+function isAdditiveArrayField(fieldPath: string): boolean {
+  return ADDITIVE_ARRAY_FIELDS.has(fieldPath) || APPROVAL_RULE_LIST_PATH.test(fieldPath);
+}
+
+/** The `approvals` block itself, at the root or on any command. */
+const APPROVALS_BLOCK_PATH = /(^|\.)approvals$/;
+
+/**
+ * §9.1 — the `approvals` value is a union, and **the scalar rung is exactly sugar for
+ * `{ mode: <rung> }`**. Expanded at merge time so a layer that spells its rung the friendly way
+ * still merges field-wise: left as a string, a project config's `"approvals": "bypass"` simply
+ * overwrites the global's object and discards that layer's rule lists — the same silent loss
+ * {@link APPROVAL_RULE_LIST_PATH} exists to prevent, reached by a different route.
+ */
+function expandApprovalsScalar(value: unknown): unknown {
+  return typeof value === 'string' ? { mode: value } : value;
+}
+
+/**
+ * Whether two layers' `approvals` values have to be merged FIELD-WISE rather than one replacing the
+ * other. True only when both layers set the key AND at least one of them is the object form — i.e.
+ * only when there is a field that replacement would lose.
+ *
+ * Deliberately narrow, because expanding the scalar changes the value's SHAPE: a config that is the
+ * only one to declare `approvals`, and two layers that both spell it as a bare rung, keep the exact
+ * value the user wrote, so `gth config print` and the `/config` panel do not churn for the
+ * overwhelmingly common cases.
+ */
+function approvalsNeedFieldWiseMerge(sourceValue: unknown, targetValue: unknown): boolean {
+  if (sourceValue === undefined || targetValue === undefined) return false;
+  return typeof sourceValue === 'object' || typeof targetValue === 'object';
+}
+
+/**
  * Deep merge two objects, with source overriding target properties.
  * Objects are merged recursively. Arrays REPLACE by default; arrays at an
- * {@link ADDITIVE_ARRAY_FIELDS} path are concatenated (target-first) then de-duplicated by
+ * {@link isAdditiveArrayField} path are concatenated (target-first) then de-duplicated by
  * value. Every other non-plain-object value is replaced by the source value.
+ *
+ * The de-duplication is by VALUE identity (a `Set`), so it removes repeated primitives and leaves
+ * structurally-equal objects — an approvals rule entry written in two layers — both in place. That
+ * is correct rather than merely tolerable: a duplicate entry cannot change a most-restrictive-wins
+ * outcome, and a deep-equality pass could.
  * @param target - The target object with default values (lower-precedence layer)
  * @param source - The source object with user overrides (higher-precedence layer)
  * @param path - Dotted path from the config root, used to look up the array merge policy.
@@ -963,9 +1018,14 @@ function deepMerge<T extends Record<string, unknown>>(
   const result = { ...target };
 
   for (const key in source) {
-    const sourceValue = source[key];
-    const targetValue = target[key];
     const fieldPath = path ? `${path}.${key}` : key;
+    // §9.1 — normalize the `approvals` scalar/object union to its object form when (and only when)
+    // a field would otherwise be lost, so the merge below is field-wise rather than a bare string
+    // clobbering a block that carries the user's rule lists.
+    const mergeApprovalsFieldWise =
+      APPROVALS_BLOCK_PATH.test(fieldPath) && approvalsNeedFieldWiseMerge(source[key], target[key]);
+    const sourceValue = mergeApprovalsFieldWise ? expandApprovalsScalar(source[key]) : source[key];
+    const targetValue = mergeApprovalsFieldWise ? expandApprovalsScalar(target[key]) : target[key];
 
     if (
       sourceValue &&
@@ -984,7 +1044,7 @@ function deepMerge<T extends Record<string, unknown>>(
     } else if (
       Array.isArray(sourceValue) &&
       Array.isArray(targetValue) &&
-      ADDITIVE_ARRAY_FIELDS.has(fieldPath)
+      isAdditiveArrayField(fieldPath)
     ) {
       // Additive list: concat both layers (target/lower-precedence first), de-dupe by value.
       result[key] = [...new Set([...targetValue, ...sourceValue])] as T[Extract<keyof T, string>];

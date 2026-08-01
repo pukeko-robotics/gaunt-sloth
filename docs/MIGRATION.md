@@ -240,11 +240,15 @@ export async function configure() {
 
 When both a global config (`~/.gsloth/...`) and a project config are present, they are
 deep-merged (project wins). In 2.0, arrays **replace** by default instead of merging across
-layers. The only exceptions are two genuinely-cumulative lists, which still concatenate and
+layers. The only exceptions are the genuinely-cumulative lists, which still concatenate and
 de-duplicate:
 
 - `allowDirs`
 - `aiignore.patterns`
+- `approvals.allow`, `approvals.deny`, `approvals.escalate` — wherever they appear, including
+  under `commands.<cmd>.approvals`. These are the rules you trust and the rules you forbid; a
+  prohibition another layer can quietly delete is not a prohibition, so no layer can narrow
+  another's lists, only add to them.
 
 Every other array (`allowedTools`, `builtInTools`, `tools`, `middleware`, `binaryFormats`,
 and so on) is now taken wholesale from the higher-precedence layer. So if you were leaning

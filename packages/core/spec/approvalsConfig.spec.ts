@@ -8,7 +8,9 @@ import {
   isApprovalRung,
   isRatedRung,
   resolveApprovals,
+  type ResolvedApprovals,
 } from '#src/config/shell-policy.js';
+import { resolveApprovalRules } from '#src/core/approvals/matcher.js';
 import type { GthCommand } from '#src/core/types.js';
 
 /**
@@ -23,6 +25,26 @@ import type { GthCommand } from '#src/core/types.js';
 type ApprovalsInput = Parameters<typeof resolveApprovals>[0];
 
 const ALL_COMMANDS: readonly GthCommand[] = ['code', 'chat', 'exec', 'ask', 'review', 'pr', 'api'];
+
+/**
+ * What the resolved posture DECIDES about a shell command, through the one comparison engine
+ * (`resolveApprovalRules`) rather than by reading the arrays back.
+ *
+ * Asserting the decision is the point: an array assertion is satisfied by two copies of one entry,
+ * by entries that match nothing, and by a concatenation in which the surviving list happens to be
+ * the wrong one. It also keeps these tests blind to concatenation ORDER, which is what makes the
+ * order genuinely irrelevant rather than merely unasserted — every deny entry is consulted before
+ * any escalate entry and every escalate entry before any allow entry, so only WHICH entry gets
+ * reported can depend on order, and nothing here reads that.
+ */
+const decisionFor = (
+  command: string,
+  approvals: ResolvedApprovals
+): 'deny' | 'escalate' | 'allow' | undefined =>
+  resolveApprovalRules(
+    { kind: 'shell', command },
+    { allow: approvals.allow, deny: approvals.deny, escalate: approvals.escalate }
+  )?.action;
 
 describe('resolveApprovals (CFG-27 ladder)', () => {
   describe('§1.1 — the default rung is auto-safe, everywhere', () => {
@@ -60,28 +82,137 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
     );
   });
 
-  describe('precedence', () => {
-    it('a per-command value REPLACES the root one wholesale', () => {
+  /**
+   * §9.1 / §11.1f (ratified 2026-08-02) — **a per-command value overrides only the fields it
+   * NAMES, and the three rule lists always concatenate.** This describe pinned the opposite until
+   * that amendment: a per-command value replaced the root wholesale, so `"code": { "approvals":
+   * "bypass" }` — the spelling the docs teach — also deleted every root `deny` entry, at the one
+   * rung where the deny list and the §8 floor are the only checks left.
+   *
+   * The rule now: `mode` / `rater` / `raterTimeoutMs` are replaced when the per-command value
+   * states them and inherited when it does not; `allow` / `deny` / `escalate` never replace. No
+   * scope can narrow another scope's lists, only add to them — narrowing is what `deny` and
+   * `escalate` are *for*. Removing an inherited prohibition for one command is deliberately not
+   * expressible, so there is no syntax here to look for.
+   */
+  describe('§9.1/§11.1f — a per-command value overrides only the fields it names', () => {
+    /** The §11.1f config, verbatim: a root deny plus the friendly per-command scalar. */
+    const ROOT_DENY: ApprovalEntry = {
+      type: 'shell',
+      matcher: 'glob',
+      pattern: 'npm publish*',
+    };
+    const SCALAR_OVERRIDE_CONFIG = {
+      approvals: { mode: 'auto-safe', deny: [ROOT_DENY] },
+      commands: { code: { approvals: 'bypass' } },
+    } as unknown as ApprovalsInput;
+
+    it('the root deny list SURVIVES a per-command scalar rung', () => {
+      const resolved = resolveApprovals(SCALAR_OVERRIDE_CONFIG, 'code');
+      // CONTROL — the override really took effect. Without this the assertion below would pass
+      // just as happily on a config where the per-command value was never read at all, which is
+      // exactly the state a regression would leave it in.
+      expect(resolved.rung).toBe('bypass');
+      expect(resolved.deny).toEqual([ROOT_DENY]);
+      // …and it is the DECISION that survives, not merely an array: the subject is refused.
+      expect(decisionFor('npm publish --access public', resolved)).toBe('deny');
+    });
+
+    it('the scalar sets the rung and NOTHING else — rater and raterTimeoutMs inherit', () => {
+      const resolved = resolveApprovals(
+        {
+          approvals: { mode: 'auto-safe', rater: 'safety-rater', raterTimeoutMs: 90_000 },
+          commands: { code: { approvals: 'bypass' } },
+        } as unknown as ApprovalsInput,
+        'code'
+      );
+      expect(resolved.rung).toBe('bypass');
+      expect(resolved.rater).toBe('safety-rater');
+      expect(resolved.raterTimeoutMs).toBe(90_000);
+    });
+
+    it('CONTROL: a per-command value that DOES name rater/raterTimeoutMs replaces them', () => {
+      // The other direction. Without it the test above pins only "the field has some value",
+      // which a resolver that ignored the per-command block entirely would also satisfy.
+      const resolved = resolveApprovals(
+        {
+          approvals: { mode: 'auto-safe', rater: 'safety-rater', raterTimeoutMs: 90_000 },
+          commands: { code: { approvals: { rater: 'strict-rater', raterTimeoutMs: 5_000 } } },
+        } as unknown as ApprovalsInput,
+        'code'
+      );
+      expect(resolved.rater).toBe('strict-rater');
+      expect(resolved.raterTimeoutMs).toBe(5_000);
+      // `mode` was not named, so it is inherited rather than reset to the default.
+      expect(resolved.rung).toBe('auto-safe');
+    });
+
+    it('an explicit per-command deny ADDS to the root deny rather than replacing it', () => {
+      const resolved = resolveApprovals(
+        {
+          approvals: { mode: 'auto-safe', deny: [ROOT_DENY] },
+          commands: {
+            code: {
+              approvals: {
+                mode: 'bypass',
+                deny: [{ type: 'shell', matcher: 'glob', pattern: 'git push --force*' }],
+              },
+            },
+          },
+        } as unknown as ApprovalsInput,
+        'code'
+      );
+      expect(resolved.rung).toBe('bypass');
+      // Asserted as DECISIONS, both directions: a length-2 array would also be satisfied by two
+      // copies of the same entry, and by entries that match nothing.
+      expect(decisionFor('npm publish --access public', resolved)).toBe('deny');
+      expect(decisionFor('git push --force origin main', resolved)).toBe('deny');
+      // …and the concatenation did not widen into a refuse-everything.
+      expect(decisionFor('npm test', resolved)).toBeUndefined();
+    });
+
+    it('allow and escalate concatenate the same way', () => {
       const resolved = resolveApprovals(
         {
           approvals: {
-            mode: 'bypass',
+            mode: 'auto-safe',
             allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
-            deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
             escalate: [{ type: 'shell', matcher: 'exact', pattern: 'terraform apply' }],
           },
-          commands: { pr: { approvals: 'read-only' } },
+          commands: {
+            code: {
+              approvals: {
+                allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm run build' }],
+                escalate: [{ type: 'shell', matcher: 'exact', pattern: 'terraform destroy' }],
+              },
+            },
+          },
         } as unknown as ApprovalsInput,
-        'pr'
+        'code'
       );
-      expect(resolved.rung).toBe('read-only');
-      // The root value's lists came from the REPLACED value, so they do not leak through.
-      expect(resolved.allow).toEqual([]);
-      expect(resolved.deny).toEqual([]);
-      expect(resolved.escalate).toEqual([]);
+      expect(decisionFor('npm test', resolved)).toBe('allow');
+      expect(decisionFor('npm run build', resolved)).toBe('allow');
+      expect(decisionFor('terraform apply', resolved)).toBe('escalate');
+      expect(decisionFor('terraform destroy', resolved)).toBe('escalate');
+      expect(decisionFor('rm -rf /tmp/x', resolved)).toBeUndefined();
     });
 
-    it('a per-command scalar override resolves wholesale (the §9 example)', () => {
+    it('CONTROL: the root lists are counted ONCE, not once per scope', () => {
+      // The failure mode of the fix, rather than of the defect: a resolver that folded the root
+      // in twice would still refuse the right commands and pass every assertion above.
+      const resolved = resolveApprovals(SCALAR_OVERRIDE_CONFIG, 'code');
+      expect(resolved.deny).toHaveLength(1);
+      expect(resolved.allow).toHaveLength(0);
+      expect(resolved.escalate).toHaveLength(0);
+    });
+
+    it('a command with NO per-command block sees exactly the root value', () => {
+      const resolved = resolveApprovals(SCALAR_OVERRIDE_CONFIG, 'review');
+      expect(resolved.rung).toBe('auto-safe');
+      expect(resolved.deny).toEqual([ROOT_DENY]);
+    });
+
+    it('a per-command scalar sets the rung for that command only (the §9 example)', () => {
       const config = {
         approvals: 'full-auto',
         commands: { pr: { approvals: 'read-only' }, review: { approvals: 'read-only' } },

@@ -509,6 +509,96 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
   });
 
   /**
+   * §9.1/§11.1f, end to end on the real graph — **a per-command rung does not discard the root's
+   * deny list.** This is the exact config the amendment was ratified over: a root `auto-safe` with
+   * one prohibition, and the friendly per-command spelling `"code": { "approvals": "bypass" }`,
+   * which reads as "let the code command run without prompting me" and must not also mean "and
+   * forget everything I forbade". `bypass` is where it matters: the deny list and the §8 floor are
+   * the only checks left there, so a list that silently empties is a command that runs.
+   */
+  it('a per-command bypass keeps the ROOT deny list, on the real graph', async () => {
+    const runner = await makeRunner(['npm publish --access public'], {
+      approvals: {
+        mode: 'auto-safe',
+        deny: [{ type: 'shell', matcher: 'glob', pattern: 'npm publish*' }],
+      },
+      commands: { code: { approvals: 'bypass' } },
+    } as unknown as Partial<GthConfig>);
+    const human = vi.fn();
+    runner.setToolApprovalCallback(human);
+
+    // CONTROL — the per-command override really took effect for this session. Without it the
+    // refusal below would be equally satisfied by a config still sitting at the root's `auto-safe`,
+    // where a refusal proves nothing about `bypass`.
+    expect(runner.getSessionApprovals().rung).toBe('bypass');
+
+    await runTurn(runner, 'ship it');
+
+    expect(human).not.toHaveBeenCalled(); // bypass: nobody was asked…
+    expect(executed).toEqual([]); // …and the root's deny entry still refused it
+  });
+
+  /**
+   * The control for the test above: the rung really is `bypass` and the gate is not simply
+   * refusing everything. A command the root deny list does not name runs unprompted and unrated —
+   * which at `auto-safe` it could not, since the rater would have been consulted.
+   */
+  it('a per-command bypass still RUNS a command the root deny list does not name', async () => {
+    const runner = await makeRunner(['rm -rf node_modules'], {
+      approvals: {
+        mode: 'auto-safe',
+        deny: [{ type: 'shell', matcher: 'glob', pattern: 'npm publish*' }],
+      },
+      commands: { code: { approvals: 'bypass' } },
+    } as unknown as Partial<GthConfig>);
+    const human = vi.fn();
+    runner.setToolApprovalCallback(human);
+
+    await runTurn(runner, 'clean');
+
+    expect(human).not.toHaveBeenCalled();
+    expect(executed).toEqual(['rm -rf node_modules']);
+  });
+
+  /**
+   * §9.1 — and an explicit per-command `deny` ADDS to the root's rather than standing in for it,
+   * which is the case §11.1f specifically settled: the alternative reading leaves the same
+   * silent-loss footgun one keystroke away, needing only a command-specific entry to trigger it.
+   */
+  it('a per-command deny adds to the root deny — both entries refuse, on the real graph', async () => {
+    const configExtra = {
+      approvals: {
+        mode: 'auto-safe',
+        deny: [{ type: 'shell', matcher: 'glob', pattern: 'npm publish*' }],
+      },
+      commands: {
+        code: {
+          approvals: {
+            mode: 'bypass',
+            deny: [{ type: 'shell', matcher: 'glob', pattern: 'git push --force*' }],
+          },
+        },
+      },
+    } as unknown as Partial<GthConfig>;
+
+    const rootDenied = await makeRunner(['npm publish --access public'], configExtra);
+    rootDenied.setToolApprovalCallback(vi.fn());
+    await runTurn(rootDenied, 'ship it');
+    expect(executed).toEqual([]); // the ROOT entry bit at bypass
+
+    const commandDenied = await makeRunner(['git push --force origin main'], configExtra);
+    commandDenied.setToolApprovalCallback(vi.fn());
+    await runTurn(commandDenied, 'force it');
+    expect(executed).toEqual([]); // …and so did the PER-COMMAND one
+
+    // CONTROL — neither is a refuse-everything: a command named by neither list still runs.
+    const allowed = await makeRunner(['echo hi'], configExtra);
+    allowed.setToolApprovalCallback(vi.fn());
+    await runTurn(allowed, 'greet');
+    expect(executed).toEqual(['echo hi']);
+  });
+
+  /**
    * §3.1, stated as a cost the spec accepts and therefore pinned rather than left to be discovered:
    * an **exact** deny entry for `npm publish` does not stop `npm publish --access public`. Under
    * `bypass` — where the deny list is one of only two checks left — that means the command RUNS.

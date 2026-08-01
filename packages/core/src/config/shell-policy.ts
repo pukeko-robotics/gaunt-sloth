@@ -618,12 +618,36 @@ function toApprovalsObject(raw: ApprovalsConfig | undefined): ApprovalsObjectCon
 /**
  * CFG-27 — resolve the effective {@link ResolvedApprovals} for the active command.
  *
- * There is no defaults *matrix* any more: §1.1 makes `auto-safe` the default in every context, so
- * this resolver neither detects nor accepts a "context". Precedence is the only thing it decides:
- * a per-command `approvals` value **replaces the root one wholesale** (no merge), mirroring how
- * `builtInTools` resolves in {@link getEffectiveDevToolsConfig}. Defaults are applied HERE, at the
- * read site, rather than in `DEFAULT_CONFIG` — so the effective-config snapshot the `/config`
- * panel renders never churns (à la GS2-34 `injectModelContext` / GS2-63 `output.header`).
+ * There is no defaults *matrix*: §1.1 makes `auto-safe` the default in every context, so this
+ * resolver neither detects nor accepts a "context". Precedence is the only thing it decides, and
+ * §9.1 splits it in two:
+ *
+ * - **The scalars — `mode`, `rater`, `raterTimeoutMs` — are replaced** when the per-command value
+ *   states them and **inherited from the root when it does not**. So the scalar sugar
+ *   `"code": { "approvals": "bypass" }` is exactly `{ mode: 'bypass' }` merged over the root: it
+ *   sets the rung and nothing else.
+ * - **The three rule lists never replace: they CONCATENATE across every scope**, and are then
+ *   resolved most-restrictive-wins by `resolveApprovalRules`. No scope can narrow another scope's
+ *   lists, only add to them — narrowing is what `deny` and `escalate` are *for*, since they outrank
+ *   `allow`. Removing an inherited prohibition for one command is deliberately not expressible.
+ *
+ * The asymmetry is the point (§11.1f). Were the per-command value to replace the root wholesale,
+ * the friendliest spelling of "stop asking me about `code`" would also delete every `deny` entry —
+ * at the one rung where the deny list and the §8 floor are the only checks left. A prohibition a
+ * nested config key can quietly delete is not a hardline.
+ *
+ * Concatenation order cannot change any outcome (`resolveApprovalRules` consults every deny entry
+ * before any escalate entry and every escalate entry before any allow entry), so root-first is a
+ * convention for readability — matching `GthAgentRunner.approvalRuleLists`, where the declared
+ * entries precede the runtime grants — and never a precedence.
+ *
+ * Defaults are applied HERE, at the read site, rather than in `DEFAULT_CONFIG` — so the
+ * effective-config snapshot the `/config` panel renders never churns (à la GS2-34
+ * `injectModelContext` / GS2-63 `output.header`).
+ *
+ * This is the per-command half. The cross-LAYER half (a project config's lists adding to a global
+ * config's rather than replacing them) is the additive-array policy in `config/loader.ts`; both are
+ * needed, since either alone still loses a list silently.
  *
  * @param command The active command; selects the per-command block.
  */
@@ -631,19 +655,21 @@ export function resolveApprovals(
   config: Pick<GthConfig, 'commands' | 'approvals'> | undefined,
   command: GthCommand | undefined
 ): ResolvedApprovals {
-  const perCommand = command
-    ? (config?.commands as Record<string, { approvals?: ApprovalsConfig }> | undefined)?.[command]
-        ?.approvals
-    : undefined;
-  const raw = toApprovalsObject(perCommand ?? config?.approvals);
+  const root = toApprovalsObject(config?.approvals);
+  const perCommand = toApprovalsObject(
+    command
+      ? (config?.commands as Record<string, { approvals?: ApprovalsConfig }> | undefined)?.[command]
+          ?.approvals
+      : undefined
+  );
 
   return {
-    rung: raw?.mode ?? DEFAULT_APPROVAL_RUNG,
-    rater: raw?.rater,
-    allow: raw?.allow ?? [],
-    deny: raw?.deny ?? [],
-    escalate: raw?.escalate ?? [],
-    raterTimeoutMs: raw?.raterTimeoutMs,
+    rung: perCommand?.mode ?? root?.mode ?? DEFAULT_APPROVAL_RUNG,
+    rater: perCommand?.rater ?? root?.rater,
+    allow: [...(root?.allow ?? []), ...(perCommand?.allow ?? [])],
+    deny: [...(root?.deny ?? []), ...(perCommand?.deny ?? [])],
+    escalate: [...(root?.escalate ?? []), ...(perCommand?.escalate ?? [])],
+    raterTimeoutMs: perCommand?.raterTimeoutMs ?? root?.raterTimeoutMs,
   };
 }
 

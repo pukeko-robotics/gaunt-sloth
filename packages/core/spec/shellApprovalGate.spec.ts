@@ -77,7 +77,10 @@ describe('resolveShellApprovalGate (EXT-52 shared gate policy, CFG-27 ladder)', 
       }
     );
 
-    it('a per-command approvals value replaces the root one', () => {
+    // §9.1 — the per-command value replaces the fields it NAMES, and `mode` is one of them, so the
+    // gate is resolved from the command's rung. The three rule lists concatenate instead (pinned in
+    // approvalsConfig.spec.ts); this gate reads only the rung, so they cannot reach it.
+    it('a per-command approvals value sets the rung this gate reports', () => {
       expect(
         resolveShellApprovalGate(
           config({
