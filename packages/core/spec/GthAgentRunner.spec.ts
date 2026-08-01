@@ -3308,6 +3308,526 @@ describe('GthAgentRunner', () => {
     });
   });
 
+  /**
+   * EXT-70 §4.7.4 — **sticky grants on tool calls**, end to end through the runner: what the menu
+   * says it will store, what it stores, what that grant then covers, and what withdraws it.
+   *
+   * Everything here drives real gated calls and reads the human prompt, because the question is
+   * never "is the right object in the store" but "does the next call still ask". A test that
+   * inspected the store would pass against a store holding exactly the right entries and a gate that
+   * consulted them wrongly.
+   */
+  describe('sticky tool grants and annotation weakening (EXT-70 §4.7.4)', () => {
+    function streamOf(...chunks: string[]) {
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const c of chunks) yield c;
+        },
+      };
+    }
+
+    interface GatedCall {
+      name: string;
+      args?: Record<string, unknown>;
+      /** What the connected servers declare for THIS call, if it should change between calls. */
+      declaring?: Record<string, Record<string, unknown>>;
+    }
+
+    function toolConfig(approvals: Record<string, unknown>) {
+      return {
+        ...mockConfig,
+        streamOutput: true as const,
+        approvals,
+        mcpServers: {
+          jira: { url: 'https://example.invalid/mcp' },
+          gitlab: { url: 'https://example.invalid/gl' },
+        },
+      } as unknown as GthConfig;
+    }
+
+    /**
+     * Drive a SEQUENCE of gated calls on ONE runner, answering every prompt with `answer`, and hand
+     * back what the human was shown each time (`null` where they were not asked).
+     *
+     * A sequence rather than one call because every assertion in this block is about the SECOND
+     * call: whether the first one's grant still covers it. The run is asserted to have suspended and
+     * resumed once per call, so a "was not asked" can never pass on a run in which nothing was gated.
+     */
+    async function driveCalls(
+      config: GthConfig,
+      calls: readonly GatedCall[],
+      answer: Record<string, unknown> = { type: 'approve', scope: 'session' }
+    ): Promise<(PendingToolInterrupt | null)[]> {
+      // The call currently being decided. Every prompt is attributed to it by INDEX rather than by
+      // matching on the tool name: these sequences deliberately repeat one tool, so a name-based
+      // attribution would happily map the third call's prompt onto the second call and turn a
+      // "was not asked" into a pass.
+      let index = -1;
+      const pending = vi.fn(async () => {
+        index += 1;
+        const call = calls[index];
+        return call ? [{ name: call.name, args: call.args ?? {} }] : [];
+      });
+      const declared = vi.fn(() => new Map(Object.entries(calls[index]?.declaring ?? {})));
+      (mockAgent as any).getPendingToolInterrupts = pending;
+      (mockAgent as any).getDeclaredMcpToolAnnotations = declared;
+      const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+      (mockAgent as any).streamResume = streamResume;
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+
+      const byCall: (PendingToolInterrupt | null)[] = calls.map(() => null);
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      await runner.init('code', config);
+      const human = vi.fn(async (prompt: PendingToolInterrupt) => {
+        byCall[index] = prompt;
+        return answer;
+      });
+      runner.setToolApprovalCallback(human as never);
+      await runner.processMessages([new HumanMessage('go')]);
+
+      expect(streamResume).toHaveBeenCalledTimes(calls.length);
+      return byCall;
+    }
+
+    /** The warnings the runner emitted, for the invalidation notice. */
+    const warningsSaid = () =>
+      statusUpdateCallback.mock.calls.map(([, message]) => String(message)).join('\n');
+
+    afterEach(() => {
+      delete (mockAgent as any).getDeclaredMcpToolAnnotations;
+    });
+
+    describe('what the menu says it will store (§6)', () => {
+      it('names the tool and the host, in the form the user would write in config', async () => {
+        const [first] = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'gth_web_fetch', args: { input: 'https://docs.internal.example/guide' } },
+        ]);
+        expect(first?.grantPreview).toBe(
+          '{ "type": "tool", "matcher": "exact", "pattern": "gth_web_fetch", "host": "docs.internal.example" }'
+        );
+      });
+
+      it('names the server for an MCP tool, and no host where none is involved', async () => {
+        const [first] = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'mcp__jira__create_issue', args: { summary: 'a bug' } },
+        ]);
+        // §6's own example: *always approve mcp__jira__create_issue*, where no host is involved.
+        expect(first?.grantPreview).toBe(
+          '{ "type": "mcpTool", "server": "jira", "matcher": "exact", "pattern": "create_issue" }'
+        );
+      });
+    });
+
+    /**
+     * §4.7.4's bound, on the live gate. Both halves, because the first alone passes on a grant that
+     * ignores the host and the second alone passes on a grant that matches nothing.
+     */
+    describe('a tool+host grant binds to that host', () => {
+      const fetchArgs = (url: string) => ({ input: url });
+
+      it('auto-approves the SAME host and PROMPTS for a different one', async () => {
+        const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'gth_web_fetch', args: fetchArgs('https://docs.internal.example/a') },
+          { name: 'gth_web_fetch', args: fetchArgs('https://docs.internal.example/b') },
+          { name: 'gth_web_fetch', args: fetchArgs('https://evil.example/c') },
+        ]);
+        expect(prompts[0], 'the first call asks').not.toBeNull();
+        expect(prompts[1], 'the same host is covered by the grant').toBeNull();
+        expect(prompts[2], 'a different host is not').not.toBeNull();
+      });
+
+      it('and a later call carrying NO host is not covered either', async () => {
+        const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'gth_web_fetch', args: fetchArgs('https://docs.internal.example/a') },
+          { name: 'gth_web_fetch', args: { input: 'not a url' } },
+        ]);
+        expect(prompts[1]).not.toBeNull();
+      });
+    });
+
+    /**
+     * §4.7.5 — the server key is what a grant is bound to, so one server's grant can never be
+     * claimed by another server's same-named tool. The control is the same tool on the same server.
+     */
+    it('a grant for one server’s tool never covers another server’s same-named tool', async () => {
+      const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+        { name: 'mcp__jira__delete_issue' },
+        { name: 'mcp__jira__delete_issue' },
+        { name: 'mcp__gitlab__delete_issue' },
+      ]);
+      expect(prompts[0]).not.toBeNull();
+      expect(prompts[1], 'CONTROL: the same tool on the same server IS covered').toBeNull();
+      expect(prompts[2], 'the other server’s same-named tool is not').not.toBeNull();
+    });
+
+    /**
+     * §6 — the menu may not display one thing and store another. A call naming two hosts has no
+     * honest single-host entry, so no sticky grant is offered at all and nothing is recorded.
+     */
+    describe('a call naming several hosts gets no grant', () => {
+      const twoHosts = { from: 'https://a.example/x', to: 'https://b.example/y' };
+
+      it('offers no preview, records nothing, and asks again next time', async () => {
+        const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'gth_web_fetch', args: twoHosts },
+          { name: 'gth_web_fetch', args: twoHosts },
+        ]);
+        expect(prompts[0]?.grantPreview).toBeUndefined();
+        expect(prompts[1], 'nothing was remembered, so it asks again').not.toBeNull();
+      });
+
+      it('CONTROL: one of those hosts alone does get a preview and does stop asking', async () => {
+        const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'gth_web_fetch', args: { from: 'https://a.example/x' } },
+          { name: 'gth_web_fetch', args: { from: 'https://a.example/x' } },
+        ]);
+        expect(prompts[0]?.grantPreview).toContain('a.example');
+        expect(prompts[1]).toBeNull();
+      });
+    });
+
+    /**
+     * A shell call with no readable `command` presents as a `tool` subject named
+     * `run_shell_command`, and it names no host — so without an explicit exclusion it would take the
+     * tool-only arm and write a grant that auto-approves every future call whose command cannot even
+     * be read.
+     */
+    describe('run_shell_command never becomes a tool grant', () => {
+      it('offers no preview and remembers nothing, so the next malformed call still asks', async () => {
+        const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'run_shell_command', args: {} },
+          { name: 'run_shell_command', args: {} },
+        ]);
+        expect(prompts[0]?.grantPreview).toBeUndefined();
+        expect(prompts[1]).not.toBeNull();
+      });
+
+      it('CONTROL: another tool in exactly the same shape does get a grant', async () => {
+        const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'gth_checklist', args: {} },
+          { name: 'gth_checklist', args: {} },
+        ]);
+        expect(prompts[0]?.grantPreview).toContain('gth_checklist');
+        expect(prompts[1]).toBeNull();
+      });
+    });
+
+    it('at bypass nothing is remembered from a tool call', async () => {
+      const prompts = await driveCalls(toolConfig({ mode: 'bypass' }), [
+        { name: 'gth_checklist', args: {} },
+        { name: 'gth_checklist', args: {} },
+      ]);
+      expect(prompts[0]?.grantPreview).toBeUndefined();
+      expect(prompts[1]).not.toBeNull();
+    });
+
+    /**
+     * §4.7.4 — **weakening invalidates, with a notice.** Every "X does not invalidate" assertion
+     * below is paired with a weakening that DOES, in the same block, because on a broken checker —
+     * one that never invalidates anything — every negative passes and only the pair fails.
+     */
+    describe('weakening the effective annotations invalidates the grant', () => {
+      /** Every hint believed, so a declaration can state any combination and be read verbatim. */
+      const trustingJira = (approvals: Record<string, unknown> = {}) =>
+        toolConfig({
+          mode: 'write',
+          mcp: {
+            servers: {
+              jira: {
+                trustAnnotations: [
+                  'readOnlyHint',
+                  'destructiveHint',
+                  'idempotentHint',
+                  'openWorldHint',
+                ],
+              },
+            },
+          },
+          ...approvals,
+        });
+
+      /**
+       * The three moves, each ISOLATED. `destructiveHint` needs `readOnlyHint: false` on both sides
+       * because effective `readOnlyHint: true` derives `destructiveHint: false` (§4.7.1), so the
+       * obvious spelling would move two hints and prove nothing about `destructiveHint` in
+       * particular — which is exactly how a checker that implements one field and misses two hides.
+       */
+      const LOCAL_WRITE = {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      };
+
+      it.each([
+        [
+          'readOnlyHint true → false',
+          { ...LOCAL_WRITE, readOnlyHint: true },
+          LOCAL_WRITE,
+          'readOnlyHint',
+        ],
+        [
+          'openWorldHint false → true',
+          LOCAL_WRITE,
+          { ...LOCAL_WRITE, openWorldHint: true },
+          'openWorldHint',
+        ],
+        [
+          'destructiveHint false → true',
+          LOCAL_WRITE,
+          { ...LOCAL_WRITE, destructiveHint: true },
+          'destructiveHint',
+        ],
+      ])('%s invalidates, and the notice names it', async (_label, before, after, hint) => {
+        const prompts = await driveCalls(trustingJira(), [
+          { name: 'mcp__jira__search', declaring: { mcp__jira__search: before } },
+          { name: 'mcp__jira__search', declaring: { mcp__jira__search: after } },
+        ]);
+        expect(prompts[0], 'the first call asks and grants').not.toBeNull();
+        expect(prompts[1], 'the weakened tool asks again').not.toBeNull();
+
+        const said = warningsSaid();
+        expect(said).toContain('search');
+        expect(said).toContain('jira');
+        expect(said).toContain(hint);
+      });
+
+      it.each([
+        ['readOnlyHint false → true', LOCAL_WRITE, { ...LOCAL_WRITE, readOnlyHint: true }],
+        [
+          'openWorldHint true → false',
+          { ...LOCAL_WRITE, openWorldHint: true },
+          { ...LOCAL_WRITE, openWorldHint: false },
+        ],
+        ['destructiveHint true → false', { ...LOCAL_WRITE, destructiveHint: true }, LOCAL_WRITE],
+      ])(
+        'the mirror image (%s) STRENGTHENS and the grant stands',
+        async (_label, before, after) => {
+          const prompts = await driveCalls(trustingJira(), [
+            { name: 'mcp__jira__search', declaring: { mcp__jira__search: before } },
+            { name: 'mcp__jira__search', declaring: { mcp__jira__search: after } },
+          ]);
+          expect(prompts[1], 'a safer tool is still covered').toBeNull();
+          expect(warningsSaid()).not.toContain('was removed');
+        }
+      );
+
+      it('an unchanged declaration invalidates nothing', async () => {
+        const prompts = await driveCalls(trustingJira(), [
+          { name: 'mcp__jira__search', declaring: { mcp__jira__search: LOCAL_WRITE } },
+          { name: 'mcp__jira__search', declaring: { mcp__jira__search: LOCAL_WRITE } },
+        ]);
+        expect(prompts[1]).toBeNull();
+      });
+
+      /**
+       * **Descriptions churn on every server release**, and a grant that dissolved on churn would
+       * teach users that grants are worthless. It holds by construction rather than by a rule: a
+       * snapshot is four booleans and a description is not one of them.
+       */
+      it('a change to anything BUT the four hints invalidates nothing', async () => {
+        const prompts = await driveCalls(trustingJira(), [
+          {
+            name: 'mcp__jira__search',
+            declaring: { mcp__jira__search: { ...LOCAL_WRITE, description: 'Search issues.' } },
+          },
+          {
+            name: 'mcp__jira__search',
+            declaring: {
+              mcp__jira__search: {
+                ...LOCAL_WRITE,
+                description: 'Search issues, now with more fields.',
+                title: 'Issue search',
+              },
+            },
+          },
+        ]);
+        expect(prompts[1], 'the grant survives a description change').toBeNull();
+      });
+
+      it('CONTROL: the same pair with one hint weakened DOES invalidate', async () => {
+        const prompts = await driveCalls(trustingJira(), [
+          {
+            name: 'mcp__jira__search',
+            declaring: { mcp__jira__search: { ...LOCAL_WRITE, description: 'Search issues.' } },
+          },
+          {
+            name: 'mcp__jira__search',
+            declaring: {
+              mcp__jira__search: {
+                ...LOCAL_WRITE,
+                openWorldHint: true,
+                description: 'Search issues, now with more fields.',
+              },
+            },
+          },
+        ]);
+        expect(prompts[1]).not.toBeNull();
+      });
+
+      /**
+       * §4.7.1 — an UNTRUSTED server's effective set IS the constant fail-closed default, so its
+       * declarations cannot move it and cannot invalidate anything. By construction, not by a rule.
+       * The control is the very same declaration pair from a TRUSTED server.
+       */
+      it('an untrusted server’s declaration change invalidates nothing', async () => {
+        // No `mcp` block at all: nothing external is believed.
+        const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+          {
+            name: 'mcp__jira__search',
+            declaring: { mcp__jira__search: { ...LOCAL_WRITE, readOnlyHint: true } },
+          },
+          {
+            name: 'mcp__jira__search',
+            declaring: {
+              mcp__jira__search: { ...LOCAL_WRITE, readOnlyHint: false, openWorldHint: true },
+            },
+          },
+        ]);
+        expect(prompts[1], 'nothing the server says can move a constant').toBeNull();
+        expect(warningsSaid()).not.toContain('was removed');
+      });
+
+      it('CONTROL: the very same declaration pair from a TRUSTED server does invalidate', async () => {
+        const prompts = await driveCalls(trustingJira(), [
+          {
+            name: 'mcp__jira__search',
+            declaring: { mcp__jira__search: { ...LOCAL_WRITE, readOnlyHint: true } },
+          },
+          {
+            name: 'mcp__jira__search',
+            declaring: {
+              mcp__jira__search: { ...LOCAL_WRITE, readOnlyHint: false, openWorldHint: true },
+            },
+          },
+        ]);
+        expect(prompts[1]).not.toBeNull();
+      });
+
+      /**
+       * **A tool-only grant imposes no host condition, so it auto-approves a call that DOES carry a
+       * host** — which means the set of grants that could approve a call is larger than the one
+       * entry that call would itself grant. A lookup keyed only on the call's own entry misses the
+       * tool-only grant that is about to approve it, and the weakening rides straight through: the
+       * exact failure §4.7.4 exists to stop, reachable for any tool whose arguments sometimes carry
+       * a URL and sometimes do not.
+       */
+      describe('a tool-only grant is invalidated by a weakened call that carries a host', () => {
+        const withHost = { url: 'https://x.example/a' };
+
+        it('the weakening is caught even though the call now names a host', async () => {
+          const prompts = await driveCalls(trustingJira(), [
+            // Grants {mcpTool jira/fetch} — no host in these arguments, so no host bound.
+            { name: 'mcp__jira__fetch', declaring: { mcp__jira__fetch: LOCAL_WRITE } },
+            {
+              name: 'mcp__jira__fetch',
+              args: withHost,
+              declaring: { mcp__jira__fetch: { ...LOCAL_WRITE, openWorldHint: true } },
+            },
+          ]);
+          expect(prompts[1], 'the weakened tool asks again').not.toBeNull();
+          expect(warningsSaid()).toContain('openWorldHint');
+        });
+
+        it('CONTROL: without the weakening that very call is auto-approved by it', async () => {
+          const prompts = await driveCalls(trustingJira(), [
+            { name: 'mcp__jira__fetch', declaring: { mcp__jira__fetch: LOCAL_WRITE } },
+            {
+              name: 'mcp__jira__fetch',
+              args: withHost,
+              declaring: { mcp__jira__fetch: LOCAL_WRITE },
+            },
+          ]);
+          expect(prompts[1], 'a tool-only grant covers a call carrying a host').toBeNull();
+        });
+
+        /**
+         * The other direction stays untouched: a grant bound to one host is not this call's to
+         * invalidate, because it does not match this call either. Asserted by the host-A grant still
+         * working after a weakened call to host B.
+         */
+        it('a grant bound to another host is NOT invalidated by a weakened call elsewhere', async () => {
+          const prompts = await driveCalls(trustingJira(), [
+            {
+              name: 'mcp__jira__fetch',
+              args: { url: 'https://a.example/1' },
+              declaring: { mcp__jira__fetch: LOCAL_WRITE },
+            },
+            {
+              name: 'mcp__jira__fetch',
+              args: { url: 'https://b.example/2' },
+              declaring: { mcp__jira__fetch: { ...LOCAL_WRITE, openWorldHint: true } },
+            },
+            {
+              name: 'mcp__jira__fetch',
+              args: { url: 'https://a.example/3' },
+              declaring: { mcp__jira__fetch: LOCAL_WRITE },
+            },
+          ]);
+          expect(prompts[1], 'the other host was never granted').not.toBeNull();
+          expect(prompts[2], 'the host A grant survived it').toBeNull();
+        });
+      });
+
+      /**
+       * Invalidation is a REMOVAL, so the human can re-grant. The stores de-duplicate by entry
+       * identity: a grant that was skipped rather than removed would make the re-approval a silent
+       * no-op and the tool would ask forever.
+       */
+      it('the human can re-grant the weakened tool, and the new grant holds', async () => {
+        const prompts = await driveCalls(trustingJira(), [
+          { name: 'mcp__jira__search', declaring: { mcp__jira__search: LOCAL_WRITE } },
+          {
+            name: 'mcp__jira__search',
+            declaring: { mcp__jira__search: { ...LOCAL_WRITE, openWorldHint: true } },
+          },
+          {
+            name: 'mcp__jira__search',
+            declaring: { mcp__jira__search: { ...LOCAL_WRITE, openWorldHint: true } },
+          },
+        ]);
+        expect(prompts[1], 'the weakening asked again').not.toBeNull();
+        expect(prompts[2], 'and the re-grant covers the tool as it now is').toBeNull();
+      });
+
+      /**
+       * An `always` grant and its invalidation both reach the FILE. Held only in memory the removal
+       * would be undone by the next session, so the notice would fire once per session forever.
+       */
+      it('an always-scoped tool grant is persisted, and its invalidation rewrites the file', async () => {
+        const storePath = join(projectDir, SHELL_ALLOWLIST_FILE);
+        await driveCalls(
+          trustingJira(),
+          [{ name: 'mcp__jira__search', declaring: { mcp__jira__search: LOCAL_WRITE } }],
+          { type: 'approve', scope: 'always' }
+        );
+        const written = JSON.parse(readFileSync(storePath, 'utf8'));
+        expect(written.grants).toHaveLength(1);
+        expect(written.grants[0].entry).toEqual({
+          type: 'mcpTool',
+          server: 'jira',
+          matcher: 'exact',
+          pattern: 'search',
+        });
+        expect(written.grants[0].annotations).toEqual(LOCAL_WRITE);
+
+        // A fresh runner reads that file, sees the weakened declaration, and clears the grant.
+        const prompts = await driveCalls(
+          trustingJira(),
+          [
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: { ...LOCAL_WRITE, openWorldHint: true } },
+            },
+          ],
+          { type: 'reject' }
+        );
+        expect(prompts[0], 'the persisted grant no longer covers it').not.toBeNull();
+        expect(JSON.parse(readFileSync(storePath, 'utf8')).grants).toHaveLength(0);
+      });
+    });
+  });
+
   describe('resetThread', () => {
     it('rotates the thread_id so subsequent turns run against a fresh checkpointer thread', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);

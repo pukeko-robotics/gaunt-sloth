@@ -176,9 +176,15 @@ export interface PendingToolInterrupt {
    * thing they are agreeing to rather than a generalization of it, which is what makes the display
    * honest and cheap at once.
    *
+   * **For a tool call the stored thing is the tool, not the arguments** (§4.7.4), so this reads
+   * e.g. `{ "type": "mcpTool", "server": "fetcher", "matcher": "exact", "pattern": "fetch_url",
+   * "host": "docs.internal.example" }`. That is the one place a grant is deliberately broader than
+   * what the human was shown, which is why the display carries the most weight there.
+   *
    * Absent exactly where no sticky grant is on offer — a `catastrophic` outcome (§4.2 withdraws
-   * the persistent grants), a non-shell call, or a rung that remembers nothing — so a prompt never
-   * advertises a control that has already been withdrawn.
+   * the persistent grants), a rung that remembers nothing, a command that does not statically
+   * resolve, or a tool call naming more than one host (which has no honest single-host entry) — so
+   * a prompt never advertises a control that has already been withdrawn.
    */
   grantPreview?: string;
 }
