@@ -843,7 +843,8 @@ describe('tui/slashCommands filterSlashCommands (TUI-C10 menu filter)', () => {
     const { createCommandRegistry, filterSlashCommands } =
       await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
-    expect(filterSlashCommands(registry, 'mo').map((c) => c.name)).toEqual(['model']);
+    // `mo` is a genuine prefix of both /mouse and /model; registry order decides which comes first.
+    expect(filterSlashCommands(registry, 'mo').map((c) => c.name)).toEqual(['mouse', 'model']);
     expect(filterSlashCommands(registry, 'MODEL').map((c) => c.name)).toEqual(['model']);
     expect(filterSlashCommands(registry, 'model').map((c) => c.name)).toEqual(['model']);
   });

@@ -56,6 +56,7 @@ them; in the TUI, typing `/` alone opens a searchable command menu. A few worth 
 - `/reasoning` — reprint a turn's thinking (`/reasoning 2` for turn 2)
 - `/approvals` — show the current rung, the rater and the allow/deny counts;
   `/approvals read-only|write|auto-safe|full-auto|bypass` switches for this session
+- `/mouse` — turn mouse reporting on or off (`/mouse off` to get text selection back)
 - `/debug-dump` — write a diagnostic archive for a bug report (see [debug-dump](../debug-dump.md))
 - `/exit` (or `/quit`) — leave the session
 
@@ -74,6 +75,29 @@ same slash commands. Two global flags force the choice:
 gth --no-tui        # force the plain readline session
 gth --tui code      # force the TUI (e.g. an interactive shell that happens to set CI)
 ```
+
+## Mouse and text selection
+
+The TUI turns on terminal mouse reporting at launch, so clickable parts of the interface respond and
+the wheel scrolls a focused panel. While it is on, your terminal gives drag events to Gaunt Sloth
+rather than using them to select text, so **hold Shift (Option in some macOS terminals) while
+dragging** to select and copy as usual.
+
+If you would rather have unmodified selection back, turn reporting off mid-session — it takes effect
+immediately and the session carries on:
+
+```
+/mouse off
+```
+
+`/mouse on` re-enables it and `/mouse` alone toggles. To make the choice permanent, set
+`useMouse` to `false` in your config; to fix a terminal that mishandles reporting before a session
+even starts, run `GTH_NO_MOUSE=1 gth chat`. See
+[output configuration](../configuration/output.md#mouse-usemouse-gth_no_mouse) for the full
+precedence order.
+
+The plain readline surface (`--no-tui`) has no mouse layer at all, so nothing changes there and
+`/mouse` reports itself unavailable.
 
 ## Interrupting a response
 

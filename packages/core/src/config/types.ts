@@ -277,6 +277,13 @@ export interface GthConfig {
    */
   useColour: boolean;
   /**
+   * Enable terminal mouse reporting in the Ink TUI, making its affordances clickable.
+   * On by default in an interactive terminal. While it is on the terminal's own text selection
+   * needs a modifier (Shift, or Option in some macOS terminals) — set this to `false`, or set
+   * `GTH_NO_MOUSE`, to get unmodified selection back.
+   */
+  useMouse: boolean;
+  /**
    * Stream session log instead of writing it when inference streaming is complete.
    * (only works when {@link streamOutput} is true)
    */

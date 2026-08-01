@@ -435,6 +435,10 @@ export const rawGthConfigSchema = z.looseObject({
   // MUST stay `.optional()` — absence is what distinguishes "the user chose true" from the `true`
   // in `defaults.ts`, and the ladder collapses without that. User docs: docs/configuration/output.md
   useColour: z.boolean().optional(),
+  // TUI-C37 — rung 2 of the mouse ladder (`config/mouse.ts`). MUST stay `.optional()` for the same
+  // reason as `useColour`: absence is what tells "the user chose true" from the `true` in
+  // `defaults.ts`, and rung 2 collapses into rung 4 without it.
+  useMouse: z.boolean().optional(),
   streamSessionInferenceLog: z.boolean().optional(),
   canInterruptInferenceWithEsc: z.boolean().optional(),
   debugLog: z.boolean().optional(),

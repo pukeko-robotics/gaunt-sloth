@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PassThrough } from 'node:stream';
 import type { SessionConfig } from '@gaunt-sloth/agent/modules/interactiveSessionModule.js';
 import type { CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
 
@@ -68,6 +69,13 @@ const systemUtilsMock = {
     rows?: number;
     write: ReturnType<typeof vi.fn>;
   },
+  // TUI-C37 — mouse reports arrive on stdin, so the module reads it to build the filtered proxy.
+  stdin: Object.assign(new PassThrough(), {
+    isTTY: true,
+    setRawMode: vi.fn(),
+    ref: vi.fn(),
+    unref: vi.fn(),
+  }),
 };
 vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => systemUtilsMock);
 
@@ -304,5 +312,119 @@ describe('createTuiSession — launch bump (TUI-C13)', () => {
     ]);
     // Nothing leaked to raw stdout while the turn's subscription was live.
     expect(systemUtilsMock.stdout.write).not.toHaveBeenCalledWith('suite green\n');
+  });
+});
+
+/**
+ * TUI-C37 — the session module's mouse wiring. The point of these is the negative case: a run with
+ * mouse off must be byte-identical to one built before mouse existed, which is what keeps piped and
+ * captured output clean.
+ */
+describe('createTuiSession — mouse wiring (TUI-C37)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    systemUtilsMock.env = {};
+    systemUtilsMock.stdout.isTTY = true;
+    systemUtilsMock.stdout.rows = 24;
+    resolveAgentFactoryMock.mockReturnValue(resolvedFactory);
+    runnerInitMock.mockResolvedValue(undefined);
+    runnerGetAgentMock.mockReturnValue({});
+    runnerCleanupMock.mockResolvedValue(undefined);
+    renderMock.mockReturnValue({
+      clear: vi.fn(),
+      waitUntilExit: vi.fn().mockResolvedValue(undefined),
+    });
+  });
+
+  it('writes no mouse escape bytes at all when the resolved config says mouse is off', async () => {
+    initConfigMock.mockResolvedValue({ useMouse: false });
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await createTuiSession(sessionConfig, overrides);
+
+    const written = systemUtilsMock.stdout.write.mock.calls.map((c) => c[0] as string).join('');
+    expect(written).not.toContain('1006');
+    expect(written).not.toContain('1000h');
+  });
+
+  it('still installs the stdin filter when mouse is off, so /mouse on can work later', async () => {
+    // The filter has to be in front of Ink before render, and Ink can never be handed a different
+    // stdin afterwards. Making it conditional is what silently broke `/mouse on` in a session that
+    // started with mouse off: the state flipped, the notice printed, and nothing happened.
+    initConfigMock.mockResolvedValue({ useMouse: false });
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await createTuiSession(sessionConfig, overrides);
+
+    const options = renderMock.mock.calls[0][1] as { stdin: unknown };
+    expect(options.stdin).toBeDefined();
+    expect(options.stdin).not.toBe(systemUtilsMock.stdin);
+  });
+
+  it('lets a session that started with mouse off turn reporting on', async () => {
+    initConfigMock.mockResolvedValue({ useMouse: false });
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await createTuiSession(sessionConfig, overrides);
+    const before = systemUtilsMock.stdout.write.mock.calls.map((c) => c[0] as string).join('');
+    expect(before).not.toContain('\x1b[?1006h');
+
+    // The App asks the session module to apply the toggle; this is that call.
+    const appElement = renderMock.mock.calls[0][0] as {
+      props: { onSetMouse?: (enabled: boolean) => void };
+    };
+    appElement.props.onSetMouse?.(true);
+
+    const after = systemUtilsMock.stdout.write.mock.calls.map((c) => c[0] as string).join('');
+    expect(after).toContain('\x1b[?1006h');
+  });
+
+  it('enables reporting and hands Ink the FILTERED stdin when mouse is on', async () => {
+    initConfigMock.mockResolvedValue({ useMouse: true });
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await createTuiSession(sessionConfig, overrides);
+
+    const written = systemUtilsMock.stdout.write.mock.calls.map((c) => c[0] as string).join('');
+    expect(written).toContain('\x1b[?1006h');
+    // Not the real stdin: mouse reports must be stripped before Ink ever sees them.
+    const options = renderMock.mock.calls[0][1] as { stdin: unknown };
+    expect(options.stdin).toBeDefined();
+    expect(options.stdin).not.toBe(systemUtilsMock.stdin);
+  });
+
+  it('restores the terminal after the session ends', async () => {
+    initConfigMock.mockResolvedValue({ useMouse: true });
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await createTuiSession(sessionConfig, overrides);
+
+    const written = systemUtilsMock.stdout.write.mock.calls.map((c) => c[0] as string).join('');
+    expect(written).toContain('\x1b[?1006l');
+  });
+
+  it('restores the terminal even when the session throws', async () => {
+    // The path that leaves a shell spewing escape gibberish if it is missed.
+    initConfigMock.mockResolvedValue({ useMouse: true });
+    renderMock.mockReturnValue({
+      clear: vi.fn(),
+      waitUntilExit: vi.fn().mockRejectedValue(new Error('boom')),
+    });
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await expect(createTuiSession(sessionConfig, overrides)).rejects.toThrow('boom');
+
+    const written = systemUtilsMock.stdout.write.mock.calls.map((c) => c[0] as string).join('');
+    expect(written).toContain('\x1b[?1006l');
+  });
+
+  it('seeds the App with the resolved mouse state', async () => {
+    initConfigMock.mockResolvedValue({ useMouse: true });
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await createTuiSession(sessionConfig, overrides);
+
+    const appElement = renderMock.mock.calls[0][0] as { props: { mouseEnabled?: boolean } };
+    expect(appElement.props.mouseEnabled).toBe(true);
   });
 });
