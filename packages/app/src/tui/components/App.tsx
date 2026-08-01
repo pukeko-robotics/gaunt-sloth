@@ -21,6 +21,7 @@ import { PromptInput } from '#src/tui/components/PromptInput.js';
 import { Rule } from '#src/tui/components/Rule.js';
 import { ClearBanner } from '#src/tui/components/ClearBanner.js';
 import { LaunchBanner } from '#src/tui/components/LaunchBanner.js';
+import { MouseProvider } from '#src/tui/useMouse.js';
 import {
   DebugPanel,
   debugPanelLines,
@@ -80,6 +81,8 @@ export function App(props: TuiAppProps): React.ReactElement {
   const [subagents, setSubagents] = useState<SubagentTreeViewModel>(initialSubagentTree);
   // Docked debug panel state (toggled by /debug).
   const [debugVisible, setDebugVisible] = useState(false);
+  // TUI-C37 — live mouse state, seeded from the resolved `config.useMouse` and flipped by `/mouse`.
+  const [mouseEnabled, setMouseEnabled] = useState(!!props.mouseEnabled);
   const [debugFocused, setDebugFocused] = useState(false);
   const [debugTab, setDebugTab] = useState<DebugTab>(DEBUG_TABS[0]);
   const [debugScroll, setDebugScroll] = useState(0);
@@ -130,6 +133,9 @@ export function App(props: TuiAppProps): React.ReactElement {
   // Likewise a mirror of debugVisible, so the slash dispatch can pass the current panel state
   // into the command context (for state-aware /debug copy) without a stale closure.
   const debugVisibleRef = useRef(false);
+  // Same mirror for mouse, so `/mouse` with no argument toggles from the CURRENT state rather than
+  // from whatever the dispatch closure captured.
+  const mouseEnabledRef = useRef(!!props.mouseEnabled);
   const abortRef = useRef<AbortController | null>(null);
   const idRef = useRef(0);
   const runningRef = useRef(false);
@@ -296,6 +302,18 @@ export function App(props: TuiAppProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // TUI-C37 — apply a `/mouse` toggle. The session module owns the escape sequences, so this
+  // updates the state the registry and the hint copy read, then asks it to act.
+  const applyMouse = useCallback(
+    (next: boolean) => {
+      mouseEnabledRef.current = next;
+      setMouseEnabled(next);
+      props.onSetMouse?.(next);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
+
   // CFG-27 — apply an approvals RUNG change (`/approvals <rung>`). The runner owns the posture,
   // so ask it to apply the rung, mirror the LANDED posture into local state + ref (drives the
   // status badge), and commit the state-aware notice. Falls back to a clear system line when the
@@ -439,6 +457,9 @@ export function App(props: TuiAppProps): React.ReactElement {
             turnCount: turnCountRef.current,
             toolsExpanded: toolsExpandedRef.current,
             debugVisible: debugVisibleRef.current,
+            // TUI-C37 — undefined (not false) when this surface has no mouse layer, so `/mouse`
+            // says it is unavailable rather than silently reporting "off".
+            mouseEnabled: props.mouseEnabled === undefined ? undefined : mouseEnabledRef.current,
             configSummary: props.configSummary,
             // TUI-C19 — the actual validation warnings so `/config` renders the details the
             // standing advisory line points at.
@@ -494,6 +515,9 @@ export function App(props: TuiAppProps): React.ReactElement {
           // toggleTools owns the notice so the copy matches the state actually applied.
           toggleTools();
         }
+        if (result.setMouse !== undefined) {
+          applyMouse(result.setMouse);
+        }
         if (result.approvals) {
           // The runner owns the posture; show it, or apply the requested mode and commit the
           // notice for the LANDED state via the shared helper (single-sourced with the approval
@@ -541,7 +565,17 @@ export function App(props: TuiAppProps): React.ReactElement {
       void runTurn(value);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [runTurn, quit, registry, mode, modelDisplayName, toggleTools, applyApprovalRung, showApprovals]
+    [
+      runTurn,
+      quit,
+      registry,
+      mode,
+      modelDisplayName,
+      toggleTools,
+      applyApprovalRung,
+      showApprovals,
+      applyMouse,
+    ]
   );
 
   // Keyboard handling, in priority order:
@@ -757,7 +791,9 @@ export function App(props: TuiAppProps): React.ReactElement {
   const showIntro = !initialMessage && transcript.length === 0 && !live;
 
   return (
-    <Box flexDirection="column">
+    // TUI-C37 — the provider measures this frame and owns the hit-region registry, so a component
+    // anywhere below can claim a clickable rectangle without knowing where the frame sits on screen.
+    <MouseProvider subscribe={props.subscribeMouse} enabled={mouseEnabled}>
       <Transcript items={transcript} toolsExpanded={toolsExpanded} />
       {clearedBanner ? <ClearBanner /> : null}
       {/* TUI-C33 — the ASCII-art launch banner, ABOVE the ready message and on the same intro
@@ -835,6 +871,6 @@ export function App(props: TuiAppProps): React.ReactElement {
       ) : null}
       <Text dimColor>{exitMessage.trim()}</Text>
       <Rule />
-    </Box>
+    </MouseProvider>
   );
 }

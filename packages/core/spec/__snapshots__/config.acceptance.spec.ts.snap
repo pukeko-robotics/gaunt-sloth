@@ -104,6 +104,7 @@ exports[`effective-merged acceptance (B2b) > resolves examples/a2a/.gsloth.confi
   "streamOutput": true,
   "streamSessionInferenceLog": true,
   "useColour": true,
+  "useMouse": false,
   "writeBinaryOutputsToFile": true,
   "writeOutputToFile": false,
 }
@@ -219,6 +220,7 @@ exports[`effective-merged acceptance (B2b) > resolves examples/jira-mcp/.gsloth.
   "streamOutput": true,
   "streamSessionInferenceLog": true,
   "useColour": true,
+  "useMouse": false,
   "writeBinaryOutputsToFile": true,
   "writeOutputToFile": false,
 }
@@ -325,6 +327,7 @@ exports[`effective-merged acceptance (B2b) > resolves examples/lmstudio/.gsloth.
   "streamOutput": true,
   "streamSessionInferenceLog": true,
   "useColour": true,
+  "useMouse": false,
   "writeBinaryOutputsToFile": true,
   "writeOutputToFile": false,
 }
@@ -427,6 +430,7 @@ exports[`effective-merged acceptance (B2b) > resolves examples/simple-DIY-helper
   "streamOutput": true,
   "streamSessionInferenceLog": true,
   "useColour": true,
+  "useMouse": false,
   "writeBinaryOutputsToFile": true,
   "writeOutputToFile": false,
 }
@@ -524,6 +528,7 @@ exports[`effective-merged acceptance (B2b) > resolves the consumer-shaped fixtur
   "streamOutput": true,
   "streamSessionInferenceLog": true,
   "useColour": true,
+  "useMouse": false,
   "writeBinaryOutputsToFile": true,
   "writeOutputToFile": false,
 }

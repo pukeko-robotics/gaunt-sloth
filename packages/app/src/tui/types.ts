@@ -8,6 +8,7 @@ import type { TurnViewModel } from '#src/tui/viewModel.js';
 import type { AllowlistCounts, ApprovalRung, ResolvedApprovals } from '@gaunt-sloth/core/config.js';
 import type { CommandNoticeTone } from '#src/tui/components/CommandNotice.js';
 import type { DebugDumpInput } from '@gaunt-sloth/agent/modules/slashCommands.js';
+import type { MouseSubscribe } from '#src/tui/useMouse.js';
 
 /**
  * One in-flight tool-approval request bridged from the runner into the mounted `<App>`
@@ -100,6 +101,22 @@ export interface TuiAppProps {
    * piped/redirected/non-TTY runs and the component specs stay clean. Absent ⇒ no banner.
    */
   showLaunchBanner?: boolean;
+  /**
+   * TUI-C37 — whether terminal mouse reporting is on at session start, as resolved by
+   * `config.useMouse`. Absent ⇒ this surface has no mouse layer at all, which is what makes
+   * `/mouse` report itself unavailable instead of pretending to toggle something.
+   */
+  mouseEnabled?: boolean;
+  /**
+   * TUI-C37 — the decoded mouse-event source, bridged in like `subscribeStatus`. The App routes
+   * events into the hit-region registry; components claim rectangles with `useHitRegion`.
+   */
+  subscribeMouse?: MouseSubscribe;
+  /**
+   * TUI-C37 — apply a `/mouse` toggle. The session module owns the escape sequences (writing them
+   * is not something a pure component should do), so the App asks and the module acts.
+   */
+  onSetMouse?: (enabled: boolean) => void;
   /**
    * CFG-27 — the RESOLVED approvals posture at session start, so the status bar names the real
    * rung from the very first frame. The session module seeds it from

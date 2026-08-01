@@ -21,6 +21,7 @@ import {
   APPROVAL_RUNGS,
   isRatedRung,
 } from '@gaunt-sloth/core/config.js';
+import { MOUSE_SELECTION_HINT } from '@gaunt-sloth/core/config/mouse.js';
 
 /** Read-only session context a command may surface (e.g. `/status`, `/model`). */
 export interface SlashCommandContext {
@@ -32,6 +33,12 @@ export interface SlashCommandContext {
   toolsExpanded: boolean;
   /** Whether the docked debug panel is currently shown (drives `/debug` copy). */
   debugVisible: boolean;
+  /**
+   * TUI-C37 — whether terminal mouse reporting is currently on (drives `/mouse` copy). Undefined on
+   * surfaces that have no mouse layer at all, where `/mouse` reports itself unavailable rather than
+   * claiming a state it cannot change.
+   */
+  mouseEnabled?: boolean;
   /**
    * Pre-rendered, secret-free summary lines of the resolved config, surfaced read-only by
    * `/config` (GS2-1). The App builds these once from the resolved config (see
@@ -279,6 +286,12 @@ export interface SlashCommandResult {
   /** When true, the component toggles tool-call panels between collapsed and expanded. */
   toggleTools?: boolean;
   /**
+   * TUI-C37 — the state `/mouse` asks the surface to move terminal mouse reporting to. The command
+   * stays pure (it cannot write escape sequences), so the App applies it and owns the actual
+   * enable/disable, the same division `/approvals` uses for the runner's posture.
+   */
+  setMouse?: boolean;
+  /**
    * CFG-27 — a requested action from `/approvals`. `{ show: true }` asks the surface to DISPLAY
    * the current posture; `{ rung }` asks it to switch the session to that rung. The command itself
    * stays pure — it cannot read the runner's posture — so the surface owns the apply + the
@@ -440,6 +453,55 @@ export function debugToggleNotice(visible: boolean): SlashCommandNotice {
  * NOT here — the hardline floor. §8.1 forbids advertising it: descriptions name only protections
  * the user can inspect and extend, which is the deny list.
  */
+/**
+ * TUI-C37 — feedback for `/mouse`, describing the state the session has LANDED on.
+ *
+ * The selection hint is repeated on every "on" notice rather than shown once at launch, because the
+ * moment a user reaches for `/mouse` is exactly the moment they are trying to copy something and
+ * finding that dragging no longer selects. Telling them there and then is the difference between a
+ * fixed problem and a filed bug.
+ */
+export function mouseToggleNotice(enabled: boolean): SlashCommandNotice {
+  return {
+    title: enabled ? 'Mouse on' : 'Mouse off',
+    lines: enabled
+      ? [
+          'Clickable parts of the interface respond to the mouse, and the wheel scrolls a focused panel.',
+          MOUSE_SELECTION_HINT,
+          'Turn it off for this session with /mouse off, or always with useMouse false in your config.',
+        ]
+      : [
+          'Mouse reporting is off; text selection and copying work exactly as your terminal normally does.',
+          'Turn it back on with /mouse on.',
+        ],
+  };
+}
+
+/** TUI-C37 — `/mouse` on a surface with no mouse layer (the plain readline session, the fixture). */
+export function mouseUnavailableNotice(): SlashCommandNotice {
+  return {
+    title: 'Mouse unavailable',
+    lines: [
+      'This session has no mouse layer, so there is nothing to turn on or off.',
+      'Mouse input needs an interactive terminal running the TUI.',
+    ],
+    tone: 'warn',
+  };
+}
+
+/**
+ * TUI-C37 — parse `/mouse [on|off]`. No argument means "toggle", which is what a bare command name
+ * usually means; `null` marks an argument that is neither, so the caller can say so rather than
+ * guess. `resolve` needs the current state only for the toggle case.
+ */
+export function parseMouseArg(args: string[], current: boolean): boolean | null {
+  if (args.length === 0) return !current;
+  const arg = args[0].toLowerCase();
+  if (arg === 'on') return true;
+  if (arg === 'off') return false;
+  return null;
+}
+
 export function approvalsRungNotice(approvals: ResolvedApprovals): SlashCommandNotice {
   const lines = [APPROVAL_RUNG_DESCRIPTIONS[approvals.rung]];
   if (isRatedRung(approvals.rung) && approvals.rater) {
@@ -664,6 +726,27 @@ export function createCommandRegistry(): SlashCommand[] {
       availableDuringRun: true,
       // State-aware: report the notice for the state the toggle will land on (the inverse of now).
       run: (ctx) => ({ toggleTools: true, notice: toolsToggleNotice(!ctx.toolsExpanded) }),
+    },
+    {
+      name: 'mouse',
+      description: 'Turn terminal mouse reporting on or off (/mouse on|off; no arg toggles)',
+      availableDuringRun: true,
+      // Available mid-turn deliberately: the reason to reach for this is usually wanting to copy
+      // something off the screen, and that urge does not wait for the run to finish.
+      run: (ctx, args) => {
+        if (ctx.mouseEnabled === undefined) return { notice: mouseUnavailableNotice() };
+        const target = parseMouseArg(args, ctx.mouseEnabled);
+        if (target === null) {
+          return {
+            notice: {
+              title: `Unknown option: ${args[0]}`,
+              lines: ['Usage: /mouse [on|off] — with no argument it toggles.'],
+              tone: 'warn',
+            },
+          };
+        }
+        return { setMouse: target, notice: mouseToggleNotice(target) };
+      },
     },
     {
       name: 'approvals',

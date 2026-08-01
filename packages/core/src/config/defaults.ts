@@ -84,6 +84,7 @@ export const DEFAULT_CONFIG = {
   writeOutputToFile: false,
   writeBinaryOutputsToFile: true,
   useColour: true,
+  useMouse: true,
   streamSessionInferenceLog: true,
   canInterruptInferenceWithEsc: true,
   aiignore: {

@@ -2,6 +2,7 @@ import React from 'react';
 import { render } from 'ink';
 import { type CommandLineConfigOverrides, initConfig } from '@gaunt-sloth/core/config.js';
 import { resolveUseColour } from '@gaunt-sloth/core/config/colour.js';
+import { resolveUseMouse } from '@gaunt-sloth/core/config/mouse.js';
 import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
 import {
   mergeToolOutputIntoEvents,
@@ -17,7 +18,7 @@ import {
   stopSessionLogging,
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
-import { env, getProjectDir, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { env, getProjectDir, stdin, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
 import {
   openConversationSafe,
   recordSessionSafe,
@@ -55,6 +56,10 @@ import {
 } from '#src/tui/debugRender.js';
 import type { AgentResolvers } from '@gaunt-sloth/core/core/types.js';
 import { viewportBumpSequence } from '#src/tui/terminal.js';
+import { installMouseReporting, type MouseReportingHandle } from '#src/tui/mouseReporting.js';
+import { createMouseStdin } from '#src/tui/mouseStdin.js';
+import type { MouseEvent } from '#src/tui/mouseParser.js';
+import type { MouseSubscribe } from '#src/tui/useMouse.js';
 import type { DebugRequestExtras } from '@gaunt-sloth/agent/core/debugCapture.js';
 
 /** The `/history` `/insights` `/search` props, or `{}` when no store is available. */
@@ -119,6 +124,55 @@ function dumpDebugSession(input: DebugDumpInput): { archiveDir: string } {
     // forward it so the writer applies (or skips) the shared secret-redaction pass.
     redact: input.redact,
   });
+}
+
+/**
+ * TUI-C37 — the session's mouse plumbing, or `undefined` when mouse is off.
+ *
+ * Three things have to be torn down together and in order, which is why they are created together:
+ * the terminal's reporting mode, the stdin filter sitting in front of Ink, and the event fan-out.
+ * `dispose` is idempotent and safe to call from more than one exit path, because more than one exit
+ * path will call it.
+ */
+interface MouseSession {
+  subscribe: MouseSubscribe;
+  stdin: NodeJS.ReadStream;
+  /** Turn reporting on/off mid-session for `/mouse`, without rebuilding the stdin filter. */
+  setEnabled: (enabled: boolean) => void;
+  dispose: () => void;
+}
+
+function createMouseSession(): MouseSession {
+  const listeners = new Set<(event: MouseEvent) => void>();
+  // The filter stays installed even while reporting is off: with tracking disabled the terminal
+  // sends nothing, so the filter costs an untaken branch, and leaving it in place means `/mouse on`
+  // does not have to hand Ink a different stdin mid-session (which it cannot do).
+  const mouseStdin = createMouseStdin(stdin, (event) => {
+    for (const listener of listeners) listener(event);
+  });
+  let reporting: MouseReportingHandle | undefined = installMouseReporting();
+  return {
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    stdin: mouseStdin.stdin,
+    setEnabled: (enabled) => {
+      if (enabled && !reporting) reporting = installMouseReporting();
+      else if (!enabled && reporting) {
+        reporting.dispose();
+        reporting = undefined;
+      }
+    },
+    dispose: () => {
+      reporting?.dispose();
+      reporting = undefined;
+      mouseStdin.dispose();
+      listeners.clear();
+    },
+  };
 }
 
 type StatusListener = (level: string, message: string) => void;
@@ -259,6 +313,17 @@ export async function createTuiSession(
       })
     );
     const { createFixtureTuiAgent } = await import('#src/tui/fixtureAgent.js');
+    // TUI-C37 — same treatment for mouse, and for the same reason the banner gets it: with no
+    // config on this branch, ask the ladder directly with the inputs the loader would have given
+    // it. Without this the PTY suite could never prove that a real mouse report stays out of the
+    // prompt, which is the one mouse regression a user would notice immediately.
+    const fixtureUseMouse = resolveUseMouse({
+      noMouse: env.GTH_NO_MOUSE,
+      term: env.TERM,
+      stdoutIsTTY: !!stdout.isTTY,
+      stdinIsTTY: !!stdin.isTTY,
+    });
+    const fixtureMouse = fixtureUseMouse ? createMouseSession() : undefined;
     // Holder so `onResetFrame` can reach the not-yet-created render instance (App writes the
     // /clear scroll/clear escapes itself, then asks Ink to forget its last frame — TUI-C12).
     let resetFrame: (() => void) | undefined;
@@ -266,6 +331,9 @@ export async function createTuiSession(
       <App
         agent={createFixtureTuiAgent(fixturePath)}
         mode={sessionConfig.mode}
+        mouseEnabled={fixtureUseMouse}
+        subscribeMouse={fixtureMouse?.subscribe}
+        onSetMouse={(enabled) => fixtureMouse?.setEnabled(enabled)}
         // TUI-C33: the banner is chrome, not model output, so the hermetic e2e branch shows it too
         // — that is what lets the PTY suite prove the art actually paints. No config here, so it
         // renders without the model/provider line.
@@ -280,10 +348,15 @@ export async function createTuiSession(
         // optional/opaque and the command already handles it being undefined.
         dumpDebugSession={dumpDebugSession}
         onResetFrame={() => resetFrame?.()}
-      />
+      />,
+      fixtureMouse ? { stdin: fixtureMouse.stdin } : undefined
     );
     resetFrame = () => instance.clear();
-    await instance.waitUntilExit();
+    try {
+      await instance.waitUntilExit();
+    } finally {
+      fixtureMouse?.dispose();
+    }
     return;
   }
 
@@ -337,6 +410,10 @@ export async function createTuiSession(
   // lines route through the status bridge into the notice surface here, not raw stdout. A fresh
   // object (not an in-place mutation) so nothing else that already captured `config` is affected.
   const agentConfig: GthConfig = { ...config, output: { ...config.output, header: true } };
+
+  // TUI-C37 — declared out here so the catch path can tear the terminal back down too. A throw
+  // between render and unmount is exactly when a terminal gets left in mouse-reporting mode.
+  let mouseSession: MouseSession | undefined;
 
   try {
     await runner.init(sessionConfig.mode, agentConfig, checkpointSaver);
@@ -469,9 +546,16 @@ export async function createTuiSession(
     // precedence — and the `finally` below clears it on every exit path, restoring the headless
     // stdout sink once the TUI is gone.
     setToolOutputSuppressed(true);
+    // TUI-C37 — mouse plumbing, built only when the resolved ladder says so. When it is off,
+    // nothing is installed and Ink receives the real stdin, so the session is byte-identical to one
+    // built before mouse existed — which is what keeps the non-TTY and piped cases honest.
+    mouseSession = config.useMouse ? createMouseSession() : undefined;
     const instance = render(
       <App
         agent={tuiAgent}
+        mouseEnabled={config.useMouse}
+        subscribeMouse={mouseSession?.subscribe}
+        onSetMouse={(enabled) => mouseSession?.setEnabled(enabled)}
         mode={sessionConfig.mode}
         modelDisplayName={config.modelDisplayName}
         // TUI-C33: the banner names the provider too, which the status bar does not.
@@ -501,12 +585,19 @@ export async function createTuiSession(
           await runner.cleanup();
           stopSessionLogging();
         }}
-      />
+      />,
+      // TUI-C37 — Ink reads the FILTERED stdin so mouse reports never reach its keyboard path and
+      // get typed into the prompt. Absent when mouse is off, in which case Ink takes the real one.
+      mouseSession ? { stdin: mouseSession.stdin } : undefined
     );
     resetFrame = () => instance.clear();
 
     await instance.waitUntilExit();
+    // TUI-C37 — restore the terminal the moment Ink is done with it. The process-level hooks
+    // installed alongside remain as the backstop for the paths that never get here.
+    mouseSession?.dispose();
   } catch (err) {
+    mouseSession?.dispose();
     approvalBridge.abortPending();
     await runner.cleanup();
     stopSessionLogging();

@@ -177,6 +177,39 @@ your terminal reports rather than forcing 24-bit escapes into a terminal that ca
 one exception is `FORCE_COLOR` where no colour support was detected at all, which gets basic
 16-colour output.
 
+## Mouse (useMouse, GTH_NO_MOUSE)
+
+Get your terminal's normal click-and-drag text selection back for one run:
+
+```bash
+GTH_NO_MOUSE=1 gth chat
+```
+
+The TUI enables terminal mouse reporting on launch, which is what makes its clickable parts respond
+and lets the wheel scroll a focused panel. The trade is that while reporting is on, your terminal
+hands drag events to Gaunt Sloth instead of using them for its own selection — so selecting text to
+copy needs a modifier: **hold Shift (Option in some macOS terminals) while dragging**.
+
+Four things decide whether mouse reporting is enabled, **highest first**:
+
+| | Condition | Result |
+|---|---|---|
+| 1 | `GTH_NO_MOUSE` is set to any non-empty value | off |
+| 2 | `useMouse` is set in your config | that value |
+| 3 | `TERM` is unset, empty, or `dumb` | off |
+| 4 | otherwise | on when both stdin and stdout are terminals |
+
+Row 4 is the default, so a piped or redirected run never emits mouse escape sequences and captured
+output stays clean without configuring anything. To turn it off permanently:
+
+```json
+{ "useMouse": false }
+```
+
+Row 1 exists because row 2 needs a config file: if a terminal mishandles reporting, `GTH_NO_MOUSE=1`
+gets you a working session immediately. Within a session, `/mouse off` does the same thing without
+restarting — see [interactive sessions](../guides/interactive-sessions.md#mouse-and-text-selection).
+
 ## Run Header (output.header)
 
 Non-TUI text runs — `ask`, `exec`, `eval`, `pr`, `review`, and `chat`/`code` with `--no-tui` or

@@ -47,6 +47,7 @@ import {
   setUseColour,
 } from '#src/utils/systemUtils.js';
 import { resolveUseColour } from '#src/config/colour.js';
+import { resolveUseMouse } from '#src/config/mouse.js';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -1062,6 +1063,11 @@ export function resolveConfig(
   // `true` are the same value and rung 3 can no longer be told from rung 4. Read it here or lose it.
   const explicitUseColour = config?.useColour;
 
+  // TUI-C37 — the same pre-merge capture for `useMouse`, and for the same reason: once
+  // `DEFAULT_CONFIG.useMouse` is merged in, "the user asked for it" and "nobody said" are the same
+  // value and the ladder's config rung can no longer be distinguished from its default rung.
+  const explicitUseMouse = config?.useMouse;
+
   // Deep merge command configs while preserving defaults
   // Type complexity from DEFAULT_CONFIG.commands 'as const' requires any cast for deep merge result
   const mergedCommands: GthConfig['commands'] = {
@@ -1164,6 +1170,17 @@ export function resolveConfig(
     noColor: env.NO_COLOR,
     explicitUseColour,
     stdoutIsTTY: isStdoutTTY(),
+  });
+
+  // TUI-C37 — resolve mouse through its own ladder (GTH_NO_MOUSE > explicit config > TERM >
+  // TTY auto-detect). Resolved here rather than in the TUI so the answer is one field on the
+  // config, the way `useColour` is, instead of a decision each surface re-takes.
+  mergedConfig.useMouse = resolveUseMouse({
+    noMouse: env.GTH_NO_MOUSE,
+    explicitUseMouse,
+    term: env.TERM,
+    stdoutIsTTY: isStdoutTTY(),
+    stdinIsTTY: isTTY(),
   });
 
   return mergedConfig;

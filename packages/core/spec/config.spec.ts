@@ -109,6 +109,10 @@ describe('config', async () => {
     systemUtilsMock.getInstallDir.mockReturnValue('/mock/install/dir');
     systemUtilsMock.isTTY.mockReturnValue(true);
     systemUtilsMock.isStdoutTTY.mockReturnValue(true);
+    // TUI-C37 — a terminal run means a real TERM too, not just TTY file descriptors. Without this
+    // the mouse ladder would resolve on the unset-TERM rung and these expectations would describe
+    // something other than the interactive session they claim to.
+    systemUtilsMock.env.TERM = 'xterm-256color';
     // Default: global config path is absent (sentinel never matched by fs mocks).
     globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
       () => '/mock/global-absent/no-such-config'
@@ -173,6 +177,7 @@ describe('config', async () => {
         writeOutputToFile: false,
         writeBinaryOutputsToFile: true,
         useColour: true,
+        useMouse: true,
         filesystem: 'none',
         aiignore: {
           enabled: true,
@@ -275,6 +280,7 @@ describe('config', async () => {
         writeOutputToFile: false,
         writeBinaryOutputsToFile: true,
         useColour: true,
+        useMouse: true,
         filesystem: 'none',
         aiignore: {
           enabled: true,
@@ -409,6 +415,7 @@ describe('config', async () => {
         writeOutputToFile: false,
         writeBinaryOutputsToFile: true,
         useColour: true,
+        useMouse: true,
         filesystem: 'none',
         aiignore: {
           enabled: true,
@@ -1530,6 +1537,7 @@ describe('config', async () => {
         writeOutputToFile: false,
         writeBinaryOutputsToFile: true,
         useColour: true,
+        useMouse: true,
         filesystem: 'none',
         aiignore: {
           enabled: true,
@@ -1985,6 +1993,7 @@ describe('config', async () => {
         writeOutputToFile: false,
         writeBinaryOutputsToFile: true,
         useColour: true,
+        useMouse: true,
         filesystem: 'none',
         aiignore: {
           enabled: true,
@@ -2070,6 +2079,7 @@ describe('config', async () => {
         writeOutputToFile: false,
         writeBinaryOutputsToFile: true,
         useColour: true,
+        useMouse: true,
         filesystem: 'none',
         aiignore: {
           enabled: true,
@@ -2155,6 +2165,7 @@ describe('config', async () => {
         writeOutputToFile: false,
         writeBinaryOutputsToFile: true,
         useColour: true,
+        useMouse: true,
         filesystem: 'none',
         aiignore: {
           enabled: true,
