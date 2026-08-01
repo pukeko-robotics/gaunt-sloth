@@ -7,6 +7,8 @@ import { MemorySaver } from '@langchain/langgraph';
 import type { GthConfig } from '#src/config.js';
 import type { PendingToolInterrupt, StatusUpdateCallback } from '#src/core/types.js';
 import { AttackHaltError, NonInteractiveEscalationError } from '#src/core/shell/approvalStop.js';
+import { COULD_NOT_ASSESS_PREFIX, openWorldToolFloorReason } from '#src/core/shell/rater.js';
+import { MCP_FAIL_CLOSED_ANNOTATIONS } from '#src/core/approvals/matcher.js';
 import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
 import { SHELL_ALLOWLIST_FILE } from '#src/constants.js';
 
@@ -2977,6 +2979,217 @@ describe('GthAgentRunner', () => {
       it('CONTROL: gth_grep IS exempted by that very entry', async () => {
         expect(await askedTheHuman(localReadConfig(), 'gth_grep')).toBe(false);
       });
+    });
+
+    /**
+     * EXT-70 §4.7.2/§4.7.3 — an effective `openWorldHint` floors the call at `destructive`, through
+     * the SAME `applyDestructiveFloor` the shell path reaches via `mapVerdictToAction`.
+     *
+     * **What is observable today, stated so these assertions are not read as more than they are.**
+     * No ACTION changes under the current gate: the rater is shell-only (§4.3), an allow match
+     * returns before the floor, and `bypass` plus the two deterministic rungs never reach it — so
+     * every call that is floored here was already going to the human. What the floor supplies is
+     * the verdict that call carries: onto the approval prompt (§6) and into the §6.2 non-interactive
+     * exit. [[EXT-30]], which rates tool calls, is what makes it decide an action.
+     */
+    describe('§4.7.3 — an effective openWorldHint floors the call at destructive', () => {
+      /** The reason the ONE floor produces, read from its own builder rather than re-spelt here. */
+      const FLOOR_REASON = openWorldToolFloorReason(MCP_FAIL_CLOSED_ANNOTATIONS);
+
+      /** Every hint believed, so a declaration can state an arbitrary combination and be read. */
+      const trustingJira = {
+        servers: {
+          jira: {
+            trustAnnotations: [
+              'readOnlyHint',
+              'destructiveHint',
+              'idempotentHint',
+              'openWorldHint',
+            ],
+          },
+        },
+      };
+
+      /**
+       * Drive one gated call and hand back what the human was shown — or `null` when nothing asked.
+       * Asserts the run really did suspend and resume, so a "was not floored" can never pass on a
+       * run in which no gated call happened at all.
+       */
+      async function shownToTheHuman(
+        config: GthConfig,
+        toolName: string
+      ): Promise<PendingToolInterrupt | null> {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        const streamResume = pendingToolOnce(toolName);
+        await runner.init('code', config);
+        const human = vi.fn().mockResolvedValue({ type: 'approve' });
+        runner.setToolApprovalCallback(human);
+        await runner.processMessages([new HumanMessage('go')]);
+        expect(streamResume).toHaveBeenCalledTimes(1);
+        return human.mock.calls.length > 0
+          ? (human.mock.calls[0][0] as PendingToolInterrupt)
+          : null;
+      }
+
+      /** The verdict a gated call carried to the human; `undefined` when it was not floored. */
+      async function verdictFor(config: GthConfig, toolName: string) {
+        const pending = await shownToTheHuman(config, toolName);
+        expect(pending, 'the human was asked at all').not.toBeNull();
+        return pending?.safetyVerdict;
+      }
+
+      const rated = (extra: Record<string, unknown> = {}) =>
+        gateConfig({ mode: 'auto-safe', ...extra });
+
+      /**
+       * The discriminating pair for §4.7.3, on OUR OWN tools so no trust question is in play.
+       * `readOnlyHint` is `true` on both sides — only `openWorldHint` differs — so a gate that
+       * floored on `readOnlyHint`, or floored everything, or floored nothing, fails one half.
+       */
+      it('gth_web_fetch is floored at destructive DESPITE being readOnlyHint true', async () => {
+        const verdict = await verdictFor(rated(), 'gth_web_fetch');
+        expect(verdict?.outcome).toBe('destructive');
+        // Compared against the floor's own reason builder, not against a copy of the sentence: a
+        // second floor written inline at this call site would say something else and fail here.
+        expect(verdict?.reason).toBe(FLOOR_REASON);
+        expect(verdict?.reason).not.toContain(COULD_NOT_ASSESS_PREFIX);
+      });
+
+      it('CONTROL: gth_grep — the same readOnlyHint, no open world — is NOT floored', async () => {
+        expect(await verdictFor(rated(), 'gth_grep')).toBeUndefined();
+      });
+
+      /**
+       * The pair that proves the floor reads EFFECTIVE values and not declared ones. Both servers
+       * declare `openWorldHint: false`; only the trusted one is believed.
+       */
+      it('an UNTRUSTED server declaring openWorldHint false is still floored', async () => {
+        declaring({ mcp__jira__search: { readOnlyHint: true, openWorldHint: false } });
+        const config = rated({ mcp: { servers: { jira: { trustAnnotations: [] } } } });
+        expect((await verdictFor(config, 'mcp__jira__search'))?.outcome).toBe('destructive');
+      });
+
+      it('CONTROL: the very same declaration from a TRUSTED server is not floored', async () => {
+        declaring({ mcp__jira__search: { readOnlyHint: true, openWorldHint: false } });
+        const config = rated({
+          mcp: { servers: { jira: { trustAnnotations: ['openWorldHint'] } } },
+        });
+        expect(await verdictFor(config, 'mcp__jira__search')).toBeUndefined();
+      });
+
+      /**
+       * §4.7.2 — `idempotentHint` has NO built-in consumer. On its own "the outcome is unchanged"
+       * passes on a harness that cannot detect any change at all, so the CONTROL is in the same
+       * test: flipping a DIFFERENT hint in the very same declaration does move the outcome.
+       */
+      it('idempotentHint changes no outcome — CONTROL: openWorldHint does', async () => {
+        const decide = async (declaration: Record<string, unknown>) => {
+          declaring({ mcp__jira__search: declaration });
+          return await verdictFor(rated({ mcp: trustingJira }), 'mcp__jira__search');
+        };
+        const local = { readOnlyHint: true, openWorldHint: false };
+        const idempotent = await decide({ ...local, idempotentHint: true });
+        const notIdempotent = await decide({ ...local, idempotentHint: false });
+        expect(idempotent).toEqual(notIdempotent);
+        expect(idempotent, 'neither is floored').toBeUndefined();
+
+        const openWorld = await decide({ ...local, openWorldHint: true, idempotentHint: false });
+        expect(openWorld, 'the harness CAN see an outcome change').not.toEqual(notIdempotent);
+        expect(openWorld?.outcome).toBe('destructive');
+      });
+
+      /**
+       * §4.7.2 — `destructiveHint` may only ever RAISE: it can decide that a tool is rated or
+       * floored, never that it is exempt.
+       */
+      it('destructiveHint false does NOT lower a floor openWorldHint set', async () => {
+        declaring({
+          mcp__jira__search: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+        });
+        const config = rated({ mcp: trustingJira });
+        expect((await verdictFor(config, 'mcp__jira__search'))?.outcome).toBe('destructive');
+      });
+
+      it('destructiveHint true never buys an exemption', async () => {
+        declaring({
+          mcp__jira__wipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+        });
+        const pending = await shownToTheHuman(rated({ mcp: trustingJira }), 'mcp__jira__wipe');
+        expect(pending, 'the human is still asked').not.toBeNull();
+        // ...and it is not floored either: `destructiveHint` is not the rule that floors, which is
+        // what keeps the openWorld assertions above about `openWorldHint` and not about "a hint".
+        expect(pending?.safetyVerdict).toBeUndefined();
+      });
+
+      it('CONTROL: the harness CAN exempt — an allow entry approves that very call', async () => {
+        declaring({
+          mcp__jira__wipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+        });
+        const config = rated({
+          allow: [{ type: 'mcpTool', server: 'jira', matcher: 'exact', pattern: 'wipe' }],
+          mcp: trustingJira,
+        });
+        expect(await shownToTheHuman(config, 'mcp__jira__wipe')).toBeNull();
+      });
+
+      /**
+       * §4.6's fourth bullet, unchanged for tools: the allow-list is consulted BEFORE the rater and
+       * therefore before this floor, and lifts it — including where the entry keeps the rater
+       * involved with `rate: true`.
+       */
+      it('an allow entry lifts the floor on an open-world tool', async () => {
+        const config = rated({
+          allow: [{ type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch' }],
+        });
+        expect(await shownToTheHuman(config, 'gth_web_fetch')).toBeNull();
+      });
+
+      it('and lifts it just the same when the entry keeps the rater involved', async () => {
+        const config = rated({
+          allow: [{ type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch', rate: true }],
+        });
+        expect(await shownToTheHuman(config, 'gth_web_fetch')).toBeNull();
+      });
+
+      /**
+       * §6.2 — where no human can answer, the floored verdict is what the process exits with. This
+       * is the second of the two places the floor is observable today, and the one a CI run reads.
+       */
+      it('with no human, the floored verdict is what the run exits with', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        pendingToolOnce('gth_web_fetch');
+        await runner.init('code', rated());
+        // No approval callback at all — CI, a one-shot run, a server.
+
+        const error = (await runner
+          .processMessages([new HumanMessage('go')])
+          .then(() => null)
+          .catch((e: unknown) => e as Error)) as NonInteractiveEscalationError | null;
+
+        expect(error).toBeInstanceOf(NonInteractiveEscalationError);
+        expect(error?.outcome).toBe('destructive');
+        expect(error?.reason).toBe(FLOOR_REASON);
+      });
+
+      /**
+       * The floor applies exactly where the shell's preflights apply — at the two RATED rungs — and
+       * for the same reason: `mapVerdictToAction` returns at `bypass` and at the deterministic
+       * rungs before any preflight runs, because there is no rating there to floor. The call is
+       * asked about at every one of these rungs either way, so nothing is less gated below.
+       */
+      it.each(['auto-safe', 'full-auto'] as const)('floors at %s', async (mode) => {
+        const verdict = await verdictFor(gateConfig({ mode }), 'gth_web_fetch');
+        expect(verdict?.outcome).toBe('destructive');
+      });
+
+      it.each(['read-only', 'write'] as const)(
+        'at %s there is no rating to floor, and the human is asked regardless',
+        async (mode) => {
+          const pending = await shownToTheHuman(gateConfig({ mode }), 'gth_web_fetch');
+          expect(pending, 'still gated').not.toBeNull();
+          expect(pending?.safetyVerdict).toBeUndefined();
+        }
+      );
     });
   });
 

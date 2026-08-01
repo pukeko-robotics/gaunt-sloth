@@ -43,9 +43,11 @@ import {
   NonInteractiveEscalationError,
 } from '#src/core/shell/approvalStop.js';
 import {
+  applyDestructiveFloor,
   isRaterTimeout,
   mapAllowMatchedVerdictToAction,
   mapVerdictToAction,
+  openWorldToolFloorReason,
   RATER_DEFAULT_TIMEOUT_MS,
   rateShellCommand,
   type ShellSafetyVerdict,
@@ -555,7 +557,10 @@ export class GthAgentRunner {
    *    ({@link mapAllowMatchedVerdictToAction}).
    * 5. **auto-rater** (`auto-safe` / `full-auto` only) — `safe` approves, `destructive` and
    *    `catastrophic` escalate, and `attack` HALTS the run ({@link AttackHaltError}). The other
-   *    three rungs consult no model at all.
+   *    three rungs consult no model at all. At those same two rungs a **tool** call is instead
+   *    floored deterministically by §4.7.3's open-world rule ({@link openWorldToolFloorReason} into
+   *    {@link applyDestructiveFloor} — the one floor the shell path also reaches): a call whose
+   *    effective `openWorldHint` is true is `destructive`, whatever its `readOnlyHint` says.
    * 6. **human prompt** — the approval callback; when the human grants `session`/`always` scope,
    *    **that command** is recorded as an `exact` entry (§3.1/§6 — the menu never widens), so the
    *    same command stops re-prompting and a longer variant of it still asks.
@@ -575,18 +580,25 @@ export class GthAgentRunner {
     const isShellCommand = tool.name === SHELL_TOOL_NAME && command !== null;
     const approvals = this.sessionApprovals;
 
+    // ONE subject and ONE annotation source per decision, shared by the rule matcher and the
+    // §4.7.3 floor below. Building a second source for the floor would let a `hint` entry and the
+    // floor read different effective values for the same call — the two-derivations-disagreeing
+    // failure `core/approvals/annotations.ts` exists to prevent.
+    const subject = this.approvalSubjectFor(tool, command);
+    const annotationSource = this.effectiveToolAnnotationSource();
+
     // The declared lists AND the runtime grant stores, resolved most-restrictive-wins in ONE pass
     // through the ONE comparison engine, so author order and the order the lists were concatenated
     // in cannot change the outcome — and a grant the menu wrote is compared exactly as a line the
     // user typed into their config is.
     const rule: ApprovalRuleDecision | null = resolveApprovalRules(
-      this.approvalSubjectFor(tool, command),
+      subject,
       this.approvalRuleLists(),
       {
         // EXT-70 §4.7.1 — a `hint` entry reads EFFECTIVE annotations, which is where per-server,
         // per-hint trust is applied. Without this the matcher falls back to the fail-closed source,
         // where no tool is ever read-only and a `hint` entry could only ever describe the default.
-        annotations: this.effectiveToolAnnotationSource(),
+        annotations: annotationSource,
         onNotice: (notice) => this.statusUpdate(notice.level, notice.message),
       }
     );
@@ -646,30 +658,48 @@ export class GthAgentRunner {
       safetyVerdict = tripwire.verdict;
     }
 
-    // (5) The auto-rater, at the two rated rungs only. `safe` is approved (the fatigue reducer),
-    // `destructive` and `catastrophic` fall through to the human with the verdict attached, and
-    // `attack` ends the run outright. Skipped entirely for an escalate match (§3.2: the user
-    // pre-decided that a human answers, so a rating would decorate a mandatory prompt) and for a
-    // call the tripwire above already rated.
-    if (
-      isShellCommand &&
-      command !== null &&
-      isRatedRung(approvals.rung) &&
-      escalatedBy === undefined &&
-      safetyVerdict === undefined
-    ) {
-      const verdict = await this.rateCommand(command, { allowMatched: false });
-      const decision = mapVerdictToAction(command, verdict, { rung: approvals.rung });
-      if (decision.action === 'approve') {
-        // Scope `once`: rater approvals are NEVER persisted to the allow-list.
-        return { type: 'approve', scope: 'once' };
+    // (5) What the gate makes of the call itself, at the two rated rungs only. Skipped entirely
+    // for an escalate match (§3.2: the user pre-decided that a human answers, so a rating would
+    // decorate a mandatory prompt) and for a call the tripwire above already rated. The rung test
+    // is the SAME one `mapVerdictToAction` applies, so both arms below floor exactly where the
+    // shell does and nowhere else: `bypass` and the two deterministic rungs consult neither the
+    // rater nor a preflight, and at those rungs the human is asked regardless.
+    if (isRatedRung(approvals.rung) && escalatedBy === undefined && safetyVerdict === undefined) {
+      if (isShellCommand && command !== null) {
+        // The auto-rater. `safe` is approved (the fatigue reducer), `destructive` and
+        // `catastrophic` fall through to the human with the verdict attached, and `attack` ends
+        // the run outright. §4.6's deterministic preflights are applied inside
+        // `mapVerdictToAction`, ahead of the `safe` check.
+        const verdict = await this.rateCommand(command, { allowMatched: false });
+        const decision = mapVerdictToAction(command, verdict, { rung: approvals.rung });
+        if (decision.action === 'approve') {
+          // Scope `once`: rater approvals are NEVER persisted to the allow-list.
+          return { type: 'approve', scope: 'once' };
+        }
+        if (decision.action === 'halt') {
+          // §4.2 — not a rejection the model can respond to. It ends the agent loop.
+          throw new AttackHaltError(command, decision.verdict?.reason ?? '');
+        }
+        // Escalate: carry the verdict (the honest one — see mapVerdictToAction) to the human.
+        safetyVerdict = decision.verdict;
+      } else if (subject.kind !== 'shell') {
+        // EXT-70 §4.7.2/§4.7.3 — a tool call whose EFFECTIVE `openWorldHint` is true is floored at
+        // `destructive`, through the SAME `applyDestructiveFloor` the shell path reaches via
+        // `mapVerdictToAction`. No rating call: §4.3's scope boundary keeps the rater on the shell
+        // until [[EXT-30]], and the floor is deterministic anyway — §4.6 states it as coming
+        // *before* any model call, so it does not wait for one.
+        //
+        // The annotations are the effective set (§4.7.1), read through the same source the `hint`
+        // matcher just used, so an untrusted server's `openWorldHint: false` has already collapsed
+        // to the fail-closed `true` and cannot buy its way past this.
+        //
+        // Reached only when no allow entry claimed the call: §4.6's fourth bullet makes an allow
+        // match lift this floor, and step (4) above has already returned in that case.
+        safetyVerdict = applyDestructiveFloor(
+          safetyVerdict,
+          openWorldToolFloorReason(annotationSource(subject))
+        );
       }
-      if (decision.action === 'halt') {
-        // §4.2 — not a rejection the model can respond to. It ends the agent loop.
-        throw new AttackHaltError(command, decision.verdict?.reason ?? '');
-      }
-      // Escalate: carry the verdict (the honest one — see mapVerdictToAction) to the human.
-      safetyVerdict = decision.verdict;
     }
 
     if (!this.toolApprovalCallback) {

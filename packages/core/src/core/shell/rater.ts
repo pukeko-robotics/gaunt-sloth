@@ -37,6 +37,9 @@ import * as z from 'zod';
 
 import type { ApprovalRung, GrantedToolSummary, GthConfig } from '#src/config.js';
 import { isRatedRung, resolveApprovals } from '#src/config.js';
+// Type-only: the floor reads the four effective booleans and nothing else, so no runtime edge is
+// created from the shell module to the approvals matcher.
+import type { EffectiveToolAnnotations } from '#src/core/approvals/matcher.js';
 import { classifyCommand } from '#src/core/shell/arity.js';
 import { normalizeCommand } from '#src/core/shell/normalize.js';
 import { findOpenWorldHostLiterals } from '#src/core/shell/openWorld.js';
@@ -132,6 +135,29 @@ export const COULD_NOT_ASSESS_PREFIX = 'Could not assess this command';
  * different warnings, and only the second is worth reading.
  */
 export const NAMES_A_HOST_PREFIX = 'This command names a host';
+
+/**
+ * EXT-70 (§4.7.2, §4.7.3) — the reason text prefix for the **tool** arm of the open-world floor: a
+ * call whose EFFECTIVE `openWorldHint` is true. Like {@link NAMES_A_HOST_PREFIX} and unlike
+ * {@link COULD_NOT_ASSESS_PREFIX}, it states something the gate positively established.
+ *
+ * It names the hint rather than paraphrasing it, because the hint is also the thing the user can
+ * act on: trust it from that server (`approvals.mcp`), or declare the call in `approvals.allow`.
+ */
+export const REACHES_OPEN_WORLD_PREFIX = 'This tool reaches the open world';
+
+/**
+ * The closing clause **shared by every open-world floor reason**, shell and tool alike.
+ *
+ * It is a constant rather than two copies of a sentence, and that is load-bearing rather than
+ * tidiness: the two arms are one rule (§4.6 for a shell fetch, §4.7.3 for the same fetch reached
+ * through a tool), so a reader who has seen one escalation reads the other as the same decision.
+ * It is also the one part of the floor a **second implementation** cannot reproduce by accident —
+ * an inline `{ outcome: 'destructive', reason: … }` written at some future call site would say
+ * something else, and the assertions that compare a floored reason against the exported reason
+ * builders are what turn that into a red test rather than a slow divergence.
+ */
+export const NEVER_AUTO_APPROVED_CLAUSE = 'so it is never auto-approved.';
 
 /**
  * The verdict returned whenever the rater cannot produce a trustworthy answer (LLM throws,
@@ -790,6 +816,76 @@ export function isBelowDestructiveFloor(outcome: RaterOutcome): boolean {
 }
 
 /**
+ * **THE deterministic floor — the one place an outcome is raised to `destructive`.**
+ *
+ * Every gated call reaches it: a shell command through {@link mapVerdictToAction}'s preflights
+ * ({@link preflightFloorReason}), a tool call through its effective `openWorldHint`
+ * ({@link openWorldToolFloorReason}, §4.7.3). They differ only in the *reason* they compute; what
+ * the reason then does to the outcome is decided here and nowhere else. A second implementation is
+ * how a gate and a display come to disagree about what a call is, and how one of them comes to
+ * *lower* an outcome the other raised.
+ *
+ * Two properties, both delegated to {@link isBelowDestructiveFloor} so they hold for every caller:
+ *
+ * - **It only ever RAISES.** A `destructive`, `catastrophic` or `attack` verdict passes through
+ *   untouched, keeping its own explanation (and any §4.4 suggestion) — the floor is agreeing with
+ *   it, not overriding it, and a floor that rewrote `catastrophic` would silently trade an
+ *   unnegotiable escalation for a negotiable one.
+ * - **`undefined` is below the floor.** Nothing has assessed the call, so there is no outcome for
+ *   the floor to defer to; a call nobody rated is exactly the call this rule exists to speak for.
+ *   That is what lets a tool call — which no rater sees while §4.3's scope boundary stands — be
+ *   floored by the same function that floors a rated shell command.
+ *
+ * @param verdict The outcome so far, or `undefined` when nothing has rated the call.
+ * @param reason The floor reason, or `null` when no preflight fired (the verdict is returned as-is).
+ */
+export function applyDestructiveFloor(
+  verdict: ShellSafetyVerdict,
+  reason: string | null
+): ShellSafetyVerdict;
+export function applyDestructiveFloor(
+  verdict: ShellSafetyVerdict | undefined,
+  reason: string | null
+): ShellSafetyVerdict | undefined;
+export function applyDestructiveFloor(
+  verdict: ShellSafetyVerdict | undefined,
+  reason: string | null
+): ShellSafetyVerdict | undefined {
+  if (reason === null) return verdict;
+  if (verdict !== undefined && !isBelowDestructiveFloor(verdict.outcome)) return verdict;
+  return { outcome: 'destructive', reason };
+}
+
+/**
+ * EXT-70 (§4.7.2, §4.7.3) — the **tool** arm of the open-world floor: the reason a call whose
+ * EFFECTIVE `openWorldHint` is true is floored at `destructive`, or `null` when it is not.
+ *
+ * It sits beside {@link preflightFloorReason} because it is the same rule seen from the other side.
+ * §4.6 floors a shell fetch before any model call precisely so that no misreading of a hostname can
+ * auto-approve; *the same fetch reached through a tool instead of through `curl` must not be
+ * ungated*, or the preflight is a rule about spelling rather than about fetching. Both feed
+ * {@link applyDestructiveFloor}.
+ *
+ * **Independent of `readOnlyHint`, and that is the whole of §4.7.3.** A fetch tool is read-only in
+ * the local sense — it mutates nothing on this machine — while reaching the network; the two facts
+ * are unrelated, and `gth_web_fetch` (`readOnlyHint: true`, `openWorldHint: true`) is the case that
+ * proves it. `destructiveHint` is not consulted either: §4.7.2 lets it only ever RAISE, so a
+ * `destructiveHint: false` can never lower a floor this rule set. `idempotentHint` has no built-in
+ * consumer at all — do not invent one here.
+ *
+ * @param annotations The call's effective set (§4.7.1), never its declared one — trust has already
+ *   been applied, so an untrusted server's `openWorldHint: false` has already collapsed to the
+ *   fail-closed `true` by the time it arrives. `undefined` (a source that cannot decide) floors, in
+ *   the same direction as the fail-closed default it would otherwise have returned.
+ */
+export function openWorldToolFloorReason(
+  annotations: EffectiveToolAnnotations | undefined
+): string | null {
+  if (annotations?.openWorldHint === false) return null;
+  return `${REACHES_OPEN_WORLD_PREFIX} (openWorldHint), ${NEVER_AUTO_APPROVED_CLAUSE}`;
+}
+
+/**
  * The deterministic preflights, in ONE place and in a FIXED order, returning the honest reason the
  * command is floored at `destructive` — or `null` when none of them fires.
  *
@@ -835,7 +931,7 @@ function preflightFloorReason(command: string): string | null {
     // prose about egress — and [[BATCH-25]] Half B calibrates deterministic assertions against this
     // exact text. Several counterparties are listed inside the same parentheses rather than
     // pluralised into a second sentence shape, so the leading clause never varies.
-    return `${NAMES_A_HOST_PREFIX} (${hosts.join(', ')}) in a fetch or transfer position, so it is never auto-approved.`;
+    return `${NAMES_A_HOST_PREFIX} (${hosts.join(', ')}) in a fetch or transfer position, ${NEVER_AUTO_APPROVED_CLAUSE}`;
   }
   return null;
 }
@@ -919,11 +1015,10 @@ export function mapVerdictToAction(
   // `catastrophic` and `attack` all pass through untouched, keeping their real explanation (and any
   // §4.4 suggestion) rather than losing it to a note that would also be FALSE — the rater did
   // assess those.
-  const floorReason = preflightFloorReason(command);
-  let effective: ShellSafetyVerdict = verdict ?? FAIL_CLOSED_VERDICT;
-  if (floorReason !== null && isBelowDestructiveFloor(effective.outcome)) {
-    effective = { outcome: 'destructive', reason: floorReason };
-  }
+  const effective: ShellSafetyVerdict = applyDestructiveFloor(
+    verdict ?? FAIL_CLOSED_VERDICT,
+    preflightFloorReason(command)
+  );
 
   // (4) The only run-ending outcome. Not negotiable, at either rated rung.
   if (effective.outcome === 'attack') {
