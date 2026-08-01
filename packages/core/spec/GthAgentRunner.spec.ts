@@ -2792,6 +2792,194 @@ describe('GthAgentRunner', () => {
     });
   });
 
+  /**
+   * EXT-70 §4.7.1/§4.7.5 — the subject a non-shell tool call presents, end to end through the
+   * runner: config → `resolveApprovals` → the effective-annotation source → the rule matcher →
+   * the decision.
+   *
+   * The fail-open this closes: every non-shell tool used to become a `kind: 'tool'` subject, which
+   * is the TRUSTED provenance. So an MCP tool was matchable by `tool` entries and NOT by the
+   * `mcpTool` entries a user wrote for it, and its own `tools/list` claims would have been read
+   * verbatim. Both directions are asserted, each against a control that a degenerate gate — one
+   * that approves everything, or refuses everything — would fail.
+   */
+  describe('MCP tool calls present as mcpTool subjects (EXT-70 §4.7.5)', () => {
+    function streamOf(...chunks: string[]) {
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const c of chunks) yield c;
+        },
+      };
+    }
+
+    /** Suspend the run once on a call to `toolName`, then complete. */
+    function pendingToolOnce(toolName: string) {
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: toolName, args: {} }])
+        .mockResolvedValueOnce([]);
+      const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+      (mockAgent as any).streamResume = streamResume;
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      return streamResume;
+    }
+
+    /** What the connected servers declared, exactly as `GthAbstractAgent` records it. */
+    function declaring(entries: Record<string, Record<string, unknown>>) {
+      (mockAgent as any).getDeclaredMcpToolAnnotations = vi
+        .fn()
+        .mockReturnValue(new Map(Object.entries(entries)));
+    }
+
+    function gateConfig(
+      approvals: Record<string, unknown>,
+      mcpServers: Record<string, unknown> = { jira: { url: 'https://example.invalid/mcp' } }
+    ) {
+      return {
+        ...mockConfig,
+        streamOutput: true as const,
+        approvals,
+        mcpServers,
+      } as unknown as GthConfig;
+    }
+
+    /**
+     * Drive one gated call and report whether the human was asked. It asserts the run really did
+     * suspend and resume first — otherwise every "was not asked" here would pass on a run in which
+     * no gated call ever happened.
+     */
+    async function askedTheHuman(config: GthConfig, toolName: string): Promise<boolean> {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      const streamResume = pendingToolOnce(toolName);
+      await runner.init('code', config);
+      const human = vi.fn().mockResolvedValue({ type: 'approve' });
+      runner.setToolApprovalCallback(human);
+      await runner.processMessages([new HumanMessage('go')]);
+      expect(streamResume).toHaveBeenCalledTimes(1);
+      return human.mock.calls.length > 0;
+    }
+
+    beforeEach(() => {
+      // Declarations are attached per test on the shared mock; drop any that leaked from the last.
+      delete (mockAgent as any).getDeclaredMcpToolAnnotations;
+    });
+
+    it('an mcpTool deny entry refuses the call — it could not have matched a tool subject', async () => {
+      // This is the assertion that would have caught the fail-open: with the call presenting as
+      // `kind: 'tool'`, the user's own `mcpTool` deny entry would silently never have fired.
+      const config = gateConfig({
+        mode: 'write',
+        deny: [{ type: 'mcpTool', server: 'jira', matcher: 'exact', pattern: 'delete_issue' }],
+      });
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      const streamResume = pendingToolOnce('mcp__jira__delete_issue');
+      await runner.init('code', config);
+      const human = vi.fn().mockResolvedValue({ type: 'approve' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('go')]);
+
+      expect(human).not.toHaveBeenCalled();
+      const decision = streamResume.mock.calls[0][0].decisions[0];
+      expect(decision.type).toBe('reject');
+      expect(decision.message).toContain('delete_issue');
+    });
+
+    it('a `tool` allow entry naming the MCP tool does NOT auto-approve it', async () => {
+      // The other half of the same fail-open: a `tool` entry cannot claim an MCP subject, so the
+      // user is still asked.
+      const config = gateConfig({
+        mode: 'write',
+        allow: [{ type: 'tool', matcher: 'exact', pattern: 'mcp__jira__delete_issue' }],
+      });
+      expect(await askedTheHuman(config, 'mcp__jira__delete_issue')).toBe(true);
+    });
+
+    it('CONTROL: the same `tool` allow entry DOES auto-approve one of our own tools', async () => {
+      // Without this the assertion above would pass on a gate that asks about everything.
+      const config = gateConfig({
+        mode: 'write',
+        allow: [{ type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch' }],
+      });
+      expect(await askedTheHuman(config, 'gth_web_fetch')).toBe(false);
+    });
+
+    it('a name no configured server explains stays an MCP subject and is still asked about', async () => {
+      // Fail-closed, and specifically NOT `kind: 'tool'`: the `tool` allow entry below names it
+      // exactly and still cannot claim it.
+      const config = gateConfig({
+        mode: 'write',
+        allow: [{ type: 'tool', matcher: 'exact', pattern: 'mcp__ghost__delete' }],
+      });
+      expect(await askedTheHuman(config, 'mcp__ghost__delete')).toBe(true);
+    });
+
+    describe('the discriminating pair, end to end from config to decision', () => {
+      /** A `hint` entry that exempts anything effectively read-only, for one server's tools. */
+      const allowReadOnlyMcp = [
+        { type: 'mcpTool', server: 'jira', matcher: 'hint', pattern: { readOnlyHint: true } },
+      ];
+
+      it('TRUSTED: the server’s own readOnlyHint declaration exempts its tool', async () => {
+        declaring({ mcp__jira__search: { readOnlyHint: true } });
+        const config = gateConfig({
+          mode: 'write',
+          allow: allowReadOnlyMcp,
+          mcp: { servers: { jira: { trustAnnotations: ['readOnlyHint'] } } },
+        });
+        expect(await askedTheHuman(config, 'mcp__jira__search')).toBe(false);
+      });
+
+      it('UNTRUSTED: the very same declaration exempts nothing, and the human is asked', async () => {
+        declaring({ mcp__jira__search: { readOnlyHint: true } });
+        const config = gateConfig({
+          mode: 'write',
+          allow: allowReadOnlyMcp,
+          mcp: { servers: { jira: { trustAnnotations: [] } } },
+        });
+        expect(await askedTheHuman(config, 'mcp__jira__search')).toBe(true);
+      });
+
+      it('CONTROL: one of OUR OWN read tools is exempted by the same hint with no trust list', async () => {
+        // The built-in half: `gth_grep`'s authored `readOnlyHint: true` is read verbatim, so an
+        // annotation-driven allow entry exempts it where the identical MCP claim does not.
+        const config = gateConfig({
+          mode: 'write',
+          allow: [{ type: 'tool', matcher: 'hint', pattern: { readOnlyHint: true } }],
+        });
+        expect(await askedTheHuman(config, 'gth_grep')).toBe(false);
+      });
+
+      it('CONTROL: a built-in that WRITES is not exempted by that hint', async () => {
+        const config = gateConfig({
+          mode: 'write',
+          allow: [{ type: 'tool', matcher: 'hint', pattern: { readOnlyHint: true } }],
+        });
+        expect(await askedTheHuman(config, 'write_file')).toBe(true);
+      });
+    });
+
+    describe('§4.7.3 — an open-world read is not a local read', () => {
+      const allowLocalRead = [
+        {
+          type: 'tool',
+          matcher: 'hint',
+          pattern: { readOnlyHint: true, openWorldHint: false },
+        },
+      ];
+
+      const localReadConfig = () => gateConfig({ mode: 'write', allow: allowLocalRead });
+
+      it('gth_web_fetch is NOT exempted by a local-read hint entry', async () => {
+        expect(await askedTheHuman(localReadConfig(), 'gth_web_fetch')).toBe(true);
+      });
+
+      it('CONTROL: gth_grep IS exempted by that very entry', async () => {
+        expect(await askedTheHuman(localReadConfig(), 'gth_grep')).toBe(false);
+      });
+    });
+  });
+
   describe('resetThread', () => {
     it('rotates the thread_id so subsequent turns run against a fresh checkpointer thread', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);

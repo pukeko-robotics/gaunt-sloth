@@ -23,6 +23,8 @@ import {
   finalizeRunStats,
   type RunStatsAccumulator,
 } from '#src/core/runStats.js';
+import type { DeclaredToolAnnotations } from '#src/core/approvals/annotations.js';
+import { collectDeclaredMcpToolAnnotations } from '#src/core/approvals/toolAnnotationSources.js';
 import type { DebugCapture, DebugRequestExtras, LastModelRequest } from '#src/core/debugCapture.js';
 import { createPlainToolIndication } from '#src/core/plainToolIndication.js';
 import { debugLog, debugLogError, debugLogObject } from '#src/utils/debugUtils.js';
@@ -250,6 +252,17 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
    */
   private registeredToolNames: string[] = [];
 
+  /**
+   * EXT-70 §4.7.1 — what the connected MCP servers DECLARED about their own tools, captured from
+   * the same registration hook as {@link registeredToolNames} and keyed by the registered tool
+   * name. Read by `GthAgentRunner` as the `mcp` half of a `DeclaredToolAnnotationLookup`.
+   *
+   * It is a record of claims, never of decisions: no trust is applied here (that is
+   * `createEffectiveToolAnnotationSource`'s only job), and an absent tool yields the fail-closed
+   * defaults rather than "declared nothing".
+   */
+  private declaredMcpToolAnnotations: ReadonlyMap<string, DeclaredToolAnnotations> = new Map();
+
   constructor(statusUpdate: StatusUpdateCallback, resolvers?: AgentResolvers) {
     this.statusUpdate = (level: StatusLevel, message: string) => {
       statusUpdate(level, message);
@@ -279,6 +292,10 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
    *    what marks a tool free). See {@link applyRungAwareToolDescriptions}.
    * 2. Records the registered tool names for {@link getRegisteredToolNames}, which feeds the
    *    rater's granted-alternative list (§4.4).
+   * 3. EXT-70 §4.7.1 — records what the MCP servers declared about their own tools, for
+   *    {@link getDeclaredMcpToolAnnotations}. This is the ONE place a `tools/list` annotation
+   *    enters the approvals stack, and it enters as a claim: nothing here decides whether it is
+   *    believed.
    *
    * `gatedTools` MUST be the same set the caller wires into the approval interrupt
    * (`humanInTheLoopMiddleware`'s `interruptOn` on lean, deepagents' `interruptOn` on deep). That
@@ -307,6 +324,9 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
       .map((tool) => tool?.name)
       .filter((name): name is string => typeof name === 'string' && name.length > 0);
     this.registeredToolNames = [...names, ...(options.additionalToolNames ?? [])];
+    // `additionalToolNames` are deliberately NOT consulted: they are names the graph builder
+    // registers itself, with no tool object and therefore no declaration to read.
+    this.declaredMcpToolAnnotations = collectDeclaredMcpToolAnnotations(tools);
     return tools;
   }
 
@@ -317,6 +337,14 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
    */
   getRegisteredToolNames(): string[] {
     return [...this.registeredToolNames];
+  }
+
+  /**
+   * EXT-70 §4.7.1 — what the MCP servers declared for their tools at the last {@link init}, keyed
+   * by registered tool name (empty before it, and on a session with no MCP servers).
+   */
+  getDeclaredMcpToolAnnotations(): ReadonlyMap<string, DeclaredToolAnnotations> {
+    return this.declaredMcpToolAnnotations;
   }
 
   /**

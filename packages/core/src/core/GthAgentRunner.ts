@@ -55,8 +55,15 @@ import {
   type ApprovalRuleLists,
   type ApprovalSubject,
   describeApprovalEntry,
+  type EffectiveToolAnnotationSource,
   resolveApprovalRules,
 } from '#src/core/approvals/matcher.js';
+import { createEffectiveToolAnnotationSource } from '#src/core/approvals/annotations.js';
+import { approvalSubjectForToolName } from '#src/core/approvals/mcpSubjects.js';
+import {
+  builtInToolAnnotations,
+  mcpDeclaredAnnotationLookup,
+} from '#src/core/approvals/toolAnnotationSources.js';
 import { resolveRaterModel } from '#src/core/shell/raterModel.js';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { env } from '#src/utils/systemUtils.js';
@@ -467,17 +474,59 @@ export class GthAgentRunner {
   }
 
   /**
-   * EXT-71 §3.1/§3.2 — the subject a pending tool call presents to the rule matcher.
+   * EXT-71 §3.1/§3.2, EXT-70 §4.7.5 — the subject a pending tool call presents to the rule matcher.
    *
    * A gated `run_shell_command` is a **shell** subject and nothing else: it is matched by `shell`
    * entries, against the command. It is deliberately NOT also offered as a `tool` subject named
    * `run_shell_command`, which would create a second allow path to every shell command carrying a
-   * different §3.2 `rate` default and a match that never saw the command it was approving. Widening
-   * the gate to the other tools — and with it the subjects they present — is [[EXT-30]].
+   * different §3.2 `rate` default and a match that never saw the command it was approving.
+   *
+   * **Everything else splits by provenance**, which is the distinction §4.7.1 rests on: `tool` is
+   * the TRUSTED provenance, read verbatim, so an MCP tool arriving as one would be asking the
+   * trusted path for a third party's annotations — a gate any server can opt itself out of. Every
+   * MCP-namespaced name therefore becomes an `mcpTool` subject carrying the user's own `mcpServers`
+   * key, and one whose server cannot be resolved stays an `mcpTool` subject under an unnameable
+   * server rather than falling back to `tool` (see `approvalSubjectForToolName`).
+   *
+   * Widening which tools the gate actually suspends on is still [[EXT-30]]; this decides what a
+   * suspended call *is* whenever one arrives.
    */
   private approvalSubjectFor(tool: PendingToolInterrupt, command: string | null): ApprovalSubject {
     if (tool.name === SHELL_TOOL_NAME && command !== null) return { kind: 'shell', command };
-    return { kind: 'tool', name: tool.name };
+    return approvalSubjectForToolName(tool.name, this.configuredMcpServerKeys());
+  }
+
+  /**
+   * §4.7.5 — the user's own `mcpServers` keys, the only identity a server has here. Own enumerable
+   * keys via `Object.keys`, so nothing inherited can pose as a configured server.
+   */
+  private configuredMcpServerKeys(): string[] {
+    const servers = this.config?.mcpServers;
+    return servers && typeof servers === 'object' ? Object.keys(servers) : [];
+  }
+
+  /**
+   * EXT-70 §4.7.1 — the source a `hint` entry reads a call's EFFECTIVE annotations through, built
+   * from the session's `approvals.mcp` block and the two declared-annotation lookups.
+   *
+   * Built per decision rather than cached at {@link init}, for two reasons that both bite: the
+   * agent registers its tools *inside* `agent.init()`, so an init-time snapshot would be empty; and
+   * a re-init re-resolves the tool list, which for MCP may hand back different declarations.
+   *
+   * The two lookups are deliberately different in kind. `builtIn` reads OUR OWN authored table and
+   * never the bound tool list — the bound list contains every server's tools, and a `builtIn`
+   * lookup over it would read a third party's declaration through the trusted-verbatim path.
+   * `mcp` reads what the servers declared, keyed by the registered tool name so the server key is
+   * never split apart and re-joined differently.
+   */
+  private effectiveToolAnnotationSource(): EffectiveToolAnnotationSource {
+    return createEffectiveToolAnnotationSource({
+      mcp: this.sessionApprovals.mcp,
+      declared: {
+        builtIn: builtInToolAnnotations,
+        mcp: mcpDeclaredAnnotationLookup(this.agent?.getDeclaredMcpToolAnnotations?.()),
+      },
+    });
   }
 
   /**
@@ -533,7 +582,13 @@ export class GthAgentRunner {
     const rule: ApprovalRuleDecision | null = resolveApprovalRules(
       this.approvalSubjectFor(tool, command),
       this.approvalRuleLists(),
-      { onNotice: (notice) => this.statusUpdate(notice.level, notice.message) }
+      {
+        // EXT-70 §4.7.1 — a `hint` entry reads EFFECTIVE annotations, which is where per-server,
+        // per-hint trust is applied. Without this the matcher falls back to the fail-closed source,
+        // where no tool is ever read-only and a `hint` entry could only ever describe the default.
+        annotations: this.effectiveToolAnnotationSource(),
+        onNotice: (notice) => this.statusUpdate(notice.level, notice.message),
+      }
     );
 
     // (1) Deny — before everything, including `bypass`.

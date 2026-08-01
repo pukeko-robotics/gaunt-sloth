@@ -172,10 +172,17 @@ export function createEffectiveToolAnnotationSource(
   const { mcp, declared } = options;
 
   return (subject: ToolApprovalSubject | McpToolApprovalSubject): EffectiveToolAnnotations => {
+    // Both branches are spelled out, and the TRUSTED one is never the fall-through. A trusted path
+    // reached by `else` silently widens the moment a third subject kind appears: the new kind would
+    // inherit read-everything-verbatim without anyone deciding that it should. The tail below is
+    // unreachable while the union has two members, and is what a third one would land on instead.
     if (subject.kind === 'mcpTool') {
       const trusted = new Set(trustedAnnotationHints(mcp, subject.server));
       return effectiveAnnotations(declared?.mcp?.(subject.server, subject.name), trusted);
     }
-    return effectiveAnnotations(declared?.builtIn?.(subject.name), ALL_HINTS);
+    if (subject.kind === 'tool') {
+      return effectiveAnnotations(declared?.builtIn?.(subject.name), ALL_HINTS);
+    }
+    return { ...MCP_FAIL_CLOSED_ANNOTATIONS };
   };
 }

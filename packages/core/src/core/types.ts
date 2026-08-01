@@ -1,4 +1,5 @@
 import type { GthConfig } from '#src/config.js';
+import type { DeclaredToolAnnotations } from '#src/core/approvals/annotations.js';
 import type { ShellSafetyVerdict } from '#src/core/shell/rater.js';
 import type { BaseMessage } from '@langchain/core/messages';
 import type { RunnableConfig } from '@langchain/core/runnables';
@@ -271,6 +272,19 @@ export interface GthAgentInterface {
    * receives no granted list (and so suggests nothing).
    */
   getRegisteredToolNames?(): string[];
+
+  /**
+   * EXT-70 (spec §4.7.1) — what the connected MCP servers declared about their own tools in their
+   * `tools/list` responses, keyed by the REGISTERED tool name (`mcp__<server>__<tool>`). The runner
+   * reads it as the `mcp` half of a declared-annotation lookup when it computes a call's effective
+   * annotation set.
+   *
+   * These are **claims, not credentials**: nothing here has been trusted, and an entry only becomes
+   * load-bearing where the user's `approvals.mcp` block believes that hint from that server.
+   * Optional — an agent that tracks no tools omits it, and every tool is then fail-closed, which is
+   * exactly what a fully distrustful configuration computes anyway.
+   */
+  getDeclaredMcpToolAnnotations?(): ReadonlyMap<string, DeclaredToolAnnotations>;
 
   /**
    * GS2-16 — reset the per-run analytics accumulator so the NEXT turn's token/tool totals start
