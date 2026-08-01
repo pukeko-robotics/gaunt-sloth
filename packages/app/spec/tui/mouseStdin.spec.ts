@@ -115,6 +115,34 @@ describe('createMouseStdin', () => {
     expect(events).toHaveLength(1);
   });
 
+  it('reassembles a multi-byte character split across chunks', async () => {
+    // Ink sets its encoding on the proxy, so the real stdin hands us raw bytes. Decoding each chunk
+    // independently would turn a split emoji into replacement characters in the user's prompt.
+    const source = fakeStdin();
+    const { stdin } = createMouseStdin(source, vi.fn());
+    stdin.setEncoding('utf8');
+
+    const emoji = Buffer.from('🦥', 'utf8');
+    source.write(emoji.subarray(0, 2));
+    source.write(emoji.subarray(2));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(stdin.read()).toBe('🦥');
+  });
+
+  it('does not corrupt multi-byte input that arrives alongside a mouse report', async () => {
+    const source = fakeStdin();
+    const events: MouseEvent[] = [];
+    const { stdin } = createMouseStdin(source, (event) => void events.push(event));
+    stdin.setEncoding('utf8');
+
+    source.write(Buffer.from(`日本${report(0, 1, 1)}語`, 'utf8'));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(stdin.read()).toBe('日本語');
+    expect(events).toHaveLength(1);
+  });
+
   it('delegates isTTY, setRawMode, ref and unref to the real stdin', () => {
     // Raw mode and the process reference count belong to the real descriptor; faking them on a
     // pipe would leave the terminal cooked and swallow every keystroke.

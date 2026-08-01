@@ -45,13 +45,18 @@ export type HitRegionHandler = (event: HitRegionEvent) => void;
 /**
  * Where the live region's first row sits in absolute screen coordinates.
  *
- * Ink pins the live frame to the bottom of the viewport, so the origin is simply the terminal
- * height minus the frame height. Clamped at 0 for the case that actually happens in practice: a
- * frame taller than the window, where the top rows have scrolled off and the visible part starts at
- * row 0.
+ * Ink pins the live frame to the bottom of the viewport, so the origin is the terminal height minus
+ * the frame height.
+ *
+ * **The result is deliberately allowed to go negative, and must not be clamped.** When the frame is
+ * taller than the window its top rows have scrolled off above the screen, so the frame starts at a
+ * row the viewport cannot show — a 30-row frame in a 24-row terminal starts at -6, and the region
+ * sitting at frame row 10 is on screen row 4. Clamping to 0 would put it on row 10 and shift every
+ * click target down by the overflow, which is exactly the case where a user is most likely to be
+ * clicking (a tall frame with lots of panels).
  */
 export function liveRegionOrigin(terminalRows: number, liveHeight: number): number {
-  return Math.max(0, terminalRows - liveHeight);
+  return terminalRows - liveHeight;
 }
 
 /** Is an absolute cell inside this region, given where the live frame starts on screen? */
@@ -81,6 +86,19 @@ export class HitRegionRegistry {
     return () => this.unregister(region.id);
   }
 
+  /**
+   * Update a claimed rectangle's bounds in place, keeping its handler.
+   *
+   * Separate from {@link register} so a re-measure on every render does not delete and re-insert the
+   * entry. That matters beyond efficiency: churning the map is a live-region-wide side effect, and
+   * keeping entries stable means the set of claims does not silently reorder as unrelated
+   * components re-render.
+   */
+  setBounds(id: string, bounds: Omit<HitRegion, 'id'>): void {
+    const entry = this.regions.get(id);
+    if (entry) entry.region = { id, ...bounds };
+  }
+
   unregister(id: string): void {
     this.regions.delete(id);
   }
@@ -97,13 +115,28 @@ export class HitRegionRegistry {
   /**
    * Find the region under an absolute cell, or `undefined`.
    *
-   * Later registrations win when rectangles overlap: a region registered on top of another is the
-   * one visually in front, so it is the one the user believes they clicked.
+   * **The smallest matching rectangle wins.** Overlap here is almost always nesting — a clickable
+   * caret inside a clickable panel — and the innermost thing under the cursor is what the user
+   * believes they clicked.
+   *
+   * Registration order deliberately does NOT decide this. React runs layout effects child-first, so
+   * children claim their rectangles before their parents do; a "last registration wins" rule would
+   * therefore hand every click to the enclosing panel instead of the control inside it, and would
+   * additionally shift as unrelated components re-rendered. Area is a property of the layout rather
+   * than of render timing, so it stays stable.
    */
   find(row: number, column: number, origin: number): HitRegion | undefined {
     let found: HitRegion | undefined;
+    let smallest = Number.POSITIVE_INFINITY;
     for (const { region } of this.regions.values()) {
-      if (regionContains(region, row, column, origin)) found = region;
+      // A zero-area claim is a component that has not been laid out yet; it can never be clicked.
+      if (region.width <= 0 || region.height <= 0) continue;
+      if (!regionContains(region, row, column, origin)) continue;
+      const area = region.width * region.height;
+      if (area < smallest) {
+        smallest = area;
+        found = region;
+      }
     }
     return found;
   }

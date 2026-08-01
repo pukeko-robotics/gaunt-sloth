@@ -15,6 +15,7 @@
  */
 
 import { PassThrough } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 import { parseMouseReports, type MouseEvent } from '#src/tui/mouseParser.js';
 
 /**
@@ -84,11 +85,14 @@ export function createMouseStdin(
   const filter = new MouseInputFilter();
   const proxy = new PassThrough() as unknown as InkStdin & PassThrough;
   let disposed = false;
+  // Ink sets its encoding on the PROXY, so the real stdin keeps handing us raw bytes. Decoding each
+  // chunk independently would corrupt any multi-byte character split across a chunk boundary — an
+  // emoji or a CJK character typed at the prompt would arrive as replacement characters. The
+  // decoder holds the incomplete tail until its remaining bytes turn up.
+  const decoder = new StringDecoder('utf8');
 
   const onData = (chunk: Buffer | string) => {
-    const { events, rest } = filter.push(
-      typeof chunk === 'string' ? chunk : chunk.toString('utf8')
-    );
+    const { events, rest } = filter.push(typeof chunk === 'string' ? chunk : decoder.write(chunk));
     // Forward the keyboard remainder FIRST so ordinary typing is never delayed behind a handler,
     // then deliver the events. Order only matters when a chunk carries both, which is rare, but
     // typing should never be the thing that waits.

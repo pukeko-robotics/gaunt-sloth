@@ -33,9 +33,19 @@ describe('liveRegionOrigin', () => {
     expect(liveRegionOrigin(24, 6)).toBe(18);
   });
 
-  it('clamps to 0 when the frame is taller than the window', () => {
-    // The top has scrolled off, so what is visible starts at row 0 — not at a negative row.
-    expect(liveRegionOrigin(10, 30)).toBe(0);
+  it('goes negative when the frame is taller than the window, rather than clamping', () => {
+    // The frame's top rows have scrolled off ABOVE the screen, so the frame genuinely starts at a
+    // row the viewport cannot show. Clamping to 0 here would shift every target down by the
+    // overflow — the exact case (a tall frame, many panels) where clicking matters most.
+    expect(liveRegionOrigin(24, 30)).toBe(-6);
+  });
+
+  it('puts a region on the right screen row when the frame overflows the window', () => {
+    // The regression the sign matters for: frame row 10 of a 30-row frame in a 24-row terminal is
+    // on screen row 4, not row 10.
+    const origin = liveRegionOrigin(24, 30);
+    expect(regionContains(region({ top: 10, height: 1, width: 20 }), 4, 2, origin)).toBe(true);
+    expect(regionContains(region({ top: 10, height: 1, width: 20 }), 10, 2, origin)).toBe(false);
   });
 
   it('is the whole screen when the frame fills it', () => {
@@ -110,16 +120,66 @@ describe('HitRegionRegistry', () => {
     expect(handler).toHaveBeenCalledWith(expect.objectContaining({ type: 'release' }));
   });
 
-  it('gives an overlapping click to the region registered last — the one visually in front', () => {
-    const behind = vi.fn();
-    const front = vi.fn();
-    registry.register(region({ id: 'behind', width: 20, height: 5 }), behind);
-    registry.register(region({ id: 'front', width: 20, height: 5 }), front);
+  it('gives a click on nested regions to the SMALLEST one — the innermost control', () => {
+    const panel = vi.fn();
+    const caret = vi.fn();
+    registry.register(region({ id: 'panel', top: 0, left: 0, width: 40, height: 6 }), panel);
+    registry.register(region({ id: 'caret', top: 0, left: 0, width: 2, height: 1 }), caret);
 
     registry.dispatch(press(20, 1), 20);
 
-    expect(front).toHaveBeenCalledTimes(1);
-    expect(behind).not.toHaveBeenCalled();
+    expect(caret).toHaveBeenCalledTimes(1);
+    expect(panel).not.toHaveBeenCalled();
+  });
+
+  it('picks the innermost region regardless of registration order', () => {
+    // React runs layout effects child-first, so a child claims BEFORE its parent. An order-based
+    // rule would hand every click to the enclosing panel; area is a property of the layout instead.
+    const panel = vi.fn();
+    const caret = vi.fn();
+    registry.register(region({ id: 'caret', top: 0, left: 0, width: 2, height: 1 }), caret);
+    registry.register(region({ id: 'panel', top: 0, left: 0, width: 40, height: 6 }), panel);
+
+    registry.dispatch(press(20, 1), 20);
+
+    expect(caret).toHaveBeenCalledTimes(1);
+    expect(panel).not.toHaveBeenCalled();
+  });
+
+  it('still routes to the enclosing region when the click misses the inner one', () => {
+    const panel = vi.fn();
+    const caret = vi.fn();
+    registry.register(region({ id: 'panel', top: 0, left: 0, width: 40, height: 6 }), panel);
+    registry.register(region({ id: 'caret', top: 0, left: 0, width: 2, height: 1 }), caret);
+
+    registry.dispatch(press(23, 30), 20);
+
+    expect(panel).toHaveBeenCalledTimes(1);
+    expect(caret).not.toHaveBeenCalled();
+  });
+
+  it('never treats a not-yet-laid-out (zero-area) claim as a hit', () => {
+    const handler = vi.fn();
+    registry.register(region({ id: 'unmeasured', width: 0, height: 0 }), handler);
+
+    expect(registry.dispatch(press(20, 0), 20)).toBe(false);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('setBounds updates a claim in place, keeping its handler', () => {
+    const handler = vi.fn();
+    registry.register(region({ id: 'moves', top: 0, left: 0, width: 0, height: 0 }), handler);
+
+    registry.setBounds('moves', { top: 3, left: 0, width: 10, height: 1 });
+
+    expect(registry.list()).toHaveLength(1);
+    expect(registry.dispatch(press(23, 2), 20)).toBe(true);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('setBounds on an unknown id is a no-op rather than creating a phantom region', () => {
+    registry.setBounds('never-registered', { top: 0, left: 0, width: 10, height: 1 });
+    expect(registry.list()).toHaveLength(0);
   });
 
   it('replaces a region when the same id re-registers, rather than accumulating stale rectangles', () => {

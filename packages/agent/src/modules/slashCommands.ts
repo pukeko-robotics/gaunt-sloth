@@ -729,7 +729,11 @@ export function createCommandRegistry(): SlashCommand[] {
     },
     {
       name: 'mouse',
-      description: 'Turn terminal mouse reporting on or off (/mouse on|off; no arg toggles)',
+      // The `/help` line carries the selection hint too, not just the `/mouse` feedback: someone
+      // scanning `/help` because dragging stopped selecting needs the answer where they are looking.
+      description:
+        'Turn terminal mouse reporting on or off (/mouse on|off; no arg toggles). ' +
+        'While on, hold Shift (Option in some macOS terminals) to select text',
       availableDuringRun: true,
       // Available mid-turn deliberately: the reason to reach for this is usually wanting to copy
       // something off the screen, and that urge does not wait for the run to finish.

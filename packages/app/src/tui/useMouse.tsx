@@ -15,6 +15,13 @@ import type { MouseEvent } from '#src/tui/mouseParser.js';
 /** Subscribe to decoded mouse events; returns an unsubscribe. Mirrors the App's other bridges. */
 export type MouseSubscribe = (listener: (event: MouseEvent) => void) => () => void;
 
+/**
+ * Terminal height to assume when the stream does not report one — a headless or test renderer.
+ * Only the frame ORIGIN depends on it, so a wrong guess shifts hit regions rather than breaking
+ * them, and a real terminal always reports its own height.
+ */
+export const FALLBACK_TERMINAL_ROWS = 24;
+
 interface MouseContextValue {
   registry: HitRegionRegistry;
   /** False when mouse is off — consumers use it to skip work and to keep hints honest. */
@@ -61,7 +68,7 @@ export function MouseProvider({ subscribe, enabled, children }: MouseProviderPro
     if (!enabled || !subscribe) return;
     const registry = registryRef.current;
     return subscribe((event) => {
-      const rows = stdout?.rows ?? 24;
+      const rows = stdout?.rows ?? FALLBACK_TERMINAL_ROWS;
       registry.dispatch(event, liveRegionOrigin(rows, heightRef.current));
     });
   }, [enabled, subscribe, stdout]);
@@ -95,20 +102,24 @@ export function useHitRegion(id: string, handler: HitRegionHandler, enabled = tr
 
   const active = enabled && mouseEnabled;
 
+  // Claim once per mount. Kept separate from the re-measure below because a claim that is deleted
+  // and re-inserted on every render would churn the registry for every component in the frame.
   useLayoutEffect(() => {
-    if (!active || !ref.current) {
-      registry.unregister(id);
-      return;
-    }
+    if (!active) return;
+    return registry.register({ id, top: 0, left: 0, width: 0, height: 0 }, (event) =>
+      handlerRef.current(event)
+    );
+  }, [id, registry, active]);
+
+  // Re-measure every render, so the rectangle follows the component as the frame reflows: a panel
+  // moves down as the transcript grows, and a stale rectangle would leave a click landing on
+  // whatever now occupies the old rows. A zero measurement means "not laid out yet", and `find`
+  // skips zero-area claims rather than treating them as a hit.
+  useLayoutEffect(() => {
+    if (!active || !ref.current) return;
     const { width, height } = measureElement(ref.current);
-    if (width === 0 || height === 0) {
-      // Not laid out yet (or genuinely invisible) — an empty rectangle would swallow nothing but
-      // could still match a zero-width click, so drop the claim instead of registering a phantom.
-      registry.unregister(id);
-      return;
-    }
     const { top, left } = elementOffset(ref.current);
-    return registry.register({ id, top, left, width, height }, (event) => handlerRef.current(event));
+    registry.setBounds(id, { top, left, width, height });
   });
 
   return ref;
