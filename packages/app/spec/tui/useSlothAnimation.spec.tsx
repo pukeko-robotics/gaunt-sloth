@@ -186,19 +186,33 @@ describe('useSlothAnimation', () => {
     h.unmount();
   });
 
-  it('clears pending timers on unmount, so nothing fires into a gone component', async () => {
+  it('clears its pending timers on unmount, so none outlive the component', async () => {
     // The banner is an intro: it disappears at the first exchange, which can land mid-animation.
+    //
+    // This asserts the CLEARING, not the absence of re-renders. React silently drops a state update
+    // on an unmounted component, so "no further renders happened" is true whether or not the timers
+    // were cancelled — a test written that way passes with the cleanup deleted.
+    const setSpy = vi.spyOn(globalThis, 'setTimeout');
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
     const h = harness(() => 'nod');
 
     h.play();
     await flush();
-    const duringPlayback = h.seen.length;
+
+    // The hook's own timers, told apart from Ink's render scheduling by their delays: every hold is
+    // at least 90ms, and Ink schedules its commits at effectively zero.
+    const ours = setSpy.mock.calls
+      .map((call, index) => ({ delay: Number(call[1] ?? 0), handle: setSpy.mock.results[index].value }))
+      .filter((timer) => timer.delay >= 90)
+      .map((timer) => timer.handle);
+    expect(ours.length).toBeGreaterThan(0);
 
     h.unmount();
-    // Well past every remaining hold: a surviving timer would set state on an unmounted component,
-    // which shows up either as another recorded render or as an unhandled React warning.
-    await advance(10_000);
 
-    expect(h.seen.length).toBe(duringPlayback);
+    const cleared = clearSpy.mock.calls.map((call) => call[0]);
+    for (const handle of ours) expect(cleared).toContain(handle);
+
+    setSpy.mockRestore();
+    clearSpy.mockRestore();
   });
 });

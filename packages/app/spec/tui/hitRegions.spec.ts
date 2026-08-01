@@ -42,7 +42,10 @@ describe('liveRegionOrigin', () => {
       expect(liveRegionOrigin(30, 14, 0)).toBe(0);
     });
 
-    it('defaults to that, so a caller that says nothing gets the launch case', () => {
+    it('assumes it when rowsAbove is omitted', () => {
+      // Only this function defaults to the launch case. `MouseProvider` defaults the other way, to
+      // `bottom`, because a session spends almost all of its life there — the App opts into `top`
+      // for the window before anything is committed.
       expect(liveRegionOrigin(30, 14)).toBe(0);
     });
   });
