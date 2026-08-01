@@ -535,6 +535,91 @@ describe('GthAgentRunner', () => {
       ]);
     });
 
+    /**
+     * §3.5 — the `/approvals` display counts the declared entries AND the runtime grants, because
+     * both are in force for this session and §3 requires every list to be inspectable. The
+     * persisted count stays `undefined` (rendered `—`) until the store is actually loaded.
+     */
+    it('§3 — the allow-list count covers the declared entries and the session grants alike', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'npm install' } }])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+      await runner.init('code', {
+        ...mockConfig,
+        ...ALLOWLIST_CONFIG,
+        approvals: {
+          mode: 'write',
+          allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
+        },
+      } as unknown as typeof mockConfig);
+      expect(runner.getAllowlistCounts().session).toBe(1); // the declared entry alone
+
+      runner.setToolApprovalCallback(
+        vi.fn().mockResolvedValue({ type: 'approve', scope: 'session' })
+      );
+      await runner.processMessages([new HumanMessage('install')]);
+
+      expect(runner.getAllowlistCounts().session).toBe(2); // …plus the grant just made
+    });
+
+    /**
+     * §3.1 — a command that does not statically resolve is not recorded. It could not be stored
+     * harmfully (no allow entry of any matcher matches an unresolvable command, so the entry would
+     * be inert), but an inert entry sitting in a list §3 requires to be inspectable would tell the
+     * user something is in force when nothing is.
+     */
+    it('records nothing for a command that does not statically resolve', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'ls; rm -rf /tmp/x' } },
+        ])
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'ls -la' } }])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+      await runner.init('code', { ...mockConfig, ...ALLOWLIST_CONFIG });
+      const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'session' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('go')]);
+
+      // The compound command left nothing behind; the ordinary one that followed did.
+      expect(runner.getAllowlistCounts().session).toBe(1);
+    });
+
+    /**
+     * §2.5 — at `bypass` the allow list is moot, so a session that has switched the gate off must
+     * not read or rewrite the project's grant file. `always: undefined` is the observable: the
+     * store was never loaded, even though a gated call went all the way through the decision.
+     */
+    it('does not touch the persisted grant file at bypass', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: 'ls -la' } }])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+      await runner.init('code', {
+        ...mockConfig,
+        ...ALLOWLIST_CONFIG,
+        approvals: 'bypass',
+      } as unknown as typeof mockConfig);
+      runner.setToolApprovalCallback(vi.fn());
+      await runner.processMessages([new HumanMessage('go')]);
+
+      expect(runner.getAllowlistCounts().always).toBeUndefined();
+    });
+
     it('prompts the human for a non-matching command', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       mockAgent.stream.mockResolvedValue(streamOf('x'));
