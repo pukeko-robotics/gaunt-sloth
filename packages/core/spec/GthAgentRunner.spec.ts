@@ -738,32 +738,32 @@ describe('GthAgentRunner', () => {
         deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
         escalate: [{ type: 'shell', matcher: 'exact', pattern: 'terraform apply' }],
       });
-      // §3 — the DECLARED lists are merged into the runtime stores at init. The stores still hold
-      // prefix strings, so what reaches them is what `declaredShellPrefixes` carries.
+      // §3 — every list MUST be inspectable, so the declared entries are what the `/approvals`
+      // display counts. They are NOT copied into the prefix stores (that is what made an `exact`
+      // entry behave as a prefix); they are matched from the posture itself.
       expect(runner.getDenylist()).toEqual(['npm publish']);
       expect(runner.getAllowlistCounts().session).toBe(1);
     });
 
     /**
-     * EXT-71 — the interim bridge's SILENT half, pinned so it cannot be mistaken for working
-     * behaviour: a `glob` deny entry parses and is carried in the posture, but reaches no store
-     * yet. This test is the marker the matcher engine must flip.
+     * EXT-71 — a `glob` entry is inspectable too, and its rendering says which matcher it is, since
+     * a pattern that is not the command has to be readable as one.
      */
-    it('carries a glob entry in the posture while the prefix stores stay empty (interim)', async () => {
+    it('renders a pattern entry in the deny display with its matcher', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       await runner.init('code', {
         ...mockConfig,
         approvals: {
           mode: 'write',
           allow: [{ type: 'shell', matcher: 'glob', pattern: 'git status*' }],
-          deny: [{ type: 'shell', matcher: 'glob', pattern: 'npm publish*' }],
+          deny: [
+            { type: 'shell', matcher: 'glob', pattern: 'npm publish*' },
+            { type: 'mcpTool', server: 'jira', matcher: 'exact', pattern: 'delete_issue' },
+          ],
         },
       } as unknown as typeof mockConfig);
-      expect(runner.getSessionApprovals().deny).toEqual([
-        { type: 'shell', matcher: 'glob', pattern: 'npm publish*' },
-      ]);
-      expect(runner.getDenylist()).toEqual([]);
-      expect(runner.getAllowlistCounts().session).toBe(0);
+      expect(runner.getDenylist()).toEqual(['npm publish* (glob)', 'mcpTool jira/delete_issue']);
+      expect(runner.getAllowlistCounts().session).toBe(1);
     });
 
     it('switching rungs never rewrites the declared lists — they are config input, not state', async () => {
@@ -1328,7 +1328,7 @@ describe('GthAgentRunner', () => {
 
     it('§3 — the allow-list is consulted BEFORE the rater: a declared entry costs no rater call', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
-      const streamResume = pendingOnce('npm test --watch=false');
+      const streamResume = pendingOnce('npm test');
 
       const { model, withStructuredOutput } = raterModel(DESTRUCTIVE);
       await runner.init('code', {
@@ -1348,6 +1348,70 @@ describe('GthAgentRunner', () => {
       // Approved from the DECLARED allow-list, with no prompt and — the point of this test — no
       // rating call, even though the rater would have said `destructive`.
       expect(withStructuredOutput).not.toHaveBeenCalled();
+      expect(human).not.toHaveBeenCalled();
+      expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
+    });
+
+    /**
+     * EXT-71 §3.1 — **the other direction of the test above, and the gap this node closed.** An
+     * `exact` entry is the command itself; it does not cover a flag-suffixed sibling. Before the
+     * matcher engine the declared entries were copied into the token-aligned prefix store, so
+     * `npm test` also auto-approved `npm test --watch=false` — unrated and unprompted, which is the
+     * one direction §3.1 says the design cannot afford: *"a too-broad allow entry has no backstop —
+     * it runs, unrated and unprompted."*
+     */
+    it('§3.1 — an exact allow entry does NOT approve a flag-suffixed sibling', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      pendingOnce('npm test --watch=false');
+
+      const { model, withStructuredOutput } = raterModel(DESTRUCTIVE);
+      await runner.init('code', {
+        ...mockConfig,
+        llm: model,
+        streamOutput: true,
+        approvals: {
+          mode: 'auto-safe',
+          allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
+        },
+        commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+      } as any);
+      const human = vi.fn().mockResolvedValue({ type: 'reject' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('go')]);
+      // It was rated (the entry did not match) and, on `destructive`, escalated to the human.
+      expect(withStructuredOutput).toHaveBeenCalledTimes(1);
+      expect(human).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * The supported way to cover the whole family is a GLOB, which the author writes deliberately.
+     * §3.2 then keeps the rater involved by default, because a glob recorded a shape rather than a
+     * command — and the rating is a TRIPWIRE: `destructive` runs, because the human already
+     * authorized it.
+     */
+    it('§3.1/§3.2 — a glob entry covers the sibling, and its rating is a tripwire that still runs it', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      const streamResume = pendingOnce('npm test --watch=false');
+
+      const { model, withStructuredOutput } = raterModel(DESTRUCTIVE);
+      await runner.init('code', {
+        ...mockConfig,
+        llm: model,
+        streamOutput: true,
+        approvals: {
+          mode: 'auto-safe',
+          allow: [{ type: 'shell', matcher: 'glob', pattern: 'npm test*' }],
+        },
+        commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+      } as any);
+      const human = vi.fn();
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('go')]);
+      // Rated (glob defaults to `rate: true`) but NOT escalated: the rater does not overrule a
+      // standing human decision by disliking it.
+      expect(withStructuredOutput).toHaveBeenCalledTimes(1);
       expect(human).not.toHaveBeenCalled();
       expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
     });
@@ -1555,10 +1619,13 @@ describe('GthAgentRunner', () => {
       return streamResume;
     }
 
-    // EXT-71 §3.1 — the declared deny list is a list of explicit entries. The call sites below all
-    // want a shell + exact entry, which is what the interim bridge carries into the deny store.
+    // EXT-71 §3.1 — the declared deny list is a list of explicit entries.
     function shellExact(...patterns: string[]): unknown[] {
       return patterns.map((pattern) => ({ type: 'shell', matcher: 'exact', pattern }));
+    }
+
+    function shellGlob(...patterns: string[]): unknown[] {
+      return patterns.map((pattern) => ({ type: 'shell', matcher: 'glob', pattern }));
     }
 
     function denyConfig(
@@ -1585,7 +1652,9 @@ describe('GthAgentRunner', () => {
       async (rung) => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         const streamResume = pendingOnce('npm publish --access public');
-        const { config, withStructuredOutput } = denyConfig(rung, shellExact('npm publish'));
+        // §3.1 — `exact` is the command itself, so covering the whole family is a GLOB, which is
+        // also what §3.1 tells a user relying on the deny list under `bypass` to write.
+        const { config, withStructuredOutput } = denyConfig(rung, shellGlob('npm publish*'));
         await runner.init('code', config);
         const human = vi.fn();
         runner.setToolApprovalCallback(human);
@@ -1597,7 +1666,7 @@ describe('GthAgentRunner', () => {
         const decision = streamResume.mock.calls[0][0].decisions[0];
         expect(decision.type).toBe('reject');
         // The refusal quotes the user's own entry back, so it is traceable to the line they wrote.
-        expect(decision.message).toContain('npm publish');
+        expect(decision.message).toContain('npm publish*');
         expect(decision.message).toContain('approvals.deny');
       }
     );
@@ -1605,7 +1674,7 @@ describe('GthAgentRunner', () => {
     it('§2.5 — bypass keeps the deny list; everything else there is approved', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       const streamResume = pendingOnce('rm -rf node_modules');
-      const { config } = denyConfig('bypass', shellExact('npm publish'));
+      const { config } = denyConfig('bypass', shellGlob('npm publish*'));
       await runner.init('code', config);
       runner.setToolApprovalCallback(vi.fn());
 
@@ -1613,11 +1682,17 @@ describe('GthAgentRunner', () => {
       expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
     });
 
+    /**
+     * §3.1 — **the asymmetry.** A deny entry MAY match a command that does not statically resolve,
+     * because a prohibition that catches something unresolvable errs in the direction that costs
+     * nothing. Both spellings below are unclassifiable, so no ALLOW entry of any matcher could
+     * touch them (the paired assertion lives in the matcher spec).
+     */
     it('fires on a COMPOSED command, which is exactly what a shared allow-list matcher could not do', async () => {
       for (const command of ['git push --force; ls', 'ls && git push --force origin main']) {
         const runner = new GthAgentRunner(statusUpdateCallback);
         const streamResume = pendingOnce(command);
-        const { config } = denyConfig('bypass', shellExact('git push --force'));
+        const { config } = denyConfig('bypass', shellGlob('git push --force*'));
         await runner.init('code', config);
         runner.setToolApprovalCallback(vi.fn());
 
@@ -1626,15 +1701,471 @@ describe('GthAgentRunner', () => {
       }
     });
 
-    it('does not refuse a command that merely shares a prefix token', async () => {
+    /**
+     * An `exact` deny entry still matches a compound command SEGMENT-wise — `git push --force; ls`
+     * runs `git push --force` as one of its segments — which is what makes the segment split worth
+     * having even for the narrowest matcher.
+     */
+    it('an exact deny entry fires on a segment of a composed command', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
-      const streamResume = pendingOnce('git push origin main');
+      const streamResume = pendingOnce('git push --force; ls');
       const { config } = denyConfig('bypass', shellExact('git push --force'));
       await runner.init('code', config);
       runner.setToolApprovalCallback(vi.fn());
 
       await runner.processMessages([new HumanMessage('go')]);
+      expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('reject');
+    });
+
+    it('does not refuse a command that merely shares a prefix token', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      const streamResume = pendingOnce('git push origin main');
+      const { config } = denyConfig('bypass', shellGlob('git push --force*'));
+      await runner.init('code', config);
+      runner.setToolApprovalCallback(vi.fn());
+
+      await runner.processMessages([new HumanMessage('go')]);
       expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
+    });
+
+    /**
+     * §3.3 — the declared lists and the runtime stores are ONE set of rules resolved
+     * most-restrictive-wins, so a grant the human made at a prompt cannot outrank a prohibition
+     * they wrote in config, whichever arrived first.
+     */
+    it('a declared deny outranks a runtime session grant for the same command', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        // First `git push origin main` is granted at session scope, recording the prefix
+        // `git push`; the second command then matches BOTH that grant and the declared deny.
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'git push origin main' } },
+        ])
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'git push --force origin main' } },
+        ])
+        .mockResolvedValueOnce([]);
+      const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+      (mockAgent as any).streamResume = streamResume;
+
+      const { config } = denyConfig('write', shellGlob('git push --force*'));
+      await runner.init('code', config);
+      const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'session' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('go')]);
+
+      // The first command prompted and was granted; the second was refused without a prompt.
+      expect(human).toHaveBeenCalledTimes(1);
+      expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
+      expect(streamResume.mock.calls[1][0].decisions[0].type).toBe('reject');
+    });
+  });
+
+  /**
+   * EXT-71 §3.2 — the `escalate` list, the `rate` axis, and the allow-match tripwire.
+   *
+   * Every negative assertion here ships its control, because each one is exactly the shape that
+   * passes on a gate that does nothing: "no rating call" passes on a gate that never rates, "inert
+   * at bypass" passes on a gate that approves everything, and "runs on destructive" passes on a
+   * gate that is simply open. The rater stub below **would answer permissively if it were called**,
+   * so an assertion that it was not called is an assertion about the gate rather than about a stub
+   * that could not have answered anyway.
+   */
+  describe('escalate list, the rate axis and the allow tripwire (EXT-71 §3.2)', () => {
+    function streamOf(...chunks: string[]) {
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const c of chunks) yield c;
+        },
+      };
+    }
+
+    function pendingOnce(command: string) {
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command } }])
+        .mockResolvedValueOnce([]);
+      const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+      (mockAgent as any).streamResume = streamResume;
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      return streamResume;
+    }
+
+    const SAFE = { outcome: 'safe', reason: 'read-only' };
+    const DESTRUCTIVE = { outcome: 'destructive', reason: 'risky' };
+    const CATASTROPHIC = { outcome: 'catastrophic', reason: 'drops a database irrecoverably' };
+    const ATTACK = { outcome: 'attack', reason: 'reads a private key as the operation itself' };
+
+    /**
+     * A rater stub that is **fully capable of answering**, and answers permissively by default.
+     * That is load-bearing: an assertion that the rater was never invoked proves the gate did not
+     * reach it only when reaching it would have produced a verdict.
+     */
+    function gateConfig(approvals: Record<string, unknown>, verdict: unknown = SAFE) {
+      const invoke = vi.fn().mockResolvedValue(verdict);
+      const withStructuredOutput = vi.fn().mockReturnValue({ invoke });
+      return {
+        withStructuredOutput,
+        invoke,
+        config: {
+          ...mockConfig,
+          llm: { withStructuredOutput } as any,
+          streamOutput: true as const,
+          approvals,
+          commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+        } as unknown as GthConfig,
+      };
+    }
+
+    const ESCALATE_TERRAFORM = [
+      { type: 'shell', matcher: 'exact', pattern: 'terraform apply' },
+    ] as unknown[];
+
+    describe('escalate always asks the human, whatever the rung would have done', () => {
+      it.each(['read-only', 'write'] as const)(
+        'asks at %s, naming the entry that fired',
+        async (rung) => {
+          const runner = new GthAgentRunner(statusUpdateCallback);
+          pendingOnce('terraform apply');
+          const { config, withStructuredOutput } = gateConfig({
+            mode: rung,
+            escalate: ESCALATE_TERRAFORM,
+          });
+          await runner.init('code', config);
+          const human = vi.fn().mockResolvedValue({ type: 'reject' });
+          runner.setToolApprovalCallback(human);
+
+          await runner.processMessages([new HumanMessage('go')]);
+
+          expect(human).toHaveBeenCalledTimes(1);
+          expect(human.mock.calls[0][0].escalatedBy).toBe('terraform apply');
+          expect(withStructuredOutput).not.toHaveBeenCalled();
+        }
+      );
+
+      it.each(['auto-safe', 'full-auto'] as const)(
+        'at %s it goes straight to the human with NO rating call',
+        async (rung) => {
+          const runner = new GthAgentRunner(statusUpdateCallback);
+          pendingOnce('terraform apply');
+          // The stub would have said `safe` — i.e. would have APPROVED this call without a prompt.
+          const { config, withStructuredOutput } = gateConfig(
+            { mode: rung, escalate: ESCALATE_TERRAFORM },
+            SAFE
+          );
+          await runner.init('code', config);
+          const human = vi.fn().mockResolvedValue({ type: 'reject' });
+          runner.setToolApprovalCallback(human);
+
+          await runner.processMessages([new HumanMessage('go')]);
+
+          expect(withStructuredOutput).not.toHaveBeenCalled();
+          expect(human).toHaveBeenCalledTimes(1);
+          expect(human.mock.calls[0][0].safetyVerdict).toBeUndefined();
+        }
+      );
+
+      it('CONTROL: without the escalate entry the same call is rated and auto-approved', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        const streamResume = pendingOnce('terraform apply');
+        const { config, withStructuredOutput } = gateConfig({ mode: 'auto-safe' }, SAFE);
+        await runner.init('code', config);
+        const human = vi.fn();
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('go')]);
+
+        expect(withStructuredOutput).toHaveBeenCalledTimes(1);
+        expect(human).not.toHaveBeenCalled();
+        expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
+      });
+
+      it('§2.5 — is INERT at bypass: the rung chosen for the session wins', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        const streamResume = pendingOnce('terraform apply');
+        const { config } = gateConfig({ mode: 'bypass', escalate: ESCALATE_TERRAFORM });
+        await runner.init('code', config);
+        const human = vi.fn();
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('go')]);
+
+        expect(human).not.toHaveBeenCalled();
+        expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
+      });
+
+      it('CONTROL: the same entry DOES escalate at write, so bypass is what made it inert', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        pendingOnce('terraform apply');
+        const { config } = gateConfig({ mode: 'write', escalate: ESCALATE_TERRAFORM });
+        await runner.init('code', config);
+        const human = vi.fn().mockResolvedValue({ type: 'reject' });
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('go')]);
+        expect(human).toHaveBeenCalledTimes(1);
+      });
+
+      it('outranks an allow entry that matched the same call', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        pendingOnce('terraform apply');
+        const { config } = gateConfig({
+          mode: 'write',
+          allow: [{ type: 'shell', matcher: 'exact', pattern: 'terraform apply' }],
+          escalate: ESCALATE_TERRAFORM,
+        });
+        await runner.init('code', config);
+        const human = vi.fn().mockResolvedValue({ type: 'reject' });
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('go')]);
+        expect(human).toHaveBeenCalledTimes(1);
+        expect(human.mock.calls[0][0].escalatedBy).toBe('terraform apply');
+      });
+
+      it('CONTROL: the allow entry alone approves without a prompt', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        const streamResume = pendingOnce('terraform apply');
+        const { config } = gateConfig({
+          mode: 'write',
+          allow: [{ type: 'shell', matcher: 'exact', pattern: 'terraform apply' }],
+        });
+        await runner.init('code', config);
+        const human = vi.fn();
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('go')]);
+        expect(human).not.toHaveBeenCalled();
+        expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
+      });
+
+      it('§6.2 — exits non-zero non-interactively, naming the entry rather than approvals.allow', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        pendingOnce('terraform apply');
+        const { config } = gateConfig({ mode: 'write', escalate: ESCALATE_TERRAFORM });
+        await runner.init('code', config);
+        // No approval callback — the CI / one-shot case.
+
+        const error = await runner
+          .processMessages([new HumanMessage('go')])
+          .then(() => null)
+          .catch((e: unknown) => e as Error);
+
+        expect(error).toBeInstanceOf(NonInteractiveEscalationError);
+        expect(error?.message).toContain('approvals.escalate');
+        expect(error?.message).toContain('terraform apply');
+        // It says the OPPOSITE of the ordinary escalation's advice: telling someone to declare the
+        // command in approvals.allow would send them to a list that an escalate match outranks.
+        expect(error?.message).toContain('no entry in approvals.allow can answer it');
+        expect(error?.message).not.toContain('Declare the commands this run is allowed to execute');
+      });
+
+      it('CONTROL: an ordinary escalation still points the user at approvals.allow', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        pendingOnce('terraform apply');
+        const { config } = gateConfig({ mode: 'write' });
+        await runner.init('code', config);
+
+        const error = await runner
+          .processMessages([new HumanMessage('go')])
+          .then(() => null)
+          .catch((e: unknown) => e as Error);
+
+        expect(error).toBeInstanceOf(NonInteractiveEscalationError);
+        expect(error?.message).toContain('Declare the commands this run is allowed to execute');
+        expect(error?.message).not.toContain('approvals.escalate');
+      });
+    });
+
+    /**
+     * §3.2 — `rate` is honored at the rater rungs and **inert at every deterministic rung**: no
+     * entry may smuggle a model call into `read-only` or `write`.
+     */
+    describe('rate is inert at the deterministic rungs', () => {
+      const RATED_ALLOW = [
+        { type: 'shell', matcher: 'exact', pattern: 'npm test', rate: true },
+      ] as unknown[];
+
+      it.each(['read-only', 'write'] as const)(
+        'at %s an allow entry with rate:true approves with NO rating call',
+        async (rung) => {
+          const runner = new GthAgentRunner(statusUpdateCallback);
+          const streamResume = pendingOnce('npm test');
+          const { config, withStructuredOutput } = gateConfig({ mode: rung, allow: RATED_ALLOW });
+          await runner.init('code', config);
+          const human = vi.fn();
+          runner.setToolApprovalCallback(human);
+
+          await runner.processMessages([new HumanMessage('go')]);
+
+          // The stub would have answered. It was never asked.
+          expect(withStructuredOutput).not.toHaveBeenCalled();
+          expect(human).not.toHaveBeenCalled();
+          expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
+        }
+      );
+
+      it('CONTROL: the SAME entry and command DO reach the rater at auto-safe', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        pendingOnce('npm test');
+        const { config, withStructuredOutput } = gateConfig({
+          mode: 'auto-safe',
+          allow: RATED_ALLOW,
+        });
+        await runner.init('code', config);
+        runner.setToolApprovalCallback(vi.fn());
+
+        await runner.processMessages([new HumanMessage('go')]);
+        expect(withStructuredOutput).toHaveBeenCalledTimes(1);
+      });
+
+      it('§3.2 — rate:false on a glob entry suppresses the rating the default would have made', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        pendingOnce('npm test --watch');
+        const { config, withStructuredOutput } = gateConfig({
+          mode: 'auto-safe',
+          allow: [{ type: 'shell', matcher: 'glob', pattern: 'npm test*', rate: false }],
+        });
+        await runner.init('code', config);
+        runner.setToolApprovalCallback(vi.fn());
+
+        await runner.processMessages([new HumanMessage('go')]);
+        expect(withStructuredOutput).not.toHaveBeenCalled();
+      });
+
+      it('CONTROL: the same glob entry WITHOUT rate:false is rated, per the §3.2 default', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        pendingOnce('npm test --watch');
+        const { config, withStructuredOutput } = gateConfig({
+          mode: 'auto-safe',
+          allow: [{ type: 'shell', matcher: 'glob', pattern: 'npm test*' }],
+        });
+        await runner.init('code', config);
+        runner.setToolApprovalCallback(vi.fn());
+
+        await runner.processMessages([new HumanMessage('go')]);
+        expect(withStructuredOutput).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    /**
+     * §3.2 — a rated allow match is a **TRIPWIRE, not a re-adjudication**. `safe` and `destructive`
+     * both run; `attack` halts per §4.2; `catastrophic` escalates. The teeth are the last two: a
+     * suite that exercised only the first two would pass on a gate that never consults the rater at
+     * all.
+     */
+    describe('the allow-match tripwire', () => {
+      const RATED_GLOB = [{ type: 'shell', matcher: 'glob', pattern: 'terraform *' }] as unknown[];
+
+      it.each([
+        ['safe', SAFE],
+        ['destructive', DESTRUCTIVE],
+      ] as const)('runs on %s, because the human already authorized it', async (_name, verdict) => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        const streamResume = pendingOnce('terraform destroy');
+        const { config, withStructuredOutput } = gateConfig(
+          { mode: 'auto-safe', allow: RATED_GLOB },
+          verdict
+        );
+        await runner.init('code', config);
+        const human = vi.fn();
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('go')]);
+
+        expect(withStructuredOutput).toHaveBeenCalledTimes(1); // it WAS rated
+        expect(human).not.toHaveBeenCalled(); // and still ran
+        expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
+      });
+
+      it('CONTROL: the same destructive verdict on an UNMATCHED command escalates', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        pendingOnce('terraform destroy');
+        const { config } = gateConfig({ mode: 'auto-safe' }, DESTRUCTIVE);
+        await runner.init('code', config);
+        const human = vi.fn().mockResolvedValue({ type: 'reject' });
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('go')]);
+        expect(human).toHaveBeenCalledTimes(1);
+      });
+
+      it('HALTS on attack — a standing grant does not answer a hostile structure', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        pendingOnce('terraform destroy');
+        const { config } = gateConfig({ mode: 'auto-safe', allow: RATED_GLOB }, ATTACK);
+        await runner.init('code', config);
+        runner.setToolApprovalCallback(vi.fn());
+
+        const error = await runner
+          .processMessages([new HumanMessage('go')])
+          .then(() => null)
+          .catch((e: unknown) => e as Error);
+
+        expect(error).toBeInstanceOf(AttackHaltError);
+        expect(error?.message).toContain('private key');
+      });
+
+      it('ESCALATES on catastrophic, carrying the verdict to the human', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        pendingOnce('terraform destroy');
+        const { config } = gateConfig({ mode: 'auto-safe', allow: RATED_GLOB }, CATASTROPHIC);
+        await runner.init('code', config);
+        const human = vi.fn().mockResolvedValue({ type: 'reject' });
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('go')]);
+
+        expect(human).toHaveBeenCalledTimes(1);
+        expect(human.mock.calls[0][0].safetyVerdict).toEqual(CATASTROPHIC);
+      });
+
+      /**
+       * §4.6 — *"An allow match lifts this floor even when the entry keeps the rater involved: the
+       * tripwire still sees the call; the floor does not apply to it."* This is the supported answer
+       * to "won't this ask constantly" for a team that fetches from one internal host all day.
+       */
+      it('lifts the §4.6 open-world floor: a host-bearing command rated safe RUNS', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        const streamResume = pendingOnce('curl https://internal.example.com/health');
+        const { config, withStructuredOutput } = gateConfig(
+          {
+            mode: 'auto-safe',
+            allow: [
+              { type: 'shell', matcher: 'glob', pattern: 'curl https://internal.example.com*' },
+            ],
+          },
+          SAFE
+        );
+        await runner.init('code', config);
+        const human = vi.fn();
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('go')]);
+
+        expect(withStructuredOutput).toHaveBeenCalledTimes(1); // the tripwire saw it
+        expect(human).not.toHaveBeenCalled(); // the floor did not apply
+        expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
+      });
+
+      it('CONTROL: the same command and verdict WITHOUT an allow entry is floored and escalated', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        pendingOnce('curl https://internal.example.com/health');
+        const { config } = gateConfig({ mode: 'auto-safe' }, SAFE);
+        await runner.init('code', config);
+        const human = vi.fn().mockResolvedValue({ type: 'reject' });
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('go')]);
+
+        expect(human).toHaveBeenCalledTimes(1);
+        // The §4.6 preflight's own words, not the rater's `safe`.
+        expect(human.mock.calls[0][0].safetyVerdict.outcome).toBe('destructive');
+        expect(human.mock.calls[0][0].safetyVerdict.reason).toContain('internal.example.com');
+      });
     });
   });
 

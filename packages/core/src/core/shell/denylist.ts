@@ -42,18 +42,25 @@ import { COMMAND_SEPARATOR_CLASS, normalizeCommand } from '#src/core/shell/norma
 const SEGMENT_SPLIT_RE = new RegExp(`[${COMMAND_SEPARATOR_CLASS}]|\\$\\(|\\)|\``, 'g');
 
 /**
- * Split a raw command into the segments a shell would run, normalized and lower-cased.
+ * Split a raw command into the segments a shell would run, normalized and **case preserved**.
  *
  * Substitution bodies are segments in their own right: `echo $(npm publish)` runs `npm publish`,
  * so a deny entry for `npm publish` must see it. Splitting on `$(`, `` ` `` and `)` yields the
  * body as its own segment (and leaves harmless empty fragments, which are dropped).
+ *
+ * Shared with the EXT-71 rule matcher (`core/approvals/matcher.ts`), which needs the segments with
+ * their case intact because a `regexp` entry is compiled exactly as the user wrote it.
  */
-export function denyCandidateSegments(command: string): string[] {
+export function commandSegments(command: string): string[] {
   return normalizeCommand(command)
-    .toLowerCase()
     .split(SEGMENT_SPLIT_RE)
     .map((segment) => segment.trim())
     .filter((segment) => segment.length > 0);
+}
+
+/** {@link commandSegments}, lower-cased — the form this module's own prefix matching compares. */
+export function denyCandidateSegments(command: string): string[] {
+  return commandSegments(command).map((segment) => segment.toLowerCase());
 }
 
 /**

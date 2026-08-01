@@ -273,11 +273,15 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
    * approve this command — and would still pay for a model call on every variant, which is the
    * cost §3 exists to remove. Only "the rater was never reached" distinguishes the two.
    */
-  it('allow-list: a DECLARED prefix approves a host-bearing command without reaching the rater at all', async () => {
+  it('allow-list: a DECLARED entry approves a host-bearing command without reaching the rater at all', async () => {
     const runner = await makeRunner(['curl https://internal.example.com/health'], {
       approvals: {
         mode: 'auto-safe',
-        allow: [{ type: 'shell', matcher: 'exact', pattern: 'curl' }],
+        // EXT-71 §3.1 — an `exact` entry is the COMMAND, so it is written out in full. §3.2 then
+        // defaults it to `rate: false`, which is why this costs no model call.
+        allow: [
+          { type: 'shell', matcher: 'exact', pattern: 'curl https://internal.example.com/health' },
+        ],
       },
     } as unknown as Partial<GthConfig>);
     const human = vi.fn();
@@ -290,6 +294,33 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
     expect(mapVerdictToActionMock).not.toHaveBeenCalled();
     expect(human).not.toHaveBeenCalled();
     expect(executed).toEqual(['curl https://internal.example.com/health']);
+  });
+
+  /**
+   * EXT-71 §3.1 — **the control for the test above, and the behaviour that separates an `exact`
+   * entry from the token-aligned prefix the runtime store holds.** `exact` is the whole command:
+   * an entry for `curl` does NOT cover `curl <a url>`, so this run is rated and escalated exactly as
+   * if nothing had been declared. §3.1 states that cost outright — *"a missed allow entry escalates
+   * … neither is an execution"* — and it is the reason both lists can share one narrow default.
+   */
+  it('allow-list: an exact entry does NOT cover a longer command that merely starts with it', async () => {
+    const verdict = { outcome: 'destructive', reason: 'fetches from a host' };
+    rateShellCommandMock.mockResolvedValue(verdict);
+    mapVerdictToActionMock.mockReturnValue({ action: 'escalate', verdict });
+    const runner = await makeRunner(['curl https://internal.example.com/health'], {
+      approvals: {
+        mode: 'auto-safe',
+        allow: [{ type: 'shell', matcher: 'exact', pattern: 'curl' }],
+      },
+    } as unknown as Partial<GthConfig>);
+    const human = vi.fn().mockResolvedValue({ type: 'reject' });
+    runner.setToolApprovalCallback(human);
+
+    await runTurn(runner, 'check the internal service');
+
+    expect(rateShellCommandMock).toHaveBeenCalledTimes(1);
+    expect(human).toHaveBeenCalledTimes(1);
+    expect(executed).toEqual([]);
   });
 
   it('rater: a SAFE verdict approves with NO human prompt (and the rater is consulted with the command)', async () => {
@@ -405,7 +436,9 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
     const runner = await makeRunner(['npm publish --access public'], {
       approvals: {
         mode: 'bypass',
-        deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
+        // §3.1 — under `bypass` the deny list is one of only two checks left, so a failure to match
+        // is not a re-prompt but the command running. A user relying on it there writes a GLOB.
+        deny: [{ type: 'shell', matcher: 'glob', pattern: 'npm publish*' }],
       },
     } as unknown as Partial<GthConfig>);
     const human = vi.fn();
@@ -415,6 +448,50 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
 
     expect(human).not.toHaveBeenCalled();
     expect(executed).toEqual([]);
+  });
+
+  /**
+   * The control for the test above, and the reason it uses a glob. A gate that refused everything
+   * under `bypass` would pass that assertion too; this proves the refusal came from the entry.
+   */
+  it('bypass runs a command the deny list does NOT match, on the real graph', async () => {
+    const runner = await makeRunner(['rm -rf node_modules'], {
+      approvals: {
+        mode: 'bypass',
+        deny: [{ type: 'shell', matcher: 'glob', pattern: 'npm publish*' }],
+      },
+    } as unknown as Partial<GthConfig>);
+    const human = vi.fn();
+    runner.setToolApprovalCallback(human);
+
+    await runTurn(runner, 'clean');
+
+    expect(human).not.toHaveBeenCalled();
+    expect(executed).toEqual(['rm -rf node_modules']);
+  });
+
+  /**
+   * §3.1, stated as a cost the spec accepts and therefore pinned rather than left to be discovered:
+   * an **exact** deny entry for `npm publish` does not stop `npm publish --access public`. Under
+   * `bypass` — where the deny list is one of only two checks left — that means the command RUNS.
+   * This is why the entry above is a glob, and why the approvals UI says so where the list is
+   * edited. Breaking this test by widening `exact` back into a prefix would reopen the fail-open on
+   * the allow side, which shares the same matcher.
+   */
+  it('an exact deny entry does not stop a flag-suffixed sibling, so under bypass it runs', async () => {
+    const runner = await makeRunner(['npm publish --access public'], {
+      approvals: {
+        mode: 'bypass',
+        deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
+      },
+    } as unknown as Partial<GthConfig>);
+    const human = vi.fn();
+    runner.setToolApprovalCallback(human);
+
+    await runTurn(runner, 'ship it');
+
+    expect(human).not.toHaveBeenCalled();
+    expect(executed).toEqual(['npm publish --access public']);
   });
 
   it('string path parity (readline/exec surface): processMessages suspends, approves and resumes to the final answer', async () => {

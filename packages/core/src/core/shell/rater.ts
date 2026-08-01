@@ -951,3 +951,40 @@ export function mapVerdictToAction(
   // conservative than the target design and never approves anything the negotiation would not.
   return { action: 'escalate', verdict: effective };
 }
+
+/**
+ * EXT-71 §3.2 — the mapping for a call an **allow entry already matched** while keeping the rater
+ * involved (`rate: true`). This is a **TRIPWIRE, not a re-adjudication**, and the difference is the
+ * whole reason it is a separate function from {@link mapVerdictToAction}:
+ *
+ * | Outcome | Action | Why |
+ * |---|---|---|
+ * | `safe` | approve | nothing to say |
+ * | `destructive` | **approve** | the human already authorized this call; the rater does not overrule a standing human decision by disliking it |
+ * | `catastrophic` | escalate | a human decides, and per §4.2 that approval is never sticky |
+ * | `attack` | **halt** | exactly per §4.2 — the structure evidenced compromise, which no prior grant answers |
+ *
+ * The rater's job on an allow-listed call is to catch the tail where a broad entry matched
+ * something structurally hostile — not to re-ask a question the human answered.
+ *
+ * **The deterministic preflights are deliberately not consulted** ({@link preflightFloorReason} is
+ * not called). §4.6 states it directly for the open-world arm: *an allow match lifts this floor even
+ * when the entry keeps the rater involved — the tripwire still sees the call; the floor does not
+ * apply to it.* The other two arms are lifted with it, and doing so changes no outcome: a preflight
+ * only ever raises `safe` to `destructive`, and both of those run here. Applying the floor would
+ * therefore alter nothing except to replace an honest verdict with a note about a decision this
+ * mapping does not make. (The ambiguity arm cannot fire at all — an allow entry does not match a
+ * command that fails to statically resolve.)
+ *
+ * @param verdict The rater's verdict; `undefined` or a fail-closed verdict is `destructive` and so
+ *   runs — the tripwire failing to answer does not revoke the human's standing decision, exactly as
+ *   `rate: false` would not have asked in the first place.
+ */
+export function mapAllowMatchedVerdictToAction(
+  verdict: ShellSafetyVerdict | undefined
+): RaterDecision {
+  const effective: ShellSafetyVerdict = verdict ?? FAIL_CLOSED_VERDICT;
+  if (effective.outcome === 'attack') return { action: 'halt', verdict: effective };
+  if (effective.outcome === 'catastrophic') return { action: 'escalate', verdict: effective };
+  return { action: 'approve', verdict: effective };
+}

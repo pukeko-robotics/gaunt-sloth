@@ -161,6 +161,13 @@ export interface PendingToolInterrupt {
    * off, or when the command reached the human without being rated.
    */
   safetyVerdict?: ShellSafetyVerdict;
+  /**
+   * EXT-71 §3.2 — when this call reached the human because a declared `approvals.escalate` entry
+   * matched it, the entry that fired, rendered for display. It is the provenance the prompt shows:
+   * an escalation the user cannot trace to the line they wrote reads as the gate malfunctioning.
+   * Absent whenever the escalation came from the rung or the rater instead.
+   */
+  escalatedBy?: string;
 }
 
 /**

@@ -50,13 +50,23 @@ function expectRejected(result: ReturnType<typeof validateRawGthConfig>): string
   return result.errorMessage as string;
 }
 
-/** The seven forms §3.1 writes out. Typed, so the hand-written type has to admit each of them. */
+/**
+ * The seven forms §3.1 writes out, plus the four arms of the union those seven never reach —
+ * `glob` and `regexp` on each tool subject. Typed, so the hand-written type has to admit each of
+ * them, and every table below (acceptance, the unknown-field sweep, the JSON Schema round-trip)
+ * runs over the whole set. An arm nothing exercises in the ACCEPT direction can be deleted without
+ * a single test going red, which is how four of the eleven arms came to be untested.
+ */
 const SPEC_ENTRIES: ApprovalEntry[] = [
   { type: 'shell', matcher: 'exact', pattern: 'npm test' },
   { type: 'shell', matcher: 'glob', pattern: 'git status*' },
   { type: 'shell', matcher: 'regexp', pattern: '^git commit -m \\S' },
   { type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch' },
+  { type: 'tool', matcher: 'glob', pattern: 'gth_*' },
+  { type: 'tool', matcher: 'regexp', pattern: '^gth_(web_fetch|grep)$' },
   { type: 'mcpTool', server: 'jira', matcher: 'exact', pattern: 'delete_issue' },
+  { type: 'mcpTool', server: 'jira', matcher: 'glob', pattern: 'delete_*' },
+  { type: 'mcpTool', server: 'jira', matcher: 'regexp', pattern: '^delete_' },
   { type: 'mcpTool', server: 'jira', matcher: 'hint', pattern: { destructiveHint: true } },
   {
     type: 'mcpTool',
@@ -418,11 +428,24 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
       );
     });
 
-    it('refuses an uncompilable pattern on every type that takes one', () => {
-      expectRejected(validateEntry({ type: 'tool', matcher: 'regexp', pattern: '[unclosed' }));
-      expectRejected(
-        validateEntry({ type: 'mcpTool', server: 'jira', matcher: 'regexp', pattern: '[unclosed' })
-      );
+    /**
+     * The tool subjects, with the message assertion and the control that the same arm ACCEPTS a
+     * valid pattern. Without both, deleting the `regexp` arm from `toolEntrySchema` outright leaves
+     * this green: the entry is still refused, just as an unknown discriminator rather than as an
+     * uncompilable pattern — so a bare `ok === false` cannot tell "the constraint works" from "the
+     * arm no longer exists".
+     */
+    it('refuses an uncompilable pattern on every type that takes one, and accepts a valid one', () => {
+      for (const entry of [
+        { type: 'tool', matcher: 'regexp' },
+        { type: 'mcpTool', server: 'jira', matcher: 'regexp' },
+      ]) {
+        const message = expectRejected(validateEntry({ ...entry, pattern: '[unclosed' }));
+        expect(message).toContain('does not compile');
+        expect(message).toContain('[unclosed');
+
+        expectAccepted(validateEntry({ ...entry, pattern: '^delete_' }));
+      }
     });
 
     it('refuses one over the length cap, quoting it, while one AT the cap loads', () => {

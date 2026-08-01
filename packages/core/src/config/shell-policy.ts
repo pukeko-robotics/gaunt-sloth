@@ -644,32 +644,6 @@ export function resolveApprovals(
   };
 }
 
-/**
- * EXT-71 — the INTERIM adapter between the declared rule entries and the prefix-string stores the
- * runner still uses (`AllowlistStore` / `DenylistStore`). It returns the pattern of every
- * `shell` + `exact` entry, in order, and drops everything else.
- *
- * **This is a bridge, and it is deliberately narrower than the grammar it reads from.** Two gaps
- * are known and belong to the matcher engine, not here:
- *
- * 1. The prefix stores match TOKEN-ALIGNED PREFIXES, so an `exact` entry bridged through them is
- *    broader than `exact`: `{"matcher":"exact","pattern":"npm test"}` currently also covers
- *    `npm test --watch`, which §3.1 says it must not. On the deny side that direction is
- *    fail-safe; on the allow side it is not, which is exactly why closing it is a matcher-engine
- *    job rather than something to approximate here.
- * 2. `glob` / `regexp` / `hint` entries, and every `tool` / `mcpTool` entry, are parsed and
- *    validated but match nothing yet.
- *
- * Keeping the bridge this thin is the point: it preserves today's behaviour exactly, so the
- * existing gate tests keep asserting something real instead of quietly becoming assertions about
- * a half-built matcher.
- */
-export function declaredShellPrefixes(entries: readonly ApprovalEntry[]): string[] {
-  return entries
-    .filter((entry) => entry.type === 'shell' && entry.matcher === 'exact')
-    .map((entry) => entry.pattern as string);
-}
-
 /** A status notice a backend should surface after resolving the shell approval gate. */
 export interface ShellApprovalGateNotice {
   /** Severity to pass to the agent's `statusUpdate` callback. */

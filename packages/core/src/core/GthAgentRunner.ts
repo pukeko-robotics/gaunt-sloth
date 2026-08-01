@@ -1,7 +1,6 @@
 import {
   type AllowlistCounts,
   type ApprovalRung,
-  declaredShellPrefixes,
   DEFAULT_APPROVAL_RUNG,
   describeGrantedBuiltInTools,
   type GrantedToolSummary,
@@ -44,11 +43,18 @@ import {
 import { DenylistStore } from '#src/core/shell/denylist.js';
 import {
   isRaterTimeout,
+  mapAllowMatchedVerdictToAction,
   mapVerdictToAction,
   RATER_DEFAULT_TIMEOUT_MS,
   rateShellCommand,
   type ShellSafetyVerdict,
 } from '#src/core/shell/rater.js';
+import {
+  type ApprovalRuleDecision,
+  type ApprovalSubject,
+  describeApprovalEntry,
+  resolveApprovalRules,
+} from '#src/core/approvals/matcher.js';
 import { resolveRaterModel } from '#src/core/shell/raterModel.js';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { env } from '#src/utils/systemUtils.js';
@@ -212,12 +218,20 @@ export class GthAgentRunner {
     const always = this.persistedAllowlistLoaded
       ? (this.persistedAllowlist?.list().length ?? undefined)
       : undefined;
-    return { session: this.sessionAllowlist.list().length, always };
+    // EXT-71 §3 — every list MUST be inspectable, and the declared entries are in force for this
+    // session exactly as the human's own grants are. They are counted alongside them rather than
+    // hidden, which is what the count meant before the declared lists stopped seeding the store.
+    const session = this.sessionAllowlist.list().length + this.sessionApprovals.allow.length;
+    return { session, always };
   }
 
-  /** CFG-27 — the session's deny entries (declared in config, plus any added at runtime). */
+  /**
+   * CFG-27 — the session's deny entries for display: the declared `approvals.deny` entries
+   * (rendered one line each) followed by whatever the escalation menu's *always reject* added at
+   * run time. Both refuse a call, so both are shown.
+   */
   public getDenylist(): string[] {
-    return this.denylist.list();
+    return [...this.sessionApprovals.deny.map(describeApprovalEntry), ...this.denylist.list()];
   }
 
   /**
@@ -249,18 +263,13 @@ export class GthAgentRunner {
     // tool is actually emitted; no effect where the tool is ungated.
     this.sessionApprovals = resolveApprovals(configIn, command);
 
-    // §3/§9.1 — the DECLARED lists are read-only config input. `allow` is merged into the session
-    // allow-list store (which the human's `session` grants also write to) and `deny` seeds the
-    // deny store; neither is ever written back to config.
-    //
-    // EXT-71 — both stores still hold prefix STRINGS, so the declared entries pass through
-    // `declaredShellPrefixes`: shell + exact entries only, everything else inert until the matcher
-    // engine lands. See that function for the two gaps this bridge knowingly leaves open.
-    this.denylist = new DenylistStore(declaredShellPrefixes(this.sessionApprovals.deny));
-    for (const prefix of declaredShellPrefixes(this.sessionApprovals.allow)) {
-      const trimmed = prefix.trim();
-      if (trimmed.length > 0) this.sessionAllowlist.add(trimmed);
-    }
+    // §3/§9.1 — the DECLARED lists are read-only config input, consulted through the EXT-71 rule
+    // matcher (`core/approvals/matcher.ts`) and NEVER copied into the prefix stores. Copying them
+    // there is what used to make a declared `exact` entry behave as a token-aligned PREFIX, so an
+    // entry for `npm test` also covered `npm test --watch` — fail-open on the allow side, and the
+    // opposite of what §3.1 says an exact entry means. The stores below now hold only what the
+    // escalation menu grants at run time.
+    this.denylist = new DenylistStore();
 
     // CFG-26 — resolve the rater's own model when a profile is named, so the documented mitigation
     // for a weak model ("point approvals.rater at a stronger one") actually takes effect.
@@ -457,24 +466,47 @@ export class GthAgentRunner {
   }
 
   /**
-   * Decide a single pending tool call. CFG-27 order — **deny → bypass → allow-list → rater →
-   * human prompt**, with the hardline floor at exec time regardless:
+   * EXT-71 §3.1/§3.2 — the subject a pending tool call presents to the rule matcher.
    *
-   * 1. **deny list** (§3) — a declared (or runtime `always reject`) prefix is refused with no
-   *    prompt and no rating call. It is consulted FIRST, and it is the one check that **still
-   *    applies under `bypass`**: choosing `bypass` says *"stop asking me"*, not *"forget what I
-   *    told you never to do"*. Its matcher is deliberately not the allow-list's — see
-   *    `core/shell/denylist.ts` for why the fail-direction has to be the opposite one.
+   * A gated `run_shell_command` is a **shell** subject and nothing else: it is matched by `shell`
+   * entries, against the command. It is deliberately NOT also offered as a `tool` subject named
+   * `run_shell_command`, which would create a second allow path to every shell command carrying a
+   * different §3.2 `rate` default and a match that never saw the command it was approving. Widening
+   * the gate to the other tools — and with it the subjects they present — is [[EXT-30]].
+   */
+  private approvalSubjectFor(tool: PendingToolInterrupt, command: string | null): ApprovalSubject {
+    if (tool.name === SHELL_TOOL_NAME && command !== null) return { kind: 'shell', command };
+    return { kind: 'tool', name: tool.name };
+  }
+
+  /**
+   * Decide a single pending tool call. Spec order — **deny → bypass → escalate → allow → rater →
+   * human prompt**, with the hardline floor at exec time regardless. The two adjacencies that carry
+   * the design are that deny comes BEFORE `bypass` and escalate comes AFTER it:
+   *
+   * 1. **deny** (§3) — a declared entry (`core/approvals/matcher.ts`) or a runtime `always reject`
+   *    prefix is refused with no prompt and no rating call. It is consulted FIRST, and it is the one
+   *    check that **still applies under `bypass`**: choosing `bypass` says *"stop asking me"*, not
+   *    *"forget what I told you never to do"*. A deny entry MAY match a compound command, because a
+   *    prohibition that catches something unresolvable errs in the direction that costs nothing.
    * 2. **`bypass`** — the gate is off for this session; approve at scope `once`.
-   * 3. **allow-list** (§3, EXT-9 Tier-2) — if the command's classified prefix is already approved
-   *    (declared in `approvals.allow`, granted this session, or persisted `always`) and survives
-   *    the safe-bin anti-widening re-validation, approve SILENTLY. It applies at EVERY rung
-   *    except `bypass` (where it is moot) and is consulted **before** the rater, so a trusted
-   *    prefix never pays for a rating call.
-   * 4. **auto-rater** (`auto-safe` / `full-auto` only) — `safe` approves, `destructive` and
+   * 3. **escalate** (§3.2) — a declared entry always asks the human, whatever the rung would have
+   *    done, **including outranking the automatic grants of `read-only` and `write`** and any allow
+   *    entry that also matched. It goes straight to the human with **no rating call**, and it never
+   *    enters the `full-auto` negotiation. It is **inert at `bypass`**, which is why it sits below
+   *    the rung check: the rung chosen for this session wins, and a stop that must survive `bypass`
+   *    is a deny entry and only that.
+   * 4. **allow** (§3, §3.2) — a declared entry (matched against the whole normalized command, and
+   *    only when that command statically resolves) or an EXT-9 Tier-2 prefix the human granted this
+   *    session / persisted. An allow match settles the human's part: no prompt. Whether the rater
+   *    still reviews the call is the entry's own `rate` (§3.2) — honored at the rater rungs and
+   *    inert at the deterministic ones, so no entry can smuggle a model call into `read-only` or
+   *    `write` — and a rated allow match is a TRIPWIRE, not a re-adjudication
+   *    ({@link mapAllowMatchedVerdictToAction}).
+   * 5. **auto-rater** (`auto-safe` / `full-auto` only) — `safe` approves, `destructive` and
    *    `catastrophic` escalate, and `attack` HALTS the run ({@link AttackHaltError}). The other
    *    three rungs consult no model at all.
-   * 5. **human prompt** — the approval callback; when the human grants `session`/`always` scope,
+   * 6. **human prompt** — the approval callback; when the human grants `session`/`always` scope,
    *    the command's classified prefix is recorded so future flag-variants stop re-prompting.
    *
    * §6.2 — where no human can answer (CI, a one-shot run, a server), an escalation is **not** a
@@ -489,10 +521,26 @@ export class GthAgentRunner {
    */
   private async decideToolApproval(tool: PendingToolInterrupt): Promise<ToolApprovalDecision> {
     const command = typeof tool.args?.command === 'string' ? (tool.args.command as string) : null;
-    const isShellCommand = tool.name === 'run_shell_command' && command !== null;
+    const isShellCommand = tool.name === SHELL_TOOL_NAME && command !== null;
     const approvals = this.sessionApprovals;
 
-    // (1) The deny list — before everything, including `bypass`.
+    // The declared lists, resolved most-restrictive-wins in ONE pass, so author order and the order
+    // the lists were concatenated in cannot change the outcome.
+    const rule: ApprovalRuleDecision | null = resolveApprovalRules(
+      this.approvalSubjectFor(tool, command),
+      approvals,
+      { onNotice: (notice) => this.statusUpdate(notice.level, notice.message) }
+    );
+
+    // (1) Deny — before everything, including `bypass`.
+    if (rule?.action === 'deny') {
+      return {
+        type: 'reject',
+        message:
+          `Refused: your deny list forbids this call (matched "${describeApprovalEntry(rule.entry)}"). ` +
+          'Remove the entry from approvals.deny if you want it to run.',
+      };
+    }
     if (isShellCommand && command !== null) {
       const denied = this.denylist.match(command);
       if (denied !== null) {
@@ -513,50 +561,50 @@ export class GthAgentRunner {
       return { type: 'approve', scope: 'once' };
     }
 
-    // (3) Approve from the allow-list without prompting. The allow-list ALWAYS wins over the
-    // rater: a human-trusted prefix shouldn't pay for an LLM call on every variant.
-    const allowlistApplies = isShellCommand && approvals.rung !== 'bypass';
-    if (allowlistApplies && this.isApprovedByAllowlist(command)) {
+    // (3) Escalate — §2.5 makes it inert at `bypass` (above), and §3.2 sends it straight to the
+    // human with no rating call, outranking any allow entry that also matched.
+    const escalatedBy = rule?.action === 'escalate' ? describeApprovalEntry(rule.entry) : undefined;
+
+    // (4) Approve from the allow list without prompting. It ALWAYS wins over the rater — a
+    // human-trusted call shouldn't pay for an LLM call on every variant — but never over escalate.
+    const allowlistApplies = approvals.rung !== 'bypass' && escalatedBy === undefined;
+    let safetyVerdict: ShellSafetyVerdict | undefined;
+    if (allowlistApplies && rule?.action === 'allow') {
+      // §3.2 — `rate` is honored at the rater rungs and INERT at the deterministic ones, so an
+      // entry can never smuggle a model call into `read-only` or `write`. A tool subject is not
+      // rated either: the rater's first implementation covers the shell only (§4.3, [[EXT-30]]).
+      if (!rule.rate || !isRatedRung(approvals.rung) || !isShellCommand || command === null) {
+        return { type: 'approve', scope: 'session' };
+      }
+      const verdict = await this.rateCommand(command, { allowMatched: true });
+      const tripwire = mapAllowMatchedVerdictToAction(verdict);
+      if (tripwire.action === 'approve') return { type: 'approve', scope: 'session' };
+      if (tripwire.action === 'halt') {
+        // §3.2/§4.2 — `attack` halts exactly as it would have without the match. A standing human
+        // grant answers "may this run"; it does not answer "is this command's structure hostile".
+        throw new AttackHaltError(command, tripwire.verdict?.reason ?? '');
+      }
+      // `catastrophic` — the one outcome the tripwire escalates. Fall through to the human.
+      safetyVerdict = tripwire.verdict;
+    } else if (allowlistApplies && isShellCommand && this.isApprovedByAllowlist(command)) {
+      // The EXT-9 Tier-2 stores: prefixes the human granted at an escalation prompt this session,
+      // or persisted. The menu writes the command the human saw (§6), so these carry no rating.
       return { type: 'approve', scope: 'session' };
     }
 
-    // (4) The auto-rater, at the two rated rungs only. `safe` is approved (the fatigue reducer),
+    // (5) The auto-rater, at the two rated rungs only. `safe` is approved (the fatigue reducer),
     // `destructive` and `catastrophic` fall through to the human with the verdict attached, and
-    // `attack` ends the run outright.
-    let safetyVerdict: ShellSafetyVerdict | undefined;
-    if (isShellCommand && command !== null && isRatedRung(approvals.rung)) {
-      const verdict = await rateShellCommand(command, this.config as GthConfig, {
-        home: env?.HOME,
-        // The profile's model when one is configured; undefined lets rateShellCommand use the
-        // session model. `init` throws rather than leaving this undefined for a NAMED profile, so
-        // a configured profile can never silently degrade to the session model here.
-        model: this.raterModel,
-        // EXT-58 (§4.4) — the already-granted built-ins of the CURRENT rung, so a non-`safe`
-        // outcome can name one the model could call for free instead. Computed per rating rather
-        // than cached at init, because `/approvals <rung>` moves the rung mid-session and a stale
-        // list would offer a tool that is no longer granted.
-        grantedTools: this.getGrantedBuiltInTools(),
-        // EXT-66 — the user-owned budget for ONE rating call, `undefined` when unset so
-        // rateShellCommand applies RATER_DEFAULT_TIMEOUT_MS. 30s is a hosted-model number and a
-        // local rater is knowably slower; without this a local `full-auto` session drifts toward
-        // escalating everything, which is the failure the rung exists to prevent.
-        timeoutMs: approvals.raterTimeoutMs,
-      });
-      // EXT-66 — a timeout is the gate giving up, not a judgement, and the two were previously
-      // indistinguishable in the action column. Say it once per occurrence: the only symptom
-      // otherwise is the gate becoming mysteriously more talkative, which reads as the rater
-      // working rather than as the rater never being heard from.
-      if (isRaterTimeout(verdict)) {
-        this.raterTimeouts += 1;
-        this.statusUpdate(
-          StatusLevel.WARNING,
-          `The command safety rater did not answer in time (${
-            approvals.raterTimeoutMs ?? RATER_DEFAULT_TIMEOUT_MS
-          }ms), so this command was escalated without being rated` +
-            (this.raterTimeouts > 1 ? ` — ${this.raterTimeouts} times this session` : '') +
-            '. Raise approvals.raterTimeoutMs if the rater is a local model.'
-        );
-      }
+    // `attack` ends the run outright. Skipped entirely for an escalate match (§3.2: the user
+    // pre-decided that a human answers, so a rating would decorate a mandatory prompt) and for a
+    // call the tripwire above already rated.
+    if (
+      isShellCommand &&
+      command !== null &&
+      isRatedRung(approvals.rung) &&
+      escalatedBy === undefined &&
+      safetyVerdict === undefined
+    ) {
+      const verdict = await this.rateCommand(command, { allowMatched: false });
       const decision = mapVerdictToAction(command, verdict, { rung: approvals.rung });
       if (decision.action === 'approve') {
         // Scope `once`: rater approvals are NEVER persisted to the allow-list.
@@ -576,13 +624,21 @@ export class GthAgentRunner {
       throw new NonInteractiveEscalationError(
         command ?? tool.name,
         safetyVerdict?.outcome,
-        safetyVerdict?.reason
+        safetyVerdict?.reason,
+        escalatedBy
       );
     }
 
-    // Surface the rater's verdict to the human prompt (if the rater escalated) without mutating
-    // the original interrupt object the caller holds.
-    const pending: PendingToolInterrupt = safetyVerdict ? { ...tool, safetyVerdict } : tool;
+    // Surface the rater's verdict — and the escalate entry that fired, as provenance (§3.2) — to
+    // the human prompt, without mutating the original interrupt object the caller holds.
+    const pending: PendingToolInterrupt =
+      safetyVerdict || escalatedBy
+        ? {
+            ...tool,
+            ...(safetyVerdict ? { safetyVerdict } : {}),
+            ...(escalatedBy ? { escalatedBy } : {}),
+          }
+        : tool;
     const decision = await this.toolApprovalCallback(pending);
 
     // Persist the human's scoped grant so future variants of the same operation skip the prompt.
@@ -595,10 +651,63 @@ export class GthAgentRunner {
     // and the next `terraform destroy` would never be rated at all. Clamping here means the policy
     // does not depend on which surface asked, or on a surface that has not been built yet.
     const catastrophic = safetyVerdict?.outcome === 'catastrophic';
-    if (decision.type === 'approve' && allowlistApplies && command && !catastrophic) {
+    const recordable = isShellCommand && approvals.rung !== 'bypass';
+    if (decision.type === 'approve' && recordable && command && !catastrophic) {
       this.recordApproval(command, decision.scope ?? 'once');
     }
     return decision;
+  }
+
+  /**
+   * One rating call, with EXT-66's timeout reporting attached. Extracted so the §3.2 tripwire (a
+   * rated allow match) and the ordinary rater path cannot drift apart in WHAT they hand the rater —
+   * only in what they do with the answer.
+   */
+  private async rateCommand(
+    command: string,
+    opts: { allowMatched: boolean }
+  ): Promise<ShellSafetyVerdict> {
+    const approvals = this.sessionApprovals;
+    const verdict = await rateShellCommand(command, this.config as GthConfig, {
+      home: env?.HOME,
+      // The profile's model when one is configured; undefined lets rateShellCommand use the
+      // session model. `init` throws rather than leaving this undefined for a NAMED profile, so
+      // a configured profile can never silently degrade to the session model here.
+      model: this.raterModel,
+      // EXT-58 (§4.4) — the already-granted built-ins of the CURRENT rung, so a non-`safe`
+      // outcome can name one the model could call for free instead. Computed per rating rather
+      // than cached at init, because `/approvals <rung>` moves the rung mid-session and a stale
+      // list would offer a tool that is no longer granted.
+      grantedTools: this.getGrantedBuiltInTools(),
+      // EXT-66 — the user-owned budget for ONE rating call, `undefined` when unset so
+      // rateShellCommand applies RATER_DEFAULT_TIMEOUT_MS. 30s is a hosted-model number and a
+      // local rater is knowably slower; without this a local `full-auto` session drifts toward
+      // escalating everything, which is the failure the rung exists to prevent.
+      timeoutMs: approvals.raterTimeoutMs,
+    });
+    // EXT-66 — a timeout is the gate giving up, not a judgement, and the two were previously
+    // indistinguishable in the action column. Say it once per occurrence: the only symptom
+    // otherwise is the gate becoming mysteriously more talkative, which reads as the rater
+    // working rather than as the rater never being heard from.
+    if (isRaterTimeout(verdict)) {
+      this.raterTimeouts += 1;
+      this.statusUpdate(
+        StatusLevel.WARNING,
+        `The command safety rater did not answer in time (${
+          approvals.raterTimeoutMs ?? RATER_DEFAULT_TIMEOUT_MS
+        }ms), so this command ` +
+          // §3.2 — on an allow match the rating is a tripwire, so a timeout does not escalate: the
+          // human's standing grant still stands and the call runs. Saying "escalated" there would
+          // be simply false, and a notice that misreports the action it accompanies is worse than
+          // none.
+          (opts.allowMatched
+            ? 'ran on its approvals.allow match alone, without the rating that entry asked for'
+            : 'was escalated without being rated') +
+          (this.raterTimeouts > 1 ? ` — ${this.raterTimeouts} times this session` : '') +
+          '. Raise approvals.raterTimeoutMs if the rater is a local model.'
+      );
+    }
+    return verdict;
   }
 
   /**

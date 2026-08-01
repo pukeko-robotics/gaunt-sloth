@@ -4,7 +4,6 @@ import {
   APPROVAL_RUNG_LABELS,
   APPROVAL_RUNGS,
   type ApprovalEntry,
-  declaredShellPrefixes,
   DEFAULT_APPROVAL_RUNG,
   isApprovalRung,
   isRatedRung,
@@ -127,45 +126,6 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       expect(resolved.allow).toEqual(allow);
       expect(resolved.deny).toEqual(deny);
       expect(resolved.escalate).toEqual(escalate);
-    });
-  });
-
-  /**
-   * EXT-71 — the INTERIM bridge from the declared entries to the prefix-string stores the runner
-   * still uses. It is deliberately narrow, and these pin both halves of that: what it carries and
-   * what it drops. When the matcher engine lands, the dropped rows are what must start matching.
-   */
-  describe('declaredShellPrefixes (the interim bridge)', () => {
-    it('carries the pattern of every shell + exact entry, in order', () => {
-      expect(
-        declaredShellPrefixes([
-          { type: 'shell', matcher: 'exact', pattern: 'npm test' },
-          { type: 'shell', matcher: 'exact', pattern: 'git status' },
-        ])
-      ).toEqual(['npm test', 'git status']);
-    });
-
-    it('drops every entry the prefix stores cannot represent', () => {
-      expect(
-        declaredShellPrefixes([
-          { type: 'shell', matcher: 'glob', pattern: 'npm publish*' },
-          { type: 'shell', matcher: 'regexp', pattern: '^gh release create\\b' },
-          { type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch' },
-          { type: 'mcpTool', server: 'jira', matcher: 'exact', pattern: 'delete_issue' },
-          { type: 'mcpTool', server: 'jira', matcher: 'hint', pattern: { destructiveHint: true } },
-        ])
-      ).toEqual([]);
-    });
-
-    it('keeps the shell + exact entries out of a mixed list without reordering them', () => {
-      expect(
-        declaredShellPrefixes([
-          { type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch' },
-          { type: 'shell', matcher: 'exact', pattern: 'npm test' },
-          { type: 'shell', matcher: 'glob', pattern: 'git *' },
-          { type: 'shell', matcher: 'exact', pattern: 'ls' },
-        ])
-      ).toEqual(['npm test', 'ls']);
     });
   });
 
