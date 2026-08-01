@@ -260,16 +260,25 @@ prompt, and never writes back to your config file.
 
 A per-command value overrides **only the fields it names**. `"commands": { "pr": { "approvals":
 "read-only" } }` above says the `pr` command has no business writing files, whatever the root
-setting is — and that is *all* it says: the rung changes, and `rater`, `raterTimeoutMs` and all
-three lists still come from the root.
+setting is — and that is *all* it says: the rung changes, and `rater`, `raterTimeoutMs` and the
+lists still come from the root.
 
-**The three lists never replace — they add up, across every scope and both config layers.** A
-command-specific `deny` entry joins the root's rather than standing in for it, and a global
-config's entries join your project's. So a per-command rung can never quietly drop a prohibition
-you wrote at the root — which matters most at `bypass`, where your deny list is nearly the last
-check left. The flip side is deliberate: **removing an inherited `deny` or `escalate` entry for
-one command is not expressible.** If a command needs to be free of a rule, the rule does not
-belong at the root.
+The lists do not all merge the same way, and the difference is deliberate:
+
+- **`deny` and `escalate` add up**, across every scope and both config layers. A command-specific
+  `deny` entry joins the root's rather than standing in for it, and a global config's entries join
+  your project's. So a per-command rung can never quietly drop a prohibition you wrote at the root
+  — which matters most at `bypass`, where your deny list is nearly the last check left. The flip
+  side: **removing an inherited `deny` or `escalate` entry for one command is not expressible.** If
+  a command needs to be free of a rule, the rule does not belong at the root.
+- **`allow` is replaced** when a command (or the higher config layer) states its own, and inherited
+  when it does not. So you *can* narrow what a command runs unprompted — give it its own `allow`
+  list, and the root's no longer applies there.
+
+The reason they differ is what each mistake costs you. A missed `allow` entry means one extra
+prompt; a missed `deny` entry means the rater still looks at the call. Neither runs anything. A
+**too-broad `allow` entry runs, without asking and without rating** — so the restrictive lists
+grow across scopes, and the permissive one does not.
 
 ### Writing an entry
 

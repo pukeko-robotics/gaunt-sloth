@@ -212,8 +212,9 @@ setting — not here.
 ### `approvals`
 
 Approvals are a **top-level** key (settable per command as `commands.<cmd>.approvals`, which
-overrides only the fields it names — `mode`, `rater` and `raterTimeoutMs` — while `allow`, `deny`
-and `escalate` add to the root's rather than replacing them). It takes one of five rung names — `read-only`, `write`,
+overrides only the fields it names: `mode`, `rater`, `raterTimeoutMs` and `allow` replace the
+root's, while `deny` and `escalate` add to it rather than replacing it — a command may narrow what
+runs unprompted, never widen what is prohibited). It takes one of five rung names — `read-only`, `write`,
 `auto-safe` (the default), `full-auto`, `bypass` — either on its own or as `mode` inside an object
 carrying the extras. See
 [Migration](../MIGRATION.md#i-approvals-and-the-ai-rater-hard) for the retired keys.

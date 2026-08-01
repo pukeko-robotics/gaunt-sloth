@@ -918,17 +918,18 @@ export async function tryJsonConfig(
  * REPLACE semantics, because those express "this is THE set" and silently unioning them across
  * global + project would surprise users.
  *
- * | array field                  | policy   | rationale                                        |
- * | ---------------------------- | -------- | ------------------------------------------------ |
- * | `allowDirs`                  | ADDITIVE | extra sandbox roots accumulate across layers     |
- * | `aiignore.patterns`          | ADDITIVE | ignore patterns accumulate across layers         |
- * | `approvals.allow`/`deny`/`escalate` | ADDITIVE | see {@link isAdditiveArrayField}          |
- * | `allowedTools`               | replace  | the explicit allow-list IS the set               |
- * | `builtInTools`               | replace  | the explicit tool selection IS the set           |
- * | `tools`                      | replace  | live tool instances; union would be surprising   |
- * | `middleware`                 | replace  | ordered pipeline; union would reorder/duplicate  |
- * | `binaryFormats`              | replace  | the declared format policy IS the set            |
- * | (every other array)          | replace  | default; preserves historical behaviour          |
+ * | array field                     | policy   | rationale                                     |
+ * | ------------------------------- | -------- | --------------------------------------------- |
+ * | `allowDirs`                     | ADDITIVE | extra sandbox roots accumulate across layers  |
+ * | `aiignore.patterns`             | ADDITIVE | ignore patterns accumulate across layers      |
+ * | `approvals.deny`/`escalate`     | ADDITIVE | see {@link isAdditiveArrayField}              |
+ * | `approvals.allow`               | replace  | a PERMISSIVE list; see the same doc           |
+ * | `allowedTools`                  | replace  | the explicit allow-list IS the set            |
+ * | `builtInTools`                  | replace  | the explicit tool selection IS the set        |
+ * | `tools`                         | replace  | live tool instances; union would be surprising|
+ * | `middleware`                    | replace  | ordered pipeline; union would reorder/duplicate|
+ * | `binaryFormats`                 | replace  | the declared format policy IS the set         |
+ * | (every other array)             | replace  | default; preserves historical behaviour       |
  *
  * NOTE: these keys only live at the config ROOT, so they are triggered only by the `deepMerge`
  * calls that START at the config root (path === ''). There are TWO such sites: the
@@ -940,28 +941,35 @@ export async function tryJsonConfig(
  * `deepMerge(DEFAULT_CONFIG.commands.X, …)` calls also start at `path === ''`. No command
  * default carries `allowDirs`/`aiignore`, so there is no collision today — but do NOT add a
  * key to THIS SET that could also appear as a per-command field, or it would silently become
- * additive inside command merges too. The approvals rule lists are the deliberate exception and
- * are therefore matched by path SHAPE ({@link isAdditiveArrayField}) rather than listed here:
+ * additive inside command merges too. The approvals RESTRICTIVE lists are the deliberate exception
+ * and are therefore matched by path SHAPE ({@link isAdditiveArrayField}) rather than listed here:
  * for them, additive at every scope is the rule and not an accident.
  */
 const ADDITIVE_ARRAY_FIELDS: ReadonlySet<string> = new Set(['allowDirs', 'aiignore.patterns']);
 
 /**
- * §9.1/§11.1f — the three approvals rule lists, wherever they appear. `deny` and `escalate` are
- * PROHIBITIONS, and a prohibition another config layer can quietly delete is not a hardline: §3's
- * "an appended entry can never perturb an existing outcome" has to hold across layers or it holds
- * nowhere. So they add up rather than replace, and no layer can narrow another's lists.
+ * §9.1/§11.1f — the approvals **restrictive** lists, wherever they appear. `deny` and `escalate`
+ * are PROHIBITIONS, and a prohibition another config layer can quietly delete is not a hardline:
+ * §3's "an appended entry can never perturb an existing outcome" has to hold across layers or it
+ * holds nowhere. So they add up rather than replace, and no layer can narrow another's.
  *
  * Matched by path SHAPE rather than by an exact root-relative path, because `approvals` is settable
  * at the root AND per command — `commands.code.approvals.deny` has to add up across the global and
  * project layers for exactly the same reason `approvals.deny` does, and listing only the root path
  * would leave the identical silent loss one keystroke away.
+ *
+ * **`allow` is deliberately NOT here, and adding it would be a security regression.** It is the
+ * PERMISSIVE list, so it keeps the default REPLACE policy: a layer that states its own `allow`
+ * replaces the layer below, and one that says nothing inherits. §3.1's cost asymmetry is why the
+ * three lists do not share a policy — a missed allow entry escalates and a missed deny entry
+ * reaches the rater, but a too-broad allow entry runs, unrated and unprompted. Unioning the
+ * restrictive lists fails toward a prompt; unioning the permissive one fails toward an execution.
  */
-const APPROVAL_RULE_LIST_PATH = /(^|\.)approvals\.(allow|deny|escalate)$/;
+const APPROVAL_RESTRICTIVE_LIST_PATH = /(^|\.)approvals\.(deny|escalate)$/;
 
 /** Whether the array at this dotted path accumulates across layers instead of being replaced. */
 function isAdditiveArrayField(fieldPath: string): boolean {
-  return ADDITIVE_ARRAY_FIELDS.has(fieldPath) || APPROVAL_RULE_LIST_PATH.test(fieldPath);
+  return ADDITIVE_ARRAY_FIELDS.has(fieldPath) || APPROVAL_RESTRICTIVE_LIST_PATH.test(fieldPath);
 }
 
 /** The `approvals` block itself, at the root or on any command. */
@@ -972,7 +980,9 @@ const APPROVALS_BLOCK_PATH = /(^|\.)approvals$/;
  * `{ mode: <rung> }`**. Expanded at merge time so a layer that spells its rung the friendly way
  * still merges field-wise: left as a string, a project config's `"approvals": "bypass"` simply
  * overwrites the global's object and discards that layer's rule lists — the same silent loss
- * {@link APPROVAL_RULE_LIST_PATH} exists to prevent, reached by a different route.
+ * {@link APPROVAL_RESTRICTIVE_LIST_PATH} exists to prevent, reached by a different route. It
+ * matters for the permissive list too, in the other direction: without the expansion a bare rung
+ * would silently drop the lower layer's `allow` rather than inheriting it.
  */
 function expandApprovalsScalar(value: unknown): unknown {
   return typeof value === 'string' ? { mode: value } : value;

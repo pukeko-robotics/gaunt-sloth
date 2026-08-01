@@ -67,7 +67,7 @@ export interface CommandToolingConfig {
   builtInTools?: BuiltInToolsSetting;
   /**
    * §9.1 — per-command approvals posture. It overrides only the fields it NAMES: `mode`,
-   * `rater` and `raterTimeoutMs` replace the root's, while `allow`, `deny` and `escalate`
+   * `rater`, `raterTimeoutMs` and `allow` replace the root's, while `deny` and `escalate`
    * concatenate with it. See {@link GthConfig.approvals}.
    */
   approvals?: ApprovalsConfig;
@@ -202,11 +202,12 @@ export interface GthConfig {
    * independent rater switch.
    *
    * Settable at the root or per command (`commands.<command>.approvals`). §9.1 — a per-command
-   * value overrides only the fields it NAMES: `mode`, `rater` and `raterTimeoutMs` replace the
-   * root's, while `allow`, `deny` and `escalate` concatenate across every scope and are resolved
-   * most-restrictive-wins. No scope can narrow another's lists, only add to them, so a per-command
-   * rung can never discard the root's prohibitions. Absent = `auto-safe`, resolved by
-   * `resolveApprovals`.
+   * value overrides only the fields it NAMES. `mode`, `rater` and `raterTimeoutMs` replace the
+   * root's; `deny` and `escalate` CONCATENATE across every scope, so a per-command rung can never
+   * discard the root's prohibitions; `allow` is REPLACED when the command states its own and
+   * inherited when it does not, so a scope may narrow what runs unprompted and may never widen
+   * what is prohibited (§3.1: a too-broad allow entry runs unrated, a missed deny entry does not).
+   * Absent = `auto-safe`, resolved by `resolveApprovals`.
    */
   approvals?: ApprovalsConfig;
   tools?: StructuredToolInterface[] | BaseToolkit[] | ServerTool[];
@@ -375,7 +376,7 @@ export interface GthConfig {
       builtInTools?: BuiltInToolsSetting;
       /**
        * §9.1 — per-command approvals posture. It overrides only the fields it NAMES: `mode`,
-       * `rater` and `raterTimeoutMs` replace the root's, while `allow`, `deny` and `escalate`
+       * `rater`, `raterTimeoutMs` and `allow` replace the root's, while `deny` and `escalate`
        * concatenate with it. See {@link GthConfig.approvals}.
        */
       approvals?: ApprovalsConfig;

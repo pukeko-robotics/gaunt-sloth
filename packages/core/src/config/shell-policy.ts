@@ -626,15 +626,24 @@ function toApprovalsObject(raw: ApprovalsConfig | undefined): ApprovalsObjectCon
  *   states them and **inherited from the root when it does not**. So the scalar sugar
  *   `"code": { "approvals": "bypass" }` is exactly `{ mode: 'bypass' }` merged over the root: it
  *   sets the rung and nothing else.
- * - **The three rule lists never replace: they CONCATENATE across every scope**, and are then
- *   resolved most-restrictive-wins by `resolveApprovalRules`. No scope can narrow another scope's
- *   lists, only add to them — narrowing is what `deny` and `escalate` are *for*, since they outrank
- *   `allow`. Removing an inherited prohibition for one command is deliberately not expressible.
+ * - **`deny` and `escalate` never replace: they CONCATENATE across every scope.** A
+ *   command-specific `deny` *adds to* the root's. Removing an inherited prohibition for one command
+ *   is deliberately not expressible.
+ * - **`allow` is REPLACED when the per-command value states its own, and inherited when it does
+ *   not.** A per-command scope may therefore narrow what runs unprompted, and may never widen what
+ *   is prohibited.
  *
- * The asymmetry is the point (§11.1f). Were the per-command value to replace the root wholesale,
- * the friendliest spelling of "stop asking me about `code`" would also delete every `deny` entry —
- * at the one rung where the deny list and the §8 floor are the only checks left. A prohibition a
- * nested config key can quietly delete is not a hardline.
+ * **The two halves differ because the costs differ (§3.1), not for tidiness.** A missed allow entry
+ * escalates and a missed deny entry falls through to the rater — neither is an execution — while a
+ * too-broad allow entry *runs, unrated and unprompted*. Concatenating the restrictive lists fails
+ * toward a prompt; concatenating the permissive one fails toward an execution, and would leave a
+ * deliberately restrictive per-command rung with no way to shed the root's standing grants. Do not
+ * "regularize" these three into one policy: the direction each list fails in is the whole design.
+ *
+ * On the restrictive side the pressure runs the other way (§11.1f). Were the per-command value to
+ * replace the root wholesale, the friendliest spelling of "stop asking me about `code`" would also
+ * delete every `deny` entry — at the one rung where the deny list and the §8 floor are the only
+ * checks left. A prohibition a nested config key can quietly delete is not a hardline.
  *
  * Concatenation order cannot change any outcome (`resolveApprovalRules` consults every deny entry
  * before any escalate entry and every escalate entry before any allow entry), so root-first is a
@@ -666,7 +675,9 @@ export function resolveApprovals(
   return {
     rung: perCommand?.mode ?? root?.mode ?? DEFAULT_APPROVAL_RUNG,
     rater: perCommand?.rater ?? root?.rater,
-    allow: [...(root?.allow ?? []), ...(perCommand?.allow ?? [])],
+    // `??`, so an EXPLICIT empty list is honoured: `allow: []` on a command states "nothing is
+    // pre-trusted here" and must not read as "said nothing, inherit the root's".
+    allow: perCommand?.allow ?? root?.allow ?? [],
     deny: [...(root?.deny ?? []), ...(perCommand?.deny ?? [])],
     escalate: [...(root?.escalate ?? []), ...(perCommand?.escalate ?? [])],
     raterTimeoutMs: perCommand?.raterTimeoutMs ?? root?.raterTimeoutMs,

@@ -599,6 +599,59 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
   });
 
   /**
+   * §9.1/§11.1f — the permissive half, on the real graph, and the one that is a SECURITY assertion
+   * rather than a merge assertion: a command that states its own `allow` no longer auto-approves
+   * what the root trusted. Driven at `write`, the unrated rung, so the only two outcomes are "ran
+   * without asking" and "asked" — which is exactly the distinction an inherited grant erases.
+   */
+  it('a per-command allow replaces the root one, so an inherited grant no longer runs unprompted', async () => {
+    const runner = await makeRunner(['npm test'], {
+      approvals: {
+        mode: 'write',
+        allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
+      },
+      commands: {
+        code: {
+          approvals: { allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm run build' }] },
+        },
+      },
+    } as unknown as Partial<GthConfig>);
+    const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
+    runner.setToolApprovalCallback(human);
+
+    await runTurn(runner, 'test it');
+
+    // The root's grant did NOT carry into a command that declared its own list: the human was asked.
+    expect(human).toHaveBeenCalledTimes(1);
+    expect(executed).toEqual(['npm test']); // …and ran only because they said so
+  });
+
+  /**
+   * The control, and the half that proves the assertion above is about REPLACEMENT rather than
+   * about the allow-list being broken: the command's OWN entry still auto-approves, unprompted.
+   */
+  it('the per-command allow list itself still approves without asking', async () => {
+    const runner = await makeRunner(['npm run build'], {
+      approvals: {
+        mode: 'write',
+        allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
+      },
+      commands: {
+        code: {
+          approvals: { allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm run build' }] },
+        },
+      },
+    } as unknown as Partial<GthConfig>);
+    const human = vi.fn();
+    runner.setToolApprovalCallback(human);
+
+    await runTurn(runner, 'build it');
+
+    expect(human).not.toHaveBeenCalled();
+    expect(executed).toEqual(['npm run build']);
+  });
+
+  /**
    * §3.1, stated as a cost the spec accepts and therefore pinned rather than left to be discovered:
    * an **exact** deny entry for `npm publish` does not stop `npm publish --access public`. Under
    * `bypass` — where the deny list is one of only two checks left — that means the command RUNS.

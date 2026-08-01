@@ -171,18 +171,16 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       expect(decisionFor('npm test', resolved)).toBeUndefined();
     });
 
-    it('allow and escalate concatenate the same way', () => {
+    it('escalate concatenates exactly as deny does', () => {
       const resolved = resolveApprovals(
         {
           approvals: {
             mode: 'auto-safe',
-            allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
             escalate: [{ type: 'shell', matcher: 'exact', pattern: 'terraform apply' }],
           },
           commands: {
             code: {
               approvals: {
-                allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm run build' }],
                 escalate: [{ type: 'shell', matcher: 'exact', pattern: 'terraform destroy' }],
               },
             },
@@ -190,11 +188,99 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
         } as unknown as ApprovalsInput,
         'code'
       );
-      expect(decisionFor('npm test', resolved)).toBe('allow');
-      expect(decisionFor('npm run build', resolved)).toBe('allow');
       expect(decisionFor('terraform apply', resolved)).toBe('escalate');
       expect(decisionFor('terraform destroy', resolved)).toBe('escalate');
       expect(decisionFor('rm -rf /tmp/x', resolved)).toBeUndefined();
+    });
+
+    /**
+     * §9.1/§11.1f — **`allow` is the exception, and it goes the other way.** The restrictive lists
+     * concatenate; the permissive one is REPLACED when the per-command value states its own and
+     * inherited when it does not. So a scope may narrow what runs unprompted and may never widen
+     * what is prohibited.
+     *
+     * The reason is §3.1's cost asymmetry, and it is what these tests are really pinning: a missed
+     * allow entry escalates and a missed deny entry falls through to the rater — neither executes —
+     * while a too-broad allow entry RUNS, unrated and unprompted. Concatenating `allow` would also
+     * leave a deliberately restrictive per-command rung silently inheriting every standing grant
+     * the root ever made, with no way to shed them.
+     */
+    describe('§9.1 — allow is replaced, not concatenated', () => {
+      const ROOT_ALLOW: ApprovalEntry = { type: 'shell', matcher: 'exact', pattern: 'npm test' };
+
+      it("a per-command allow REPLACES the root's", () => {
+        const resolved = resolveApprovals(
+          {
+            approvals: { mode: 'auto-safe', allow: [ROOT_ALLOW], deny: [ROOT_DENY] },
+            commands: {
+              code: {
+                approvals: {
+                  allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm run build' }],
+                },
+              },
+            },
+          } as unknown as ApprovalsInput,
+          'code'
+        );
+        // The command's own list is in force…
+        expect(decisionFor('npm run build', resolved)).toBe('allow');
+        // …and the root's is NOT: this command no longer auto-approves what the root trusted.
+        expect(decisionFor('npm test', resolved)).toBeUndefined();
+        // CONTROL — narrowing the PERMISSIVE list did not weaken the RESTRICTIVE one. Without
+        // this, a resolver that dropped every root list on any per-command block would pass the
+        // assertion above while silently reopening the defect this whole task exists to close.
+        expect(decisionFor('npm publish --access public', resolved)).toBe('deny');
+      });
+
+      it('a per-command value stating NO allow inherits the root list', () => {
+        // The other direction. Without it the test above pins only "the root list went away",
+        // which a resolver that ignored `allow` entirely would satisfy just as well.
+        const resolved = resolveApprovals(
+          {
+            approvals: { mode: 'auto-safe', allow: [ROOT_ALLOW] },
+            commands: { code: { approvals: 'write' } },
+          } as unknown as ApprovalsInput,
+          'code'
+        );
+        expect(resolved.rung).toBe('write'); // CONTROL — the per-command value really applied
+        expect(decisionFor('npm test', resolved)).toBe('allow');
+      });
+
+      it('the measured regression: a restrictive rung with its own allow does NOT inherit', () => {
+        // The case that motivated the amendment, in its own words: `pr` is set to `read-only`
+        // precisely because it should ask, and §2.1 applies the allow-list at that rung — so an
+        // inherited root grant would auto-approve there exactly what the rung was chosen to stop.
+        const resolved = resolveApprovals(
+          {
+            approvals: { mode: 'auto-safe', allow: [ROOT_ALLOW] },
+            commands: {
+              pr: {
+                approvals: {
+                  mode: 'read-only',
+                  allow: [{ type: 'shell', matcher: 'exact', pattern: 'git status' }],
+                },
+              },
+            },
+          } as unknown as ApprovalsInput,
+          'pr'
+        );
+        expect(resolved.rung).toBe('read-only'); // CONTROL — the rung really is the restrictive one
+        expect(decisionFor('npm test', resolved)).toBeUndefined();
+        expect(decisionFor('git status', resolved)).toBe('allow');
+      });
+
+      it('an EXPLICIT empty allow narrows to nothing — it is a statement, not a silence', () => {
+        // `[]` says "nothing is pre-trusted for this command". Resolving it with `||` or a
+        // truthiness check would read it as "said nothing" and hand back the root's list.
+        const resolved = resolveApprovals(
+          {
+            approvals: { mode: 'auto-safe', allow: [ROOT_ALLOW] },
+            commands: { code: { approvals: { allow: [] } } },
+          } as unknown as ApprovalsInput,
+          'code'
+        );
+        expect(decisionFor('npm test', resolved)).toBeUndefined();
+      });
     });
 
     it('CONTROL: the root lists are counted ONCE, not once per scope', () => {
@@ -238,6 +324,12 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       expect(resolved.rater).toBe('safety-rater');
     });
 
+    /**
+     * A root-only config, so this pins pass-through and nothing else. Note the three lists reach it
+     * by DIFFERENT routes (§9.1): `deny` and `escalate` are concatenated with an empty per-command
+     * list, `allow` is inherited because no per-command list was stated. They agree here precisely
+     * because there is one scope — do not read this test as evidence that they merge alike.
+     */
     it('carries the declared allow, deny and escalate lists through unchanged (EXT-71 §3.1)', () => {
       const allow: ApprovalEntry[] = [
         { type: 'shell', matcher: 'exact', pattern: 'npm test' },

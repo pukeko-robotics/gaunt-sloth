@@ -318,6 +318,61 @@ describe('config B2b behavior changes', () => {
       expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
     });
 
+    /**
+     * §9.1 — `allow` is the PERMISSIVE list and therefore keeps REPLACE semantics across layers
+     * too: a layer that states its own replaces the layer below, one that says nothing inherits.
+     * Unioning it here would fail toward an execution, which is the whole reason it is not in the
+     * additive set (§3.1's cost asymmetry).
+     */
+    it('a project allow list REPLACES the global one, while deny still adds', async () => {
+      setupGlobalAndProject(
+        {
+          approvals: {
+            mode: 'auto-safe',
+            allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
+            deny: [GLOBAL_DENY],
+          },
+        },
+        {
+          llm: { type: 'vertexai' },
+          approvals: {
+            allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm run build' }],
+            deny: [PROJECT_DENY],
+          },
+        }
+      );
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({});
+
+      // The project's own allow list is in force; the global's is gone.
+      expect((await decide(config, 'code', 'npm run build')).action).toBe('allow');
+      expect((await decide(config, 'code', 'npm test')).action).toBeUndefined();
+      // CONTROL — the permissive list narrowed WITHOUT the restrictive one narrowing with it.
+      // The two policies live one line apart; this is what stops a future edit unifying them.
+      expect((await decide(config, 'code', 'npm publish --access public')).action).toBe('deny');
+      expect((await decide(config, 'code', 'git push --force origin main')).action).toBe('deny');
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+    });
+
+    it('a project layer that states NO allow inherits the global one', async () => {
+      // The other direction, without which the test above pins only "the global list went away".
+      setupGlobalAndProject(
+        {
+          approvals: {
+            mode: 'auto-safe',
+            allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
+          },
+        },
+        { llm: { type: 'vertexai' }, approvals: { mode: 'write' } }
+      );
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({});
+
+      expect((await decide(config, 'code', 'npm test')).rung).toBe('write'); // CONTROL
+      expect((await decide(config, 'code', 'npm test')).action).toBe('allow');
+    });
+
     it('a project SCALAR rung keeps the global lists — the scalar is sugar for { mode }', async () => {
       // §9.1's union collapsing is a second route to the same loss: a bare string on the
       // higher-precedence layer would otherwise overwrite the lower layer's whole block.

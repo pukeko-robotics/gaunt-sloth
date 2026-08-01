@@ -245,10 +245,11 @@ de-duplicate:
 
 - `allowDirs`
 - `aiignore.patterns`
-- `approvals.allow`, `approvals.deny`, `approvals.escalate` — wherever they appear, including
-  under `commands.<cmd>.approvals`. These are the rules you trust and the rules you forbid; a
-  prohibition another layer can quietly delete is not a prohibition, so no layer can narrow
-  another's lists, only add to them.
+- `approvals.deny` and `approvals.escalate` — wherever they appear, including under
+  `commands.<cmd>.approvals`. These are the rules you forbid, and a prohibition another layer can
+  quietly delete is not a prohibition, so no layer can narrow another's, only add to them.
+  `approvals.allow` is **not** additive: it is the permissive list, so it keeps replace semantics
+  and a layer that states its own replaces the layer below.
 
 Every other array (`allowedTools`, `builtInTools`, `tools`, `middleware`, `binaryFormats`,
 and so on) is now taken wholesale from the higher-precedence layer. So if you were leaning

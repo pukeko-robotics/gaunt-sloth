@@ -531,7 +531,7 @@ const prCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
   // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
-  // `rater` and `raterTimeoutMs` replace the root's; `allow`/`deny`/`escalate` concatenate.
+  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -546,7 +546,7 @@ const reviewCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
   // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
-  // `rater` and `raterTimeoutMs` replace the root's; `allow`/`deny`/`escalate` concatenate.
+  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -558,7 +558,7 @@ const askCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
   // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
-  // `rater` and `raterTimeoutMs` replace the root's; `allow`/`deny`/`escalate` concatenate.
+  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -569,7 +569,7 @@ const chatCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
   // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
-  // `rater` and `raterTimeoutMs` replace the root's; `allow`/`deny`/`escalate` concatenate.
+  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -580,7 +580,7 @@ const codeCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
   // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
-  // `rater` and `raterTimeoutMs` replace the root's; `allow`/`deny`/`escalate` concatenate.
+  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -591,7 +591,7 @@ const execCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
   // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
-  // `rater` and `raterTimeoutMs` replace the root's; `allow`/`deny`/`escalate` concatenate.
+  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -602,7 +602,7 @@ const apiCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
   // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
-  // `rater` and `raterTimeoutMs` replace the root's; `allow`/`deny`/`escalate` concatenate.
+  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
   approvals: approvalsSchema.optional(),
   port: z.number().optional(),
   cors: z
@@ -702,8 +702,8 @@ export const rawGthConfigSchema = z.looseObject({
   builtInTools: builtInToolsSchema.optional(),
   // CFG-27 — the approvals ladder: a rung name, or an object carrying the rater profile and the
   // declared allow/deny lists. Settable at the root or per command
-  // (`commands.<command>.approvals`, which per §9.1 overrides only the fields it names — the three
-  // rule lists concatenate across scopes instead of replacing). Absent = `auto-safe`
+  // (`commands.<command>.approvals`, which per §9.1 overrides only the fields it names — the
+  // restrictive lists concatenate across scopes, `allow` replaces). Absent = `auto-safe`
   // (`resolveApprovals` in shell-policy.ts).
   approvals: approvalsSchema.optional(),
   // Live tool instances / toolkits in JS configs — kept permissive.
