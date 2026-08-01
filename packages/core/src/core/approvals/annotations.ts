@@ -102,12 +102,22 @@ export interface EffectiveToolAnnotationOptions {
  * The alternative — falling back to `defaults` field by field — would mean a server named with an
  * empty body silently inherits trust, and trust by omission is the failure this section exists to
  * prevent.
+ *
+ * The lookup is an **own-property** one, and that is load-bearing rather than defensive noise.
+ * `servers` is a plain user-authored map, so a server key that collides with an `Object.prototype`
+ * member (`constructor`, `toString`, `hasOwnProperty`, `valueOf`) would otherwise resolve to the
+ * INHERITED value — truthy, so `defaults` is never consulted and that one server silently gets a
+ * relationship nobody wrote. Here that lands fail-closed; on the `expose` field [[EXT-73]] adds to
+ * this same block it lands fail-OPEN, because an absent `expose` means "expose every tool". A
+ * server's identity is the user's own config key (§4.7.5) and every such key must resolve by the
+ * same rule.
  */
 export function trustedAnnotationHints(
   mcp: McpApprovalsConfig | undefined,
   server: string
 ): readonly ToolAnnotationHint[] {
-  const named = mcp?.servers?.[server];
+  const servers = mcp?.servers;
+  const named = servers && Object.hasOwn(servers, server) ? servers[server] : undefined;
   const relationship = named ?? mcp?.defaults;
   return relationship?.trustAnnotations ?? [];
 }

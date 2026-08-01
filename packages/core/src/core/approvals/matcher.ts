@@ -129,13 +129,18 @@ export type EffectiveToolAnnotationSource = (
  * to write, to destroy, to be non-idempotent and to reach the open world. These are the values the
  * MCP specification itself defines for absent annotations, so an entry written against them is
  * written against the protocol's own conservative reading.
+ *
+ * **Frozen**, and read-only to the type system, because it is shared: an effective set is something
+ * callers snapshot (§4.7.4 records one on a sticky grant), so a source that handed this object out
+ * instead of a copy would let one caller's snapshot rewrite the fail-closed floor for every other.
+ * Freezing turns that aliasing bug into an immediate throw rather than a silent, global loosening.
  */
-export const MCP_FAIL_CLOSED_ANNOTATIONS: EffectiveToolAnnotations = {
+export const MCP_FAIL_CLOSED_ANNOTATIONS: Readonly<EffectiveToolAnnotations> = Object.freeze({
   readOnlyHint: false,
   destructiveHint: true,
   idempotentHint: false,
   openWorldHint: true,
-};
+});
 
 /**
  * The {@link EffectiveToolAnnotationSource} a caller gets when it wires none: every tool reads as
@@ -145,9 +150,13 @@ export const MCP_FAIL_CLOSED_ANNOTATIONS: EffectiveToolAnnotations = {
  * anyway (§4.7.1: an untrusted server's effective set IS this constant), so a call site that has no
  * annotations to offer behaves exactly like one whose user believes nothing. Deliberately NOT a
  * trust model: trust needs config, and config belongs to `core/approvals/annotations.ts`.
+ *
+ * It answers with a **fresh object per call**, matching `createEffectiveToolAnnotationSource`, so
+ * the whole contract — not merely its configured half — is safe to snapshot.
  */
-export const failClosedToolAnnotations: EffectiveToolAnnotationSource = () =>
-  MCP_FAIL_CLOSED_ANNOTATIONS;
+export const failClosedToolAnnotations: EffectiveToolAnnotationSource = () => ({
+  ...MCP_FAIL_CLOSED_ANNOTATIONS,
+});
 
 /* -------------------------------------------------------------------------------------------- *
  * The engine.

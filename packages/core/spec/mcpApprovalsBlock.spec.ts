@@ -134,12 +134,29 @@ describe('the approvals.mcp block (EXT-70 §4.7, §9)', () => {
      * so the strict refusal is the correct interim state, and this test is the one EXT-73 turns
      * around when it implements the key.
      */
-    it('refuses expose, which belongs to EXT-73 and is not implemented here', () => {
+    it('refuses expose on a server, which belongs to EXT-73 and is not implemented here', () => {
       const message = expectRejected(
         validate({ servers: { jira: { trustAnnotations: [], expose: 'all' } } })
       );
       expect(message).toContain('expose');
+      expect(message).toContain('approvals.mcp.servers.jira');
       expectAccepted(validate({ servers: { jira: { trustAnnotations: [] } } }));
+    });
+
+    /**
+     * `defaults` and `servers.*` are the same shape, so the refusal must hold at BOTH — otherwise
+     * the pin is one-sided and a later widening of one arm alone goes unnoticed. §9 writes `expose`
+     * inside `defaults` as well as inside a server entry, which is exactly where EXT-73 will need
+     * it, and exactly where an accidental permissive arm would let a user believe their tools were
+     * filtered when nothing reads the key.
+     */
+    it('refuses expose on defaults too, at the defaults path', () => {
+      const message = expectRejected(
+        validate({ defaults: { trustAnnotations: [], expose: 'all' } })
+      );
+      expect(message).toContain('expose');
+      expect(message).toContain('approvals.mcp.defaults');
+      expectAccepted(validate({ defaults: { trustAnnotations: [] } }));
     });
 
     it('reports a per-command block at its own path, not the root one', () => {
@@ -178,7 +195,8 @@ describe('the approvals.mcp block (EXT-70 §4.7, §9)', () => {
       ['a boolean instead of a list', { servers: { jira: { trustAnnotations: true } } }],
       ['an unknown key on a server', { servers: { jira: { trust: [] } } }],
       ['an unknown key on the block', { defualts: {} }],
-      ['expose (EXT-73)', { servers: { jira: { expose: 'all' } } }],
+      ['expose on a server (EXT-73)', { servers: { jira: { expose: 'all' } } }],
+      ['expose on defaults (EXT-73)', { defaults: { expose: 'all' } }],
     ])('refuses %s', (_label, mcp) => {
       expect(accepts(mcp)).toBe(false);
       // …and the load agrees. Two enforcement surfaces, one answer.

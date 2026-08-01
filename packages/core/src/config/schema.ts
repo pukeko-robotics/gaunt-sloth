@@ -123,9 +123,20 @@ export const APPROVAL_ENTRY_TYPES = ['shell', 'tool', 'mcpTool'] as const;
 export const APPROVAL_ENTRY_MATCHERS = ['exact', 'glob', 'regexp', 'hint'] as const;
 
 /**
- * EXT-71 §3.1 / §4.7 — the four MCP `ToolAnnotations` booleans a `hint` pattern may name. This is
- * the whole vocabulary: an unknown name is a config error, never an ignored key, because a hint
- * pattern that quietly drops a constraint matches MORE than its author wrote.
+ * EXT-71 §3.1 / §4.7 — the four MCP `ToolAnnotations` booleans a `hint` pattern may name, and the
+ * names a user may list in `approvals.mcp.*.trustAnnotations` (§4.7.1). This is the whole
+ * vocabulary: an unknown name is a config error, never an ignored key, because a hint pattern that
+ * quietly drops a constraint matches MORE than its author wrote, and a trust list that quietly
+ * drops one reads as working while believing something else.
+ *
+ * **The runtime twin `TOOL_ANNOTATION_HINTS` in `shell-policy.ts` is a deliberate duplicate, and
+ * the reason is layering, not oversight.** Neither file may import the other. This module must stay
+ * pure and cwd/fs-independent because it feeds `z.toJSONSchema()` (see the header), and importing
+ * `shell-policy.ts` would pull `core/types.js` and the whole runtime policy surface into it;
+ * importing this module from there would in turn pull zod into every module that only wanted a
+ * policy type. So the vocabulary is written once per layer on purpose — do not "simplify" it by
+ * making one import the other. The equality assertion in `mcpApprovalsBlock.spec.ts` is what fails
+ * when they drift.
  */
 export const HINT_ANNOTATION_KEYS = [
   'readOnlyHint',

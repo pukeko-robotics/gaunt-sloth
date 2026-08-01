@@ -81,9 +81,49 @@ describe('effective tool annotations (EXT-70 §4.7.1)', () => {
         mcp: { servers: { jira: { trustAnnotations: ['readOnlyHint'] } } },
         declared: declaringMcp(DECLARES_HARMLESS),
       });
-      expect(source(mcpSubject('confluence')).readOnlyHint).toBe(false);
-      // Control: the server that WAS named gets what it was granted, so the lookup is by key.
+      // The unnamed server moves nothing at all, though it declared the opposite of all four.
+      expect(source(mcpSubject('confluence'))).toEqual(MCP_FAIL_CLOSED_ANNOTATIONS);
+      // Control: the server that WAS named gets what it was granted, so the lookup is by key —
+      // and gets ONLY that, since both servers declared every hint. The pair is what separates
+      // per-hint trust from a per-server boolean; the trusted half alone passes on either.
       expect(source(mcpSubject('jira')).readOnlyHint).toBe(true);
+      expect(source(mcpSubject('jira')).openWorldHint).toBe(true);
+    });
+  });
+
+  /**
+   * §4.7.5 — a server's identity is the user's own config key, and EVERY such key resolves by the
+   * same rule. A key colliding with an `Object.prototype` member must not resolve through the
+   * prototype chain to an inherited value: that would be a relationship nobody wrote, and it would
+   * shadow `defaults` entirely. Here it lands fail-closed; on the `expose` field EXT-73 adds to
+   * this same block it would land fail-OPEN, because an absent `expose` means "expose every tool".
+   */
+  describe('a server key that collides with Object.prototype is an ordinary key', () => {
+    const mcp: McpApprovalsConfig = {
+      defaults: { trustAnnotations: ['readOnlyHint'] },
+      servers: { other: {} },
+    };
+    const source = createEffectiveToolAnnotationSource({
+      mcp,
+      declared: declaringMcp({ readOnlyHint: true }),
+    });
+
+    it.each(['constructor', 'toString', 'hasOwnProperty', 'valueOf', '__proto__'])(
+      'a server named %s is UNNAMED here, so it takes the defaults',
+      (server) => {
+        expect(trustedAnnotationHints(mcp, server)).toEqual(['readOnlyHint']);
+        expect(source(mcpSubject(server)).readOnlyHint).toBe(true);
+      }
+    );
+
+    it('CONTROL: an ordinary key resolves the same way, and a key that IS named still wins', () => {
+      // The ordinary unnamed key — the behaviour the colliding keys above must match exactly.
+      expect(trustedAnnotationHints(mcp, 'normal')).toEqual(['readOnlyHint']);
+      expect(source(mcpSubject('normal')).readOnlyHint).toBe(true);
+      // …and the lookup still FINDS a real key: `other` names itself with an empty body, so it
+      // trusts nothing. A "fix" that simply stopped looking servers up would fail here.
+      expect(trustedAnnotationHints(mcp, 'other')).toEqual([]);
+      expect(source(mcpSubject('other')).readOnlyHint).toBe(false);
     });
   });
 
@@ -226,12 +266,16 @@ describe('effective tool annotations (EXT-70 §4.7.1)', () => {
       expect(source(mcpSubject('jira'))).toEqual(MCP_FAIL_CLOSED_ANNOTATIONS);
     });
 
-    it('CONTROL: a STATED list on the same config believes what it names', () => {
+    it('CONTROL: a STATED list believes what it names, and only what it names', () => {
       const source = createEffectiveToolAnnotationSource({
         mcp: { servers: { jira: { trustAnnotations: ['idempotentHint'] } } },
         declared,
       });
-      expect(source(mcpSubject('jira')).idempotentHint).toBe(true);
+      const effective = source(mcpSubject('jira'));
+      expect(effective.idempotentHint).toBe(true);
+      // The same declaration also said openWorldHint=false, which was not named and so collapses.
+      // Both halves, because the trusted half alone passes on a per-server boolean too.
+      expect(effective.openWorldHint).toBe(true);
     });
   });
 
@@ -298,6 +342,24 @@ describe('effective tool annotations (EXT-70 §4.7.1)', () => {
         declared: { mcp: () => undefined },
       });
       expect(source(mcpSubject('jira', 'never_listed'))).toEqual(MCP_FAIL_CLOSED_ANNOTATIONS);
+    });
+
+    /**
+     * §4.7.4 — an effective set is something callers SNAPSHOT onto a sticky grant, so every path
+     * out of the contract must hand back an object of the caller's own. The fail-closed path is
+     * the one that would alias, since it has nothing of its own to build.
+     */
+    it('answers with a FRESH object per call, so a snapshot cannot alias the shared constant', () => {
+      const source = createEffectiveToolAnnotationSource();
+      const first = source(mcpSubject('jira'));
+      const second = source(mcpSubject('jira'));
+      expect(first).not.toBe(second);
+      expect(first).not.toBe(MCP_FAIL_CLOSED_ANNOTATIONS);
+      first.readOnlyHint = true;
+      expect(second.readOnlyHint).toBe(false);
+      expect(MCP_FAIL_CLOSED_ANNOTATIONS.readOnlyHint).toBe(false);
+      // Control: the fresh object is a real effective set, not an empty one.
+      expect(second).toEqual(MCP_FAIL_CLOSED_ANNOTATIONS);
     });
 
     it('does not mutate the shared fail-closed constant', () => {

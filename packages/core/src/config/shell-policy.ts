@@ -465,8 +465,20 @@ export type ApprovalMatcher = 'exact' | 'glob' | 'regexp' | 'hint';
 /**
  * §4.7 — the four MCP `ToolAnnotations` hint names, and the whole vocabulary. It is the same list
  * on both sides of the design: what a `hint` pattern may name ({@link ApprovalHintPattern}) and what
- * a user may believe from a server ({@link McpServerApprovalsConfig.trustAnnotations}). The schema
- * twin is `HINT_ANNOTATION_KEYS` in `config/schema.ts`; `configSchema.spec.ts` pins the two together.
+ * a user may believe from a server ({@link McpServerApprovalsConfig.trustAnnotations}).
+ *
+ * **The schema twin `HINT_ANNOTATION_KEYS` in `config/schema.ts` is a deliberate duplicate, and the
+ * reason is layering, not oversight.** Neither file may import the other. `schema.ts` states in its
+ * own header that it must stay pure and cwd/fs-independent because it feeds `z.toJSONSchema()`, and
+ * importing this module would pull `core/types.js` and the whole runtime policy surface into it;
+ * importing `schema.ts` here would in turn pull zod into every module that only wanted a policy
+ * type. So the vocabulary is written once per layer on purpose — do not "simplify" it by making one
+ * import the other.
+ *
+ * What keeps the two honest instead is the equality assertion in `mcpApprovalsBlock.spec.ts`, which
+ * fails the moment they drift. Drift matters in one direction especially: a name the config accepts
+ * but the derivation never reads fails silently, and it fails toward trusting. Change one list,
+ * change the other.
  */
 export const TOOL_ANNOTATION_HINTS = [
   'readOnlyHint',

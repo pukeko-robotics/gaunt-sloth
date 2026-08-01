@@ -582,6 +582,31 @@ describe('approvals rule matcher (EXT-71 §3.1)', () => {
       expect(failClosedToolAnnotations(mcp as never)).toEqual(MCP_FAIL_CLOSED_ANNOTATIONS);
     });
 
+    /**
+     * §4.7.4 — an effective set is something a caller SNAPSHOTS onto a sticky grant. This is the
+     * default source, so it is the one most call sites get; handing out the shared constant would
+     * let one caller's snapshot rewrite the fail-closed floor for every other.
+     */
+    it('answers with a FRESH object per call, so a snapshot cannot alias the shared constant', () => {
+      const first = failClosedToolAnnotations(mcp as never)!;
+      const second = failClosedToolAnnotations(mcp as never)!;
+      expect(first).not.toBe(second);
+      expect(first).not.toBe(MCP_FAIL_CLOSED_ANNOTATIONS);
+      first.destructiveHint = false;
+      expect(second.destructiveHint).toBe(true);
+      expect(MCP_FAIL_CLOSED_ANNOTATIONS.destructiveHint).toBe(true);
+      // Control: the fresh object is a real fail-closed set, not an empty one.
+      expect(second).toEqual(MCP_FAIL_CLOSED_ANNOTATIONS);
+    });
+
+    it('the shared constant is frozen, so a future aliasing bug is loud rather than silent', () => {
+      expect(Object.isFrozen(MCP_FAIL_CLOSED_ANNOTATIONS)).toBe(true);
+      expect(() => {
+        (MCP_FAIL_CLOSED_ANNOTATIONS as { destructiveHint: boolean }).destructiveHint = false;
+      }).toThrow(TypeError);
+      expect(MCP_FAIL_CLOSED_ANNOTATIONS.destructiveHint).toBe(true);
+    });
+
     it('matches when every NAMED hint holds, and not when one does not', () => {
       expect(asDeny([hint({ destructiveHint: true })], mcp)?.action).toBe('deny');
       expect(asDeny([hint({ readOnlyHint: false })], mcp)?.action).toBe('deny');
