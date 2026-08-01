@@ -9,6 +9,7 @@ import {
   PersistedApprovalGrants,
   shellGrantEntry,
   toolGrantEntry,
+  trustWithdrawalWeakens,
   type ApprovalGrant,
 } from '#src/core/approvals/grants.js';
 import {
@@ -313,6 +314,66 @@ describe('annotationWeakenings — what invalidates a grant (§4.7.4)', () => {
     expect(unbound).not.toContain('docs.internal.example');
     expect(bound).not.toBe(unbound);
   });
+});
+
+/**
+ * EXT-70 §4.7.1/§4.7.4 — **which hints, when trust in them is WITHDRAWN, can invalidate a grant.**
+ *
+ * This is what lets the surface where a user withdraws trust say so there, instead of letting them
+ * meet the withdrawal notice three turns later. It is also the one place this node's own brief was
+ * wrong, so it is asserted against the moves rather than against the prose: `destructiveHint`'s
+ * fail-closed default is `true`, and `destructiveHint` false→true IS a weakening move, so ceasing
+ * to believe a server's `destructiveHint: false` makes its tools destructive again.
+ */
+describe('trustWithdrawalWeakens — withdrawing trust is a weakening, for three hints of four', () => {
+  it.each([['readOnlyHint'], ['openWorldHint'], ['destructiveHint']] as const)(
+    'withdrawing %s can weaken, so it can invalidate a grant',
+    (hint) => {
+      expect(trustWithdrawalWeakens(hint)).toBe(true);
+    }
+  );
+
+  /**
+   * The only negative, and its control is the `it.each` above: `idempotentHint` appears in no
+   * weakening move at any declared value, so withdrawing it invalidates nothing. Asserting only
+   * this would pass on a function that returned `false` for everything.
+   */
+  it('withdrawing idempotentHint can NOT weaken — it names no move', () => {
+    expect(trustWithdrawalWeakens('idempotentHint')).toBe(false);
+  });
+
+  /**
+   * The end-to-end evidence for the `destructiveHint` row, built the way the derivation actually
+   * builds an effective set rather than by restating the table. `readOnlyHint` is false on BOTH
+   * sides deliberately: an effective `readOnlyHint: true` derives `destructiveHint: false` (§4.7.1),
+   * so the obvious spelling would move two hints and prove nothing about `destructiveHint` alone.
+   */
+  it('a believed destructiveHint:false really does weaken when it stops being believed', () => {
+    const believed: EffectiveToolAnnotations = {
+      ...MCP_FAIL_CLOSED_ANNOTATIONS,
+      destructiveHint: false,
+    };
+    expect(annotationWeakenings(believed, { ...MCP_FAIL_CLOSED_ANNOTATIONS })).toEqual([
+      'destructiveHint',
+    ]);
+  });
+
+  /**
+   * The mirror: GRANTING trust can never weaken, because every weakening move ENDS at the
+   * fail-closed default and believing a hint only ever moves away from it. Stated as its own
+   * assertion because it is what makes the withdrawal warning specific to withdrawal — a notice
+   * shown on both would be noise, and one shown on neither would be the surprise §4.7.4 creates.
+   */
+  it.each([['readOnlyHint'], ['openWorldHint'], ['destructiveHint'], ['idempotentHint']] as const)(
+    'believing %s moves AWAY from the fail-closed default, so it never weakens',
+    (hint) => {
+      const believed: EffectiveToolAnnotations = {
+        ...MCP_FAIL_CLOSED_ANNOTATIONS,
+        [hint]: !MCP_FAIL_CLOSED_ANNOTATIONS[hint],
+      };
+      expect(annotationWeakenings({ ...MCP_FAIL_CLOSED_ANNOTATIONS }, believed)).toEqual([]);
+    }
+  );
 });
 
 describe('ApprovalGrantStore', () => {

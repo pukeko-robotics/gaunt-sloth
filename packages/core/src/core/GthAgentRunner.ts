@@ -1,15 +1,22 @@
 import {
   type AllowlistCounts,
+  type ApprovalEntry,
   type ApprovalRung,
   DEFAULT_APPROVAL_RUNG,
   describeGrantedBuiltInTools,
   type GrantedToolSummary,
   GthConfig,
   isRatedRung,
+  type McpAnnotationTrustChange,
+  type McpAnnotationTrustView,
+  type McpApprovalsConfig,
+  type McpToolApprovalEntry,
   type ResolvedApprovals,
   resolveApprovals,
   resolveShellApprovalGate,
   SHELL_TOOL_NAME,
+  TOOL_ANNOTATION_HINTS,
+  type ToolAnnotationHint,
 } from '#src/config.js';
 import { BaseCheckpointSaver } from '@langchain/langgraph';
 import {
@@ -37,6 +44,7 @@ import {
   PersistedApprovalGrants,
   shellGrantEntry,
   toolGrantEntry,
+  trustWithdrawalWeakens,
 } from '#src/core/approvals/grants.js';
 import { renderApprovalEntryObject } from '#src/config/schema.js';
 import { classifyCommand } from '#src/core/shell/arity.js';
@@ -67,7 +75,10 @@ import {
   resolveApprovalRules,
   type ToolApprovalSubject,
 } from '#src/core/approvals/matcher.js';
-import { createEffectiveToolAnnotationSource } from '#src/core/approvals/annotations.js';
+import {
+  createEffectiveToolAnnotationSource,
+  trustedAnnotationHints,
+} from '#src/core/approvals/annotations.js';
 import { approvalSubjectForToolName } from '#src/core/approvals/mcpSubjects.js';
 import { toolCallHosts } from '#src/core/approvals/toolHost.js';
 import {
@@ -97,6 +108,16 @@ import { setToolDisplayConfig } from '#src/core/toolDisplay.js';
  * kept; they are redacted (GS2-47) by the crash snapshot writer before anything reaches disk.
  */
 const CRASH_TRANSCRIPT_TAIL_MESSAGES = 8;
+
+/**
+ * A private copy of a rule entry, for handing to a display. `pattern` is the one field that can be
+ * an object (a `hint` pattern, §3.1), so it is copied too — a shallow spread alone would leave the
+ * displayed entry sharing the very object the matcher compares against.
+ */
+function copyApprovalEntry(entry: ApprovalEntry): ApprovalEntry {
+  if (entry.type === 'shell' || typeof entry.pattern === 'string') return { ...entry };
+  return { ...entry, pattern: { ...entry.pattern } };
+}
 
 /**
  * Agent simplifies interaction with LLM and reduces it to calling a few methods
@@ -252,6 +273,169 @@ export class GthAgentRunner {
    */
   public getDenylist(): string[] {
     return [...this.sessionApprovals.deny, ...this.denyGrants.entries()].map(describeApprovalEntry);
+  }
+
+  /**
+   * §3/§4.7.4 — **the grants themselves**, for an approvals view that shows *what* was granted,
+   * *when*, and *under which effective annotations*. The counterpart of {@link getAllowlistCounts},
+   * which answers only how many.
+   *
+   * The declared config lists are deliberately NOT here. They are something a human wrote and
+   * reviewed, they carry no `grantedAt` and no scope, and `getAllowlistCounts` already counts them
+   * alongside these; mixing them in would present a config line as something the session granted.
+   *
+   * **Read-only in both senses.** It never loads the persisted store — same rule as
+   * {@link getAllowlistCounts}: a display must not create the store in order to show it, so a
+   * session that has not yet needed the file lists its session grants alone. And every grant is
+   * **deep-copied on the way out**, because the stores hand back their live records: the copy on the
+   * way in is what makes a snapshot private to its grant, and handing the same object to a renderer
+   * would put what the gate matches against one property assignment away from any consumer.
+   */
+  public getGrants(): ApprovalGrant[] {
+    const held = [
+      ...this.sessionGrants.list(),
+      ...(this.persistedGrantsLoaded ? (this.persistedGrants?.list() ?? []) : []),
+    ];
+    const seen = new Set<string>();
+    const grants: ApprovalGrant[] = [];
+    for (const grant of held) {
+      // An `always` grant is written to BOTH stores, so identity de-duplication is what keeps it
+      // from being displayed twice. The same question `ApprovalGrantStore.add` asks.
+      const key = renderApprovalEntryObject(grant.entry);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      grants.push({
+        ...grant,
+        entry: copyApprovalEntry(grant.entry),
+        ...(grant.annotations ? { annotations: { ...grant.annotations } } : {}),
+      });
+    }
+    return grants;
+  }
+
+  /**
+   * §4.7.1 — **which of each server's annotation hints this session believes**, for display.
+   *
+   * Every key either side names is listed: a configured `mcpServers` key with no policy of its own
+   * (which resolves through `defaults`), and a policy key naming a server the config does not have
+   * (which is what a typo looks like). Resolution is {@link trustedAnnotationHints}, the same
+   * function the gate derives effective annotations through, so the display cannot claim a
+   * relationship the gate does not act on.
+   */
+  public getMcpAnnotationTrust(): McpAnnotationTrustView {
+    const mcp = this.sessionApprovals.mcp;
+    const configured = new Set(this.configuredMcpServerKeys());
+    const named = Object.keys(mcp?.servers ?? {});
+    const keys = [...new Set([...configured, ...named])];
+    return {
+      defaults: [...(mcp?.defaults?.trustAnnotations ?? [])],
+      servers: keys.map((server) => ({
+        server,
+        trusted: [...trustedAnnotationHints(mcp, server)],
+        configured: configured.has(server),
+      })),
+    };
+  }
+
+  /**
+   * §4.7.1 — **believe, or stop believing, specific hints from one server**, for the life of this
+   * session. The runtime half of `approvals.mcp.servers.<key>.trustAnnotations` (§9), so a user can
+   * do from the TUI what they can do in config.
+   *
+   * **Per hint, never per server.** `hints` names the hints this call moves and leaves every other
+   * hint of that server's exactly as it was, because believing a server's `readOnlyHint` while
+   * disbelieving its `openWorldHint` is a coherent position and the common one. A "trust this
+   * server" flag is the design §4.7.1 rejects.
+   *
+   * **The previous set is what was IN FORCE, resolved through `defaults`.** A server not named
+   * under `servers` inherits `defaults`, and naming it makes it state its relationship in full (§9)
+   * — so seeding from the empty set would mean that believing one more hint silently withdrew every
+   * hint `defaults` had granted, which is a weakening the user did not ask for and would invalidate
+   * their grants.
+   *
+   * **Session-scoped only.** Nothing is written to config: the declared block is read-only input
+   * (§9.1), exactly as the rung is.
+   *
+   * A trusted external annotation still never grants more than the same annotation grants one of
+   * our own built-ins — that holds in `core/approvals/annotations.ts` by construction, and this
+   * changes only which hints are read.
+   */
+  public setMcpAnnotationTrust(
+    server: string,
+    hints: readonly ToolAnnotationHint[],
+    believe: boolean
+  ): McpAnnotationTrustChange {
+    const mcp = this.sessionApprovals.mcp;
+    const before = trustedAnnotationHints(mcp, server);
+    const requested = new Set(hints);
+    const after = believe
+      ? TOOL_ANNOTATION_HINTS.filter((hint) => before.includes(hint) || requested.has(hint))
+      : TOOL_ANNOTATION_HINTS.filter((hint) => before.includes(hint) && !requested.has(hint));
+    const added = after.filter((hint) => !before.includes(hint));
+    const removed = before.filter((hint) => !after.includes(hint));
+
+    const nextMcp: McpApprovalsConfig = {
+      ...mcp,
+      servers: {
+        ...mcp?.servers,
+        [server]: { ...mcp?.servers?.[server], trustAnnotations: after },
+      },
+    };
+    // A fresh posture object, and fresh nested ones above: the resolved posture may share its `mcp`
+    // block with the loaded config, and a session change must not rewrite what the user configured.
+    this.sessionApprovals = { ...this.sessionApprovals, mcp: nextMcp };
+
+    return {
+      server,
+      configured: this.configuredMcpServerKeys().includes(server),
+      trusted: [...after],
+      added,
+      removed,
+      weakening: removed.filter(trustWithdrawalWeakens),
+      invalidates: this.grantsWeakenedByCurrentTrust(server),
+    };
+  }
+
+  /**
+   * §4.7.4 — which of this server's saved approvals the trust now in force weakens, for the notice
+   * that reports a trust change. **It predicts; it never removes.** The removal stays where Task
+   * 4 put it — at the call being decided — because that is the only moment the tool's declaration
+   * can be read for certain; here a server that is merely offline declares nothing and would read
+   * as having weakened everything.
+   *
+   * It compares through the same two functions the gate does: the effective-annotation source built
+   * from the posture as it stands *after* the change, and `annotationWeakenings`. A second
+   * comparison written for the display is how a warning comes to describe a rule the gate does not
+   * have.
+   */
+  private grantsWeakenedByCurrentTrust(server: string): string[] {
+    const source = this.effectiveToolAnnotationSource();
+    return this.getGrants()
+      .filter(
+        (
+          grant
+        ): grant is ApprovalGrant & {
+          entry: McpToolApprovalEntry & { pattern: string };
+          annotations: EffectiveToolAnnotations;
+        } =>
+          grant.entry.type === 'mcpTool' &&
+          grant.entry.server === server &&
+          typeof grant.entry.pattern === 'string' &&
+          grant.annotations !== undefined
+      )
+      .filter((grant) => {
+        // The source contract admits "cannot answer"; this one never does (it falls back to the
+        // fail-closed constant), and a source that could not answer says nothing about a grant
+        // either way — so no answer is no prediction rather than a prediction of the worst.
+        const current = source({
+          kind: 'mcpTool',
+          server,
+          name: grant.entry.pattern,
+          ...(grant.entry.host !== undefined ? { host: grant.entry.host } : {}),
+        });
+        return current !== undefined && annotationWeakenings(grant.annotations, current).length > 0;
+      })
+      .map((grant) => describeApprovalEntry(grant.entry));
   }
 
   /**
@@ -772,6 +956,11 @@ export class GthAgentRunner {
     // would remember — so the prompt never advertises a control that has already been withdrawn.
     const grant = catastrophic ? undefined : this.stickyGrantFor(subject, effective, hosts);
     const grantPreview = grant ? renderApprovalEntryObject(grant.entry) : undefined;
+    // §6 — the same grant in the words the menu's *always approve* control is written in, through
+    // the one-liner the §4.7.4 withdrawal notice also uses, so the two cannot describe one grant
+    // two ways. For a tool call this is where "the stored thing is the tool, not the arguments"
+    // becomes visible: it names the tool, its server and the host bound, and nothing else.
+    const grantSummary = grant ? describeApprovalEntry(grant.entry) : undefined;
 
     // Surface the rater's verdict, the escalate entry that fired as provenance (§3.2), and what a
     // sticky choice would store (§6) — without mutating the original interrupt object the caller
@@ -783,6 +972,7 @@ export class GthAgentRunner {
             ...(safetyVerdict ? { safetyVerdict } : {}),
             ...(escalatedBy ? { escalatedBy } : {}),
             ...(grantPreview ? { grantPreview } : {}),
+            ...(grantSummary ? { grantSummary } : {}),
           }
         : tool;
     const decision = await this.toolApprovalCallback(pending);

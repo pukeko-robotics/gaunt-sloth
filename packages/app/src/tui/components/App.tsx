@@ -31,8 +31,10 @@ import {
 import {
   approvalsRungNotice,
   approvalsStatusNotice,
+  approvalsTrustNotice,
   createCommandRegistry,
   dispatchSlashCommand,
+  type McpTrustRequest,
   parseSlashCommand,
   toolsToggleNotice,
 } from '@gaunt-sloth/agent/modules/slashCommands.js';
@@ -351,13 +353,35 @@ export function App(props: TuiAppProps): React.ReactElement {
       });
       return;
     }
-    const { approvals: current, allowlist, deny } = agent.getApprovals();
+    const { approvals: current, allowlist, deny, grants, trust } = agent.getApprovals();
     approvalsRef.current = current;
     setApprovals(current);
-    const { title, lines, tone } = approvalsStatusNotice(current, allowlist, deny);
+    const { title, lines, tone } = approvalsStatusNotice(current, allowlist, deny, grants, trust);
     push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent]);
+
+  // EXT-70 §4.7.1 — `/approvals trust|untrust <server> <hint…>`: believe, or stop believing,
+  // specific annotation hints from one MCP server for this session. Same division as the rung: the
+  // runner owns the posture, applies the change and reports what LANDED, and the notice is built
+  // from that — never from what was asked for.
+  const applyMcpTrust = useCallback(
+    (request: McpTrustRequest): void => {
+      if (!agent.setMcpAnnotationTrust) {
+        push({
+          kind: 'system',
+          level: 'warning',
+          text: 'Approvals are unavailable in this session.',
+        });
+        return;
+      }
+      const change = agent.setMcpAnnotationTrust(request.server, request.hints, request.believe);
+      const { title, lines, tone } = approvalsTrustNotice(change);
+      push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [agent]
+  );
 
   // Resolve the currently-shown approval (the queue head) and commit a brief notice so the
   // decision reads in the transcript (TUI-C14 notice conventions). Dequeues the head so the next
@@ -394,14 +418,22 @@ export function App(props: TuiAppProps): React.ReactElement {
       // in its detail line and in the scope it names. §6: a control offered and then refused reads
       // as a bug, and a confirmation of a persistence that did not happen is the same failure with
       // the evidence hidden. Withdrawing `[a]lways` from the menu is [[TUI-C26]]'s.
+      // EXT-70 §6 — the general form of the same rule. `grantPreview` is absent exactly where the
+      // runner would store nothing, and `catastrophic` is one of its cases (the runner discards the
+      // grant for that outcome), so the confirmation branches on WHAT WAS STORED rather than on the
+      // one outcome. Without that, a command that does not statically resolve — or a tool call
+      // nothing can attribute — was confirmed as remembered while the store stayed empty, which is
+      // the same failure the catastrophic clamp exists to prevent, one case further along.
+      const sticky = head.pending.grantPreview !== undefined;
       const catastrophic = head.pending.safetyVerdict?.outcome === 'catastrophic';
-      const effectiveScope: ToolApprovalScope = catastrophic ? 'once' : scope;
+      const effectiveScope: ToolApprovalScope = sticky ? scope : 'once';
       const describe = (): string => {
-        if (catastrophic && scope !== 'once') {
-          return (
-            'Approved this once — a command rated catastrophic is never remembered, so the next ' +
-            'one like it will ask again.'
-          );
+        if (!sticky && scope !== 'once') {
+          return catastrophic
+            ? 'Approved this once — a command rated catastrophic is never remembered, so the next ' +
+                'one like it will ask again.'
+            : 'Approved this once — there is nothing about this call that can be remembered, so ' +
+                'the next one like it will ask again.';
         }
         // EXT-71 §3.1 — a grant is exactly the command the human saw, so the confirmation says
         // that and not "this operation". A longer command that merely starts with it asks again.
@@ -526,6 +558,7 @@ export function App(props: TuiAppProps): React.ReactElement {
           // notice for the LANDED state via the shared helper (single-sourced with the approval
           // prompt's y key). CFG-26.
           if ('show' in result.approvals) showApprovals();
+          else if ('trust' in result.approvals) applyMcpTrust(result.approvals.trust);
           else applyApprovalRung(result.approvals.rung);
         }
         if (result.toggleDebug) {
@@ -577,6 +610,7 @@ export function App(props: TuiAppProps): React.ReactElement {
       toggleTools,
       applyApprovalRung,
       showApprovals,
+      applyMcpTrust,
       applyMouse,
     ]
   );

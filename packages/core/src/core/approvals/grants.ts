@@ -71,6 +71,7 @@ import { TOOL_ANNOTATION_HINTS } from '#src/config/shell-policy.js';
 import {
   describeApprovalEntry,
   type EffectiveToolAnnotations,
+  MCP_FAIL_CLOSED_ANNOTATIONS,
   type McpToolApprovalSubject,
   type ToolApprovalSubject,
 } from '#src/core/approvals/matcher.js';
@@ -217,6 +218,28 @@ export function annotationWeakenings(
   return WEAKENING_MOVES.filter(
     ({ hint, from, to }) => snapshot[hint] === from && current[hint] === to
   ).map(({ hint }) => hint);
+}
+
+/**
+ * §4.7.1/§4.7.4 — **can WITHDRAWING trust in this hint weaken an effective set?**
+ *
+ * Withdrawing trust pushes a hint back to its MCP fail-closed default, and every weakening move
+ * *ends* at that default, so the answer does not depend on what a server declared: it is exactly
+ * whether the move (not-the-default → the default) is one of {@link WEAKENING_MOVES}. Three of the
+ * four hints answer yes — `readOnlyHint`, `openWorldHint` and `destructiveHint`, whose fail-closed
+ * default is `true`, so a server whose `destructiveHint: false` was believed becomes destructive
+ * again the moment it is not. `idempotentHint` is the only one that answers no, because no
+ * weakening move names it.
+ *
+ * **It asks {@link annotationWeakenings} rather than restating the table.** A second statement of
+ * which moves weaken is how a warning comes to describe a rule the gate no longer has — which
+ * matters most here, since this decides whether the human is told their saved approvals are about
+ * to be withdrawn.
+ */
+export function trustWithdrawalWeakens(hint: ToolAnnotationHint): boolean {
+  const untrusted: EffectiveToolAnnotations = { ...MCP_FAIL_CLOSED_ANNOTATIONS };
+  const trusted: EffectiveToolAnnotations = { ...untrusted, [hint]: !untrusted[hint] };
+  return annotationWeakenings(trusted, untrusted).includes(hint);
 }
 
 /**

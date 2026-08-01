@@ -56,7 +56,14 @@ function makeApprovalHarness() {
 describe('tui <ApprovalPrompt>', () => {
   it('renders the tool name, command text and the [o]/[s]/[a]/[N] choices', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt pending={{ name: 'run_shell_command', args: { command: 'ls -la /tmp' } }} />
+      <ApprovalPrompt
+        pending={{
+          name: 'run_shell_command',
+          args: { command: 'ls -la /tmp' },
+          grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "ls -la /tmp" }',
+          grantSummary: 'ls -la /tmp',
+        }}
+      />
     );
     const f = lastFrame() ?? '';
     expect(f).toContain('run_shell_command');
@@ -142,11 +149,12 @@ describe('tui <ApprovalPrompt>', () => {
           name: 'run_shell_command',
           args: { command: 'npm test' },
           grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "npm test" }',
+          grantSummary: 'npm test',
         }}
       />
     );
     const f = lastFrame() ?? '';
-    expect(f).toContain('will remember exactly this command');
+    expect(f).toContain('will remember npm test');
     expect(f).toContain('"matcher": "exact"');
     unmount();
   });
@@ -156,7 +164,7 @@ describe('tui <ApprovalPrompt>', () => {
       <ApprovalPrompt pending={{ name: 'run_shell_command', args: { command: 'ls -la' } }} />
     );
     const f = lastFrame() ?? '';
-    expect(f).not.toContain('will remember exactly this command');
+    expect(f).not.toContain('will remember');
     // Control: the prompt still renders, so the assertion above is about the grant row and not
     // about the component having failed to draw anything.
     expect(f).toContain('[o]nce');
@@ -207,6 +215,11 @@ describe('tui approval flow through <App>', () => {
     const decisionP = harness.request({
       name: 'run_shell_command',
       args: { command: 'echo hi' },
+      // EXT-70 §6 — the runner sends a preview whenever a sticky grant is on offer, which for a
+      // resolvable command at a gated rung is always. Without it this fixture describes a call
+      // nothing would remember, and the scope the notice names would be `once` whatever was pressed.
+      grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "echo hi" }',
+      grantSummary: 'echo hi',
     });
     await vi.waitFor(() => expect(lastFrame()).toContain('echo hi'));
 
@@ -286,6 +299,11 @@ describe('tui approval flow through <App>', () => {
       name: 'run_shell_command',
       args: { command: 'rm -rf build' },
       safetyVerdict: { outcome: 'destructive', reason: 'deletes the build output' },
+      // A `destructive` verdict does NOT withdraw the grant, so the runner still sends a preview —
+      // which is exactly what tells this control apart from the catastrophic case above, where the
+      // runner discards it.
+      grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "rm -rf build" }',
+      grantSummary: 'rm -rf build',
     });
     await vi.waitFor(() => expect(lastFrame()).toContain('rm -rf build'));
 
@@ -379,6 +397,193 @@ describe('tui approval flow through <App>', () => {
     stdin.write('x');
     expect((await decisionP).type).toBe('reject');
     expect(turnsRun).toBe(0);
+    unmount();
+  });
+});
+
+/**
+ * EXT-70 §6 / §4.7.1 — the menu names what a sticky choice will store, offers the sticky controls
+ * only where one is on offer, and the TUI's own trust affordance.
+ */
+describe('tui <ApprovalPrompt> — §6 names the grant, and offers it only when there is one', () => {
+  const toolGrant = {
+    name: 'gth_web_fetch',
+    args: { input: 'https://docs.internal.example/guide' },
+    grantPreview:
+      '{ "type": "tool", "matcher": "exact", "pattern": "gth_web_fetch", "host": "docs.internal.example" }',
+    grantSummary: 'tool gth_web_fetch (host docs.internal.example)',
+  };
+
+  /**
+   * §6: *always approve `gth_web_fetch` for `docs.internal`*. What the control names is the tool and
+   * its host bound — never the arguments, which is the whole of what makes a tool grant broader
+   * than a shell one and therefore the display that carries most weight.
+   */
+  it('names the tool and its host, and not the arguments', () => {
+    const { lastFrame, unmount } = render(<ApprovalPrompt pending={toolGrant} />);
+    const f = plain([lastFrame() ?? '']);
+    expect(f).toContain('will remember tool gth_web_fetch (host docs.internal.example)');
+    expect(f).toContain('stored as');
+    unmount();
+  });
+
+  /**
+   * The pair §2(a) turns on. A menu that never rendered the sticky controls at all would pass the
+   * absence assertion alone, so the same prompt WITH a grant is asserted in the same test.
+   */
+  it('offers [s]/[a] with a grant and NOT WITHOUT one — the control is absent, never disabled', () => {
+    const withGrant = render(<ApprovalPrompt pending={toolGrant} />);
+    const wf = plain([withGrant.lastFrame() ?? '']);
+    expect(wf).toContain('[s]ession');
+    expect(wf).toContain('[a]lways');
+    withGrant.unmount();
+
+    const without = render(
+      <ApprovalPrompt pending={{ name: 'gth_web_fetch', args: { input: 'x' } }} />
+    );
+    const nf = plain([without.lastFrame() ?? '']);
+    expect(nf).not.toContain('[s]ession');
+    expect(nf).not.toContain('[a]lways');
+    // Still a prompt: the one-shot choices remain, so the absence above is about the sticky pair.
+    expect(nf).toContain('[o]nce');
+    expect(nf).toContain('[N]o');
+    without.unmount();
+  });
+});
+
+describe('tui approvals — the confirmation names what was actually stored (§6)', () => {
+  const baseAgent = () => scriptedAgent([{ type: 'text', delta: 'hi' }]);
+
+  /**
+   * The general form of the CFG-28 clamp. `grantPreview` is absent exactly where the runner stores
+   * nothing, and `catastrophic` is one of its cases — so a call that simply cannot be remembered
+   * (a compound command, an unattributable tool call) must not be confirmed as remembered either.
+   */
+  it('a call with no grant on offer confirms one invocation, whatever key was pressed', async () => {
+    const harness = makeApprovalHarness();
+    const { stdin, lastFrame, frames, unmount } = render(
+      <App {...baseProps} agent={baseAgent()} subscribeApproval={harness.subscribeApproval} />
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    const decisionP = harness.request({
+      name: 'run_shell_command',
+      args: { command: 'ls && rm -rf build' },
+    });
+    await vi.waitFor(() => expect(lastFrame()).toContain('rm -rf build'));
+
+    stdin.write('s');
+    expect(await decisionP).toEqual({ type: 'approve', scope: 'session' });
+    const flat = () => plain(frames);
+    await vi.waitFor(() => expect(flat()).toContain('Command approved (once)'));
+    expect(flat()).toContain('nothing about this call that can be remembered');
+    expect(flat()).not.toContain('will not ask again this session');
+    unmount();
+  });
+
+  it('CONTROL: the same key on a call that DOES carry a grant confirms the session grant', async () => {
+    const harness = makeApprovalHarness();
+    const { stdin, lastFrame, frames, unmount } = render(
+      <App {...baseProps} agent={baseAgent()} subscribeApproval={harness.subscribeApproval} />
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    const decisionP = harness.request({
+      name: 'run_shell_command',
+      args: { command: 'ls -la' },
+      grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "ls -la" }',
+      grantSummary: 'ls -la',
+    });
+    await vi.waitFor(() => expect(lastFrame()).toContain('ls -la'));
+
+    stdin.write('s');
+    expect(await decisionP).toEqual({ type: 'approve', scope: 'session' });
+    const flat = () => plain(frames);
+    await vi.waitFor(() => expect(flat()).toContain('Command approved (session)'));
+    expect(flat()).toContain('will not ask again this session');
+    unmount();
+  });
+});
+
+/**
+ * EXT-70 §4.7.1 — `/approvals trust|untrust` through the real `<App>` dispatch: the request the
+ * command produced reaches the agent unchanged, and the notice the surface commits is built from
+ * what the agent RETURNED.
+ */
+describe('tui /approvals trust (EXT-70 §4.7.1)', () => {
+  const trustingAgent = (change: Record<string, unknown>) => {
+    const calls: unknown[][] = [];
+    const agent: TuiAgent = {
+      ...scriptedAgent([{ type: 'text', delta: 'hi' }]),
+      setMcpAnnotationTrust(server, hints, believe) {
+        calls.push([server, hints, believe]);
+        return {
+          server,
+          configured: true,
+          trusted: [],
+          added: [],
+          removed: [],
+          weakening: [],
+          invalidates: [],
+          ...change,
+        } as never;
+      },
+    };
+    return { agent, calls };
+  };
+
+  const submit = async (
+    agent: TuiAgent,
+    line: string
+  ): Promise<{ frames: string[]; unmount: () => void }> => {
+    const { stdin, lastFrame, frames, unmount } = render(<App {...baseProps} agent={agent} />);
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    stdin.write(line);
+    await vi.waitFor(() => expect(lastFrame()).toContain(line));
+    stdin.write('\r');
+    return { frames, unmount };
+  };
+
+  it('hands the server and hints to the agent exactly as typed, and reports what landed', async () => {
+    const { agent, calls } = trustingAgent({ trusted: ['readOnlyHint'], added: ['readOnlyHint'] });
+    const { frames, unmount } = await submit(agent, '/approvals trust jira readOnlyHint');
+    await vi.waitFor(() =>
+      expect(plain(frames)).toContain('Now believing from jira: readOnlyHint')
+    );
+    expect(calls).toEqual([['jira', ['readOnlyHint'], true]]);
+    unmount();
+  });
+
+  /**
+   * §2(c) — the user withdrawing trust is told, THERE, that their saved approvals for that server
+   * go with it. Its control is the test above, where no such line appears on a grant of trust.
+   */
+  it('a withdrawal states that the saved approvals for that server will go', async () => {
+    const { agent } = trustingAgent({
+      removed: ['readOnlyHint'],
+      weakening: ['readOnlyHint'],
+      invalidates: ['mcpTool jira/search'],
+    });
+    const { frames, unmount } = await submit(agent, '/approvals untrust jira readOnlyHint');
+    await vi.waitFor(() =>
+      expect(plain(frames)).toContain('withdrawn the next time that tool is called')
+    );
+    expect(plain(frames)).toContain('mcpTool jira/search');
+    unmount();
+  });
+
+  it('CONTROL: granting trust says nothing about approvals being withdrawn', async () => {
+    const { agent } = trustingAgent({ trusted: ['readOnlyHint'], added: ['readOnlyHint'] });
+    const { frames, unmount } = await submit(agent, '/approvals trust jira readOnlyHint');
+    await vi.waitFor(() => expect(plain(frames)).toContain('Now believing from jira'));
+    expect(plain(frames)).not.toContain('withdrawn the next time');
+    unmount();
+  });
+
+  it('a surface with no runner says so instead of pretending to move trust', async () => {
+    const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
+    const { frames, unmount } = await submit(agent, '/approvals trust jira readOnlyHint');
+    await vi.waitFor(() =>
+      expect(plain(frames)).toContain('Approvals are unavailable in this session.')
+    );
     unmount();
   });
 });

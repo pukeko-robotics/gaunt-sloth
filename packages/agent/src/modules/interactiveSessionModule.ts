@@ -39,6 +39,7 @@ import { resolveAgentFactory } from '#src/core/resolveAgentFactory.js';
 import {
   approvalsRungNotice,
   approvalsStatusNotice,
+  approvalsTrustNotice,
   createCommandRegistry,
   dispatchSlashCommand,
   formatConfigSummary,
@@ -160,12 +161,15 @@ export async function createInteractiveSession(
       if (pending.escalatedBy) {
         displayWarning(`⚠ Your approvals.escalate list matched this call: ${pending.escalatedBy}`);
       }
-      // EXT-71 §6 — the menu MUST show what a sticky choice will store, at the moment of the
-      // choice. Under §3.1 that is the command itself as a fully-explicit exact entry, not a
-      // pattern derived from it, which is what makes the display honest and cheap at once: the
-      // user sees the thing they are agreeing to. Absent when no sticky grant is on offer.
-      if (pending.grantPreview) {
-        displayInfo(`[s]/[a] will remember exactly this command: ${pending.grantPreview}`);
+      // EXT-71/EXT-70 §6 — the menu MUST show what a sticky choice will store, at the moment of
+      // the choice, and it names it in the words the control is written in: the command itself for
+      // a shell call, the tool (with its server and host bound) for a tool call, since for a tool
+      // "the stored thing is the tool, not the arguments" (§4.7.4). The exact entry follows it, so
+      // the user sees the thing they are agreeing to rather than a generalization of it.
+      const sticky = pending.grantPreview !== undefined;
+      if (sticky) {
+        displayInfo(`[s]/[a] will remember ${pending.grantSummary ?? pending.grantPreview}`);
+        displayInfo(`    stored as ${pending.grantPreview}`);
       }
       setRawMode(false); // ensure typed input is echoed for this confirm
       // EXT-18: wrap the prompt in try/finally so the raw-mode/ref state is not left wedged if
@@ -174,8 +178,20 @@ export async function createInteractiveSession(
       // suspended on the tool interrupt, whose stream-end unref'd stdin).
       let answer: string;
       try {
+        // §6 — a sticky control is SHOWN only where a sticky grant is actually on offer. Where
+        // nothing would be remembered — a `catastrophic` outcome (§4.2), a command that does not
+        // statically resolve, a tool call nothing can attribute — the menu simply does not offer
+        // the choice, because "a control that is offered and then refused reads as a bug rather
+        // than as a policy". Hiding it, never disabling it: a disabled control invites the user to
+        // hunt for why.
         answer = (
-          await askLine(formatInputPrompt('Approve? [o]nce / [s]ession / [a]lways / [N]o: '))
+          await askLine(
+            formatInputPrompt(
+              sticky
+                ? 'Approve? [o]nce / [s]ession / [a]lways / [N]o: '
+                : 'Approve? [o]nce / [N]o: '
+            )
+          )
         )
           .trim()
           .toLowerCase();
@@ -192,10 +208,18 @@ export async function createInteractiveSession(
       // HERE is only the confirmation — §6 rejects "a control that is offered and then refused",
       // and a confirmation that promises a persistence the gate has already discarded is that same
       // failure with the evidence hidden. Withdrawing the key itself is [[TUI-C26]]'s.
+      // The confirmation must name what actually happened, and the condition for that is the SAME
+      // one that decides whether the control was shown: no grant on offer means no grant written,
+      // whatever key was typed. `catastrophic` keeps its own wording because the reason matters to
+      // the reader, but it is one case of the general one rather than the only one — the other
+      // cases (a command that does not statically resolve, an unattributable tool call) used to be
+      // confirmed as remembered while the runner stored nothing.
       const notRemembered =
-        'Approved this once — a command rated catastrophic is never remembered, so the next one ' +
-        'like it will ask again.';
-      const sticky = pending.safetyVerdict?.outcome !== 'catastrophic';
+        pending.safetyVerdict?.outcome === 'catastrophic'
+          ? 'Approved this once — a command rated catastrophic is never remembered, so the next ' +
+            'one like it will ask again.'
+          : 'Approved this once — there is nothing about this call that can be remembered, so the ' +
+            'next one like it will ask again.';
       if (answer === 's' || answer === 'session') {
         displayInfo(
           sticky ? 'Approved — this exact command will not ask again this session.' : notRemembered
@@ -339,8 +363,19 @@ export async function createInteractiveSession(
                 approvalsStatusNotice(
                   runner.getSessionApprovals(),
                   runner.getAllowlistCounts(),
-                  runner.getDenylist()
+                  runner.getDenylist(),
+                  runner.getGrants(),
+                  runner.getMcpAnnotationTrust()
                 )
+              );
+            } else if ('trust' in result.approvals) {
+              // EXT-70 §4.7.1 — believe (or stop believing) specific hints from one server, for
+              // this session. The notice is built from what the runner RETURNS, so it can only
+              // describe the trust actually in force — including §4.7.4's consequence when the
+              // withdrawal is a weakening.
+              const { server, hints, believe } = result.approvals.trust;
+              printNotice(
+                approvalsTrustNotice(runner.setMcpAnnotationTrust(server, hints, believe))
               );
             } else {
               runner.setSessionApprovalRung(result.approvals.rung);

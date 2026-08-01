@@ -680,6 +680,73 @@ export interface AllowlistCounts {
 }
 
 /**
+ * EXT-70 §4.7.1 — what one server's annotations are believed on, for display.
+ *
+ * `configured` says whether {@link server} is a key under `mcpServers` in the loaded config. It is
+ * an advisory rather than a validity test: §9 deliberately does NOT check `approvals.mcp` keys
+ * against `mcpServers`, so a user may write the policy before adding the server and config ORDER
+ * never matters. What it buys interactively is that a mistyped key — which trusts nothing while
+ * reading as though it did — can be pointed out rather than swallowed.
+ */
+export interface McpServerAnnotationTrust {
+  /** §4.7.5 — the user's own `mcpServers` config key. */
+  server: string;
+  /** The hints believed from this server, resolved through `defaults` where it is not named. */
+  trusted: ToolAnnotationHint[];
+  /** Whether this key names a server in the loaded config's `mcpServers`. */
+  configured: boolean;
+}
+
+/** EXT-70 §4.7.1 — the whole believed-annotation picture, for the `/approvals` display. */
+export interface McpAnnotationTrustView {
+  /** §9 — the hints believed from servers NOT named under `servers`. */
+  defaults: ToolAnnotationHint[];
+  /** Per-server, for every key either the config names or the policy does. */
+  servers: McpServerAnnotationTrust[];
+}
+
+/**
+ * EXT-70 §4.7.1/§4.7.4 — the outcome of believing (or ceasing to believe) hints from one server,
+ * so the surface that asked can report exactly what landed and what it costs.
+ *
+ * **`weakening` is the field that keeps the human un-surprised.** Withdrawing trust pushes a hint
+ * back to its fail-closed default, which for three of the four is a *weakening*, so the saved
+ * approvals made for that server while the hint was believed will be invalidated (§4.7.4) at the
+ * next call to that tool. That has to be said where the user withdraws trust, not only in the
+ * notice that arrives later.
+ */
+export interface McpAnnotationTrustChange extends McpServerAnnotationTrust {
+  /** Hints this change started believing (absent from the previous set). */
+  added: ToolAnnotationHint[];
+  /** Hints this change stopped believing (present in the previous set). */
+  removed: ToolAnnotationHint[];
+  /**
+   * §4.7.4 — the subset of {@link removed} whose withdrawal can weaken an effective set, and
+   * therefore invalidate a grant. Empty on a grant of trust, which can never weaken: every
+   * weakening move ends at the fail-closed default, and believing a hint only ever moves away
+   * from it.
+   */
+  weakening: ToolAnnotationHint[];
+  /**
+   * §4.7.4 — the saved approvals for this server that the *resulting* trust actually weakens, each
+   * rendered by `describeApprovalEntry`. They are the ones that will be withdrawn, with the §4.7.4
+   * notice, at the next call to that tool.
+   *
+   * **A prediction, never a deletion.** Invalidation stays scoped to the call being decided, because
+   * a sweep would read every held grant against a source that can only answer for the tools
+   * registered right now — a server that happened to be offline would read as having weakened
+   * everything it ever declared, and the grants would go. Listing them is safe where deleting them
+   * is not.
+   *
+   * Empty is therefore not "nothing is at risk" but "nothing this session can see is": with
+   * {@link weakening} non-empty the rule still holds for any grant made while those hints were
+   * believed, which is what the notice says in that case. Counted read-only, like
+   * {@link AllowlistCounts}: the persisted store is consulted only when it is already loaded.
+   */
+  invalidates: string[];
+}
+
+/**
  * §1.1 — **the default rung is `auto-safe`, everywhere.** It is the default in every interactive
  * context, it does NOT vary with the configured model, and there is no separate non-interactive
  * default. What changes without a human is what an escalation *does* (§6.2: an immediate non-zero

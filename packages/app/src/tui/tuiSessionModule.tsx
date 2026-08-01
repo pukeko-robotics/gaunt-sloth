@@ -529,7 +529,15 @@ export async function createTuiSession(
           approvals: runner.getSessionApprovals(),
           allowlist: runner.getAllowlistCounts(),
           deny: runner.getDenylist(),
+          grants: runner.getGrants(),
+          trust: runner.getMcpAnnotationTrust(),
         };
+      },
+      // EXT-70 §4.7.1 — `/approvals trust|untrust <server> <hint…>`. Returns the landed change so
+      // the notice describes the trust actually in force, and so it can state §4.7.4's consequence
+      // at the moment trust is withdrawn.
+      setMcpAnnotationTrust(server, hints, believe) {
+        return runner.setMcpAnnotationTrust(server, hints, believe);
       },
     };
 

@@ -187,6 +187,21 @@ export interface PendingToolInterrupt {
    * a prompt never advertises a control that has already been withdrawn.
    */
   grantPreview?: string;
+  /**
+   * §6 — **the same grant in the words a menu control is written in**: `npm test` for a shell
+   * command, `tool gth_web_fetch (host docs.internal.example)` or `mcpTool jira/create_issue` for a
+   * tool call. It is what the *always approve* control names, so the control reads as
+   * *always approve this tool for this host* rather than as a bare key.
+   *
+   * It is rendered by `describeApprovalEntry` — the one-liner every other provenance message uses,
+   * including the §4.7.4 notice that later withdraws the grant. Sharing the renderer is the point:
+   * a menu that describes a grant differently from the notice that withdraws it is how a user stops
+   * trusting either.
+   *
+   * Present exactly when {@link grantPreview} is, since both are rendered from the one entry
+   * `recordApproval` would write.
+   */
+  grantSummary?: string;
 }
 
 /**

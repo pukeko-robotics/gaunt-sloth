@@ -14,13 +14,22 @@
  * can append more entries via {@link createCommandRegistry} without this module changing.
  */
 
-import type { ApprovalRung, ResolvedApprovals } from '@gaunt-sloth/core/config.js';
+import type {
+  ApprovalRung,
+  McpAnnotationTrustChange,
+  McpAnnotationTrustView,
+  ResolvedApprovals,
+  ToolAnnotationHint,
+} from '@gaunt-sloth/core/config.js';
 import {
   APPROVAL_RUNG_DESCRIPTIONS,
   APPROVAL_RUNG_LABELS,
   APPROVAL_RUNGS,
   isRatedRung,
+  TOOL_ANNOTATION_HINTS,
 } from '@gaunt-sloth/core/config.js';
+import type { ApprovalGrant } from '@gaunt-sloth/core/core/approvals/grants.js';
+import { describeApprovalEntry } from '@gaunt-sloth/core/core/approvals/matcher.js';
 import { MOUSE_SELECTION_HINT } from '@gaunt-sloth/core/config/mouse.js';
 
 /** Read-only session context a command may surface (e.g. `/status`, `/model`). */
@@ -301,8 +310,13 @@ export interface SlashCommandResult {
    * There is deliberately NO `toggle` action: with five ordered rungs a flip has no honest
    * meaning, which is also why `/auto-approve` and `/bypass-approve` were retired with the
    * three-mode vocabulary that gave them their names.
+   *
+   * EXT-70 adds `{ trust }` — start or stop believing specific annotation hints from one MCP
+   * server (§4.7.1). It takes the same route for the same reason: the command cannot read or write
+   * the runner's posture, so it states the request and the surface applies it and reports what
+   * landed.
    */
-  approvals?: { show: true } | { rung: ApprovalRung };
+  approvals?: { show: true } | { rung: ApprovalRung } | { trust: McpTrustRequest };
   /**
    * TUI-C18 — a committed turn's thinking to REPRINT into the transcript (the `/reasoning` command).
    * Committed reasoning is frozen in Ink's `<Static>` and can never re-expand in place, so instead of
@@ -526,7 +540,9 @@ export function approvalsRungNotice(approvals: ResolvedApprovals): SlashCommandN
 export function approvalsStatusNotice(
   approvals: ResolvedApprovals,
   allowlist: { session: number; always: number | undefined },
-  deny: readonly string[] = []
+  deny: readonly string[] = [],
+  grants: readonly ApprovalGrant[] = [],
+  trust?: McpAnnotationTrustView
 ): SlashCommandNotice {
   const rater = isRatedRung(approvals.rung)
     ? (approvals.rater ?? 'main model')
@@ -537,25 +553,228 @@ export function approvalsStatusNotice(
       APPROVAL_RUNG_DESCRIPTIONS[approvals.rung],
       `Auto-rater: ${rater}`,
       `Allowed: ${allowlist.session} this session · ${allowlist.always ?? '—'} remembered · Denied: ${deny.length}`,
+      ...describeGrants(grants),
+      ...(trust ? [describeMcpTrust(trust)] : []),
       `Switch with /approvals ${APPROVAL_RUNGS.join(' | /approvals ')}.`,
+      TRUST_USAGE_LINE,
     ],
     tone: approvals.rung === 'bypass' ? 'warn' : 'info',
   };
 }
 
+/** How many grants `/approvals` lists before it summarizes the rest. */
+const GRANT_DISPLAY_LIMIT = 10;
+
 /**
- * CFG-27 — parse the `/approvals` argument: no arg SHOWS the current posture; any of the five
- * kebab-case rung names switches to it. Returns `null` for an unrecognized argument so the
+ * §3/§4.7.4 — the granted lines of the `/approvals` display: **what** was granted, **when**, and
+ * **under which effective annotations**.
+ *
+ * The annotations are the half that only a tool grant has, and the half §4.7.4 exists for: a grant
+ * is an approval of a tool *as annotated*, so a user asked to believe that has to be able to see
+ * what they believed. Each entry is rendered by `describeApprovalEntry` — the same one-liner the
+ * escalation menu names the grant with and the withdrawal notice names it with.
+ */
+function describeGrants(grants: readonly ApprovalGrant[]): string[] {
+  if (grants.length === 0) return [];
+  const shown = grants.slice(0, GRANT_DISPLAY_LIMIT).map((grant) => {
+    const annotations = grant.annotations
+      ? `, approved as ${TOOL_ANNOTATION_HINTS.map((hint) => `${hint}=${grant.annotations?.[hint]}`).join(' ')}`
+      : '';
+    return `  ${describeApprovalEntry(grant.entry)} — ${grant.scope}, granted ${grant.grantedAt}${annotations}`;
+  });
+  const rest = grants.length - shown.length;
+  return [`Granted this session:`, ...shown, ...(rest > 0 ? [`  …and ${rest} more.`] : [])];
+}
+
+/**
+ * §4.7.1 — the one line saying which of each server's annotation hints this session believes.
+ *
+ * A server is listed even when it believes nothing, because "believes nothing" is the default and
+ * the user needs to be able to tell it apart from "this server is not here at all" — the two look
+ * identical when only trusted servers are listed, and the second is what a typo produces.
+ */
+function describeMcpTrust(trust: McpAnnotationTrustView): string {
+  const parts = [
+    `defaults — ${trust.defaults.length > 0 ? trust.defaults.join(' ') : 'nothing'}`,
+    ...trust.servers.map(
+      (entry) =>
+        `${entry.server} — ${entry.trusted.length > 0 ? entry.trusted.join(' ') : 'nothing'}`
+    ),
+  ];
+  return `MCP annotations believed: ${parts.join(' · ')}`;
+}
+
+/** The `/approvals trust` half of the usage copy, shown wherever the rung half is. */
+const TRUST_USAGE_LINE =
+  'Believe an MCP server’s annotation hints with /approvals trust <server> <hint…>, ' +
+  'and stop believing them with /approvals untrust <server> <hint…>.';
+
+/** EXT-70 §4.7.1 — a request to start or stop believing specific hints from one server. */
+export interface McpTrustRequest {
+  /** §4.7.5 — the user's own `mcpServers` config key, case-sensitive. */
+  server: string;
+  /** The hints this request moves, in canonical spelling. Never empty. */
+  hints: ToolAnnotationHint[];
+  /** `true` to believe them, `false` to stop. */
+  believe: boolean;
+}
+
+/** Something wrong with a `/approvals trust` invocation that the command explains rather than guesses at. */
+export type ApprovalsUsageProblem =
+  | { kind: 'trust-missing-server'; believe: boolean }
+  | { kind: 'trust-missing-hints'; believe: boolean; server: string }
+  | { kind: 'unknown-hint'; believe: boolean; token: string };
+
+/** What `/approvals` resolved to, or `null` when the first argument names nothing it knows. */
+export type ApprovalsAction =
+  | { show: true }
+  | { rung: ApprovalRung }
+  | { trust: McpTrustRequest }
+  | { usage: ApprovalsUsageProblem };
+
+/**
+ * CFG-27/EXT-70 — parse the `/approvals` argument: no arg SHOWS the current posture; any of the
+ * five kebab-case rung names switches to it; `trust` / `untrust` move which of a server's
+ * annotation hints are believed (§4.7.1). Returns `null` for an unrecognized first argument so the
  * command renders a usage hint instead of guessing.
  *
  * The retired `auto` / `ask` spellings are NOT accepted as aliases — this is still alpha, and a
  * silent alias would leave the user believing in a vocabulary the gate no longer has.
+ *
+ * **Only the subcommand token is lower-cased.** A server key is the user's own `mcpServers` key
+ * (§4.7.5) and is case-sensitive, so folding it would name a different server — one that believes
+ * nothing, silently, while the notice reported success. A hint is matched case-insensitively
+ * against the fixed vocabulary and echoed back in its **canonical** spelling, so `readonlyhint`
+ * resolves rather than vanishing, and what lands in the policy is the name the derivation reads.
  */
-export function parseApprovalsArg(args: string[]): { show: true } | { rung: ApprovalRung } | null {
+export function parseApprovalsArg(args: string[]): ApprovalsAction | null {
   if (args.length === 0) return { show: true };
-  const arg = args[0].toLowerCase();
-  const rung = APPROVAL_RUNGS.find((r) => r === arg);
-  return rung ? { rung } : null;
+  const verb = args[0].toLowerCase();
+  const rung = APPROVAL_RUNGS.find((r) => r === verb);
+  if (rung) return { rung };
+  if (verb !== 'trust' && verb !== 'untrust') return null;
+
+  const believe = verb === 'trust';
+  const server = args[1];
+  if (!server) return { usage: { kind: 'trust-missing-server', believe } };
+  const tokens = args.slice(2);
+  if (tokens.length === 0) return { usage: { kind: 'trust-missing-hints', believe, server } };
+
+  const hints: ToolAnnotationHint[] = [];
+  for (const token of tokens) {
+    const hint = TOOL_ANNOTATION_HINTS.find((h) => h.toLowerCase() === token.toLowerCase());
+    if (!hint) return { usage: { kind: 'unknown-hint', believe, token } };
+    if (!hints.includes(hint)) hints.push(hint);
+  }
+  return { trust: { server, hints, believe } };
+}
+
+/** The verb a notice names an invocation by, so copy never has to branch twice on the same flag. */
+const trustVerb = (believe: boolean): string => (believe ? 'trust' : 'untrust');
+
+/**
+ * EXT-70 §4.7.1 — usage copy for a `/approvals trust` invocation that named no server, no hint, or
+ * a hint that is not one of the four. Each says what is missing and shows the vocabulary, because
+ * the hint names are camelCase MCP identifiers nobody guesses.
+ */
+export function approvalsTrustUsageNotice(problem: ApprovalsUsageProblem): SlashCommandNotice {
+  const usage = `Usage: /approvals ${trustVerb(problem.believe)} <server> <hint…> — hints are ${TOOL_ANNOTATION_HINTS.join(', ')}.`;
+  const perHint =
+    'Trust is per hint and per server: you may believe a server’s readOnlyHint while disbelieving ' +
+    'its openWorldHint.';
+  if (problem.kind === 'trust-missing-server') {
+    return {
+      title: `Which server should this ${trustVerb(problem.believe)}?`,
+      lines: [
+        'Name the server by the key you gave it under mcpServers in your config — that is the only ' +
+          'identity a server has here.',
+        usage,
+        perHint,
+      ],
+      tone: 'warn',
+    };
+  }
+  if (problem.kind === 'trust-missing-hints') {
+    return {
+      title: `Which hints should this ${trustVerb(problem.believe)} for ${problem.server}?`,
+      lines: [`Name at least one hint. Nothing was changed for ${problem.server}.`, usage, perHint],
+      tone: 'warn',
+    };
+  }
+  return {
+    title: `Not an annotation hint: ${problem.token}`,
+    lines: [`Nothing was changed.`, usage, perHint],
+    tone: 'warn',
+  };
+}
+
+/**
+ * EXT-70 §4.7.1/§4.7.4 — the notice for a landed `/approvals trust` or `/approvals untrust`, built
+ * from what the runner RETURNS rather than from what was asked for, so the copy can only describe
+ * the trust actually in force.
+ *
+ * **The withdrawal half states the consequence where the withdrawal happens.** Ceasing to believe a
+ * hint pushes it back to the MCP fail-closed default, and for `readOnlyHint`, `openWorldHint` and
+ * `destructiveHint` that is a *weakening* — so §4.7.4 will withdraw that server's saved approvals at
+ * the next call, with its own notice. That is the correct direction and is not suppressed; what
+ * would be wrong is for the user to meet it as a surprise three turns later. `idempotentHint` is the
+ * one hint no weakening move names, so withdrawing it invalidates nothing and the line is absent —
+ * which is why the line is driven by the runner's `weakening` list rather than by "was anything
+ * withdrawn".
+ */
+export function approvalsTrustNotice(change: McpAnnotationTrustChange): SlashCommandNotice {
+  const believed =
+    change.trusted.length > 0
+      ? `Believed from ${change.server}: ${change.trusted.join(', ')}.`
+      : `Nothing is believed from ${change.server}; every hint takes its fail-closed default.`;
+  const lines: string[] = [];
+
+  if (change.added.length > 0) {
+    lines.push(`Now believing from ${change.server}: ${change.added.join(', ')}.`);
+  }
+  if (change.removed.length > 0) {
+    lines.push(`No longer believing from ${change.server}: ${change.removed.join(', ')}.`);
+  }
+  if (change.added.length === 0 && change.removed.length === 0) {
+    lines.push(`Nothing changed — ${change.server} was already believed on exactly those hints.`);
+  }
+  lines.push(believed);
+
+  if (change.weakening.length > 0) {
+    const withdrawn = change.weakening.join(', ');
+    // Precise where it can be, a rule where it cannot. Naming the grants is only honest for the
+    // ones this session can actually see weakened right now; for everything else the rule is
+    // stated, because promising a specific withdrawal that then does not happen teaches the user
+    // to disbelieve the notice.
+    lines.push(
+      change.invalidates.length > 0
+        ? `Because ${withdrawn} is no longer believed, ${change.server}'s tools describe themselves ` +
+            'as more dangerous than when you approved them. These saved approvals will be ' +
+            `withdrawn the next time that tool is called, and you will be asked again: ` +
+            `${change.invalidates.join('; ')}.`
+        : `Withdrawing ${withdrawn} can make ${change.server}'s tools describe themselves as more ` +
+            `dangerous than when you approved them, so any saved approval for ${change.server} ` +
+            'made while it was believed is withdrawn the next time that tool is called, and you ' +
+            'are asked again.'
+    );
+  }
+  if (!change.configured) {
+    lines.push(
+      `Note: no server is configured under the key "${change.server}". A server is identified by ` +
+        'your own mcpServers key, so check the spelling — policy written for a key nothing uses ' +
+        'has no effect.'
+    );
+  }
+  lines.push(
+    'A believed hint never grants a server more than the same hint grants a built-in tool.',
+    'Session-scoped only (not saved); run /approvals to see it.'
+  );
+
+  return {
+    title: `MCP annotations believed: ${change.server}`,
+    lines,
+    tone: change.weakening.length > 0 ? 'warn' : 'info',
+  };
 }
 
 /**
@@ -756,7 +975,8 @@ export function createCommandRegistry(): SlashCommand[] {
       name: 'approvals',
       description:
         'Show or switch the approvals rung ' +
-        '(/approvals read-only|write|auto-safe|full-auto|bypass; no arg shows it)',
+        '(/approvals read-only|write|auto-safe|full-auto|bypass; no arg shows it), ' +
+        'or believe an MCP server’s annotation hints (/approvals trust|untrust <server> <hint…>)',
       // Available mid-turn so the user can change how the run's REMAINING tool calls are handled
       // (EXT-12's reason, generalized to the rung). The surface owns the runner posture, so it
       // applies the change and commits the notice for the landed state.
@@ -776,11 +996,15 @@ export function createCommandRegistry(): SlashCommand[] {
                 ...APPROVAL_RUNGS.map(
                   (rung) => `${rung} — ${APPROVAL_RUNG_DESCRIPTIONS[rung].split('. ')[0]}.`
                 ),
+                TRUST_USAGE_LINE,
               ],
               tone: 'warn',
             },
           };
         }
+        // A malformed `trust`/`untrust` is explained rather than applied: nothing is changed, so
+        // the surface has nothing to do and the command answers on its own.
+        if ('usage' in action) return { notice: approvalsTrustUsageNotice(action.usage) };
         return { approvals: action };
       },
     },

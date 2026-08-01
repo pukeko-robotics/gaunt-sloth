@@ -392,6 +392,287 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
   });
 });
 
+/**
+ * EXT-70 §4.7.1 — the `/approvals trust|untrust <server> <hint…>` half of the command: the parse,
+ * the usage copy, and the notice that has to state §4.7.4's consequence at the moment trust is
+ * withdrawn.
+ */
+describe('tui/slashCommands /approvals trust (EXT-70 §4.7.1)', () => {
+  const load = () => import('@gaunt-sloth/agent/modules/slashCommands.js');
+
+  /** A landed change, with the fail-closed defaults every field of a real one has. */
+  const change = (over: Record<string, unknown> = {}) =>
+    ({
+      server: 'jira',
+      configured: true,
+      trusted: ['readOnlyHint'],
+      added: ['readOnlyHint'],
+      removed: [],
+      weakening: [],
+      invalidates: [],
+      ...over,
+    }) as never;
+
+  describe('parseApprovalsArg', () => {
+    it('parses trust and untrust with one or several hints', async () => {
+      const { parseApprovalsArg } = await load();
+      expect(parseApprovalsArg(['trust', 'jira', 'readOnlyHint'])).toEqual({
+        trust: { server: 'jira', hints: ['readOnlyHint'], believe: true },
+      });
+      expect(parseApprovalsArg(['untrust', 'jira', 'readOnlyHint', 'openWorldHint'])).toEqual({
+        trust: { server: 'jira', hints: ['readOnlyHint', 'openWorldHint'], believe: false },
+      });
+    });
+
+    /**
+     * A hint is matched case-insensitively and echoed in its CANONICAL spelling, because what lands
+     * in the policy has to be the name the derivation reads — a lower-cased `readonlyhint` matches
+     * nothing and would trust nothing while the notice reported success.
+     */
+    it('canonicalizes the hint spelling', async () => {
+      const { parseApprovalsArg } = await load();
+      expect(parseApprovalsArg(['trust', 'jira', 'readonlyhint'])).toEqual({
+        trust: { server: 'jira', hints: ['readOnlyHint'], believe: true },
+      });
+    });
+
+    /**
+     * A server key is the user's own `mcpServers` key (§4.7.5) and is case-sensitive: folding it
+     * would name a DIFFERENT server, silently. The control is the hint in the same invocation,
+     * which IS folded — so this is about the server field and not about nothing being lower-cased.
+     */
+    it('never folds the case of the server key', async () => {
+      const { parseApprovalsArg } = await load();
+      expect(parseApprovalsArg(['trust', 'MyJira', 'READONLYHINT'])).toEqual({
+        trust: { server: 'MyJira', hints: ['readOnlyHint'], believe: true },
+      });
+    });
+
+    it('de-duplicates repeated hints', async () => {
+      const { parseApprovalsArg } = await load();
+      expect(parseApprovalsArg(['trust', 'jira', 'readOnlyHint', 'readOnlyHint'])).toEqual({
+        trust: { server: 'jira', hints: ['readOnlyHint'], believe: true },
+      });
+    });
+
+    it.each([
+      [['trust'], 'trust-missing-server'],
+      [['untrust', 'jira'], 'trust-missing-hints'],
+      [['trust', 'jira', 'notAHint'], 'unknown-hint'],
+    ])('reports %j as a usage problem rather than guessing', async (args, kind) => {
+      const { parseApprovalsArg } = await load();
+      const parsed = parseApprovalsArg(args as string[]);
+      expect(parsed).toMatchObject({ usage: { kind } });
+    });
+
+    it('still returns null for a first argument that is neither a rung nor a trust verb', async () => {
+      const { parseApprovalsArg } = await load();
+      expect(parseApprovalsArg(['nonsense'])).toBeNull();
+    });
+  });
+
+  describe('the command itself', () => {
+    const ctx = {
+      mode: 'chat',
+      modelDisplayName: 'test-model',
+      turnCount: 0,
+      toolsExpanded: false,
+      debugVisible: false,
+    };
+
+    it('asks the surface to apply a well-formed trust change', async () => {
+      const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } = await load();
+      const result = dispatchSlashCommand(
+        parseSlashCommand('/approvals untrust jira openWorldHint')!,
+        createCommandRegistry(),
+        ctx as never
+      );
+      expect(result.approvals).toEqual({
+        trust: { server: 'jira', hints: ['openWorldHint'], believe: false },
+      });
+    });
+
+    /**
+     * A malformed invocation changes NOTHING, so it never reaches the surface — it answers on its
+     * own with copy naming the vocabulary. The `approvals` assertion is the one that matters: a
+     * result carrying both would have the surface apply a request the parse rejected.
+     */
+    it('answers a malformed invocation itself, asking the surface for nothing', async () => {
+      const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } = await load();
+      const result = dispatchSlashCommand(
+        parseSlashCommand('/approvals trust jira nope')!,
+        createCommandRegistry(),
+        ctx as never
+      );
+      expect(result.approvals).toBeUndefined();
+      expect(result.notice?.tone).toBe('warn');
+      expect(result.notice?.lines.join(' ')).toContain('readOnlyHint');
+    });
+
+    it('is available mid-turn, like the rest of /approvals', async () => {
+      const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } = await load();
+      expect(
+        dispatchSlashCommand(
+          parseSlashCommand('/approvals trust jira readOnlyHint')!,
+          createCommandRegistry(),
+          ctx as never,
+          { duringRun: true }
+        ).approvals
+      ).toBeDefined();
+    });
+  });
+
+  describe('approvalsTrustNotice', () => {
+    it('names what is now believed, and stays session-scoped', async () => {
+      const { approvalsTrustNotice } = await load();
+      const notice = approvalsTrustNotice(change());
+      expect(notice.title).toContain('jira');
+      const body = notice.lines.join(' ');
+      expect(body).toContain('Now believing from jira: readOnlyHint');
+      expect(body).toContain('Believed from jira: readOnlyHint');
+      expect(body).toContain('Session-scoped only');
+      expect(notice.tone).toBe('info');
+    });
+
+    /**
+     * §2(c) — **the consequence is stated where trust is withdrawn**, not only in the notice that
+     * arrives at the next call. A user who withdraws belief and then finds their saved approvals
+     * gone has been surprised by the correct behaviour, which is how correct behaviour gets
+     * reported as a bug.
+     */
+    it('says the saved approvals will go, and names them where it can', async () => {
+      const { approvalsTrustNotice } = await load();
+      const notice = approvalsTrustNotice(
+        change({
+          trusted: [],
+          added: [],
+          removed: ['readOnlyHint'],
+          weakening: ['readOnlyHint'],
+          invalidates: ['mcpTool jira/search'],
+        })
+      );
+      const body = notice.lines.join(' ');
+      expect(body).toContain('withdrawn the next time that tool is called');
+      expect(body).toContain('mcpTool jira/search');
+      expect(notice.tone, 'a withdrawal that costs approvals is not an info notice').toBe('warn');
+    });
+
+    /**
+     * Where nothing visible is weakened it states the RULE rather than naming grants — promising a
+     * specific withdrawal that then does not happen teaches the user to disbelieve the notice.
+     */
+    it('states the rule when it can see no grant to name', async () => {
+      const { approvalsTrustNotice } = await load();
+      const body = approvalsTrustNotice(
+        change({
+          trusted: [],
+          added: [],
+          removed: ['openWorldHint'],
+          weakening: ['openWorldHint'],
+          invalidates: [],
+        })
+      ).lines.join(' ');
+      expect(body).toContain('any saved approval for jira');
+      expect(body).toContain('is withdrawn the next time that tool is called');
+    });
+
+    /**
+     * The negative, with its control below: a change that weakens nothing must not warn about
+     * approvals going, or the warning becomes noise on every `/approvals trust` and stops being
+     * read. `idempotentHint` is the one hint whose withdrawal is not a weakening.
+     */
+    it('says nothing about withdrawn approvals when nothing weakened', async () => {
+      const { approvalsTrustNotice } = await load();
+      const notice = approvalsTrustNotice(
+        change({ trusted: [], added: [], removed: ['idempotentHint'], weakening: [] })
+      );
+      const body = notice.lines.join(' ');
+      expect(body).not.toContain('withdrawn');
+      expect(notice.tone).toBe('info');
+      // CONTROL: the withdrawal itself IS reported, so the absence above is about the invalidation
+      // line and not about the notice having said nothing at all.
+      expect(body).toContain('No longer believing from jira: idempotentHint');
+    });
+
+    it('warns when the key names no configured server, without refusing it', async () => {
+      const { approvalsTrustNotice } = await load();
+      const unknown = approvalsTrustNotice(change({ configured: false })).lines.join(' ');
+      expect(unknown).toContain('no server is configured under the key "jira"');
+      // CONTROL: a configured key gets no such line.
+      expect(approvalsTrustNotice(change()).lines.join(' ')).not.toContain(
+        'no server is configured'
+      );
+    });
+
+    it('says so plainly when the request changed nothing', async () => {
+      const { approvalsTrustNotice } = await load();
+      expect(approvalsTrustNotice(change({ added: [], removed: [] })).lines.join(' ')).toContain(
+        'Nothing changed'
+      );
+    });
+  });
+
+  describe('the /approvals display', () => {
+    const posture = {
+      rung: 'auto-safe',
+      rater: undefined,
+      allow: [],
+      deny: [],
+      escalate: [],
+    } as never;
+
+    it('lists each grant with when it was made and the annotations it was made under', async () => {
+      const { approvalsStatusNotice } = await load();
+      const body = approvalsStatusNotice(
+        posture,
+        { session: 1, always: 0 },
+        [],
+        [
+          {
+            entry: { type: 'mcpTool', server: 'jira', matcher: 'exact', pattern: 'search' },
+            scope: 'session',
+            grantedAt: '2026-08-02T09:16:00.000Z',
+            annotations: {
+              readOnlyHint: true,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: false,
+            },
+          },
+        ] as never,
+        { defaults: [], servers: [{ server: 'jira', trusted: ['readOnlyHint'], configured: true }] }
+      ).lines.join(' ');
+      expect(body).toContain('mcpTool jira/search');
+      expect(body).toContain('2026-08-02T09:16:00.000Z');
+      expect(body).toContain('readOnlyHint=true');
+      expect(body).toContain('openWorldHint=false');
+      expect(body).toContain('MCP annotations believed: defaults — nothing · jira — readOnlyHint');
+    });
+
+    /**
+     * A server that believes nothing is still listed: "believes nothing" and "this server is not
+     * here at all" look identical when only trusted servers appear, and the second is what a typo
+     * produces.
+     */
+    it('lists a server that believes nothing rather than omitting it', async () => {
+      const { approvalsStatusNotice } = await load();
+      const body = approvalsStatusNotice(posture, { session: 0, always: 0 }, [], [], {
+        defaults: [],
+        servers: [{ server: 'jira', trusted: [], configured: true }],
+      }).lines.join(' ');
+      expect(body).toContain('jira — nothing');
+    });
+
+    it('says nothing about grants when there are none', async () => {
+      const { approvalsStatusNotice } = await load();
+      const body = approvalsStatusNotice(posture, { session: 0, always: 0 }).lines.join(' ');
+      expect(body).not.toContain('Granted this session');
+      // CONTROL: the display still rendered, so the absence is about the grant block.
+      expect(body).toContain('Auto-rater:');
+    });
+  });
+});
+
 describe('tui/slashCommands /config (GS2-1 read-only)', () => {
   beforeEach(() => {
     vi.resetAllMocks();

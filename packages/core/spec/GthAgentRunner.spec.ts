@@ -376,8 +376,10 @@ describe('GthAgentRunner', () => {
         name: 'run_shell_command',
         args: { command: 'ls -la' },
         // EXT-71 §6 — the prompt is told what a sticky choice would store, so it can show the user
-        // the thing they are agreeing to before they agree to it.
+        // the thing they are agreeing to before they agree to it, and (EXT-70) the same grant in
+        // the words the menu's control is written in.
         grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "ls -la" }',
+        grantSummary: 'ls -la',
       });
       // Resume sent the HITL decisions array shape humanInTheLoopMiddleware expects.
       expect(streamResume).toHaveBeenCalledWith(
@@ -2684,6 +2686,7 @@ describe('GthAgentRunner', () => {
         name: 'run_shell_command',
         args: { command: 'ls -la' },
         grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "ls -la" }',
+        grantSummary: 'ls -la',
       });
       // Resume sent the HITL `{ decisions }` shape humanInTheLoopMiddleware expects.
       expect(streamWithEventsResume).toHaveBeenCalledWith(
@@ -3351,6 +3354,13 @@ describe('GthAgentRunner', () => {
       args?: Record<string, unknown>;
       /** What the connected servers declare for THIS call, if it should change between calls. */
       declaring?: Record<string, Record<string, unknown>>;
+      /**
+       * EXT-70 — run against the LIVE runner immediately before this call is decided. It is how a
+       * mid-session `/approvals trust|untrust` is driven: the user's trust change has to land
+       * between two calls on ONE runner, because what it does to a grant made under the old trust
+       * is the whole question.
+       */
+      before?: (_runner: GthAgentRunner) => void;
     }
 
     function toolConfig(approvals: Record<string, unknown>) {
@@ -3383,12 +3393,21 @@ describe('GthAgentRunner', () => {
       // attribution would happily map the third call's prompt onto the second call and turn a
       // "was not asked" into a pass.
       let index = -1;
+      // Assigned below, before any interrupt is polled; the hook cannot run earlier than that.
+      let runner: GthAgentRunner;
       const pending = vi.fn(async () => {
         index += 1;
         const call = calls[index];
+        if (call?.before) call.before(runner);
         return call ? [{ name: call.name, args: call.args ?? {} }] : [];
       });
-      const declared = vi.fn(() => new Map(Object.entries(calls[index]?.declaring ?? {})));
+      // After the sequence ends the servers go on declaring whatever they last declared — which is
+      // what an accessor called AFTER the run (a `/approvals` display, a trust change) reads. The
+      // bare `calls[index]` form returned an empty map there, so every held grant read as though
+      // its server had withdrawn every annotation it ever made.
+      const declared = vi.fn(
+        () => new Map(Object.entries((calls[index] ?? calls[calls.length - 1])?.declaring ?? {}))
+      );
       (mockAgent as any).getPendingToolInterrupts = pending;
       (mockAgent as any).getDeclaredMcpToolAnnotations = declared;
       const streamResume = vi.fn().mockResolvedValue(streamOf(''));
@@ -3396,7 +3415,7 @@ describe('GthAgentRunner', () => {
       mockAgent.stream.mockResolvedValue(streamOf('x'));
 
       const byCall: (PendingToolInterrupt | null)[] = calls.map(() => null);
-      const runner = new GthAgentRunner(statusUpdateCallback);
+      runner = new GthAgentRunner(statusUpdateCallback);
       await runner.init('code', config);
       const human = vi.fn(async (prompt: PendingToolInterrupt) => {
         byCall[index] = prompt;
@@ -3896,6 +3915,451 @@ describe('GthAgentRunner', () => {
         );
         expect(prompts[0], 'the persisted grant no longer covers it').not.toBeNull();
         expect(JSON.parse(readFileSync(storePath, 'utf8')).grants).toHaveLength(0);
+      });
+    });
+
+    /**
+     * EXT-70 §4.7.1 / §6 / §4.7.4 — **the surface half.** What the menu names a grant, what the
+     * runner exposes for an approvals view, and what moving trust from the TUI does to grants made
+     * under the old trust.
+     */
+    describe('the TUI trust affordance, and what the menu names (§4.7.1, §6)', () => {
+      /** A declaration a fully-trusting session reads verbatim: local, safe, closed. */
+      const SAFE_DECL = {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      };
+      /** The same, but not read-only — so `destructiveHint` is not forced by the §4.7.1 derivation. */
+      const WRITING_DECL = { ...SAFE_DECL, readOnlyHint: false };
+      const ALL_HINTS = [
+        'readOnlyHint',
+        'destructiveHint',
+        'idempotentHint',
+        'openWorldHint',
+      ] as const;
+
+      const believingJira = (trustAnnotations: readonly string[] = ALL_HINTS) =>
+        toolConfig({ mode: 'write', mcp: { servers: { jira: { trustAnnotations } } } });
+
+      /** A runner initialized on one config, for the accessors that need no run at all. */
+      async function idleRunner(approvals: Record<string, unknown>): Promise<GthAgentRunner> {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        await runner.init('code', toolConfig(approvals));
+        return runner;
+      }
+
+      /** What one server's believed hints are, by the runner's own display accessor. */
+      const believed = (runner: GthAgentRunner, server: string): readonly string[] | undefined =>
+        runner.getMcpAnnotationTrust().servers.find((s) => s.server === server)?.trusted;
+
+      describe('§6 — the menu names what it will store, in the same words the notice uses', () => {
+        /**
+         * **The pin against drift between the two renderers.** The menu's summary and the §4.7.4
+         * withdrawal notice describe ONE grant, and a user who is shown two different descriptions
+         * of the same thing stops trusting both. Asserted as an identity plus a containment rather
+         * than as two literals, so no rewording can satisfy one and not the other.
+         */
+        it('the summary the menu shows is the exact line the withdrawal notice later names', async () => {
+          const prompts = await driveCalls(believingJira(), [
+            { name: 'mcp__jira__search', declaring: { mcp__jira__search: SAFE_DECL } },
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: { ...SAFE_DECL, openWorldHint: true } },
+            },
+          ]);
+          const summary = prompts[0]?.grantSummary;
+          expect(summary).toBe(jiraSearchGrantLine);
+          expect(prompts[1], 'the weakened tool asks again').not.toBeNull();
+          expect(warningsSaid()).toContain(summary as string);
+        });
+
+        it('names the tool and its host bound, never the arguments', async () => {
+          const [first] = await driveCalls(toolConfig({ mode: 'write' }), [
+            { name: 'gth_web_fetch', args: { input: 'https://docs.internal.example/guide' } },
+          ]);
+          expect(first?.grantSummary).toBe('tool gth_web_fetch (host docs.internal.example)');
+          expect(first?.grantSummary, 'the arguments are not what is stored').not.toContain(
+            'guide'
+          );
+        });
+
+        /**
+         * The pair §6 turns on: a control is SHOWN only where something would be stored. Asserting
+         * only the absence would pass on a runner that never sent a summary at all, so the same
+         * tool, one host fewer, is the control.
+         */
+        it('offers nothing to name where nothing would be stored (several hosts)', async () => {
+          const [several] = await driveCalls(toolConfig({ mode: 'write' }), [
+            {
+              name: 'gth_web_fetch',
+              args: { a: 'https://one.example/x', b: 'https://two.example/y' },
+            },
+          ]);
+          expect(several?.grantSummary).toBeUndefined();
+          expect(several?.grantPreview).toBeUndefined();
+
+          const [one] = await driveCalls(toolConfig({ mode: 'write' }), [
+            { name: 'gth_web_fetch', args: { a: 'https://one.example/x' } },
+          ]);
+          expect(one?.grantSummary, 'CONTROL: one host is named').toBe(
+            'tool gth_web_fetch (host one.example)'
+          );
+        });
+      });
+
+      describe('§4.7.1 — trust moves per hint, never per server', () => {
+        /**
+         * The trap this node exists to avoid: a test that believes one hint and checks that hint
+         * passes just as well on a per-server boolean. So the assertion is on BOTH halves — the one
+         * moved and one deliberately left alone.
+         */
+        it('believing one hint leaves the others exactly where they were', async () => {
+          const runner = await idleRunner({ mode: 'write' });
+          runner.setMcpAnnotationTrust('jira', ['readOnlyHint'], true);
+          expect(believed(runner, 'jira')).toEqual(['readOnlyHint']);
+
+          runner.setMcpAnnotationTrust('jira', ['openWorldHint'], true);
+          expect(believed(runner, 'jira')).toEqual(['readOnlyHint', 'openWorldHint']);
+
+          runner.setMcpAnnotationTrust('jira', ['readOnlyHint'], false);
+          expect(believed(runner, 'jira'), 'the other hint survives the withdrawal').toEqual([
+            'openWorldHint',
+          ]);
+        });
+
+        /**
+         * The same claim where it decides something. A grant records the effective set it was made
+         * under (§4.7.4), so the snapshot is the derivation's own answer: with only `readOnlyHint`
+         * believed, the server's `openWorldHint: false` is NOT read and the effective value stays
+         * the fail-closed `true`. One object, both halves.
+         */
+        it('an unbelieved hint stays fail-closed in the set a grant is made under', async () => {
+          let runner!: GthAgentRunner;
+          await driveCalls(believingJira(['readOnlyHint']), [
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: SAFE_DECL },
+              before: (r) => {
+                runner = r;
+              },
+            },
+          ]);
+          expect(runner.getGrants()[0].annotations).toEqual({
+            readOnlyHint: true, // believed, and read verbatim
+            destructiveHint: false, // §4.7.1's derivation, not the declaration
+            idempotentHint: false, // NOT believed — the declared `true` is ignored
+            openWorldHint: true, // NOT believed — the declared `false` is ignored
+          });
+        });
+
+        /**
+         * §9 — a server not named under `servers` inherits `defaults`, and naming it makes it state
+         * its relationship IN FULL. So a trust change must seed from what was in force, or believing
+         * one more hint would silently withdraw everything `defaults` granted — a weakening nobody
+         * asked for, and one that would invalidate their grants.
+         */
+        it('believing a hint for an unnamed server keeps what defaults already granted', async () => {
+          const runner = await idleRunner({
+            mode: 'write',
+            mcp: { defaults: { trustAnnotations: ['openWorldHint'] } },
+          });
+          runner.setMcpAnnotationTrust('jira', ['readOnlyHint'], true);
+          expect(believed(runner, 'jira')).toEqual(['readOnlyHint', 'openWorldHint']);
+        });
+
+        it('CONTROL: a server NAMED with no trust does not inherit defaults, and still does not', async () => {
+          const runner = await idleRunner({
+            mode: 'write',
+            mcp: {
+              defaults: { trustAnnotations: ['openWorldHint'] },
+              servers: { jira: {} },
+            },
+          });
+          expect(believed(runner, 'jira'), 'a named server states it in full').toEqual([]);
+          runner.setMcpAnnotationTrust('jira', ['readOnlyHint'], true);
+          expect(believed(runner, 'jira')).toEqual(['readOnlyHint']);
+        });
+
+        it('a trust change never rewrites the config block it was resolved from', async () => {
+          const mcp = { servers: { jira: { trustAnnotations: ['readOnlyHint'] } } };
+          const runner = new GthAgentRunner(statusUpdateCallback);
+          await runner.init('code', toolConfig({ mode: 'write', mcp }));
+          runner.setMcpAnnotationTrust('jira', ['openWorldHint'], true);
+          expect(mcp.servers.jira.trustAnnotations).toEqual(['readOnlyHint']);
+        });
+
+        it('names every server either side knows about, believed or not', async () => {
+          const runner = await idleRunner({
+            mode: 'write',
+            mcp: { servers: { typo: { trustAnnotations: ['readOnlyHint'] } } },
+          });
+          const view = runner.getMcpAnnotationTrust();
+          expect(view.servers.map((s) => [s.server, s.configured])).toEqual(
+            expect.arrayContaining([
+              ['jira', true],
+              ['gitlab', true],
+              ['typo', false],
+            ])
+          );
+        });
+      });
+
+      describe('§4.7.4 — withdrawing trust weakens, and the change SAYS so', () => {
+        /**
+         * The three hints whose fail-closed default is the dangerous value. **`destructiveHint` is
+         * one of them** — this node's own brief said it was not, and the moves table says otherwise:
+         * a believed `destructiveHint: false` becomes `true` again the moment it stops being
+         * believed. `readOnlyHint` is false in that row's declaration on purpose, because an
+         * effective `readOnlyHint: true` would force `destructiveHint: false` by derivation and the
+         * row would prove nothing.
+         */
+        it.each([
+          ['readOnlyHint', SAFE_DECL],
+          ['openWorldHint', SAFE_DECL],
+          ['destructiveHint', WRITING_DECL],
+        ] as const)('withdrawing %s reports a weakening', async (hint, decl) => {
+          let runner!: GthAgentRunner;
+          await driveCalls(believingJira(), [
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: decl },
+              before: (r) => {
+                runner = r;
+              },
+            },
+          ]);
+          const change = runner.setMcpAnnotationTrust('jira', [hint], false);
+          expect(change.removed).toEqual([hint]);
+          expect(change.weakening).toEqual([hint]);
+          expect(change.invalidates).toEqual([jiraSearchGrantLine]);
+        });
+
+        /**
+         * The negative, and the only hint it is true of: `idempotentHint` names no weakening move,
+         * so withdrawing it invalidates nothing. Its control is the `it.each` above — on a checker
+         * that reported nothing for anything, this would pass alone.
+         */
+        it('withdrawing idempotentHint reports no weakening and no invalidation', async () => {
+          let runner!: GthAgentRunner;
+          await driveCalls(believingJira(), [
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: SAFE_DECL },
+              before: (r) => {
+                runner = r;
+              },
+            },
+          ]);
+          const change = runner.setMcpAnnotationTrust('jira', ['idempotentHint'], false);
+          expect(change.removed, 'it really was believed, and really was withdrawn').toEqual([
+            'idempotentHint',
+          ]);
+          expect(change.weakening).toEqual([]);
+          expect(change.invalidates).toEqual([]);
+        });
+
+        /**
+         * BELIEVING can never weaken: every weakening move ends at the fail-closed default, and
+         * belief only moves away from it. Its control is the same hints withdrawn, immediately
+         * after, on the same runner.
+         */
+        it('believing a hint reports no weakening — its control is withdrawing the same hint', async () => {
+          let runner!: GthAgentRunner;
+          await driveCalls(believingJira(['readOnlyHint']), [
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: SAFE_DECL },
+              before: (r) => {
+                runner = r;
+              },
+            },
+          ]);
+          const granted = runner.setMcpAnnotationTrust('jira', ['openWorldHint'], true);
+          expect(granted.added).toEqual(['openWorldHint']);
+          expect(granted.weakening).toEqual([]);
+          expect(granted.invalidates).toEqual([]);
+
+          const withdrawn = runner.setMcpAnnotationTrust('jira', ['readOnlyHint'], false);
+          expect(withdrawn.weakening, 'CONTROL: the withdrawal does report one').toEqual([
+            'readOnlyHint',
+          ]);
+        });
+
+        it('names only THIS server’s grants — another server’s same-named tool is not affected', async () => {
+          let runner!: GthAgentRunner;
+          await driveCalls(
+            toolConfig({
+              mode: 'write',
+              mcp: {
+                servers: {
+                  jira: { trustAnnotations: ALL_HINTS },
+                  gitlab: { trustAnnotations: ALL_HINTS },
+                },
+              },
+            }),
+            [
+              {
+                name: 'mcp__jira__search',
+                declaring: { mcp__jira__search: SAFE_DECL },
+                before: (r) => {
+                  runner = r;
+                },
+              },
+              { name: 'mcp__gitlab__search', declaring: { mcp__gitlab__search: SAFE_DECL } },
+            ]
+          );
+          expect(runner.getGrants(), 'both were granted').toHaveLength(2);
+          const change = runner.setMcpAnnotationTrust('jira', ['readOnlyHint'], false);
+          expect(change.invalidates).toEqual([jiraSearchGrantLine]);
+        });
+
+        /**
+         * **The behaviour the notice promises, end to end.** The grant is made while the hint is
+         * believed; the user withdraws belief mid-session, exactly as `/approvals untrust` does; the
+         * next call to that very tool is invalidated with the §4.7.4 notice and asks again. Nothing
+         * about the server's declaration changed — the trust did.
+         */
+        it('a mid-session withdrawal invalidates the grant at the next call, with the notice', async () => {
+          const prompts = await driveCalls(believingJira(), [
+            { name: 'mcp__jira__search', declaring: { mcp__jira__search: SAFE_DECL } },
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: SAFE_DECL },
+              before: (r) => {
+                r.setMcpAnnotationTrust('jira', ['readOnlyHint'], false);
+              },
+            },
+          ]);
+          expect(prompts[0], 'the first call asks and grants').not.toBeNull();
+          expect(prompts[1], 'the withdrawal made the tool ask again').not.toBeNull();
+          const said = warningsSaid();
+          expect(said).toContain(jiraSearchGrantLine);
+          expect(said).toContain('readOnlyHint');
+        });
+
+        /**
+         * CONTROL for the above: withdrawing the one hint no weakening move names leaves the grant
+         * in force. Without it, an invalidator that fired on ANY trust change would pass the test
+         * above.
+         */
+        it('CONTROL: withdrawing idempotentHint leaves the grant covering the next call', async () => {
+          const prompts = await driveCalls(believingJira(), [
+            { name: 'mcp__jira__search', declaring: { mcp__jira__search: SAFE_DECL } },
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: SAFE_DECL },
+              before: (r) => {
+                r.setMcpAnnotationTrust('jira', ['idempotentHint'], false);
+              },
+            },
+          ]);
+          expect(prompts[1], 'the grant still covers it').toBeNull();
+          expect(warningsSaid()).not.toContain(jiraSearchGrantLine);
+        });
+
+        it('reports whether the key names a configured server, without refusing an unknown one', async () => {
+          const runner = await idleRunner({ mode: 'write' });
+          expect(runner.setMcpAnnotationTrust('jira', ['readOnlyHint'], true).configured).toBe(
+            true
+          );
+          const unknown = runner.setMcpAnnotationTrust('jira-typo', ['readOnlyHint'], true);
+          expect(unknown.configured).toBe(false);
+          // Not refused: §9 deliberately does not check policy keys against `mcpServers`, so policy
+          // may be written before the server exists and config ORDER never matters.
+          expect(unknown.trusted).toEqual(['readOnlyHint']);
+        });
+      });
+
+      describe('§3/§4.7.4 — getGrants, the approvals view’s data', () => {
+        it('shows what was granted, when, at what scope, and under which annotations', async () => {
+          let runner!: GthAgentRunner;
+          await driveCalls(believingJira(), [
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: SAFE_DECL },
+              before: (r) => {
+                runner = r;
+              },
+            },
+          ]);
+          const [grant] = runner.getGrants();
+          expect(grant.entry).toEqual({
+            type: 'mcpTool',
+            server: 'jira',
+            matcher: 'exact',
+            pattern: 'search',
+          });
+          expect(grant.scope).toBe('session');
+          expect(grant.grantedAt).toEqual(expect.any(String));
+          expect(grant.annotations).toEqual(SAFE_DECL);
+        });
+
+        /**
+         * The stores hand back their LIVE records, so a view that mutated what it read would be
+         * rewriting what the gate matches against. The control at the end asserts the mutation did
+         * land somewhere, so this is isolation rather than a no-op.
+         */
+        it('hands back copies — a display cannot rewrite what the gate matches', async () => {
+          let runner!: GthAgentRunner;
+          await driveCalls(believingJira(), [
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: SAFE_DECL },
+              before: (r) => {
+                runner = r;
+              },
+            },
+          ]);
+          const mine = runner.getGrants()[0];
+          (mine.entry as { pattern: string }).pattern = 'delete_issue';
+          mine.annotations!.openWorldHint = true;
+          mine.scope = 'always';
+
+          const fresh = runner.getGrants()[0];
+          expect(fresh.entry).toEqual({
+            type: 'mcpTool',
+            server: 'jira',
+            matcher: 'exact',
+            pattern: 'search',
+          });
+          expect(fresh.annotations).toEqual(SAFE_DECL);
+          expect(fresh.scope).toBe('session');
+          expect(mine.entry, 'CONTROL: the mutation landed on the copy').toMatchObject({
+            pattern: 'delete_issue',
+          });
+        });
+
+        /**
+         * Read-only by construction, exactly as `getAllowlistCounts` is: a display must never CREATE
+         * the persisted store in order to show it. The control is the same session driven to a point
+         * where the store IS loaded, where the persisted grant does appear.
+         */
+        it('never loads the persisted store, and lists it once it is loaded', async () => {
+          const idle = await idleRunner({ mode: 'write' });
+          expect(idle.getGrants()).toEqual([]);
+          expect(idle.getAllowlistCounts().always, 'the store was not created').toBeUndefined();
+
+          let runner!: GthAgentRunner;
+          await driveCalls(
+            believingJira(),
+            [
+              {
+                name: 'mcp__jira__search',
+                declaring: { mcp__jira__search: SAFE_DECL },
+                before: (r) => {
+                  runner = r;
+                },
+              },
+            ],
+            { type: 'approve', scope: 'always' }
+          );
+          // CONTROL: an `always` grant is written to BOTH stores, and is listed exactly once.
+          expect(runner.getGrants()).toHaveLength(1);
+          expect(runner.getGrants()[0].scope).toBe('always');
+          expect(runner.getAllowlistCounts().always).toBe(1);
+        });
       });
     });
   });

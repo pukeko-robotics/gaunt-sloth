@@ -36,11 +36,23 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
   // did. It is the provenance that makes the question traceable to the line the user wrote; an
   // escalation they cannot trace reads as the gate malfunctioning rather than as their own rule.
   const escalatedBy = pending.escalatedBy;
-  // EXT-71 §6 — what a sticky choice will store, shown at the moment of the choice on every
-  // surface. Under §3.1 it is the command itself as a fully-explicit exact entry, not a pattern
-  // derived from it; showing the user the thing they are agreeing to is what makes the display
-  // honest. Absent whenever no sticky grant is on offer (e.g. a `catastrophic` outcome, §4.2).
+  // EXT-71/EXT-70 §6 — what a sticky choice will store, shown at the moment of the choice on every
+  // surface. Under §3.1 a shell grant is the command itself as a fully-explicit exact entry, not a
+  // pattern derived from it; for a tool call the stored thing is the TOOL, its server and the host
+  // bound, never the arguments (§4.7.4) — which is the one place a grant is deliberately broader
+  // than what the human was shown, and therefore the one place the display carries most weight.
+  //
+  // `grantSummary` names it in the words the control is written in, through the same one-liner the
+  // §4.7.4 withdrawal notice uses, so the menu and that notice can never describe one grant two
+  // ways. `grantPreview` is the exact entry that lands in the store.
+  //
+  // **Absent means the control is not offered at all**, never offered-and-disabled: a disabled
+  // control invites the user to hunt for why, and §6 calls a control that is offered and then
+  // refused a bug rather than a policy. Absent covers a `catastrophic` outcome (§4.2), a command
+  // that does not statically resolve, a call naming several hosts, and a call whose MCP server
+  // could not be attributed.
   const grantPreview = pending.grantPreview;
+  const grantSummary = pending.grantSummary;
   return (
     <Box flexDirection="column">
       <Rule />
@@ -55,9 +67,16 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
         <Text color="yellow">{`⚠ Your approvals.escalate list matched this call: ${escalatedBy}`}</Text>
       ) : null}
       {grantPreview ? (
-        <Text dimColor>{`[s]/[a] will remember exactly this command: ${grantPreview}`}</Text>
+        <>
+          <Text dimColor>{`[s]/[a] will remember ${grantSummary ?? grantPreview}`}</Text>
+          <Text dimColor>{`    stored as ${grantPreview}`}</Text>
+        </>
       ) : null}
-      <Text dimColor>{'Approve?  [o]nce   [s]ession   [a]lways   [N]o'}</Text>
+      <Text dimColor>
+        {grantPreview
+          ? 'Approve?  [o]nce   [s]ession   [a]lways   [N]o'
+          : 'Approve?  [o]nce   [N]o'}
+      </Text>
     </Box>
   );
 }
