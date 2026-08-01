@@ -198,7 +198,8 @@ test.describe('gth code TUI — EXT-52/CFG-27 rung switching restores prompting 
     await expect(terminal.getByText('Approvals: Write')).toBeVisible();
 
     // Turn 2: the per-command prompt is BACK (not a placebo). Reject to finish cleanly — pressing
-    // [a]/always here would write shell-allowlist.json into the tracked fixtures dir.
+    // [a]/always here would write shell-allowlist.json into the tracked fixtures dir. See the EXT-70
+    // describe below for why the HOME clamp does not cover it, and what to clamp instead.
     terminal.write('run it again');
     await expect(terminal.getByText('> run it again')).toBeVisible();
     terminal.submit();
@@ -208,5 +209,153 @@ test.describe('gth code TUI — EXT-52/CFG-27 rung switching restores prompting 
     terminal.write('n');
     await expect(terminal.getByText('Command rejected')).toBeVisible();
     await expect(terminal.getByText('turns: 2  ·  ready', { strict: false })).toBeVisible();
+  });
+});
+
+test.describe('gth code TUI — EXT-70 §6 the menu names what it will store, and offers it only when there is one', () => {
+  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gth-e2e-approval-home-'));
+
+  test.use({
+    program: { file: 'node', args: [cli, 'code', '--tui', '-c', approvalConfig] },
+    env: realAgentEnv(tmpHome),
+    columns: 120,
+    rows: 40,
+  });
+
+  test.afterAll(() => {
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  /**
+   * §6 — the menu MUST display what a sticky choice is about to store, at the moment of the choice.
+   * The pair is in one test on purpose: asserting only that the compound command hides `[s]`/`[a]`
+   * would pass on a menu that never rendered them at all.
+   *
+   * **No test in this file may press `[a]` as it stands, and every one of them answers `n` or `[o]`
+   * for that reason.** `realAgentEnv` clamps HOME to a throwaway dir, but the allow-list is a
+   * PROJECT artifact: `--config` sets the project dir to the config file's own directory, which is
+   * the tracked `fixtures/` folder, so an `[a]lways` grant writes
+   * `.gsloth/.gsloth-settings/shell-allowlist.json` into the repo — and, worse, the next run of the
+   * suite reads it back and the prompt under test silently stops appearing.
+   *
+   * **The remedy, for whoever needs to press it:** clamp the project dir the same way HOME is
+   * clamped, by copying (or generating) the config into the per-suite `mkdtemp` and pointing
+   * `-c` at the copy. `tui-test`'s `program` option takes no `cwd`, so the config path is the lever;
+   * assert afterwards that the store landed under the temp dir, which also makes the persistence
+   * itself testable instead of merely avoided.
+   */
+  test('a resolvable command names its grant and offers the sticky controls', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to code')).toBeVisible();
+
+    terminal.write('run it');
+    await expect(terminal.getByText('> run it')).toBeVisible();
+    terminal.submit();
+
+    await expect(
+      terminal.getByText('The agent wants to run a shell command via run_shell_command')
+    ).toBeVisible();
+    // The grant is named in words, and the exact entry that will land in the store is shown under it.
+    await expect(terminal.getByText('will remember', { strict: false })).toBeVisible();
+    await expect(terminal.getByText('stored as', { strict: false })).toBeVisible();
+    await expect(terminal.getByText('[s]ession', { strict: false })).toBeVisible();
+    await expect(terminal.getByText('[a]lways', { strict: false })).toBeVisible();
+
+    terminal.write('n');
+    await expect(terminal.getByText('Command rejected')).toBeVisible();
+  });
+
+  test('a command that does not statically resolve offers no sticky control at all', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to code')).toBeVisible();
+
+    terminal.write('run it unresolvable-compound');
+    await expect(terminal.getByText('> run it unresolvable-compound')).toBeVisible();
+    terminal.submit();
+
+    await expect(
+      terminal.getByText('The agent wants to run a shell command via run_shell_command')
+    ).toBeVisible();
+    // The gate still asks — the one-shot choices are there...
+    await expect(terminal.getByText('[o]nce', { strict: false })).toBeVisible();
+    // ...and the sticky ones are ABSENT, not disabled: nothing would be stored, so §6 says the
+    // control is not offered.
+    await expect(terminal.getByText('[s]ession', { strict: false })).not.toBeVisible();
+    await expect(terminal.getByText('[a]lways', { strict: false })).not.toBeVisible();
+    await expect(terminal.getByText('will remember', { strict: false })).not.toBeVisible();
+
+    terminal.write('n');
+    await expect(terminal.getByText('Command rejected')).toBeVisible();
+  });
+});
+
+test.describe('gth code TUI — EXT-70 §4.7.1 the trust affordance', () => {
+  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gth-e2e-approval-home-'));
+
+  test.use({
+    program: { file: 'node', args: [cli, 'code', '--tui', '-c', approvalConfig] },
+    env: realAgentEnv(tmpHome),
+    columns: 120,
+    rows: 40,
+  });
+
+  test.afterAll(() => {
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  /**
+   * §4.7.1 — a user may believe specific hints from a specific server FROM THE TUI, per hint and
+   * never per server, and withdrawing belief must say — there — that the saved approvals for that
+   * server go with it (§4.7.4). Both halves are driven through the real command dispatch.
+   */
+  test('/approvals trust believes one hint; /approvals untrust says the approvals will go', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to code')).toBeVisible();
+
+    terminal.write('/approvals trust jira readOnlyHint');
+    await expect(terminal.getByText('> /approvals trust jira readOnlyHint')).toBeVisible();
+    terminal.submit();
+    await expect(terminal.getByText('MCP annotations believed: jira')).toBeVisible();
+    await expect(
+      terminal.getByText('Now believing from jira: readOnlyHint', { strict: false })
+    ).toBeVisible();
+    // Believing can never weaken, so no approval-withdrawal line appears here.
+    await expect(
+      terminal.getByText('withdrawn the next time', { strict: false })
+    ).not.toBeVisible();
+
+    terminal.write('/approvals untrust jira readOnlyHint');
+    await expect(terminal.getByText('> /approvals untrust jira readOnlyHint')).toBeVisible();
+    terminal.submit();
+    await expect(
+      terminal.getByText('No longer believing from jira: readOnlyHint', { strict: false })
+    ).toBeVisible();
+    await expect(
+      terminal.getByText('withdrawn the next time that tool is called', { strict: false })
+    ).toBeVisible();
+  });
+
+  test('/approvals with no argument shows the believed hints, and a bad hint is explained', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to code')).toBeVisible();
+
+    terminal.write('/approvals trust jira openWorldHint');
+    terminal.submit();
+    await expect(terminal.getByText('MCP annotations believed: jira')).toBeVisible();
+
+    terminal.write('/approvals');
+    await expect(terminal.getByText('> /approvals')).toBeVisible();
+    terminal.submit();
+    await expect(
+      terminal.getByText('MCP annotations believed: defaults', { strict: false })
+    ).toBeVisible();
+
+    terminal.write('/approvals trust jira nope');
+    terminal.submit();
+    await expect(terminal.getByText('Not an annotation hint: nope')).toBeVisible();
   });
 });

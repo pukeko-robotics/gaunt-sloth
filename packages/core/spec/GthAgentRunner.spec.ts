@@ -2,11 +2,15 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, Mock, vi } from 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { HumanMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import type { GthConfig } from '#src/config.js';
 import type { PendingToolInterrupt, StatusUpdateCallback } from '#src/core/types.js';
 import { AttackHaltError, NonInteractiveEscalationError } from '#src/core/shell/approvalStop.js';
+import { COULD_NOT_ASSESS_PREFIX, openWorldToolFloorReason } from '#src/core/shell/rater.js';
+import { describeApprovalEntry, MCP_FAIL_CLOSED_ANNOTATIONS } from '#src/core/approvals/matcher.js';
+import { mcpToolRegisteredName } from '#src/core/approvals/mcpSubjects.js';
 import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
 import { SHELL_ALLOWLIST_FILE } from '#src/constants.js';
 
@@ -374,8 +378,10 @@ describe('GthAgentRunner', () => {
         name: 'run_shell_command',
         args: { command: 'ls -la' },
         // EXT-71 §6 — the prompt is told what a sticky choice would store, so it can show the user
-        // the thing they are agreeing to before they agree to it.
+        // the thing they are agreeing to before they agree to it, and (EXT-70) the same grant in
+        // the words the menu's control is written in.
         grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "ls -la" }',
+        grantSummary: 'ls -la',
       });
       // Resume sent the HITL decisions array shape humanInTheLoopMiddleware expects.
       expect(streamResume).toHaveBeenCalledWith(
@@ -602,8 +608,13 @@ describe('GthAgentRunner', () => {
      * harmfully (no allow entry of any matcher matches an unresolvable command, so the entry would
      * be inert), but an inert entry sitting in a list §3 requires to be inspectable would tell the
      * user something is in force when nothing is.
+     *
+     * **And it is not offered either**, which is the half that matters to the human: §6 shows the
+     * menu the entry a sticky choice will store, so a preview for a command nothing would store is a
+     * control offered and then silently refused. Both halves are asserted here because the storage
+     * one alone passes on a gate that shows the preview and then declines to write it.
      */
-    it('records nothing for a command that does not statically resolve', async () => {
+    it('neither offers nor records a grant for a command that does not statically resolve', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       mockAgent.stream.mockResolvedValue(streamOf('x'));
       (mockAgent as any).getPendingToolInterrupts = vi
@@ -620,6 +631,21 @@ describe('GthAgentRunner', () => {
       runner.setToolApprovalCallback(human);
 
       await runner.processMessages([new HumanMessage('go')]);
+
+      const compound = human.mock.calls[0][0] as PendingToolInterrupt;
+      const ordinary = human.mock.calls[1][0] as PendingToolInterrupt;
+      expect(compound.args, 'the compound command is the one that was asked about first').toEqual({
+        command: 'ls; rm -rf /tmp/x',
+      });
+      expect(
+        compound.grantPreview,
+        'nothing is offered where nothing would be stored'
+      ).toBeUndefined();
+      // CONTROL: the ordinary command that followed IS shown the entry it will store, so the
+      // absence above is this command's unresolvability and not a preview that never renders.
+      expect(ordinary.grantPreview).toBe(
+        '{ "type": "shell", "matcher": "exact", "pattern": "ls -la" }'
+      );
 
       // The compound command left nothing behind; the ordinary one that followed did.
       expect(runner.getAllowlistCounts().session).toBe(1);
@@ -2662,6 +2688,7 @@ describe('GthAgentRunner', () => {
         name: 'run_shell_command',
         args: { command: 'ls -la' },
         grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "ls -la" }',
+        grantSummary: 'ls -la',
       });
       // Resume sent the HITL `{ decisions }` shape humanInTheLoopMiddleware expects.
       expect(streamWithEventsResume).toHaveBeenCalledWith(
@@ -2789,6 +2816,1778 @@ describe('GthAgentRunner', () => {
         { type: 'text', delta: 'Hel' },
         { type: 'text', delta: 'lo' },
       ]);
+    });
+  });
+
+  /**
+   * EXT-70 §4.7.1/§4.7.5 — the subject a non-shell tool call presents, end to end through the
+   * runner: config → `resolveApprovals` → the effective-annotation source → the rule matcher →
+   * the decision.
+   *
+   * The fail-open this closes: every non-shell tool used to become a `kind: 'tool'` subject, which
+   * is the TRUSTED provenance. So an MCP tool was matchable by `tool` entries and NOT by the
+   * `mcpTool` entries a user wrote for it, and its own `tools/list` claims would have been read
+   * verbatim. Both directions are asserted, each against a control that a degenerate gate — one
+   * that approves everything, or refuses everything — would fail.
+   */
+  describe('MCP tool calls present as mcpTool subjects (EXT-70 §4.7.5)', () => {
+    function streamOf(...chunks: string[]) {
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const c of chunks) yield c;
+        },
+      };
+    }
+
+    /** Suspend the run once on a call to `toolName`, then complete. */
+    function pendingToolOnce(toolName: string) {
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: toolName, args: {} }])
+        .mockResolvedValueOnce([]);
+      const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+      (mockAgent as any).streamResume = streamResume;
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      return streamResume;
+    }
+
+    /** What the connected servers declared, exactly as `GthAbstractAgent` records it. */
+    function declaring(entries: Record<string, Record<string, unknown>>) {
+      (mockAgent as any).getDeclaredMcpToolAnnotations = vi
+        .fn()
+        .mockReturnValue(new Map(Object.entries(entries)));
+    }
+
+    function gateConfig(
+      approvals: Record<string, unknown>,
+      mcpServers: Record<string, unknown> = { jira: { url: 'https://example.invalid/mcp' } }
+    ) {
+      return {
+        ...mockConfig,
+        streamOutput: true as const,
+        approvals,
+        mcpServers,
+      } as unknown as GthConfig;
+    }
+
+    /**
+     * Drive one gated call and report whether the human was asked. It asserts the run really did
+     * suspend and resume first — otherwise every "was not asked" here would pass on a run in which
+     * no gated call ever happened.
+     */
+    async function askedTheHuman(config: GthConfig, toolName: string): Promise<boolean> {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      const streamResume = pendingToolOnce(toolName);
+      await runner.init('code', config);
+      const human = vi.fn().mockResolvedValue({ type: 'approve' });
+      runner.setToolApprovalCallback(human);
+      await runner.processMessages([new HumanMessage('go')]);
+      expect(streamResume).toHaveBeenCalledTimes(1);
+      return human.mock.calls.length > 0;
+    }
+
+    beforeEach(() => {
+      // Declarations are attached per test on the shared mock; drop any that leaked from the last.
+      delete (mockAgent as any).getDeclaredMcpToolAnnotations;
+    });
+
+    it('an mcpTool deny entry refuses the call — it could not have matched a tool subject', async () => {
+      // This is the assertion that would have caught the fail-open: with the call presenting as
+      // `kind: 'tool'`, the user's own `mcpTool` deny entry would silently never have fired.
+      const config = gateConfig({
+        mode: 'write',
+        deny: [{ type: 'mcpTool', server: 'jira', matcher: 'exact', pattern: 'delete_issue' }],
+      });
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      const streamResume = pendingToolOnce('mcp__jira__delete_issue');
+      await runner.init('code', config);
+      const human = vi.fn().mockResolvedValue({ type: 'approve' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('go')]);
+
+      expect(human).not.toHaveBeenCalled();
+      const decision = streamResume.mock.calls[0][0].decisions[0];
+      expect(decision.type).toBe('reject');
+      expect(decision.message).toContain('delete_issue');
+    });
+
+    it('a `tool` allow entry naming the MCP tool does NOT auto-approve it', async () => {
+      // The other half of the same fail-open: a `tool` entry cannot claim an MCP subject, so the
+      // user is still asked.
+      const config = gateConfig({
+        mode: 'write',
+        allow: [{ type: 'tool', matcher: 'exact', pattern: 'mcp__jira__delete_issue' }],
+      });
+      expect(await askedTheHuman(config, 'mcp__jira__delete_issue')).toBe(true);
+    });
+
+    it('CONTROL: the same `tool` allow entry DOES auto-approve one of our own tools', async () => {
+      // Without this the assertion above would pass on a gate that asks about everything.
+      const config = gateConfig({
+        mode: 'write',
+        allow: [{ type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch' }],
+      });
+      expect(await askedTheHuman(config, 'gth_web_fetch')).toBe(false);
+    });
+
+    it('a name no configured server explains stays an MCP subject and is still asked about', async () => {
+      // Fail-closed, and specifically NOT `kind: 'tool'`: the `tool` allow entry below names it
+      // exactly and still cannot claim it.
+      const config = gateConfig({
+        mode: 'write',
+        allow: [{ type: 'tool', matcher: 'exact', pattern: 'mcp__ghost__delete' }],
+      });
+      expect(await askedTheHuman(config, 'mcp__ghost__delete')).toBe(true);
+    });
+
+    describe('the discriminating pair, end to end from config to decision', () => {
+      /** A `hint` entry that exempts anything effectively read-only, for one server's tools. */
+      const allowReadOnlyMcp = [
+        { type: 'mcpTool', server: 'jira', matcher: 'hint', pattern: { readOnlyHint: true } },
+      ];
+
+      it('TRUSTED: the server’s own readOnlyHint declaration exempts its tool', async () => {
+        declaring({ mcp__jira__search: { readOnlyHint: true } });
+        const config = gateConfig({
+          mode: 'write',
+          allow: allowReadOnlyMcp,
+          mcp: { servers: { jira: { trustAnnotations: ['readOnlyHint'] } } },
+        });
+        expect(await askedTheHuman(config, 'mcp__jira__search')).toBe(false);
+      });
+
+      it('UNTRUSTED: the very same declaration exempts nothing, and the human is asked', async () => {
+        declaring({ mcp__jira__search: { readOnlyHint: true } });
+        const config = gateConfig({
+          mode: 'write',
+          allow: allowReadOnlyMcp,
+          mcp: { servers: { jira: { trustAnnotations: [] } } },
+        });
+        expect(await askedTheHuman(config, 'mcp__jira__search')).toBe(true);
+      });
+
+      it('CONTROL: one of OUR OWN read tools is exempted by the same hint with no trust list', async () => {
+        // The built-in half: `gth_grep`'s authored `readOnlyHint: true` is read verbatim, so an
+        // annotation-driven allow entry exempts it where the identical MCP claim does not.
+        const config = gateConfig({
+          mode: 'write',
+          allow: [{ type: 'tool', matcher: 'hint', pattern: { readOnlyHint: true } }],
+        });
+        expect(await askedTheHuman(config, 'gth_grep')).toBe(false);
+      });
+
+      it('CONTROL: a built-in that WRITES is not exempted by that hint', async () => {
+        const config = gateConfig({
+          mode: 'write',
+          allow: [{ type: 'tool', matcher: 'hint', pattern: { readOnlyHint: true } }],
+        });
+        expect(await askedTheHuman(config, 'write_file')).toBe(true);
+      });
+    });
+
+    describe('§4.7.3 — an open-world read is not a local read', () => {
+      const allowLocalRead = [
+        {
+          type: 'tool',
+          matcher: 'hint',
+          pattern: { readOnlyHint: true, openWorldHint: false },
+        },
+      ];
+
+      const localReadConfig = () => gateConfig({ mode: 'write', allow: allowLocalRead });
+
+      it('gth_web_fetch is NOT exempted by a local-read hint entry', async () => {
+        expect(await askedTheHuman(localReadConfig(), 'gth_web_fetch')).toBe(true);
+      });
+
+      it('CONTROL: gth_grep IS exempted by that very entry', async () => {
+        expect(await askedTheHuman(localReadConfig(), 'gth_grep')).toBe(false);
+      });
+    });
+
+    /**
+     * EXT-70 §4.7.2/§4.7.3 — an effective `openWorldHint` floors the call at `destructive`, through
+     * the SAME `applyDestructiveFloor` the shell path reaches via `mapVerdictToAction`.
+     *
+     * **What is observable today, stated so these assertions are not read as more than they are.**
+     * No ACTION changes under the current gate: the rater is shell-only (§4.3), an allow match
+     * returns before the floor, and `bypass` plus the two deterministic rungs never reach it — so
+     * every call that is floored here was already going to the human. What the floor supplies is
+     * the verdict that call carries: onto the approval prompt (§6) and into the §6.2 non-interactive
+     * exit. [[EXT-30]], which rates tool calls, is what makes it decide an action.
+     */
+    describe('§4.7.3 — an effective openWorldHint floors the call at destructive', () => {
+      /** The reason the ONE floor produces, read from its own builder rather than re-spelt here. */
+      const FLOOR_REASON = openWorldToolFloorReason(MCP_FAIL_CLOSED_ANNOTATIONS);
+
+      /** Every hint believed, so a declaration can state an arbitrary combination and be read. */
+      const trustingJira = {
+        servers: {
+          jira: {
+            trustAnnotations: [
+              'readOnlyHint',
+              'destructiveHint',
+              'idempotentHint',
+              'openWorldHint',
+            ],
+          },
+        },
+      };
+
+      /**
+       * Drive one gated call and hand back what the human was shown — or `null` when nothing asked.
+       * Asserts the run really did suspend and resume, so a "was not floored" can never pass on a
+       * run in which no gated call happened at all.
+       */
+      async function shownToTheHuman(
+        config: GthConfig,
+        toolName: string
+      ): Promise<PendingToolInterrupt | null> {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        const streamResume = pendingToolOnce(toolName);
+        await runner.init('code', config);
+        const human = vi.fn().mockResolvedValue({ type: 'approve' });
+        runner.setToolApprovalCallback(human);
+        await runner.processMessages([new HumanMessage('go')]);
+        expect(streamResume).toHaveBeenCalledTimes(1);
+        return human.mock.calls.length > 0
+          ? (human.mock.calls[0][0] as PendingToolInterrupt)
+          : null;
+      }
+
+      /** The verdict a gated call carried to the human; `undefined` when it was not floored. */
+      async function verdictFor(config: GthConfig, toolName: string) {
+        const pending = await shownToTheHuman(config, toolName);
+        expect(pending, 'the human was asked at all').not.toBeNull();
+        return pending?.safetyVerdict;
+      }
+
+      const rated = (extra: Record<string, unknown> = {}) =>
+        gateConfig({ mode: 'auto-safe', ...extra });
+
+      /**
+       * The discriminating pair for §4.7.3, on OUR OWN tools so no trust question is in play.
+       * `readOnlyHint` is `true` on both sides — only `openWorldHint` differs — so a gate that
+       * floored on `readOnlyHint`, or floored everything, or floored nothing, fails one half.
+       */
+      it('gth_web_fetch is floored at destructive DESPITE being readOnlyHint true', async () => {
+        const verdict = await verdictFor(rated(), 'gth_web_fetch');
+        expect(verdict?.outcome).toBe('destructive');
+        // Compared against the floor's own reason builder, not against a copy of the sentence: a
+        // second floor written inline at this call site would say something else and fail here.
+        expect(verdict?.reason).toBe(FLOOR_REASON);
+        expect(verdict?.reason).not.toContain(COULD_NOT_ASSESS_PREFIX);
+      });
+
+      it('CONTROL: gth_grep — the same readOnlyHint, no open world — is NOT floored', async () => {
+        expect(await verdictFor(rated(), 'gth_grep')).toBeUndefined();
+      });
+
+      /**
+       * The pair that proves the floor reads EFFECTIVE values and not declared ones. Both servers
+       * declare `openWorldHint: false`; only the trusted one is believed.
+       */
+      it('an UNTRUSTED server declaring openWorldHint false is still floored', async () => {
+        declaring({ mcp__jira__search: { readOnlyHint: true, openWorldHint: false } });
+        const config = rated({ mcp: { servers: { jira: { trustAnnotations: [] } } } });
+        expect((await verdictFor(config, 'mcp__jira__search'))?.outcome).toBe('destructive');
+      });
+
+      it('CONTROL: the very same declaration from a TRUSTED server is not floored', async () => {
+        declaring({ mcp__jira__search: { readOnlyHint: true, openWorldHint: false } });
+        const config = rated({
+          mcp: { servers: { jira: { trustAnnotations: ['openWorldHint'] } } },
+        });
+        expect(await verdictFor(config, 'mcp__jira__search')).toBeUndefined();
+      });
+
+      /**
+       * §4.7.2 — `idempotentHint` has NO built-in consumer. On its own "the outcome is unchanged"
+       * passes on a harness that cannot detect any change at all, so the CONTROL is in the same
+       * test: flipping a DIFFERENT hint in the very same declaration does move the outcome.
+       */
+      it('idempotentHint changes no outcome — CONTROL: openWorldHint does', async () => {
+        const decide = async (declaration: Record<string, unknown>) => {
+          declaring({ mcp__jira__search: declaration });
+          return await verdictFor(rated({ mcp: trustingJira }), 'mcp__jira__search');
+        };
+        const local = { readOnlyHint: true, openWorldHint: false };
+        const idempotent = await decide({ ...local, idempotentHint: true });
+        const notIdempotent = await decide({ ...local, idempotentHint: false });
+        expect(idempotent).toEqual(notIdempotent);
+        expect(idempotent, 'neither is floored').toBeUndefined();
+
+        const openWorld = await decide({ ...local, openWorldHint: true, idempotentHint: false });
+        expect(openWorld, 'the harness CAN see an outcome change').not.toEqual(notIdempotent);
+        expect(openWorld?.outcome).toBe('destructive');
+      });
+
+      /**
+       * §4.7.2 — `destructiveHint` may only ever RAISE: it can decide that a tool is rated or
+       * floored, never that it is exempt.
+       */
+      it('destructiveHint false does NOT lower a floor openWorldHint set', async () => {
+        declaring({
+          mcp__jira__search: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+        });
+        const config = rated({ mcp: trustingJira });
+        expect((await verdictFor(config, 'mcp__jira__search'))?.outcome).toBe('destructive');
+      });
+
+      it('destructiveHint true never buys an exemption', async () => {
+        declaring({
+          mcp__jira__wipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+        });
+        const pending = await shownToTheHuman(rated({ mcp: trustingJira }), 'mcp__jira__wipe');
+        expect(pending, 'the human is still asked').not.toBeNull();
+        // ...and it is not floored either: `destructiveHint` is not the rule that floors, which is
+        // what keeps the openWorld assertions above about `openWorldHint` and not about "a hint".
+        expect(pending?.safetyVerdict).toBeUndefined();
+      });
+
+      it('CONTROL: the harness CAN exempt — an allow entry approves that very call', async () => {
+        declaring({
+          mcp__jira__wipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+        });
+        const config = rated({
+          allow: [{ type: 'mcpTool', server: 'jira', matcher: 'exact', pattern: 'wipe' }],
+          mcp: trustingJira,
+        });
+        expect(await shownToTheHuman(config, 'mcp__jira__wipe')).toBeNull();
+      });
+
+      /**
+       * §4.6's fourth bullet, unchanged for tools: the allow-list is consulted BEFORE the rater and
+       * therefore before this floor, and lifts it — including where the entry carries `rate: true`.
+       *
+       * **The `rate: true` case matches the shell on the floor and NOT on the tripwire, and the
+       * second test's name says only the first.** §4.6 pairs floor-lifting with the rating still
+       * seeing the call, but step (4) short-circuits to approve for a non-shell subject, so no
+       * tripwire runs for a tool. That half does not exist while §4.3 keeps the rater on the shell;
+       * [[EXT-30]] is what brings it, and asserting it here would be asserting a wish.
+       */
+      it('an allow entry lifts the floor on an open-world tool', async () => {
+        const config = rated({
+          allow: [{ type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch' }],
+        });
+        expect(await shownToTheHuman(config, 'gth_web_fetch')).toBeNull();
+      });
+
+      it('and lifts it just the same when the allow entry sets rate true', async () => {
+        const config = rated({
+          allow: [{ type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch', rate: true }],
+        });
+        expect(await shownToTheHuman(config, 'gth_web_fetch')).toBeNull();
+      });
+
+      /**
+       * §6.2 — where no human can answer, the floored verdict is what the process exits with. This
+       * is the second of the two places the floor is observable today, and the one a CI run reads.
+       */
+      it('with no human, the floored verdict is what the run exits with', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        pendingToolOnce('gth_web_fetch');
+        await runner.init('code', rated());
+        // No approval callback at all — CI, a one-shot run, a server.
+
+        const error = (await runner
+          .processMessages([new HumanMessage('go')])
+          .then(() => null)
+          .catch((e: unknown) => e as Error)) as NonInteractiveEscalationError | null;
+
+        expect(error).toBeInstanceOf(NonInteractiveEscalationError);
+        expect(error?.outcome).toBe('destructive');
+        expect(error?.reason).toBe(FLOOR_REASON);
+      });
+
+      /**
+       * The floor applies exactly where the shell's preflights apply — at the two RATED rungs — and
+       * for the same reason: `mapVerdictToAction` returns at `bypass` and at the deterministic
+       * rungs before any preflight runs, because there is no rating there to floor. The call is
+       * asked about at every one of these rungs either way, so nothing is less gated below.
+       */
+      it.each(['auto-safe', 'full-auto'] as const)('floors at %s', async (mode) => {
+        const verdict = await verdictFor(gateConfig({ mode }), 'gth_web_fetch');
+        expect(verdict?.outcome).toBe('destructive');
+      });
+
+      it.each(['read-only', 'write'] as const)(
+        'at %s there is no rating to floor, and the human is asked regardless',
+        async (mode) => {
+          const pending = await shownToTheHuman(gateConfig({ mode }), 'gth_web_fetch');
+          expect(pending, 'still gated').not.toBeNull();
+          expect(pending?.safetyVerdict).toBeUndefined();
+        }
+      );
+
+      /**
+       * **The path on which this floor is reachable under today's gate**, and the reason the
+       * rest of this block is not merely a rehearsal for [[EXT-30]].
+       *
+       * `run_shell_command` is the only tool either backend puts in `interruptOn`, so it is the
+       * only call that suspends. When the model emits it with a MISSING or non-string `command`
+       * there is nothing to rate: `isShellCommand` is false, the call presents as a `tool` subject
+       * named `run_shell_command`, and — since that name is deliberately absent from our authored
+       * annotation table — its effective set is the fail-closed one, whose `openWorldHint` is true.
+       * So the tool arm floors it.
+       *
+       * That is the fail-closed direction and it is correct: a shell call whose command we cannot
+       * even read is not a call anything can say something reassuring about. The ACTION is
+       * unchanged — it escalated before this floor existed and it escalates now — so what these
+       * assertions pin is the VERDICT the human and the §6.2 exit carry.
+       */
+      describe('a malformed run_shell_command reaches the tool arm', () => {
+        const RATER_SAID = 'the rater was consulted';
+
+        /**
+         * A rated rung whose rater would answer `outcome`. Supplied so "floored" can be told
+         * apart from "the rater happened to say destructive" — the floor's own reason is compared
+         * by equality below, and the rater's is a different sentence.
+         */
+        function shellGateConfig(approvals: Record<string, unknown>, outcome: string) {
+          const invoke = vi.fn().mockResolvedValue({ outcome, reason: RATER_SAID });
+          const withStructuredOutput = vi.fn().mockReturnValue({ invoke });
+          const config = {
+            ...mockConfig,
+            llm: { withStructuredOutput } as any,
+            streamOutput: true as const,
+            approvals,
+            commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+          } as unknown as GthConfig;
+          return { config, withStructuredOutput };
+        }
+
+        /** Suspend once on `run_shell_command` carrying exactly these args, then complete. */
+        function pendingShellOnce(args: Record<string, unknown>) {
+          (mockAgent as any).getPendingToolInterrupts = vi
+            .fn()
+            .mockResolvedValueOnce([{ name: 'run_shell_command', args }])
+            .mockResolvedValueOnce([]);
+          const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+          (mockAgent as any).streamResume = streamResume;
+          mockAgent.stream.mockResolvedValue(streamOf('x'));
+          return streamResume;
+        }
+
+        /** Drive one gated shell call; report what the human saw and whether the rater ran. */
+        async function decideOn(
+          args: Record<string, unknown>,
+          approvals: Record<string, unknown> = { mode: 'auto-safe' },
+          outcome = 'safe'
+        ) {
+          const { config, withStructuredOutput } = shellGateConfig(approvals, outcome);
+          const runner = new GthAgentRunner(statusUpdateCallback);
+          const streamResume = pendingShellOnce(args);
+          await runner.init('code', config);
+          const human = vi.fn().mockResolvedValue({ type: 'approve' });
+          runner.setToolApprovalCallback(human);
+          await runner.processMessages([new HumanMessage('go')]);
+          expect(streamResume).toHaveBeenCalledTimes(1);
+          return {
+            pending:
+              human.mock.calls.length > 0 ? (human.mock.calls[0][0] as PendingToolInterrupt) : null,
+            raterRan: withStructuredOutput.mock.calls.length > 0,
+          };
+        }
+
+        it.each([
+          ['no command argument at all', {}],
+          ['a non-string command argument', { command: 42 }],
+          ['a null command argument', { command: null }],
+        ])('%s — floored as a tool, with no rating call', async (_label, args) => {
+          const { pending, raterRan } = await decideOn(args);
+          expect(pending, 'the human is still asked').not.toBeNull();
+          expect(raterRan, 'there is no command to rate, so nothing rated it').toBe(false);
+          expect(pending?.safetyVerdict?.outcome).toBe('destructive');
+          // Equality against the floor's own builder: a rater verdict, or a second floor written
+          // inline, would say something else.
+          expect(pending?.safetyVerdict?.reason).toBe(FLOOR_REASON);
+        });
+
+        /**
+         * The control that makes the pair discriminating: the SAME tool at the SAME rung, and only
+         * the argument differs. Without it every assertion above passes on a gate that floors
+         * every `run_shell_command`.
+         */
+        it('CONTROL: the very same tool WITH a string command is rated, not floored', async () => {
+          const { pending, raterRan } = await decideOn({ command: 'ls -la' });
+          expect(raterRan, 'the shell arm consulted the rater').toBe(true);
+          expect(pending, 'a `safe` command runs without asking').toBeNull();
+        });
+
+        it('CONTROL: a rated malformed call carries the FLOOR reason, never the rater’s', async () => {
+          // The rater would have said `destructive` too, so outcome alone cannot tell the two
+          // apart — the reason can, and it is the floor's.
+          const { pending } = await decideOn({}, { mode: 'auto-safe' }, 'destructive');
+          expect(pending?.safetyVerdict?.reason).not.toContain(RATER_SAID);
+          expect(pending?.safetyVerdict?.reason).toBe(FLOOR_REASON);
+        });
+
+        it('CONTROL: at an unrated rung the same malformed call carries no verdict', async () => {
+          const { pending } = await decideOn({}, { mode: 'write' });
+          expect(pending, 'still gated').not.toBeNull();
+          expect(pending?.safetyVerdict).toBeUndefined();
+        });
+      });
+    });
+  });
+
+  /**
+   * EXT-70 — **the non-shell corpus, driven through the real decision path**, and an EXPIRY-DATED
+   * pin on where that path stops today.
+   *
+   * `spec-fixtures/approvals-tool-corpus.json` is the other half of the approvals corpus: an
+   * innocuous tool NAME carrying hostile ARGUMENTS. `approvalsToolCorpus.spec.ts` asserts the two
+   * halves of §3.2 over it as pure functions — the entry matches on identity and arms the tripwire
+   * (`rate: true`), and the tripwire mapping turns each labelled outcome into run / escalate / halt.
+   *
+   * **This block asserts what the runner actually does with those same cases, which is less.** §4.3
+   * scopes the rater's first implementation to the shell, so `decideToolApproval` short-circuits on
+   * `!isShellCommand`: a rated allow-match on a tool subject approves with **no rating call at
+   * all**, hostile arguments and benign ones alike. Nothing here is a defect of this node — it is
+   * [[EXT-30]]'s scope, and the ledger records it — but it has to be a TEST rather than a sentence,
+   * because the alternative is a corpus of hostile calls that nothing in production ever looks at
+   * and no one notices.
+   *
+   * **When [[EXT-30]] routes tool calls into the tripwire, these assertions go red — that is their
+   * purpose.** Replace them with the consequence assertions in `approvalsToolCorpus.spec.ts`:
+   * `tc-01`/`tc-02`/`tc-03`/`tc-10` must then HALT, `tc-04`/`tc-05` must escalate, and the `run`
+   * cases must still run.
+   */
+  describe('the non-shell corpus reaches the gate (EXT-70 §3.2, §4.3)', () => {
+    /** Only the fields this block reads are modelled; the fixture's own spec models the rest. */
+    interface ToolCorpusCase {
+      id: string;
+      subject: 'tool' | 'mcpTool';
+      server?: string;
+      tool: string;
+      arguments: Record<string, unknown>;
+      outcome: string;
+      tripwire: string;
+    }
+
+    /** Resolved RELATIVE TO THIS FILE — never from `process.cwd()`, never a POSIX path literal. */
+    const TOOL_CORPUS: { cases: ToolCorpusCase[] } = JSON.parse(
+      readFileSync(
+        fileURLToPath(
+          new URL('../../../spec-fixtures/approvals-tool-corpus.json', import.meta.url)
+        ),
+        'utf8'
+      )
+    );
+
+    function streamOf(...chunks: string[]) {
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const c of chunks) yield c;
+        },
+      };
+    }
+
+    /** Suspend the run once on this call — the tool's registered name AND its arguments. */
+    function pendingToolOnce(toolName: string, args: Record<string, unknown>) {
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: toolName, args }])
+        .mockResolvedValueOnce([]);
+      const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+      (mockAgent as any).streamResume = streamResume;
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      return streamResume;
+    }
+
+    /**
+     * A rated rung (`auto-safe`) whose allow list holds the one entry a user could write for this
+     * call: its IDENTITY, which is all §3.1 lets a tool entry record. The rater model is a spy that
+     * would answer `attack` — so "no rating call" below is a fact about the gate and not about a
+     * model that had nothing to say.
+     */
+    function gateFor(corpusCase: ToolCorpusCase) {
+      const invoke = vi.fn().mockResolvedValue({ outcome: 'attack', reason: 'hostile arguments' });
+      const withStructuredOutput = vi.fn().mockReturnValue({ invoke });
+      const entry =
+        corpusCase.subject === 'mcpTool'
+          ? {
+              type: 'mcpTool',
+              server: corpusCase.server,
+              matcher: 'exact',
+              pattern: corpusCase.tool,
+            }
+          : { type: 'tool', matcher: 'exact', pattern: corpusCase.tool };
+      const config = {
+        ...mockConfig,
+        llm: { withStructuredOutput } as any,
+        streamOutput: true as const,
+        approvals: { mode: 'auto-safe', allow: [entry] },
+        ...(corpusCase.server === undefined
+          ? {}
+          : { mcpServers: { [corpusCase.server]: { url: 'https://example.invalid/mcp' } } }),
+      } as unknown as GthConfig;
+      return { config, withStructuredOutput };
+    }
+
+    const registeredName = (corpusCase: ToolCorpusCase) =>
+      corpusCase.subject === 'mcpTool'
+        ? mcpToolRegisteredName(corpusCase.server ?? '', corpusCase.tool)
+        : corpusCase.tool;
+
+    const ROWS = TOOL_CORPUS.cases.map((corpusCase) => [corpusCase.id, corpusCase] as const);
+
+    it('reads a fixture with hostile-argument cases in it (a wrong path must fail loudly)', () => {
+      expect(TOOL_CORPUS.cases.length).toBeGreaterThan(0);
+      // Both directions must be present, or the indiscriminate approval below proves nothing.
+      expect(TOOL_CORPUS.cases.filter((c) => c.tripwire === 'halt').length).toBeGreaterThan(0);
+      expect(TOOL_CORPUS.cases.filter((c) => c.tripwire === 'run').length).toBeGreaterThan(0);
+    });
+
+    it.each(ROWS)(
+      '%s: the identity entry approves it with NO rating call (EXT-30 turns this red)',
+      async (_id, corpusCase) => {
+        const { config, withStructuredOutput } = gateFor(corpusCase);
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        const streamResume = pendingToolOnce(registeredName(corpusCase), corpusCase.arguments);
+        await runner.init('code', config);
+        const human = vi.fn().mockResolvedValue({ type: 'approve' });
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('go')]);
+
+        // The run really did suspend on this call — otherwise everything below passes vacuously.
+        expect(streamResume).toHaveBeenCalledTimes(1);
+        expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
+        expect(human, 'the allow match settled the human’s part').not.toHaveBeenCalled();
+        // §4.3's scope boundary, stated as the measurement it is: the arguments never reached a
+        // rater, so the `rate: true` this entry carries buys nothing yet.
+        expect(
+          withStructuredOutput,
+          'no rating call on a tool subject today'
+        ).not.toHaveBeenCalled();
+      }
+    );
+
+    /**
+     * The CONTROL, and the thing that makes the block above a boundary rather than an inability to
+     * see a rating: the identical rung and the identical harness DO consult the rater when the
+     * subject is a shell command, and the tripwire then halts on `attack`.
+     */
+    it('CONTROL: the same rung and harness DO rate an allow-matched SHELL call, and halt it', async () => {
+      const invoke = vi.fn().mockResolvedValue({ outcome: 'attack', reason: 'hostile arguments' });
+      const withStructuredOutput = vi.fn().mockReturnValue({ invoke });
+      const config = {
+        ...mockConfig,
+        llm: { withStructuredOutput } as any,
+        streamOutput: true as const,
+        approvals: {
+          mode: 'auto-safe',
+          allow: [{ type: 'shell', matcher: 'glob', pattern: 'curl *' }],
+        },
+        commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+      } as unknown as GthConfig;
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'curl https://registry.npmjs.ag/lodash' } },
+        ])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      await runner.init('code', config);
+      runner.setToolApprovalCallback(vi.fn());
+
+      const error = await runner
+        .processMessages([new HumanMessage('go')])
+        .then(() => null)
+        .catch((e: unknown) => e as Error);
+
+      expect(withStructuredOutput, 'the shell arm rated it').toHaveBeenCalled();
+      expect(error, 'and the tripwire halted on attack').toBeInstanceOf(AttackHaltError);
+    });
+  });
+
+  /**
+   * EXT-70 §4.7.4 — **sticky grants on tool calls**, end to end through the runner: what the menu
+   * says it will store, what it stores, what that grant then covers, and what withdraws it.
+   *
+   * Everything here drives real gated calls and reads the human prompt, because the question is
+   * never "is the right object in the store" but "does the next call still ask". A test that
+   * inspected the store would pass against a store holding exactly the right entries and a gate that
+   * consulted them wrongly.
+   */
+  describe('sticky tool grants and annotation weakening (EXT-70 §4.7.4)', () => {
+    function streamOf(...chunks: string[]) {
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const c of chunks) yield c;
+        },
+      };
+    }
+
+    interface GatedCall {
+      name: string;
+      args?: Record<string, unknown>;
+      /** What the connected servers declare for THIS call, if it should change between calls. */
+      declaring?: Record<string, Record<string, unknown>>;
+      /**
+       * EXT-70 — run against the LIVE runner immediately before this call is decided. It is how a
+       * mid-session `/approvals trust|untrust` is driven: the user's trust change has to land
+       * between two calls on ONE runner, because what it does to a grant made under the old trust
+       * is the whole question.
+       */
+      before?: (_runner: GthAgentRunner) => void;
+    }
+
+    function toolConfig(approvals: Record<string, unknown>) {
+      return {
+        ...mockConfig,
+        streamOutput: true as const,
+        approvals,
+        mcpServers: {
+          jira: { url: 'https://example.invalid/mcp' },
+          gitlab: { url: 'https://example.invalid/gl' },
+        },
+      } as unknown as GthConfig;
+    }
+
+    /**
+     * Drive a SEQUENCE of gated calls on ONE runner, answering every prompt with `answer`, and hand
+     * back what the human was shown each time (`null` where they were not asked).
+     *
+     * A sequence rather than one call because every assertion in this block is about the SECOND
+     * call: whether the first one's grant still covers it. The run is asserted to have suspended and
+     * resumed once per call, so a "was not asked" can never pass on a run in which nothing was gated.
+     */
+    async function driveCalls(
+      config: GthConfig,
+      calls: readonly GatedCall[],
+      answer: Record<string, unknown> = { type: 'approve', scope: 'session' }
+    ): Promise<(PendingToolInterrupt | null)[]> {
+      // The call currently being decided. Every prompt is attributed to it by INDEX rather than by
+      // matching on the tool name: these sequences deliberately repeat one tool, so a name-based
+      // attribution would happily map the third call's prompt onto the second call and turn a
+      // "was not asked" into a pass.
+      let index = -1;
+      // Assigned below, before any interrupt is polled; the hook cannot run earlier than that.
+      let runner: GthAgentRunner;
+      const pending = vi.fn(async () => {
+        index += 1;
+        const call = calls[index];
+        if (call?.before) call.before(runner);
+        return call ? [{ name: call.name, args: call.args ?? {} }] : [];
+      });
+      // **Every connected server declares, not just the one being called.** The production accessor
+      // reports what all registered tools declare, so the map accumulates every declaration made up
+      // to and including the current call, later declarations of the SAME tool winning — which is
+      // how a sequence still models a tool that changes what it says about itself between calls.
+      //
+      // Two things depend on it. An accessor called AFTER the run (a `/approvals` display, a trust
+      // change) reads the whole set rather than an empty map, so a held grant is not read as though
+      // its server had withdrawn every annotation it ever made. And in a sequence that touches TWO
+      // servers, the first server goes on declaring after the second one's call — without that, its
+      // grant reads as maximally weakened whatever the user's trust says, and any assertion about
+      // WHY it was invalidated passes for the wrong reason.
+      const declared = vi.fn(() => {
+        const map = new Map<string, Record<string, unknown>>();
+        for (const call of calls.slice(0, Math.min(index + 1, calls.length))) {
+          for (const [name, annotations] of Object.entries(call.declaring ?? {})) {
+            map.set(name, annotations);
+          }
+        }
+        return map;
+      });
+      (mockAgent as any).getPendingToolInterrupts = pending;
+      (mockAgent as any).getDeclaredMcpToolAnnotations = declared;
+      const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+      (mockAgent as any).streamResume = streamResume;
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+
+      const byCall: (PendingToolInterrupt | null)[] = calls.map(() => null);
+      runner = new GthAgentRunner(statusUpdateCallback);
+      await runner.init('code', config);
+      const human = vi.fn(async (prompt: PendingToolInterrupt) => {
+        byCall[index] = prompt;
+        return answer;
+      });
+      runner.setToolApprovalCallback(human as never);
+      await runner.processMessages([new HumanMessage('go')]);
+
+      expect(streamResume).toHaveBeenCalledTimes(calls.length);
+      return byCall;
+    }
+
+    /** The warnings the runner emitted, for the invalidation notice. */
+    const warningsSaid = () =>
+      statusUpdateCallback.mock.calls.map(([, message]) => String(message)).join('\n');
+
+    /**
+     * **What every "nothing was withdrawn" assertion below anchors on.** The notice's prose is not
+     * pinned by anything, so a negative keyed on a phrase from it (*"was removed"*) goes vacuous the
+     * moment someone rewords the message — and every such negative in this block would go vacuous
+     * together, silently. This is the one fragment the notice cannot be reworded out of, because
+     * `describeWeakenedGrant` renders it with this very function: the grant it withdrew. Nothing
+     * else the runner reports about an auto-approved call renders an entry, so its presence means an
+     * invalidation and its absence means none.
+     */
+    const jiraSearchGrantLine = describeApprovalEntry({
+      type: 'mcpTool',
+      server: 'jira',
+      matcher: 'exact',
+      pattern: 'search',
+    });
+
+    afterEach(() => {
+      delete (mockAgent as any).getDeclaredMcpToolAnnotations;
+    });
+
+    describe('what the menu says it will store (§6)', () => {
+      it('names the tool and the host, in the form the user would write in config', async () => {
+        const [first] = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'gth_web_fetch', args: { input: 'https://docs.internal.example/guide' } },
+        ]);
+        expect(first?.grantPreview).toBe(
+          '{ "type": "tool", "matcher": "exact", "pattern": "gth_web_fetch", "host": "docs.internal.example" }'
+        );
+      });
+
+      it('names the server for an MCP tool, and no host where none is involved', async () => {
+        const [first] = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'mcp__jira__create_issue', args: { summary: 'a bug' } },
+        ]);
+        // §6's own example: *always approve mcp__jira__create_issue*, where no host is involved.
+        expect(first?.grantPreview).toBe(
+          '{ "type": "mcpTool", "server": "jira", "matcher": "exact", "pattern": "create_issue" }'
+        );
+      });
+    });
+
+    /**
+     * §4.7.4's bound, on the live gate. Both halves, because the first alone passes on a grant that
+     * ignores the host and the second alone passes on a grant that matches nothing.
+     */
+    describe('a tool+host grant binds to that host', () => {
+      const fetchArgs = (url: string) => ({ input: url });
+
+      it('auto-approves the SAME host and PROMPTS for a different one', async () => {
+        const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'gth_web_fetch', args: fetchArgs('https://docs.internal.example/a') },
+          { name: 'gth_web_fetch', args: fetchArgs('https://docs.internal.example/b') },
+          { name: 'gth_web_fetch', args: fetchArgs('https://evil.example/c') },
+        ]);
+        expect(prompts[0], 'the first call asks').not.toBeNull();
+        expect(prompts[1], 'the same host is covered by the grant').toBeNull();
+        expect(prompts[2], 'a different host is not').not.toBeNull();
+      });
+
+      it('and a later call carrying NO host is not covered either', async () => {
+        const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'gth_web_fetch', args: fetchArgs('https://docs.internal.example/a') },
+          { name: 'gth_web_fetch', args: { input: 'not a url' } },
+        ]);
+        expect(prompts[1]).not.toBeNull();
+      });
+    });
+
+    /**
+     * §4.7.5 — the server key is what a grant is bound to, so one server's grant can never be
+     * claimed by another server's same-named tool. The control is the same tool on the same server.
+     */
+    it('a grant for one server’s tool never covers another server’s same-named tool', async () => {
+      const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+        { name: 'mcp__jira__delete_issue' },
+        { name: 'mcp__jira__delete_issue' },
+        { name: 'mcp__gitlab__delete_issue' },
+      ]);
+      expect(prompts[0]).not.toBeNull();
+      expect(prompts[1], 'CONTROL: the same tool on the same server IS covered').toBeNull();
+      expect(prompts[2], 'the other server’s same-named tool is not').not.toBeNull();
+    });
+
+    /**
+     * §6 — the menu may not display one thing and store another. A call naming two hosts has no
+     * honest single-host entry, so no sticky grant is offered at all and nothing is recorded.
+     */
+    describe('a call naming several hosts gets no grant', () => {
+      const twoHosts = { from: 'https://a.example/x', to: 'https://b.example/y' };
+
+      it('offers no preview, records nothing, and asks again next time', async () => {
+        const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'gth_web_fetch', args: twoHosts },
+          { name: 'gth_web_fetch', args: twoHosts },
+        ]);
+        expect(prompts[0]?.grantPreview).toBeUndefined();
+        expect(prompts[1], 'nothing was remembered, so it asks again').not.toBeNull();
+      });
+
+      it('CONTROL: one of those hosts alone does get a preview and does stop asking', async () => {
+        const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'gth_web_fetch', args: { from: 'https://a.example/x' } },
+          { name: 'gth_web_fetch', args: { from: 'https://a.example/x' } },
+        ]);
+        expect(prompts[0]?.grantPreview).toContain('a.example');
+        expect(prompts[1]).toBeNull();
+      });
+
+      /**
+       * **What refusing the multi-host grant does NOT do, pinned so the rule's stated reason cannot
+       * drift back into claiming it.** A host-less entry imposes no host condition at all, so the
+       * tool-only grant that any host-less call produces auto-approves a call naming two hosts — the
+       * identical breadth this arm declines to grant, handed out the moment one argument fails to
+       * parse as a URL. The arm survives on the §3.1 grammar (one optional `host` string, strict
+       * arms, so a set is unrepresentable) and on §4.7.4's useless-grant test, never on breadth.
+       *
+       * Both tests above hold the host count at TWO across their calls, which is exactly why neither
+       * can see this: the grant and the call it covers have to differ in host COUNT, not in host.
+       */
+      it('a tool-only grant from a HOSTLESS call already covers a multi-host one', async () => {
+        const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'gth_web_fetch', args: { input: 'not a url' } },
+          { name: 'gth_web_fetch', args: twoHosts },
+        ]);
+        expect(prompts[0]?.grantPreview, 'the hostless call takes the tool-only arm').toBe(
+          '{ "type": "tool", "matcher": "exact", "pattern": "gth_web_fetch" }'
+        );
+        expect(prompts[1], 'and that grant covers a call naming two hosts').toBeNull();
+      });
+    });
+
+    /**
+     * A shell call with no readable `command` presents as a `tool` subject named
+     * `run_shell_command`, and it names no host — so without an explicit exclusion it would take the
+     * tool-only arm and write a grant that auto-approves every future call whose command cannot even
+     * be read.
+     */
+    describe('run_shell_command never becomes a tool grant', () => {
+      it('offers no preview and remembers nothing, so the next malformed call still asks', async () => {
+        const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'run_shell_command', args: {} },
+          { name: 'run_shell_command', args: {} },
+        ]);
+        expect(prompts[0]?.grantPreview).toBeUndefined();
+        expect(prompts[1]).not.toBeNull();
+      });
+
+      it('CONTROL: another tool in exactly the same shape does get a grant', async () => {
+        const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+          { name: 'gth_checklist', args: {} },
+          { name: 'gth_checklist', args: {} },
+        ]);
+        expect(prompts[0]?.grantPreview).toContain('gth_checklist');
+        expect(prompts[1]).toBeNull();
+      });
+    });
+
+    it('at bypass nothing is remembered from a tool call', async () => {
+      const prompts = await driveCalls(toolConfig({ mode: 'bypass' }), [
+        { name: 'gth_checklist', args: {} },
+        { name: 'gth_checklist', args: {} },
+      ]);
+      expect(prompts[0]?.grantPreview).toBeUndefined();
+      expect(prompts[1]).not.toBeNull();
+    });
+
+    /**
+     * §4.7.4 — **weakening invalidates, with a notice.** Every "X does not invalidate" assertion
+     * below is paired with a weakening that DOES, in the same block, because on a broken checker —
+     * one that never invalidates anything — every negative passes and only the pair fails.
+     */
+    describe('weakening the effective annotations invalidates the grant', () => {
+      /** Every hint believed, so a declaration can state any combination and be read verbatim. */
+      const trustingJira = (approvals: Record<string, unknown> = {}) =>
+        toolConfig({
+          mode: 'write',
+          mcp: {
+            servers: {
+              jira: {
+                trustAnnotations: [
+                  'readOnlyHint',
+                  'destructiveHint',
+                  'idempotentHint',
+                  'openWorldHint',
+                ],
+              },
+            },
+          },
+          ...approvals,
+        });
+
+      /**
+       * The three moves, each ISOLATED. `destructiveHint` needs `readOnlyHint: false` on both sides
+       * because effective `readOnlyHint: true` derives `destructiveHint: false` (§4.7.1), so the
+       * obvious spelling would move two hints and prove nothing about `destructiveHint` in
+       * particular — which is exactly how a checker that implements one field and misses two hides.
+       */
+      const LOCAL_WRITE = {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      };
+
+      /**
+       * The fourth column is the hint that MOVED; the fifth is one that stayed exactly where it was
+       * (`false` on both sides of this row), and naming it is what makes the fourth mean something.
+       * A notice built from the four hints rather than from the moved ones reads *"openWorldHint
+       * changed from false to false"* — the gate reporting a change that did not happen — and passes
+       * every `toContain` here. Only the absence assertion sees it.
+       */
+      it.each([
+        [
+          'readOnlyHint true → false',
+          { ...LOCAL_WRITE, readOnlyHint: true },
+          LOCAL_WRITE,
+          'readOnlyHint',
+          'openWorldHint',
+        ],
+        [
+          'openWorldHint false → true',
+          LOCAL_WRITE,
+          { ...LOCAL_WRITE, openWorldHint: true },
+          'openWorldHint',
+          'readOnlyHint',
+        ],
+        [
+          'destructiveHint false → true',
+          LOCAL_WRITE,
+          { ...LOCAL_WRITE, destructiveHint: true },
+          'destructiveHint',
+          'readOnlyHint',
+        ],
+      ])(
+        '%s invalidates, and the notice names it and no hint that stayed put',
+        async (_label, before, after, hint, stayed) => {
+          const prompts = await driveCalls(trustingJira(), [
+            { name: 'mcp__jira__search', declaring: { mcp__jira__search: before } },
+            { name: 'mcp__jira__search', declaring: { mcp__jira__search: after } },
+          ]);
+          expect(prompts[0], 'the first call asks and grants').not.toBeNull();
+          expect(prompts[1], 'the weakened tool asks again').not.toBeNull();
+
+          const said = warningsSaid();
+          expect(said).toContain('search');
+          expect(said).toContain('jira');
+          expect(said).toContain(hint);
+          expect(said, 'a hint that did not move is not something to report').not.toContain(stayed);
+        }
+      );
+
+      it.each([
+        ['readOnlyHint false → true', LOCAL_WRITE, { ...LOCAL_WRITE, readOnlyHint: true }],
+        [
+          'openWorldHint true → false',
+          { ...LOCAL_WRITE, openWorldHint: true },
+          { ...LOCAL_WRITE, openWorldHint: false },
+        ],
+        ['destructiveHint true → false', { ...LOCAL_WRITE, destructiveHint: true }, LOCAL_WRITE],
+      ])(
+        'the mirror image (%s) STRENGTHENS and the grant stands',
+        async (_label, before, after) => {
+          const prompts = await driveCalls(trustingJira(), [
+            { name: 'mcp__jira__search', declaring: { mcp__jira__search: before } },
+            { name: 'mcp__jira__search', declaring: { mcp__jira__search: after } },
+          ]);
+          expect(prompts[1], 'a safer tool is still covered').toBeNull();
+          expect(warningsSaid(), 'and nothing was withdrawn').not.toContain(jiraSearchGrantLine);
+        }
+      );
+
+      it('an unchanged declaration invalidates nothing', async () => {
+        const prompts = await driveCalls(trustingJira(), [
+          { name: 'mcp__jira__search', declaring: { mcp__jira__search: LOCAL_WRITE } },
+          { name: 'mcp__jira__search', declaring: { mcp__jira__search: LOCAL_WRITE } },
+        ]);
+        expect(prompts[1]).toBeNull();
+      });
+
+      /**
+       * **Descriptions churn on every server release**, and a grant that dissolved on churn would
+       * teach users that grants are worthless. It holds by construction rather than by a rule: a
+       * snapshot is four booleans and a description is not one of them.
+       */
+      it('a change to anything BUT the four hints invalidates nothing', async () => {
+        const prompts = await driveCalls(trustingJira(), [
+          {
+            name: 'mcp__jira__search',
+            declaring: { mcp__jira__search: { ...LOCAL_WRITE, description: 'Search issues.' } },
+          },
+          {
+            name: 'mcp__jira__search',
+            declaring: {
+              mcp__jira__search: {
+                ...LOCAL_WRITE,
+                description: 'Search issues, now with more fields.',
+                title: 'Issue search',
+              },
+            },
+          },
+        ]);
+        expect(prompts[1], 'the grant survives a description change').toBeNull();
+      });
+
+      it('CONTROL: the same pair with one hint weakened DOES invalidate', async () => {
+        const prompts = await driveCalls(trustingJira(), [
+          {
+            name: 'mcp__jira__search',
+            declaring: { mcp__jira__search: { ...LOCAL_WRITE, description: 'Search issues.' } },
+          },
+          {
+            name: 'mcp__jira__search',
+            declaring: {
+              mcp__jira__search: {
+                ...LOCAL_WRITE,
+                openWorldHint: true,
+                description: 'Search issues, now with more fields.',
+              },
+            },
+          },
+        ]);
+        expect(prompts[1]).not.toBeNull();
+      });
+
+      /**
+       * §4.7.1 — an UNTRUSTED server's effective set IS the constant fail-closed default, so its
+       * declarations cannot move it and cannot invalidate anything. By construction, not by a rule.
+       * The control is the very same declaration pair from a TRUSTED server.
+       */
+      it('an untrusted server’s declaration change invalidates nothing', async () => {
+        // No `mcp` block at all: nothing external is believed.
+        const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+          {
+            name: 'mcp__jira__search',
+            declaring: { mcp__jira__search: { ...LOCAL_WRITE, readOnlyHint: true } },
+          },
+          {
+            name: 'mcp__jira__search',
+            declaring: {
+              mcp__jira__search: { ...LOCAL_WRITE, readOnlyHint: false, openWorldHint: true },
+            },
+          },
+        ]);
+        expect(prompts[1], 'nothing the server says can move a constant').toBeNull();
+        expect(warningsSaid(), 'and nothing was withdrawn').not.toContain(jiraSearchGrantLine);
+      });
+
+      it('CONTROL: the very same declaration pair from a TRUSTED server does invalidate', async () => {
+        const prompts = await driveCalls(trustingJira(), [
+          {
+            name: 'mcp__jira__search',
+            declaring: { mcp__jira__search: { ...LOCAL_WRITE, readOnlyHint: true } },
+          },
+          {
+            name: 'mcp__jira__search',
+            declaring: {
+              mcp__jira__search: { ...LOCAL_WRITE, readOnlyHint: false, openWorldHint: true },
+            },
+          },
+        ]);
+        expect(prompts[1]).not.toBeNull();
+      });
+
+      /**
+       * **A tool-only grant imposes no host condition, so it auto-approves a call that DOES carry a
+       * host** — which means the set of grants that could approve a call is larger than the one
+       * entry that call would itself grant. A lookup keyed only on the call's own entry misses the
+       * tool-only grant that is about to approve it, and the weakening rides straight through: the
+       * exact failure §4.7.4 exists to stop, reachable for any tool whose arguments sometimes carry
+       * a URL and sometimes do not.
+       */
+      describe('a tool-only grant is invalidated by a weakened call that carries a host', () => {
+        const withHost = { url: 'https://x.example/a' };
+
+        it('the weakening is caught even though the call now names a host', async () => {
+          const prompts = await driveCalls(trustingJira(), [
+            // Grants {mcpTool jira/fetch} — no host in these arguments, so no host bound.
+            { name: 'mcp__jira__fetch', declaring: { mcp__jira__fetch: LOCAL_WRITE } },
+            {
+              name: 'mcp__jira__fetch',
+              args: withHost,
+              declaring: { mcp__jira__fetch: { ...LOCAL_WRITE, openWorldHint: true } },
+            },
+          ]);
+          expect(prompts[1], 'the weakened tool asks again').not.toBeNull();
+          expect(warningsSaid()).toContain('openWorldHint');
+        });
+
+        it('CONTROL: without the weakening that very call is auto-approved by it', async () => {
+          const prompts = await driveCalls(trustingJira(), [
+            { name: 'mcp__jira__fetch', declaring: { mcp__jira__fetch: LOCAL_WRITE } },
+            {
+              name: 'mcp__jira__fetch',
+              args: withHost,
+              declaring: { mcp__jira__fetch: LOCAL_WRITE },
+            },
+          ]);
+          expect(prompts[1], 'a tool-only grant covers a call carrying a host').toBeNull();
+        });
+
+        /**
+         * The other direction stays untouched: a grant bound to one host is not this call's to
+         * invalidate, because it does not match this call either. Asserted by the host-A grant still
+         * working after a weakened call to host B.
+         */
+        it('a grant bound to another host is NOT invalidated by a weakened call elsewhere', async () => {
+          const prompts = await driveCalls(trustingJira(), [
+            {
+              name: 'mcp__jira__fetch',
+              args: { url: 'https://a.example/1' },
+              declaring: { mcp__jira__fetch: LOCAL_WRITE },
+            },
+            {
+              name: 'mcp__jira__fetch',
+              args: { url: 'https://b.example/2' },
+              declaring: { mcp__jira__fetch: { ...LOCAL_WRITE, openWorldHint: true } },
+            },
+            {
+              name: 'mcp__jira__fetch',
+              args: { url: 'https://a.example/3' },
+              declaring: { mcp__jira__fetch: LOCAL_WRITE },
+            },
+          ]);
+          expect(prompts[1], 'the other host was never granted').not.toBeNull();
+          expect(prompts[2], 'the host A grant survived it').toBeNull();
+        });
+      });
+
+      /**
+       * Invalidation is a REMOVAL, so the human can re-grant. The stores de-duplicate by entry
+       * identity: a grant that was skipped rather than removed would make the re-approval a silent
+       * no-op and the tool would ask forever.
+       */
+      it('the human can re-grant the weakened tool, and the new grant holds', async () => {
+        const prompts = await driveCalls(trustingJira(), [
+          { name: 'mcp__jira__search', declaring: { mcp__jira__search: LOCAL_WRITE } },
+          {
+            name: 'mcp__jira__search',
+            declaring: { mcp__jira__search: { ...LOCAL_WRITE, openWorldHint: true } },
+          },
+          {
+            name: 'mcp__jira__search',
+            declaring: { mcp__jira__search: { ...LOCAL_WRITE, openWorldHint: true } },
+          },
+        ]);
+        expect(prompts[1], 'the weakening asked again').not.toBeNull();
+        expect(prompts[2], 'and the re-grant covers the tool as it now is').toBeNull();
+      });
+
+      /**
+       * An `always` grant and its invalidation both reach the FILE. Held only in memory the removal
+       * would be undone by the next session, so the notice would fire once per session forever.
+       */
+      it('an always-scoped tool grant is persisted, and its invalidation rewrites the file', async () => {
+        const storePath = join(projectDir, SHELL_ALLOWLIST_FILE);
+        await driveCalls(
+          trustingJira(),
+          [{ name: 'mcp__jira__search', declaring: { mcp__jira__search: LOCAL_WRITE } }],
+          { type: 'approve', scope: 'always' }
+        );
+        const written = JSON.parse(readFileSync(storePath, 'utf8'));
+        expect(written.grants).toHaveLength(1);
+        expect(written.grants[0].entry).toEqual({
+          type: 'mcpTool',
+          server: 'jira',
+          matcher: 'exact',
+          pattern: 'search',
+        });
+        expect(written.grants[0].annotations).toEqual(LOCAL_WRITE);
+
+        // A fresh runner reads that file, sees the weakened declaration, and clears the grant.
+        const prompts = await driveCalls(
+          trustingJira(),
+          [
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: { ...LOCAL_WRITE, openWorldHint: true } },
+            },
+          ],
+          { type: 'reject' }
+        );
+        expect(prompts[0], 'the persisted grant no longer covers it').not.toBeNull();
+        expect(JSON.parse(readFileSync(storePath, 'utf8')).grants).toHaveLength(0);
+      });
+    });
+
+    /**
+     * EXT-70 §4.7.1 / §6 / §4.7.4 — **the surface half.** What the menu names a grant, what the
+     * runner exposes for an approvals view, and what moving trust from the TUI does to grants made
+     * under the old trust.
+     */
+    describe('the TUI trust affordance, and what the menu names (§4.7.1, §6)', () => {
+      /** A declaration a fully-trusting session reads verbatim: local, safe, closed. */
+      const SAFE_DECL = {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      };
+      /** The same, but not read-only — so `destructiveHint` is not forced by the §4.7.1 derivation. */
+      const WRITING_DECL = { ...SAFE_DECL, readOnlyHint: false };
+      const ALL_HINTS = [
+        'readOnlyHint',
+        'destructiveHint',
+        'idempotentHint',
+        'openWorldHint',
+      ] as const;
+
+      const believingJira = (trustAnnotations: readonly string[] = ALL_HINTS) =>
+        toolConfig({ mode: 'write', mcp: { servers: { jira: { trustAnnotations } } } });
+
+      /** A runner initialized on one config, for the accessors that need no run at all. */
+      async function idleRunner(approvals: Record<string, unknown>): Promise<GthAgentRunner> {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        await runner.init('code', toolConfig(approvals));
+        return runner;
+      }
+
+      /** What one server's believed hints are, by the runner's own display accessor. */
+      const believed = (runner: GthAgentRunner, server: string): readonly string[] | undefined =>
+        runner.getMcpAnnotationTrust().servers.find((s) => s.server === server)?.trusted;
+
+      describe('§6 — the menu names what it will store, in the same words the notice uses', () => {
+        /**
+         * **The pin against drift between the two renderers.** The menu's summary and the §4.7.4
+         * withdrawal notice describe ONE grant, and a user who is shown two different descriptions
+         * of the same thing stops trusting both. Asserted as an identity plus a containment rather
+         * than as two literals, so no rewording can satisfy one and not the other.
+         */
+        it('the summary the menu shows is the exact line the withdrawal notice later names', async () => {
+          const prompts = await driveCalls(believingJira(), [
+            { name: 'mcp__jira__search', declaring: { mcp__jira__search: SAFE_DECL } },
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: { ...SAFE_DECL, openWorldHint: true } },
+            },
+          ]);
+          const summary = prompts[0]?.grantSummary;
+          expect(summary).toBe(jiraSearchGrantLine);
+          expect(prompts[1], 'the weakened tool asks again').not.toBeNull();
+          expect(warningsSaid()).toContain(summary as string);
+        });
+
+        it('names the tool and its host bound, never the arguments', async () => {
+          const [first] = await driveCalls(toolConfig({ mode: 'write' }), [
+            { name: 'gth_web_fetch', args: { input: 'https://docs.internal.example/guide' } },
+          ]);
+          expect(first?.grantSummary).toBe('tool gth_web_fetch (host docs.internal.example)');
+          expect(first?.grantSummary, 'the arguments are not what is stored').not.toContain(
+            'guide'
+          );
+        });
+
+        /**
+         * The pair §6 turns on: a control is SHOWN only where something would be stored. Asserting
+         * only the absence would pass on a runner that never sent a summary at all, so the same
+         * tool, one host fewer, is the control.
+         */
+        it('offers nothing to name where nothing would be stored (several hosts)', async () => {
+          const [several] = await driveCalls(toolConfig({ mode: 'write' }), [
+            {
+              name: 'gth_web_fetch',
+              args: { a: 'https://one.example/x', b: 'https://two.example/y' },
+            },
+          ]);
+          expect(several?.grantSummary).toBeUndefined();
+          expect(several?.grantPreview).toBeUndefined();
+
+          const [one] = await driveCalls(toolConfig({ mode: 'write' }), [
+            { name: 'gth_web_fetch', args: { a: 'https://one.example/x' } },
+          ]);
+          expect(one?.grantSummary, 'CONTROL: one host is named').toBe(
+            'tool gth_web_fetch (host one.example)'
+          );
+        });
+      });
+
+      describe('§4.7.1 — trust moves per hint, never per server', () => {
+        /**
+         * The trap this node exists to avoid: a test that believes one hint and checks that hint
+         * passes just as well on a per-server boolean. So the assertion is on BOTH halves — the one
+         * moved and one deliberately left alone.
+         */
+        it('believing one hint leaves the others exactly where they were', async () => {
+          const runner = await idleRunner({ mode: 'write' });
+          runner.setMcpAnnotationTrust('jira', ['readOnlyHint'], true);
+          expect(believed(runner, 'jira')).toEqual(['readOnlyHint']);
+
+          runner.setMcpAnnotationTrust('jira', ['openWorldHint'], true);
+          expect(believed(runner, 'jira')).toEqual(['readOnlyHint', 'openWorldHint']);
+
+          runner.setMcpAnnotationTrust('jira', ['readOnlyHint'], false);
+          expect(believed(runner, 'jira'), 'the other hint survives the withdrawal').toEqual([
+            'openWorldHint',
+          ]);
+        });
+
+        /**
+         * The same claim where it decides something. A grant records the effective set it was made
+         * under (§4.7.4), so the snapshot is the derivation's own answer: with only `readOnlyHint`
+         * believed, the server's `openWorldHint: false` is NOT read and the effective value stays
+         * the fail-closed `true`. One object, both halves.
+         */
+        it('an unbelieved hint stays fail-closed in the set a grant is made under', async () => {
+          let runner!: GthAgentRunner;
+          // Believed FROM THE TUI, on a session whose config believes nothing — so this pins the
+          // affordance itself and not the config path Task 1 already covers.
+          await driveCalls(toolConfig({ mode: 'write' }), [
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: SAFE_DECL },
+              before: (r) => {
+                r.setMcpAnnotationTrust('jira', ['readOnlyHint'], true);
+                runner = r;
+              },
+            },
+          ]);
+          expect(runner.getGrants()[0].annotations).toEqual({
+            readOnlyHint: true, // believed, and read verbatim
+            destructiveHint: false, // §4.7.1's derivation, not the declaration
+            idempotentHint: false, // NOT believed — the declared `true` is ignored
+            openWorldHint: true, // NOT believed — the declared `false` is ignored
+          });
+        });
+
+        /**
+         * §9 — a server not named under `servers` inherits `defaults`, and naming it makes it state
+         * its relationship IN FULL. So a trust change must seed from what was in force, or believing
+         * one more hint would silently withdraw everything `defaults` granted — a weakening nobody
+         * asked for, and one that would invalidate their grants.
+         */
+        it('believing a hint for an unnamed server keeps what defaults already granted', async () => {
+          const runner = await idleRunner({
+            mode: 'write',
+            mcp: { defaults: { trustAnnotations: ['openWorldHint'] } },
+          });
+          runner.setMcpAnnotationTrust('jira', ['readOnlyHint'], true);
+          expect(believed(runner, 'jira')).toEqual(['readOnlyHint', 'openWorldHint']);
+        });
+
+        it('CONTROL: a server NAMED with no trust does not inherit defaults, and still does not', async () => {
+          const runner = await idleRunner({
+            mode: 'write',
+            mcp: {
+              defaults: { trustAnnotations: ['openWorldHint'] },
+              servers: { jira: {} },
+            },
+          });
+          expect(believed(runner, 'jira'), 'a named server states it in full').toEqual([]);
+          runner.setMcpAnnotationTrust('jira', ['readOnlyHint'], true);
+          expect(believed(runner, 'jira')).toEqual(['readOnlyHint']);
+        });
+
+        it('a trust change never rewrites the config block it was resolved from', async () => {
+          const mcp = { servers: { jira: { trustAnnotations: ['readOnlyHint'] } } };
+          const runner = new GthAgentRunner(statusUpdateCallback);
+          await runner.init('code', toolConfig({ mode: 'write', mcp }));
+          runner.setMcpAnnotationTrust('jira', ['openWorldHint'], true);
+          expect(mcp.servers.jira.trustAnnotations).toEqual(['readOnlyHint']);
+        });
+
+        it('names every server either side knows about, believed or not', async () => {
+          const runner = await idleRunner({
+            mode: 'write',
+            mcp: { servers: { typo: { trustAnnotations: ['readOnlyHint'] } } },
+          });
+          const view = runner.getMcpAnnotationTrust();
+          expect(view.servers.map((s) => [s.server, s.configured])).toEqual(
+            expect.arrayContaining([
+              ['jira', true],
+              ['gitlab', true],
+              ['typo', false],
+            ])
+          );
+        });
+      });
+
+      describe('§4.7.4 — withdrawing trust weakens, and the change SAYS so', () => {
+        /**
+         * The three hints whose fail-closed default is the dangerous value. **`destructiveHint` is
+         * one of them** — this node's own brief said it was not, and the moves table says otherwise:
+         * a believed `destructiveHint: false` becomes `true` again the moment it stops being
+         * believed. `readOnlyHint` is false in that row's declaration on purpose, because an
+         * effective `readOnlyHint: true` would force `destructiveHint: false` by derivation and the
+         * row would prove nothing.
+         */
+        it.each([
+          ['readOnlyHint', SAFE_DECL],
+          ['openWorldHint', SAFE_DECL],
+          ['destructiveHint', WRITING_DECL],
+        ] as const)('withdrawing %s reports a weakening', async (hint, decl) => {
+          let runner!: GthAgentRunner;
+          await driveCalls(believingJira(), [
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: decl },
+              before: (r) => {
+                runner = r;
+              },
+            },
+          ]);
+          const change = runner.setMcpAnnotationTrust('jira', [hint], false);
+          expect(change.removed).toEqual([hint]);
+          expect(change.weakening).toEqual([hint]);
+          expect(change.invalidates).toEqual([jiraSearchGrantLine]);
+        });
+
+        /**
+         * The negative, and the only hint it is true of: `idempotentHint` names no weakening move,
+         * so withdrawing it invalidates nothing. Its control is the `it.each` above — on a checker
+         * that reported nothing for anything, this would pass alone.
+         */
+        it('withdrawing idempotentHint reports no weakening and no invalidation', async () => {
+          let runner!: GthAgentRunner;
+          await driveCalls(believingJira(), [
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: SAFE_DECL },
+              before: (r) => {
+                runner = r;
+              },
+            },
+          ]);
+          const change = runner.setMcpAnnotationTrust('jira', ['idempotentHint'], false);
+          expect(change.removed, 'it really was believed, and really was withdrawn').toEqual([
+            'idempotentHint',
+          ]);
+          expect(change.weakening).toEqual([]);
+          expect(change.invalidates).toEqual([]);
+        });
+
+        /**
+         * BELIEVING can never weaken: every weakening move ends at the fail-closed default, and
+         * belief only moves away from it. Its control is the same hints withdrawn, immediately
+         * after, on the same runner.
+         */
+        it('believing a hint reports no weakening — its control is withdrawing the same hint', async () => {
+          let runner!: GthAgentRunner;
+          await driveCalls(believingJira(['readOnlyHint']), [
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: SAFE_DECL },
+              before: (r) => {
+                runner = r;
+              },
+            },
+          ]);
+          const granted = runner.setMcpAnnotationTrust('jira', ['openWorldHint'], true);
+          expect(granted.added).toEqual(['openWorldHint']);
+          expect(granted.weakening).toEqual([]);
+          expect(granted.invalidates).toEqual([]);
+
+          const withdrawn = runner.setMcpAnnotationTrust('jira', ['readOnlyHint'], false);
+          expect(withdrawn.weakening, 'CONTROL: the withdrawal does report one').toEqual([
+            'readOnlyHint',
+          ]);
+        });
+
+        /**
+         * Two claims, and the test has to carry both: the listing names only the server whose trust
+         * moved, **and it names it because of the withdrawal**. The second is the one a scoping test
+         * gets for free and should not: `invalidates` compares each grant's snapshot against the set
+         * in force NOW, so a jira grant that read as weakened for some reason of its own would be
+         * listed under any withdrawal at all, and the assertion would pass without trust having
+         * decided anything.
+         *
+         * So the causal half runs FIRST and on the same runner: `idempotentHint` is the one hint no
+         * weakening move names, and withdrawing it must list nothing. Order matters — the comparison
+         * is snapshot-versus-now rather than before-versus-after, so once `readOnlyHint` is gone the
+         * grant stays weakened and every later withdrawal would list it too.
+         */
+        it('names only THIS server’s grants, and only because the withdrawal weakened them', async () => {
+          let runner!: GthAgentRunner;
+          await driveCalls(
+            toolConfig({
+              mode: 'write',
+              mcp: {
+                servers: {
+                  jira: { trustAnnotations: ALL_HINTS },
+                  gitlab: { trustAnnotations: ALL_HINTS },
+                },
+              },
+            }),
+            [
+              {
+                name: 'mcp__jira__search',
+                declaring: { mcp__jira__search: SAFE_DECL },
+                before: (r) => {
+                  runner = r;
+                },
+              },
+              { name: 'mcp__gitlab__search', declaring: { mcp__gitlab__search: SAFE_DECL } },
+            ]
+          );
+          expect(runner.getGrants(), 'both were granted').toHaveLength(2);
+
+          const harmless = runner.setMcpAnnotationTrust('jira', ['idempotentHint'], false);
+          expect(harmless.removed, 'it really was believed, and really was withdrawn').toEqual([
+            'idempotentHint',
+          ]);
+          expect(
+            harmless.invalidates,
+            'a withdrawal that weakens nothing lists nothing — so the line below is caused by the trust move'
+          ).toEqual([]);
+
+          const change = runner.setMcpAnnotationTrust('jira', ['readOnlyHint'], false);
+          expect(change.invalidates).toEqual([jiraSearchGrantLine]);
+        });
+
+        /**
+         * **The behaviour the notice promises, end to end.** The grant is made while the hint is
+         * believed; the user withdraws belief mid-session, exactly as `/approvals untrust` does; the
+         * next call to that very tool is invalidated with the §4.7.4 notice and asks again. Nothing
+         * about the server's declaration changed — the trust did.
+         *
+         * Once per hint whose withdrawal weakens on this declaration, because the whole sequence is
+         * what a row proves: a checker that answered for `readOnlyHint` alone would leave the other
+         * covered only as far as `change.invalidates` and never as far as the second call actually
+         * being asked about.
+         *
+         * **`destructiveHint` is the third such hint and has no row here — a stated boundary, not a
+         * claim of coverage.** It is asserted only as far as `change.invalidates`, by the three-row
+         * `it.each` above, which is also where the not-read-only declaration it needs belongs. So
+         * nothing below that level is proved for it, and adding the row is the way to prove it.
+         */
+        it.each(['readOnlyHint', 'openWorldHint'] as const)(
+          'a mid-session withdrawal of %s invalidates the grant at the next call, with the notice',
+          async (hint) => {
+            const prompts = await driveCalls(believingJira(), [
+              { name: 'mcp__jira__search', declaring: { mcp__jira__search: SAFE_DECL } },
+              {
+                name: 'mcp__jira__search',
+                declaring: { mcp__jira__search: SAFE_DECL },
+                before: (r) => {
+                  r.setMcpAnnotationTrust('jira', [hint], false);
+                },
+              },
+            ]);
+            expect(prompts[0], 'the first call asks and grants').not.toBeNull();
+            expect(prompts[1], 'the withdrawal made the tool ask again').not.toBeNull();
+            const said = warningsSaid();
+            expect(said).toContain(jiraSearchGrantLine);
+            expect(said).toContain(hint);
+          }
+        );
+
+        /**
+         * CONTROL for the above: withdrawing the one hint no weakening move names leaves the grant
+         * in force. Without it, an invalidator that fired on ANY trust change would pass the test
+         * above.
+         */
+        it('CONTROL: withdrawing idempotentHint leaves the grant covering the next call', async () => {
+          const prompts = await driveCalls(believingJira(), [
+            { name: 'mcp__jira__search', declaring: { mcp__jira__search: SAFE_DECL } },
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: SAFE_DECL },
+              before: (r) => {
+                r.setMcpAnnotationTrust('jira', ['idempotentHint'], false);
+              },
+            },
+          ]);
+          expect(prompts[1], 'the grant still covers it').toBeNull();
+          expect(warningsSaid()).not.toContain(jiraSearchGrantLine);
+        });
+
+        it('reports whether the key names a configured server, without refusing an unknown one', async () => {
+          const runner = await idleRunner({ mode: 'write' });
+          expect(runner.setMcpAnnotationTrust('jira', ['readOnlyHint'], true).configured).toBe(
+            true
+          );
+          const unknown = runner.setMcpAnnotationTrust('jira-typo', ['readOnlyHint'], true);
+          expect(unknown.configured).toBe(false);
+          // Not refused: §9 deliberately does not check policy keys against `mcpServers`, so policy
+          // may be written before the server exists and config ORDER never matters.
+          expect(unknown.trusted).toEqual(['readOnlyHint']);
+        });
+      });
+
+      describe('§3/§4.7.4 — getGrants, the approvals view’s data', () => {
+        it('shows what was granted, when, at what scope, and under which annotations', async () => {
+          let runner!: GthAgentRunner;
+          await driveCalls(believingJira(), [
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: SAFE_DECL },
+              before: (r) => {
+                runner = r;
+              },
+            },
+          ]);
+          const [grant] = runner.getGrants();
+          expect(grant.entry).toEqual({
+            type: 'mcpTool',
+            server: 'jira',
+            matcher: 'exact',
+            pattern: 'search',
+          });
+          expect(grant.scope).toBe('session');
+          expect(grant.grantedAt).toEqual(expect.any(String));
+          expect(grant.annotations).toEqual(SAFE_DECL);
+        });
+
+        /**
+         * The stores hand back their LIVE records, so a view that mutated what it read would be
+         * rewriting what the gate matches against. The control at the end asserts the mutation did
+         * land somewhere, so this is isolation rather than a no-op.
+         */
+        it('hands back copies — a display cannot rewrite what the gate matches', async () => {
+          let runner!: GthAgentRunner;
+          await driveCalls(believingJira(), [
+            {
+              name: 'mcp__jira__search',
+              declaring: { mcp__jira__search: SAFE_DECL },
+              before: (r) => {
+                runner = r;
+              },
+            },
+          ]);
+          const mine = runner.getGrants()[0];
+          (mine.entry as { pattern: string }).pattern = 'delete_issue';
+          mine.annotations!.openWorldHint = true;
+          mine.scope = 'always';
+
+          const fresh = runner.getGrants()[0];
+          expect(fresh.entry).toEqual({
+            type: 'mcpTool',
+            server: 'jira',
+            matcher: 'exact',
+            pattern: 'search',
+          });
+          expect(fresh.annotations).toEqual(SAFE_DECL);
+          expect(fresh.scope).toBe('session');
+          expect(mine.entry, 'CONTROL: the mutation landed on the copy').toMatchObject({
+            pattern: 'delete_issue',
+          });
+        });
+
+        /**
+         * Read-only by construction, exactly as `getAllowlistCounts` is: a display must never CREATE
+         * the persisted store in order to show it. The control is the same session driven to a point
+         * where the store IS loaded, where the persisted grant does appear.
+         */
+        it('never loads the persisted store, and lists it once it is loaded', async () => {
+          const idle = await idleRunner({ mode: 'write' });
+          expect(idle.getGrants()).toEqual([]);
+          expect(idle.getAllowlistCounts().always, 'the store was not created').toBeUndefined();
+
+          let runner!: GthAgentRunner;
+          await driveCalls(
+            believingJira(),
+            [
+              {
+                name: 'mcp__jira__search',
+                declaring: { mcp__jira__search: SAFE_DECL },
+                before: (r) => {
+                  runner = r;
+                },
+              },
+            ],
+            { type: 'approve', scope: 'always' }
+          );
+          // CONTROL: an `always` grant is written to BOTH stores, and is listed exactly once.
+          expect(runner.getGrants()).toHaveLength(1);
+          expect(runner.getGrants()[0].scope).toBe('always');
+          expect(runner.getAllowlistCounts().always).toBe(1);
+        });
+      });
     });
   });
 

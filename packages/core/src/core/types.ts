@@ -1,4 +1,5 @@
 import type { GthConfig } from '#src/config.js';
+import type { DeclaredToolAnnotations } from '#src/core/approvals/annotations.js';
 import type { ShellSafetyVerdict } from '#src/core/shell/rater.js';
 import type { BaseMessage } from '@langchain/core/messages';
 import type { RunnableConfig } from '@langchain/core/runnables';
@@ -175,11 +176,32 @@ export interface PendingToolInterrupt {
    * thing they are agreeing to rather than a generalization of it, which is what makes the display
    * honest and cheap at once.
    *
+   * **For a tool call the stored thing is the tool, not the arguments** (§4.7.4), so this reads
+   * e.g. `{ "type": "mcpTool", "server": "fetcher", "matcher": "exact", "pattern": "fetch_url",
+   * "host": "docs.internal.example" }`. That is the one place a grant is deliberately broader than
+   * what the human was shown, which is why the display carries the most weight there.
+   *
    * Absent exactly where no sticky grant is on offer — a `catastrophic` outcome (§4.2 withdraws
-   * the persistent grants), a non-shell call, or a rung that remembers nothing — so a prompt never
-   * advertises a control that has already been withdrawn.
+   * the persistent grants), a rung that remembers nothing, a command that does not statically
+   * resolve, or a tool call naming more than one host (which has no honest single-host entry) — so
+   * a prompt never advertises a control that has already been withdrawn.
    */
   grantPreview?: string;
+  /**
+   * §6 — **the same grant in the words a menu control is written in**: `npm test` for a shell
+   * command, `tool gth_web_fetch (host docs.internal.example)` or `mcpTool jira/create_issue` for a
+   * tool call. It is what the *always approve* control names, so the control reads as
+   * *always approve this tool for this host* rather than as a bare key.
+   *
+   * It is rendered by `describeApprovalEntry` — the one-liner every other provenance message uses,
+   * including the §4.7.4 notice that later withdraws the grant. Sharing the renderer is the point:
+   * a menu that describes a grant differently from the notice that withdraws it is how a user stops
+   * trusting either.
+   *
+   * Present exactly when {@link grantPreview} is, since both are rendered from the one entry
+   * `recordApproval` would write.
+   */
+  grantSummary?: string;
 }
 
 /**
@@ -271,6 +293,19 @@ export interface GthAgentInterface {
    * receives no granted list (and so suggests nothing).
    */
   getRegisteredToolNames?(): string[];
+
+  /**
+   * EXT-70 (spec §4.7.1) — what the connected MCP servers declared about their own tools in their
+   * `tools/list` responses, keyed by the REGISTERED tool name (`mcp__<server>__<tool>`). The runner
+   * reads it as the `mcp` half of a declared-annotation lookup when it computes a call's effective
+   * annotation set.
+   *
+   * These are **claims, not credentials**: nothing here has been trusted, and an entry only becomes
+   * load-bearing where the user's `approvals.mcp` block believes that hint from that server.
+   * Optional — an agent that tracks no tools omits it, and every tool is then fail-closed, which is
+   * exactly what a fully distrustful configuration computes anyway.
+   */
+  getDeclaredMcpToolAnnotations?(): ReadonlyMap<string, DeclaredToolAnnotations>;
 
   /**
    * GS2-16 — reset the per-run analytics accumulator so the NEXT turn's token/tool totals start

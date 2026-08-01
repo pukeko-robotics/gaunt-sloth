@@ -633,13 +633,17 @@ describe('config schema (GS2-1 B1)', () => {
             'allow',
             'deny',
             'escalate',
+            'mcp',
             'mode',
             'rater',
             'raterTimeoutMs',
           ]);
           // A refinement has no JSON Schema representation; nothing of that shape may appear.
-          expect(JSON.stringify(approvals)).not.toContain('not');
-          expect(JSON.stringify(approvals)).not.toContain('allOf');
+          // Matched as emitted KEYWORDS rather than as bare substrings: a property NAME may
+          // legitimately contain those letters (`trustAnnotations` contains "not"), and a check
+          // that a schema keyword is absent must not be answerable by the vocabulary.
+          expect(JSON.stringify(approvals)).not.toContain('"not":');
+          expect(JSON.stringify(approvals)).not.toContain('"allOf":');
         });
 
         it('describes approvals in ALL EIGHT positions (root + each per-command block)', () => {

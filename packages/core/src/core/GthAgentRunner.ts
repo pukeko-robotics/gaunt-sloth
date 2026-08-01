@@ -1,15 +1,22 @@
 import {
   type AllowlistCounts,
+  type ApprovalEntry,
   type ApprovalRung,
   DEFAULT_APPROVAL_RUNG,
   describeGrantedBuiltInTools,
   type GrantedToolSummary,
   GthConfig,
   isRatedRung,
+  type McpAnnotationTrustChange,
+  type McpAnnotationTrustView,
+  type McpApprovalsConfig,
+  type McpToolApprovalEntry,
   type ResolvedApprovals,
   resolveApprovals,
   resolveShellApprovalGate,
   SHELL_TOOL_NAME,
+  TOOL_ANNOTATION_HINTS,
+  type ToolAnnotationHint,
 } from '#src/config.js';
 import { BaseCheckpointSaver } from '@langchain/langgraph';
 import {
@@ -29,10 +36,15 @@ import {
 } from '#src/core/types.js';
 import { GthLangChainAgent } from '#src/core/GthLangChainAgent.js';
 import {
+  annotationWeakenings,
+  type ApprovalGrant,
   ApprovalGrantStore,
   type ApprovalGrantScope,
+  describeWeakenedGrant,
   PersistedApprovalGrants,
   shellGrantEntry,
+  toolGrantEntry,
+  trustWithdrawalWeakens,
 } from '#src/core/approvals/grants.js';
 import { renderApprovalEntryObject } from '#src/config/schema.js';
 import { classifyCommand } from '#src/core/shell/arity.js';
@@ -43,9 +55,11 @@ import {
   NonInteractiveEscalationError,
 } from '#src/core/shell/approvalStop.js';
 import {
+  applyDestructiveFloor,
   isRaterTimeout,
   mapAllowMatchedVerdictToAction,
   mapVerdictToAction,
+  openWorldToolFloorReason,
   RATER_DEFAULT_TIMEOUT_MS,
   rateShellCommand,
   type ShellSafetyVerdict,
@@ -55,8 +69,22 @@ import {
   type ApprovalRuleLists,
   type ApprovalSubject,
   describeApprovalEntry,
+  type EffectiveToolAnnotations,
+  type EffectiveToolAnnotationSource,
+  type McpToolApprovalSubject,
   resolveApprovalRules,
+  type ToolApprovalSubject,
 } from '#src/core/approvals/matcher.js';
+import {
+  createEffectiveToolAnnotationSource,
+  trustedAnnotationHints,
+} from '#src/core/approvals/annotations.js';
+import { approvalSubjectForToolName } from '#src/core/approvals/mcpSubjects.js';
+import { toolCallHosts } from '#src/core/approvals/toolHost.js';
+import {
+  builtInToolAnnotations,
+  mcpDeclaredAnnotationLookup,
+} from '#src/core/approvals/toolAnnotationSources.js';
 import { resolveRaterModel } from '#src/core/shell/raterModel.js';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { env } from '#src/utils/systemUtils.js';
@@ -80,6 +108,16 @@ import { setToolDisplayConfig } from '#src/core/toolDisplay.js';
  * kept; they are redacted (GS2-47) by the crash snapshot writer before anything reaches disk.
  */
 const CRASH_TRANSCRIPT_TAIL_MESSAGES = 8;
+
+/**
+ * A private copy of a rule entry, for handing to a display. `pattern` is the one field that can be
+ * an object (a `hint` pattern, §3.1), so it is copied too — a shallow spread alone would leave the
+ * displayed entry sharing the very object the matcher compares against.
+ */
+function copyApprovalEntry(entry: ApprovalEntry): ApprovalEntry {
+  if (entry.type === 'shell' || typeof entry.pattern === 'string') return { ...entry };
+  return { ...entry, pattern: { ...entry.pattern } };
+}
 
 /**
  * Agent simplifies interaction with LLM and reduces it to calling a few methods
@@ -235,6 +273,171 @@ export class GthAgentRunner {
    */
   public getDenylist(): string[] {
     return [...this.sessionApprovals.deny, ...this.denyGrants.entries()].map(describeApprovalEntry);
+  }
+
+  /**
+   * §3/§4.7.4 — **the grants themselves**, for an approvals view that shows *what* was granted,
+   * *when*, and *under which effective annotations*. The counterpart of {@link getAllowlistCounts},
+   * which answers only how many.
+   *
+   * The declared config lists are deliberately NOT here. They are something a human wrote and
+   * reviewed, they carry no `grantedAt` and no scope, and `getAllowlistCounts` already counts them
+   * alongside these; mixing them in would present a config line as something the session granted.
+   *
+   * **Read-only in both senses.** It never loads the persisted store — same rule as
+   * {@link getAllowlistCounts}: a display must not create the store in order to show it, so a
+   * session that has not yet needed the file lists its session grants alone. And every grant is
+   * **deep-copied on the way out**, because the stores hand back their live records: the copy on the
+   * way in is what makes a snapshot private to its grant, and handing the same object to a renderer
+   * would put what the gate matches against one property assignment away from any consumer.
+   */
+  public getGrants(): ApprovalGrant[] {
+    const held = [
+      ...this.sessionGrants.list(),
+      ...(this.persistedGrantsLoaded ? (this.persistedGrants?.list() ?? []) : []),
+    ];
+    const seen = new Set<string>();
+    const grants: ApprovalGrant[] = [];
+    for (const grant of held) {
+      // An `always` grant is written to BOTH stores, so identity de-duplication is what keeps it
+      // from being displayed twice. The same question `ApprovalGrantStore.add` asks.
+      const key = renderApprovalEntryObject(grant.entry);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      grants.push({
+        ...grant,
+        entry: copyApprovalEntry(grant.entry),
+        ...(grant.annotations ? { annotations: { ...grant.annotations } } : {}),
+      });
+    }
+    return grants;
+  }
+
+  /**
+   * §4.7.1 — **which of each server's annotation hints this session believes**, for display.
+   *
+   * Every key either side names is listed: a configured `mcpServers` key with no policy of its own
+   * (which resolves through `defaults`), and a policy key naming a server the config does not have
+   * (which is what a typo looks like). Resolution is {@link trustedAnnotationHints}, the same
+   * function the gate derives effective annotations through, so the display cannot claim a
+   * relationship the gate does not act on.
+   */
+  public getMcpAnnotationTrust(): McpAnnotationTrustView {
+    const mcp = this.sessionApprovals.mcp;
+    const configured = new Set(this.configuredMcpServerKeys());
+    const named = Object.keys(mcp?.servers ?? {});
+    const keys = [...new Set([...configured, ...named])];
+    return {
+      defaults: [...(mcp?.defaults?.trustAnnotations ?? [])],
+      servers: keys.map((server) => ({
+        server,
+        trusted: [...trustedAnnotationHints(mcp, server)],
+        configured: configured.has(server),
+      })),
+    };
+  }
+
+  /**
+   * §4.7.1 — **believe, or stop believing, specific hints from one server**, for the life of this
+   * session. The runtime half of `approvals.mcp.servers.<key>.trustAnnotations` (§9), so a user can
+   * do from the TUI what they can do in config.
+   *
+   * **Per hint, never per server.** `hints` names the hints this call moves and leaves every other
+   * hint of that server's exactly as it was, because believing a server's `readOnlyHint` while
+   * disbelieving its `openWorldHint` is a coherent position and the common one. A "trust this
+   * server" flag is the design §4.7.1 rejects.
+   *
+   * **The previous set is what was IN FORCE, resolved through `defaults`.** A server not named
+   * under `servers` inherits `defaults`, and naming it makes it state its relationship in full (§9)
+   * — so seeding from the empty set would mean that believing one more hint silently withdrew every
+   * hint `defaults` had granted, which is a weakening the user did not ask for and would invalidate
+   * their grants.
+   *
+   * **Session-scoped only.** Nothing is written to config: the declared block is read-only input
+   * (§9.1), exactly as the rung is.
+   *
+   * A trusted external annotation still never grants more than the same annotation grants one of
+   * our own built-ins — that holds in `core/approvals/annotations.ts` by construction, and this
+   * changes only which hints are read.
+   */
+  public setMcpAnnotationTrust(
+    server: string,
+    hints: readonly ToolAnnotationHint[],
+    believe: boolean
+  ): McpAnnotationTrustChange {
+    const mcp = this.sessionApprovals.mcp;
+    const before = trustedAnnotationHints(mcp, server);
+    const requested = new Set(hints);
+    const after = believe
+      ? TOOL_ANNOTATION_HINTS.filter((hint) => before.includes(hint) || requested.has(hint))
+      : TOOL_ANNOTATION_HINTS.filter((hint) => before.includes(hint) && !requested.has(hint));
+    const added = after.filter((hint) => !before.includes(hint));
+    const removed = before.filter((hint) => !after.includes(hint));
+
+    const nextMcp: McpApprovalsConfig = {
+      ...mcp,
+      servers: {
+        ...mcp?.servers,
+        [server]: { ...mcp?.servers?.[server], trustAnnotations: after },
+      },
+    };
+    // A fresh posture object, and fresh nested ones above: the resolved posture may share its `mcp`
+    // block with the loaded config, and a session change must not rewrite what the user configured.
+    this.sessionApprovals = { ...this.sessionApprovals, mcp: nextMcp };
+
+    return {
+      server,
+      configured: this.configuredMcpServerKeys().includes(server),
+      trusted: [...after],
+      added,
+      removed,
+      weakening: removed.filter(trustWithdrawalWeakens),
+      invalidates: this.grantsWeakenedByCurrentTrust(server),
+    };
+  }
+
+  /**
+   * §4.7.4 — which of this server's saved approvals the trust now in force weakens, for the notice
+   * that reports a trust change. **It predicts; it never removes.** The removal stays where Task
+   * 4 put it — at the call being decided — because that is the only moment the tool's declaration
+   * can be read for certain; here a server that is merely offline declares nothing and would read
+   * as having weakened everything.
+   *
+   * It compares through the same two functions the gate does: the effective-annotation source built
+   * from the posture as it stands *after* the change, and `annotationWeakenings`. A second
+   * comparison written for the display is how a warning comes to describe a rule the gate does not
+   * have.
+   */
+  private grantsWeakenedByCurrentTrust(server: string): string[] {
+    const source = this.effectiveToolAnnotationSource();
+    return this.getGrants()
+      .filter(
+        (
+          grant
+        ): grant is ApprovalGrant & {
+          entry: McpToolApprovalEntry & { pattern: string };
+          annotations: EffectiveToolAnnotations;
+        } =>
+          grant.entry.type === 'mcpTool' &&
+          grant.entry.server === server &&
+          typeof grant.entry.pattern === 'string' &&
+          grant.annotations !== undefined
+      )
+      .filter((grant) => {
+        // `EffectiveToolAnnotationSource` admits `undefined` for a source that genuinely cannot
+        // answer; `createEffectiveToolAnnotationSource` never returns it — a tool nothing has
+        // declared for resolves to the fail-closed constant, which for a grant made under anything
+        // softer reads as a weakening. The guard is therefore a type-level obligation and not a
+        // live branch: it discharges the union the contract declares, and nothing reaches it.
+        const current = source({
+          kind: 'mcpTool',
+          server,
+          name: grant.entry.pattern,
+          ...(grant.entry.host !== undefined ? { host: grant.entry.host } : {}),
+        });
+        return current !== undefined && annotationWeakenings(grant.annotations, current).length > 0;
+      })
+      .map((grant) => describeApprovalEntry(grant.entry));
   }
 
   /**
@@ -467,17 +670,71 @@ export class GthAgentRunner {
   }
 
   /**
-   * EXT-71 §3.1/§3.2 — the subject a pending tool call presents to the rule matcher.
+   * EXT-71 §3.1/§3.2, EXT-70 §4.7.5 — the subject a pending tool call presents to the rule matcher.
    *
    * A gated `run_shell_command` is a **shell** subject and nothing else: it is matched by `shell`
    * entries, against the command. It is deliberately NOT also offered as a `tool` subject named
    * `run_shell_command`, which would create a second allow path to every shell command carrying a
-   * different §3.2 `rate` default and a match that never saw the command it was approving. Widening
-   * the gate to the other tools — and with it the subjects they present — is [[EXT-30]].
+   * different §3.2 `rate` default and a match that never saw the command it was approving.
+   *
+   * **Everything else splits by provenance**, which is the distinction §4.7.1 rests on: `tool` is
+   * the TRUSTED provenance, read verbatim, so an MCP tool arriving as one would be asking the
+   * trusted path for a third party's annotations — a gate any server can opt itself out of. Every
+   * MCP-namespaced name therefore becomes an `mcpTool` subject carrying the user's own `mcpServers`
+   * key, and one whose server cannot be resolved stays an `mcpTool` subject under an unnameable
+   * server rather than falling back to `tool` (see `approvalSubjectForToolName`).
+   *
+   * **The host (§4.7.4)** is attached here, so the one subject the whole decision runs on carries
+   * it: the rule matcher treats a `host` on an entry as an additional exact-match condition, and a
+   * grant the menu writes records it. A call naming no single host has none, which fails toward a
+   * prompt at both sites.
+   *
+   * Widening which tools the gate actually suspends on is still [[EXT-30]]; this decides what a
+   * suspended call *is* whenever one arrives.
+   *
+   * @param hosts Every distinct host the call's arguments name ({@link toolCallHosts}).
    */
-  private approvalSubjectFor(tool: PendingToolInterrupt, command: string | null): ApprovalSubject {
+  private approvalSubjectFor(
+    tool: PendingToolInterrupt,
+    command: string | null,
+    hosts: readonly string[]
+  ): ApprovalSubject {
     if (tool.name === SHELL_TOOL_NAME && command !== null) return { kind: 'shell', command };
-    return { kind: 'tool', name: tool.name };
+    const subject = approvalSubjectForToolName(tool.name, this.configuredMcpServerKeys());
+    return hosts.length === 1 ? { ...subject, host: hosts[0] } : subject;
+  }
+
+  /**
+   * §4.7.5 — the user's own `mcpServers` keys, the only identity a server has here. Own enumerable
+   * keys via `Object.keys`, so nothing inherited can pose as a configured server.
+   */
+  private configuredMcpServerKeys(): string[] {
+    const servers = this.config?.mcpServers;
+    return servers && typeof servers === 'object' ? Object.keys(servers) : [];
+  }
+
+  /**
+   * EXT-70 §4.7.1 — the source a `hint` entry reads a call's EFFECTIVE annotations through, built
+   * from the session's `approvals.mcp` block and the two declared-annotation lookups.
+   *
+   * Built per decision rather than cached at {@link init}, for two reasons that both bite: the
+   * agent registers its tools *inside* `agent.init()`, so an init-time snapshot would be empty; and
+   * a re-init re-resolves the tool list, which for MCP may hand back different declarations.
+   *
+   * The two lookups are deliberately different in kind. `builtIn` reads OUR OWN authored table and
+   * never the bound tool list — the bound list contains every server's tools, and a `builtIn`
+   * lookup over it would read a third party's declaration through the trusted-verbatim path.
+   * `mcp` reads what the servers declared, keyed by the registered tool name so the server key is
+   * never split apart and re-joined differently.
+   */
+  private effectiveToolAnnotationSource(): EffectiveToolAnnotationSource {
+    return createEffectiveToolAnnotationSource({
+      mcp: this.sessionApprovals.mcp,
+      declared: {
+        builtIn: builtInToolAnnotations,
+        mcp: mcpDeclaredAnnotationLookup(this.agent?.getDeclaredMcpToolAnnotations?.()),
+      },
+    });
   }
 
   /**
@@ -506,7 +763,10 @@ export class GthAgentRunner {
    *    ({@link mapAllowMatchedVerdictToAction}).
    * 5. **auto-rater** (`auto-safe` / `full-auto` only) — `safe` approves, `destructive` and
    *    `catastrophic` escalate, and `attack` HALTS the run ({@link AttackHaltError}). The other
-   *    three rungs consult no model at all.
+   *    three rungs consult no model at all. At those same two rungs a **tool** call is instead
+   *    floored deterministically by §4.7.3's open-world rule ({@link openWorldToolFloorReason} into
+   *    {@link applyDestructiveFloor} — the one floor the shell path also reaches): a call whose
+   *    effective `openWorldHint` is true is `destructive`, whatever its `readOnlyHint` says.
    * 6. **human prompt** — the approval callback; when the human grants `session`/`always` scope,
    *    **that command** is recorded as an `exact` entry (§3.1/§6 — the menu never widens), so the
    *    same command stops re-prompting and a longer variant of it still asks.
@@ -526,14 +786,40 @@ export class GthAgentRunner {
     const isShellCommand = tool.name === SHELL_TOOL_NAME && command !== null;
     const approvals = this.sessionApprovals;
 
+    // ONE subject and ONE annotation source per decision, shared by the rule matcher and the
+    // §4.7.3 floor below. Building a second source for the floor would let a `hint` entry and the
+    // floor read different effective values for the same call — the two-derivations-disagreeing
+    // failure `core/approvals/annotations.ts` exists to prevent.
+    // §4.7.4 — the hosts this call names, read ONCE. The subject carries the single host where
+    // there is exactly one; the sticky-grant decision needs the count as well, because "named no
+    // host" and "named several" are the same absent `host` on the subject and are not the same
+    // question for the menu.
+    const hosts = tool.name === SHELL_TOOL_NAME && command !== null ? [] : toolCallHosts(tool.args);
+    const subject = this.approvalSubjectFor(tool, command, hosts);
+    const annotationSource = this.effectiveToolAnnotationSource();
+    // ONE read of that source per decision as well, so the §4.7.4 invalidation below, the §4.7.3
+    // floor and the snapshot a grant records are all the same set. A shell subject has none — a
+    // command carries no tool annotations.
+    const effective = subject.kind === 'shell' ? undefined : annotationSource(subject);
+
+    // §4.7.4 — **before any rule is resolved**, so a grant the tool has since weakened out from
+    // under cannot auto-approve the very call that revealed the weakening.
+    if (subject.kind !== 'shell' && effective) this.invalidateWeakenedGrants(subject, effective);
+
     // The declared lists AND the runtime grant stores, resolved most-restrictive-wins in ONE pass
     // through the ONE comparison engine, so author order and the order the lists were concatenated
     // in cannot change the outcome — and a grant the menu wrote is compared exactly as a line the
     // user typed into their config is.
     const rule: ApprovalRuleDecision | null = resolveApprovalRules(
-      this.approvalSubjectFor(tool, command),
+      subject,
       this.approvalRuleLists(),
-      { onNotice: (notice) => this.statusUpdate(notice.level, notice.message) }
+      {
+        // EXT-70 §4.7.1 — a `hint` entry reads EFFECTIVE annotations, which is where per-server,
+        // per-hint trust is applied. Without this the matcher falls back to the fail-closed source,
+        // where no tool is ever read-only and a `hint` entry could only ever describe the default.
+        annotations: annotationSource,
+        onNotice: (notice) => this.statusUpdate(notice.level, notice.message),
+      }
     );
 
     // (1) Deny — before everything, including `bypass`.
@@ -591,30 +877,57 @@ export class GthAgentRunner {
       safetyVerdict = tripwire.verdict;
     }
 
-    // (5) The auto-rater, at the two rated rungs only. `safe` is approved (the fatigue reducer),
-    // `destructive` and `catastrophic` fall through to the human with the verdict attached, and
-    // `attack` ends the run outright. Skipped entirely for an escalate match (§3.2: the user
-    // pre-decided that a human answers, so a rating would decorate a mandatory prompt) and for a
-    // call the tripwire above already rated.
-    if (
-      isShellCommand &&
-      command !== null &&
-      isRatedRung(approvals.rung) &&
-      escalatedBy === undefined &&
-      safetyVerdict === undefined
-    ) {
-      const verdict = await this.rateCommand(command, { allowMatched: false });
-      const decision = mapVerdictToAction(command, verdict, { rung: approvals.rung });
-      if (decision.action === 'approve') {
-        // Scope `once`: rater approvals are NEVER persisted to the allow-list.
-        return { type: 'approve', scope: 'once' };
+    // (5) What the gate makes of the call itself, at the two rated rungs only. Skipped entirely
+    // for an escalate match (§3.2: the user pre-decided that a human answers, so a rating would
+    // decorate a mandatory prompt) and for a call the tripwire above already rated. The rung test
+    // is the SAME one `mapVerdictToAction` applies, so both arms below floor exactly where the
+    // shell does and nowhere else: `bypass` and the two deterministic rungs consult neither the
+    // rater nor a preflight, and at those rungs the human is asked regardless.
+    if (isRatedRung(approvals.rung) && escalatedBy === undefined && safetyVerdict === undefined) {
+      // **The SUBJECT is what splits the two arms, not a second reading of the tool name.**
+      // `approvalSubjectFor` returns `kind: 'shell'` under exactly the condition `isShellCommand`
+      // states, so branching on the discriminant says the same thing once instead of twice — and
+      // any future divergence in that function sends the call to the FLOOR (fail-closed) rather
+      // than silently past it. It is also what carries the command as a non-null string.
+      if (subject.kind === 'shell') {
+        // The auto-rater. `safe` is approved (the fatigue reducer), `destructive` and
+        // `catastrophic` fall through to the human with the verdict attached, and `attack` ends
+        // the run outright. §4.6's deterministic preflights are applied inside
+        // `mapVerdictToAction`, ahead of the `safe` check.
+        const verdict = await this.rateCommand(subject.command, { allowMatched: false });
+        const decision = mapVerdictToAction(subject.command, verdict, { rung: approvals.rung });
+        if (decision.action === 'approve') {
+          // Scope `once`: rater approvals are NEVER persisted to the allow-list.
+          return { type: 'approve', scope: 'once' };
+        }
+        if (decision.action === 'halt') {
+          // §4.2 — not a rejection the model can respond to. It ends the agent loop.
+          throw new AttackHaltError(subject.command, decision.verdict?.reason ?? '');
+        }
+        // Escalate: carry the verdict (the honest one — see mapVerdictToAction) to the human.
+        safetyVerdict = decision.verdict;
+      } else {
+        // EXT-70 §4.7.2/§4.7.3 — a tool call whose EFFECTIVE `openWorldHint` is true is floored at
+        // `destructive`, through the SAME `applyDestructiveFloor` the shell path reaches via
+        // `mapVerdictToAction`. No rating call: §4.3's scope boundary keeps the rater on the shell
+        // until [[EXT-30]], and the floor is deterministic anyway — §4.6 states it as coming
+        // *before* any model call, so it does not wait for one.
+        //
+        // **This is the branch a malformed `run_shell_command` lands in**, and it is the one shape
+        // that reaches this floor under today's gate: a call with no `command` argument, or one
+        // that is not a string, has nothing to rate, so it presents as a `tool` subject — and
+        // `run_shell_command` carries no authored annotations, so its effective set is the
+        // fail-closed one and it floors. That is the right direction: a shell call whose command
+        // cannot even be read is not one anything can say something reassuring about.
+        //
+        // The annotations are the effective set (§4.7.1), read through the same source the `hint`
+        // matcher just used, so an untrusted server's `openWorldHint: false` has already collapsed
+        // to the fail-closed `true` and cannot buy its way past this.
+        //
+        // Reached only when no allow entry claimed the call: §4.6's fourth bullet makes an allow
+        // match lift this floor, and step (4) above has already returned in that case.
+        safetyVerdict = applyDestructiveFloor(safetyVerdict, openWorldToolFloorReason(effective));
       }
-      if (decision.action === 'halt') {
-        // §4.2 — not a rejection the model can respond to. It ends the agent loop.
-        throw new AttackHaltError(command, decision.verdict?.reason ?? '');
-      }
-      // Escalate: carry the verdict (the honest one — see mapVerdictToAction) to the human.
-      safetyVerdict = decision.verdict;
     }
 
     if (!this.toolApprovalCallback) {
@@ -636,18 +949,20 @@ export class GthAgentRunner {
     // and the next `terraform destroy` would never be rated at all. Clamping here means the policy
     // does not depend on which surface asked, or on a surface that has not been built yet.
     const catastrophic = safetyVerdict?.outcome === 'catastrophic';
-    const recordable = isShellCommand && approvals.rung !== 'bypass';
 
     // §6 — **the menu must display what it is about to store**, at the moment of the choice, on
-    // every surface. It is rendered from the very entry {@link recordApproval} will write (one
-    // function, {@link shellGrantEntry}), because a menu that describes a grant one way and stores
-    // it another is the drift this design cannot afford. Absent exactly where no sticky grant is
-    // available — a `catastrophic` outcome, or a call nothing would remember — so the prompt never
-    // advertises a control that has already been withdrawn.
-    const grantPreview =
-      recordable && command && !catastrophic
-        ? renderApprovalEntryObject(shellGrantEntry(command))
-        : undefined;
+    // every surface. It is rendered from the very grant {@link recordApproval} will write, because a
+    // menu that describes a grant one way and stores it another is the drift this design cannot
+    // afford. Absent exactly where no sticky grant is available — a `catastrophic` outcome (§4.2
+    // withdraws the persistent grants for EVERY subject, not only the shell one), or a call nothing
+    // would remember — so the prompt never advertises a control that has already been withdrawn.
+    const grant = catastrophic ? undefined : this.stickyGrantFor(subject, effective, hosts);
+    const grantPreview = grant ? renderApprovalEntryObject(grant.entry) : undefined;
+    // §6 — the same grant in the words the menu's *always approve* control is written in, through
+    // the one-liner the §4.7.4 withdrawal notice also uses, so the two cannot describe one grant
+    // two ways. For a tool call this is where "the stored thing is the tool, not the arguments"
+    // becomes visible: it names the tool, its server and the host bound, and nothing else.
+    const grantSummary = grant ? describeApprovalEntry(grant.entry) : undefined;
 
     // Surface the rater's verdict, the escalate entry that fired as provenance (§3.2), and what a
     // sticky choice would store (§6) — without mutating the original interrupt object the caller
@@ -659,13 +974,14 @@ export class GthAgentRunner {
             ...(safetyVerdict ? { safetyVerdict } : {}),
             ...(escalatedBy ? { escalatedBy } : {}),
             ...(grantPreview ? { grantPreview } : {}),
+            ...(grantSummary ? { grantSummary } : {}),
           }
         : tool;
     const decision = await this.toolApprovalCallback(pending);
 
-    // Record the human's scoped grant so the same command stops re-prompting.
-    if (decision.type === 'approve' && recordable && command && !catastrophic) {
-      this.recordApproval(command, decision.scope ?? 'once');
+    // Record the human's scoped grant so the same call stops re-prompting.
+    if (decision.type === 'approve' && grant) {
+      this.recordApproval(grant, decision.scope ?? 'once');
     }
     return decision;
   }
@@ -795,30 +1111,157 @@ export class GthAgentRunner {
   }
 
   /**
+   * §3.1/§4.7.4/§6 — **the grant a sticky choice would write for this call**, or `undefined` when
+   * none is on offer. The one place that question is answered, so the menu's *this is what will be
+   * stored* line (§6) and the store can never disagree.
+   *
+   * - **A shell call** records the command itself as an `exact` entry (§3.1) — never a prefix,
+   *   never a pattern. One that does not statically resolve (composition, substitution,
+   *   redirection) is not on offer: no allow entry of any matcher matches such a command, so the
+   *   entry would be inert, and an inert entry sitting in a list §3 requires to be inspectable
+   *   tells the user something is in force when nothing is.
+   * - **A tool call** records identity — the tool, its server, and the host where the call carries
+   *   one (§4.7.4, {@link toolGrantEntry}) — never arguments, which would produce a grant that
+   *   never matches twice. A call naming no host records the tool alone, which is §6's own example
+   *   (*always approve `mcp__jira__create_issue`*, where no host is involved); what keeps that from
+   *   being unbounded is §3.2's default that a tool entry is still `rate: true`, so the rater goes
+   *   on seeing every call's full arguments.
+   *
+   * Four cases have **no grant on offer at all**, each fail-closed:
+   *
+   * 1. **`bypass`** — the gate is off for this session and nothing is remembered from it.
+   * 2. **`run_shell_command` arriving as a tool subject.** That is what a shell call with no
+   *    readable `command` argument presents as, and it names no host, so without this it would take
+   *    the tool-only arm and write a `{"type":"tool","pattern":"run_shell_command"}` grant that
+   *    auto-approves every future call whose command cannot even be read. This exclusion is what
+   *    stops that, not a side effect of anything else, and it must survive [[EXT-30]] widening the
+   *    gate.
+   * 3. **A call naming more than one distinct host.** The grammar has no entry for it. `host` is a
+   *    single optional string on every tool arm of `approvalEntrySchema`, and every arm is a
+   *    `z.strictObject`, so recording the *set* is not a policy this code may choose — a `hosts`
+   *    array is an unrecognized-key error, and writing one would be a §3.1 grammar change. Of the
+   *    two entries that would parse, the host-bound one displays a bound the grant does not have,
+   *    which §6 forbids (the menu shows exactly what will be stored). And a grammar that did record
+   *    the set, matching only when all of it recurred, would fail §4.7.4's opening test anyway: a
+   *    tool whose host set varies per call would get a grant that never matches a second time — not
+   *    a narrower grant, the useless one §4.7.4 rejects by name.
+   *
+   *    **What this arm does not claim.** It is not a narrowing. A hostless entry imposes no host
+   *    condition at all (`resolveApprovalRules`), so the tool-only grant that any host-less call to
+   *    the same tool produces already auto-approves a multi-host one. Refusing here withholds a
+   *    grant; it does not close a hole, and the reason to keep it is the grammar above rather than
+   *    any breadth it prevents. Asserted, so this cannot drift back into a claim the system does not
+   *    support.
+   * 4. **An MCP call whose server could not be resolved** ({@link toolGrantEntry} returns `null`) —
+   *    a call nobody can attribute is not one anything can remember.
+   */
+  private stickyGrantFor(
+    subject: ApprovalSubject,
+    effective: EffectiveToolAnnotations | undefined,
+    hosts: readonly string[]
+  ): Omit<ApprovalGrant, 'grantedAt' | 'scope'> | undefined {
+    if (this.sessionApprovals.rung === 'bypass') return undefined;
+    if (subject.kind === 'shell') {
+      if (classifyCommand(subject.command, normalizeCommand) === null) return undefined;
+      return { entry: shellGrantEntry(subject.command) };
+    }
+    if (subject.name === SHELL_TOOL_NAME) return undefined;
+    // A snapshot is what invalidation compares against, so a grant with no readable effective set
+    // is a grant nothing could ever invalidate.
+    if (!effective) return undefined;
+    if (hosts.length > 1) return undefined;
+    const entry = toolGrantEntry(subject);
+    if (!entry) return undefined;
+    // §4.7.4 — the effective set the human approved this tool AS. `annotationWeakenings` compares a
+    // later one against it, and the store copies it so the record is private to this grant.
+    return { entry, annotations: effective };
+  }
+
+  /**
    * §3.1/§6 — record a human-granted approval at the given scope. `once` remembers nothing.
    * `session` adds the entry to the in-memory store; `always` additionally persists it (falling
    * back to session-only when the file cannot be written).
    *
-   * **What is recorded is the command itself, as an `exact` entry** — never a prefix, never a
-   * pattern. Breadth is always something a human typed into a config file.
-   *
-   * A command that does not statically resolve (composition, substitution, redirection) is not
-   * recorded at all. It could not be stored harmfully — no allow entry of any matcher matches an
-   * unresolvable command, so the entry would be inert — but an inert entry sitting in a list §3
-   * requires to be inspectable would tell the user something is in force when nothing is.
+   * What is recorded was decided by {@link stickyGrantFor} and shown to the human before they
+   * answered; this only stamps it with when and at what scope.
    */
-  private recordApproval(command: string, scope: ToolApprovalScope): void {
+  private recordApproval(
+    grant: Omit<ApprovalGrant, 'grantedAt' | 'scope'>,
+    scope: ToolApprovalScope
+  ): void {
     if (scope === 'once') return;
-    if (classifyCommand(command, normalizeCommand) === null) return;
     const grantScope: ApprovalGrantScope = scope;
-    const grant = {
-      entry: shellGrantEntry(command),
+    const record: ApprovalGrant = {
+      ...grant,
       grantedAt: new Date().toISOString(),
       scope: grantScope,
     };
-    this.sessionGrants.add(grant);
+    this.sessionGrants.add(record);
     if (scope === 'always') {
-      this.getPersistedGrants()?.add(grant);
+      this.getPersistedGrants()?.add(record);
+    }
+  }
+
+  /**
+   * §4.7.4 — **drop a tool grant the tool has since weakened out from under, with a notice naming
+   * the tool, the server and the hint that moved.**
+   *
+   * The human approved a tool *as annotated*; a tool that re-annotates itself into a more dangerous
+   * shape is a different proposition wearing the same name, so the grant is invalidated and the next
+   * call prompts again. Only a **trusted** server can produce a weakening — an untrusted server's
+   * effective set is the constant fail-closed default (§4.7.1) and cannot move — which is exactly
+   * where it matters, since the trusted server is the one whose rug-pull would otherwise ride an
+   * existing grant.
+   *
+   * **Scoped to the call being decided, never a sweep of the store.** A sweep would read every held
+   * grant against a source that can only answer for the tools registered right now, so a server that
+   * happened to be offline would read as having weakened everything it ever declared — and the
+   * grants would be deleted for it.
+   *
+   * **The scope is every grant that could auto-approve THIS call, which is at most two.** A grant
+   * with no `host` imposes no host condition, so it matches a call that carries one; looking up only
+   * the entry this call would grant (`host` included) would miss the tool-only grant that is about
+   * to auto-approve it, and the weakening would ride straight through — the exact failure §4.7.4
+   * exists to stop. The host-bound entry of a DIFFERENT host is deliberately not a candidate: it
+   * does not match this call either, so this call's annotations say nothing about it.
+   *
+   * **Only allow-side grants.** A weakening makes a tool more dangerous, so dropping an *always
+   * reject* over one would be the unsafe direction: the reason to withdraw an approval is the reason
+   * to keep a refusal.
+   */
+  private invalidateWeakenedGrants(
+    subject: ToolApprovalSubject | McpToolApprovalSubject,
+    effective: EffectiveToolAnnotations
+  ): void {
+    const candidates = [
+      toolGrantEntry(subject),
+      ...(subject.host !== undefined ? [toolGrantEntry({ ...subject, host: undefined })] : []),
+    ].filter((entry) => entry !== null);
+    if (candidates.length === 0) return;
+    // Never at `bypass`, for the same reason `approvalRuleLists` does not read the file there: a
+    // session that has switched the gate off should not be rewriting the project's grant file.
+    const persisted = this.sessionApprovals.rung === 'bypass' ? null : this.getPersistedGrants();
+    for (const entry of candidates) {
+      // The session store wins, and a session grant with no snapshot therefore hides a persisted one
+      // that has one. Safe only because all three of these hold, and each is a premise a later change
+      // could break silently: (1) every tool grant this runner writes carries a snapshot — a call with
+      // no readable effective set is refused a grant at all ({@link stickyGrantFor}); (2) a `shell`
+      // subject, the one kind whose grant has no snapshot by design, never reaches this method; and
+      // (3) a persisted grant already in force auto-approves the call, so no prompt happens and no
+      // session grant is written over it. Break any one of them and this line starts skipping a
+      // weakening it should have caught — check both stores then, rather than the first that answers.
+      const held = this.sessionGrants.find(entry) ?? persisted?.find(entry);
+      if (!held?.annotations) continue;
+      const weakened = annotationWeakenings(held.annotations, effective);
+      if (weakened.length === 0) continue;
+      // Removed rather than skipped: the stores de-duplicate by entry identity, so a grant left in
+      // place would silently swallow the human's re-approval of the same tool.
+      this.sessionGrants.remove(entry);
+      persisted?.remove(entry);
+      this.statusUpdate(
+        StatusLevel.WARNING,
+        describeWeakenedGrant(entry, weakened, held.annotations, effective)
+      );
     }
   }
 

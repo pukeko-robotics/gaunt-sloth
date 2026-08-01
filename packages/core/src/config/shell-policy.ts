@@ -463,6 +463,34 @@ export type ApprovalEntryType = 'shell' | 'tool' | 'mcpTool';
 export type ApprovalMatcher = 'exact' | 'glob' | 'regexp' | 'hint';
 
 /**
+ * §4.7 — the four MCP `ToolAnnotations` hint names, and the whole vocabulary. It is the same list
+ * on both sides of the design: what a `hint` pattern may name ({@link ApprovalHintPattern}) and what
+ * a user may believe from a server ({@link McpServerApprovalsConfig.trustAnnotations}).
+ *
+ * **The schema twin `HINT_ANNOTATION_KEYS` in `config/schema.ts` is a deliberate duplicate, and the
+ * reason is layering, not oversight.** Neither file may import the other. `schema.ts` states in its
+ * own header that it must stay pure and cwd/fs-independent because it feeds `z.toJSONSchema()`, and
+ * importing this module would pull `core/types.js` and the whole runtime policy surface into it;
+ * importing `schema.ts` here would in turn pull zod into every module that only wanted a policy
+ * type. So the vocabulary is written once per layer on purpose — do not "simplify" it by making one
+ * import the other.
+ *
+ * What keeps the two honest instead is the equality assertion in `mcpApprovalsBlock.spec.ts`, which
+ * fails the moment they drift. Drift matters in one direction especially: a name the config accepts
+ * but the derivation never reads fails silently, and it fails toward trusting. Change one list,
+ * change the other.
+ */
+export const TOOL_ANNOTATION_HINTS = [
+  'readOnlyHint',
+  'destructiveHint',
+  'idempotentHint',
+  'openWorldHint',
+] as const;
+
+/** One of {@link TOOL_ANNOTATION_HINTS}. */
+export type ToolAnnotationHint = (typeof TOOL_ANNOTATION_HINTS)[number];
+
+/**
  * EXT-71 §3.1 — a `hint` pattern: the four MCP `ToolAnnotations` booleans, each mapped to the
  * value it must EFFECTIVELY hold (§4.7.1). All named hints must match (AND within the entry);
  * hints not named are unconstrained; `false` is the spelling of negation. At least one must be
@@ -530,6 +558,45 @@ export interface McpToolApprovalEntry extends ApprovalEntryCommon {
 export type ApprovalEntry = ShellApprovalEntry | ToolApprovalEntry | McpToolApprovalEntry;
 
 /**
+ * EXT-70 §4.7.1/§9 — the approvals relationship with ONE MCP server, keyed by the user's own
+ * `mcpServers` config key (§4.7.5 — the only identity a server has that is stable, unique and
+ * user-authored; nothing a server declares about itself ever participates).
+ *
+ * `trustAnnotations` names the hints that are BELIEVED from that server. It is a list rather than a
+ * boolean because trusting `readOnlyHint` while distrusting `openWorldHint` is a coherent position
+ * and the common one, and because a single "trusted server" flag throws that distinction away for
+ * nothing. **Absent or empty means what the default means: nothing external is believed** — every
+ * hint of that server's collapses to the MCP fail-closed default, so its declarations cannot
+ * perturb any rule.
+ */
+export interface McpServerApprovalsConfig {
+  /** §4.7.1 — the hints believed from this server. Absent or empty trusts nothing. */
+  trustAnnotations?: ToolAnnotationHint[];
+}
+
+/**
+ * EXT-70 §4.7/§9 — the `approvals.mcp` block: the per-server relationship, keyed by the user's own
+ * `mcpServers` config key.
+ *
+ * **`defaults` applies to servers NOT named under `servers`** — §9's own gloss. A server that names
+ * itself states its own relationship in full, so `{"jira": {}}` trusts nothing however permissive
+ * `defaults` is: trust by omission is exactly the failure §4.7.1 exists to prevent, and the fail-
+ * closed direction is the one a silent config edit must fall in.
+ *
+ * A key here is **not** validated against `mcpServers`. A user may write the policy before adding
+ * the server, and coupling the two would make config ORDER matter.
+ *
+ * This block cannot live inside `mcpServers`, which is modelled permissively because it carries
+ * runtime objects.
+ */
+export interface McpApprovalsConfig {
+  /** The relationship with every server not named under {@link servers}. */
+  defaults?: McpServerApprovalsConfig;
+  /** Per-server relationships, keyed by the user's own `mcpServers` config key (§4.7.5). */
+  servers?: Record<string, McpServerApprovalsConfig>;
+}
+
+/**
  * On-disk `approvals` object form (root or per command). The **scalar form is exactly sugar for
  * `{ mode: <value> }`** (§9.1) — the union exists so the extras have a home when they are needed,
  * not so there are two ways to say the same thing.
@@ -560,6 +627,12 @@ export interface ApprovalsObjectConfig {
    * asks about everything while every layer reports success.
    */
   raterTimeoutMs?: number;
+  /**
+   * EXT-70 §4.7/§9 — the per-server MCP relationship. Read through
+   * `createEffectiveToolAnnotationSource` (`core/approvals/annotations.ts`), which is the ONE place
+   * an effective annotation set is derived; nothing else re-reads this block.
+   */
+  mcp?: McpApprovalsConfig;
 }
 
 /** On-disk `approvals` value: the rung on its own, or the object when the extras are needed. */
@@ -587,6 +660,13 @@ export interface ResolvedApprovals {
    * snapshot does not churn, exactly as `rater` is.
    */
   raterTimeoutMs?: number;
+  /**
+   * EXT-70 §4.7 — the declared per-server MCP relationship, or `undefined` when no scope states
+   * one (which reads the same as an empty block: nothing external is believed). Left `undefined`
+   * rather than defaulted here for the same reason `rater` is — so the effective-config snapshot
+   * does not churn.
+   */
+  mcp?: McpApprovalsConfig;
 }
 
 /**
@@ -597,6 +677,83 @@ export interface ResolvedApprovals {
 export interface AllowlistCounts {
   session: number;
   always: number | undefined;
+}
+
+/**
+ * EXT-70 §4.7.1 — what one server's annotations are believed on, for display.
+ *
+ * `configured` says whether {@link server} is a key under `mcpServers` in the loaded config. It is
+ * an advisory rather than a validity test: §9 deliberately does NOT check `approvals.mcp` keys
+ * against `mcpServers`, so a user may write the policy before adding the server and config ORDER
+ * never matters. What it buys interactively is that a mistyped key — which trusts nothing while
+ * reading as though it did — can be pointed out rather than swallowed.
+ */
+export interface McpServerAnnotationTrust {
+  /** §4.7.5 — the user's own `mcpServers` config key. */
+  server: string;
+  /** The hints believed from this server, resolved through `defaults` where it is not named. */
+  trusted: ToolAnnotationHint[];
+  /** Whether this key names a server in the loaded config's `mcpServers`. */
+  configured: boolean;
+}
+
+/** EXT-70 §4.7.1 — the whole believed-annotation picture, for the `/approvals` display. */
+export interface McpAnnotationTrustView {
+  /** §9 — the hints believed from servers NOT named under `servers`. */
+  defaults: ToolAnnotationHint[];
+  /** Per-server, for every key either the config names or the policy does. */
+  servers: McpServerAnnotationTrust[];
+}
+
+/**
+ * EXT-70 §4.7.1/§4.7.4 — the outcome of believing (or ceasing to believe) hints from one server,
+ * so the surface that asked can report exactly what landed and what it costs.
+ *
+ * **`weakening` is the field that keeps the human un-surprised.** Withdrawing trust pushes a hint
+ * back to its fail-closed default, which for three of the four is a *weakening*, so the saved
+ * approvals made for that server while the hint was believed will be invalidated (§4.7.4) at the
+ * next call to that tool. That has to be said where the user withdraws trust, not only in the
+ * notice that arrives later.
+ */
+export interface McpAnnotationTrustChange extends McpServerAnnotationTrust {
+  /** Hints this change started believing (absent from the previous set). */
+  added: ToolAnnotationHint[];
+  /** Hints this change stopped believing (present in the previous set). */
+  removed: ToolAnnotationHint[];
+  /**
+   * §4.7.4 — the subset of {@link removed} whose withdrawal can weaken an effective set, and
+   * therefore invalidate a grant. Empty on a grant of trust, which can never weaken: every
+   * weakening move ends at the fail-closed default, and believing a hint only ever moves away
+   * from it.
+   */
+  weakening: ToolAnnotationHint[];
+  /**
+   * §4.7.4 — the saved approvals for this server that the *resulting* trust actually weakens, each
+   * rendered by `describeApprovalEntry`. They are the ones that will be withdrawn, with the §4.7.4
+   * notice, at the next call to that tool.
+   *
+   * **A prediction, never a deletion.** Invalidation stays scoped to the call being decided, because
+   * a sweep would read every held grant against a source that can only answer for the tools
+   * registered right now — a server that happened to be offline would read as having weakened
+   * everything it ever declared, and the grants would go. Listing them is safe where deleting them
+   * is not.
+   *
+   * **It over-reports in two distinct ways, and both are the same trade.** The comparison is each
+   * grant's recorded snapshot against the set in force *now*, not the set before this change against
+   * the set after it. So (1) a server that is offline when trust moves declares nothing, resolves to
+   * the fail-closed constant, and every grant it holds is named; and (2) a grant already weakened
+   * for some other reason — an earlier withdrawal, a `tools/list` that took a hint back — is named
+   * under whichever withdrawal happens to run next, including one that moved nothing relevant to it.
+   * A named grant is therefore one that the trust now in force weakens, which is what the user needs
+   * to know; it is not a claim that *this* withdrawal is what weakened it. Reading it as the latter
+   * is how a test comes to assert causation the field never promised.
+   *
+   * Empty is likewise not "nothing is at risk" but "nothing this session can see is": with
+   * {@link weakening} non-empty the rule still holds for any grant made while those hints were
+   * believed, which is what the notice says in that case. Counted read-only, like
+   * {@link AllowlistCounts}: the persisted store is consulted only when it is already loaded.
+   */
+  invalidates: string[];
 }
 
 /**
@@ -632,6 +789,13 @@ function toApprovalsObject(raw: ApprovalsConfig | undefined): ApprovalsObjectCon
  * - **`allow` is REPLACED when the per-command value states its own, and inherited when it does
  *   not.** A per-command scope may therefore narrow what runs unprompted, and may never widen what
  *   is prohibited.
+ * - **`mcp` (EXT-70 §4.7) follows `allow`, not the restrictive lists**: replaced when the
+ *   per-command value states it, inherited when it does not. Believing a hint is a PERMISSIVE act
+ *   in both directions — it can make an `allow` hint entry fire and can make a `deny` hint entry
+ *   stop firing — so it merges the way the permissive list does, and a per-command scope can
+ *   narrow the session's trust (`"mcp": {}` believes nothing) but never inherits half of it by
+ *   accident. Deep-merging the two scopes' `servers` maps was rejected for the same reason: it
+ *   would leave a deliberately distrustful per-command block silently carrying the root's trust.
  *
  * **The two halves differ because the costs differ (§3.1), not for tidiness.** A missed allow entry
  * escalates and a missed deny entry falls through to the rater — neither is an execution — while a
@@ -681,6 +845,9 @@ export function resolveApprovals(
     deny: [...(root?.deny ?? []), ...(perCommand?.deny ?? [])],
     escalate: [...(root?.escalate ?? []), ...(perCommand?.escalate ?? [])],
     raterTimeoutMs: perCommand?.raterTimeoutMs ?? root?.raterTimeoutMs,
+    // `??`, so an EXPLICIT empty block is honoured exactly as an explicit empty `allow` is: it
+    // states "believe nothing external here" and must not read as "said nothing, inherit the root".
+    mcp: perCommand?.mcp ?? root?.mcp,
   };
 }
 

@@ -306,6 +306,35 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
     });
   });
 
+  /**
+   * EXT-70 §4.7.5 — the other `mcpServers` key no rule can refer to. A server's identity is the
+   * user's own config key, and both an `mcpTool` entry's `server` field and a trust relationship
+   * under `approvals.mcp.servers` require at least one character — so an empty key names a server
+   * nothing can be written about. Its tools would be gated on every call with no way to say
+   * otherwise and no error saying why, which is the same class of silently-inexpressible config
+   * the reserved `*` is refused for.
+   */
+  describe('the unnameable mcpServers key', () => {
+    it('refuses a server keyed with the empty name, while an ordinary key loads', () => {
+      const message = expectRejected(
+        validateRawGthConfig({ ...BASE, mcpServers: { '': { command: 'x' } } })
+      );
+      expect(message).toContain('mcpServers.""');
+      expect(message).toContain('empty name');
+      // CONTROL: an ordinary key alongside it still loads, so the check is about the empty key and
+      // not about `mcpServers` being refused outright.
+      expectAccepted(validateRawGthConfig({ ...BASE, mcpServers: { jira: { command: 'x' } } }));
+    });
+
+    it('names BOTH unusable keys when a config carries them together', () => {
+      const message = expectRejected(
+        validateRawGthConfig({ ...BASE, mcpServers: { '': {}, '*': {}, jira: {} } })
+      );
+      expect(message).toContain('mcpServers.*');
+      expect(message).toContain('mcpServers.""');
+    });
+  });
+
   describe('hint patterns', () => {
     it('are refused on a shell entry, while the same matcher on a tool subject loads', () => {
       const message = expectRejected(

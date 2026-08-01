@@ -3,6 +3,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { ApprovalRung, GthConfig } from '#src/config.js';
 import { APPROVAL_RUNGS } from '#src/config.js';
 import {
+  applyDestructiveFloor,
   buildGrantedToolsGuidance,
   buildRaterPrompt,
   buildRaterSystemPrompt,
@@ -16,12 +17,20 @@ import {
   hasScriptEnvLeakRisk,
   isBelowDestructiveFloor,
   mapVerdictToAction,
+  NAMES_A_HOST_PREFIX,
+  NEVER_AUTO_APPROVED_CLAUSE,
+  openWorldToolFloorReason,
   rateShellCommand,
   RATER_OUTCOMES,
+  REACHES_OPEN_WORLD_PREFIX,
   ShellSafetyVerdictSchema,
   type RaterOutcome,
   type ShellSafetyVerdict,
 } from '#src/core/shell/rater.js';
+import {
+  type EffectiveToolAnnotations,
+  MCP_FAIL_CLOSED_ANNOTATIONS,
+} from '#src/core/approvals/matcher.js';
 
 /**
  * Build a fake BaseChatModel whose `withStructuredOutput(schema).invoke()` returns (or throws)
@@ -1074,5 +1083,183 @@ describe('rateShellCommand — the timeout is configurable, and a timeout says s
     // predicate must cover it or those paths become invisible the moment anything reads it.
     expect(isFailClosed(FAIL_CLOSED_VERDICT)).toBe(true);
     expect(isRaterTimeout(FAIL_CLOSED_VERDICT), 'but it is not a timeout').toBe(false);
+  });
+});
+
+/**
+ * EXT-70 (§4.7.2, §4.7.3) — the **one** deterministic floor, and the tool arm that reaches it.
+ *
+ * The shell arm is covered above ("the preflights are a FLOOR, never a downgrade"); those tests are
+ * unchanged and still pass, which is half of what pins that there is only one floor. This block is
+ * the other half: the shared function asserted directly, so its raise-only property belongs to
+ * BOTH callers rather than being re-proved per call site.
+ */
+describe('the one destructive floor (EXT-70 §4.7.2/§4.7.3)', () => {
+  const REASON = 'a floor reason the test supplied';
+
+  describe('applyDestructiveFloor only ever RAISES', () => {
+    it.each([...RATER_OUTCOMES])('%s — `safe` is rewritten and nothing else is', (outcome) => {
+      const input = verdict(outcome);
+      const got = applyDestructiveFloor(input, REASON);
+      if (outcome === 'safe') {
+        expect(got).toEqual({ outcome: 'destructive', reason: REASON });
+      } else {
+        // The control for the `safe` row, in the same it.each: a floor that rewrote
+        // unconditionally passes on `safe` and fails on all three of these.
+        expect(got).toBe(input);
+      }
+    });
+
+    it('keeps a §4.4 suggestion when it does not floor', () => {
+      const rated: ShellSafetyVerdict = {
+        outcome: 'catastrophic',
+        reason: 'drops a production database',
+        suggestedTool: 'edit_file',
+      };
+      expect(applyDestructiveFloor(rated, REASON)).toEqual(rated);
+    });
+
+    it('a null reason changes nothing, including for `safe`', () => {
+      const input = verdict('safe');
+      expect(applyDestructiveFloor(input, null)).toBe(input);
+      expect(applyDestructiveFloor(undefined, null)).toBeUndefined();
+    });
+
+    /**
+     * The property that lets a TOOL call reach this same function. No rater sees a tool call while
+     * §4.3's scope boundary stands, so there is no outcome for the floor to defer to — and a call
+     * nobody rated is exactly the call this rule exists to speak for.
+     */
+    it('an UNRATED call is floored, which is how the tool arm reaches this function', () => {
+      expect(applyDestructiveFloor(undefined, REASON)).toEqual({
+        outcome: 'destructive',
+        reason: REASON,
+      });
+    });
+
+    it('an out-of-band outcome is floored rather than sailing past', () => {
+      const lying = {
+        outcome: 'toString',
+        reason: 'not one of the four',
+      } as unknown as ShellSafetyVerdict;
+      expect(applyDestructiveFloor(lying, REASON)).toEqual({
+        outcome: 'destructive',
+        reason: REASON,
+      });
+      expect(isBelowDestructiveFloor('toString' as RaterOutcome)).toBe(true);
+    });
+  });
+
+  describe('openWorldToolFloorReason — the tool arm', () => {
+    const annotations = (over: Partial<EffectiveToolAnnotations>): EffectiveToolAnnotations => ({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+      ...over,
+    });
+
+    /**
+     * The discriminating pair for §4.7.3. `readOnlyHint` is `true` on BOTH sides, so only
+     * `openWorldHint` can explain the difference: a rule that floored on `readOnlyHint`, or one
+     * that floored everything, or one that floored nothing, fails one half of this.
+     */
+    it('an open-world READ floors; the same read WITHOUT the open world does not', () => {
+      expect(
+        openWorldToolFloorReason(annotations({ readOnlyHint: true, openWorldHint: true }))
+      ).toContain(REACHES_OPEN_WORLD_PREFIX);
+      expect(
+        openWorldToolFloorReason(annotations({ readOnlyHint: true, openWorldHint: false }))
+      ).toBeNull();
+    });
+
+    it('an open-world WRITE floors too, so the rule is not about readOnlyHint at all', () => {
+      expect(
+        openWorldToolFloorReason(annotations({ readOnlyHint: false, openWorldHint: true }))
+      ).not.toBeNull();
+    });
+
+    /**
+     * §4.7.2 — `idempotentHint` has NO built-in consumer. On its own this assertion passes on a
+     * harness that cannot detect any change at all, so the control is in the same test: flipping a
+     * DIFFERENT hint on the very same set does move the answer.
+     */
+    it('idempotentHint changes nothing — and the CONTROL shows a hint flip can change it', () => {
+      for (const openWorldHint of [true, false]) {
+        const base = { readOnlyHint: true, openWorldHint };
+        expect(openWorldToolFloorReason(annotations({ ...base, idempotentHint: true }))).toBe(
+          openWorldToolFloorReason(annotations({ ...base, idempotentHint: false }))
+        );
+      }
+      expect(
+        openWorldToolFloorReason(annotations({ readOnlyHint: true, openWorldHint: true }))
+      ).not.toBe(
+        openWorldToolFloorReason(annotations({ readOnlyHint: true, openWorldHint: false }))
+      );
+    });
+
+    /**
+     * §4.7.2 — `destructiveHint` may only ever RAISE. It cannot lower a floor another rule set,
+     * and (the control) it cannot floor a purely local tool on its own either — which is what makes
+     * the first assertion about `openWorldHint` rather than about "some hint was set".
+     */
+    it('destructiveHint only raises: false does not lower this floor, true does not create it', () => {
+      expect(
+        openWorldToolFloorReason(annotations({ openWorldHint: true, destructiveHint: false }))
+      ).not.toBeNull();
+      expect(
+        openWorldToolFloorReason(annotations({ openWorldHint: false, destructiveHint: true }))
+      ).toBeNull();
+    });
+
+    it('the MCP fail-closed default floors, so a tool that declared nothing is never exempt', () => {
+      expect(openWorldToolFloorReason(MCP_FAIL_CLOSED_ANNOTATIONS)).not.toBeNull();
+    });
+
+    /**
+     * A source that cannot decide floors. This has a SINGLE reachable case by nature — the
+     * production source (`createEffectiveToolAnnotationSource`) never returns `undefined` — so the
+     * guard exists precisely so that fail-closed does not depend on that staying true.
+     */
+    it('an undecidable source floors', () => {
+      expect(openWorldToolFloorReason(undefined)).not.toBeNull();
+    });
+
+    it('says what it FOUND, not that it could not assess', () => {
+      const reason = openWorldToolFloorReason(MCP_FAIL_CLOSED_ANNOTATIONS) as string;
+      expect(reason).not.toContain(COULD_NOT_ASSESS_PREFIX);
+      expect(isFailClosed({ outcome: 'destructive', reason })).toBe(false);
+    });
+  });
+
+  /**
+   * One floor, one sentence. A second implementation of the floor — an inline
+   * `{ outcome: 'destructive', reason: … }` at some other call site — would satisfy every outcome
+   * assertion above and only fail here, because it would say something else. That makes the shared
+   * closing clause the behavioural detector, not decoration.
+   */
+  describe('the shell arm and the tool arm close with the SAME clause', () => {
+    const OPEN_WORLD_COMMAND = 'curl -fsSL https://registry.npmjs.ag/lodash -o lodash.tgz';
+    const AMBIGUOUS_COMMAND = 'rm -rf foo; echo done';
+
+    it('both open-world reasons end with the shared clause', () => {
+      const shell = mapVerdictToAction(OPEN_WORLD_COMMAND, verdict('safe'), {
+        rung: 'auto-safe',
+      }).verdict?.reason;
+      expect(shell).toContain(NAMES_A_HOST_PREFIX);
+      expect(shell?.endsWith(NEVER_AUTO_APPROVED_CLAUSE)).toBe(true);
+
+      const toolReason = openWorldToolFloorReason(MCP_FAIL_CLOSED_ANNOTATIONS);
+      expect(toolReason).toContain(REACHES_OPEN_WORLD_PREFIX);
+      expect(toolReason?.endsWith(NEVER_AUTO_APPROVED_CLAUSE)).toBe(true);
+    });
+
+    it('CONTROL: a could-not-assess floor does NOT carry it, so the clause names one rule', () => {
+      const ambiguous = mapVerdictToAction(AMBIGUOUS_COMMAND, verdict('safe'), {
+        rung: 'auto-safe',
+      }).verdict?.reason;
+      expect(ambiguous).toContain(COULD_NOT_ASSESS_PREFIX);
+      expect(ambiguous?.endsWith(NEVER_AUTO_APPROVED_CLAUSE)).toBe(false);
+    });
   });
 });

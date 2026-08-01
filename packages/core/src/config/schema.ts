@@ -123,9 +123,20 @@ export const APPROVAL_ENTRY_TYPES = ['shell', 'tool', 'mcpTool'] as const;
 export const APPROVAL_ENTRY_MATCHERS = ['exact', 'glob', 'regexp', 'hint'] as const;
 
 /**
- * EXT-71 §3.1 / §4.7 — the four MCP `ToolAnnotations` booleans a `hint` pattern may name. This is
- * the whole vocabulary: an unknown name is a config error, never an ignored key, because a hint
- * pattern that quietly drops a constraint matches MORE than its author wrote.
+ * EXT-71 §3.1 / §4.7 — the four MCP `ToolAnnotations` booleans a `hint` pattern may name, and the
+ * names a user may list in `approvals.mcp.*.trustAnnotations` (§4.7.1). This is the whole
+ * vocabulary: an unknown name is a config error, never an ignored key, because a hint pattern that
+ * quietly drops a constraint matches MORE than its author wrote, and a trust list that quietly
+ * drops one reads as working while believing something else.
+ *
+ * **The runtime twin `TOOL_ANNOTATION_HINTS` in `shell-policy.ts` is a deliberate duplicate, and
+ * the reason is layering, not oversight.** Neither file may import the other. This module must stay
+ * pure and cwd/fs-independent because it feeds `z.toJSONSchema()` (see the header), and importing
+ * `shell-policy.ts` would pull `core/types.js` and the whole runtime policy surface into it;
+ * importing this module from there would in turn pull zod into every module that only wanted a
+ * policy type. So the vocabulary is written once per layer on purpose — do not "simplify" it by
+ * making one import the other. The equality assertion in `mcpApprovalsBlock.spec.ts` is what fails
+ * when they drift.
  */
 export const HINT_ANNOTATION_KEYS = [
   'readOnlyHint',
@@ -338,6 +349,50 @@ export const approvalEntrySchema = z
 const APPROVAL_LIST_KEYS = ['allow', 'deny', 'escalate'] as const;
 
 /**
+ * EXT-70 §4.7.1/§9.1 — `trustAnnotations`: **the hints believed from one server**, as a LIST of
+ * {@link HINT_ANNOTATION_KEYS} names and never a boolean, because trusting `readOnlyHint` while
+ * distrusting `openWorldHint` is a coherent position and the common one.
+ *
+ * An unknown name is a hard config error rather than an ignored member: a list that quietly drops
+ * a name the user believed they wrote trusts LESS than they asked in one direction and reads as a
+ * working config in the other, and a trust list nobody can verify from its own error output is
+ * worse than none. The custom message quotes the offending value, since the path alone gives an
+ * index and the user needs the word they mistyped.
+ */
+const trustAnnotationsSchema = z.array(
+  z.enum(HINT_ANNOTATION_KEYS, {
+    error: (issue) =>
+      `${JSON.stringify(issue.input)} is not an MCP tool annotation. trustAnnotations names the ` +
+      `hints believed from a server, and the whole vocabulary is ` +
+      `${HINT_ANNOTATION_KEYS.join(', ')}.`,
+  })
+);
+
+/**
+ * EXT-70 §4.7/§9 — one server's entry under `approvals.mcp.servers`, and the shape `defaults`
+ * takes. **Strict**: an unrecognized key is an error, so a hint list misspelt as a whole key
+ * (`trustAnnotation`, `trust`) fails loudly instead of silently trusting nothing while reading as
+ * though it trusted something.
+ */
+const mcpServerApprovalsSchema = z.strictObject({
+  trustAnnotations: trustAnnotationsSchema.optional(),
+});
+
+/**
+ * EXT-70 §4.7/§9 — the `approvals.mcp` block. `defaults` covers servers not named under `servers`;
+ * `servers` is keyed by the user's own `mcpServers` config key (§4.7.5) and is deliberately NOT
+ * checked against `mcpServers`, so policy may be written before the server it describes.
+ *
+ * Strict, and it stays strict: `expose` (§4.7.6) belongs to [[EXT-73]] and is not accepted here
+ * until that node adds it deliberately. A permissive block would accept `expose` today, do nothing
+ * with it, and leave a user believing their tools were filtered.
+ */
+const mcpApprovalsSchema = z.strictObject({
+  defaults: mcpServerApprovalsSchema.optional(),
+  servers: z.record(z.string().min(1), mcpServerApprovalsSchema).optional(),
+});
+
+/**
  * EXT-71 §3.1 — render an entry in the object form the user would write in a config file, with the
  * fields in grammar order (`type`, `server`, `matcher`, `pattern`, then the optional bounds).
  *
@@ -407,6 +462,9 @@ export function renderApprovalEntryForString(pattern: string): string {
  *   message shows the object form of that same string ({@link findApprovalsGrammarIssues}).
  * - `escalate` is the third list (§3, §3.2): a match always asks the human, whatever the rung
  *   would have done. It takes the same entries as the other two.
+ * - `mcp` (EXT-70 §4.7) holds the per-server relationship — which hints are believed from which
+ *   server — keyed by the user's own `mcpServers` config key, with `defaults` for servers not
+ *   named. Absent or empty `trustAnnotations` believes nothing external, which is also the default.
  * - The retired `strictness` / `allowlist` / `persistAllowlist` keys and the retired `auto` / `ask`
  *   mode values are hard migration errors naming their replacement — see `RETIRED_APPROVALS_KEYS` /
  *   `RETIRED_APPROVAL_MODES` in {@link findDeprecatedConfigIssues}. So is a NON-ARRAY `escalate`,
@@ -435,6 +493,8 @@ const approvalsSchema = z.union([
     // declarations). This schema is not a tool declaration, but one spelling everywhere is what
     // stops the wrong one being copied into somewhere that is.
     raterTimeoutMs: z.number().int().min(1).optional(),
+    // EXT-70 §4.7/§9 — the per-server MCP relationship, keyed by the user's own `mcpServers` key.
+    mcp: mcpApprovalsSchema.optional(),
   }),
 ]);
 
@@ -1222,6 +1282,18 @@ export function findDeprecatedConfigIssues(raw: Record<string, unknown>): Deprec
 const RESERVED_MCP_SERVER_NAME = '*';
 
 /**
+ * EXT-70 §4.7.5 — the MCP server name that cannot be written about. A server key is
+ * `z.string().min(1)` both under `approvals.mcp.servers` (§9) and on an `mcpTool` entry's `server`
+ * field (§3.1), so a server keyed with the empty string is one no approvals rule and no trust
+ * relationship can ever refer to by name. Its tools resolve to the unattributable-server sentinel:
+ * fail-closed, which is safe, but also silently un-configurable — the user would get a server whose
+ * every call is gated with no way to say anything about it and no error explaining why. Refused at
+ * load, for the same reason as {@link RESERVED_MCP_SERVER_NAME}: a name whose rules cannot be
+ * expressed is worse than a rejected config.
+ */
+const UNNAMEABLE_MCP_SERVER_NAME = '';
+
+/**
  * EXT-71 §3.1/§9.1 — validate every entry in one `approvals` value's three rule lists (root or per
  * command), pushing one issue per problem with a path that points at the exact entry and field.
  *
@@ -1295,10 +1367,41 @@ function collectApprovalEntryIssues(
 }
 
 /**
+ * EXT-70 §4.7/§9 — validate one `approvals.mcp` block, with a path that names the offending field.
+ *
+ * It runs PRE-PARSE for the same reason the rule entries do: `approvalsSchema` is a `z.union`, so a
+ * bad `mcp` block otherwise collapses into the union's bland "approvals: Invalid input" — the
+ * message this whole family of checks exists to replace. Here the user gets the server key, the
+ * field and (for a hint name) the value they mistyped.
+ */
+function collectMcpApprovalsIssues(
+  approvals: unknown,
+  pathPrefix: string,
+  issues: DeprecatedConfigIssue[]
+): void {
+  if (!approvals || typeof approvals !== 'object' || Array.isArray(approvals)) return;
+  const mcp = (approvals as Record<string, unknown>).mcp;
+  if (mcp === undefined) return;
+
+  const parsed = mcpApprovalsSchema.safeParse(mcp);
+  if (parsed.success) return;
+  for (const issue of parsed.error.issues) {
+    issues.push({
+      path:
+        issue.path.length > 0 ? `${pathPrefix}.mcp.${issue.path.join('.')}` : `${pathPrefix}.mcp`,
+      message: issue.message,
+    });
+  }
+}
+
+/**
  * EXT-71 §3.1 — every hard error the rule grammar defines, found on the RAW input: each entry in
  * `allow`/`deny`/`escalate` validated with a path that names the offending field
- * ({@link collectApprovalEntryIssues}), and a configured `mcpServers` key named `*` (which needs
- * to see `mcpServers`, a sibling of `approvals`, not a field of it).
+ * ({@link collectApprovalEntryIssues}), the `approvals.mcp` block ({@link collectMcpApprovalsIssues}),
+ * and the two `mcpServers` keys no rule can refer to — `*` ({@link RESERVED_MCP_SERVER_NAME}, which
+ * an entry already reads as "every server") and the empty name
+ * ({@link UNNAMEABLE_MCP_SERVER_NAME}, which no entry's `server` field can hold). Both need to see
+ * `mcpServers`, a sibling of `approvals` rather than a field of it.
  *
  * All of them are HARD errors, reported the same way {@link findDeprecatedConfigIssues} reports
  * its own, and — like it — this runs BEFORE the schema parse so the precise message is the only
@@ -1311,34 +1414,44 @@ export function findApprovalsGrammarIssues(raw: Record<string, unknown>): Deprec
   const issues: DeprecatedConfigIssue[] = [];
 
   const mcpServers = raw.mcpServers;
-  if (
-    mcpServers &&
-    typeof mcpServers === 'object' &&
-    !Array.isArray(mcpServers) &&
-    Object.prototype.hasOwnProperty.call(mcpServers, RESERVED_MCP_SERVER_NAME)
-  ) {
-    issues.push({
-      path: `mcpServers.${RESERVED_MCP_SERVER_NAME}`,
-      message:
-        `"${RESERVED_MCP_SERVER_NAME}" is a reserved MCP server name: an approvals rule entry ` +
-        `uses it to mean EVERY server, so a server of that name would make ` +
-        `{ "type": "mcpTool", "server": "${RESERVED_MCP_SERVER_NAME}", ... } ambiguous. ` +
-        'Rename the server to anything else. ' +
-        MIGRATION_HINT,
-    });
+  if (mcpServers && typeof mcpServers === 'object' && !Array.isArray(mcpServers)) {
+    if (Object.prototype.hasOwnProperty.call(mcpServers, RESERVED_MCP_SERVER_NAME)) {
+      issues.push({
+        path: `mcpServers.${RESERVED_MCP_SERVER_NAME}`,
+        message:
+          `"${RESERVED_MCP_SERVER_NAME}" is a reserved MCP server name: an approvals rule entry ` +
+          `uses it to mean EVERY server, so a server of that name would make ` +
+          `{ "type": "mcpTool", "server": "${RESERVED_MCP_SERVER_NAME}", ... } ambiguous. ` +
+          'Rename the server to anything else. ' +
+          MIGRATION_HINT,
+      });
+    }
+    if (Object.prototype.hasOwnProperty.call(mcpServers, UNNAMEABLE_MCP_SERVER_NAME)) {
+      issues.push({
+        path: 'mcpServers.""',
+        message:
+          'an MCP server may not be keyed with an empty name: both an approvals rule entry ' +
+          '({ "type": "mcpTool", "server": ... }) and a trust relationship under ' +
+          '"approvals.mcp.servers" require a server name of at least one character, so nothing ' +
+          "could ever be written about this server's tools — every call it makes would be gated " +
+          'with no way to say otherwise. Give the server a name. ' +
+          MIGRATION_HINT,
+      });
+    }
   }
 
-  collectApprovalEntryIssues(raw.approvals, 'approvals', issues);
+  const collect = (approvals: unknown, prefix: string): void => {
+    collectApprovalEntryIssues(approvals, prefix, issues);
+    collectMcpApprovalsIssues(approvals, prefix, issues);
+  };
+
+  collect(raw.approvals, 'approvals');
 
   const commands = raw.commands;
   if (commands && typeof commands === 'object' && !Array.isArray(commands)) {
     for (const [name, cmd] of Object.entries(commands as Record<string, unknown>)) {
       if (cmd && typeof cmd === 'object' && !Array.isArray(cmd)) {
-        collectApprovalEntryIssues(
-          (cmd as Record<string, unknown>).approvals,
-          `commands.${name}.approvals`,
-          issues
-        );
+        collect((cmd as Record<string, unknown>).approvals, `commands.${name}.approvals`);
       }
     }
   }

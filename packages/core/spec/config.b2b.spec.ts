@@ -355,6 +355,73 @@ describe('config B2b behavior changes', () => {
       expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
     });
 
+    /**
+     * EXT-70 §4.7 — `trustAnnotations` is a list, so it lands on the merge policy's DEFAULT
+     * (replace) rather than in the additive set. That is what makes `[]` mean "believe nothing":
+     * were it additive, a project config could not withdraw a global one's trust at all, and the
+     * fail-closed spelling would silently be the one shape the merge cannot express.
+     *
+     * Asserted through the effective annotation set, so it pins what the gate believes rather than
+     * which array survived the merge.
+     */
+    describe('the approvals.mcp trust block across layers (EXT-70 §4.7)', () => {
+      /** Whether jira's declared `readOnlyHint: true` survives into the effective set. */
+      async function jiraReadOnly(config: unknown): Promise<boolean> {
+        const { resolveApprovals } = await import('#src/config/shell-policy.js');
+        const { createEffectiveToolAnnotationSource } =
+          await import('#src/core/approvals/annotations.js');
+        const approvals = resolveApprovals(
+          config as Parameters<typeof resolveApprovals>[0],
+          'code'
+        );
+        return createEffectiveToolAnnotationSource({
+          mcp: approvals.mcp,
+          declared: { mcp: () => ({ readOnlyHint: true }) },
+        })({ kind: 'mcpTool', server: 'jira', name: 'get_issue' }).readOnlyHint;
+      }
+
+      it('a project layer WITHDRAWS a global one’s trust with an empty list', async () => {
+        setupGlobalAndProject(
+          {
+            approvals: {
+              mode: 'auto-safe',
+              mcp: { servers: { jira: { trustAnnotations: ['readOnlyHint'] } } },
+              deny: [GLOBAL_DENY],
+            },
+          },
+          {
+            llm: { type: 'vertexai' },
+            approvals: { mcp: { servers: { jira: { trustAnnotations: [] } } } },
+          }
+        );
+        const { initConfig } = await import('#src/config.js');
+        const config = await initConfig({});
+
+        expect(await jiraReadOnly(config)).toBe(false);
+        // CONTROL — the restrictive list did not narrow along with the trust.
+        expect((await decide(config, 'code', 'npm publish --access public')).action).toBe('deny');
+        expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      });
+
+      it('a project layer that states NO mcp inherits the global block', async () => {
+        // The other direction, without which the test above pins only "the global block went away".
+        setupGlobalAndProject(
+          {
+            approvals: {
+              mode: 'auto-safe',
+              mcp: { servers: { jira: { trustAnnotations: ['readOnlyHint'] } } },
+            },
+          },
+          { llm: { type: 'vertexai' }, approvals: { mode: 'write' } }
+        );
+        const { initConfig } = await import('#src/config.js');
+        const config = await initConfig({});
+
+        expect((await decide(config, 'code', 'npm test')).rung).toBe('write'); // CONTROL
+        expect(await jiraReadOnly(config)).toBe(true);
+      });
+    });
+
     it('a project layer that states NO allow inherits the global one', async () => {
       // The other direction, without which the test above pins only "the global list went away".
       setupGlobalAndProject(

@@ -21,9 +21,36 @@ class ScriptedShellCallingModel extends BaseChatModel {
   bindTools() {
     return this;
   }
+  /**
+   * The printed marker ('approval-out-marker') deliberately differs from any literal substring of
+   * the command text, so the e2e can distinguish "the pending command is DISPLAYED in the approval
+   * prompt" from "the command actually EXECUTED". `node` is guaranteed present (it runs this very
+   * CLI) and the quoting works in POSIX shells and cmd.exe alike.
+   *
+   * The COMPOUND variant, requested by a user turn containing `unresolvable-compound`, is a command
+   * that does not statically resolve — so no allow entry of any matcher could ever match it, no
+   * sticky grant is on offer, and the §6 menu must not show a sticky control it would then refuse.
+   * It is the negative half of that pair; the plain command above is the positive.
+   */
+  #command(compound) {
+    // The marker stays SPLIT inside the emitted command, never concatenated here: the whole point
+    // is that 'approval-out-marker' is not a literal substring of the command text, so the e2e can
+    // tell "the pending command is displayed" from "the command ran".
+    const say = (expr) => `node -e "console.log(${expr})"`;
+    const marker = say(`'approval-'+'out-'+'marker'`);
+    return compound ? `${say(`'approval-'+'first'`)} && ${marker}` : marker;
+  }
+
   async _generate(messages) {
     this.callCount += 1;
     const last = messages[messages.length - 1];
+    // Whether THIS conversation asked for the unresolvable variant. Read off the whole message
+    // list rather than the newest message, so it still holds on the post-tool turn.
+    // The trigger token is deliberately one no prompt, tool description or approvals copy contains,
+    // so a wording change elsewhere cannot silently switch every case onto this branch.
+    const compound = messages.some(
+      (m) => typeof m.content === 'string' && m.content.includes('unresolvable-compound')
+    );
     const message = ToolMessage.isInstance(last)
       ? new AIMessage('approval-final-answer-marker')
       : new AIMessage({
@@ -31,12 +58,7 @@ class ScriptedShellCallingModel extends BaseChatModel {
           tool_calls: [
             {
               name: 'run_shell_command',
-              // The printed marker ('approval-out-marker') deliberately differs from any literal
-              // substring of the command text, so the e2e can distinguish "the pending command is
-              // DISPLAYED in the approval prompt" from "the command actually EXECUTED". `node` is
-              // guaranteed present (it runs this very CLI) and the quoting works in POSIX shells
-              // and cmd.exe alike.
-              args: { command: `node -e "console.log('approval-'+'out-'+'marker')"` },
+              args: { command: this.#command(compound) },
               id: `call-${this.callCount}`,
             },
           ],

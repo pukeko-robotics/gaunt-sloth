@@ -5,7 +5,15 @@ import type {
   McpConnectionFailure,
 } from '@gaunt-sloth/core/core/types.js';
 import type { TurnViewModel } from '#src/tui/viewModel.js';
-import type { AllowlistCounts, ApprovalRung, ResolvedApprovals } from '@gaunt-sloth/core/config.js';
+import type {
+  AllowlistCounts,
+  ApprovalRung,
+  McpAnnotationTrustChange,
+  McpAnnotationTrustView,
+  ResolvedApprovals,
+  ToolAnnotationHint,
+} from '@gaunt-sloth/core/config.js';
+import type { ApprovalGrant } from '@gaunt-sloth/core/core/approvals/grants.js';
 import type { CommandNoticeTone } from '#src/tui/components/CommandNotice.js';
 import type { DebugDumpInput } from '@gaunt-sloth/agent/modules/slashCommands.js';
 import type { MouseSubscribe } from '#src/tui/useMouse.js';
@@ -53,7 +61,31 @@ export interface TuiAgent {
     approvals: ResolvedApprovals;
     allowlist: AllowlistCounts;
     deny: string[];
+    /**
+     * EXT-70 §3/§4.7.4 — the grants themselves (what was granted, when, and under which effective
+     * annotations), not merely how many. Read-only copies; the runner never hands out its live
+     * records.
+     */
+    grants: ApprovalGrant[];
+    /** EXT-70 §4.7.1 — which of each MCP server's annotation hints this session believes. */
+    trust: McpAnnotationTrustView;
   };
+  /**
+   * EXT-70 §4.7.1 — start or stop believing specific annotation hints from ONE MCP server, for
+   * this session. The TUI counterpart of `approvals.mcp.servers.<key>.trustAnnotations` (§9).
+   *
+   * Per hint, never per server: `hints` moves exactly the hints it names. Returns what the runner
+   * LANDED on — including whether the withdrawal weakens, which is what lets the surface tell the
+   * user their saved approvals for that server are about to go with it (§4.7.4) rather than
+   * letting them meet that as a surprise at the next call.
+   *
+   * Optional so the fixture agent (no runner) may omit it.
+   */
+  setMcpAnnotationTrust?(
+    server: string,
+    hints: ToolAnnotationHint[],
+    believe: boolean
+  ): McpAnnotationTrustChange;
 }
 
 /**

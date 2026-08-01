@@ -14,9 +14,10 @@
  * is how a matcher and a floor come to disagree about what a command is.
  *
  * `hint` is valid only on tool subjects and reads the call's **effective** annotations through
- * {@link EffectiveToolAnnotationSource} — the seam [[EXT-70]] implements. Until it does, the source
- * is {@link failClosedToolAnnotations}: the MCP fail-closed defaults, which describe a tool that
- * writes, destroys, is not idempotent and reaches the open world.
+ * {@link EffectiveToolAnnotationSource}, which `core/approvals/annotations.ts` builds from the user's
+ * per-server trust (§4.7.1). A caller that wires no source gets {@link failClosedToolAnnotations}:
+ * the MCP fail-closed defaults, which describe a tool that writes, destroys, is not idempotent and
+ * reaches the open world.
  *
  * ## The asymmetry (§3.1 "Compound commands"), which is the whole point of this module
  *
@@ -78,11 +79,9 @@ export interface ToolApprovalSubject {
 }
 
 /**
- * A gated MCP tool call. `server` is the user's own key in `mcpServers` (§4.7.5).
- *
- * **[[EXT-70]] owns the construction of this subject** — MCP identity and the effective-annotation
- * set are its scope, and nothing builds one today (MCP tools are not gated yet). The matcher
- * handles it so EXT-70 adds a call site rather than a code path.
+ * A gated MCP tool call. `server` is the user's own key in `mcpServers` (§4.7.5) — the only identity
+ * a server has that is stable, unique and user-authored, and the key its trust and its rule entries
+ * are both written against. Nothing a server declares about its own name ever participates.
  */
 export interface McpToolApprovalSubject {
   kind: 'mcpTool';
@@ -95,7 +94,7 @@ export interface McpToolApprovalSubject {
 export type ApprovalSubject = ShellApprovalSubject | ToolApprovalSubject | McpToolApprovalSubject;
 
 /* -------------------------------------------------------------------------------------------- *
- * The EXT-70 seam — effective tool annotations.
+ * Effective tool annotations — the values a `hint` entry reads.
  * -------------------------------------------------------------------------------------------- */
 
 /**
@@ -112,13 +111,14 @@ export interface EffectiveToolAnnotations {
 }
 
 /**
- * **The [[EXT-70]] seam.** Resolves the effective annotations of a tool call, or `undefined` when
- * they cannot be determined — which the matcher treats as undecidable (non-match on allow, match on
- * deny/escalate).
+ * Resolves the effective annotations of a tool call, or `undefined` when they cannot be determined
+ * — which the matcher treats as undecidable (non-match on allow, match on deny/escalate).
  *
- * EXT-70 replaces {@link failClosedToolAnnotations} with a real implementation that reads each
- * server's declared annotations through its per-server, per-hint trust decision (§4.7.1–§4.7.6).
- * Nothing else in this module needs to change when it does: this function type IS the contract.
+ * This function type is the whole contract between the matcher and the trust model:
+ * `createEffectiveToolAnnotationSource` (`core/approvals/annotations.ts`) is the one implementation
+ * that applies per-server, per-hint trust (§4.7.1), and it is the ONLY place an effective set is
+ * derived. Nothing in this module knows how trust is decided, which is what lets the two evolve
+ * independently.
  */
 export type EffectiveToolAnnotationSource = (
   subject: ToolApprovalSubject | McpToolApprovalSubject
@@ -129,21 +129,34 @@ export type EffectiveToolAnnotationSource = (
  * to write, to destroy, to be non-idempotent and to reach the open world. These are the values the
  * MCP specification itself defines for absent annotations, so an entry written against them is
  * written against the protocol's own conservative reading.
+ *
+ * **Frozen**, and read-only to the type system, because it is shared: an effective set is something
+ * callers snapshot (§4.7.4 records one on a sticky grant), so a source that handed this object out
+ * instead of a copy would let one caller's snapshot rewrite the fail-closed floor for every other.
+ * Freezing turns that aliasing bug into an immediate throw rather than a silent, global loosening.
  */
-export const MCP_FAIL_CLOSED_ANNOTATIONS: EffectiveToolAnnotations = {
+export const MCP_FAIL_CLOSED_ANNOTATIONS: Readonly<EffectiveToolAnnotations> = Object.freeze({
   readOnlyHint: false,
   destructiveHint: true,
   idempotentHint: false,
   openWorldHint: true,
-};
+});
 
 /**
- * The interim {@link EffectiveToolAnnotationSource}: every tool reads as
- * {@link MCP_FAIL_CLOSED_ANNOTATIONS}. Deliberately NOT a trust model — building one here would be
- * building [[EXT-70]] ahead of its own node, with none of its measurement behind it.
+ * The {@link EffectiveToolAnnotationSource} a caller gets when it wires none: every tool reads as
+ * {@link MCP_FAIL_CLOSED_ANNOTATIONS}.
+ *
+ * It is the safe default and not a stub — it is what a fully distrustful configuration computes
+ * anyway (§4.7.1: an untrusted server's effective set IS this constant), so a call site that has no
+ * annotations to offer behaves exactly like one whose user believes nothing. Deliberately NOT a
+ * trust model: trust needs config, and config belongs to `core/approvals/annotations.ts`.
+ *
+ * It answers with a **fresh object per call**, matching `createEffectiveToolAnnotationSource`, so
+ * the whole contract — not merely its configured half — is safe to snapshot.
  */
-export const failClosedToolAnnotations: EffectiveToolAnnotationSource = () =>
-  MCP_FAIL_CLOSED_ANNOTATIONS;
+export const failClosedToolAnnotations: EffectiveToolAnnotationSource = () => ({
+  ...MCP_FAIL_CLOSED_ANNOTATIONS,
+});
 
 /* -------------------------------------------------------------------------------------------- *
  * The engine.
@@ -180,7 +193,10 @@ interface MatchContext {
 
 /** Tuning + seams for {@link resolveApprovalRules}. All optional; the defaults are the product's. */
 export interface ApprovalMatcherOptions {
-  /** The [[EXT-70]] seam. Defaults to {@link failClosedToolAnnotations}. */
+  /**
+   * Where a `hint` entry reads its effective values (§4.7.1). Build it with
+   * `createEffectiveToolAnnotationSource`; defaults to {@link failClosedToolAnnotations}.
+   */
   annotations?: EffectiveToolAnnotationSource;
   /**
    * Where a run-time report goes — the established {@link ShellApprovalGateNotice} shape, which the

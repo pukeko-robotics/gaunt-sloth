@@ -54,8 +54,15 @@ them; in the TUI, typing `/` alone opens a searchable command menu. A few worth 
 - `/model` — show the current model / provider
 - `/verbose` — expand or collapse tool-call detail (Ctrl+T does the same mid-response)
 - `/reasoning` — reprint a turn's thinking (`/reasoning 2` for turn 2)
-- `/approvals` — show the current rung, the rater and the allow/deny counts;
-  `/approvals read-only|write|auto-safe|full-auto|bypass` switches for this session
+- `/approvals` — show the current rung, the rater, the allow/deny counts, what you have approved so
+  far and which MCP annotation hints you believe;
+  `/approvals read-only|write|auto-safe|full-auto|bypass` switches the rung for this session
+- `/approvals trust <server> <hint…>` — believe one MCP server's tool annotations, named by the key
+  you gave it under `mcpServers`; `/approvals untrust` stops believing them. Each hint
+  (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) is believed separately, so
+  `/approvals trust jira readOnlyHint` leaves that server's `openWorldHint` disbelieved. Session
+  only. Untrusting makes those tools read as more dangerous than when you approved them, so your
+  saved approvals for that server are withdrawn at their next call — the command tells you so
 - `/mouse` — turn mouse reporting on or off (`/mouse off` to get text selection back)
 - `/debug-dump` — write a diagnostic archive for a bug report (see [debug-dump](../debug-dump.md))
 - `/exit` (or `/quit`) — leave the session

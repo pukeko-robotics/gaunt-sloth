@@ -141,12 +141,27 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
     displayWarningMock.mockClear();
   };
 
+  /**
+   * EXT-70 §6 — production attaches the grant preview EXACTLY when a sticky grant is on offer, and
+   * discards it for a `catastrophic` outcome (§4.2), so the fixture is derived from the verdict
+   * rather than left off. Without that, every confirmation test here ran on a pending the runner
+   * never sends, and the sticky/not-sticky assertions would have agreed with each other whatever
+   * the surface did.
+   */
   const answer = async (key: string, safetyVerdict: PendingLike['safetyVerdict']) => {
     rlQuestionMock.mockResolvedValueOnce(key);
+    const sticky = safetyVerdict?.outcome !== 'catastrophic';
     return capturedApprovalCallback!({
       name: 'run_shell_command',
       args: { command: 'terraform destroy -auto-approve' },
       safetyVerdict,
+      ...(sticky
+        ? {
+            grantPreview:
+              '{ "type": "shell", "matcher": "exact", "pattern": "terraform destroy -auto-approve" }',
+            grantSummary: 'terraform destroy -auto-approve',
+          }
+        : {}),
     });
   };
 
@@ -235,8 +250,9 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
       name: 'run_shell_command',
       args: { command: 'npm test' },
       grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "npm test" }',
+      grantSummary: 'npm test',
     });
-    expect(printed()).toContain('will remember exactly this command');
+    expect(printed()).toContain('will remember npm test');
     expect(printed()).toContain('"matcher": "exact"');
   });
 
@@ -244,9 +260,45 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
     await startSession();
     rlQuestionMock.mockResolvedValueOnce('n');
     await capturedApprovalCallback!({ name: 'run_shell_command', args: { command: 'npm test' } });
-    expect(printed()).not.toContain('will remember exactly this command');
+    expect(printed()).not.toContain('will remember');
     // Control: this surface still printed its own line on the same path, so the assertion above is
     // about the grant row and not about output being suppressed altogether.
     expect(printed()).toContain('Command rejected.');
+  });
+
+  /** The prompt string this surface actually asked with — the menu, as the human read it. */
+  const asked = (): string =>
+    rlQuestionMock.mock.calls.map((call: unknown[]) => String(call[0])).join('\n');
+
+  /**
+   * EXT-70 §6 — **a sticky control is shown only where a sticky grant is on offer**, and is
+   * ABSENT rather than disabled: "a control that is offered and then refused reads as a bug rather
+   * than as a policy". Both halves are in one test, because asserting only the absence would pass
+   * on a menu that never offered `[s]`/`[a]` at all.
+   */
+  it('offers the sticky choices with a grant and not without one', async () => {
+    await startSession();
+    rlQuestionMock.mockResolvedValueOnce('n');
+    await capturedApprovalCallback!({
+      name: 'run_shell_command',
+      args: { command: 'npm test' },
+      grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "npm test" }',
+      grantSummary: 'npm test',
+    });
+    expect(asked()).toContain('[s]ession');
+    expect(asked()).toContain('[a]lways');
+
+    rlQuestionMock.mockClear();
+    rlQuestionMock.mockResolvedValueOnce('n');
+    await capturedApprovalCallback!({
+      name: 'run_shell_command',
+      args: { command: 'ls && rm -rf build' },
+    });
+    expect(asked()).not.toContain('[s]ession');
+    expect(asked()).not.toContain('[a]lways');
+    // Still a menu: the one-shot choices remain, so the absence above is about the sticky pair and
+    // not about the prompt having collapsed.
+    expect(asked()).toContain('[o]nce');
+    expect(asked()).toContain('[N]o');
   });
 });
