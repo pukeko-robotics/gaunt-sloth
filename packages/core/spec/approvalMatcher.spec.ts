@@ -90,6 +90,25 @@ describe('approvals rule matcher (EXT-71 §3.1)', () => {
       // Control: the allow entry as written still matches.
       expect(asAllow([upper], shell('NPM PUBLISH'))?.action).toBe('allow');
     });
+
+    /**
+     * `matcher` is the ONLY thing that decides whether a pattern is interpreted, so a `*` inside an
+     * `exact` pattern is an ordinary character. Worth its own assertion because the failure mode is
+     * silent and one-directional: were `exact` to translate `*`, an entry the user wrote to name one
+     * literal command would quietly grant a whole family of them, unrated and unprompted.
+     */
+    it('treats a literal `*` in an exact pattern as a character, not a wildcard', () => {
+      const entry: ApprovalEntry = { type: 'shell', matcher: 'exact', pattern: 'echo *' };
+      // Control: the entry matches the command it literally names.
+      expect(asAllow([entry], shell('echo *'))?.action).toBe('allow');
+      // It does not behave as a glob in either direction.
+      expect(asAllow([entry], shell('echo hello'))).toBeNull();
+      expect(asAllow([entry], shell('echo'))).toBeNull();
+      // Control on the matcher axis: the SAME pattern as a glob does match, so the assertion above
+      // is about `exact` and not about this pattern being unmatchable.
+      const asGlob: ApprovalEntry = { type: 'shell', matcher: 'glob', pattern: 'echo *' };
+      expect(asAllow([asGlob], shell('echo hello'))?.action).toBe('allow');
+    });
   });
 
   describe('§3.1 — glob', () => {
