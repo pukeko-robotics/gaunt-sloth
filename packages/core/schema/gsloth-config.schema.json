@@ -447,6 +447,55 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 9007199254740991
+            },
+            "mcp": {
+              "type": "object",
+              "properties": {
+                "defaults": {
+                  "type": "object",
+                  "properties": {
+                    "trustAnnotations": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "readOnlyHint",
+                          "destructiveHint",
+                          "idempotentHint",
+                          "openWorldHint"
+                        ]
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "servers": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "trustAnnotations": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "readOnlyHint",
+                            "destructiveHint",
+                            "idempotentHint",
+                            "openWorldHint"
+                          ]
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
             }
           }
         }
@@ -739,6 +788,55 @@
                       "type": "integer",
                       "minimum": 1,
                       "maximum": 9007199254740991
+                    },
+                    "mcp": {
+                      "type": "object",
+                      "properties": {
+                        "defaults": {
+                          "type": "object",
+                          "properties": {
+                            "trustAnnotations": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "readOnlyHint",
+                                  "destructiveHint",
+                                  "idempotentHint",
+                                  "openWorldHint"
+                                ]
+                              }
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "servers": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "trustAnnotations": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "readOnlyHint",
+                                    "destructiveHint",
+                                    "idempotentHint",
+                                    "openWorldHint"
+                                  ]
+                                }
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "additionalProperties": false
                     }
                   }
                 }
@@ -1008,6 +1106,55 @@
                       "type": "integer",
                       "minimum": 1,
                       "maximum": 9007199254740991
+                    },
+                    "mcp": {
+                      "type": "object",
+                      "properties": {
+                        "defaults": {
+                          "type": "object",
+                          "properties": {
+                            "trustAnnotations": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "readOnlyHint",
+                                  "destructiveHint",
+                                  "idempotentHint",
+                                  "openWorldHint"
+                                ]
+                              }
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "servers": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "trustAnnotations": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "readOnlyHint",
+                                    "destructiveHint",
+                                    "idempotentHint",
+                                    "openWorldHint"
+                                  ]
+                                }
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "additionalProperties": false
                     }
                   }
                 }
@@ -1268,6 +1415,55 @@
                       "type": "integer",
                       "minimum": 1,
                       "maximum": 9007199254740991
+                    },
+                    "mcp": {
+                      "type": "object",
+                      "properties": {
+                        "defaults": {
+                          "type": "object",
+                          "properties": {
+                            "trustAnnotations": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "readOnlyHint",
+                                  "destructiveHint",
+                                  "idempotentHint",
+                                  "openWorldHint"
+                                ]
+                              }
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "servers": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "trustAnnotations": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "readOnlyHint",
+                                    "destructiveHint",
+                                    "idempotentHint",
+                                    "openWorldHint"
+                                  ]
+                                }
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "additionalProperties": false
                     }
                   }
                 }
@@ -1508,6 +1704,55 @@
                       "type": "integer",
                       "minimum": 1,
                       "maximum": 9007199254740991
+                    },
+                    "mcp": {
+                      "type": "object",
+                      "properties": {
+                        "defaults": {
+                          "type": "object",
+                          "properties": {
+                            "trustAnnotations": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "readOnlyHint",
+                                  "destructiveHint",
+                                  "idempotentHint",
+                                  "openWorldHint"
+                                ]
+                              }
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "servers": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "trustAnnotations": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "readOnlyHint",
+                                    "destructiveHint",
+                                    "idempotentHint",
+                                    "openWorldHint"
+                                  ]
+                                }
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "additionalProperties": false
                     }
                   }
                 }
@@ -1748,6 +1993,55 @@
                       "type": "integer",
                       "minimum": 1,
                       "maximum": 9007199254740991
+                    },
+                    "mcp": {
+                      "type": "object",
+                      "properties": {
+                        "defaults": {
+                          "type": "object",
+                          "properties": {
+                            "trustAnnotations": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "readOnlyHint",
+                                  "destructiveHint",
+                                  "idempotentHint",
+                                  "openWorldHint"
+                                ]
+                              }
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "servers": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "trustAnnotations": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "readOnlyHint",
+                                    "destructiveHint",
+                                    "idempotentHint",
+                                    "openWorldHint"
+                                  ]
+                                }
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "additionalProperties": false
                     }
                   }
                 }
@@ -1988,6 +2282,55 @@
                       "type": "integer",
                       "minimum": 1,
                       "maximum": 9007199254740991
+                    },
+                    "mcp": {
+                      "type": "object",
+                      "properties": {
+                        "defaults": {
+                          "type": "object",
+                          "properties": {
+                            "trustAnnotations": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "readOnlyHint",
+                                  "destructiveHint",
+                                  "idempotentHint",
+                                  "openWorldHint"
+                                ]
+                              }
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "servers": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "trustAnnotations": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "readOnlyHint",
+                                    "destructiveHint",
+                                    "idempotentHint",
+                                    "openWorldHint"
+                                  ]
+                                }
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "additionalProperties": false
                     }
                   }
                 }
@@ -2228,6 +2571,55 @@
                       "type": "integer",
                       "minimum": 1,
                       "maximum": 9007199254740991
+                    },
+                    "mcp": {
+                      "type": "object",
+                      "properties": {
+                        "defaults": {
+                          "type": "object",
+                          "properties": {
+                            "trustAnnotations": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "readOnlyHint",
+                                  "destructiveHint",
+                                  "idempotentHint",
+                                  "openWorldHint"
+                                ]
+                              }
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "servers": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "trustAnnotations": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "readOnlyHint",
+                                    "destructiveHint",
+                                    "idempotentHint",
+                                    "openWorldHint"
+                                  ]
+                                }
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "additionalProperties": false
                     }
                   }
                 }

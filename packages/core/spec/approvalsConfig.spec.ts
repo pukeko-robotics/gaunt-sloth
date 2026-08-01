@@ -10,6 +10,7 @@ import {
   resolveApprovals,
   type ResolvedApprovals,
 } from '#src/config/shell-policy.js';
+import { createEffectiveToolAnnotationSource } from '#src/core/approvals/annotations.js';
 import { resolveApprovalRules } from '#src/core/approvals/matcher.js';
 import type { GthCommand } from '#src/core/types.js';
 
@@ -280,6 +281,79 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
           'code'
         );
         expect(decisionFor('npm test', resolved)).toBeUndefined();
+      });
+    });
+
+    /**
+     * EXT-70 §4.7/§9 — `mcp` follows `allow`, not the restrictive lists. Believing a hint is a
+     * PERMISSIVE act in both directions (it can make an allow hint entry fire, and can make a deny
+     * hint entry stop firing), so it is replaced when a command states its own and inherited when
+     * it does not — never merged, which would leave a deliberately distrustful per-command block
+     * silently carrying the root's trust.
+     *
+     * Asserted through the effective annotation set rather than by reading the block back, for the
+     * same reason the lists are asserted through a decision: an object assertion is satisfied by a
+     * block that resolves to something no consumer would agree with.
+     */
+    describe('§4.7/§9 — the mcp trust block is replaced, not merged', () => {
+      const ROOT_MCP = { servers: { jira: { trustAnnotations: ['readOnlyHint' as const] } } };
+      /** Whether jira's declared `readOnlyHint: true` survives into the effective set. */
+      const jiraReadOnly = (resolved: ResolvedApprovals): boolean =>
+        createEffectiveToolAnnotationSource({
+          mcp: resolved.mcp,
+          declared: { mcp: () => ({ readOnlyHint: true }) },
+        })({ kind: 'mcpTool', server: 'jira', name: 'get_issue' }).readOnlyHint;
+
+      it("a per-command mcp REPLACES the root's, and does not inherit its servers", () => {
+        const resolved = resolveApprovals(
+          {
+            approvals: { mode: 'auto-safe', mcp: ROOT_MCP, deny: [ROOT_DENY] },
+            commands: {
+              pr: {
+                approvals: {
+                  mode: 'read-only',
+                  mcp: { servers: { confluence: { trustAnnotations: ['readOnlyHint'] } } },
+                },
+              },
+            },
+          } as unknown as ApprovalsInput,
+          'pr'
+        );
+        expect(resolved.rung).toBe('read-only'); // CONTROL — the per-command value really applied
+        expect(jiraReadOnly(resolved)).toBe(false);
+        // CONTROL — narrowing trust did not weaken the restrictive list.
+        expect(decisionFor('npm publish --access public', resolved)).toBe('deny');
+      });
+
+      it('a per-command value stating NO mcp inherits the root block', () => {
+        // The other direction. Without it the test above pins only "the root block went away",
+        // which a resolver that ignored `mcp` entirely would satisfy just as well.
+        const resolved = resolveApprovals(
+          {
+            approvals: { mode: 'auto-safe', mcp: ROOT_MCP },
+            commands: { code: { approvals: 'write' } },
+          } as unknown as ApprovalsInput,
+          'code'
+        );
+        expect(resolved.rung).toBe('write'); // CONTROL — the per-command value really applied
+        expect(jiraReadOnly(resolved)).toBe(true);
+      });
+
+      it('an EXPLICIT empty mcp believes nothing — it is a statement, not a silence', () => {
+        const resolved = resolveApprovals(
+          {
+            approvals: { mode: 'auto-safe', mcp: ROOT_MCP },
+            commands: { code: { approvals: { mcp: {} } } },
+          } as unknown as ApprovalsInput,
+          'code'
+        );
+        expect(jiraReadOnly(resolved)).toBe(false);
+      });
+
+      it('is left undefined when no scope states one, so the config snapshot does not churn', () => {
+        expect(
+          resolveApprovals({ approvals: 'auto-safe' } as ApprovalsInput, 'code').mcp
+        ).toBeUndefined();
       });
     });
 

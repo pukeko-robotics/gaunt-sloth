@@ -561,16 +561,18 @@ describe('approvals rule matcher (EXT-71 §3.1)', () => {
   });
 
   /**
-   * §3.1 — a `hint` pattern, evaluated against the EFFECTIVE annotations. Building the effective set
-   * is [[EXT-70]]; until then the source is the MCP fail-closed defaults, and the seam it plugs into
-   * is {@link EffectiveToolAnnotationSource}.
+   * §3.1 — a `hint` pattern, evaluated against the EFFECTIVE annotations, which the matcher only
+   * ever READS through {@link EffectiveToolAnnotationSource}. How an effective set is built from
+   * per-server trust is `core/approvals/annotations.ts` and is pinned in `toolAnnotations.spec.ts`;
+   * what is pinned here is that this module derives nothing of its own, and that a caller wiring no
+   * source gets the MCP fail-closed defaults.
    */
-  describe('§3.1 — hint patterns and the EXT-70 seam', () => {
+  describe('§3.1 — hint patterns, read through the annotation source', () => {
     const mcp: ApprovalSubject = { kind: 'mcpTool', server: 'jira', name: 'delete_issue' };
     const hint = (pattern: Record<string, boolean>): ApprovalEntry =>
       ({ type: 'mcpTool', server: 'jira', matcher: 'hint', pattern }) as ApprovalEntry;
 
-    it('the interim source is the MCP fail-closed defaults', () => {
+    it('the default source is the MCP fail-closed defaults', () => {
       expect(MCP_FAIL_CLOSED_ANNOTATIONS).toEqual({
         readOnlyHint: false,
         destructiveHint: true,
@@ -599,7 +601,7 @@ describe('approvals rule matcher (EXT-71 §3.1)', () => {
       expect(asDeny([hint({ destructiveHint: true })], mcp)?.action).toBe('deny');
     });
 
-    it('reads through the injected source, so EXT-70 replaces one function', () => {
+    it('reads through the injected source, deriving nothing of its own', () => {
       const readOnly: EffectiveToolAnnotations = {
         readOnlyHint: true,
         destructiveHint: false,

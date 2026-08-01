@@ -463,6 +463,22 @@ export type ApprovalEntryType = 'shell' | 'tool' | 'mcpTool';
 export type ApprovalMatcher = 'exact' | 'glob' | 'regexp' | 'hint';
 
 /**
+ * §4.7 — the four MCP `ToolAnnotations` hint names, and the whole vocabulary. It is the same list
+ * on both sides of the design: what a `hint` pattern may name ({@link ApprovalHintPattern}) and what
+ * a user may believe from a server ({@link McpServerApprovalsConfig.trustAnnotations}). The schema
+ * twin is `HINT_ANNOTATION_KEYS` in `config/schema.ts`; `configSchema.spec.ts` pins the two together.
+ */
+export const TOOL_ANNOTATION_HINTS = [
+  'readOnlyHint',
+  'destructiveHint',
+  'idempotentHint',
+  'openWorldHint',
+] as const;
+
+/** One of {@link TOOL_ANNOTATION_HINTS}. */
+export type ToolAnnotationHint = (typeof TOOL_ANNOTATION_HINTS)[number];
+
+/**
  * EXT-71 §3.1 — a `hint` pattern: the four MCP `ToolAnnotations` booleans, each mapped to the
  * value it must EFFECTIVELY hold (§4.7.1). All named hints must match (AND within the entry);
  * hints not named are unconstrained; `false` is the spelling of negation. At least one must be
@@ -530,6 +546,45 @@ export interface McpToolApprovalEntry extends ApprovalEntryCommon {
 export type ApprovalEntry = ShellApprovalEntry | ToolApprovalEntry | McpToolApprovalEntry;
 
 /**
+ * EXT-70 §4.7.1/§9 — the approvals relationship with ONE MCP server, keyed by the user's own
+ * `mcpServers` config key (§4.7.5 — the only identity a server has that is stable, unique and
+ * user-authored; nothing a server declares about itself ever participates).
+ *
+ * `trustAnnotations` names the hints that are BELIEVED from that server. It is a list rather than a
+ * boolean because trusting `readOnlyHint` while distrusting `openWorldHint` is a coherent position
+ * and the common one, and because a single "trusted server" flag throws that distinction away for
+ * nothing. **Absent or empty means what the default means: nothing external is believed** — every
+ * hint of that server's collapses to the MCP fail-closed default, so its declarations cannot
+ * perturb any rule.
+ */
+export interface McpServerApprovalsConfig {
+  /** §4.7.1 — the hints believed from this server. Absent or empty trusts nothing. */
+  trustAnnotations?: ToolAnnotationHint[];
+}
+
+/**
+ * EXT-70 §4.7/§9 — the `approvals.mcp` block: the per-server relationship, keyed by the user's own
+ * `mcpServers` config key.
+ *
+ * **`defaults` applies to servers NOT named under `servers`** — §9's own gloss. A server that names
+ * itself states its own relationship in full, so `{"jira": {}}` trusts nothing however permissive
+ * `defaults` is: trust by omission is exactly the failure §4.7.1 exists to prevent, and the fail-
+ * closed direction is the one a silent config edit must fall in.
+ *
+ * A key here is **not** validated against `mcpServers`. A user may write the policy before adding
+ * the server, and coupling the two would make config ORDER matter.
+ *
+ * This block cannot live inside `mcpServers`, which is modelled permissively because it carries
+ * runtime objects.
+ */
+export interface McpApprovalsConfig {
+  /** The relationship with every server not named under {@link servers}. */
+  defaults?: McpServerApprovalsConfig;
+  /** Per-server relationships, keyed by the user's own `mcpServers` config key (§4.7.5). */
+  servers?: Record<string, McpServerApprovalsConfig>;
+}
+
+/**
  * On-disk `approvals` object form (root or per command). The **scalar form is exactly sugar for
  * `{ mode: <value> }`** (§9.1) — the union exists so the extras have a home when they are needed,
  * not so there are two ways to say the same thing.
@@ -560,6 +615,12 @@ export interface ApprovalsObjectConfig {
    * asks about everything while every layer reports success.
    */
   raterTimeoutMs?: number;
+  /**
+   * EXT-70 §4.7/§9 — the per-server MCP relationship. Read through
+   * `createEffectiveToolAnnotationSource` (`core/approvals/annotations.ts`), which is the ONE place
+   * an effective annotation set is derived; nothing else re-reads this block.
+   */
+  mcp?: McpApprovalsConfig;
 }
 
 /** On-disk `approvals` value: the rung on its own, or the object when the extras are needed. */
@@ -587,6 +648,13 @@ export interface ResolvedApprovals {
    * snapshot does not churn, exactly as `rater` is.
    */
   raterTimeoutMs?: number;
+  /**
+   * EXT-70 §4.7 — the declared per-server MCP relationship, or `undefined` when no scope states
+   * one (which reads the same as an empty block: nothing external is believed). Left `undefined`
+   * rather than defaulted here for the same reason `rater` is — so the effective-config snapshot
+   * does not churn.
+   */
+  mcp?: McpApprovalsConfig;
 }
 
 /**
@@ -632,6 +700,13 @@ function toApprovalsObject(raw: ApprovalsConfig | undefined): ApprovalsObjectCon
  * - **`allow` is REPLACED when the per-command value states its own, and inherited when it does
  *   not.** A per-command scope may therefore narrow what runs unprompted, and may never widen what
  *   is prohibited.
+ * - **`mcp` (EXT-70 §4.7) follows `allow`, not the restrictive lists**: replaced when the
+ *   per-command value states it, inherited when it does not. Believing a hint is a PERMISSIVE act
+ *   in both directions — it can make an `allow` hint entry fire and can make a `deny` hint entry
+ *   stop firing — so it merges the way the permissive list does, and a per-command scope can
+ *   narrow the session's trust (`"mcp": {}` believes nothing) but never inherits half of it by
+ *   accident. Deep-merging the two scopes' `servers` maps was rejected for the same reason: it
+ *   would leave a deliberately distrustful per-command block silently carrying the root's trust.
  *
  * **The two halves differ because the costs differ (§3.1), not for tidiness.** A missed allow entry
  * escalates and a missed deny entry falls through to the rater — neither is an execution — while a
@@ -681,6 +756,9 @@ export function resolveApprovals(
     deny: [...(root?.deny ?? []), ...(perCommand?.deny ?? [])],
     escalate: [...(root?.escalate ?? []), ...(perCommand?.escalate ?? [])],
     raterTimeoutMs: perCommand?.raterTimeoutMs ?? root?.raterTimeoutMs,
+    // `??`, so an EXPLICIT empty block is honoured exactly as an explicit empty `allow` is: it
+    // states "believe nothing external here" and must not read as "said nothing, inherit the root".
+    mcp: perCommand?.mcp ?? root?.mcp,
   };
 }
 
