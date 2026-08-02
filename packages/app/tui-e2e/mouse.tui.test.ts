@@ -80,7 +80,9 @@ const promptCursorCell = (terminal: Term): Cell => {
   }
   throw new Error(
     'no reverse-video cell in the terminal: the prompt cursor is not being rendered at all — ' +
-      'colour is most likely off (NO_COLOR / FORCE_COLOR=0 reaching the app)'
+      'colour is most likely off (NO_COLOR / FORCE_COLOR=0 reaching the app), or the cursor was ' +
+      'walked left past the start of the prompt, which leaves ink-text-input at offset -1 and ' +
+      'renders no cursor at all (its guard tests the pre-move offset, not the next one)'
   );
 };
 
