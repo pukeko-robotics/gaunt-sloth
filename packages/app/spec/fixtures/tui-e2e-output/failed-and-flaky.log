@@ -1,0 +1,84 @@
+Running 3 tests using 3 workers with the following shells:
+bash version 5.3.15(1)-release running from bash
+
+  ✘  1 zzprobe.tui.test.ts:11:9 › probe: flaky — fails on the first attempt, passes on the retry (124ms)
+  ✔  2 zzprobe.tui.test.ts:11:9 › probe: flaky — fails on the first attempt, passes on the retry (retry #1) (103ms)
+  ✘  3 zzprobe.tui.test.ts:16:59 › probe: genuinely failing — fails on every attempt (104ms)
+  ✘  4 zzprobe.tui.test.ts:16:59 › probe: genuinely failing — fails on every attempt (retry #1) (103ms)
+  ✘  5 zzprobe.tui.test.ts:16:59 › probe: genuinely failing — fails on every attempt (retry #2) (103ms)
+  ✔  6 zzprobe.tui.test.ts:20:30 › probe: always passes (102ms)
+
+  1) zzprobe.tui.test.ts:16:59 › probe: genuinely failing — fails on every attempt 
+
+     Error: expect(received).toBe(expected) // Object.is equality
+     
+     Expected: 2
+     Received: 1
+         at <anonymous> (/home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/zzprobe.tui.test.ts:17:18)
+         at step (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:115:23)
+         at Object.<anonymous> (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:56:20)
+         at asyncGeneratorStep (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:6:28)
+         at _next (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:24:17)
+         at file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:29:13
+         at new Promise (<anonymous>)
+         at file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:21:16
+         at TestCase.testFunction (/home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/zzprobe.tui.test.ts:20:30)
+         at runTest (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/node_modules/.pnpm/@microsoft+tui-test@0.0.4/node_modules/@microsoft/tui-test/lib/runner/worker.js:106:36)
+
+
+     Retry #1 
+
+     Error: expect(received).toBe(expected) // Object.is equality
+     
+     Expected: 2
+     Received: 1
+         at <anonymous> (/home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/zzprobe.tui.test.ts:17:18)
+         at step (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:115:23)
+         at Object.<anonymous> (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:56:20)
+         at asyncGeneratorStep (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:6:28)
+         at _next (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:24:17)
+         at file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:29:13
+         at new Promise (<anonymous>)
+         at file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:21:16
+         at TestCase.testFunction (/home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/zzprobe.tui.test.ts:20:30)
+         at runTest (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/node_modules/.pnpm/@microsoft+tui-test@0.0.4/node_modules/@microsoft/tui-test/lib/runner/worker.js:106:36)
+
+
+     Retry #2 
+
+     Error: expect(received).toBe(expected) // Object.is equality
+     
+     Expected: 2
+     Received: 1
+         at <anonymous> (/home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/zzprobe.tui.test.ts:17:18)
+         at step (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:115:23)
+         at Object.<anonymous> (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:56:20)
+         at asyncGeneratorStep (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:6:28)
+         at _next (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:24:17)
+         at file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:29:13
+         at new Promise (<anonymous>)
+         at file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:21:16
+         at TestCase.testFunction (/home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/zzprobe.tui.test.ts:20:30)
+         at runTest (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/node_modules/.pnpm/@microsoft+tui-test@0.0.4/node_modules/@microsoft/tui-test/lib/runner/worker.js:106:36)
+
+
+  2) zzprobe.tui.test.ts:11:9 › probe: flaky — fails on the first attempt, passes on the retry 
+
+     Error: expect(received).toBeGreaterThan(expected)
+     
+     Expected: > 0
+     Received:   0
+         at toBeGreaterThan (/home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/zzprobe.tui.test.ts:13:29)
+         at step (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:115:23)
+         at Object.<anonymous> (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:56:20)
+         at asyncGeneratorStep (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:6:28)
+         at _next (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:24:17)
+         at file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:29:13
+         at new Promise (<anonymous>)
+         at file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/.tui-test/cache/zzprobe.tui.test.js:21:16
+         at TestCase.n (/home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/packages/app/tui-e2e/zzprobe.tui.test.ts:16:59)
+         at runTest (file:///home/parents/Documents/project-takahe/_worktrees/QA-13/gaunt-sloth/node_modules/.pnpm/@microsoft+tui-test@0.0.4/node_modules/@microsoft/tui-test/lib/runner/worker.js:106:36)
+
+
+  tests: 1 failed, 1 flaky, 34 did not run, 1 passed, 37 total
+

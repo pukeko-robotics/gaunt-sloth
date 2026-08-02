@@ -1,0 +1,7 @@
+Running 1 test using 1 worker with the following shells:
+bash version 5.3.15(1)-release running from bash
+
+  ✔  1 zzprobe.tui.test.ts:5:30 › probe: always passes (123ms)
+
+  tests: 34 did not run, 1 passed, 35 total
+
