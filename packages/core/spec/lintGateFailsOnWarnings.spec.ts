@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
 /**
  * OPS-39 — the lint gate must fail on warnings, not merely report them.
@@ -22,14 +21,20 @@ import { fileURLToPath } from 'node:url';
  * What is unprotected is the flag itself.
  */
 
-const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
+/**
+ * Resolved as a URL and handed to `readFileSync` as one. Going through a native path here is what
+ * broke the first attempt on win32: a `D:\…` string is not a valid URL, so re-wrapping it in
+ * `new URL(…, 'file:')` produced nonsense on Windows and worked everywhere else — the exact shape
+ * the repo's Windows-cell rule exists to catch.
+ */
+const ROOT_PACKAGE_JSON = new URL('../../../package.json', import.meta.url);
 
 interface PackageScripts {
   [script: string]: string | undefined;
 }
 
 function rootScripts(): PackageScripts {
-  const pkg = JSON.parse(readFileSync(new URL('package.json', new URL(ROOT, 'file:')), 'utf8'));
+  const pkg = JSON.parse(readFileSync(ROOT_PACKAGE_JSON, 'utf8'));
   return (pkg.scripts ?? {}) as PackageScripts;
 }
 
