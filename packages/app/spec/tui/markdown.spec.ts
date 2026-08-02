@@ -87,14 +87,41 @@ describe('tui markdown renderer', () => {
       expect(out).toContain('2. second');
     });
 
-    it('renders a fenced code block verbatim, dropping the fences', () => {
-      const out = stripAnsi(renderMarkdown('```js\nconst x = 1;\n```'));
-      expect(out).toContain('const x = 1;');
+    it('renders a fenced code block with full-width rules and space indent', () => {
+      const raw = renderMarkdown('```js\nconst x = 1;\n```', { columns: 40 });
+      const out = stripAnsi(raw);
+      const lines = out.split('\n');
       expect(out).not.toContain('```');
+      // Top rule carries the language tag and fills the requested width.
+      expect(lines[0]).toMatch(/^── js ─+$/);
+      expect(lines[0].length).toBe(40);
+      expect(lines[lines.length - 1]).toBe('─'.repeat(40));
+      // Body: two-space indent + verbatim content at default foreground.
+      expect(lines[1]).toBe('  const x = 1;');
+      const bodyRaw = raw.split('\n')[1];
+      expect(bodyRaw).toBe('  const x = 1;'); // no ANSI on the payload line
+    });
+
+    it('frames a fenced block without a language tag at full width', () => {
+      const out = stripAnsi(renderMarkdown('```\nhello\n```', { columns: 24 })).split('\n');
+      expect(out[0]).toBe('─'.repeat(24));
+      expect(out[1]).toBe('  hello');
+      expect(out[2]).toBe('─'.repeat(24));
+    });
+
+    it('does not grey fenced body lines (issue #421)', () => {
+      const raw = renderMarkdown('```\nhello\n```', { columns: 20 });
+      const bodyRaw = raw.split('\n')[1];
+      // Payload stays default fg — no grey/dim wrap on the body line.
+      expect(bodyRaw).toBe('  hello');
+      expect(bodyRaw).not.toBe(chalk.gray('  hello'));
+      expect(bodyRaw).not.toBe(chalk.dim('  hello'));
+      expect(bodyRaw).not.toMatch(/\x1b\[90m/);
+      expect(bodyRaw).not.toMatch(/\x1b\[2m/);
     });
 
     it('does not apply inline formatting inside a fenced block', () => {
-      const out = stripAnsi(renderMarkdown('```\nthis **is not** bold\n```'));
+      const out = stripAnsi(renderMarkdown('```\nthis **is not** bold\n```', { columns: 20 }));
       expect(out).toContain('**is not**'); // markers preserved literally
     });
 

@@ -222,6 +222,11 @@ not chatter (DL-1 no important action is silent). Plain (non-TUI) CLI keeps all 
   and never garbles**: content with no markdown-meaningful syntax passes through verbatim, and any
   internal error returns the original text unchanged. Keep the renderer dependency-light (chalk,
   already shipped by Ink) — don't pull in a heavyweight markdown lib (DL-10).
+- **Fenced code is primary content, not chrome.** Frame fences with **full-width** dim top/bottom
+  rules (same width math as `Rule` / `ruleWidth`; language tag on the top rule when present) and
+  **two-space** indent on body lines. Emit body lines at **default foreground** — do not grey or
+  dim the payload. Greying the body makes committed answers look degraded after stream-plain
+  finishes (DL-7 legibility). Dim is for secondary chrome only.
 - The `--no-tui` / readline path must not import this module; plain/non-interactive output stays
   untouched.
 

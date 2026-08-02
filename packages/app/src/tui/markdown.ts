@@ -1,4 +1,23 @@
 import chalk from 'chalk';
+import { stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { ruleWidth } from '#src/tui/components/Rule.js';
+
+/** Spaces prepended to each fenced body line so the block reads indented vs prose. */
+const FENCE_INDENT = '  ';
+
+/**
+ * Dim full-width rule for fence open/close. Optional language tag sits in the top rule;
+ * remaining columns fill with `─` so the bar matches terminal width (same math as {@link ruleWidth}).
+ */
+function fenceRule(columns: number | undefined, lang?: string): string {
+  const width = ruleWidth(columns);
+  if (lang) {
+    const prefix = `── ${lang} `;
+    const rest = Math.max(1, width - prefix.length);
+    return chalk.dim(prefix + '─'.repeat(rest));
+  }
+  return chalk.dim('─'.repeat(width));
+}
 
 /**
  * Minimal, dependency-light Markdown → ANSI renderer for the Ink TUI.
@@ -92,23 +111,28 @@ const HEADING_COLORS = [
   (s: string) => chalk.bold.dim(s),
 ];
 
+export type RenderMarkdownOptions = {
+  /** Terminal width for full-width fence rules; defaults to `stdout.columns`. */
+  columns?: number;
+};
+
 /**
  * Render a markdown string to an ANSI-styled string suitable for a single Ink `<Text>`.
  * Never throws: on any error, or when the content has no markdown-meaningful syntax, it
  * returns the input unchanged so plain text always reads correctly.
  */
-export function renderMarkdown(text: string): string {
+export function renderMarkdown(text: string, options: RenderMarkdownOptions = {}): string {
   if (!text) return text;
   if (!looksLikeMarkdown(text)) return text;
   try {
-    return renderBlocks(text);
+    return renderBlocks(text, options.columns ?? stdout.columns);
   } catch {
     // Graceful fallback: never garble or crash the transcript.
     return text;
   }
 }
 
-function renderBlocks(text: string): string {
+function renderBlocks(text: string, columns: number | undefined): string {
   const lines = text.split('\n');
   const out: string[] = [];
   let inFence = false;
@@ -117,23 +141,28 @@ function renderBlocks(text: string): string {
   for (const raw of lines) {
     const line = raw;
 
-    // Fenced code blocks: render contents verbatim, dimmed, no inline processing.
+    // Fenced code blocks: drop fence markers; body at default foreground (primary
+    // answer content — do not grey). Distinguish with full-width dim top/bottom rules
+    // and space indentation — no greying of the payload.
     const fenceMatch = /^[ \t]*(```|~~~)(.*)$/.exec(line);
     if (fenceMatch) {
       const marker = fenceMatch[1];
       if (!inFence) {
         inFence = true;
         fenceMarker = marker;
-        continue; // drop the opening fence line (and its language tag)
+        const lang = fenceMatch[2].trim();
+        out.push(fenceRule(columns, lang || undefined));
+        continue;
       }
       if (inFence && marker === fenceMarker) {
         inFence = false;
         fenceMarker = '';
-        continue; // drop the closing fence line
+        out.push(fenceRule(columns));
+        continue;
       }
     }
     if (inFence) {
-      out.push(chalk.gray(line));
+      out.push(`${FENCE_INDENT}${line}`);
       continue;
     }
 
