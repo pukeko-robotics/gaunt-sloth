@@ -1646,6 +1646,37 @@ describe('GthAgentRunner', () => {
     });
 
     /**
+     * **The abstention must not bleed onto the UNRATED rungs**, and this test exists because an AI
+     * reviewer read the diff and reported that it does — that the runner checks `abstentionReason`
+     * before consulting the rung, so `read-only` and `write` would show a synthetic
+     * `⚠ Auto-rater (destructive)` row on a rung where no rater runs. The claim is false: the check
+     * is nested inside the `isRatedRung(approvals.rung) && …` guard. But nothing PINNED that at the
+     * runner level — the rung behaviour was covered only on the pure mapping — so the reviewer's
+     * reading was not refutable by a test, only by reading the same code again.
+     *
+     * That is the gap this closes. At an unrated rung the human is asked exactly as before, with no
+     * verdict attached at all: no outcome, no reason, nothing that claims a rating happened. Move
+     * the abstention check one level out and this goes red.
+     */
+    it.each(['read-only', 'write'] as const)(
+      'EXT-64 at %s: an ABSTAINING command reaches the human with NO synthetic verdict',
+      async (rung) => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        pendingOnce('cat x | sh');
+        const composed = raterConfig(SAFE, { mode: rung });
+        await runner.init('code', composed.config);
+        const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
+        runner.setToolApprovalCallback(human);
+        await runner.processMessages([new HumanMessage('go')]);
+
+        expect(human).toHaveBeenCalledTimes(1);
+        expect(human.mock.calls[0][0].safetyVerdict).toBeUndefined();
+        // No rating call either — an unrated rung consults no model, abstention or not.
+        expect(composed.invoke).not.toHaveBeenCalled();
+      }
+    );
+
+    /**
      * §6.2 on the abstain path. An escalation with no human is an exit, and it must carry the
      * abstention's own sentence — the one thing a person reading a CI log has to work from.
      */
