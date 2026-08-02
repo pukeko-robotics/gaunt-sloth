@@ -13,6 +13,23 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// OPS-39 — what `warn` means here, decided per rule rather than left ambient.
+//
+// `pnpm run lint` carries `--max-warnings 0`, so a warning fails the gate exactly like an error.
+// Severity is therefore a *display* distinction — yellow in an editor, red in CI — and no longer
+// an enforcement one. That is the whole point: before the flag, a warn-severity rule printed and
+// blocked nobody, so it was decorative.
+//
+// The three rules currently at `warn` were each kept deliberately, none deleted:
+//   - `@typescript-eslint/no-explicit-any` (below, and off in the test block) — discouraging `any`
+//     in package sources was always the intent; it now holds.
+//   - `react-hooks/incompatible-library` and `react-hooks/unsupported-syntax` (shipped at `warn` by
+//     the plugin's recommended set) — both say the React Compiler could not analyse something,
+//     which is worth stopping for. Neither reports anything today.
+//
+// Adding a rule at `warn` from here on is a decision to block on it. If it is not worth blocking
+// on, do not add it — that is the state this node removed.
+//
 // Shared TypeScript rules
 const tsRules = {
   ...tseslint.configs.recommended.rules,
