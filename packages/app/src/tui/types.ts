@@ -69,6 +69,11 @@ export interface TuiAgent {
     grants: ApprovalGrant[];
     /** EXT-70 §4.7.1 — which of each MCP server's annotation hints this session believes. */
     trust: McpAnnotationTrustView;
+    /**
+     * EXT-65 — how many commands this session the gate could not statically resolve. Optional so
+     * the fixture agent (no runner) may omit it; absent reads as none.
+     */
+    abstentions?: number;
   };
   /**
    * EXT-70 §4.7.1 — start or stop believing specific annotation hints from ONE MCP server, for

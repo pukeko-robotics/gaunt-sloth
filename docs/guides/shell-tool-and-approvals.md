@@ -67,6 +67,30 @@ judged it, or whether the gate never got an answer. The reason says which — "c
 command: the auto-rater did not answer within 30000ms" is the gate giving up, not a finding about
 your command. If you see that one, the fix is a bigger budget (below), not a safer command.
 
+### A command Gaunt Sloth cannot read goes back to the agent, not to you
+
+At `auto-safe` and `full-auto`, a command whose target the gate cannot work out from the text —
+anything that composes (`&&`, `;`, `|`, a line break), substitutes (`$(…)`, backticks) or redirects
+(`>`, `<`) — is not rated and does not reach you. It is handed straight back to the agent, naming
+what could not be read and what to do instead: issue the parts as separate calls, work out a
+substitution's value first and pass the literal result, or — when the rung already grants one — use
+a file tool rather than a redirect. The agent normally reissues the work in a form the gate can
+read, and you see neither version.
+
+This is a defect in the *form* of the command, not a finding about it: `pwd && ls` is ordinary and
+correctly written, and the gate is simply the party that cannot parse it. Asking you would spend
+your attention on a problem only the agent can fix.
+
+You are asked when the agent does not fix it. A **second unreadable command in a row** comes to you
+as an ordinary escalation — **once** or **No**, with no sticky choice, because a command that does
+not resolve is not one anything could remember. Any command in between that the gate *can* read
+starts the count over, so a long session full of composed commands does not accumulate into a
+prompt. At `read-only` and `write` nothing changes: those rungs already bring every gated command
+to you.
+
+`/approvals` reports how many commands the gate could not read this session, so a gate that keeps
+failing to parse your ordinary work stays visible instead of silently sending the agent round again.
+
 ### A command that names a host always asks
 
 When one of the usual network tools — `curl`, `wget`, `ssh`, `scp`, `rsync`, `nc`, `aws`, `git

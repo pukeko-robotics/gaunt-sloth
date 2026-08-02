@@ -346,10 +346,24 @@ export function App(props: TuiAppProps): React.ReactElement {
       });
       return;
     }
-    const { approvals: current, allowlist, deny, grants, trust } = agent.getApprovals();
+    const {
+      approvals: current,
+      allowlist,
+      deny,
+      grants,
+      trust,
+      abstentions,
+    } = agent.getApprovals();
     approvalsRef.current = current;
     setApprovals(current);
-    const { title, lines, tone } = approvalsStatusNotice(current, allowlist, deny, grants, trust);
+    const { title, lines, tone } = approvalsStatusNotice(
+      current,
+      allowlist,
+      deny,
+      grants,
+      trust,
+      abstentions
+    );
     push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent]);

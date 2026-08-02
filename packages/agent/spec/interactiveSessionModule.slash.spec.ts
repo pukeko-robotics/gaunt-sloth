@@ -62,6 +62,7 @@ const runnerInstanceMock = {
   getDenylist: vi.fn(),
   getGrants: vi.fn(),
   getMcpAnnotationTrust: vi.fn(),
+  getAbstentionCount: vi.fn(),
   setMcpAnnotationTrust: vi.fn(),
   getAgent: vi.fn(),
   cleanup: vi.fn(),
@@ -141,6 +142,7 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
     runnerInstanceMock.getDenylist.mockReturnValue([]);
     runnerInstanceMock.getGrants.mockReturnValue([]);
     runnerInstanceMock.getMcpAnnotationTrust.mockReturnValue({ defaults: [], servers: [] });
+    runnerInstanceMock.getAbstentionCount.mockReturnValue(0);
   });
 
   it('/status answers with the session status (mode folded in from the old /mode) — never sent to the model', async () => {
