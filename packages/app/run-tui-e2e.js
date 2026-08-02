@@ -59,7 +59,8 @@ child.on('close', (code) => {
     process.stderr.write(
       `\n✗ tui-e2e flake check could not read the run report: ${analysis.problem}\n`
     );
-    process.exit(childCode === 0 ? 1 : childCode);
+    process.exitCode = childCode === 0 ? 1 : childCode;
+    return;
   }
 
   if (analysis.flaky.length > 0) {
@@ -91,5 +92,18 @@ child.on('close', (code) => {
   // acceptance asks for a flake to be *reported as flaky rather than as a pass*, not to be turned
   // into a failure. Promoting a flake to a hard failure is the promote-after-soak rule, which
   // belongs to OPS-14.
-  process.exit(childCode);
+  //
+  // Set the code and let the process end on its own — do NOT force the exit here. On macOS
+  // `process.stdout` is ASYNCHRONOUS when it is a pipe, which is exactly what a GitHub Actions step
+  // gives it, and forcing an exit does not drain what is still queued. The flake block and the
+  // `::warning` annotations are written immediately above, so they are what would be lost.
+  //
+  // Measured, so as not to overstate it: at today's payload the hazard does NOT bite. The same
+  // planted flake was run through the full three-OS matrix on two branches differing only in this,
+  // and both annotated on all three cells — ~500 bytes completes on the fast path, far inside the
+  // pipe buffer. This is a hazard removed rather than a truncation observed, and it costs nothing.
+  // It starts to matter as the payload grows, which it does with every extra flaky test in a run.
+  // Nothing holds the loop open once the child has closed, so the process still exits promptly.
+  // `packages/app/spec/tuiE2eRunnerFlush.spec.ts` keeps it this way.
+  process.exitCode = childCode;
 });
