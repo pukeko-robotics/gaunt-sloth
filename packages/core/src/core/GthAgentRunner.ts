@@ -908,9 +908,19 @@ export class GthAgentRunner {
         if (abstention !== null) {
           // **The DISPLAY path.** The decision carries no verdict — nobody rated — but the approval
           // prompt renders a `⚠ Auto-rater (…)` row from one, so the runner builds the human-facing
-          // verdict here, through the SAME `applyDestructiveFloor` every other floor reaches. That
-          // keeps the prompt byte-identical to the one the retired preflight arm produced, which is
-          // what makes this node invisible to a user.
+          // verdict here, through the SAME `applyDestructiveFloor` every other floor reaches.
+          //
+          // **What the human sees, stated exactly, because "nothing changes" would be false.** The
+          // prompt is byte-identical to the one the retired arm produced for a command the rater
+          // called `safe` — which, now that nobody rates, is the only prompt this path can produce.
+          // It is NOT identical to what a rater's own non-`safe` verdict used to put here: the
+          // preflight raised only `safe`, so a `destructive` or `catastrophic` verdict on an
+          // unresolvable command used to reach the human carrying its own sentence, its own badge
+          // and any §4.4 suggestion, and an `attack` one ended the run. None of that is reachable
+          // once the call is skipped. That is the cost of not buying an opinion the gate has
+          // declared unreadable, and it is the trade the acceptance list makes deliberately — the
+          // §8 hardline floor still refuses the deterministic members of that class at exec time
+          // under every rung.
           //
           // [[EXT-65]] replaces this escalation with a rejection handed back to the MODEL: an
           // abstention is the gate reporting its own limit, and the agent is the only party that can
@@ -933,6 +943,19 @@ export class GthAgentRunner {
             throw new AttackHaltError(subject.command, decision.verdict?.reason ?? '');
           }
           // Escalate: carry the verdict (the honest one — see mapVerdictToAction) to the human.
+          //
+          // `abstain` cannot arrive here, and the reason is worth writing down rather than
+          // trusting: this branch is the `else` of `abstentionReason(subject.command) !== null`,
+          // and `mapVerdictToAction` decides `abstain` by calling that same function on that same
+          // string. The two cannot disagree. If they ever did — a second caller, a signature that
+          // grew an option — the fallthrough would set `undefined` and prompt a human with no
+          // verdict row at all, which is why it is asserted rather than assumed.
+          if (decision.action === 'abstain') {
+            throw new Error(
+              'Internal invariant violated: the rating path produced an abstention for a command ' +
+                'the runner had already resolved. `abstentionReason` disagreed with itself.'
+            );
+          }
           safetyVerdict = decision.verdict;
         }
       } else {
