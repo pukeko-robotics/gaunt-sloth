@@ -27,25 +27,31 @@ const bin = createRequire(import.meta.url).resolve('@microsoft/tui-test');
 // TTY and chalk keys off the CI vendor instead, which is unchanged either way.
 const env = { ...process.env, ...(process.stdout.isTTY ? { FORCE_COLOR: '1' } : {}) };
 
-const chunks = [];
+// Only stdout is captured for parsing. The list reporter writes the summary and the numbered
+// headers exclusively to stdout; stderr carries just the fatal paths (a bad filter, the global
+// timeout), each of which exits non-zero anyway and is preserved as such below. Folding stderr in
+// would let an async write interleave mid-line and break a line-anchored match, turning a healthy
+// run into a hard "the flake check went blind" failure. Both streams are still teed through.
+const stdoutChunks = [];
 const child = spawn(process.execPath, [bin, ...process.argv.slice(2)], {
   cwd: e2eDir,
   stdio: ['inherit', 'pipe', 'pipe'],
   env,
 });
 child.stdout.on('data', (chunk) => {
-  chunks.push(chunk);
+  stdoutChunks.push(chunk);
   process.stdout.write(chunk);
 });
 child.stderr.on('data', (chunk) => {
-  chunks.push(chunk);
   process.stderr.write(chunk);
 });
 
 // `close` rather than `exit`: it fires once the piped streams are drained, so nothing is missed.
 child.on('close', (code) => {
   const childCode = code ?? 1;
-  const analysis = analyseRun(Buffer.concat(chunks).toString('utf8'));
+  // Concatenate as Buffers before decoding: a multi-byte character split across two chunks would
+  // be corrupted by decoding each chunk separately.
+  const analysis = analyseRun(Buffer.concat(stdoutChunks).toString('utf8'));
 
   if (analysis.problem) {
     // The flake check has gone blind. Reporting "no flakes" here would be a green light from a
