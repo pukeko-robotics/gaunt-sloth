@@ -236,10 +236,18 @@ not chatter (DL-1 no important action is silent). Plain (non-TUI) CLI keeps all 
 
 ## Layout: rules and the status bar (DL-7, DL-1)
 
-- **Full-width, resize-aware rules.** Use the single-sourced `Rule` component; it spans the live
-  terminal width via `useStdout().columns`, re-renders on the stdout `resize` event, and falls back
-  to 80 cols (clamped to ≥1) when width is unknown. Rules delimit committed turns and bracket the
-  input dock so the controls read as a distinct zone.
+- **Full-width rules.** Use the single-sourced `Rule` component; it spans the terminal width via
+  `useStdout().columns` and falls back to 80 cols (clamped to ≥1) when width is unknown. Rules
+  delimit committed turns and bracket the input dock so the controls read as a distinct zone.
+  Anything else that draws a full-width bar takes its width from the same `ruleWidth` math.
+- **Only the live frame follows a resize, and that is accepted.** `Rule` does subscribe to the
+  stdout `resize` event, but that only reaches the live region — the dock and the running turn.
+  Committed turns render inside Ink's `<Static>`, which emits each item exactly once, so a rule
+  already in the scrollback (a turn separator, or one the markdown renderer drew) keeps the width
+  it was committed at: widening leaves it short, narrowing wraps it. This is how terminal
+  scrollback works and it is **not** a defect to fix. In particular, do not chase it with a further
+  resize subscription or by re-keying `<Static>` — Ink cannot rewrite output it has already
+  emitted, and forcing a re-print duplicates the whole transcript into the scrollback.
 - **Single-line, stable status bar** (`tui/components/StatusBar.tsx`). One dim line carrying
   session context — **mode · model · turn counter · ready** — when idle; a spinner +
   `Thinking… (Esc to interrupt)` while a turn runs. Keep it to one line and free of streaming
