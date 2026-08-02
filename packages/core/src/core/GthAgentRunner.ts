@@ -55,6 +55,7 @@ import {
   NonInteractiveEscalationError,
 } from '#src/core/shell/approvalStop.js';
 import {
+  abstentionReason,
   applyDestructiveFloor,
   isRaterTimeout,
   mapAllowMatchedVerdictToAction,
@@ -763,10 +764,14 @@ export class GthAgentRunner {
    *    ({@link mapAllowMatchedVerdictToAction}).
    * 5. **auto-rater** (`auto-safe` / `full-auto` only) — `safe` approves, `destructive` and
    *    `catastrophic` escalate, and `attack` HALTS the run ({@link AttackHaltError}). The other
-   *    three rungs consult no model at all. At those same two rungs a **tool** call is instead
-   *    floored deterministically by §4.7.3's open-world rule ({@link openWorldToolFloorReason} into
-   *    {@link applyDestructiveFloor} — the one floor the shell path also reaches): a call whose
-   *    effective `openWorldHint` is true is `destructive`, whatever its `readOnlyHint` says.
+   *    three rungs consult no model at all. A command whose target the gate cannot statically
+   *    resolve ({@link abstentionReason}) is **not rated at all**: the gate has already decided no
+   *    reading of its meaning is actionable, so it escalates on a reason the runner builds itself
+   *    ([[EXT-64]]; [[EXT-65]] sends it to the model instead). At those same two rungs a **tool**
+   *    call is instead floored deterministically by §4.7.3's open-world rule
+   *    ({@link openWorldToolFloorReason} into {@link applyDestructiveFloor} — the one floor the
+   *    shell path also reaches): a call whose effective `openWorldHint` is true is `destructive`,
+   *    whatever its `readOnlyHint` says.
    * 6. **human prompt** — the approval callback; when the human grants `session`/`always` scope,
    *    **that command** is recorded as an `exact` entry (§3.1/§6 — the menu never widens), so the
    *    same command stops re-prompting and a longer variant of it still asks.
@@ -890,22 +895,46 @@ export class GthAgentRunner {
       // any future divergence in that function sends the call to the FLOOR (fail-closed) rather
       // than silently past it. It is also what carries the command as a non-null string.
       if (subject.kind === 'shell') {
-        // The auto-rater. `safe` is approved (the fatigue reducer), `destructive` and
-        // `catastrophic` fall through to the human with the verdict attached, and `attack` ends
-        // the run outright. §4.6's deterministic preflights are applied inside
-        // `mapVerdictToAction`, ahead of the `safe` check.
-        const verdict = await this.rateCommand(subject.command, { allowMatched: false });
-        const decision = mapVerdictToAction(subject.command, verdict, { rung: approvals.rung });
-        if (decision.action === 'approve') {
-          // Scope `once`: rater approvals are NEVER persisted to the allow-list.
-          return { type: 'approve', scope: 'once' };
+        // EXT-64 — **the abstention runs BEFORE the rating call, and skipping the call is the
+        // point.** When the gate cannot resolve the command's target it has already decided that no
+        // reading of that command's meaning is actionable; buying one anyway is a paid opinion the
+        // gate discards a line later. The check is deterministic and free, so it costs nothing to
+        // ask first.
+        //
+        // The consequence, stated because it is a real narrowing and not an oversight: `attack` and
+        // `catastrophic` are unreachable on this path, since nobody rates. The §8 hardline floor
+        // still refuses the deterministic members of that class at exec time under every rung.
+        const abstention = abstentionReason(subject.command);
+        if (abstention !== null) {
+          // **The DISPLAY path.** The decision carries no verdict — nobody rated — but the approval
+          // prompt renders a `⚠ Auto-rater (…)` row from one, so the runner builds the human-facing
+          // verdict here, through the SAME `applyDestructiveFloor` every other floor reaches. That
+          // keeps the prompt byte-identical to the one the retired preflight arm produced, which is
+          // what makes this node invisible to a user.
+          //
+          // [[EXT-65]] replaces this escalation with a rejection handed back to the MODEL: an
+          // abstention is the gate reporting its own limit, and the agent is the only party that can
+          // act on it (by proposing a command that resolves). Until then it goes to the human,
+          // exactly as before.
+          safetyVerdict = applyDestructiveFloor(undefined, abstention);
+        } else {
+          // The auto-rater. `safe` is approved (the fatigue reducer), `destructive` and
+          // `catastrophic` fall through to the human with the verdict attached, and `attack` ends
+          // the run outright. §4.6's deterministic preflights are applied inside
+          // `mapVerdictToAction`, ahead of the `safe` check.
+          const verdict = await this.rateCommand(subject.command, { allowMatched: false });
+          const decision = mapVerdictToAction(subject.command, verdict, { rung: approvals.rung });
+          if (decision.action === 'approve') {
+            // Scope `once`: rater approvals are NEVER persisted to the allow-list.
+            return { type: 'approve', scope: 'once' };
+          }
+          if (decision.action === 'halt') {
+            // §4.2 — not a rejection the model can respond to. It ends the agent loop.
+            throw new AttackHaltError(subject.command, decision.verdict?.reason ?? '');
+          }
+          // Escalate: carry the verdict (the honest one — see mapVerdictToAction) to the human.
+          safetyVerdict = decision.verdict;
         }
-        if (decision.action === 'halt') {
-          // §4.2 — not a rejection the model can respond to. It ends the agent loop.
-          throw new AttackHaltError(subject.command, decision.verdict?.reason ?? '');
-        }
-        // Escalate: carry the verdict (the honest one — see mapVerdictToAction) to the human.
-        safetyVerdict = decision.verdict;
       } else {
         // EXT-70 §4.7.2/§4.7.3 — a tool call whose EFFECTIVE `openWorldHint` is true is floored at
         // `destructive`, through the SAME `applyDestructiveFloor` the shell path reaches via

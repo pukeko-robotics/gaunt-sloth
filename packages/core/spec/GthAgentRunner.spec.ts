@@ -8,7 +8,11 @@ import { MemorySaver } from '@langchain/langgraph';
 import type { GthConfig } from '#src/config.js';
 import type { PendingToolInterrupt, StatusUpdateCallback } from '#src/core/types.js';
 import { AttackHaltError, NonInteractiveEscalationError } from '#src/core/shell/approvalStop.js';
-import { COULD_NOT_ASSESS_PREFIX, openWorldToolFloorReason } from '#src/core/shell/rater.js';
+import {
+  abstentionReason,
+  COULD_NOT_ASSESS_PREFIX,
+  openWorldToolFloorReason,
+} from '#src/core/shell/rater.js';
 import { describeApprovalEntry, MCP_FAIL_CLOSED_ANNOTATIONS } from '#src/core/approvals/matcher.js';
 import { mcpToolRegisteredName } from '#src/core/approvals/mcpSubjects.js';
 import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
@@ -1576,6 +1580,92 @@ describe('GthAgentRunner', () => {
       // ...and the human sees the HONEST reason, not the rater's "read-only" claim.
       expect(human.mock.calls[0][0].safetyVerdict.outcome).toBe('destructive');
       expect(human.mock.calls[0][0].safetyVerdict.reason).toContain('Could not assess');
+    });
+
+    /**
+     * EXT-64 — **the rating call is not made when the gate abstains, and this is where that is
+     * decidable.** `mapVerdictToAction` is pure and cannot say whether anyone paid for a model
+     * call; the runner is the only layer that can. The gate has already decided that no reading of
+     * this command's meaning is actionable, so buying one is a paid opinion it discards a line
+     * later — and it is a *latency* cost on every composed command at the default rung, which is
+     * how a user meets it.
+     *
+     * The control is the same assertion in the other direction on a resolvable command, because
+     * "zero calls" alone would also pass if the rater had stopped being called at all.
+     */
+    it.each(['auto-safe', 'full-auto'] as const)(
+      'EXT-64 at %s: an ABSTAINING command costs ZERO rating calls, a resolvable one costs a call',
+      async (rung) => {
+        const abstaining = new GthAgentRunner(statusUpdateCallback);
+        pendingOnce('cat x | sh');
+        const composed = raterConfig(SAFE, { mode: rung });
+        await abstaining.init('code', composed.config);
+        const humanA = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
+        abstaining.setToolApprovalCallback(humanA);
+        await abstaining.processMessages([new HumanMessage('go')]);
+
+        expect(composed.withStructuredOutput).not.toHaveBeenCalled();
+        expect(composed.invoke).not.toHaveBeenCalled();
+        // …and it still reached the human, so the zero is a skipped rating and not a skipped gate.
+        expect(humanA).toHaveBeenCalledTimes(1);
+
+        // CONTROL — a command the gate CAN resolve is still rated, so the zero above is about this
+        // command and not about the rater having quietly stopped running.
+        const resolvable = new GthAgentRunner(statusUpdateCallback);
+        pendingOnce('rm -rf build');
+        const plain = raterConfig(DESTRUCTIVE, { mode: rung });
+        await resolvable.init('code', plain.config);
+        resolvable.setToolApprovalCallback(vi.fn().mockResolvedValue({ type: 'reject' }));
+        await resolvable.processMessages([new HumanMessage('go')]);
+
+        expect(plain.invoke).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    /**
+     * Requirement 6, asserted as an equality rather than as two literals: what the human is shown
+     * for a command the gate cannot resolve is EXACTLY the sentence the abstention predicate
+     * produces. That is what makes the display path a reconstruction rather than a second copy of
+     * core's prose — reword the predicate and this moves with it; write a different sentence in the
+     * runner and this goes red.
+     */
+    it('EXT-64: the prompt for an abstaining command renders the abstention sentence verbatim', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      pendingOnce('cat x | sh');
+
+      const { config } = raterConfig(SAFE);
+      await runner.init('code', config);
+      const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('go')]);
+      expect(human.mock.calls[0][0].safetyVerdict.reason).toBe(abstentionReason('cat x | sh'));
+      expect(human.mock.calls[0][0].safetyVerdict.outcome).toBe('destructive');
+      // Nothing of the rater's survives — it was never asked.
+      expect(human.mock.calls[0][0].safetyVerdict.suggestedTool).toBeUndefined();
+    });
+
+    /**
+     * §6.2 on the abstain path. An escalation with no human is an exit, and it must carry the
+     * abstention's own sentence — the one thing a person reading a CI log has to work from.
+     */
+    it('EXT-64 §6.2: an abstaining command with no human exits non-zero, carrying the sentence', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      pendingOnce('cat x | sh');
+
+      const { config, withStructuredOutput } = raterConfig(SAFE);
+      await runner.init('code', config);
+      // No approval callback at all.
+
+      const error = (await runner
+        .processMessages([new HumanMessage('go')])
+        .then(() => null)
+        .catch((e: unknown) => e as Error)) as NonInteractiveEscalationError | null;
+
+      expect(error).toBeInstanceOf(NonInteractiveEscalationError);
+      expect(error?.outcome).toBe('destructive');
+      expect(error?.message).toContain('composes, substitutes or redirects');
+      expect(withStructuredOutput).not.toHaveBeenCalled();
     });
 
     /**
