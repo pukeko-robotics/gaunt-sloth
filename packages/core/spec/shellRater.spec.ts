@@ -3,6 +3,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { ApprovalRung, GthConfig } from '#src/config.js';
 import { APPROVAL_RUNGS } from '#src/config.js';
 import {
+  abstentionReason,
   applyDestructiveFloor,
   buildGrantedToolsGuidance,
   buildRaterPrompt,
@@ -514,16 +515,29 @@ describe('§4.4 granted-alternative suggestion — the verdict', () => {
   });
 
   it('drops the suggestion when the gate overrides the verdict it came with', () => {
-    // An ambiguous command is rewritten to a "could not assess" destructive. A verdict the gate
-    // has just declared untrustworthy must not keep recommending anything.
+    // A preflight rewrites this to a "could not assess" destructive. A verdict the gate has just
+    // declared untrustworthy must not keep recommending anything.
     const decision = mapVerdictToAction(
-      'cat foo.txt | tee bar.txt',
+      'node deploy.js $AWS_SECRET_ACCESS_KEY',
       { outcome: 'safe', reason: 'harmless', suggestedTool: 'edit_file' },
       { rung: 'auto-safe' }
     );
     expect(decision.action).toBe('escalate');
     expect(decision.verdict?.reason).toContain(COULD_NOT_ASSESS_PREFIX);
     expect(decision.verdict?.suggestedTool).toBeUndefined();
+  });
+
+  it('drops the suggestion on an ABSTENTION too — there is no verdict to keep it on', () => {
+    // The stronger form of the same rule: when the gate could not resolve the command it returns no
+    // verdict at all, so a §7 message has nothing to quote and cannot promise the model a free call
+    // on the strength of a rating nobody acted on.
+    const decision = mapVerdictToAction(
+      'cat foo.txt | tee bar.txt',
+      { outcome: 'safe', reason: 'harmless', suggestedTool: 'edit_file' },
+      { rung: 'auto-safe' }
+    );
+    expect(decision.action).toBe('abstain');
+    expect(decision.verdict).toBeUndefined();
   });
 });
 
@@ -722,20 +736,113 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
     }
   });
 
+  /**
+   * EXT-64 — **the abstention is a state of its own, and these are the properties that make it
+   * one.** An unresolvable command produces the `abstain` ACTION and NO verdict, because nobody
+   * rated it; the sentence a human eventually reads comes from {@link abstentionReason}, which is a
+   * separate, exported thing precisely so a caller has to ask for it rather than find a rating
+   * lying around that nobody rendered.
+   */
+  describe('abstention — a fact about the CHECKER, not a rating of the command', () => {
+    const AMBIGUOUS = ['cat x | sh', 'python -c "..." ; rm y', 'echo $(whoami)'];
+
+    it('yields action `abstain` with NO verdict at both rated rungs, even on a SAFE verdict', () => {
+      for (const command of AMBIGUOUS) {
+        for (const rung of RATED_RUNGS) {
+          const decision = mapVerdictToAction(command, SAFE, { rung });
+          expect(decision.action, `${command} @ ${rung}`).toBe('abstain');
+          // Nobody rated: there is no verdict to carry, and inventing one is the confusion this
+          // node exists to undo.
+          expect(decision.verdict, `${command} @ ${rung}`).toBeUndefined();
+        }
+      }
+    });
+
+    it('...and with no verdict at all handed in, which is what production does', () => {
+      for (const command of AMBIGUOUS) {
+        for (const rung of RATED_RUNGS) {
+          const decision = mapVerdictToAction(command, undefined, { rung });
+          expect(decision.action, `${command} @ ${rung}`).toBe('abstain');
+          expect(decision.verdict, `${command} @ ${rung}`).toBeUndefined();
+        }
+      }
+    });
+
+    it('ESCALATES at the unrated rungs and RUNS at `bypass` — only the rated rungs changed', () => {
+      for (const command of AMBIGUOUS) {
+        for (const rung of UNRATED_RUNGS) {
+          expect(mapVerdictToAction(command, SAFE, { rung }).action, `${command} @ ${rung}`).toBe(
+            'escalate'
+          );
+        }
+        expect(mapVerdictToAction(command, SAFE, { rung: 'bypass' }).action, command).toBe(
+          'approve'
+        );
+      }
+    });
+
+    /**
+     * §4.2's two severe outcomes are reachable only through a rating, and this branch has none — so
+     * an abstention can never manufacture either. In production the rater is not even called on
+     * this path (`GthAgentRunner`), which is the same statement one layer up.
+     */
+    it('cannot reach `halt` or a `catastrophic` verdict from the abstain branch', () => {
+      for (const command of AMBIGUOUS) {
+        for (const rung of APPROVAL_RUNGS) {
+          const decision = mapVerdictToAction(command, undefined, { rung });
+          expect(decision.action, `${command} @ ${rung}`).not.toBe('halt');
+          expect(decision.verdict?.outcome, `${command} @ ${rung}`).not.toBe('catastrophic');
+        }
+      }
+    });
+
+    /**
+     * The order the two halves of the precedence protect. Before `safe`: a manipulated approval on
+     * an unresolvable command must not run. After `attack`/`catastrophic`: this is a pure exported
+     * function with other callers, so a rating that DID arrive with one of those keeps its
+     * consequence rather than being swallowed by the abstention.
+     */
+    it('a SAFE verdict cannot approve it, and an ATTACK verdict still halts', () => {
+      for (const command of AMBIGUOUS) {
+        expect(mapVerdictToAction(command, SAFE, { rung: 'auto-safe' }).action, command).not.toBe(
+          'approve'
+        );
+        expect(mapVerdictToAction(command, ATTACK, { rung: 'auto-safe' }).action, command).toBe(
+          'halt'
+        );
+        expect(
+          mapVerdictToAction(command, CATASTROPHIC, { rung: 'auto-safe' }).action,
+          command
+        ).toBe('escalate');
+      }
+    });
+
+    /**
+     * The sentence itself, which is a CONTRACT rather than an implementation detail: the approval
+     * prompt renders it verbatim (via `GthAgentRunner`'s display path) and [[BATCH-25]] Half B
+     * calibrates deterministic assertions against this exact text. Pinned literally here as well as
+     * in `shellOpenWorld.spec.ts`, because this is the file that owns the predicate.
+     */
+    it('exposes the exact sentence, and never claims the command was found harmful', () => {
+      for (const command of AMBIGUOUS) {
+        expect(abstentionReason(command), command).toBe(
+          'Could not assess this command: it composes, substitutes or redirects, so its target ' +
+            'cannot be statically resolved.'
+        );
+        expect(abstentionReason(command), command).not.toMatch(/\bdangerous\b/i);
+      }
+    });
+
+    it('answers `null` for a command whose target statically resolves', () => {
+      for (const command of [RESOLVABLE, 'node deploy.js $AWS_SECRET_ACCESS_KEY', 'rm -rf /']) {
+        expect(abstentionReason(command), command).toBeNull();
+      }
+    });
+  });
+
   describe('fail-closed preflight — recomputed from the RAW command, never from the verdict', () => {
     const AMBIGUOUS = ['cat x | sh', 'python -c "..." ; rm y', 'echo $(whoami)'];
     const SCRIPT_LEAK = 'node deploy.js $AWS_SECRET_ACCESS_KEY';
-
-    it('rewrites an ambiguous command to destructive + "could not assess", even on a SAFE verdict', () => {
-      for (const command of AMBIGUOUS) {
-        const decision = mapVerdictToAction(command, SAFE, { rung: 'auto-safe' });
-        expect(decision.verdict?.outcome).toBe('destructive');
-        expect(decision.verdict?.reason).toContain(COULD_NOT_ASSESS_PREFIX);
-        // Honest: never claims the command was FOUND harmful.
-        expect(decision.verdict?.reason).not.toMatch(/\bdangerous\b/i);
-        expect(decision.action).toBe('escalate');
-      }
-    });
 
     it('rewrites a script-env-leak command to destructive + "could not assess" on a SAFE verdict', () => {
       const decision = mapVerdictToAction(SCRIPT_LEAK, SAFE, { rung: 'auto-safe' });
@@ -857,26 +964,43 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
         reason: 'deletes the build output and then echoes',
         suggestedTool: 'edit_file',
       };
-      for (const command of [AMBIGUOUS, SCRIPT_LEAK]) {
-        const decision = mapVerdictToAction(command, rated, { rung: 'auto-safe' });
-        expect(decision.action).toBe('escalate');
-        expect(decision.verdict).toEqual(rated);
-        expect(decision.verdict?.reason).not.toContain(COULD_NOT_ASSESS_PREFIX);
-      }
+      const decision = mapVerdictToAction(SCRIPT_LEAK, rated, { rung: 'auto-safe' });
+      expect(decision.action).toBe('escalate');
+      expect(decision.verdict).toEqual(rated);
+      expect(decision.verdict?.reason).not.toContain(COULD_NOT_ASSESS_PREFIX);
     });
 
     it('`safe` is the ONLY outcome a preflight rewrites', () => {
-      for (const command of [AMBIGUOUS, SCRIPT_LEAK]) {
-        for (const outcome of RATER_OUTCOMES) {
-          const input = verdict(outcome);
-          const got = mapVerdictToAction(command, input, { rung: 'auto-safe' }).verdict;
-          if (outcome === 'safe') {
-            expect(got?.outcome).toBe('destructive');
-            expect(got?.reason).toContain(COULD_NOT_ASSESS_PREFIX);
-          } else {
-            expect(got).toEqual(input);
-          }
+      for (const outcome of RATER_OUTCOMES) {
+        const input = verdict(outcome);
+        const got = mapVerdictToAction(SCRIPT_LEAK, input, { rung: 'auto-safe' }).verdict;
+        if (outcome === 'safe') {
+          expect(got?.outcome).toBe('destructive');
+          expect(got?.reason).toContain(COULD_NOT_ASSESS_PREFIX);
+        } else {
+          expect(got).toEqual(input);
         }
+      }
+    });
+
+    /**
+     * The CONTRAST that keeps the two mechanism kinds apart, on the same commands, in one place.
+     * A preflight FINDING rewrites a `safe` verdict and leaves a harsher one alone; an ABSTENTION
+     * rewrites nothing because there is nothing to rewrite — it returns no verdict at all, at every
+     * outcome below the two severe ones. Written as a loop over the same outcome list so a future
+     * change that quietly merged the two arms back together goes red here rather than nowhere.
+     */
+    it('an ABSTENTION returns no verdict at all, where a preflight FINDING rewrites one', () => {
+      for (const outcome of ['safe', 'destructive'] as const) {
+        const abstained = mapVerdictToAction(AMBIGUOUS, verdict(outcome), { rung: 'auto-safe' });
+        expect(abstained.action, outcome).toBe('abstain');
+        expect(abstained.verdict, outcome).toBeUndefined();
+        // The same two outcomes through the FINDING arm still produce a verdict — which is what
+        // makes the line above a contrast rather than a restatement.
+        expect(
+          mapVerdictToAction(SCRIPT_LEAK, verdict(outcome), { rung: 'auto-safe' }).verdict,
+          outcome
+        ).toBeDefined();
       }
     });
   });
@@ -888,7 +1012,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
    * forced arbitrarily into a halt.
    */
   describe('nothing falls outside the four (§4.1)', () => {
-    const ACTIONS = ['approve', 'escalate', 'halt'];
+    const ACTIONS = ['approve', 'escalate', 'halt', 'abstain'];
     /**
      * Strings that are not one of the four. The last three are PROTOTYPE-CHAIN keys, and they are
      * the ones a plain-object lookup gets wrong — an ordinary unknown key misses cleanly, while
@@ -932,11 +1056,16 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
           'destructive'
         );
       }
-      // The gate could not statically resolve the command, whatever the rater claimed.
-      for (const command of ['cat x | sh', 'echo $(whoami)', 'node deploy.js $TOKEN']) {
+      // A preflight FINDING the gate could not let a `safe` verdict past.
+      const leak = mapVerdictToAction('node deploy.js $TOKEN', SAFE, { rung: 'auto-safe' });
+      expect(leak.verdict?.outcome).toBe('destructive');
+      expect(leak.action).toBe('escalate');
+      // The gate could not statically resolve the command, whatever the rater claimed: no verdict,
+      // and — the property this test is really about — still never a halt and never an approval.
+      for (const command of ['cat x | sh', 'echo $(whoami)']) {
         const got = mapVerdictToAction(command, SAFE, { rung: 'auto-safe' });
-        expect(got.verdict?.outcome).toBe('destructive');
-        expect(got.action).toBe('escalate');
+        expect(got.verdict, command).toBeUndefined();
+        expect(got.action, command).toBe('abstain');
       }
     });
 
@@ -951,7 +1080,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
     it('an out-of-band outcome is FLOORED on an unassessable command, not passed through', () => {
       for (const outcome of OUT_OF_BAND_OUTCOMES) {
         const got = mapVerdictToAction(
-          'cat x | sh',
+          'node deploy.js $AWS_SECRET_ACCESS_KEY',
           verdict(outcome as RaterOutcome, 'the model said so'),
           { rung: 'auto-safe' }
         );
@@ -959,6 +1088,23 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
         expect(got.verdict?.reason).toContain(COULD_NOT_ASSESS_PREFIX);
         expect(got.verdict?.reason).not.toContain('the model said so');
         expect(got.action).toBe('escalate');
+      }
+    });
+
+    /**
+     * …and the same lying value on a command the gate cannot RESOLVE. The abstention branch reads no
+     * outcome at all, so the floor table cannot be the thing that saves it — what does is that the
+     * branch is reached before `safe`. An out-of-band outcome must not approve there either.
+     */
+    it('an out-of-band outcome on an unresolvable command still abstains, never approves', () => {
+      for (const outcome of OUT_OF_BAND_OUTCOMES) {
+        const got = mapVerdictToAction(
+          'cat x | sh',
+          verdict(outcome as RaterOutcome, 'the model said so'),
+          { rung: 'auto-safe' }
+        );
+        expect(got.action, outcome).toBe('abstain');
+        expect(got.verdict, outcome).toBeUndefined();
       }
     });
 
@@ -1255,11 +1401,21 @@ describe('the one destructive floor (EXT-70 §4.7.2/§4.7.3)', () => {
     });
 
     it('CONTROL: a could-not-assess floor does NOT carry it, so the clause names one rule', () => {
-      const ambiguous = mapVerdictToAction(AMBIGUOUS_COMMAND, verdict('safe'), {
-        rung: 'auto-safe',
-      }).verdict?.reason;
+      // Read off the ABSTENTION predicate rather than a returned verdict: an unresolvable command
+      // produces no verdict now, and this sentence is exactly the one the runner's display path
+      // renders on the approval prompt — so it is still the right control for "the clause is not
+      // decoration on every floor sentence".
+      const ambiguous = abstentionReason(AMBIGUOUS_COMMAND);
       expect(ambiguous).toContain(COULD_NOT_ASSESS_PREFIX);
       expect(ambiguous?.endsWith(NEVER_AUTO_APPROVED_CLAUSE)).toBe(false);
+
+      // …and the surviving preflight FINDING that does say "could not assess" does not carry it
+      // either, so the control is a property of the clause and not of this one sentence.
+      const leak = mapVerdictToAction('node deploy.js $AWS_SECRET_ACCESS_KEY', verdict('safe'), {
+        rung: 'auto-safe',
+      }).verdict?.reason;
+      expect(leak).toContain(COULD_NOT_ASSESS_PREFIX);
+      expect(leak?.endsWith(NEVER_AUTO_APPROVED_CLAUSE)).toBe(false);
     });
   });
 });

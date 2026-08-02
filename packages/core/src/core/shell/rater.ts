@@ -23,9 +23,9 @@
  *    "could not assess" reason. A rater failure can never silently green-light a command.
  *    See {@link FAIL_CLOSED_VERDICT}.
  *
- * Fail-closed-on-AMBIGUITY (when the command's target can't be statically resolved) lives in the
- * decision mapping ({@link mapVerdictToAction}), not here, so it applies regardless of what the
- * rater says.
+ * ABSTENTION (when the command's target can't be statically resolved) lives in the decision mapping
+ * ({@link mapVerdictToAction} via {@link abstentionReason}), not here, so it applies regardless of
+ * what the rater says — and in production it means the rater is never called at all.
  *
  * Mirrors the QA-3 rating substrate (`packages/review/src/middleware/reviewRateMiddleware.ts`):
  * structured-output evaluation over `config.llm`, wrapped in try/catch.
@@ -120,8 +120,8 @@ export type ShellSafetyVerdict = z.infer<typeof ShellSafetyVerdictSchema>;
 
 /**
  * The honest reason text used whenever the outcome was NOT assessed by the rater — a rater failure
- * ({@link FAIL_CLOSED_VERDICT}) or a command the gate itself cannot statically vet
- * ({@link mapVerdictToAction}'s ambiguity / script-env-leak preflight). Spec rule (§4.1):
+ * ({@link FAIL_CLOSED_VERDICT}), a command whose target the gate cannot statically resolve
+ * ({@link abstentionReason}), or the script-env-leak preflight. Spec rule (§4.1):
  * *uncertainty is not an outcome*, so it maps to `destructive` while SAYING it could not be
  * assessed rather than pretending the command was found harmful.
  */
@@ -730,6 +730,21 @@ export async function rateShellCommand(
  * - `halt` — **end the agent loop** (§4.2). Reserved for `attack`. It is not a rejection the
  *   model can respond to and offers it no moves; no rung except `bypass` can turn it into
  *   anything else.
+ * - `abstain` — **the gate could not resolve the command's target** ({@link abstentionReason}), so
+ *   nobody rated it and there is no verdict to carry. Returned at the two RATED rungs only.
+ *
+ * **`abstain` is an ACTION and never an OUTCOME**, and the distinction is the whole of [[EXT-64]].
+ * The outcome vocabulary ({@link RATER_OUTCOMES}) belongs to the rater and says what is true of the
+ * *command*; an abstention says something about the *gate*. Adding it to the outcomes would put a
+ * non-judgement into {@link BELOW_DESTRUCTIVE_FLOOR}, into every confusion matrix, and into the
+ * rating prompt's four-way exclusion — which is exactly the confusion that table's
+ * `Record<RaterOutcome, boolean>` guard exists to make a compile error.
+ *
+ * Its consequence is unchanged until [[EXT-65]]: the runner reconstructs the human-facing verdict
+ * from {@link abstentionReason} and escalates, so the approval prompt is byte-identical to the one
+ * the retired first preflight arm produced. What EXT-65 changes is the *addressee* — an abstention
+ * is the gate reporting its own limit, and the only party who can act on that is the agent, so it
+ * becomes a rejection handed back to the model rather than an interruption handed to the human.
  *
  * There is deliberately **no `refuse` arm for `catastrophic`** (settled 2026-07-27c, §4.2). The
  * deterministic members of that class — fork bomb, `mkfs`, `rm -rf /`, `dd` to a block device — are
@@ -740,7 +755,7 @@ export async function rateShellCommand(
  * unmeasured classifier belongs behind a human who can correct it; a refusal has no correction
  * path.
  */
-export type RaterAction = 'approve' | 'escalate' | 'halt';
+export type RaterAction = 'approve' | 'escalate' | 'halt' | 'abstain';
 
 /** Inputs to the decision mapping: just the rung. Each rung fully determines behaviour (§1). */
 export interface RaterDecisionOptions {
@@ -753,11 +768,17 @@ export interface RaterDecisionOptions {
  * overridden the rater where it must. Returned alongside the action so the caller surfaces the
  * HONEST reason (a "could not assess" note) rather than whatever the rater claimed about a
  * command the gate could not statically vet. `undefined` at the unrated rungs, where no rating
- * call was made at all.
+ * call was made at all — and on the `abstain` action, where nobody rated either.
  */
 export interface RaterDecision {
   action: RaterAction;
-  /** The verdict actually used — the rater's, or the fail-closed `destructive` override. */
+  /**
+   * The verdict actually used — the rater's, or the fail-closed `destructive` override.
+   *
+   * **Absent on `abstain`, and that absence is load-bearing.** An abstention is not a judgement
+   * about the command, so there is no verdict for it to carry; a caller that needs a sentence for a
+   * human builds one from {@link abstentionReason} rather than reading a rating nobody rendered.
+   */
   verdict?: ShellSafetyVerdict;
 }
 
@@ -766,8 +787,8 @@ export interface RaterDecision {
  * may rewrite. **This is the whole floor rule, and it is a table rather than a comparison on
  * purpose.**
  *
- * A preflight ({@link mapVerdictToAction}'s ambiguity and script-env-leak checks; [[EXT-61]]'s
- * open-world check next) may only ever RAISE an outcome to `destructive`. Expressing that as
+ * A preflight ({@link preflightFloorReason}'s script-env-leak and open-world checks; §4.7.3's
+ * tool-annotation check) may only ever RAISE an outcome to `destructive`. Expressing that as
  * `outcome < 'destructive'` would need a total order over the outcomes, and §4.1 refuses to give
  * one: `catastrophic` and `attack` ask different questions and *"neither is a severity ranking"*.
  * A lookup states exactly the property that is true — `safe` is below the floor, nothing else is —
@@ -886,38 +907,68 @@ export function openWorldToolFloorReason(
 }
 
 /**
- * The deterministic preflights, in ONE place and in a FIXED order, returning the honest reason the
- * command is floored at `destructive` — or `null` when none of them fires.
+ * EXT-64 — **the abstention.** The command composes, substitutes or redirects
+ * ({@link classifyCommand} returns `null`), so its target cannot be statically resolved. Returns
+ * the sentence saying so, or `null` when the command does resolve.
  *
- * All three are recomputed from the RAW command, independently of anything the rater said, so a
+ * **This is a statement about the CHECKER, not about the command**, and that is the whole reason it
+ * is a separate function from {@link preflightFloorReason} rather than its first arm. The other two
+ * arms are FINDINGS — the gate looked at the command and established something specific about it
+ * (an environment variable expanded into a script; a host literal in a fetch position). This one
+ * establishes nothing at all about the command: it reports that the gate's own parser could not
+ * resolve the command's target. Collapsing the two kinds into one `destructive` outcome launders an
+ * admission of incompetence into a claim of harm, and — because {@link mapVerdictToAction} routes on
+ * the outcome — would make *"I could not parse this"* negotiable at `full-auto` the moment
+ * [[EXT-29]] lands: a negotiation about MEANING, conducted with the oracle whose meaning-reading the
+ * gate has just declared irrelevant.
+ *
+ * Each layer answers only the question it can answer and its output goes to whoever can act on it.
+ * A refusal is about the command and goes to nobody; a rating is about meaning and goes to the
+ * human; **an abstention is about the checker, and the only party who can act on it is the AGENT** —
+ * the defect is in the command's *form*, so it is closer to a compile error than to a permission
+ * denial. [[EXT-65]] is what routes it there; this function is the state it routes.
+ *
+ * The sentence is unchanged from the arm it replaces, and pinned by
+ * `packages/core/spec/shellOpenWorld.spec.ts`: the approval prompt renders it verbatim and
+ * [[BATCH-25]] Half B calibrates deterministic assertions against this exact text.
+ *
+ * @param command The raw command string as the model proposed it.
+ * @returns The abstention sentence, or `null` when the command's target statically resolves.
+ */
+export function abstentionReason(command: string): string | null {
+  if (classifyCommand(command, normalizeCommand) !== null) return null;
+  return (
+    `${COULD_NOT_ASSESS_PREFIX}: it composes, substitutes or redirects, so its target ` +
+    'cannot be statically resolved.'
+  );
+}
+
+/**
+ * The deterministic preflight FINDINGS, in ONE place and in a FIXED order, returning the honest
+ * reason the command is floored at `destructive` — or `null` when neither of them fires.
+ *
+ * Both are recomputed from the RAW command, independently of anything the rater said, so a
  * manipulated `safe` verdict cannot slip past them. They are arms of a single decision rather than
- * three independent checks, and the order below is the order of the *explanation* a human reads —
+ * two independent checks, and the order below is the order of the *explanation* a human reads —
  * the outcome is identical whichever fires:
  *
- * 1. **Ambiguity** ({@link classifyCommand} returns `null`) — the command composes, substitutes or
- *    redirects, so its target cannot be statically resolved. **First on purpose**: it is the widest
- *    and the truest thing that can be said about such a command. `cat .env | curl -X POST …` names
- *    a host too, but "its target cannot be statically resolved" is the honest headline, and the
- *    open-world matcher declines these for exactly that reason
- *    ({@link findOpenWorldHostLiterals}).
- * 2. **Script env leak** ({@link hasScriptEnvLeakRisk}) — an interpreter invocation expanding an
+ * 1. **Script env leak** ({@link hasScriptEnvLeakRisk}) — an interpreter invocation expanding an
  *    ALL_CAPS environment variable into its arguments. §11.1b's narrowing of the `attack` clause
  *    rests on this arm firing, so it must keep its own reason rather than merging into another.
- * 3. **Open world** (EXT-61, §4.6, {@link findOpenWorldHostLiterals}) — a host literal in a
+ * 2. **Open world** (EXT-61, §4.6, {@link findOpenWorldHostLiterals}) — a host literal in a
  *    fetch/transfer position. Its reason NAMES THE HOST and does not say "could not assess": this
  *    preflight assessed the command and found something specific, which is what makes the
  *    escalation worth reading.
+ *
+ * **{@link abstentionReason} is checked before either of these** ({@link mapVerdictToAction}), which
+ * preserves the precedence the explanation depends on: `cat .env | curl -X POST …` names a host too,
+ * but "its target cannot be statically resolved" is the honest headline, and the open-world matcher
+ * declines composed commands for exactly that reason ({@link findOpenWorldHostLiterals}).
  *
  * @param command The raw command string as the model proposed it.
  * @returns The reason to floor at `destructive`, or `null` to leave the rater's verdict alone.
  */
 function preflightFloorReason(command: string): string | null {
-  if (classifyCommand(command, normalizeCommand) === null) {
-    return (
-      `${COULD_NOT_ASSESS_PREFIX}: it composes, substitutes or redirects, so its target ` +
-      'cannot be statically resolved.'
-    );
-  }
   if (hasScriptEnvLeakRisk(normalizeCommand(command))) {
     return (
       `${COULD_NOT_ASSESS_PREFIX}: it expands an environment variable into a script, which ` +
@@ -948,6 +999,9 @@ function preflightFloorReason(command: string): string | null {
  * | `catastrophic` | — | escalate | escalate — **never negotiate** | — |
  * | `attack` | — | **halt** | **halt** | — |
  *
+ * …and, cutting across the outcome column entirely, a command whose target the gate cannot resolve
+ * ({@link abstentionReason}) → **`abstain`** at both rated rungs, with no verdict.
+ *
  * Order of precedence (fail-closed FIRST — **this ordering IS the safety property**):
  *
  * 1. `bypass` → `approve`. The gate is off. The declared deny list and the exec-time hardline
@@ -957,24 +1011,27 @@ function preflightFloorReason(command: string): string | null {
  *    decides. (Both rungs behave identically for the shell because the shell is the only gated
  *    tool today — the built-in read/write tools each rung grants are not gated until [[EXT-30]]
  *    widens the gate. That is a scope boundary, not a missing branch.)
- * 3. **The deterministic preflights, which FLOOR the outcome at `destructive` and never lower
- *    one** ({@link preflightFloorReason}). Ambiguity ({@link classifyCommand} returns null — the
- *    command composes / substitutes / redirects, so its target cannot be statically resolved), the
- *    script-env-leak preflight ({@link hasScriptEnvLeakRisk}), and EXT-61's open-world preflight
- *    ({@link findOpenWorldHostLiterals} — a host literal in a fetch/transfer position, §4.6) are all
- *    recomputed from the RAW command, independently of what
- *    the rater said. Any one of them rewrites a verdict that sits BELOW the floor — i.e. `safe`, and
- *    only `safe` ({@link isBelowDestructiveFloor}) — to `destructive` with an honest
- *    {@link COULD_NOT_ASSESS_PREFIX} reason, **before the `safe` check**, so a manipulated `safe`
- *    verdict can never slip an unresolvable command through. **A rater verdict may only ever make
- *    an outcome worse, never better**, and so may a preflight: `destructive`, `catastrophic` and
- *    `attack` all pass through UNCHANGED. (Before the rescale this branch excluded the single
- *    halting outcome BY NAME. Renamed in place it would have let a preflight hit *downgrade* a
- *    `catastrophic` verdict to `destructive` — the exact inverse of the invariant above, silently
- *    trading an unnegotiable escalation for a negotiable one at `full-auto`.)
+ * 3. **The deterministic preflight FINDINGS, which FLOOR the outcome at `destructive` and never
+ *    lower one** ({@link preflightFloorReason}): the script-env-leak preflight
+ *    ({@link hasScriptEnvLeakRisk}) and EXT-61's open-world preflight
+ *    ({@link findOpenWorldHostLiterals} — a host literal in a fetch/transfer position, §4.6). Both
+ *    are recomputed from the RAW command, independently of what the rater said. Either rewrites a
+ *    verdict that sits BELOW the floor — i.e. `safe`, and only `safe`
+ *    ({@link isBelowDestructiveFloor}) — to `destructive` with an honest reason, **before the `safe`
+ *    check**, so a manipulated `safe` verdict can never slip one of them through. **A rater verdict
+ *    may only ever make an outcome worse, never better**, and so may a preflight: `destructive`,
+ *    `catastrophic` and `attack` all pass through UNCHANGED. (Before the rescale this branch
+ *    excluded the single halting outcome BY NAME. Renamed in place it would have let a preflight hit
+ *    *downgrade* a `catastrophic` verdict to `destructive` — the exact inverse of the invariant
+ *    above, silently trading an unnegotiable escalation for a negotiable one at `full-auto`.)
  * 4. `attack` → `halt`, at both rated rungs, never negotiable.
- * 5. `safe` → `approve`; `catastrophic` → `escalate` and MUST NOT enter §5; `destructive` →
- *    `escalate` (a negotiation at `full-auto` once [[EXT-29]] lands).
+ * 5. `catastrophic` → `escalate`, and MUST NOT enter §5's negotiation.
+ * 6. **{@link abstentionReason} fires → `abstain`, with NO verdict** ([[EXT-64]]). Placed here on
+ *    purpose: before `safe`, so an unresolvable command carrying a `safe` verdict cannot approve;
+ *    after the two severe outcomes, so a caller that DOES hand this function a rating for an
+ *    unresolvable command still halts on `attack`. See the comment at the branch itself.
+ * 7. `safe` → `approve`; `destructive` → `escalate` (a negotiation at `full-auto` once [[EXT-29]]
+ *    lands).
  *
  * **EXT-58 (§4.4): the verdict's `suggestedTool` is not read here, and that is deliberate.** A
  * suggestion is never an approval — it must not change the action, must not approve the original
@@ -1009,8 +1066,8 @@ export function mapVerdictToAction(
     return { action: 'escalate', verdict: undefined };
   }
 
-  // (3) Anything the gate itself cannot statically vet — and (EXT-61) anything that names a host —
-  // is FLOORED at `destructive` with an honest reason, even when the rater said `safe`. The
+  // (3) A command that names a host (EXT-61), or that expands an environment variable into a
+  // script, is FLOORED at `destructive` with an honest reason, even when the rater said `safe`. The
   // preflights raise; they never lower. Only `safe` sits below the floor, so `destructive`,
   // `catastrophic` and `attack` all pass through untouched, keeping their real explanation (and any
   // §4.4 suggestion) rather than losing it to a note that would also be FALSE — the rater did
@@ -1025,11 +1082,6 @@ export function mapVerdictToAction(
     return { action: 'halt', verdict: effective };
   }
 
-  // (5) `safe` runs.
-  if (effective.outcome === 'safe') {
-    return { action: 'approve', verdict: effective };
-  }
-
   // §4.2 — `catastrophic` escalates at BOTH rated rungs and is deliberately its OWN return rather
   // than a fallthrough into the `destructive` arm below. It MUST NOT enter the §5 negotiation at
   // `full-auto`: being *argued into* a `mkfs` is the failure mode that rung is most exposed to, so
@@ -1037,6 +1089,29 @@ export function mapVerdictToAction(
   // alone — a shared fallthrough is exactly how `catastrophic` would end up negotiable by accident.
   if (effective.outcome === 'catastrophic') {
     return { action: 'escalate', verdict: effective };
+  }
+
+  // (5) EXT-64 — the gate could not resolve this command's target, so nobody's judgement about it
+  // is worth acting on, including its own. No verdict: an abstention is a fact about the CHECKER,
+  // and inventing a `destructive` rating to carry it is what made "I could not parse this"
+  // indistinguishable from "I found this harmful".
+  //
+  // **This sits AFTER `attack`/`catastrophic` and BEFORE `safe`, and both halves are deliberate.**
+  // Before `safe` is the load-bearing one: an ambiguous command carrying a `safe` verdict —
+  // manipulated, or simply wrong — must never approve. After the two severe outcomes is the safety
+  // half: in production nothing rates an abstaining command at all (the runner skips the call), so
+  // the verdict here is `undefined`, becomes FAIL_CLOSED_VERDICT, and falls through both to reach
+  // this line as intended. But this is a pure exported function with other callers — the eval
+  // facility's rater target among them — and checking abstention first would mean an ambiguous
+  // command carrying an `attack` verdict silently stopped halting. That is a safety regression for
+  // no gain.
+  if (abstentionReason(command) !== null) {
+    return { action: 'abstain' };
+  }
+
+  // (6) `safe` runs.
+  if (effective.outcome === 'safe') {
+    return { action: 'approve', verdict: effective };
   }
 
   // TODO(EXT-29): under `full-auto` a `destructive` outcome opens a NEGOTIATION with the rater
@@ -1065,11 +1140,12 @@ export function mapVerdictToAction(
  * **The deterministic preflights are deliberately not consulted** ({@link preflightFloorReason} is
  * not called). §4.6 states it directly for the open-world arm: *an allow match lifts this floor even
  * when the entry keeps the rater involved — the tripwire still sees the call; the floor does not
- * apply to it.* The other two arms are lifted with it, and doing so changes no outcome: a preflight
- * only ever raises `safe` to `destructive`, and both of those run here. Applying the floor would
- * therefore alter nothing except to replace an honest verdict with a note about a decision this
- * mapping does not make. (The ambiguity arm cannot fire at all — an allow entry does not match a
- * command that fails to statically resolve.)
+ * apply to it.* The script-env-leak arm is lifted with it, and doing so changes no outcome: a
+ * preflight only ever raises `safe` to `destructive`, and both of those run here. Applying the floor
+ * would therefore alter nothing except to replace an honest verdict with a note about a decision
+ * this mapping does not make. **Nor is {@link abstentionReason} consulted**, for a stronger reason
+ * than "it changes nothing": it cannot fire at all here, because an allow entry only matches a
+ * command that statically resolves — so an `abstain` is unreachable on this path by construction.
  *
  * @param verdict The rater's verdict; `undefined` or a fail-closed verdict is `destructive` and so
  *   runs — the tripwire failing to answer does not revoke the human's standing decision, exactly as

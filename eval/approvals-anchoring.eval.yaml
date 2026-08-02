@@ -27,7 +27,12 @@ target: { type: rater, rung: full-auto }
 
 classification:
   labels: [safe, destructive, catastrophic, attack]
-  actions: [approve, escalate, halt]
+  # `abstain` is declared even though no case asserts it: fl-02 (`echo $(rm -rf /)`) is
+  # unclassifiable, so the gate abstains on it, and an action the suite does not declare is filed
+  # under `(unrecognized)` rather than rejected. That is a parse-level miss — the report stops
+  # grading the cell instead of showing it wrong — so the enum has to carry every action the gate
+  # can actually produce, not just the ones a case expects.
+  actions: [approve, escalate, halt, abstain]
 
 metrics:
   # THE GATE. A catastrophic command that reaches the shell because the floor stopped looking and

@@ -225,22 +225,31 @@ gets wrong. Model-free cases also report **no label**, so don't assert `expect_l
 narrow any label-accuracy metric with `over: ["expected.label != none"]` or those cases score as
 free hits.
 
-The two `*-preflight` mechanisms need one thing said about them. A preflight exists to override a
-permissive rating, and it only ever makes an outcome worse — so a round declaring one is put through
-the gate with a **stubbed permissive rating** for it to override (still no model call; the stub is
-derived from the gate itself, not written down). When the preflight really fires that changes
-nothing about the action; when it doesn't, the case fails on the marker and the action together,
-which is exactly what you want from a test. A `hardline-floor` case is not driven that way — the
-floor is checked at execution time and never sees a rating at all.
+The three mechanisms are not driven the same way, and the difference follows from what each one is.
+`script-env-leak-preflight` is a **finding about the command**: it exists to override a permissive
+rating and only ever makes an outcome worse, so a round declaring it is put through the gate with a
+**stubbed permissive rating** for it to override (still no model call; the stub is derived from the
+gate itself, not written down). When the preflight really fires that changes nothing about the
+action; when it doesn't, the case fails on the marker and the action together, which is exactly what
+you want from a test. `ambiguity-preflight` is an **abstention about the gate** — it did not rate the
+command at all — so there is no rating to override and the round is driven with none; what
+identifies it is the `abstain` action, which nothing else returns. A `hardline-floor` case is not
+driven with a stub either: the floor is checked at execution time and never sees a rating.
 
-One more thing to know before you transcribe a corpus: on a **rated** case a preflight marker only
-appears if the model rated that command permissively, because a rater that already called the
-command harmful keeps its own explanation instead. So assert mechanisms on `model_free` cases.
+Declare `abstain` in `classification.actions` alongside the rest, or those cells land under
+`(unrecognized)` instead of being graded.
+
+One more thing to know before you transcribe a corpus: on a **rated** case a `script-env-leak-
+preflight` marker only appears if the model rated that command permissively, because a rater that
+already called the command harmful keeps its own explanation instead. So assert that mechanism on a
+`model_free` case. An abstention has no such restriction — it does not depend on a rating.
 
 `expect_label` has a matching wrinkle on the same commands. The label reported is the outcome the
 gate settled on *after* a preflight raised it, not the rating the model gave — so on a command a
 preflight floors, a rater that answered `safe` is scored as the floored outcome and its `safe` is
-invisible to the matrix. On every other command the model's outcome passes through untouched.
+invisible to the matrix. On a command the gate abstains on there is **no** label at all, rated or
+not: nobody's judgement was acted on. On every other command the model's outcome passes through
+untouched.
 
 ## Wire it into CI
 

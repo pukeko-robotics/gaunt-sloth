@@ -78,8 +78,8 @@ export const FORCED_BY_ASSERTIONS: Record<ForcedByMechanism, string> = {
 };
 
 /**
- * Which of {@link FORCED_BY_MECHANISMS} are **preflights of the decision mapping** — the ones that
- * can only be observed by handing the gate a rating for them to OVERRIDE.
+ * Which of {@link FORCED_BY_MECHANISMS} are **preflight FINDINGS of the decision mapping** — the
+ * ones that can only be observed by handing the gate a rating for them to OVERRIDE.
  *
  * **This is the single statement of the rule, and everything else reads it through
  * {@link mechanismNeedsPermissiveRating}.** It is kept here, next to the mechanism list, rather than
@@ -89,7 +89,7 @@ export const FORCED_BY_ASSERTIONS: Record<ForcedByMechanism, string> = {
  *
  * ## Why the floor is not on this list (measured, CFG-28)
  *
- * The two preflights live INSIDE `mapVerdictToAction`, and CFG-28 narrowed them to raise only an
+ * A preflight finding lives INSIDE `mapVerdictToAction`, and CFG-28 narrowed it to raise only an
  * outcome that sits below the deterministic floor. Give that mapping no verdict and it substitutes
  * core's fail-closed one, which is *at* the floor — so no preflight rewrites anything, every command
  * comes back with the identical placeholder sentence, and the assertion is a constant again. Handing
@@ -102,18 +102,21 @@ export const FORCED_BY_ASSERTIONS: Record<ForcedByMechanism, string> = {
  * verdict — so a rating cannot change the answer, and supplying one buys nothing. It also costs:
  * `mapVerdictToAction` does not consult the floor, so a permissive rating on `rm -rf /` returns
  * `approve`, which would move the action column of **5 of the corpus's 6 `fl-*` cases** off the
- * `escalate` they author. Measured over all 22 deterministic corpus cases; see the fix-round-2
- * section of `handoff/task-1-report.md`.
+ * `escalate` they author. Measured over all 22 deterministic corpus cases.
+ *
+ * ## Why the abstention is not on this list either
+ *
+ * See {@link ABSTENTION_MECHANISMS}. An abstention rewrites nothing, so there is no rating for it to
+ * override and a stub would buy exactly as little as it does for the floor.
  *
  * ## The property that makes this self-justifying
  *
- * When the claimed preflight really does fire, the rating does not move the action — every corpus
- * case that claims one (`ob-02`…`ob-05`, `el-01`, `el-02`) is `escalate` with or without it. When it
- * does not fire, the marker and the action go red **together**. That is the discrimination, not a
- * side effect of it.
+ * When the claimed preflight really does fire, the rating does not move the action — the corpus
+ * cases that claim one (`el-01`, `el-02`) are `escalate` with or without it. When it does not fire,
+ * the marker and the action go red **together**. That is the discrimination, not a side effect of
+ * it.
  */
 export const PREFLIGHT_MECHANISMS = [
-  'ambiguity-preflight',
   'script-env-leak-preflight',
 ] as const satisfies readonly ForcedByMechanism[];
 
@@ -127,10 +130,42 @@ export const PREFLIGHT_MECHANISMS = [
 export type PreflightMechanism = (typeof PREFLIGHT_MECHANISMS)[number];
 
 /**
+ * EXT-64 — which of {@link FORCED_BY_MECHANISMS} are **abstentions**: the gate reporting that it
+ * could not resolve the command at all, rather than reporting something it found in the command.
+ *
+ * **They are a separate list because they are observed differently, and that follows from what they
+ * are.** A preflight finding is a claim about the command, so it must OVERRIDE a rating to be
+ * visible — hence {@link PREFLIGHT_MECHANISMS}' permissive-stub rule. An abstention is a claim about
+ * the checker: nobody rated, there is no verdict, and therefore nothing was rewritten. Driving one
+ * with a stub would hand the gate a rating that plays no part in the answer while moving the action
+ * column, which is the same bad trade the §8 floor already declines.
+ *
+ * What makes an abstention observable instead is the **action** the gate returns, which no other
+ * mechanism produces. The target discovers that action by probing rather than spelling it; see
+ * `raterTarget.js`'s abstention calibration.
+ *
+ * The spelling is the corpus's own (`ambiguity-preflight`), unchanged, so transcribing a corpus case
+ * stays a copy rather than a translation.
+ */
+export const ABSTENTION_MECHANISMS = [
+  'ambiguity-preflight',
+] as const satisfies readonly ForcedByMechanism[];
+
+/**
+ * One of {@link ABSTENTION_MECHANISMS}. Narrower than {@link ForcedByMechanism} for the same reason
+ * {@link PreflightMechanism} is: the target's abstention probe table is a TOTAL record over this, so
+ * adding an abstention to the list above is a **compile error** until someone writes the probe
+ * command that observes it.
+ */
+export type AbstentionMechanism = (typeof ABSTENTION_MECHANISMS)[number];
+
+/**
  * Must a round claiming this mechanism be driven with a permissive rating for the mechanism to be
- * observable at all? See {@link PREFLIGHT_MECHANISMS} for the whole rule and why the floor is
- * excluded. `undefined` (the round claims no mechanism) is `false`: an ordinary `model_free` case
- * must keep going through the gate with no verdict, or its action would change.
+ * observable at all? See {@link PREFLIGHT_MECHANISMS} for the whole rule, and
+ * {@link ABSTENTION_MECHANISMS} for why an abstention answers **false** — there is no rating for it
+ * to override, so a stub would move the action column and buy nothing. `undefined` (the round claims
+ * no mechanism) is `false` too: an ordinary `model_free` case must keep going through the gate with
+ * no verdict, or its action would change.
  */
 export function mechanismNeedsPermissiveRating(mechanism: ForcedByMechanism | undefined): boolean {
   return (
