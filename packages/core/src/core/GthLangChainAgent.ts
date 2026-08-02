@@ -178,6 +178,26 @@ function stableStringify(value: unknown): string {
 }
 
 /**
+ * The delimiter between a tool name and its serialised arguments in a call signature. U+0000 is
+ * chosen because a tool name cannot contain a control character, so no `(name, args)` pair can be
+ * spelled two ways and no pair of distinct calls can collide on one signature.
+ *
+ * It MUST stay written as this escape. A raw NUL byte in the source makes the whole file binary to
+ * ripgrep and ugrep, which then skip it in silence — every symbol in this file becomes invisible to
+ * a repo-wide search, and an empty result reads as proof of absence. `noRawNulBytes.spec.ts` guards
+ * the repo against the raw form returning.
+ */
+export const TOOL_CALL_SIGNATURE_DELIMITER = '\u0000';
+
+/**
+ * EXT-36 — the `(tool, args)` identity a repeat-detection streak is counted over. Exported so the
+ * delimiter invariant above is asserted directly rather than inferred from loop behaviour.
+ */
+export function toolCallSignature(name: string, args: unknown): string {
+  return `${name}${TOOL_CALL_SIGNATURE_DELIMITER}${stableStringify(args ?? {})}`;
+}
+
+/**
  * EXT-36 — the tool-loop guardrail as a standalone, testable middleware factory. The ORTHOGONAL
  * sibling of {@link createToolErrorBudgetMiddleware}: GS2-36 caps a consecutive-tool-ERROR streak;
  * this catches a **repeated identical `(tool, args)` / no-progress loop** — the same call re-issued
@@ -244,10 +264,8 @@ export function createToolLoopGuardMiddleware(
               const id = tc?.id;
               if (typeof id === 'string') {
                 const name = typeof tc.name === 'string' ? tc.name : '';
-                // TODO(OPS-34): the delimiter below is a literal NUL byte, which makes this whole
-                // file binary to ripgrep and ugrep - they skip it in silence, so nothing in this
-                // file is findable by a repo-wide search. Replace it with the \u0000 escape.
-                callById.set(id, { sig: `${name} ${stableStringify(tc.args ?? {})}`, name });
+                // Signature identity + its delimiter: see toolCallSignature.
+                callById.set(id, { sig: toolCallSignature(name, tc.args), name });
               }
             }
           }

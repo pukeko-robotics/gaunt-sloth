@@ -85,3 +85,50 @@ describe('EXT-36 mechanical half: HALT ends a real createAgent loop cleanly', ()
     expect(model.callCount).toBe(3);
   });
 });
+
+/**
+ * OPS-34 — the signature delimiter is U+0000, and it is written in source as an escape rather than
+ * a raw byte (that invariant is enforced repo-wide by `noRawNulBytes.spec.ts`). These pin the
+ * BEHAVIOUR the escape must preserve, so a future "simplification" of the delimiter has to fail
+ * here rather than silently changing what counts as the same call.
+ */
+describe('OPS-34 tool-call signature delimiter', () => {
+  it('is exactly one character, U+0000', async () => {
+    const { TOOL_CALL_SIGNATURE_DELIMITER } = await import('#src/core/GthLangChainAgent.js');
+    expect(TOOL_CALL_SIGNATURE_DELIMITER).toHaveLength(1);
+    expect(TOOL_CALL_SIGNATURE_DELIMITER.charCodeAt(0)).toBe(0);
+  });
+
+  it('separates the tool name from its serialised arguments', async () => {
+    const { toolCallSignature } = await import('#src/core/GthLangChainAgent.js');
+    const sig = toolCallSignature('read_file', { path: 'a.txt' });
+    expect(sig.charCodeAt('read_file'.length)).toBe(0);
+    expect(sig.startsWith('read_file')).toBe(true);
+    expect(sig.endsWith('{"path":"a.txt"}')).toBe(true);
+  });
+
+  it('two calls differing only in arguments get distinct signatures', async () => {
+    const { toolCallSignature } = await import('#src/core/GthLangChainAgent.js');
+    expect(toolCallSignature('read_file', { path: 'a.txt' })).not.toBe(
+      toolCallSignature('read_file', { path: 'b.txt' })
+    );
+  });
+
+  it('identical name and arguments collide by design — that is the loop signal', async () => {
+    const { toolCallSignature } = await import('#src/core/GthLangChainAgent.js');
+    // Key order must not matter: the streak counter would miss a real loop if it did.
+    expect(toolCallSignature('read_file', { a: 1, b: 2 })).toBe(
+      toolCallSignature('read_file', { b: 2, a: 1 })
+    );
+  });
+
+  it('a control-character delimiter is what makes the split unambiguous', async () => {
+    const { toolCallSignature } = await import('#src/core/GthLangChainAgent.js');
+    // A tool name cannot contain U+0000, so the name/args boundary is unique. The same pair under
+    // an ordinary printable delimiter would be spelled two ways and could collide; here it cannot.
+    const a = toolCallSignature('read', { x: 1 });
+    const b = toolCallSignature('read' + String.fromCharCode(0) + '{"x":1}', {});
+    expect(a).not.toBe(b);
+    expect(a.split(String.fromCharCode(0))).toHaveLength(2);
+  });
+});
