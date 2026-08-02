@@ -774,8 +774,15 @@ export function App(props: TuiAppProps): React.ReactElement {
   // the effect body itself: `runTurn` pushes the user line and flips `running`/`live` before its
   // first await, so calling it here would commit the mount frame and immediately supersede it — the
   // cascading render `set-state-in-effect` names. A microtask runs before any I/O, so the turn
-  // still starts in the same tick and only the first, never-visible frame differs. The flag makes
-  // the kickoff cancellable, since an effect that schedules work owes its cleanup a way to stop it.
+  // still starts in the same tick. The flag makes the kickoff cancellable, since an effect that
+  // schedules work owes its cleanup a way to stop it.
+  //
+  // Not a pure frame difference, and the ordering is the part worth knowing: deferring also moves
+  // `runTurn`'s synchronous prefix to AFTER the `subscribeStatus` and `subscribeDebug` effects
+  // below, which previously had not mounted yet. On the first turn only, WARNING/ERROR from that
+  // prefix now reach the transcript, and — since `subscribeDebug` filters nothing — every capture
+  // it emits now reaches the debug panel. That is the intended direction (a subscriber that exists
+  // sees more, not less), but it is a real behavioural change and not merely an invisible frame.
   useEffect(() => {
     if (!initialMessage || !initialMessage.trim()) return;
     let cancelled = false;
