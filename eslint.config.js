@@ -146,11 +146,12 @@ export default defineConfig([
   // Test TypeScript files with separate project reference
   {
     files: [
-      'packages/*/spec/**/*.ts',
-      'packages/*/spec/**/*.tsx',
-      'packages/*/integration-tests/**/*.ts',
-      'packages/*/embed-e2e/**/*.ts',
-      'packages/*/tui-e2e/**/*.ts',
+      // Both extensions everywhere: a .tsx added under any of these harnesses would otherwise
+      // reach the lint report with no block matched, which is the hole this list exists to close.
+      'packages/*/spec/**/*.{ts,tsx}',
+      'packages/*/integration-tests/**/*.{ts,tsx}',
+      'packages/*/embed-e2e/**/*.{ts,tsx}',
+      'packages/*/tui-e2e/**/*.{ts,tsx}',
       'packages/*/vitest.setup.ts',
       'vitest.config.ts',
       'vitest-it.config.ts',
