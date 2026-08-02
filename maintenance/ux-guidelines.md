@@ -80,6 +80,27 @@ top of `decideToolApproval`.
   restores approvals. The readline interactive session mirrors the same `/auto-approve` (and `/yolo`)
   commands via `displayWarning`/`displayInfo` (no `CommandNotice` there).
 
+## Abstentions the agent resolves (DL-4 transparency, DL-1 nothing important is silent, EXT-65)
+
+When the approvals gate cannot statically read a command — it composes, substitutes or redirects —
+it hands the defect back to the **model** as a rejection and the user is not asked. That is the
+point: `pwd && ls` is an ordinary shell idiom, the gate is the only party that cannot read it, and
+prompting about it is approval fatigue with nothing behind it. But a prompt that no longer appears
+is a decision the user never sees, so the transparency has to move somewhere rather than vanish.
+
+- **Count it and show the aggregate (DL-4).** The read-only `/approvals` display carries the
+  session's abstention count. It is the near-miss signal the gate produces most often, and before
+  this it was invisible — an approval the user was spared is still an approval that happened.
+- **One retry, then the user (DL-1).** A second *consecutive* abstention escalates as before.
+  Silence is affordable exactly once, because the retry is a search toward a command the gate can
+  read; past that the user is the only party who can settle it.
+- **The count is consecutive, not per-session (DL-9 beginner-safe defaults).** A per-session count
+  would make the second legitimate composed command of a long session prompt, which inverts the goal
+  the feature exists to serve.
+- **Never present an abstention as a rating (DL-4).** It is the checker declaring its own limit, not
+  a judgement about the command, and wearing the auto-rater's name for it teaches the user to blame
+  the wrong layer. The escalation prompt still does this; TUI-C26 owns the fix.
+
 ## `/clear` (DL-3 preserve context, DL-5 respect host)
 
 `/clear` resets the session **without destroying history**:

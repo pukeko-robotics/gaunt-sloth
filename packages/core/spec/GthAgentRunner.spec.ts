@@ -1968,22 +1968,33 @@ describe('GthAgentRunner', () => {
        * and `NonInteractiveEscalationError` end the RUN and nothing in core catches either — but a
        * long-lived TUI runner takes another turn afterwards, and a stale consecutive run left
        * behind by a halted turn would escalate the next composed command on a budget it never spent.
+       *
+       * **Turn 1 must ABSTAIN before it halts, and that is the whole test.** The first version of
+       * this case halted on `rm -rf /` as the turn's only gated call, so the counter was already
+       * zero when the error propagated and the `finally` had nothing to reset — it stayed green with
+       * the reset moved inline after the inner call, i.e. with the exact defect it names reinstated.
+       * An assertion that cannot fail for the property in its own title is this repo's tracked
+       * defect class. Abstaining first puts a real 1 on the counter for the throw to strand.
        */
       it('a halted turn does not leave a stale consecutive run behind', async () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
-        pendingSequence('rm -rf /');
+        // Abstain (counter → 1), THEN halt, so the throw has something to leave behind.
+        pendingSequence('pwd && ls', 'rm -rf /');
         const { config } = raterConfig(ATTACK, { mode: 'full-auto' });
         await runner.init('code', config);
-        runner.setToolApprovalCallback(vi.fn());
+        const human = vi.fn();
+        runner.setToolApprovalCallback(human);
 
         await expect(runner.processMessages([new HumanMessage('go')])).rejects.toBeInstanceOf(
           AttackHaltError
         );
 
-        // A fresh turn on the SAME runner: a first abstention must still be a first abstention.
+        // A fresh turn on the SAME runner: a first abstention must still be a first abstention —
+        // refused to the model, not escalated to a human on a budget the halted turn stranded.
         const { decisionAt } = pendingSequence('pwd && ls');
         await runner.processMessages([new HumanMessage('again')]);
         expect(decisionAt(0).type).toBe('reject');
+        expect(human).not.toHaveBeenCalled();
       });
 
       /**
@@ -2009,9 +2020,17 @@ describe('GthAgentRunner', () => {
     });
 
     /**
-     * The safety property CFG-26 established, carried through the rescale intact: the preflight is
-     * recomputed from the RAW command and rewrites the verdict AHEAD of the `safe` check, so a
-     * MANIPULATED `safe` verdict on `ls -la; rm -rf ~` still cannot approve.
+     * The safety property CFG-26 established, carried through the rescale and then through EXT-64
+     * and EXT-65 intact — but **the mechanism carrying it has changed twice, so read the assertion
+     * rather than the history.** CFG-26's version was about the preflight: recomputed from the RAW
+     * command, it rewrote the verdict ahead of the `safe` check. On this command that path is now
+     * unreachable — `ls -la; rm -rf ~` composes, so the gate abstains and no rating is bought at
+     * all. What survives, and what this asserts, is the property itself: **a manipulated `safe`
+     * verdict on this command cannot approve it.**
+     *
+     * The preflight-rewrite mechanism is still pinned, just not here: at the mapping level by
+     * `shellRater.spec.ts` (*"`safe` is the ONLY outcome a preflight rewrites"*) and at the runner
+     * level by the env-leak case below, which uses a command the gate CAN resolve.
      */
     it('a manipulated SAFE verdict on `ls -la; rm -rf ~` still does not approve', async () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
