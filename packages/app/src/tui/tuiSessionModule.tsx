@@ -531,6 +531,9 @@ export async function createTuiSession(
           deny: runner.getDenylist(),
           grants: runner.getGrants(),
           trust: runner.getMcpAnnotationTrust(),
+          // EXT-65 — how many commands this session the gate could not read. It no longer
+          // interrupts anyone at the rated rungs, so the count is the only trace it leaves.
+          abstentions: runner.getAbstentionCount(),
         };
       },
       // EXT-70 §4.7.1 — `/approvals trust|untrust <server> <hint…>`. Returns the landed change so
