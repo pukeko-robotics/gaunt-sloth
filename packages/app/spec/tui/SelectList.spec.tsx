@@ -152,7 +152,9 @@ describe('CFG-20 filterSelectItems / matchesFilter predicate', () => {
     expect(filteredItemIndices(items, '5')).toEqual([0, 1, 2, 3]); // source order preserved
     expect(filteredItemIndices(items, 'zzz')).toEqual([]); // no match
     // filterSelectItems is exactly this path mapped back to items — proving they cannot diverge.
-    expect(filterSelectItems(items, '5')).toEqual(filteredItemIndices(items, '5').map((i) => items[i]));
+    expect(filterSelectItems(items, '5')).toEqual(
+      filteredItemIndices(items, '5').map((i) => items[i])
+    );
   });
 });
 

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Text, useApp, useInput, useStdout } from 'ink';
+import { Text, useApp, useInput, useStdout } from 'ink';
 import {
   foldEvents,
   foldSubagentEvents,

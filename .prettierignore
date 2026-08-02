@@ -1,0 +1,15 @@
+# Kept in step with `globalIgnores` in eslint.config.js: format and lint must cover the same
+# files, or whatever only one of them sees drifts back out of format.
+node_modules/
+dist/
+out/
+coverage/
+docs-generated/
+readonly/
+packages/app/integration-tests/workdir
+packages/app/integration-tests/workdir-with-profiles
+packages/*/tui-e2e/.tui-test/
+vitest-it.config.js
+vitest-it.config.d.ts
+eval-it/workdir/out/
+eval-it/workdir/.gsloth/gth_*/

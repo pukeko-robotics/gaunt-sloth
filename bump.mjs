@@ -47,15 +47,7 @@ const APP_DIR = 'app';
 // Every package that carries the locked version + publishConfig.tag.
 const ALL_DIRS = [...SYNCED, APP_DIR];
 
-const RELEASE_TYPES = [
-  'patch',
-  'minor',
-  'major',
-  'prepatch',
-  'preminor',
-  'premajor',
-  'prerelease',
-];
+const RELEASE_TYPES = ['patch', 'minor', 'major', 'prepatch', 'preminor', 'premajor', 'prerelease'];
 const PREIDS = ['alpha', 'beta', 'rc'];
 
 // Drop our own `--commit` flag and any bare `--` arg-separator. pnpm forwards
@@ -184,10 +176,7 @@ if (commit) {
     shell: process.platform === 'win32',
   });
 
-  const files = [
-    ...ALL_DIRS.map((name) => `packages/${name}/package.json`),
-    'pnpm-lock.yaml',
-  ];
+  const files = [...ALL_DIRS.map((name) => `packages/${name}/package.json`), 'pnpm-lock.yaml'];
   const status = execFileSync('git', ['status', '--porcelain', '--', ...files], {
     cwd: ROOT,
     encoding: 'utf8',
@@ -202,9 +191,13 @@ if (commit) {
     // publish, so it's the start of that version's dev cycle, NOT its release
     // (the release/tag/publish for the prior version already happened). Word it
     // so the history doesn't read as if `target` has shipped.
-    execFileSync('git', ['commit', '-m', `chore(release): start ${target} development cycle`, '--', ...files], {
-      cwd: ROOT,
-      stdio: 'inherit',
-    });
+    execFileSync(
+      'git',
+      ['commit', '-m', `chore(release): start ${target} development cycle`, '--', ...files],
+      {
+        cwd: ROOT,
+        stdio: 'inherit',
+      }
+    );
   }
 }

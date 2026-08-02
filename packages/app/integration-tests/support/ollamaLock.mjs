@@ -113,7 +113,8 @@ export function createOllamaLock({
           throw new Error(
             `ollama GPU lock still held after ${Math.round(
               waitMs / 1000
-            )}s (lock ${lockPath}); another ollama run is in progress — retry shortly, or delete a stale lock file.`
+            )}s (lock ${lockPath}); another ollama run is in progress — retry shortly, or delete a stale lock file.`,
+            { cause: e }
           );
         }
         await sleep(200 + Math.floor(Math.random() * 200));

@@ -43,12 +43,6 @@ const baseProps = {
   exitMessage: "Type 'exit' or Ctrl+C to exit · /help for commands\n",
 };
 
-function eventStream(...events: AgentStreamEvent[]): AsyncGenerator<AgentStreamEvent> {
-  return (async function* () {
-    for (const e of events) yield e;
-  })();
-}
-
 /**
  * The production approval bridge from `tuiSessionModule.createApprovalBridge`, replicated here so
  * the test owns the exact wiring it asserts (the module-private fn is not exported). Promise-based:
@@ -230,13 +224,20 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     });
     const { runner, bridge, tuiAgent, command } = wireRunner(agent, {
       ...FULL_CONFIG,
-      commands: { code: { builtInTools: { run_shell_command: { enabled: true, allowlist: false } } } },
+      commands: {
+        code: { builtInTools: { run_shell_command: { enabled: true, allowlist: false } } },
+      },
     } as Partial<GthConfig>);
     await runner.init(command as never, { ...FULL_CONFIG } as GthConfig);
     runner.setToolApprovalCallback((pending) => bridge.request(pending));
 
     const { stdin, lastFrame, frames, unmount } = render(
-      <App {...baseProps} agent={tuiAgent} subscribeApproval={bridge.subscribe} initialMessage="rm" />
+      <App
+        {...baseProps}
+        agent={tuiAgent}
+        subscribeApproval={bridge.subscribe}
+        initialMessage="rm"
+      />
     );
 
     await vi.waitFor(() => expect(lastFrame()).toContain('rm -rf build'));
@@ -372,13 +373,16 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       async cleanup() {},
     };
     const { runner, bridge, tuiAgent } = wireRunner(agent, {}, 'code');
-    await runner.init('code' as never, {
-      ...FULL_CONFIG,
-      // CFG-26 — persistAllowlist moved to `approvals`; on the retired per-tool entry it is a
-      // silent no-op, which would let this test write the real allow-list file.
-      approvals: { mode: 'ask', persistAllowlist: false },
-      commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
-    } as GthConfig);
+    await runner.init(
+      'code' as never,
+      {
+        ...FULL_CONFIG,
+        // CFG-26 — persistAllowlist moved to `approvals`; on the retired per-tool entry it is a
+        // silent no-op, which would let this test write the real allow-list file.
+        approvals: { mode: 'ask', persistAllowlist: false },
+        commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+      } as GthConfig
+    );
 
     let promptCount = 0;
     bridge.subscribe(() => {
@@ -388,7 +392,12 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     runner.setToolApprovalCallback((pending) => bridge.request(pending));
 
     const { stdin, lastFrame, unmount } = render(
-      <App {...baseProps} agent={tuiAgent} subscribeApproval={bridge.subscribe} initialMessage="go" />
+      <App
+        {...baseProps}
+        agent={tuiAgent}
+        subscribeApproval={bridge.subscribe}
+        initialMessage="go"
+      />
     );
 
     // First command prompts; approve at session scope so the variant is allow-listed.
@@ -439,12 +448,15 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       withStructuredOutput: vi.fn().mockReturnValue({ invoke: rate }),
     } as unknown as GthConfig['llm'];
     const { runner, bridge, tuiAgent } = wireRunner(agent, {}, 'code');
-    await runner.init('code' as never, {
-      ...FULL_CONFIG,
-      llm: raterLlm,
-      approvals: 'auto-safe',
-      commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
-    } as GthConfig);
+    await runner.init(
+      'code' as never,
+      {
+        ...FULL_CONFIG,
+        llm: raterLlm,
+        approvals: 'auto-safe',
+        commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+      } as GthConfig
+    );
 
     let promptCount = 0;
     bridge.subscribe(() => {
@@ -490,12 +502,15 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       withStructuredOutput: vi.fn().mockReturnValue({ invoke }),
     } as unknown as GthConfig['llm'];
     const { runner, bridge, tuiAgent } = wireRunner(agent, {}, 'code');
-    await runner.init('code' as never, {
-      ...FULL_CONFIG,
-      llm: raterLlm,
-      approvals: 'auto-safe',
-      commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
-    } as GthConfig);
+    await runner.init(
+      'code' as never,
+      {
+        ...FULL_CONFIG,
+        llm: raterLlm,
+        approvals: 'auto-safe',
+        commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+      } as GthConfig
+    );
     runner.setToolApprovalCallback((pending) => bridge.request(pending));
 
     const { lastFrame, unmount } = render(

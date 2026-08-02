@@ -170,7 +170,13 @@ describe('tui <LiveTurn>', () => {
       ).join('\n');
       const t = turn({
         toolCalls: [
-          { id: 't1', name: 'read_file', argsText: '{"path":"big.txt"}', status: 'done', result: longResult },
+          {
+            id: 't1',
+            name: 'read_file',
+            argsText: '{"path":"big.txt"}',
+            status: 'done',
+            result: longResult,
+          },
         ],
       });
       const collapsed = render(<LiveTurn turn={t} />);

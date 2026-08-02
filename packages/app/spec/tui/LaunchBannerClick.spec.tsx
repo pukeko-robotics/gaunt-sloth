@@ -94,7 +94,12 @@ describe('tui <LaunchBanner> click', () => {
     const source = mouseSource();
     const { lastFrame, unmount } = render(
       <MouseProvider subscribe={source.subscribe} enabled>
-        <LaunchBanner columns={100} model="gemini-3.1-pro" provider="google" pickAnimation={() => 'nod'} />
+        <LaunchBanner
+          columns={100}
+          model="gemini-3.1-pro"
+          provider="google"
+          pickAnimation={() => 'nod'}
+        />
       </MouseProvider>
     );
     const rightHalves = (frame: string | undefined) =>

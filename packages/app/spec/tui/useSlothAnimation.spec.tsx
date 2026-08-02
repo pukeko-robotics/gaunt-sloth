@@ -202,7 +202,10 @@ describe('useSlothAnimation', () => {
     // The hook's own timers, told apart from Ink's render scheduling by their delays: every hold is
     // at least 90ms, and Ink schedules its commits at effectively zero.
     const ours = setSpy.mock.calls
-      .map((call, index) => ({ delay: Number(call[1] ?? 0), handle: setSpy.mock.results[index].value }))
+      .map((call, index) => ({
+        delay: Number(call[1] ?? 0),
+        handle: setSpy.mock.results[index].value,
+      }))
       .filter((timer) => timer.delay >= 90)
       .map((timer) => timer.handle);
     expect(ours.length).toBeGreaterThan(0);

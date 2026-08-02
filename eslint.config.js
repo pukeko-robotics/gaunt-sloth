@@ -5,6 +5,7 @@ import tseslint from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
 import prettierConfig from 'eslint-config-prettier';
 import prettierPlugin from 'eslint-plugin-prettier';
+import reactHooks from 'eslint-plugin-react-hooks';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -27,10 +28,12 @@ const tsRules = {
   ],
 };
 
-// Helper to create a package source config
-function pkgSourceConfig(pkg) {
+// Helper to create a package source config.
+// `files` is overridable so a variant (the app's .tsx sources) reuses this exact shape —
+// parser, tsconfig project and tsRules — instead of near-copying the object.
+function pkgSourceConfig(pkg, files = [`packages/${pkg}/src/**/*.ts`]) {
   return {
-    files: [`packages/${pkg}/src/**/*.ts`],
+    files,
     languageOptions: {
       parser: tsParser,
       parserOptions: {
@@ -73,9 +76,19 @@ export default defineConfig([
   {
     ignores: globalIgnores,
   },
-  // Base configuration for all JavaScript files
+  // Repo-wide linter options. A stale `eslint-disable` is indistinguishable from a live one, so
+  // suppressions rot silently and a rule can be switched on later with its own markers already
+  // dead. Reported as an error, an unused directive has to be deleted rather than accumulate.
   {
-    files: ['**/*.js'],
+    linterOptions: {
+      reportUnusedDisableDirectives: 'error',
+    },
+  },
+  // Base configuration for all JavaScript files. `.mjs` is included because scripts, release
+  // tooling and spec fixtures use it; without it those files land in the lint report with no
+  // config block matched, so zero rules apply and they are checked by nothing.
+  {
+    files: ['**/*.js', '**/*.mjs'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
@@ -101,6 +114,10 @@ export default defineConfig([
   pkgSourceConfig('review'),
   pkgSourceConfig('batch'),
   pkgSourceConfig('app'),
+  // The Ink terminal UI is written in .tsx. It gets the same rule set as the app's .ts sources,
+  // via the same helper — the app tsconfig already has `jsx: react-jsx` and includes `src/**/*`,
+  // and @typescript-eslint/parser enables JSX from the .tsx extension.
+  pkgSourceConfig('app', ['packages/app/src/**/*.tsx']),
   // BATCH-19: the standalone JUnit eval reporter package.
   pkgSourceConfig('eval-reporter-junit'),
   // BATCH-20: the standalone live TeamCity eval reporter package.
@@ -130,9 +147,11 @@ export default defineConfig([
   {
     files: [
       'packages/*/spec/**/*.ts',
+      'packages/*/spec/**/*.tsx',
       'packages/*/integration-tests/**/*.ts',
       'packages/*/embed-e2e/**/*.ts',
       'packages/*/tui-e2e/**/*.ts',
+      'packages/*/vitest.setup.ts',
       'vitest.config.ts',
       'vitest-it.config.ts',
       'vitest-embed.config.ts',
@@ -168,11 +187,29 @@ export default defineConfig([
       'prettier/prettier': 'error',
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/no-explicit-any': 'off', // Allow any in test files
+      // Unused vars are caught by the TypeScript-aware rule only. The base `no-unused-vars` is
+      // not TypeScript-aware: it reads the parameter names inside a function *type* annotation as
+      // unused bindings, so it reports names that document the type and nothing else. Every glob
+      // above is TypeScript, so the base rule has no file here it could correctly serve.
       '@typescript-eslint/no-unused-vars': [
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ], // Error for unused vars in tests
-      'no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }], // For .js test files
+    },
+  },
+  // React hooks, layered on top of whichever rule set above already matched the .tsx file.
+  // Scoped to the same two globs so it never becomes the *only* rule a stray .tsx picks up.
+  {
+    files: ['packages/app/src/**/*.tsx', 'packages/*/spec/**/*.tsx'],
+    plugins: {
+      'react-hooks': reactHooks,
+    },
+    rules: {
+      // ONLY exhaustive-deps is enabled, and the presence of `react-hooks` here must not be read
+      // as "the TUI is hook-checked" — it is not. The plugin's recommended set reports 12 further
+      // real findings in the TUI; those are deferred to OPS-38 and are to be fixed there, not
+      // suppressed here. Widen this list only together with fixing what it turns red.
+      'react-hooks/exhaustive-deps': 'error',
     },
   },
 ]);

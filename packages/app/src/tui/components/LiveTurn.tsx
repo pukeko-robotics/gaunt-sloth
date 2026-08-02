@@ -188,7 +188,10 @@ function ChecklistPanel({ items }: { items: ChecklistItemViewModel[] }): React.R
         return (
           <Box key={i}>
             <Text color={color}>{`  ${glyph} `}</Text>
-            <Text dimColor={item.status === 'completed'} strikethrough={item.status === 'completed'}>
+            <Text
+              dimColor={item.status === 'completed'}
+              strikethrough={item.status === 'completed'}
+            >
               {item.content}
             </Text>
           </Box>
