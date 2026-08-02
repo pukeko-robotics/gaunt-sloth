@@ -1,22 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Text, useStdout } from 'ink';
-
-/** Width used when the terminal width is unknown (non-TTY / tests). */
-const DEFAULT_COLUMNS = 80;
-/** Never draw a rule narrower than this, even on a tiny / mis-reported terminal. */
-const MIN_WIDTH = 1;
-
-/**
- * Pure width math for the rule, factored out of React so it is unit-testable without a
- * terminal. Given the live `stdout.columns` (which Ink/Node leaves `undefined` when not
- * attached to a TTY), return the number of `─` glyphs to draw: the full column count,
- * falling back to {@link DEFAULT_COLUMNS} when unknown, and clamped to {@link MIN_WIDTH}
- * so it can never collapse to 0/negative.
- */
-export function ruleWidth(columns: number | undefined): number {
-  const cols = typeof columns === 'number' && Number.isFinite(columns) ? columns : DEFAULT_COLUMNS;
-  return Math.max(MIN_WIDTH, Math.floor(cols));
-}
+import { ruleWidth } from '#src/tui/ruleWidth.js';
 
 /**
  * A dim, full-width horizontal rule. Single-sourced so the two places that delimit regions

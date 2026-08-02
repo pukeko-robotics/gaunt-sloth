@@ -1,23 +1,6 @@
 import chalk from 'chalk';
 import { stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
-import { ruleWidth } from '#src/tui/components/Rule.js';
-
-/** Spaces prepended to each fenced body line so the block reads indented vs prose. */
-const FENCE_INDENT = '  ';
-
-/**
- * Dim full-width rule for fence open/close. Optional language tag sits in the top rule;
- * remaining columns fill with `─` so the bar matches terminal width (same math as {@link ruleWidth}).
- */
-function fenceRule(columns: number | undefined, lang?: string): string {
-  const width = ruleWidth(columns);
-  if (lang) {
-    const prefix = `── ${lang} `;
-    const rest = Math.max(1, width - prefix.length);
-    return chalk.dim(prefix + '─'.repeat(rest));
-  }
-  return chalk.dim('─'.repeat(width));
-}
+import { ruleWidth } from '#src/tui/ruleWidth.js';
 
 /**
  * Minimal, dependency-light Markdown → ANSI renderer for the Ink TUI.
@@ -40,6 +23,25 @@ function fenceRule(columns: number | undefined, lang?: string): string {
  * unrecognised survives as plain text. This is intentionally a pragmatic subset — enough for
  * assistant chat output — not a spec-complete CommonMark implementation.
  */
+
+/** Spaces prepended to each fenced body line so the block reads indented vs prose. */
+const FENCE_INDENT = '  ';
+
+/**
+ * A dim, full-width `─` bar — the single shape for every horizontal divider this renderer
+ * emits: the top and bottom of a fenced block, and a markdown `---` rule. Width comes from
+ * {@link ruleWidth}, the same math `components/Rule.tsx` uses, so a divider drawn inside a
+ * committed answer lines up with the ones that bracket turns instead of falling visibly short.
+ *
+ * An optional `label` (a fence's language tag) is inlaid at the left and the remaining columns
+ * fill with `─`; a label wider than the terminal keeps a one-glyph tail rather than going negative.
+ */
+function dimRule(columns: number | undefined, label?: string): string {
+  const width = ruleWidth(columns);
+  if (!label) return chalk.dim('─'.repeat(width));
+  const prefix = `── ${label} `;
+  return chalk.dim(prefix + '─'.repeat(Math.max(1, width - prefix.length)));
+}
 
 /** True if the text contains any markdown syntax worth rendering. */
 export function looksLikeMarkdown(text: string): boolean {
@@ -141,9 +143,9 @@ function renderBlocks(text: string, columns: number | undefined): string {
   for (const raw of lines) {
     const line = raw;
 
-    // Fenced code blocks: drop fence markers; body at default foreground (primary
-    // answer content — do not grey). Distinguish with full-width dim top/bottom rules
-    // and space indentation — no greying of the payload.
+    // Fenced code blocks: drop the fence markers and frame the block with dim rules instead,
+    // indenting the body. The payload stays at default foreground — it is primary answer
+    // content, so dimming it is what made committed answers look degraded (DL-7).
     const fenceMatch = /^[ \t]*(```|~~~)(.*)$/.exec(line);
     if (fenceMatch) {
       const marker = fenceMatch[1];
@@ -151,13 +153,13 @@ function renderBlocks(text: string, columns: number | undefined): string {
         inFence = true;
         fenceMarker = marker;
         const lang = fenceMatch[2].trim();
-        out.push(fenceRule(columns, lang || undefined));
+        out.push(dimRule(columns, lang || undefined));
         continue;
       }
       if (inFence && marker === fenceMarker) {
         inFence = false;
         fenceMarker = '';
-        out.push(fenceRule(columns));
+        out.push(dimRule(columns));
         continue;
       }
     }
@@ -168,7 +170,7 @@ function renderBlocks(text: string, columns: number | undefined): string {
 
     // Horizontal rule.
     if (/^[ \t]*([-*_])(?:[ \t]*\1){2,}[ \t]*$/.test(line)) {
-      out.push(chalk.dim('────────────────────'));
+      out.push(dimRule(columns));
       continue;
     }
 

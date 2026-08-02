@@ -1,5 +1,17 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import chalk from 'chalk';
+
+/**
+ * The renderer reads the terminal width from `systemUtils.stdout` when a caller passes none.
+ * Stub it so width assertions are pinned to this fixture instead of the ambient terminal.
+ * Declared via `vi.hoisted` because `vi.mock`'s factory is hoisted above plain `const`s and
+ * runs at first import of the module under test.
+ */
+const { fakeStdout } = vi.hoisted(() => ({
+  fakeStdout: { columns: undefined as number | undefined },
+}));
+vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => ({ stdout: fakeStdout }));
+
 import { renderMarkdown, looksLikeMarkdown } from '#src/tui/markdown.js';
 
 /**
@@ -13,6 +25,8 @@ describe('tui markdown renderer', () => {
   beforeEach(() => {
     // Force colour so we can assert ANSI is emitted; tests run without a TTY (level 0).
     chalk.level = 3;
+    // Unknown width by default, so a spec that cares about it has to say so.
+    fakeStdout.columns = undefined;
   });
 
   describe('looksLikeMarkdown', () => {
@@ -136,11 +150,27 @@ describe('tui markdown renderer', () => {
       expect(out).toContain('a quoted line');
     });
 
-    it('renders a horizontal rule', () => {
-      const out = stripAnsi(renderMarkdown('text\n\n---\n\nmore'));
-      expect(out).toContain('text');
-      expect(out).toContain('more');
-      expect(out).toContain('───');
+    it('renders a horizontal rule at the full terminal width', () => {
+      const lines = stripAnsi(renderMarkdown('text\n\n---\n\nmore', { columns: 34 })).split('\n');
+      expect(lines).toContain('text');
+      expect(lines).toContain('more');
+      // Same bar as the fence rules, not a stubby fixed-length one.
+      expect(lines).toContain('─'.repeat(34));
+    });
+
+    // `LiveTurn` renders a committed turn with no explicit width, so the no-options path is the
+    // production path. Drive it off the mocked stdout rather than the real one — asserting a rule
+    // length against the ambient terminal would pass under a pipe and fail in a wide TTY.
+    it('defaults to the live terminal width when no columns are passed', () => {
+      fakeStdout.columns = 34;
+      expect(stripAnsi(renderMarkdown('---')).split('\n')).toContain('─'.repeat(34));
+      fakeStdout.columns = 52;
+      expect(stripAnsi(renderMarkdown('---')).split('\n')).toContain('─'.repeat(52));
+    });
+
+    it('falls back to 80 columns when the terminal width is unknown (non-TTY)', () => {
+      fakeStdout.columns = undefined;
+      expect(stripAnsi(renderMarkdown('---')).split('\n')).toContain('─'.repeat(80));
     });
 
     it('does not garble inline code containing asterisks', () => {

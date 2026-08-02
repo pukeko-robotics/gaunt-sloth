@@ -10,7 +10,8 @@
         { "type": "text", "delta": "# Summary\n\n" },
         { "type": "text", "delta": "Here are the **key** points:\n\n" },
         { "type": "text", "delta": "- first item\n" },
-        { "type": "text", "delta": "- second item\n" }
+        { "type": "text", "delta": "- second item\n\n" },
+        { "type": "text", "delta": "```js\nconst fenced = 1;\n```\n" }
       ]
     }
   ]
