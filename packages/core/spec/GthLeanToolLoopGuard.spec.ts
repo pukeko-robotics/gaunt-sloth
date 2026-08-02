@@ -88,7 +88,7 @@ describe('EXT-36 mechanical half: HALT ends a real createAgent loop cleanly', ()
 
 /**
  * OPS-34 — the signature delimiter is U+0000, and it is written in source as an escape rather than
- * a raw byte (that invariant is enforced repo-wide by `noRawNulBytes.spec.ts`). These pin the
+ * a raw byte (that invariant is enforced repo-wide by `noRawControlBytes.spec.ts`). These pin the
  * BEHAVIOUR the escape must preserve, so a future "simplification" of the delimiter has to fail
  * here rather than silently changing what counts as the same call.
  */
@@ -122,13 +122,16 @@ describe('OPS-34 tool-call signature delimiter', () => {
     );
   });
 
-  it('a control-character delimiter is what makes the split unambiguous', async () => {
+  it('splits into exactly two parts, so the name/args boundary is unambiguous', async () => {
     const { toolCallSignature } = await import('#src/core/GthLangChainAgent.js');
-    // A tool name cannot contain U+0000, so the name/args boundary is unique. The same pair under
-    // an ordinary printable delimiter would be spelled two ways and could collide; here it cannot.
-    const a = toolCallSignature('read', { x: 1 });
-    const b = toolCallSignature('read' + String.fromCharCode(0) + '{"x":1}', {});
-    expect(a).not.toBe(b);
-    expect(a.split(String.fromCharCode(0))).toHaveLength(2);
+    // This is the property the control character actually buys: a tool name cannot contain U+0000,
+    // and stableStringify never emits one, so the delimiter occurs exactly once and the boundary
+    // can always be recovered. Under a printable delimiter this assertion fails.
+    const parts = toolCallSignature('read_file', { path: 'a b-c.txt' }).split(
+      String.fromCharCode(0)
+    );
+    expect(parts).toHaveLength(2);
+    expect(parts[0]).toBe('read_file');
+    expect(parts[1]).toBe('{"path":"a b-c.txt"}');
   });
 });

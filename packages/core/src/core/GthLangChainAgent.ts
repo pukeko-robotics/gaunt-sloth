@@ -184,7 +184,7 @@ function stableStringify(value: unknown): string {
  *
  * It MUST stay written as this escape. A raw NUL byte in the source makes the whole file binary to
  * ripgrep and ugrep, which then skip it in silence — every symbol in this file becomes invisible to
- * a repo-wide search, and an empty result reads as proof of absence. `noRawNulBytes.spec.ts` guards
+ * a repo-wide search, and an empty result reads as proof of absence. `noRawControlBytes.spec.ts` guards
  * the repo against the raw form returning.
  */
 export const TOOL_CALL_SIGNATURE_DELIMITER = '\u0000';
