@@ -161,6 +161,13 @@ test.describe('gth chat TUI — markdown + collapsible tool calls (markdown fixt
     // lines of the result now PREVIEW inline while collapsed. Beyond-cap hiding is asserted by
     // the tool-preview fixture below.
     await expect(terminal.getByText('secret-tool-result-body', { full: true })).toBeVisible();
+    // Fenced code survives the commit-time render: the body is on screen indented, the fence
+    // markers are consumed, and the language tag is inlaid in the top rule. The unit spec owns
+    // the "body carries no dim/grey SGR" half; this proves the fence path actually paints in a
+    // real terminal, on every OS in the matrix.
+    await expect(terminal.getByText('  const fenced = 1;', { full: true })).toBeVisible();
+    await expect(terminal.getByText('── js ─', { full: false })).toBeVisible();
+    await expect(terminal.getByText('```', { full: false })).not.toBeVisible();
   });
 });
 

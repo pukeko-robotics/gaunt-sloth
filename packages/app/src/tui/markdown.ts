@@ -1,4 +1,6 @@
 import chalk from 'chalk';
+import { stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { ruleWidth } from '#src/tui/ruleWidth.js';
 
 /**
  * Minimal, dependency-light Markdown → ANSI renderer for the Ink TUI.
@@ -21,6 +23,25 @@ import chalk from 'chalk';
  * unrecognised survives as plain text. This is intentionally a pragmatic subset — enough for
  * assistant chat output — not a spec-complete CommonMark implementation.
  */
+
+/** Spaces prepended to each fenced body line so the block reads indented vs prose. */
+const FENCE_INDENT = '  ';
+
+/**
+ * A dim, full-width `─` bar — the single shape for every horizontal divider this renderer
+ * emits: the top and bottom of a fenced block, and a markdown `---` rule. Width comes from
+ * {@link ruleWidth}, the same math `components/Rule.tsx` uses, so a divider drawn inside a
+ * committed answer lines up with the ones that bracket turns instead of falling visibly short.
+ *
+ * An optional `label` (a fence's language tag) is inlaid at the left and the remaining columns
+ * fill with `─`; a label wider than the terminal keeps a one-glyph tail rather than going negative.
+ */
+function dimRule(columns: number | undefined, label?: string): string {
+  const width = ruleWidth(columns);
+  if (!label) return chalk.dim('─'.repeat(width));
+  const prefix = `── ${label} `;
+  return chalk.dim(prefix + '─'.repeat(Math.max(1, width - prefix.length)));
+}
 
 /** True if the text contains any markdown syntax worth rendering. */
 export function looksLikeMarkdown(text: string): boolean {
@@ -92,23 +113,28 @@ const HEADING_COLORS = [
   (s: string) => chalk.bold.dim(s),
 ];
 
+export type RenderMarkdownOptions = {
+  /** Terminal width for full-width fence rules; defaults to `stdout.columns`. */
+  columns?: number;
+};
+
 /**
  * Render a markdown string to an ANSI-styled string suitable for a single Ink `<Text>`.
  * Never throws: on any error, or when the content has no markdown-meaningful syntax, it
  * returns the input unchanged so plain text always reads correctly.
  */
-export function renderMarkdown(text: string): string {
+export function renderMarkdown(text: string, options: RenderMarkdownOptions = {}): string {
   if (!text) return text;
   if (!looksLikeMarkdown(text)) return text;
   try {
-    return renderBlocks(text);
+    return renderBlocks(text, options.columns ?? stdout.columns);
   } catch {
     // Graceful fallback: never garble or crash the transcript.
     return text;
   }
 }
 
-function renderBlocks(text: string): string {
+function renderBlocks(text: string, columns: number | undefined): string {
   const lines = text.split('\n');
   const out: string[] = [];
   let inFence = false;
@@ -117,29 +143,34 @@ function renderBlocks(text: string): string {
   for (const raw of lines) {
     const line = raw;
 
-    // Fenced code blocks: render contents verbatim, dimmed, no inline processing.
+    // Fenced code blocks: drop the fence markers and frame the block with dim rules instead,
+    // indenting the body. The payload stays at default foreground — it is primary answer
+    // content, so dimming it is what made committed answers look degraded (DL-7).
     const fenceMatch = /^[ \t]*(```|~~~)(.*)$/.exec(line);
     if (fenceMatch) {
       const marker = fenceMatch[1];
       if (!inFence) {
         inFence = true;
         fenceMarker = marker;
-        continue; // drop the opening fence line (and its language tag)
+        const lang = fenceMatch[2].trim();
+        out.push(dimRule(columns, lang || undefined));
+        continue;
       }
       if (inFence && marker === fenceMarker) {
         inFence = false;
         fenceMarker = '';
-        continue; // drop the closing fence line
+        out.push(dimRule(columns));
+        continue;
       }
     }
     if (inFence) {
-      out.push(chalk.gray(line));
+      out.push(`${FENCE_INDENT}${line}`);
       continue;
     }
 
     // Horizontal rule.
     if (/^[ \t]*([-*_])(?:[ \t]*\1){2,}[ \t]*$/.test(line)) {
-      out.push(chalk.dim('────────────────────'));
+      out.push(dimRule(columns));
       continue;
     }
 

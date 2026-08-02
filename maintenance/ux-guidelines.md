@@ -221,7 +221,16 @@ not chatter (DL-1 no important action is silent). Plain (non-TUI) CLI keeps all 
 - **Never-crash plain-text fallback.** Use `tui/markdown.ts` `renderMarkdown`, which **never throws
   and never garbles**: content with no markdown-meaningful syntax passes through verbatim, and any
   internal error returns the original text unchanged. Keep the renderer dependency-light (chalk,
-  already shipped by Ink) — don't pull in a heavyweight markdown lib (DL-10).
+  already shipped by Ink) — don't pull in a heavyweight markdown lib (DL-10). It is a plain
+  string→string module: it takes its width from `tui/ruleWidth.ts`, **not** by importing a
+  component, so nothing drags React/Ink into a renderer that has to stay cheap and total.
+- **Fenced code is primary content, not chrome.** Frame fences with dim top/bottom rules (language
+  tag inlaid on the top rule when present) and a **two-space** indent on body lines. Emit body
+  lines at **default foreground** — do not grey or dim the payload; that is what makes a committed
+  answer look degraded the moment streaming ends. Dim is for secondary chrome only.
+- **One bar for every divider.** Fence rules and a markdown `---` are the same full-width dim `─`
+  bar, sized by `ruleWidth` — the same math behind the `Rule` component. A divider inside a
+  committed answer must line up with the ones bracketing turns, not fall visibly short of them.
 - The `--no-tui` / readline path must not import this module; plain/non-interactive output stays
   untouched.
 
