@@ -124,9 +124,10 @@ export default defineConfig([
   pkgSourceConfig('eval-reporter-teamcity'),
   // BATCH-13: eval-it standalone harness TypeScript. It lives outside packages/, so it matches none
   // of the pkgSourceConfig globs; give it a type-agnostic block (tsParser, no `project`) mirroring
-  // the test block so `pnpm run lint` genuinely lints it rather than skipping it.
+  // the test block so `pnpm run lint` genuinely lints it rather than skipping it. Both extensions,
+  // for the same reason the harness globs below carry both.
   {
-    files: ['eval-it/**/*.ts'],
+    files: ['eval-it/**/*.{ts,tsx}'],
     languageOptions: {
       parser: tsParser,
       parserOptions: {
@@ -199,7 +200,10 @@ export default defineConfig([
     },
   },
   // React hooks, layered on top of whichever rule set above already matched the .tsx file.
-  // Scoped to the same two globs so it never becomes the *only* rule a stray .tsx picks up.
+  // Scoped to the two places hooks are actually written — a strict subset of the globs above that
+  // match .tsx — so this block can never be the *only* rule a .tsx picks up. A `**/*.tsx` overlay
+  // would hand a file in an unconfigured directory exactly one rule, which is enough to hide it
+  // from the coverage guard in packages/core/spec/noUnlintedFiles.spec.ts. Keep it a subset.
   {
     files: ['packages/app/src/**/*.tsx', 'packages/*/spec/**/*.tsx'],
     plugins: {
