@@ -7,7 +7,14 @@
  * sit on this rather than each re-deriving where Ink's live frame starts on screen.
  */
 
-import React, { createContext, useContext, useEffect, useLayoutEffect, useRef } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { Box, measureElement, useStdout, type DOMElement } from 'ink';
 import { HitRegionRegistry, liveRegionOrigin, type HitRegionHandler } from '#src/tui/hitRegions.js';
 import type { MouseEvent } from '#src/tui/mouseParser.js';
@@ -68,7 +75,11 @@ export interface MouseProviderProps {
  * region by a few rows and make clicks land one panel off.
  */
 export function MouseProvider({ subscribe, enabled, anchor, children }: MouseProviderProps) {
-  const registryRef = useRef(new HitRegionRegistry());
+  // The registry is rendered (it goes into the context value), so it is state, not a ref: a ref
+  // would have to be read during render, and every render would build a throwaway registry just to
+  // discard it. A `useState` initializer runs exactly once, which matters here because the object
+  // holds the live registrations — recreating it would silently unclaim every hit region.
+  const [registry] = useState(() => new HitRegionRegistry());
   const liveRef = useRef<DOMElement | null>(null);
   const { stdout } = useStdout();
   // Read at dispatch time rather than captured in the subscription: a click must resolve against
@@ -81,7 +92,6 @@ export function MouseProvider({ subscribe, enabled, anchor, children }: MousePro
 
   useEffect(() => {
     if (!enabled || !subscribe) return;
-    const registry = registryRef.current;
     return subscribe((event) => {
       const rows = stdout?.rows ?? FALLBACK_TERMINAL_ROWS;
       // `bottom` is expressed as "as far down as it will go", which `liveRegionOrigin` then clamps
@@ -89,10 +99,10 @@ export function MouseProvider({ subscribe, enabled, anchor, children }: MousePro
       const rowsAbove = anchor === 'top' ? 0 : Number.MAX_SAFE_INTEGER;
       registry.dispatch(event, liveRegionOrigin(rows, heightRef.current, rowsAbove));
     });
-  }, [enabled, subscribe, stdout, anchor]);
+  }, [enabled, subscribe, stdout, anchor, registry]);
 
   return (
-    <MouseContext.Provider value={{ registry: registryRef.current, enabled }}>
+    <MouseContext.Provider value={{ registry, enabled }}>
       <Box flexDirection="column" ref={liveRef}>
         {children}
       </Box>
@@ -114,9 +124,14 @@ export function useHitRegion(id: string, handler: HitRegionHandler, enabled = tr
   const ref = useRef<DOMElement | null>(null);
   const { registry, enabled: mouseEnabled } = useContext(MouseContext);
   // Held in a ref so re-registering does not depend on the caller memoizing its handler — an
-  // inline arrow function is the natural way to write this and must not defeat it.
+  // inline arrow function is the natural way to write this and must not defeat it. Refreshed on
+  // commit rather than during render: the committed handler is the one belonging to the frame the
+  // user can actually click, and a layout effect lands it before control returns to the terminal,
+  // so no event can reach a superseded one.
   const handlerRef = useRef(handler);
-  handlerRef.current = handler;
+  useLayoutEffect(() => {
+    handlerRef.current = handler;
+  });
 
   const active = enabled && mouseEnabled;
 

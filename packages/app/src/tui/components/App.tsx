@@ -72,10 +72,6 @@ const isPlainExit = (s: string): boolean => s.trim().toLowerCase() === 'exit';
 export function App(props: TuiAppProps): React.ReactElement {
   const { agent, mode, modelDisplayName, readyMessage, exitMessage, initialMessage } = props;
   const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
-  // Mirror for the slash-command dispatch (memoized without transcript in deps): lets /reasoning
-  // read the committed turns' thinking without a stale closure or re-binding the handler (TUI-C18).
-  const transcriptRef = useRef<TranscriptItem[]>([]);
-  transcriptRef.current = transcript;
   const [live, setLive] = useState<TurnViewModel | null>(null);
   const [running, setRunning] = useState(false);
   const [turnCount, setTurnCount] = useState(0);
@@ -124,11 +120,9 @@ export function App(props: TuiAppProps): React.ReactElement {
   // suspended, so the command can't be typed into the chat box. Additional requests queue behind
   // it (only one approval is shown at a time) and surface as the head is resolved.
   const [approvalQueue, setApprovalQueue] = useState<PendingApproval[]>([]);
+  // The head is the approval on screen AND the one that owns the keyboard. Deriving both from this
+  // single expression is what keeps those two facts from drifting apart.
   const pendingApproval = approvalQueue[0] ?? null;
-  // Mirror for the synchronous useInput handler, so it can read+resolve the head without a stale
-  // closure (the handler is bound once and must not depend on the queue in its deps).
-  const approvalQueueRef = useRef<PendingApproval[]>([]);
-  approvalQueueRef.current = approvalQueue;
   // Mirror of toolsExpanded for the slash-command handler (memoized without it in deps), so
   // /verbose can compute the next state without a stale closure or a side effect in the updater.
   const toolsExpandedRef = useRef(false);
@@ -174,25 +168,22 @@ export function App(props: TuiAppProps): React.ReactElement {
   );
   const debugLineCount = debugLines.length;
   const debugMaxOffset = Math.max(0, debugLineCount - debugViewport);
-  // Mirror the active tab's lines for the synchronous key handler, so `/`-search can compute
-  // matches + the jump offset off the exact lines being rendered without a stale closure (TUI-C21).
-  const debugLinesRef = useRef<string[]>([]);
-  debugLinesRef.current = debugLines;
   // Match line-indices for the current query over the active tab's lines — one search, every tab
-  // uniformly (it runs over whatever `debugPanelLines` produced). Mirrored into refs so the
-  // synchronous key handler (n/N, Esc) reads the current matches + cursor without a stale closure.
+  // uniformly (it runs over whatever `debugPanelLines` produced).
   const debugMatches = useMemo(
     () => findMatches(debugLines, debugSearchQuery),
     [debugLines, debugSearchQuery]
   );
-  const debugMatchesRef = useRef<number[]>([]);
-  debugMatchesRef.current = debugMatches;
+  // TUI-C21 — the three search values the key handler both READS AND WRITES, held in refs as well
+  // as state. Ink dispatches every keypress parsed out of one stdin chunk in a synchronous loop, so
+  // typing `abc` can run this handler three times before a single re-render: reading the state
+  // would give all three the pre-`a` value and the query would end up `c`. Every helper below and
+  // every branch of the handler writes the ref beside its setter, which is the whole contract —
+  // there is no render-time refresh to fall back on, and adding one would store a value from a
+  // render React may never commit.
   const debugSearchInputRef = useRef(false);
-  debugSearchInputRef.current = debugSearchInput;
   const debugSearchQueryRef = useRef('');
-  debugSearchQueryRef.current = debugSearchQuery;
   const debugSearchCurrentRef = useRef(0);
-  debugSearchCurrentRef.current = debugSearchCurrent;
   // The absolute line index of the current match (or -1) — DebugPanel paints it distinctly.
   const currentMatchLine =
     debugMatches.length > 0
@@ -202,7 +193,9 @@ export function App(props: TuiAppProps): React.ReactElement {
   // real maximum; the upward floor stays Math.max(0, …).
   const clampDebugScroll = (next: number) => Math.min(Math.max(0, next), debugMaxOffset);
 
-  // ── TUI-C21 search helpers (drive state + refs together so the synchronous handler stays fresh) ──
+  // ── TUI-C21 search helpers. They read `debugLines` / `debugMatches` straight from this render:
+  // Ink wraps the useInput callback in React's `useEffectEvent`, so the handler that calls them is
+  // always the newest committed one, and neither value can change from a search keystroke anyway. ──
   // Clear the search entirely (query, matches, input mode). Leaves the viewport where it is.
   const clearDebugSearch = () => {
     debugSearchInputRef.current = false;
@@ -217,21 +210,21 @@ export function App(props: TuiAppProps): React.ReactElement {
   const setDebugSearch = (query: string) => {
     debugSearchQueryRef.current = query;
     setDebugSearchQuery(query);
-    const matches = findMatches(debugLinesRef.current, query);
+    const matches = findMatches(debugLines, query);
     debugSearchCurrentRef.current = 0;
     setDebugSearchCurrent(0);
     if (matches.length > 0) {
-      setDebugScroll(scrollOffsetForLine(matches[0], debugViewport, debugLinesRef.current.length));
+      setDebugScroll(scrollOffsetForLine(matches[0], debugViewport, debugLines.length));
     }
   };
   // Move to the next (+1) / previous (-1) match with wrap-around and jump the viewport to it.
   const stepDebugSearch = (dir: number) => {
-    const matches = debugMatchesRef.current;
+    const matches = debugMatches;
     if (matches.length === 0) return;
     const next = stepMatch(matches, debugSearchCurrentRef.current, dir);
     debugSearchCurrentRef.current = next;
     setDebugSearchCurrent(next);
-    setDebugScroll(scrollOffsetForLine(matches[next], debugViewport, debugLinesRef.current.length));
+    setDebugScroll(scrollOffsetForLine(matches[next], debugViewport, debugLines.length));
   };
 
   // Built once per session; a plain array so later layers (EXT-5) could append commands.
@@ -386,8 +379,8 @@ export function App(props: TuiAppProps): React.ReactElement {
   // Resolve the currently-shown approval (the queue head) and commit a brief notice so the
   // decision reads in the transcript (TUI-C14 notice conventions). Dequeues the head so the next
   // queued approval (if any) surfaces. Approve carries the chosen scope; reject is fail-closed.
-  const resolveApproval = useCallback((decision: 'once' | 'session' | 'always' | 'reject') => {
-    const head = approvalQueueRef.current[0];
+  const resolveApproval = (decision: 'once' | 'session' | 'always' | 'reject'): void => {
+    const head = pendingApproval;
     if (!head) return;
     if (decision === 'reject') {
       // EXT-58 (§7): hand the model the moves it has (re-call with a justification, a different
@@ -451,8 +444,7 @@ export function App(props: TuiAppProps): React.ReactElement {
       });
     }
     setApprovalQueue((q) => q.slice(1));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  };
 
   const handleSubmit = useCallback(
     (value: string) => {
@@ -503,14 +495,14 @@ export function App(props: TuiAppProps): React.ReactElement {
             insightsSummary: props.insightsSummary,
             historySearch: props.historySearch,
             // Committed turns' thinking, in transcript order (index 0 = turn 1), for /reasoning.
-            turnReasonings: transcriptRef.current
+            turnReasonings: transcript
               .filter(
                 (i): i is Extract<TranscriptItem, { kind: 'assistant' }> => i.kind === 'assistant'
               )
               .map((i) => i.turn.reasoning),
             // GS2-46 — the full live transcript + resolved config for /debug-dump, plus the
             // injected fs-writing implementation (undefined for the fixture agent).
-            transcript: transcriptRef.current,
+            transcript,
             resolvedConfig: props.resolvedConfig,
             dumpDebugSession: props.dumpDebugSession,
           },
@@ -607,6 +599,10 @@ export function App(props: TuiAppProps): React.ReactElement {
       registry,
       mode,
       modelDisplayName,
+      // /reasoning and /debug-dump read the committed turns, so the handler has to be re-bound
+      // when they change. PromptInput calls `onSubmit` straight out of its own render closure and
+      // never lists it as a dependency, so re-binding costs nothing.
+      transcript,
       toggleTools,
       applyApprovalRung,
       showApprovals,
@@ -632,7 +628,7 @@ export function App(props: TuiAppProps): React.ReactElement {
     // always reject — and a per-prompt change of RUNG is not one of them: the ladder has no
     // "turn the gate down from here" action, so keeping the key would have meant inventing one.
     // [[TUI-C26]] builds the five-choice menu (and the §6.1 attack banner) on this seam.
-    if (approvalQueueRef.current.length > 0) {
+    if (pendingApproval) {
       const ch = input.toLowerCase();
       if (ch === 'o') resolveApproval('once');
       else if (ch === 's') resolveApproval('session');
@@ -774,11 +770,21 @@ export function App(props: TuiAppProps): React.ReactElement {
     }
   });
 
-  // Run an initial message once on mount, if supplied.
+  // Run an initial message once on mount, if supplied. Started from a microtask rather than from
+  // the effect body itself: `runTurn` pushes the user line and flips `running`/`live` before its
+  // first await, so calling it here would commit the mount frame and immediately supersede it — the
+  // cascading render `set-state-in-effect` names. A microtask runs before any I/O, so the turn
+  // still starts in the same tick and only the first, never-visible frame differs. The flag makes
+  // the kickoff cancellable, since an effect that schedules work owes its cleanup a way to stop it.
   useEffect(() => {
-    if (initialMessage && initialMessage.trim()) {
-      void runTurn(initialMessage);
-    }
+    if (!initialMessage || !initialMessage.trim()) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) void runTurn(initialMessage);
+    });
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

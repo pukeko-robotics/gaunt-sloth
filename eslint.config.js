@@ -210,10 +210,11 @@ export default defineConfig([
       'react-hooks': reactHooks,
     },
     rules: {
-      // ONLY exhaustive-deps is enabled, and the presence of `react-hooks` here must not be read
-      // as "the TUI is hook-checked" — it is not. The plugin's recommended set reports 12 further
-      // real findings in the TUI; those are deferred to OPS-38 and are to be fixed there, not
-      // suppressed here. Widen this list only together with fixing what it turns red.
+      ...reactHooks.configs.recommended.rules,
+      // The recommended set ships exhaustive-deps as a warning. `pnpm run lint` has no
+      // --max-warnings, so a warning here would be advice nobody is obliged to act on; every
+      // other rule in this config is an error, and this one carries markers that
+      // reportUnusedDisableDirectives must keep honest.
       'react-hooks/exhaustive-deps': 'error',
     },
   },

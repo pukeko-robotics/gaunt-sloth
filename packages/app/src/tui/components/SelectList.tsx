@@ -217,10 +217,12 @@ export function SelectList({
   // keeps the window valid even when the cursor jumps (wraparound), the filter narrows the list,
   // or the terminal resizes.
   const start = clampWindowStart(windowStart, cursor, size, count);
-  // Persist the derived start so the window stays sticky across moves (converges in one pass).
-  useEffect(() => {
-    if (start !== windowStart) setWindowStart(start);
-  }, [start, windowStart]);
+  // Persist the derived start so the window stays sticky across moves. Adjusted during render
+  // rather than from an effect: React re-runs this component with the new value before it commits,
+  // so the window converges in one pass with nothing painted in between, whereas an effect would
+  // commit the pre-convergence frame first and only then schedule the correction. `clampWindowStart`
+  // is idempotent — fed its own output it returns it unchanged — so the second pass is the last.
+  if (start !== windowStart) setWindowStart(start);
 
   const visibleIndices = filteredIndices.slice(start, start + size);
   const hiddenAbove = start;
