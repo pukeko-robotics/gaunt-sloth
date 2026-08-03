@@ -27,6 +27,21 @@ describe('appendCommitCoAuthorNote (GS2-35/EXT-83)', () => {
    */
   const NEUTRAL_IDENTITY: ResolvedModelIdentity = { identity: 'acme:widget-1', hasProvider: true };
 
+  /** The composed `Co-Authored-By:` line, so an assertion about the trailer scans the trailer. */
+  const trailerLineOf = (note: string): string | undefined =>
+    note.split('\n').find((line) => line.startsWith('Co-Authored-By:'));
+
+  /**
+   * The note MINUS its trailer line — the prose the model reads as instructions. The trailer is
+   * excluded because the RFC form of an address genuinely requires angle brackets; everywhere else
+   * an angle bracket is a placeholder the model may copy literally into a shell.
+   */
+  const proseOf = (note: string): string =>
+    note
+      .split('\n')
+      .filter((line) => !line.startsWith('Co-Authored-By:'))
+      .join('\n');
+
   it('defaults to the Gaunt Sloth account when no co-author is configured', () => {
     const out = appendCommitCoAuthorNote('BASE PROMPT', undefined);
     expect(DEFAULT_COMMIT_CO_AUTHOR_NAME).toBe('Gaunt Sloth');
@@ -98,10 +113,12 @@ describe('appendCommitCoAuthorNote (GS2-35/EXT-83)', () => {
     ];
     for (const identity of unresolvable) {
       const out = appendCommitCoAuthorNote('BASE', undefined, identity);
-      expect(out).toContain('Co-Authored-By: Gaunt Sloth <code@gauntsloth.app>');
+      // EXACT on the composed trailer line, not a substring of the whole note: an empty
+      // parenthesis, a whitespace identity or a stand-in like "unknown" all fail here, and a
+      // future note wording that happens to contain those characters elsewhere does not.
+      expect(trailerLineOf(out)).toBe('Co-Authored-By: Gaunt Sloth <code@gauntsloth.app>');
+      // …and the identity is not spliced into the name anywhere else in the note either.
       expect(out).not.toContain('Gaunt Sloth (');
-      expect(out).not.toContain('()');
-      expect(out.toLowerCase()).not.toContain('unknown');
     }
   });
 
@@ -139,16 +156,42 @@ describe('appendCommitCoAuthorNote (GS2-35/EXT-83)', () => {
   });
 
   // EXT-83 — this is the ONE note whose subject is how to write a commit message, so quoting its
-  // own examples in backticks would demonstrate the exact style the rule exists to stop. Asserted
-  // on the note ALONE (with a base prompt the return value includes sibling notes that legitimately
-  // use backticks).
-  it('contains no backtick character at all', () => {
+  // own examples in backticks would demonstrate the exact style the rule exists to stop, and the
+  // requirement is "no backticks AND no markup", both halves pinned here. The angle-bracket half
+  // is not cosmetic: a model copying `-F <path to that file>` literally emits a SHELL INPUT
+  // REDIRECT, which is the very class of accident this note exists to prevent. Asserted on the
+  // note ALONE (with a base prompt the return value includes sibling notes that legitimately use
+  // backticks), and on the PROSE (the trailer's RFC `<email>` brackets are legitimate).
+  it('contains no backtick and no other markup in its prose', () => {
+    // Placeholder/markup characters a model could copy verbatim, or that would make the note
+    // demonstrate the formatting it forbids.
+    const MARKUP = ['`', '<', '>', '*', '#', '[', ']'];
     const notes = [
       appendCommitCoAuthorNote(undefined, undefined),
       appendCommitCoAuthorNote(undefined, undefined, NEUTRAL_IDENTITY),
       appendCommitCoAuthorNote(undefined, { name: 'Acme Bot', email: 'bot@acme.test' }),
     ];
-    for (const note of notes) expect(note).not.toContain('`');
+    for (const note of notes) {
+      // A backtick is illegitimate even on the trailer line.
+      expect(note).not.toContain('`');
+      const prose = proseOf(note);
+      for (const char of MARKUP) expect(prose).not.toContain(char);
+    }
+  });
+
+  // EXT-83 — the single-trailer instruction. With the model-name denylist retired, this sentence
+  // and the supplied correct name together carry the whole "what goes in the trailer" requirement,
+  // so its load went up; it is pinned here because nothing else in the suite asserts it and a
+  // silent deletion would leave the model free to emit a second trailer naming itself.
+  it('instructs the model to emit at most ONE Co-Authored-By trailer', () => {
+    const notes = [
+      appendCommitCoAuthorNote(undefined, undefined),
+      appendCommitCoAuthorNote(undefined, undefined, NEUTRAL_IDENTITY),
+      appendCommitCoAuthorNote(undefined, { name: 'Acme Bot', email: 'bot@acme.test' }),
+    ];
+    for (const note of notes) {
+      expect(note).toContain('Emit at most this one Co-Authored-By trailer.');
+    }
   });
 
   // EXT-83 — a prohibition the model can only obey by rote is one it drops under pressure; the

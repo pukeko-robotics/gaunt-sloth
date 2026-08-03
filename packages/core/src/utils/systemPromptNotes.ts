@@ -123,9 +123,11 @@ export interface CommitCoAuthor {
  *    measured not to work. A file path carries no shell metacharacters, so the file form removes the
  *    failure mode instead of asking the model to avoid it.
  *
- * The note contains **no backtick character**: it is the one piece of guidance whose subject is how
- * to write a commit message, so quoting its own examples in backticks would demonstrate the exact
- * style rule 2 exists to stop.
+ * The note's prose carries **no backtick and no other markup** — including no angle-bracket
+ * placeholder: it is the one piece of guidance whose subject is how to write a commit message, so
+ * quoting its own examples in backticks would demonstrate the exact style rule 2 exists to stop, and
+ * an angle-bracket placeholder copied literally is itself a shell input redirect. The `<email>` of
+ * the trailer line is the exception the RFC form requires, and is scoped out of the scan.
  *
  * The identity is config-driven (`commit.coAuthor` in {@link import('#src/config/types.js').GthConfig}).
  * Each field falls back INDEPENDENTLY to the Gaunt Sloth account
@@ -164,7 +166,7 @@ export function appendCommitCoAuthorNote(
     'expands backtick and dollar-parenthesis constructs before git ever runs, so a message that ' +
     'quotes code is executed as a command. Write the message to a file with the write_file tool ' +
     '(never with shell echo or a heredoc, which put the same text back into a shell argument), ' +
-    'then commit it with git commit -F <path to that file>.';
+    'then commit it with git commit -F followed by that file path.';
   return systemPrompt ? `${systemPrompt}\n\n${note}` : note;
 }
 

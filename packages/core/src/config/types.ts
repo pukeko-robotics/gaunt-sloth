@@ -396,11 +396,15 @@ export interface GthConfig {
     };
   };
   /**
-   * GS2-35 — identity for the `Co-Authored-By` trailer of agent-authored git commits. Gaunt Sloth
-   * has no dedicated commit tool (it commits via `run_shell_command`), so this identity is injected
-   * into the code-mode system prompt, which instructs the agent to co-author commits as this account
-   * and NEVER as the underlying model. Optional and defaulted: when unset (or a field is unset) the
-   * agent co-authors as {@link DEFAULT_COMMIT_CO_AUTHOR_NAME} `<`{@link DEFAULT_COMMIT_CO_AUTHOR_EMAIL}`>`.
+   * GS2-35/EXT-83 — identity for the `Co-Authored-By` trailer of agent-authored git commits. Gaunt
+   * Sloth has no dedicated commit tool (it commits via `run_shell_command`), so this identity is
+   * injected into the code-mode system prompt, which instructs the agent to co-author commits as
+   * this account. Optional and defaulted, each field independently: when the name is unset the
+   * default is {@link DEFAULT_COMMIT_CO_AUTHOR_NAME} decorated with the resolved active model —
+   * `Gaunt Sloth (provider:model)` — falling back to the bare
+   * {@link DEFAULT_COMMIT_CO_AUTHOR_NAME} when no model resolves or {@link injectModelContext} is
+   * `false`; when the email is unset it is {@link DEFAULT_COMMIT_CO_AUTHOR_EMAIL}. A CONFIGURED
+   * name is emitted verbatim — the model identity decorates only the default.
    */
   commit?: {
     coAuthor?: {
@@ -425,9 +429,14 @@ export interface GthConfig {
    * so the agent knows which model is serving it (to answer "what model are you?" and reason about
    * its own capabilities/limits). Default ON (omitted = inject). Opt out with
    * `injectModelContext: false` to keep reproducible / model-agnostic runs (e.g. review) blind to
-   * the identity — when off, the assembled prompt is exactly as it is without this feature. Applies
-   * in ALL modes (unlike the code-mode-only cwd/os-shell/commit notes). Defaulted at the read site
-   * (not in {@link DEFAULT_CONFIG}) to avoid churning the effective-config snapshot.
+   * the identity — when off, the assembled prompt is exactly as it is without this feature.
+   *
+   * EXT-83 — it governs the model identity EVERYWHERE in the prompt, not just the identity line:
+   * in `code` mode the same resolved identity decorates the default git commit co-author name
+   * ({@link GthConfig.commit}), so turning this off also removes the model from the commit trailer,
+   * which degrades to the plain default name. The identity LINE applies in all modes; the trailer
+   * it also feeds is code-mode-only, like the cwd/os-shell notes. Defaulted at the read site (not
+   * in {@link DEFAULT_CONFIG}) to avoid churning the effective-config snapshot.
    */
   injectModelContext?: boolean;
   /**
