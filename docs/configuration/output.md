@@ -310,7 +310,7 @@ Co-Authored-By: Gaunt Sloth (anthropic:claude-sonnet-5) <code@gauntsloth.app>
 
 | Field | Default |
 |-------|---------|
-| `commit.coAuthor.name` | `Gaunt Sloth (provider:model)`, using the [resolved active model](providers.md#model-identity-in-the-prompt-injectmodelcontext) |
+| `commit.coAuthor.name` | `Gaunt Sloth (provider:model)`, using the [resolved active model](providers.md#model-identity-in-the-prompt-injectmodelcontext) — or `Gaunt Sloth (model)`, the bare model name, when no provider half resolves |
 | `commit.coAuthor.email` | `code@gauntsloth.app` |
 
 The name falls back to a plain `Gaunt Sloth` whenever no model can be resolved. **To keep the model

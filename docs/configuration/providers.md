@@ -653,7 +653,7 @@ applies in **every mode** (`chat`, `ask`, `code`, `exec`).
 This setting governs the model identity **everywhere in the prompt**, not just that line. In `code`
 mode the same resolved identity also decorates the default git
 [commit co-author](output.md#commit-co-author-commitcoauthor) name, as
-`Gaunt Sloth (provider:model)`.
+`Gaunt Sloth (provider:model)` — or `Gaunt Sloth (model)` when no provider half resolves.
 
 Turn it off with the top-level `injectModelContext: false`. This suits reproducible or
 model-agnostic runs — e.g. a `review` you want kept blind to which model served it. With it off the
