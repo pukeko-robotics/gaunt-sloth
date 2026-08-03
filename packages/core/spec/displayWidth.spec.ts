@@ -92,6 +92,21 @@ describe('utils/displayWidth', () => {
     }
   });
 
+  it('does NOT understand ANSI when slicing, which is why callers must pass plain text', async () => {
+    const { displayWidth, sliceToWidth } = await import('#src/utils/displayWidth.js');
+    const coloured = '\x1b[35mabcdefghij\x1b[0m';
+
+    // The two disagree on escape-bearing input, on purpose and by contract: the measurement
+    // strips escapes, the slice sees their bytes as ordinary printable characters.
+    expect(displayWidth(coloured)).toBe(10);
+    expect(sliceToWidth(coloured, 5)).toBe('\x1b[35ma');
+    // At a budget narrower than the escape itself the cut lands INSIDE the sequence. This case
+    // exists to make that visible rather than surprising: if a caller ever needs coloured input
+    // sliced, the fix is a deliberate change here with this assertion updated, not a caller
+    // quietly discovering mojibake.
+    expect(sliceToWidth(coloured, 2)).toBe('\x1b[3');
+  });
+
   it('drops a wide cluster whole rather than half-spending its columns', async () => {
     const { sliceEndToWidth, sliceToWidth } = await import('#src/utils/displayWidth.js');
 

@@ -23,6 +23,17 @@
  * rules below are defined over, so the two agree by construction and a sliced string's width is
  * exactly the sum of the widths of the clusters kept.
  *
+ * ## What the slices expect: PLAIN text
+ *
+ * {@link displayWidth} is ANSI-aware and the slices are NOT, and that asymmetry is a contract
+ * rather than an oversight. An escape sequence is not one cluster — the terminal swallows it
+ * whole, but `ESC`, `[`, `3`, `5`, `m` segment as five, four of them printable — so the two
+ * disagree on an escape-bearing string and a slice can both under-fill its budget and cut inside
+ * a sequence. Feed the slices the text a user will read, and colour it afterwards; that is what
+ * every caller here does, since both render surfaces map a style tag to their own escapes at the
+ * very end. Making the slices ANSI-aware would change what a coloured preview line renders as,
+ * which is a decision for whoever needs it and not a silent detail of this module.
+ *
  * ## Why ambiguous-width characters stay NARROW
  *
  * `string-width` defaults to treating East-Asian "Ambiguous" characters as one column, and that
@@ -43,7 +54,8 @@ const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'graphem
 /**
  * Terminal columns `text` occupies. Zero-width clusters (combining marks, default-ignorables)
  * count 0, wide clusters (CJK, emoji, fullwidth forms) count 2, everything else 1. ANSI escape
- * sequences are not counted, so a pre-coloured string measures as what the user sees.
+ * sequences are not counted, so a pre-coloured string measures as what the user sees — but the
+ * slices below do not share that awareness, so do not read this as a licence to feed them one.
  */
 export function displayWidth(text: string): number {
   return stringWidth(text);
