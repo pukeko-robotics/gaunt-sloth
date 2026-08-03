@@ -191,6 +191,24 @@ describe('toolDisplay (TUI-C30)', () => {
       expect(wide[0].text.endsWith('…')).toBe(true);
     });
 
+    it('leaves a COLOURED line that visibly fits the cap alone, and still caps one that does not', async () => {
+      const { capToolDisplayLines, TOOL_PREVIEW_LINE_MAX_CHARS } =
+        await import('#src/core/toolDisplay.js');
+      // Shell output arrives coloured. 180 visible columns under the 200-column cap, but 380
+      // once the escapes' own printable bytes are counted — so whether this line fits has to be
+      // decided by what it RENDERS as, or a fitting line comes back cut by its own escapes.
+      const coloured = '\x1b[32m'.repeat(50) + 'a'.repeat(180);
+      expect(stringWidth(coloured)).toBeLessThan(TOOL_PREVIEW_LINE_MAX_CHARS);
+      expect(capToolDisplayLines([{ text: coloured, style: 'dim' }])[0].text).toBe(coloured);
+
+      // …and the cap still bites on a coloured line that genuinely over-runs, so this is not
+      // "coloured input is exempt".
+      const over = capToolDisplayLines([{ text: '\x1b[32m' + 'a'.repeat(400), style: 'dim' }])[0]
+        .text;
+      expect(stringWidth(over)).toBeLessThanOrEqual(TOOL_PREVIEW_LINE_MAX_CHARS);
+      expect(over.endsWith('…')).toBe(true);
+    });
+
     it('uses the singular marker for exactly one hidden line', async () => {
       const { capToolDisplayLines } = await import('#src/core/toolDisplay.js');
       const lines = Array.from({ length: 11 }, (_, i) => ({
