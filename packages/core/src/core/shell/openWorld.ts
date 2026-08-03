@@ -657,9 +657,12 @@ export function findOpenWorldHostLiterals(command: string): string[] {
  *
  * 1. **It never invents a flow.** An arm fires only where its mechanism is true of the program
  *    named — the at-sign convention only for a program that has it, a substitution only where the
- *    program SENDS that operand, execution of fetched bytes only where the interpreter was given no
- *    program of its own. Anything else falls through to the flowless sentence. The module docblock
- *    says why this is not the same trade-off as over-matching a host.
+ *    program SENDS that operand, execution of fetched bytes only where **no token on the
+ *    interpreter's own argv could be a program**. That last one is read from ARGV SHAPE alone,
+ *    without knowing what any flag letter means, so it hedges wherever a token *might* carry a
+ *    program and errs towards saying less ({@link interpreterRunsStdin} states which direction and
+ *    why). Anything else falls through to the flowless sentence. The module docblock says why this
+ *    is not the same trade-off as over-matching a host.
  * 2. **It names every host of the part it describes**, and any host the rest of the line names is
  *    added rather than dropped. Naming a flow must never cost the note a counterparty, or adding a
  *    pipe would once again remove information from the model — the very asymmetry this path exists
@@ -687,9 +690,9 @@ const SHELL_INTERPRETERS: ReadonlySet<string> = new Set([
 
 /**
  * Programs that CAN run what arrives on their standard input. Piping a fetch into one of these makes
- * the fetched bytes the program **when the line gives the program nothing else to run** — which is
- * the question {@link interpreterRunsStdin} answers, and which decides which sentence this note
- * carries.
+ * the fetched bytes the program **when no token on that interpreter's own argv could be a program
+ * instead** — which is the question {@link interpreterRunsStdin} answers, and which decides which
+ * sentence this note carries.
  *
  * An enumeration, and a miss costs only a less specific note (the host is still named and the
  * remaining sentence is still true), which is what makes an enumeration acceptable *here* and not in
@@ -716,9 +719,29 @@ const STDIN_INTERPRETERS: ReadonlySet<string> = new Set([
 /** A short-flag cluster: one dash, then letters or digits (`-s`, `-fsSL`, `-es`). */
 const SHORT_FLAG_CLUSTER_RE = /^-[A-Za-z0-9]+$/;
 
+/** A long flag with nothing attached: two dashes, then letters, digits or dashes (`--norc`). */
+const LONG_FLAG_RE = /^--[A-Za-z0-9][A-Za-z0-9-]*$/;
+
+/** A token that is nothing but dashes (`-`, `--`). It has no room to carry a program. */
+const DASHES_ONLY_RE = /^-+$/;
+
 /**
- * Does this line leave the interpreter's PROGRAM to standard input, or does it give the interpreter
- * one of its own?
+ * Is this token a flag and ONLY a flag — with no text glued to it that could be a program?
+ *
+ * Three shapes qualify, and each is a statement about the token's characters rather than about what
+ * any program does with them: nothing but dashes, a short-flag cluster, or a long flag with nothing
+ * attached. Every other `-`-leading token — `-mjson.tool`, `-pes/a/b/`, `--eval=console.log(1)`,
+ * `-cprint(1)` — carries text of its own, and that text can be a program.
+ */
+function isCleanFlag(token: string): boolean {
+  return (
+    DASHES_ONLY_RE.test(token) || SHORT_FLAG_CLUSTER_RE.test(token) || LONG_FLAG_RE.test(token)
+  );
+}
+
+/**
+ * Does this line leave the interpreter's PROGRAM to standard input, or could a token on the
+ * interpreter's own argv be the program instead?
  *
  * Answered from the shape of the argv alone. **There is deliberately no table of what each
  * interpreter's flags mean**, because that table is the enumeration that acquires a blind spot one
@@ -727,16 +750,25 @@ const SHORT_FLAG_CLUSTER_RE = /^-[A-Za-z0-9]+$/;
  * node and perl and `errexit` to every shell; `-m` is a module to python and job control to bash. Two
  * program-agnostic facts settle it instead:
  *
- * - **An operand that is not a flag** may be the program (`python3 script.py`) or the value of a
- *   flag that supplies one (`bash -c "…"`, `node -e "…"`, `perl -pe "…"`, `python3 -m json.tool`).
- *   Either way this line hands the interpreter something of its own, so the note must not say the
- *   fetched bytes are what runs.
+ * - **A token that is not a clean flag by shape** ({@link isCleanFlag}) may be the program
+ *   (`python3 script.py`), or the value of a flag that supplies one — whether that value is spaced
+ *   (`bash -c "…"`, `python3 -m json.tool`) or GLUED to the flag (`python3 -mjson.tool`,
+ *   `perl -pe's/a/b/'`, `node --eval="…"`). Shape cannot tell those apart, and it does not need to:
+ *   in every one of them the line may hand the interpreter something of its own, so the note must
+ *   not say the fetched bytes are what runs. Testing merely for a leading dash instead would make
+ *   the gate spelling-sensitive where it has to be shape-sensitive, and assert execution of a
+ *   `curl … | python3 -mjson.tool` that only pretty-prints.
  * - **A shell's `-s`, alone or in a cluster**, says the program IS standard input. It therefore
- *   WINS over the operand test, which would otherwise read the script's own arguments (`sh -s foo`)
+ *   WINS over the token test, which would otherwise read the script's own arguments (`sh -s foo`)
  *   as a program and soften the sentence on the hostile shape.
  *
- * A bare `-` is a flag by this test and not an operand, which is the right answer: `python3 -` reads
- * its program from standard input.
+ * **The direction it errs in, and why that one.** A flag whose value is DETACHED (`bash -o pipefail`,
+ * `bash --rcfile /dev/null`) reads here as a possible program, so a shell that really does run its
+ * standard input gets the hedged sentence. Separating those from a genuine program needs to know
+ * which flags take a value — the very table this function refuses — so the gate under-claims
+ * instead: it still names every host and still says the fetched bytes may be what executes. The
+ * opposite error asserts an execution that does not happen, which is the failure this note path
+ * exists to remove, so the hedge is the side to fall on.
  */
 function interpreterRunsStdin(head: string, operands: readonly string[]): boolean {
   if (SHELL_INTERPRETERS.has(head)) {
@@ -745,7 +777,7 @@ function interpreterRunsStdin(head: string, operands: readonly string[]): boolea
     );
     if (forcesStdin) return true;
   }
-  return !operands.some((operand) => !operand.startsWith('-'));
+  return operands.every(isCleanFlag);
 }
 
 /** What separates one part of a composed command line from the next. */
@@ -1206,8 +1238,10 @@ function flowSentence(flow: ComposedFlow): string {
       const interpreter = quotable(flow.interpreter) ?? 'the program after the pipe';
       const returns = plural ? 'return' : 'returns';
       const does = plural ? 'do' : 'does';
-      // The interpreter was handed a program of its own, so the fetched bytes are its INPUT rather
-      // than the thing it runs — `curl … | python3 -m json.tool` pretty-prints them as data.
+      // A token on the interpreter's own argv could be a program, so the fetched bytes may be its
+      // INPUT rather than the thing it runs — `curl … | python3 -m json.tool` pretty-prints them as
+      // data, and so does the glued `-mjson.tool` spelling. The sentence hedges because the gate
+      // reads shape and not flag meanings; see {@link interpreterRunsStdin}.
       if (!flow.stdinIsTheProgram) {
         return (
           `The part that fetches from ${host} is piped into ${interpreter}, so ${interpreter} ` +
