@@ -38,15 +38,33 @@
  * upstream. The one hard limit is unchanged and non-negotiable: **never fire on the mere presence of
  * a URL anywhere in the string**, because `git commit -m "closes https://…"` must stay silent.
  *
+ * ## TWO CONSUMERS, TWO INPUT SETS — read this before merging them back together
+ *
+ * This module answers the host question for **two** callers whose error costs differ, so it has two
+ * entry points and they are deliberately not the same function:
+ *
+ * - {@link findOpenWorldHostLiterals} — **the floor**. Its finding rewrites a `safe` verdict to
+ *   `destructive` with no model in the loop, so it fires only where the parser resolved the whole
+ *   command. "The parser could not resolve this" is a fact about the checker, not a detection about
+ *   the command, and this layer floors only what is deterministically known.
+ * - {@link findComposedOpenWorld} — **the note**. It reads the parts of a command the parser could
+ *   NOT resolve as a whole, and its finding is handed to the rater as context. It changes no
+ *   outcome by itself.
+ *
+ * **The error-cost regime is the third distinct one in this codebase, and it is the widest.** The §8
+ * hardline REFUSES unappealably, so it must be the narrowest. This module's floor RAISES a prompt,
+ * so it over-matches (below). The note only INFORMS THE MODEL — a wrong one costs a sentence of
+ * attention and no interruption at all — so it may be wider than either. Do not "fix" a note false
+ * positive by narrowing the extractor; that trades a free cost for a silent one.
+ *
  * ## The shape of the matcher
  *
  * Ported from the measured prototype (`project-takahe _spikes/open-world-preflight/`).
  *
- * 1. **Decline on anything unclassifiable.** {@link classifyCommand} returns `null` on any
- *    composition (separator, line break, `$(…)`, backtick, redirection), and the *ambiguity*
- *    preflight already floors those. So this matcher never has to parse a hard command — and it
- *    must not claim the finding, because "it names a host" would be a worse (and possibly false)
- *    explanation than "its target cannot be statically resolved".
+ * 1. **Decline on anything unclassifiable** — for the FLOOR only. {@link classifyCommand} returns
+ *    `null` on any composition (separator, line break, `$(…)`, backtick, redirection), and a
+ *    deterministic floor must not claim "it names a host" about a string whose target it could not
+ *    statically resolve. The note path picks those up instead, by reading the parts.
  * 2. **Step past wrappers** (`sudo -u root`, `env FOO=1`, `nohup --`, …) to the head.
  * 3. **Look the head up** in {@link NETWORK_HEADS}, keyed by *where a host may legitimately appear*.
  * 4. **Test only the candidate operands** for a host literal.
@@ -546,13 +564,14 @@ function matchArgv(argv: readonly string[]): string[] {
  * caller can never accidentally hand this a form that has already lost the composition boundary
  * the decline below depends on.
  *
- * Returns `[]` — declining rather than flooring — for any command {@link classifyCommand} cannot
- * classify. Those compose, substitute or redirect, and the **ambiguity preflight already floors
- * them**, with a truer explanation than this one could give. Composed egress
- * (`curl … | sh`, `cat .env | curl …`) is thus still floored; it is simply floored one layer up.
- * That decline is also why `sed -i 's|http://a|http://b|' config.yml` is not this preflight's
- * finding: the `|` inside the sed expression reads as composition, so it was already unclassifiable
- * — and already escalating — before EXT-61 existed.
+ * **This is the FLOOR's input set, and it is narrow on purpose.** It returns `[]` — declining rather
+ * than flooring — for any command {@link classifyCommand} cannot classify: those compose, substitute
+ * or redirect, and a deterministic rewrite of the rater's verdict must rest on a target this module
+ * actually resolved. A composed fetch (`curl … | sh`, `cat .env | curl …`) is therefore **not
+ * floored**; it is reported to the rater as context by {@link findComposedOpenWorld} instead, which
+ * is a different question with a different error cost (module docblock). The same decline is why
+ * `sed -i 's|http://a|http://b|' config.yml` is not this preflight's finding: the `|` inside the sed
+ * expression reads as composition.
  *
  * **Every match is returned, not the first.** The first is not the target: for
  * `curl -x http://proxy.corp.local:3128 https://evil.example.net/x` it is the proxy, and for
@@ -593,4 +612,444 @@ export function findOpenWorldHostLiterals(command: string): string[] {
   // …then the raw form, which is the only one that still has its Windows path separators.
   const rawArgv = tokenize(command);
   return rawArgv === null ? [] : matchArgv(rawArgv);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────────────────────────
+ * THE NOTE PATH — what the RATER is told about a composed command that names a host.
+ *
+ * Everything below feeds {@link import('./rater.js').buildRaterPrompt} and nothing else. It never
+ * reaches {@link import('./rater.js').mapVerdictToAction}, so it can raise no floor and change no
+ * outcome on its own.
+ *
+ * **Why it exists at all.** {@link findOpenWorldHostLiterals} declines a command the parser could
+ * not resolve, and that decline used to be invisible because the same commands were floored by the
+ * ambiguity abstention. With the abstention retired they are RATED — and because one function fed
+ * both the floor and the note, a composed command reached the rater with *less* information than
+ * the same fetch written as a single command: no floor, and no mention of the host either. Adding a
+ * pipe removed information from the model. That asymmetry is what this path closes.
+ *
+ * **And the host alone is not the information.** A rater sees a hostname, names it in its own
+ * reasoning, and rates the command safely anyway — which is why host trust is deterministic
+ * exact-match and not a model call in the first place. Restating a hostname that is already in the
+ * command text is assistance in form only. What a model can genuinely miss is the **data flow across
+ * the parts**: in `cat .env | curl -X POST https://…` the fact worth stating is that a local file's
+ * contents are read into an outbound request, which takes composing two segments to see — exactly
+ * what the parser failed to do. So the note names the FLOW where one is determinable, and says only
+ * what it knows where one is not. It never invents a flow.
+ * ─────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Programs that RUN what arrives on their standard input. Piping a fetch into one of these makes the
+ * fetched bytes the program.
+ *
+ * An enumeration, and a miss costs only a less specific note (the host is still named and the
+ * remaining sentence is still true), which is what makes an enumeration acceptable *here* and not in
+ * a layer that decides an outcome.
+ */
+const STDIN_INTERPRETERS: ReadonlySet<string> = new Set([
+  'sh',
+  'bash',
+  'zsh',
+  'dash',
+  'ksh',
+  'ash',
+  'csh',
+  'tcsh',
+  'fish',
+  'python',
+  'python2',
+  'python3',
+  'node',
+  'nodejs',
+  'deno',
+  'bun',
+  'perl',
+  'ruby',
+  'php',
+  'lua',
+  'osascript',
+  'powershell',
+  'pwsh',
+]);
+
+/** What separates one part of a composed command line from the next. */
+type SeparatorKind = 'none' | 'pipe' | 'sequence';
+
+/** One part of a composed command line, with the separator that introduced it. */
+interface CommandSegment {
+  readonly text: string;
+  readonly separatorBefore: SeparatorKind;
+}
+
+/**
+ * Split a command line into its parts at the separators the SHELL would act on.
+ *
+ * Quote-aware and nesting-aware, because both are the difference between a part and a fragment: a
+ * `|` inside `"$(cat a | b)"` or inside `'a;b'` starts no new command, and splitting there would
+ * describe a flow the shell never performs. The nesting counter covers `$(…)`, `<(…)`, `>(…)` and
+ * backticks — the constructs whose interior is a command line of its own.
+ *
+ * This does NOT try to be a shell parser. It is the smallest thing that can say "these are the parts
+ * and this one feeds that one", which is all the note needs.
+ */
+function splitComposed(command: string): CommandSegment[] {
+  const segments: CommandSegment[] = [];
+  let current = '';
+  let separatorBefore: SeparatorKind = 'none';
+  let quote: '"' | "'" | null = null;
+  let depth = 0;
+  let backtick = false;
+
+  const cut = (next: SeparatorKind): void => {
+    segments.push({ text: current, separatorBefore });
+    current = '';
+    separatorBefore = next;
+  };
+
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    const next = command[i + 1];
+
+    if (quote !== null) {
+      current += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === '`') {
+      backtick = !backtick;
+      current += ch;
+      continue;
+    }
+    if (!backtick && (ch === '$' || ch === '<' || ch === '>') && next === '(') {
+      depth++;
+      current += ch + next;
+      i++;
+      continue;
+    }
+    if (depth > 0) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      current += ch;
+      continue;
+    }
+    if (backtick) {
+      current += ch;
+      continue;
+    }
+
+    if (ch === '\n' || ch === '\r' || ch === ';') {
+      cut('sequence');
+      continue;
+    }
+    if (ch === '&') {
+      if (next === '&') i++;
+      cut('sequence');
+      continue;
+    }
+    if (ch === '|') {
+      // `||` is a sequence operator; a single `|` is the one that connects two parts' streams, and
+      // that connection is the whole of what a flow sentence describes.
+      if (next === '|') {
+        i++;
+        cut('sequence');
+      } else {
+        cut('pipe');
+      }
+      continue;
+    }
+    current += ch;
+  }
+  cut('none');
+  return segments.filter((segment) => segment.text.trim().length > 0);
+}
+
+/** One part of a composed command line, read the way {@link matchArgv} reads a whole one. */
+interface AnalyzedSegment {
+  readonly separatorBefore: SeparatorKind;
+  readonly argv: readonly string[];
+  /** The bare head name, e.g. `curl` for `/usr/bin/curl`. */
+  readonly head: string;
+  /** Host literals in a fetch/transfer position within THIS part. */
+  readonly hosts: readonly string[];
+}
+
+/**
+ * The characters a token may contain to be quoted back inside our own note.
+ *
+ * **This is an injection boundary, not cosmetics.** The note is OUR trusted text and sits OUTSIDE
+ * the `<command_to_evaluate>` fence, while every token it names comes from the model's command
+ * string. {@link SCHEME_RE} and {@link HOST_COLON_PATH_RE} are PREFIX tests, so an operand that
+ * starts as a URL carries whatever follows it — and a composed command is the easiest place to build
+ * one. Barring whitespace and line breaks is what stops a "hostname" from becoming a sentence or a
+ * new line in a prompt that is read as instructions.
+ *
+ * A token that fails this is not mangled into shape; it is simply not named ({@link quotable}), and
+ * the sentence falls back to a generic word.
+ */
+const QUOTABLE_IN_NOTE_RE = /^[A-Za-z0-9~/.[][A-Za-z0-9._~@:/+?=,%#[\]-]{0,99}$/;
+
+/** The token if it is safe to name in our own note, else `null`. See {@link QUOTABLE_IN_NOTE_RE}. */
+function quotable(token: string): string | null {
+  return QUOTABLE_IN_NOTE_RE.test(token) ? token : null;
+}
+
+/**
+ * The data flow the parts of a composed command line perform together — the fact that is not visible
+ * in any one part, and the only reason this note is worth a rater's attention.
+ */
+export type ComposedFlow =
+  /** A fetch is piped into a program that RUNS its standard input. */
+  | { readonly kind: 'fetch-into-interpreter'; readonly host: string; readonly interpreter: string }
+  /** A local program's output is piped into a program that sends it to a host. */
+  | {
+      readonly kind: 'local-into-transfer';
+      readonly producer: string;
+      readonly transfer: string;
+      readonly host: string;
+    }
+  /** A substitution's output becomes an argument of a program that sends it to a host. */
+  | {
+      readonly kind: 'substitution-into-transfer';
+      readonly transfer: string;
+      readonly host: string;
+    }
+  /** A transfer agent is told to read a local file and send its contents. */
+  | {
+      readonly kind: 'file-into-transfer';
+      readonly transfer: string;
+      readonly host: string;
+      readonly path: string | null;
+    };
+
+/** What the note path found in a command the parser could not resolve as a whole. */
+export interface ComposedOpenWorldFinding {
+  /**
+   * Host literals in a fetch/transfer position, found by reading the parts SEPARATELY.
+   *
+   * **Not the floor's set and never passed to it** — {@link findOpenWorldHostLiterals} is the floor's
+   * only input, and it declines every command this function accepts.
+   */
+  readonly hosts: readonly string[];
+  /** The flow across the parts, or `null` when none is determinable. */
+  readonly flow: ComposedFlow | null;
+}
+
+/** `$(…)` or a backtick — the substitution forms the shell EXECUTES before the outer program runs. */
+const EXECUTING_SUBSTITUTION_RE = /\$\(|`/;
+
+/**
+ * curl/httpie's convention for "read this operand from a local file rather than taking it
+ * literally". `@-` is standard input, which is the pipe case rather than a file read.
+ *
+ * Keyed on the convention and not on a list of the flags that honour it: an enumeration of
+ * `-d`/`--data-binary`/`-T`/`-F`/… acquires a blind spot one flag at a time, and a wrong answer here
+ * costs a less specific note rather than an outcome.
+ */
+const AT_FILE_OPERAND_RE = /^@(?!-$)(.+)$/;
+
+/** Read one part the way the matcher reads a whole command; `null` when it does not tokenize. */
+function analyzeSegment(segment: CommandSegment): AnalyzedSegment | null {
+  const argv = tokenize(segment.text);
+  if (argv === null || argv.length === 0) return null;
+  return {
+    separatorBefore: segment.separatorBefore,
+    argv,
+    head: bareHead(argv[0]),
+    hosts: matchArgv(argv),
+  };
+}
+
+/**
+ * Name the flow across the parts, or `null` when none of the shapes below applies.
+ *
+ * **Only shapes where the flow is determinable from the argv alone appear here**, and the order is
+ * how specific each one is. A part piped into an ordinary local program (`curl … | jq .version`) is
+ * deliberately NOT a flow: it is real, but naming it would state something the rater can already see
+ * in the text, and the note's whole value is the fact that needs two parts composed to notice.
+ */
+function findFlow(segments: readonly AnalyzedSegment[]): ComposedFlow | null {
+  for (let i = 0; i + 1 < segments.length; i++) {
+    const upstream = segments[i];
+    const downstream = segments[i + 1];
+    if (downstream.separatorBefore !== 'pipe') continue;
+    if (upstream.hosts.length > 0 && STDIN_INTERPRETERS.has(downstream.head)) {
+      return {
+        kind: 'fetch-into-interpreter',
+        host: upstream.hosts[0],
+        interpreter: downstream.head,
+      };
+    }
+    if (upstream.hosts.length === 0 && downstream.hosts.length > 0) {
+      return {
+        kind: 'local-into-transfer',
+        producer: upstream.head,
+        transfer: downstream.head,
+        host: downstream.hosts[0],
+      };
+    }
+  }
+  for (const segment of segments) {
+    if (segment.hosts.length === 0) continue;
+    if (segment.argv.some((token) => EXECUTING_SUBSTITUTION_RE.test(token))) {
+      return {
+        kind: 'substitution-into-transfer',
+        transfer: segment.head,
+        host: segment.hosts[0],
+      };
+    }
+    const atFile = segment.argv
+      .map((token) => AT_FILE_OPERAND_RE.exec(token)?.[1])
+      .find((path) => path !== undefined);
+    if (atFile !== undefined) {
+      return {
+        kind: 'file-into-transfer',
+        transfer: segment.head,
+        host: segment.hosts[0],
+        path: quotable(atFile),
+      };
+    }
+  }
+  return null;
+}
+
+/** Read every part of one form of the command; `null` when no part names a host. */
+function analyzeComposed(command: string): ComposedOpenWorldFinding | null {
+  const segments = splitComposed(command)
+    .map(analyzeSegment)
+    .filter((segment): segment is AnalyzedSegment => segment !== null);
+  const hosts = [...new Set(segments.flatMap((segment) => [...segment.hosts]))];
+  if (hosts.length === 0) return null;
+  return { hosts, flow: findFlow(segments) };
+}
+
+/**
+ * Read a command the gate's parser could NOT resolve part by part, and report the host literals and
+ * the data flow across those parts — or `null` when the command resolves, or when no part names a
+ * host.
+ *
+ * **This feeds the rater's note and nothing else.** It is never consulted by the destructive floor:
+ * see the module docblock for why the two questions have different input sets, and
+ * {@link findOpenWorldHostLiterals} for the floor's.
+ *
+ * The `null` on a resolvable command is the guard that keeps the rater from being told about the
+ * same host twice in two registers — a command the parser resolved is the floor's, and the floor's
+ * own note already names its hosts.
+ *
+ * Both the normalized and the raw form are read, for the reason {@link findOpenWorldHostLiterals}
+ * gives: normalization collapses `\x` to `x`, which defeats `c\url` and destroys a Windows path
+ * separator, so the raw pass is the only one that still sees `C:\Windows\System32\curl.exe`.
+ *
+ * @param command The raw command string as the model proposed it.
+ */
+export function findComposedOpenWorld(command: string): ComposedOpenWorldFinding | null {
+  if (classifyCommand(command, normalizeCommand) !== null) return null;
+  return analyzeComposed(normalizeCommand(command)) ?? analyzeComposed(command);
+}
+
+/**
+ * The opening line of the composed open-world note.
+ *
+ * **It states the two facts and asserts no third one.** A part of this line names a host in a
+ * fetch/transfer position, and nothing about the command has been decided. The second half is what
+ * keeps this out of the floor note's register: that one may say the command *"is never
+ * auto-approved"* because a floor really did fire, and here no floor exists — repeating its sentence
+ * would tell the rater the outcome is settled when the rating is the only thing that decides it.
+ */
+export const COMPOSED_OPEN_WORLD_PREAMBLE =
+  'OPEN-WORLD NOTE: the gate could not resolve this command line as a single command — it composes, ' +
+  'substitutes or redirects — so it was not put through the deterministic host check a plain ' +
+  'command goes through. Reading its parts separately, one of them names a host in a fetch or ' +
+  'transfer position. Nothing has been decided here and nothing has been floored: this is context ' +
+  'about what the parts do together, and the rating is entirely yours.';
+
+/** Name the hosts if they are safe to quote back, else fall back to naming none. */
+function hostPhrase(hosts: readonly string[]): string {
+  const named = hosts.map(quotable).filter((host): host is string => host !== null);
+  return named.length > 0 ? named.join(', ') : 'a host';
+}
+
+/** The one host a flow sentence is about, or a generic word when it cannot be quoted. */
+function hostWord(host: string): string {
+  return quotable(host) ?? 'that host';
+}
+
+/**
+ * The sentence describing the flow — the mechanism, then a question.
+ *
+ * Neither is a verdict about the command. [[QA-17]] measured that a bare observation from a
+ * component that has just said it could not read the command is taken as DOUBT rather than as
+ * information, and that one sentence of MECHANISM is what moves a rater; these say what the shell
+ * does with the parts and then hand the judgement back.
+ */
+function flowSentence(flow: ComposedFlow): string {
+  switch (flow.kind) {
+    case 'fetch-into-interpreter': {
+      const host = hostWord(flow.host);
+      const interpreter = quotable(flow.interpreter) ?? 'the program after the pipe';
+      return (
+        `The part that fetches from ${host} is piped into ${interpreter}, so the shell hands ` +
+        `whatever ${host} returns to ${interpreter} and ${interpreter} runs it as a program on this ` +
+        `machine. What this line executes is therefore decided by ${host} and is not in the text ` +
+        `above. What does ${host} serve here?`
+      );
+    }
+    case 'local-into-transfer': {
+      const host = hostWord(flow.host);
+      const producer = quotable(flow.producer) ?? 'the program before the pipe';
+      const transfer = quotable(flow.transfer) ?? 'the program after the pipe';
+      return (
+        `The output of ${producer} is piped into ${transfer}, so whatever ${producer} produces on ` +
+        `this machine is what ${transfer} sends to ${host}. It takes both parts together to see ` +
+        `that: neither one moves local data off the machine on its own. What does ${producer} read ` +
+        `and emit here?`
+      );
+    }
+    case 'substitution-into-transfer': {
+      const host = hostWord(flow.host);
+      const transfer = quotable(flow.transfer) ?? 'the transfer program';
+      return (
+        `An operand of ${transfer} is a substitution. The SHELL runs that inner command first and ` +
+        `substitutes its output into the argument list BEFORE ${transfer} starts, so the result of ` +
+        `the inner command is part of what ${transfer} sends to ${host} — the operand is not the ` +
+        `literal text shown. What does the inner command produce?`
+      );
+    }
+    case 'file-into-transfer': {
+      const host = hostWord(flow.host);
+      const transfer = quotable(flow.transfer) ?? 'the transfer program';
+      const file = flow.path === null ? 'a local file' : `the local file ${flow.path}`;
+      return (
+        `An operand of ${transfer} begins with an at-sign, which tells ${transfer} to read ` +
+        `${file} and send its CONTENTS to ${host} rather than sending the name itself. What is in ` +
+        `that file?`
+      );
+    }
+  }
+}
+
+/**
+ * Build the composed open-world note for a command, or `null` when there is nothing to say.
+ *
+ * One sentence of mechanism when the flow is determinable; when it is not, the hosts and an explicit
+ * statement that the flow is NOT known — a note that guessed at a flow would be worse than a short
+ * one, and a reader who is told what the gate could not work out can weigh it.
+ *
+ * @param command The raw command string as the model proposed it.
+ */
+export function buildComposedOpenWorldNote(command: string): string | null {
+  const finding = findComposedOpenWorld(command);
+  if (finding === null) return null;
+  const body =
+    finding.flow !== null
+      ? flowSentence(finding.flow)
+      : `The part in question names ${hostPhrase(finding.hosts)}. The gate could not work out how ` +
+        'the parts feed into each other, so it is not telling you what reaches that host — only ' +
+        'that one part of this line contacts it. What does the whole line do once every part has ' +
+        'run?';
+  return `${COMPOSED_OPEN_WORLD_PREAMBLE}\n${body}`;
 }
