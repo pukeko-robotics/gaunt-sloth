@@ -34,6 +34,14 @@
  * very end. Making the slices ANSI-aware would change what a coloured preview line renders as,
  * which is a decision for whoever needs it and not a silent detail of this module.
  *
+ * That asymmetry is also why a slice decides "does the whole string fit?" two different ways. For
+ * plain text the cluster walk decides it: the widths of the clusters sum to the width of the
+ * string, so walking until the budget is blown answers the question and answers it WITHOUT
+ * touching the rest of the input — which is what keeps a megabyte-long preview line from being
+ * measured end to end before it is cut at column 200. Only escape-bearing text is measured whole
+ * first, because there the two rulers disagree and a coloured string that MEASURES as fitting must
+ * be handed back whole rather than cut short by the bytes of its own escapes.
+ *
  * ## Why ambiguous-width characters stay NARROW
  *
  * `string-width` defaults to treating East-Asian "Ambiguous" characters as one column, and that
@@ -69,23 +77,38 @@ function clusters(text: string): string[] {
 }
 
 /**
+ * Whether the whole-string measurement is the only ruler that can answer "does this fit" for
+ * `text` — true exactly when it carries an escape introducer (`ESC`, or the one-byte `CSI`), the
+ * two characters `string-width` itself strips on. On anything else the cluster widths sum to the
+ * whole-string width, so the walk decides the same question incrementally and a pre-measurement
+ * would be a second full pass over the input for nothing.
+ */
+function needsWholeStringMeasure(text: string): boolean {
+  return text.includes('\u001B') || text.includes('\u009B');
+}
+
+/**
  * The longest LEADING run of whole clusters whose total width is at most `maxWidth` — i.e. keep
  * the head, lose the tail. Total (never throws): a non-positive `maxWidth` yields `''`.
  *
  * A cluster is kept only if it fits ENTIRELY, so the result can come back one column short of
  * `maxWidth` when the next cluster is two columns wide. That is the point: half a wide glyph
  * cannot be drawn, and spending the column anyway is how text over-runs its budget.
+ *
+ * The clusters are produced one at a time and the walk stops at the budget, so the cost is the
+ * length of the RESULT rather than the length of the input — the input here is a whole tool-output
+ * line, which is unbounded.
  */
 export function sliceToWidth(text: string, maxWidth: number): string {
   if (maxWidth <= 0) return '';
-  if (displayWidth(text) <= maxWidth) return text;
+  if (needsWholeStringMeasure(text) && displayWidth(text) <= maxWidth) return text;
   let width = 0;
   let kept = '';
-  for (const cluster of clusters(text)) {
-    const clusterWidth = displayWidth(cluster);
+  for (const { segment } of GRAPHEME_SEGMENTER.segment(text)) {
+    const clusterWidth = displayWidth(segment);
     if (width + clusterWidth > maxWidth) break;
     width += clusterWidth;
-    kept += cluster;
+    kept += segment;
   }
   return kept;
 }
@@ -94,10 +117,14 @@ export function sliceToWidth(text: string, maxWidth: number): string {
  * The longest TRAILING run of whole clusters whose total width is at most `maxWidth` — i.e. keep
  * the tail, lose the head. The mirror of {@link sliceToWidth}, for values whose end is the
  * informative part (a path's leaf directory).
+ *
+ * This one materialises the clusters: it walks backwards, and cluster boundaries are only
+ * derivable from the front. Its callers pass a path or a model id, so the input is a line rather
+ * than a file.
  */
 export function sliceEndToWidth(text: string, maxWidth: number): string {
   if (maxWidth <= 0) return '';
-  if (displayWidth(text) <= maxWidth) return text;
+  if (needsWholeStringMeasure(text) && displayWidth(text) <= maxWidth) return text;
   const all = clusters(text);
   let width = 0;
   let kept = '';

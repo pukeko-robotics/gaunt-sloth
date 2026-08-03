@@ -197,12 +197,18 @@ function inline(value: string): string {
 
 /**
  * Truncate to `max` terminal COLUMNS with the {@link ELLIPSIS} marker, reserving the marker's own
- * width out of the budget. Measuring and slicing both go through the shared width primitive: a
- * code-point count would read a CJK or emoji value as shorter than it renders and hand it back
- * whole, over-running the row it is drawn on.
+ * width out of the budget. Slicing goes through the shared width primitive: a code-point count
+ * would read a CJK or emoji value as shorter than it renders and hand it back whole, over-running
+ * the row it is drawn on.
+ *
+ * Whether the value fits is put to the SLICE rather than to the ruler, because the slice stops at
+ * the budget: a value that over-runs is recognised from its first `max` columns, where measuring
+ * it reads all of it — and the values arriving here are whole tool-output lines, which
+ * {@link TOOL_PREVIEW_LINE_MAX_CHARS} exists precisely because they can be a megabyte long.
  */
 function truncate(value: string, max: number): string {
-  if (displayWidth(value) <= max) return value;
+  const fitted = sliceToWidth(value, max);
+  if (fitted === value) return value;
   return sliceToWidth(value, max - ELLIPSIS_WIDTH) + ELLIPSIS;
 }
 

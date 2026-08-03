@@ -1,3 +1,4 @@
+import stringWidth from 'string-width';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // systemUtils supplies the env the default secret collection reads; keep it empty and inject
@@ -41,7 +42,9 @@ describe('toolDisplay (TUI-C30)', () => {
       const summary = summariseToolCall('read_file', JSON.stringify({ path: long }), []);
       expect(summary).toContain('…');
       expect(summary).not.toContain(long);
-      expect(summary.length).toBeLessThan(TOOL_PARAM_VALUE_MAX_CHARS + 20);
+      // The caps are COLUMN budgets, so the bound is measured in columns — on an ASCII fixture
+      // the two coincide, and a `.length` bound would silently double the moment one does not.
+      expect(stringWidth(summary)).toBeLessThan(TOOL_PARAM_VALUE_MAX_CHARS + 20);
     });
 
     it('caps a CJK value by terminal COLUMNS rather than code points (TUI-C34)', async () => {
@@ -63,7 +66,9 @@ describe('toolDisplay (TUI-C30)', () => {
       );
       const summary = summariseToolCall('mystery_tool', JSON.stringify(args), []);
       expect(summary).not.toContain('\n');
-      expect(summary.length).toBeLessThanOrEqual('mystery_tool()'.length + TOOL_SUMMARY_MAX_CHARS);
+      expect(stringWidth(summary)).toBeLessThanOrEqual(
+        stringWidth('mystery_tool()') + TOOL_SUMMARY_MAX_CHARS
+      );
       expect(summary).toContain('…');
     });
 
@@ -114,7 +119,7 @@ describe('toolDisplay (TUI-C30)', () => {
       const { summariseToolCall, TOOL_PARAM_VALUE_MAX_CHARS } =
         await import('#src/core/toolDisplay.js');
       const secret = 'deadbeef'.repeat(8); // 64 chars, no provider-pattern prefix
-      expect(secret.length).toBeGreaterThan(TOOL_PARAM_VALUE_MAX_CHARS);
+      expect(stringWidth(secret)).toBeGreaterThan(TOOL_PARAM_VALUE_MAX_CHARS);
       const summary = summariseToolCall('echo_tool', JSON.stringify({ token: secret }), [secret]);
       expect(summary).toBe('echo_tool(token=<redacted>)');
       expect(summary).not.toContain(secret.slice(0, 12)); // no leaked head
@@ -141,7 +146,9 @@ describe('toolDisplay (TUI-C30)', () => {
         [secret]
       );
       expect(summary).not.toContain('feedface'); // neither whole nor bisected head survives
-      expect(summary.length).toBeLessThanOrEqual('echo_tool()'.length + TOOL_SUMMARY_MAX_CHARS);
+      expect(stringWidth(summary)).toBeLessThanOrEqual(
+        stringWidth('echo_tool()') + TOOL_SUMMARY_MAX_CHARS
+      );
     });
   });
 
@@ -169,12 +176,19 @@ describe('toolDisplay (TUI-C30)', () => {
       expect(capped[10]).toEqual({ text: '… (+15 more lines)', style: 'dim' });
     });
 
-    it('char-caps an over-long single line with …', async () => {
+    it('caps an over-long single line at the per-line COLUMN budget with …', async () => {
       const { capToolDisplayLines, TOOL_PREVIEW_LINE_MAX_CHARS } =
         await import('#src/core/toolDisplay.js');
       const capped = capToolDisplayLines([{ text: 'y'.repeat(500), style: 'dim' }]);
-      expect(capped[0].text.length).toBeLessThanOrEqual(TOOL_PREVIEW_LINE_MAX_CHARS);
+      expect(stringWidth(capped[0].text)).toBeLessThanOrEqual(TOOL_PREVIEW_LINE_MAX_CHARS);
       expect(capped[0].text.endsWith('…')).toBe(true);
+
+      // The same cap on a CJK line, which is half as many code points as it is columns: 99 whole
+      // two-column clusters (198) plus the marker (1) is the whole 200-column budget bar the odd
+      // column no wide glyph can fill — a unit-counting cap would draw it twice that wide.
+      const wide = capToolDisplayLines([{ text: '設定'.repeat(300), style: 'dim' }]);
+      expect(stringWidth(wide[0].text)).toBe(TOOL_PREVIEW_LINE_MAX_CHARS - 1);
+      expect(wide[0].text.endsWith('…')).toBe(true);
     });
 
     it('uses the singular marker for exactly one hidden line', async () => {
