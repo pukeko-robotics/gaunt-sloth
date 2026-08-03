@@ -800,10 +800,12 @@ export const rawGthConfigSchema = z.looseObject({
     })
     .optional(),
   commands: commandsSchema.optional(),
-  // GS2-35 — identity used in the `Co-Authored-By` trailer of agent-authored git commits. Optional;
-  // when omitted the agent is instructed to co-author as the Gaunt Sloth account
-  // (`Gaunt Sloth <code@gauntsloth.app>`), NEVER the underlying model. Either field may be set
-  // alone; the other falls back to its default (see `appendCommitCoAuthorNote`).
+  // GS2-35/EXT-83 — identity used in the `Co-Authored-By` trailer of agent-authored git commits.
+  // Optional; when omitted the agent is instructed to co-author as the Gaunt Sloth account, whose
+  // default NAME carries the resolved active model — `Gaunt Sloth (provider:model)`, falling back
+  // to the bare `Gaunt Sloth` when no model resolves or `injectModelContext` is false — at the
+  // constant address `code@gauntsloth.app`. A configured name is emitted verbatim. Either field may
+  // be set alone; the other falls back to its default (see `appendCommitCoAuthorNote`).
   commit: z
     .object({
       coAuthor: z
@@ -815,9 +817,11 @@ export const rawGthConfigSchema = z.looseObject({
     })
     .optional(),
   modelDisplayName: z.string().optional(),
-  // GS2-34 — inject the resolved active `provider:model` identity into the system prompt (default ON;
-  // set `false` to opt out for reproducible / model-agnostic runs). Defaulted at the read site, so it
-  // is intentionally absent from DEFAULT_CONFIG (no effective-config snapshot churn).
+  // GS2-34/EXT-83 — inject the resolved active `provider:model` identity into the system prompt
+  // (default ON; set `false` to opt out for reproducible / model-agnostic runs). It governs the
+  // identity everywhere in the prompt: the identity line in every mode, AND the model name that
+  // decorates the default git commit co-author trailer in `code` mode. Defaulted at the read site,
+  // so it is intentionally absent from DEFAULT_CONFIG (no effective-config snapshot churn).
   injectModelContext: z.boolean().optional(),
   // GS2-47 — secret-redaction for `/debug-dump` artifacts. `redact` DEFAULTS ON (omitted = redact);
   // set `false` to write a raw, unredacted archive (the command then shows a loud secrets warning).

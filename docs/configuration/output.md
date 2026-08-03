@@ -300,17 +300,27 @@ and small [source](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/pack
 
 When the agent makes a Git commit in `code` mode — it does this by running `git commit` through
 `run_shell_command`, as there is no dedicated commit tool — it is instructed to add exactly one
-`Co-Authored-By` trailer crediting Gaunt Sloth, and never to attribute the co-author to the
-underlying model or vendor (`Claude`, `GPT`, `Gemini`, …): the commit is Gaunt Sloth's work, not the
-model's.
+`Co-Authored-By` trailer crediting Gaunt Sloth. The default name **also carries the model that
+served the session**, so your git history records which model wrote the commit while the authorship
+and the address stay Gaunt Sloth's:
 
-Set `commit.coAuthor` to use your own identity instead. Each field defaults **independently**, so
-you can override just one:
+```
+Co-Authored-By: Gaunt Sloth (anthropic:claude-sonnet-5) <code@gauntsloth.app>
+```
 
 | Field | Default |
 |-------|---------|
-| `commit.coAuthor.name` | `Gaunt Sloth` |
+| `commit.coAuthor.name` | `Gaunt Sloth (provider:model)`, using the [resolved active model](providers.md#model-identity-in-the-prompt-injectmodelcontext) — or `Gaunt Sloth (model)`, the bare model name, when no provider half resolves |
 | `commit.coAuthor.email` | `code@gauntsloth.app` |
+
+The name falls back to a plain `Gaunt Sloth` whenever no model can be resolved. **To keep the model
+name out of your git history deliberately,** either set your own `commit.coAuthor.name` — a
+configured name is emitted verbatim, with no model spliced into it — or set
+`injectModelContext: false`, which removes the model identity from the whole prompt, this trailer
+included.
+
+Set `commit.coAuthor` to use your own identity instead. Each field defaults **independently**, so
+you can override just one:
 
 ```json
 {
@@ -325,3 +335,14 @@ you can override just one:
 
 The agent then emits `Co-Authored-By: Acme Bot <bot@acme.example>`. This is first-party prompt
 guidance the model follows when it composes the commit message, not an enforced post-processing step.
+
+### How the message itself is written
+
+The same guidance tells the agent to write the commit message in plain English — what changed and
+why, with code, shell commands, backticks and markup kept out — into a file, and to pass that file
+to `git commit -F`, never inline with `git commit -m`.
+
+That is a safety rule, not a style preference. Inside double quotes a POSIX shell expands backtick
+and `$(…)` constructs **before git ever runs**, so a message that quotes code the way ordinary
+technical prose does is executed as a command. A file path carries no shell metacharacters, so the
+file form removes the hazard rather than asking the model to avoid it.
