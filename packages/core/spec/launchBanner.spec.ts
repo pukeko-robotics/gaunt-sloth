@@ -19,6 +19,21 @@ const ART = 1;
 const MAGENTA = '\x1b[35m';
 const RESET = '\x1b[0m';
 
+/**
+ * A caller-supplied animation frame (`LaunchBannerInput.face`) drawn with one TWO-column glyph in
+ * place of two block characters: the same five lines and the same 16 columns as the shipped art,
+ * but one UTF-16 unit shorter on the row that carries it. Padding the face field by unit count
+ * therefore over-fills it by one column per wide glyph and pushes the row past the terminal, which
+ * is the whole point of measuring the pad in columns.
+ */
+const WIDE_FACE = [
+  '  ▄█▀▀▀▀▀▀▀▀█▄',
+  '▄▀█▄█▀▀▀▀▀▀█▄█▀▄',
+  '█  ▀█▄▀  ▀▄█▀  █',
+  '▀▄▀▀ ████開 ▀▀▄▀',
+  '  ▀██████████▀',
+] as const;
+
 /** The rendered line's columns from `at` onwards, counted in characters rather than UTF-16 units. */
 const columnsFrom = (line: string, at: number): string => [...line].slice(at).join('');
 
@@ -240,21 +255,52 @@ describe('core/launchBanner', () => {
         displayWidth('~/開発/深層/作業/設定/更に深い階層'),
       ];
 
-      for (let columns = MIN_COLUMNS - 4; columns <= 140; columns++) {
-        const rows = launchBannerRows({ ...input, columns });
-        // Upper bound, every row including the version row and the too-narrow face-only banner.
-        for (const row of rows) {
-          expect(displayWidth(row.face + row.right)).toBeLessThanOrEqual(columns);
+      // Both the shipped art (the control) and a caller-supplied frame carrying a wide glyph: the
+      // face is public input, so a frame is as much a source of double-width columns as a path is.
+      for (const face of [undefined, WIDE_FACE]) {
+        for (let columns = MIN_COLUMNS - 4; columns <= 140; columns++) {
+          const rows = launchBannerRows({ ...input, columns, face });
+          // Upper bound, every row including the version row and the too-narrow face-only banner.
+          for (const row of rows) {
+            expect(displayWidth(row.face + row.right)).toBeLessThanOrEqual(columns);
+          }
+          if (columns < MIN_COLUMNS) continue;
+          // Lower bound, which is what stops the upper bound being satisfied by rendering nothing:
+          // a clipped field must still spend its budget to within one column (one, because an
+          // all-wide value cannot land exactly on an odd budget), and an unclipped one must be
+          // whole.
+          [ART + 3, ART + 4].forEach((row, index) => {
+            const width = displayWidth(rows[row].right);
+            expect(width).toBeGreaterThanOrEqual(Math.min(columns - RIGHT - 1, untruncated[index]));
+          });
         }
-        if (columns < MIN_COLUMNS) continue;
-        // Lower bound, which is what stops the upper bound being satisfied by rendering nothing:
-        // a clipped field must still spend its budget to within one column (one, because an
-        // all-wide value cannot land exactly on an odd budget), and an unclipped one must be whole.
-        [ART + 3, ART + 4].forEach((row, index) => {
-          const width = displayWidth(rows[row].right);
-          expect(width).toBeGreaterThanOrEqual(Math.min(columns - RIGHT - 1, untruncated[index]));
-        });
       }
+    });
+
+    it('pads the face field in COLUMNS, so a wide glyph in a supplied frame cannot move the split', async () => {
+      const { launchBannerRows } = await import('#src/core/launchBanner.js');
+      const displayWidth = stringWidth;
+
+      // The fixture's whole point: 16 columns like the shipped art, 15 UTF-16 units. A unit-count
+      // pad reads it as one short and hands the field 23 columns instead of 22.
+      expect(displayWidth(WIDE_FACE[3])).toBe(16);
+      expect(WIDE_FACE[3].length).toBe(15);
+
+      const rows = launchBannerRows({
+        version: '2.0.0-alpha.25',
+        model: 'gemini-3.1-pro',
+        directory: '/home/mari/dev/takahe',
+        homeDir: '/home/mari',
+        columns: 80,
+        face: WIDE_FACE,
+      });
+      // Every art row's face half is exactly the split column WIDE, so the right column still
+      // starts at 22 on the row carrying the wide glyph as much as on its neighbours.
+      for (const row of rows) {
+        if (row.right) expect(displayWidth(row.face)).toBe(RIGHT);
+      }
+      // …and the padding is spaces, not a truncation of the art: the frame renders in full.
+      expect(rows[ART + 3].face.trimEnd()).toBe(` ${WIDE_FACE[3]}`);
     });
   });
 

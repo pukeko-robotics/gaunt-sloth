@@ -303,6 +303,17 @@ export interface LaunchBannerRow {
   right: string;
 }
 
+/**
+ * Right-pad `text` to `width` TERMINAL COLUMNS. `String.prototype.padEnd` counts UTF-16 units, so
+ * a field holding a wide glyph would be filled one column too far for each of them — and since the
+ * split column is the single number this whole layout is expressed in terms of, that shifts the
+ * right column and pushes the row past the terminal. Text already at or past the width is returned
+ * untouched, exactly as `padEnd` leaves it.
+ */
+function padToWidth(text: string, width: number): string {
+  return text + ' '.repeat(Math.max(0, width - displayWidth(text)));
+}
+
 /** Resolve the usable terminal width, mirroring `ruleWidth`'s unknown/non-finite handling. */
 function resolveColumns(columns: number | undefined): number {
   const cols = typeof columns === 'number' && Number.isFinite(columns) ? columns : DEFAULT_COLUMNS;
@@ -419,7 +430,7 @@ export function launchBannerRows(input: LaunchBannerInput): LaunchBannerRow[] {
   const rightLines = [
     WORDMARK_LINES[0],
     version
-      ? WORDMARK_LINES[1].padEnd(WORDMARK_WIDTH) + ' '.repeat(VERSION_GAP) + version
+      ? padToWidth(WORDMARK_LINES[1], WORDMARK_WIDTH) + ' '.repeat(VERSION_GAP) + version
       : WORDMARK_LINES[1],
     WORDMARK_LINES[2],
     modelLine ?? '',
@@ -432,7 +443,7 @@ export function launchBannerRows(input: LaunchBannerInput): LaunchBannerRow[] {
       const padded = PAD + line;
       // Pad the face out to the split column only when something follows it, so a row whose field
       // was omitted (or truncated away) does not end in a run of spaces.
-      return { face: right ? padded.padEnd(RIGHT_COLUMN) : padded, right };
+      return { face: right ? padToWidth(padded, RIGHT_COLUMN) : padded, right };
     })
   );
 }
