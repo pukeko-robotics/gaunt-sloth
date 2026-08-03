@@ -1,3 +1,4 @@
+import stringWidth from 'string-width';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -177,6 +178,84 @@ describe('core/launchBanner', () => {
     expect(rows[ART + 1].right).toBe('┃┓┏┓┓┏┏┓╋  ┗┓┃┏┓╋┣┓'); // version dropped
     expect(rows[ART + 3].right).toBe('some-absurdly-long-mode…'); // 46 - 22 = 24 columns, tail lost
     expect(rows[ART + 4].right).toBe('…ev/takahe/packages/core'); // 24 columns, head lost
+  });
+
+  describe('TUI-C34 — budgets are terminal COLUMNS, not code points', () => {
+    // Every fixture below is chosen so a code-point count reads it as FITTING the budget while it
+    // actually over-runs: the field is then handed back whole and wraps into the face, which is the
+    // exact failure the truncation exists to prevent.
+
+    it('truncates a CJK directory to its real column budget', async () => {
+      const { launchBannerRows } = await import('#src/core/launchBanner.js');
+      // 22 code points, 30 columns — a 24-column budget it only appears to fit.
+      const directory = '/home/mari/開発/深層/作業/設定';
+      const rows = launchBannerRows({ directory, columns: MIN_COLUMNS });
+
+      // `…` (1 column) + `ari/開発/深層/作業/設定` (23 columns) = exactly the 24-column budget.
+      // The literal pins BOTH bounds at once: anything wider over-runs the terminal, anything
+      // narrower means the slice gave back columns it was entitled to spend.
+      expect(rows[ART + 4].right).toBe('…ari/開発/深層/作業/設定');
+    });
+
+    it('truncates an emoji-bearing model id to its real column budget', async () => {
+      const { launchBannerRows } = await import('#src/core/launchBanner.js');
+      // 21 code points, 27 columns. Each rocket is one code point and two columns.
+      const model = 'gemini-3.1-pro-🚀🚀🚀🚀🚀🚀';
+      const rows = launchBannerRows({ model, columns: MIN_COLUMNS });
+
+      // `gemini-3.1-pro-` (15) + four rockets (8) + `…` (1) = the 24-column budget. A fifth rocket
+      // would take 26, so the slice stops at four rather than half-spending the last column.
+      expect(rows[ART + 3].right).toBe('gemini-3.1-pro-🚀🚀🚀🚀…');
+    });
+
+    it('DROPS a version whose real width overflows, even though its code points fit', async () => {
+      const { launchBannerRows } = await import('#src/core/launchBanner.js');
+      // `v0.0.0-🚀🚀`: 9 code points, 11 columns. At 54 columns the label budget is 10, so it fits
+      // by count and over-runs by width — and a version is dropped rather than clipped.
+      const row = launchBannerRows({ version: '0.0.0-🚀🚀', columns: VERSION + 10 })[ART + 1].right;
+      expect(row).toBe('┃┓┏┓┓┏┏┓╋  ┗┓┃┏┓╋┣┓');
+      // One more column and it fits in full, which is what proves the drop was the width and not a
+      // blanket refusal of the value.
+      expect(
+        launchBannerRows({ version: '0.0.0-🚀🚀', columns: VERSION + 11 })[ART + 1].right
+      ).toBe('┃┓┏┓┓┏┏┓╋  ┗┓┃┏┓╋┣┓   v0.0.0-🚀🚀');
+    });
+
+    it('never lets a double-width glyph push a row past the terminal, at any width', async () => {
+      const { launchBannerRows } = await import('#src/core/launchBanner.js');
+      // The oracle is `string-width` itself, NOT the module's own primitive: measuring the output
+      // with the same function that produced it would make a broken ruler agree with itself.
+      const displayWidth = stringWidth;
+      const input = {
+        version: '2.0.0-alpha.27',
+        model: 'gemini-3.1-pro-🚀🚀',
+        provider: '深層プロバイダー',
+        directory: '/home/mari/開発/深層/作業/設定/更に深い階層',
+        homeDir: '/home/mari',
+      };
+      // What the two truncating fields would render as if nothing were clipped — the directory
+      // after its home prefix collapses to `~`.
+      const untruncated = [
+        displayWidth('gemini-3.1-pro-🚀🚀 (深層プロバイダー)'),
+        displayWidth('~/開発/深層/作業/設定/更に深い階層'),
+      ];
+
+      for (let columns = MIN_COLUMNS - 4; columns <= 140; columns++) {
+        const rows = launchBannerRows({ ...input, columns });
+        // Upper bound, every row including the version row and the too-narrow face-only banner.
+        for (const row of rows) {
+          expect(displayWidth(row.face + row.right)).toBeLessThanOrEqual(columns);
+        }
+        if (columns < MIN_COLUMNS) continue;
+        // Lower bound, which is what stops the upper bound being satisfied by rendering nothing:
+        // a clipped field must still spend its budget to within one column (one, because an
+        // all-wide value cannot land exactly on an odd budget), and an unclipped one must be whole.
+        [ART + 3, ART + 4].forEach((row, index) => {
+          const width = displayWidth(rows[row].right);
+          expect(width).toBeGreaterThanOrEqual(Math.min(columns - RIGHT - 1, untruncated[index]));
+        });
+      }
+    });
   });
 
   it('drops the right column entirely below the narrowest banner width', async () => {

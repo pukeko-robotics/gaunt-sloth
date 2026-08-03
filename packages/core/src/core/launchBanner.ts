@@ -61,6 +61,11 @@
  * all, and each field is bounded by what is left of the terminal on its own line — `columns - 21`
  * for the model/provider and directory lines, `columns - 43` for the version.
  *
+ * Those budgets are TERMINAL COLUMNS, and every measurement and cut in this module goes through
+ * `#src/utils/displayWidth.js` for that reason. A CJK ideograph or an emoji is one code point in
+ * two columns, so a `.length`-style count would let a path or model id containing either measure
+ * short, slip past its budget and wrap — the very failure above.
+ *
  * The model/provider and directory lines TRUNCATE to that budget: a clipped model id or path is
  * still honest, it visibly ends in `…`. The directory is truncated from the LEFT
  * (`…/dev/takahe`), because the leaf directory is the informative end; the model keeps its head and
@@ -76,8 +81,9 @@
  * rather than wrapping the wordmark into rubble.
  */
 import { homedir } from 'node:os';
-import { ELLIPSIS } from '#src/core/toolDisplay.js';
+import { ELLIPSIS, ELLIPSIS_WIDTH } from '#src/core/toolDisplay.js';
 import { ANSI_COLORS } from '#src/utils/consoleUtils.js';
+import { displayWidth, sliceEndToWidth, sliceToWidth } from '#src/utils/displayWidth.js';
 import { getProjectDir, getSlothVersion } from '#src/utils/systemUtils.js';
 
 /**
@@ -210,7 +216,7 @@ const WORDMARK_LINES = [
 ] as const;
 
 /** Widest wordmark line (19); rows 1 and 3 are padded to it so the version label lands square. */
-const WORDMARK_WIDTH = Math.max(...WORDMARK_LINES.map((line) => [...line].length));
+const WORDMARK_WIDTH = Math.max(...WORDMARK_LINES.map((line) => displayWidth(line)));
 
 /** Blank columns between the wordmark and the version label. */
 const VERSION_GAP = 3;
@@ -306,37 +312,40 @@ function resolveColumns(columns: number | undefined): number {
 /**
  * Truncate `text` to `budget` columns, losing the TAIL (`gemini-3.1-pro-experi…`). Returns
  * `undefined` only when there is no budget at all; that guard keeps the function total (at
- * `budget === 0` the slice below would otherwise drop a character and return a bare marker) and is
- * not reachable from {@link launchBannerRows}, whose narrowest field budget is `45 - 21 = 24`.
+ * `budget === 0` the slice below would otherwise return a bare marker) and is not reachable from
+ * {@link launchBannerRows}, whose narrowest field budget is `46 - 22 = 24`.
  *
- * Slicing goes through `[...text]` rather than `String.slice` so a value containing an astral
- * character (an emoji in a directory name) cannot be cut in half into a lone surrogate.
+ * `budget` is TERMINAL COLUMNS, and so is every measurement here: measuring and slicing both go
+ * through the shared width primitive, which counts a CJK ideograph or an emoji as the two columns
+ * it draws and cuts only between whole grapheme clusters. A code-point count would let such a
+ * value measure short, escape its budget and wrap into the face; a code-point slice would cut a
+ * cluster in half.
  */
 function truncateTail(text: string, budget: number): string | undefined {
   if (budget <= 0) return undefined;
-  const chars = [...text];
-  if (chars.length <= budget) return text;
-  return chars.slice(0, budget - 1).join('') + ELLIPSIS;
+  if (displayWidth(text) <= budget) return text;
+  return sliceToWidth(text, budget - ELLIPSIS_WIDTH) + ELLIPSIS;
 }
 
 /**
  * Truncate `text` to `budget` columns, losing the HEAD (`…/dev/takahe`). Used for the directory,
- * where the leaf is what the user needs and the ancestors are noise.
+ * where the leaf is what the user needs and the ancestors are noise. Columns, not code points —
+ * see {@link truncateTail}.
  */
 function truncateHead(text: string, budget: number): string | undefined {
   if (budget <= 0) return undefined;
-  const chars = [...text];
-  if (chars.length <= budget) return text;
-  return ELLIPSIS + chars.slice(chars.length - (budget - 1)).join('');
+  if (displayWidth(text) <= budget) return text;
+  return ELLIPSIS + sliceEndToWidth(text, budget - ELLIPSIS_WIDTH);
 }
 
 /**
  * All-or-nothing: `text` if it fits `budget` columns in full, otherwise `undefined`. Used for the
  * VERSION label, which must never be truncated — see the module docs on why a clipped version
- * number is misleading rather than merely terse.
+ * number is misleading rather than merely terse. "Fits" is measured in columns, so a wide glyph
+ * cannot buy its way in on a short code-point count and push the row past the terminal.
  */
 function fitOrDrop(text: string, budget: number): string | undefined {
-  return [...text].length <= budget ? text : undefined;
+  return displayWidth(text) <= budget ? text : undefined;
 }
 
 /**

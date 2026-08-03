@@ -44,6 +44,17 @@ describe('toolDisplay (TUI-C30)', () => {
       expect(summary.length).toBeLessThan(TOOL_PARAM_VALUE_MAX_CHARS + 20);
     });
 
+    it('caps a CJK value by terminal COLUMNS rather than code points (TUI-C34)', async () => {
+      const { summariseToolCall } = await import('#src/core/toolDisplay.js');
+      // 33 code points, 56 columns: it fits the 48-column value cap only by count, so a code-point
+      // cap hands the whole path back and the summary over-runs the row it is rendered on.
+      const path = '/プロジェクト/ドキュメント/設定/読み込み/テスト/深層.txt';
+      // The kept head is 47 columns and `…` is the 48th — the whole cap, and no more.
+      expect(summariseToolCall('read_file', JSON.stringify({ path }), [])).toBe(
+        'read_file(path=/プロジェクト/ドキュメント/設定/読み込み/テスト…)'
+      );
+    });
+
     it('caps the whole summary and collapses newlines so it stays one line', async () => {
       const { summariseToolCall, TOOL_SUMMARY_MAX_CHARS } =
         await import('#src/core/toolDisplay.js');
