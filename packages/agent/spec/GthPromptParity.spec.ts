@@ -121,10 +121,15 @@ describe('deep/lean system-prompt parity (GS2-27)', () => {
       // EXT-26 OS/shell-dialect note
       expect(prompt).toContain('Host operating system:');
       expect(prompt).toContain(OS_SHELL_GUIDANCE);
-      // GS2-35 commit co-author note: default (unconfigured) identity + the model-name prohibition,
-      // composed on BOTH backends.
+      // GS2-35 commit co-author note: default (unconfigured) identity, composed on BOTH backends.
+      // No model resolves from makeConfig(), so the name is the bare default.
       expect(prompt).toContain('Co-Authored-By: Gaunt Sloth <code@gauntsloth.app>');
-      expect(prompt).toContain('NEVER attribute the co-author to the underlying model');
+      // EXT-83 commit-message rules, likewise on BOTH backends: plain English, passed by file, and
+      // the MECHANISM that makes the inline form dangerous rather than a bare prohibition.
+      expect(prompt).toContain('Write the commit message in plain English');
+      expect(prompt).toContain('Never pass a commit message inline with the -m option');
+      expect(prompt).toContain('before git ever runs');
+      expect(prompt).toContain('git commit -F');
     }
   });
 
@@ -225,8 +230,31 @@ describe('deep/lean system-prompt parity (GS2-27)', () => {
     for (const prompt of [lean, deep]) {
       expect(prompt).not.toContain('claude-sonnet-5');
       expect(prompt).not.toContain('The model currently serving this session');
+      // EXT-83 — the opt-out covers the COMMIT TRAILER too: it means "keep my model identity out of
+      // the prompt", and the trailer is prompt text. The trailer degrades to the plain default name
+      // (the same path an unresolvable model takes), never to a partial or a placeholder.
+      expect(prompt).toContain('Co-Authored-By: Gaunt Sloth <code@gauntsloth.app>');
+      expect(prompt).not.toContain('Gaunt Sloth (');
       // Opt-out is additive-only: the rest of the composed code-mode prompt is intact.
       expect(prompt).toContain('SYSTEM PROMPT');
+    }
+  });
+
+  // EXT-83 — the trailer names the REAL model (the identity is SUPPLIED, rather than a list of
+  // model names being forbidden), on BOTH backends; and the commit guidance is appended EXACTLY
+  // ONCE in the fully composed prompt, i.e. with the model-context note applying as well.
+  it('names the resolved model in the commit trailer, exactly once, on BOTH backends (EXT-83)', async () => {
+    const lean = await leanPrompt('code', IDENTITY_OVER);
+    const deep = await deepPrompt('code', IDENTITY_OVER);
+    for (const prompt of [lean, deep]) {
+      expect(prompt).toContain(
+        'Co-Authored-By: Gaunt Sloth (anthropic:claude-sonnet-5) <code@gauntsloth.app>'
+      );
+      // Counted, not merely present. The sentinels each occur ONCE inside the note — unlike
+      // `Co-Authored-By:`, which the note itself names twice (the trailer line and the
+      // at-most-one-trailer rule), so it could never distinguish one note from two.
+      expect(prompt?.match(/When you create a git commit/g)).toHaveLength(1);
+      expect(prompt?.match(/before git ever runs/g)).toHaveLength(1);
     }
   });
 });

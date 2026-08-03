@@ -730,30 +730,37 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // notes stay deep-only (lean never runs virtualMode). Same order the deep backend's real-path
     // branch uses: cwd note first, OS/shell note last. `getCurrentWorkDir()` is already read above
     // for the status line, so the value is free.
+    // GS2-34/EXT-83: resolve the active model identity ONCE, honouring the `injectModelContext`
+    // opt-out (default ON) at this single read site. Both consumers below take this same value, so
+    // the commit trailer and the model-context note can never disagree about which model is serving
+    // the session — and the opt-out means "my model identity stays out of the prompt", which covers
+    // the trailer as much as the identity line.
+    const modelIdentity =
+      this.config.injectModelContext !== false ? resolveModelIdentity(this.config) : undefined;
+
     // GS2-35: also append the commit co-authoring rule so the agent credits Gaunt Sloth (config
-    // `commit.coAuthor`, defaulting to the Gaunt Sloth account) in the `Co-Authored-By` trailer and
-    // never the underlying model name. Same code-mode gate as the shell/cwd notes — the git-commit
-    // capability rides on `run_shell_command`, which is a code-mode tool.
+    // `commit.coAuthor`, defaulting to the Gaunt Sloth account) in the `Co-Authored-By` trailer, and
+    // the EXT-83 commit-message rules (plain English, and passed by file — never inline, where the
+    // shell would expand the message before git runs). Same code-mode gate as the shell/cwd notes —
+    // the git-commit capability rides on `run_shell_command`, which is a code-mode tool.
     const codeNotesPrompt =
       this.command === 'code'
         ? appendCommitCoAuthorNote(
             appendOsShellNote(appendCwdNote(baseSystemPrompt, getCurrentWorkDir())),
-            this.config.commit?.coAuthor
+            this.config.commit?.coAuthor,
+            modelIdentity
           )
         : baseSystemPrompt;
 
     // GS2-34: inject the resolved provider:model identity so the agent knows which model is serving
     // it (to answer "what model are you?" and reason about its own capabilities/limits). Composed
     // OUTSIDE the code-mode gate above — unlike the cwd/os-shell/commit notes, that question can
-    // arise in ANY mode (chat/ask/code/exec), so the identity must be visible everywhere. Config
-    // opt-out via `injectModelContext: false` (default ON, defaulted here at the read site); when
-    // off — or when no model resolves — nothing is appended and the prompt is exactly as before.
-    // Backend-agnostic: the deep backend composes the same note (GS2-27 parity). The GS2-6
+    // arise in ANY mode (chat/ask/code/exec), so the identity must be visible everywhere. The
+    // `injectModelContext` opt-out is applied at the single read site above; when it is off — or
+    // when no model resolves — `modelIdentity` is undefined, nothing is appended, and the prompt is
+    // exactly as before. Backend-agnostic: the deep backend composes the same note (GS2-27). GS2-6's
     // capability note is a deferred follow-up (bare provider:model identity only for now).
-    const modelContextPrompt =
-      this.config.injectModelContext !== false
-        ? appendModelContextNote(codeNotesPrompt, resolveModelIdentity(this.config))
-        : codeNotesPrompt;
+    const modelContextPrompt = appendModelContextNote(codeNotesPrompt, modelIdentity);
 
     // EXT-32: inject each connected MCP server's discovery `instructions` (captured during tool
     // resolution) into the prompt — fenced + per-server-labelled as untrusted server-provided

@@ -103,20 +103,38 @@ export interface CommitCoAuthor {
 }
 
 /**
- * GS2-35: append the commit co-authoring rule to the composed code-mode system prompt.
+ * GS2-35/EXT-83: append the commit-writing rules to the composed code-mode system prompt.
  *
  * Gaunt Sloth has **no dedicated git-commit tool** — the agent commits by calling
- * `run_shell_command` with `git commit`, composing the message (including any trailer) itself. Left
- * unguided, models emit `Co-Authored-By: <their own model name>` (e.g. `Claude`, `GPT`, `Gemini`)
- * from trained habit, which is **factually wrong**: the commit was produced by *Gaunt Sloth*, not by
- * the model. This note is the fix at the correct layer — first-party prompt guidance that (a) states
- * the exact trailer to emit and (b) forbids a model-name co-author.
+ * `run_shell_command` with `git commit`, composing the message (including any trailer) itself. That
+ * leaves two things it must be told, and both live here because both are about committing:
+ *
+ * 1. **WHO the co-author is.** Left unguided, models emit their own model name from trained habit,
+ *    which is factually wrong: the commit was produced by *Gaunt Sloth*, not by the model. The note
+ *    states the exact trailer to emit. EXT-83 — rather than enumerate model names not to write (a
+ *    denylist is stale the day a new vendor ships, and an enumeration beside a catch-all teaches the
+ *    model that the list is the rule), the correct name is SUPPLIED: the resolved
+ *    {@link ResolvedModelIdentity} decorates the DEFAULT name as `Gaunt Sloth (provider:model)`, so
+ *    the real model is named while the authorship stays Gaunt Sloth's.
+ * 2. **HOW the message reaches git.** A commit message passed inline in a double-quoted shell
+ *    argument is EXPANDED BY THE SHELL before git runs, so a message that quotes code the way
+ *    ordinary technical prose does is executed as a command. The note states that mechanism rather
+ *    than merely forbidding the construct — naming a construct without its mechanism has been
+ *    measured not to work. A file path carries no shell metacharacters, so the file form removes the
+ *    failure mode instead of asking the model to avoid it.
+ *
+ * The note contains **no backtick character**: it is the one piece of guidance whose subject is how
+ * to write a commit message, so quoting its own examples in backticks would demonstrate the exact
+ * style rule 2 exists to stop.
  *
  * The identity is config-driven (`commit.coAuthor` in {@link import('#src/config/types.js').GthConfig}).
  * Each field falls back INDEPENDENTLY to the Gaunt Sloth account
  * ({@link DEFAULT_COMMIT_CO_AUTHOR_NAME} / {@link DEFAULT_COMMIT_CO_AUTHOR_EMAIL}) — so a partial
  * override (name only, or a config that bypassed the loader) still yields a complete trailer, and a
- * fully-absent config yields the default account. Blank/whitespace values are treated as unset.
+ * fully-absent config yields the default account. Blank/whitespace values are treated as unset. An
+ * EXPLICITLY CONFIGURED name is emitted verbatim, with no identity spliced in — the user asked for
+ * that string; the identity decorates only the default. An unresolvable identity (`undefined`) falls
+ * back to the plain default name, never to a placeholder.
  *
  * Backend-agnostic: composed through the shared code path so BOTH the lean `GthLangChainAgent` and
  * the deep `GthDeepAgent` inject it (the git-commit capability rides on `run_shell_command`, which
@@ -124,17 +142,29 @@ export interface CommitCoAuthor {
  */
 export function appendCommitCoAuthorNote(
   systemPrompt: string | undefined,
-  coAuthor?: CommitCoAuthor
+  coAuthor?: CommitCoAuthor,
+  modelIdentity?: ResolvedModelIdentity
 ): string {
-  const name = coAuthor?.name?.trim() || DEFAULT_COMMIT_CO_AUTHOR_NAME;
+  // EXT-83 — ONE place composes the name, so the parenthesised shape stays a one-line change. The
+  // identity decorates ONLY the default name: a configured name is the user's own string and is
+  // emitted verbatim, and an unresolved identity yields the bare default (never a placeholder).
+  const configuredName = coAuthor?.name?.trim();
+  const identity = modelIdentity?.identity?.trim();
+  const name =
+    configuredName ||
+    (identity ? `${DEFAULT_COMMIT_CO_AUTHOR_NAME} (${identity})` : DEFAULT_COMMIT_CO_AUTHOR_NAME);
   const email = coAuthor?.email?.trim() || DEFAULT_COMMIT_CO_AUTHOR_EMAIL;
   const note =
     'When you create a git commit, add EXACTLY this co-author trailer line (on its own line, at ' +
     `the end of the commit message):\nCo-Authored-By: ${name} <${email}>\n` +
-    'NEVER attribute the co-author to the underlying model or provider name (do not write ' +
-    '`Co-Authored-By: Claude`, `GPT`, `Gemini`, `Opus`, `Sonnet`, or any model/vendor name): the ' +
-    'commit is authored by Gaunt Sloth, the assistant, not the model. Emit at most this one ' +
-    'Co-Authored-By trailer.';
+    'Emit at most this one Co-Authored-By trailer.\n' +
+    'Write the commit message in plain English: say what changed and why, and keep code, shell ' +
+    'commands, backticks and markup out of it.\n' +
+    'Never pass a commit message inline with the -m option: inside double quotes a POSIX shell ' +
+    'expands backtick and dollar-parenthesis constructs before git ever runs, so a message that ' +
+    'quotes code is executed as a command. Write the message to a file with the write_file tool ' +
+    '(never with shell echo or a heredoc, which put the same text back into a shell argument), ' +
+    'then commit it with git commit -F <path to that file>.';
   return systemPrompt ? `${systemPrompt}\n\n${note}` : note;
 }
 

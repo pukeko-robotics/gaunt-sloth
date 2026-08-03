@@ -4,19 +4,29 @@ import {
   appendModelContextNote,
   resolveModelIdentity,
   type CommitCoAuthor,
+  type ResolvedModelIdentity,
 } from '#src/utils/systemPromptNotes.js';
 import { DEFAULT_COMMIT_CO_AUTHOR_EMAIL, DEFAULT_COMMIT_CO_AUTHOR_NAME } from '#src/constants.js';
 
 /**
- * GS2-35 — commit co-authoring guidance.
+ * GS2-35 / EXT-83 — commit guidance: WHO co-authors, and HOW the message reaches git.
  *
- * Gaunt Sloth has no dedicated commit tool; the agent commits via `run_shell_command` and, left
- * unguided, mis-attributes the co-author to the underlying MODEL name. {@link appendCommitCoAuthorNote}
- * is the fix: it composes first-party prompt guidance that (a) states the exact, config-driven
- * `Co-Authored-By` trailer to emit and (b) forbids a model-name co-author. These assertions are the
- * acceptance for GS2-35(b) — a unit test on the assembled guidance, no live LLM needed.
+ * Gaunt Sloth has no dedicated commit tool; the agent commits via `run_shell_command`, so both
+ * halves are prompt guidance. {@link appendCommitCoAuthorNote} composes them:
+ *   - GS2-35: the exact, config-driven `Co-Authored-By` trailer to emit.
+ *   - EXT-83: the model identity is SUPPLIED in the default name rather than a denylist of model
+ *     names being forbidden, and the message-writing rules (plain English; written to a file and
+ *     passed by file) state the SHELL-EXPANSION MECHANISM rather than merely prohibiting.
+ * These assertions are the acceptance — unit tests on the assembled guidance, no live LLM needed.
  */
-describe('appendCommitCoAuthorNote (GS2-35)', () => {
+describe('appendCommitCoAuthorNote (GS2-35/EXT-83)', () => {
+  /**
+   * A resolved identity that shares no token with the retired model-name denylist, so the
+   * "no model or vendor name in the note text" scan cannot be satisfied merely by the absence of
+   * an injected value.
+   */
+  const NEUTRAL_IDENTITY: ResolvedModelIdentity = { identity: 'acme:widget-1', hasProvider: true };
+
   it('defaults to the Gaunt Sloth account when no co-author is configured', () => {
     const out = appendCommitCoAuthorNote('BASE PROMPT', undefined);
     expect(DEFAULT_COMMIT_CO_AUTHOR_NAME).toBe('Gaunt Sloth');
@@ -50,15 +60,114 @@ describe('appendCommitCoAuthorNote (GS2-35)', () => {
     expect(out).toContain('Co-Authored-By: Gaunt Sloth <code@gauntsloth.app>');
   });
 
-  it('forbids attributing the co-author to the underlying model name', () => {
-    const out = appendCommitCoAuthorNote('BASE PROMPT', undefined);
-    // The prohibition is explicit and names concrete model/vendor tokens so the model cannot fall
-    // back to its trained `Co-Authored-By: <model>` habit.
-    expect(out).toContain('NEVER attribute the co-author to the underlying model');
-    expect(out).toContain('not the model');
-    expect(out).toContain('Claude');
-    expect(out).toContain('GPT');
-    expect(out).toContain('Gemini');
+  // EXT-83 — the trailer names the REAL model while keeping the Gaunt Sloth address. Both halves
+  // are asserted in ONE string: the identity without the address would break the link to the real
+  // gauntsloth account, and the address without the identity would be the old un-named trailer, so
+  // a change to either half must fail visibly here.
+  it('carries the resolved model identity AND the Gaunt Sloth email in one trailer line', () => {
+    const out = appendCommitCoAuthorNote('BASE PROMPT', undefined, {
+      identity: 'anthropic:claude-opus-5',
+      hasProvider: true,
+    });
+    expect(out).toContain(
+      'Co-Authored-By: Gaunt Sloth (anthropic:claude-opus-5) <code@gauntsloth.app>'
+    );
+  });
+
+  it('emits an explicitly configured name VERBATIM, with no identity spliced into it', () => {
+    // The user asked for this exact string; the identity decorates only the DEFAULT name.
+    const out = appendCommitCoAuthorNote(
+      'BASE',
+      { name: 'Acme Bot' },
+      {
+        identity: 'anthropic:claude-opus-5',
+        hasProvider: true,
+      }
+    );
+    expect(out).toContain('Co-Authored-By: Acme Bot <code@gauntsloth.app>');
+    expect(out).not.toContain('anthropic:claude-opus-5');
+    expect(out).not.toContain('Acme Bot (');
+  });
+
+  it('falls back to the plain default name when the model is unresolvable (never a placeholder)', () => {
+    // Absent identity, and a blank one (whitespace-only) — neither may yield a partial or a
+    // stand-in like "unknown", and neither may leave an empty parenthesis behind.
+    const unresolvable: (ResolvedModelIdentity | undefined)[] = [
+      undefined,
+      { identity: '   ', hasProvider: false },
+    ];
+    for (const identity of unresolvable) {
+      const out = appendCommitCoAuthorNote('BASE', undefined, identity);
+      expect(out).toContain('Co-Authored-By: Gaunt Sloth <code@gauntsloth.app>');
+      expect(out).not.toContain('Gaunt Sloth (');
+      expect(out).not.toContain('()');
+      expect(out.toLowerCase()).not.toContain('unknown');
+    }
+  });
+
+  // EXT-83 — the load-bearing proof that the model-name DENYLIST is gone rather than relocated or
+  // reworded. A denylist is stale the day a new vendor ships, and an enumeration sitting beside a
+  // catch-all teaches the model that the list is the rule; supplying the correct name replaces the
+  // whole class. Scanned case-insensitively over BOTH the bare note and one composed with a
+  // neutral injected identity, so absence cannot be an artifact of injecting nothing.
+  it('names no model or vendor anywhere in the note text (the denylist is gone, not relocated)', () => {
+    const RETIRED_DENYLIST = ['Claude', 'GPT', 'Gemini', 'Opus', 'Sonnet'];
+    // The names the retired list had already gone stale against — this project drives gth with all
+    // of them, and a "better list" would be the same defect again.
+    const ALSO_ABSENT = [
+      'Anthropic',
+      'OpenAI',
+      'Google',
+      'DeepSeek',
+      'Kimi',
+      'Qwen',
+      'Grok',
+      'Llama',
+      'Mistral',
+    ];
+    const notes = [
+      appendCommitCoAuthorNote(undefined, undefined),
+      appendCommitCoAuthorNote(undefined, undefined, NEUTRAL_IDENTITY),
+    ];
+    for (const note of notes) {
+      for (const token of [...RETIRED_DENYLIST, ...ALSO_ABSENT]) {
+        expect(note.toLowerCase()).not.toContain(token.toLowerCase());
+      }
+      // …and the sentence that carried them is gone in substance, not merely re-spelled.
+      expect(note).not.toContain('NEVER attribute the co-author to the underlying model');
+    }
+  });
+
+  // EXT-83 — this is the ONE note whose subject is how to write a commit message, so quoting its
+  // own examples in backticks would demonstrate the exact style the rule exists to stop. Asserted
+  // on the note ALONE (with a base prompt the return value includes sibling notes that legitimately
+  // use backticks).
+  it('contains no backtick character at all', () => {
+    const notes = [
+      appendCommitCoAuthorNote(undefined, undefined),
+      appendCommitCoAuthorNote(undefined, undefined, NEUTRAL_IDENTITY),
+      appendCommitCoAuthorNote(undefined, { name: 'Acme Bot', email: 'bot@acme.test' }),
+    ];
+    for (const note of notes) expect(note).not.toContain('`');
+  });
+
+  // EXT-83 — a prohibition the model can only obey by rote is one it drops under pressure; the
+  // note must carry the MECHANISM (the shell expands the construct BEFORE git runs). Naming a
+  // construct without its mechanism has been measured on this project not to work.
+  it('states the shell-expansion mechanism and both message rules, not merely a prohibition', () => {
+    const note = appendCommitCoAuthorNote(undefined, undefined);
+    // Rule 1 — plain English.
+    expect(note).toContain('plain English');
+    // The mechanism itself: expansion, of the named constructs, before git runs.
+    expect(note).toContain(
+      'expands backtick and dollar-parenthesis constructs before git ever runs'
+    );
+    // Rule 2 — by file, not inline. Unconditional, not advisory.
+    expect(note).toContain('Never pass a commit message inline with the -m option');
+    expect(note).toContain('git commit -F');
+    // …and the file must be written by the tool, not by a shell redirect that reintroduces the
+    // identical hazard one layer up.
+    expect(note).toContain('write_file');
   });
 
   it('appends to a base prompt (keeps it) and returns the note alone when there is no base', () => {
