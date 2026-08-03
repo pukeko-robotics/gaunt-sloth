@@ -735,8 +735,9 @@ const DASHES_ONLY_RE = /^-+$/;
  * `-cprint(1)` — carries text of its own, and that text can be a program.
  *
  * The limit is exactly where the characters stop distinguishing: a glued value made only of letters
- * and digits (`-mbase64`, `-MJSON`) is the same shape as a flag cluster (`-fsSL`) and passes here.
- * {@link interpreterRunsStdin} records what that costs.
+ * and digits (`-mbase64`) is the same shape as a flag cluster (`-fsSL`) and passes here.
+ * {@link interpreterRunsStdin} records what that costs — and note the cost is not uniform, since
+ * `-MJSON` has that same shape while the reading it produces is correct.
  */
 function isCleanFlag(token: string): boolean {
   return (
@@ -774,11 +775,13 @@ function isCleanFlag(token: string): boolean {
  *   of its own, so it reads as a possible program and a shell that really does run its standard
  *   input gets the hedged sentence. This one UNDER-claims, which is the tolerable side: the note
  *   still names every host and still says the fetched bytes may be what executes.
- * - **A glued value made only of letters and digits** (`python3 -mbase64`, `perl -MJSON`) is the
- *   same characters as a flag cluster, so it reads as a clean flag and the strong sentence fires on
- *   a line that only ENCODES the fetched bytes. This one OVER-claims, which is the failure this
- *   note path exists to remove — it is narrowed here to the shapes characters cannot separate, not
- *   eliminated.
+ * - **A glued value made only of letters and digits** (`python3 -mbase64`) is the same characters
+ *   as a flag cluster, so it reads as a clean flag and the strong sentence fires on a line that only
+ *   ENCODES the fetched bytes. This one OVER-claims, which is the failure this note path exists to
+ *   remove — it is narrowed here to the shapes characters cannot separate, not eliminated.
+ *   Note the shape does not decide the direction: `perl -MJSON` is the identical shape and the
+ *   strong sentence is TRUE there, because `-M` only loads a module and leaves standard input as
+ *   the program. Both are pinned, the second as correct behaviour rather than as a gap.
  *
  * Neither is closable from shape. Both need to know which flags take a value, which is the table
  * this function refuses: a wrong entry there would state a false mechanism on EVERY line using that
