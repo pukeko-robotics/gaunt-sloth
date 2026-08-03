@@ -659,10 +659,11 @@ export function findOpenWorldHostLiterals(command: string): string[] {
  *    named — the at-sign convention only for a program that has it, a substitution only where the
  *    program SENDS that operand, execution of fetched bytes only where **no token on the
  *    interpreter's own argv could be a program**. That last one is read from ARGV SHAPE alone,
- *    without knowing what any flag letter means, so it hedges wherever a token *might* carry a
- *    program and errs towards saying less ({@link interpreterRunsStdin} states which direction and
- *    why). Anything else falls through to the flowless sentence. The module docblock says why this
- *    is not the same trade-off as over-matching a host.
+ *    without knowing what any flag letter means, so it hedges wherever a token has text of its own
+ *    that could be a program — and where two shapes are indistinguishable by their characters it
+ *    can be wrong in EITHER direction, which {@link interpreterRunsStdin} names case by case rather
+ *    than claiming a property this code does not have. Anything else falls through to the flowless
+ *    sentence. The module docblock says why this is not the same trade-off as over-matching a host.
  * 2. **It names every host of the part it describes**, and any host the rest of the line names is
  *    added rather than dropped. Naming a flow must never cost the note a counterparty, or adding a
  *    pipe would once again remove information from the model — the very asymmetry this path exists
@@ -732,6 +733,10 @@ const DASHES_ONLY_RE = /^-+$/;
  * any program does with them: nothing but dashes, a short-flag cluster, or a long flag with nothing
  * attached. Every other `-`-leading token — `-mjson.tool`, `-pes/a/b/`, `--eval=console.log(1)`,
  * `-cprint(1)` — carries text of its own, and that text can be a program.
+ *
+ * The limit is exactly where the characters stop distinguishing: a glued value made only of letters
+ * and digits (`-mbase64`, `-MJSON`) is the same shape as a flag cluster (`-fsSL`) and passes here.
+ * {@link interpreterRunsStdin} records what that costs.
  */
 function isCleanFlag(token: string): boolean {
   return (
@@ -762,13 +767,23 @@ function isCleanFlag(token: string): boolean {
  *   WINS over the token test, which would otherwise read the script's own arguments (`sh -s foo`)
  *   as a program and soften the sentence on the hostile shape.
  *
- * **The direction it errs in, and why that one.** A flag whose value is DETACHED (`bash -o pipefail`,
- * `bash --rcfile /dev/null`) reads here as a possible program, so a shell that really does run its
- * standard input gets the hedged sentence. Separating those from a genuine program needs to know
- * which flags take a value — the very table this function refuses — so the gate under-claims
- * instead: it still names every host and still says the fetched bytes may be what executes. The
- * opposite error asserts an execution that does not happen, which is the failure this note path
- * exists to remove, so the hedge is the side to fall on.
+ * **Where shape runs out — both directions, stated rather than claimed away.** Two token shapes are
+ * indistinguishable from a clean flag by their characters alone, and each costs a different error:
+ *
+ * - **A DETACHED flag value** (`bash -o pipefail`, `bash --rcfile /dev/null`) is a token with text
+ *   of its own, so it reads as a possible program and a shell that really does run its standard
+ *   input gets the hedged sentence. This one UNDER-claims, which is the tolerable side: the note
+ *   still names every host and still says the fetched bytes may be what executes.
+ * - **A glued value made only of letters and digits** (`python3 -mbase64`, `perl -MJSON`) is the
+ *   same characters as a flag cluster, so it reads as a clean flag and the strong sentence fires on
+ *   a line that only ENCODES the fetched bytes. This one OVER-claims, which is the failure this
+ *   note path exists to remove — it is narrowed here to the shapes characters cannot separate, not
+ *   eliminated.
+ *
+ * Neither is closable from shape. Both need to know which flags take a value, which is the table
+ * this function refuses: a wrong entry there would state a false mechanism on EVERY line using that
+ * flag, where shape is wrong only on the lines whose tokens are genuinely ambiguous. Both are pinned
+ * in the spec, so closing either is a decision and not a drift.
  */
 function interpreterRunsStdin(head: string, operands: readonly string[]): boolean {
   if (SHELL_INTERPRETERS.has(head)) {

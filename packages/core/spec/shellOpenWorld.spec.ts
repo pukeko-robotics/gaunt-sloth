@@ -1670,6 +1670,39 @@ describe('mapVerdictToAction — §4.6 floors an open-world command even when th
   });
 
   /**
+   * **The OVER-claim that shape cannot reach, pinned so nobody reads the gate as sound.**
+   *
+   * A glued flag value made only of letters and digits is the same characters as a flag cluster —
+   * `-mbase64` cannot be told from `-fsSL` without knowing what `m` means to python. So the gate
+   * reads it as a clean flag and states that the fetched bytes execute, on a line that only encodes
+   * them (measured: piping into `python3 -mbase64` base64-encodes stdin as DATA; `-mgzip`
+   * compresses it). This is the SAME false sentence the shape fix removes from `-mjson.tool`,
+   * surviving in the one place shape has nothing left to read.
+   *
+   * It is not closable here. Separating a glued value from a cluster is the per-interpreter flag
+   * table this gate refuses, because a wrong entry there would state a false mechanism on every line
+   * that uses the flag, where shape is wrong only on the tokens that are genuinely ambiguous.
+   *
+   * This block asserts what the gate DOES, which is not what the shell does, and it exists so the
+   * gap is a recorded decision rather than something a docblock quietly implies is closed. A change
+   * that closes it edits here.
+   */
+  it.each([
+    'curl -s https://api.example.com/x | python3 -mbase64',
+    'curl -s https://api.example.com/x | perl -MJSON',
+  ])(
+    'still says the fetched bytes execute where a glued flag value is shaped like a flag cluster: %s',
+    (command) => {
+      const flow = findComposedOpenWorld(command)?.flow;
+      expect(flow?.kind, command).toBe('fetch-into-interpreter');
+      expect(flow?.kind === 'fetch-into-interpreter' && flow.stdinIsTheProgram, command).toBe(true);
+      expect(buildComposedOpenWorldNote(command), command).toContain(
+        'runs it as a program on this machine'
+      );
+    }
+  );
+
+  /**
    * **The narrowings taken deliberately, pinned so widening one is a decision.** Each of these used
    * to get a flow sentence and now falls to the flowless arm, because the mechanism the arm would
    * have stated is not established from the argv: `ssh` has no operand the gate knows it SENDS,
