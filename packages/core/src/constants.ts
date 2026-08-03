@@ -55,10 +55,13 @@ export const MCP_TOOL_NAME_PREFIX = 'mcp';
 /**
  * GS2-35 — the canonical Git co-author identity for agent-authored commits. When Gaunt Sloth writes
  * a commit (via `run_shell_command` `git commit`) the co-author is *Gaunt Sloth itself*, NOT the
- * underlying model — attributing the commit to the model name (e.g. `Claude`, `GPT`) is factually
- * wrong. Config (`commit.coAuthor`) overrides this; single-sourced so the config default and the
- * prompt-guidance fallback ({@link import('#src/utils/systemPromptNotes.js').appendCommitCoAuthorNote})
- * can never drift.
+ * underlying model: the commit was produced by the assistant, so attributing it to the model that
+ * served the session is factually wrong. The email is what makes the trailer resolve to the real
+ * Gaunt Sloth account, so it is the half that must not move. This name is the BASE the composed
+ * trailer is built from, not the whole emitted value: the resolved active model decorates it as
+ * `Gaunt Sloth (provider:model)` (EXT-83). Config (`commit.coAuthor`) overrides
+ * this; single-sourced so the config default and the prompt-guidance fallback
+ * ({@link import('#src/utils/systemPromptNotes.js').appendCommitCoAuthorNote}) can never drift.
  */
 export const DEFAULT_COMMIT_CO_AUTHOR_NAME = 'Gaunt Sloth';
 export const DEFAULT_COMMIT_CO_AUTHOR_EMAIL = 'code@gauntsloth.app';

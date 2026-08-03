@@ -27,23 +27,34 @@
  *    (added = `added` style/green, removed = `removed` style/red); monochrome keeps the `+`/`-`
  *    prefixes so the diff still reads without colour (DL-7 graceful degradation).
  */
+import { displayWidth, sliceToWidth } from '#src/utils/displayWidth.js';
 import { collectSecretValues, redactText } from '#src/utils/redactSecrets.js';
 import { env } from '#src/utils/systemUtils.js';
 
 /** The single canonical output-preview cap (lines). No other preview length exists anywhere. */
 export const TOOL_OUTPUT_PREVIEW_LINES = 10;
 
-/** Per-line character cap for preview lines (a one-line minified bundle must not flood a row). */
+/**
+ * Per-line cap for preview lines, in terminal COLUMNS (a one-line minified bundle must not flood a
+ * row). The `CHARS` in the name is historical; every cap here is a column budget, because a
+ * character count is not a width — see `#src/utils/displayWidth.js`.
+ */
 export const TOOL_PREVIEW_LINE_MAX_CHARS = 200;
 
-/** Per-value character cap inside a params summary. */
+/** Per-value cap inside a params summary, in terminal COLUMNS. */
 export const TOOL_PARAM_VALUE_MAX_CHARS = 48;
 
-/** Whole params-summary character cap (everything inside the parentheses). */
+/** Whole params-summary cap (everything inside the parentheses), in terminal COLUMNS. */
 export const TOOL_SUMMARY_MAX_CHARS = 120;
 
 /** The overflow/truncation marker used everywhere in this module. */
 export const ELLIPSIS = '…';
+
+/**
+ * Columns {@link ELLIPSIS} itself occupies, which every truncator has to reserve out of its budget
+ * before slicing. Derived rather than written as `1` so it stays true of whatever marker is used.
+ */
+export const ELLIPSIS_WIDTH = displayWidth(ELLIPSIS);
 
 /**
  * Style tag for one rendered line. The two surfaces map these to their own colour systems
@@ -184,11 +195,21 @@ function inline(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
-/** Truncate to `max` characters with the {@link ELLIPSIS} marker. */
+/**
+ * Truncate to `max` terminal COLUMNS with the {@link ELLIPSIS} marker, reserving the marker's own
+ * width out of the budget. Slicing goes through the shared width primitive: a code-point count
+ * would read a CJK or emoji value as shorter than it renders and hand it back whole, over-running
+ * the row it is drawn on.
+ *
+ * Whether the value fits is put to the SLICE rather than to the ruler, because the slice stops at
+ * the budget: a value that over-runs is recognised from its first `max` columns, where measuring
+ * it reads all of it — and the values arriving here are whole tool-output lines, which
+ * {@link TOOL_PREVIEW_LINE_MAX_CHARS} exists precisely because they can be a megabyte long.
+ */
 function truncate(value: string, max: number): string {
-  const chars = [...value];
-  if (chars.length <= max) return value;
-  return chars.slice(0, Math.max(0, max - 1)).join('') + ELLIPSIS;
+  const fitted = sliceToWidth(value, max);
+  if (fitted === value) return value;
+  return sliceToWidth(value, max - ELLIPSIS_WIDTH) + ELLIPSIS;
 }
 
 /**

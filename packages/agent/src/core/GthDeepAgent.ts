@@ -295,10 +295,20 @@ export class GthDeepAgent extends GthAbstractAgent {
     // POSIX). This is ORTHOGONAL to the path-namespace notes above (those say WHERE it is; this
     // says WHAT shell it speaks) and applies in BOTH code-mode branches, independent of
     // virtualMode — the shell dialect matters on every platform. Non-code paths get nothing new.
+    // GS2-34/EXT-83: resolve the active model identity ONCE, honouring the `injectModelContext`
+    // opt-out (default ON) at this single read site. Both consumers below take this same value, so
+    // the commit trailer and the model-context note can never disagree about which model is serving
+    // the session — and the opt-out means "my model identity stays out of the prompt", which covers
+    // the trailer as much as the identity line. Mirrors the lean backend seam.
+    const modelIdentity =
+      this.config?.injectModelContext !== false ? resolveModelIdentity(this.config) : undefined;
+
     // GS2-35: append the commit co-authoring rule (config `commit.coAuthor`, defaulting to the Gaunt
-    // Sloth account) so agent-authored commits credit Gaunt Sloth in the `Co-Authored-By` trailer and
-    // never the underlying model name. Mirrors the lean backend seam so both compose the same shared
-    // note (GS2-27 parity); same code-mode gate as the shell/cwd notes and independent of virtualMode.
+    // Sloth account) so agent-authored commits credit Gaunt Sloth in the `Co-Authored-By` trailer,
+    // and the EXT-83 commit-message rules (plain English, and passed by file — never inline, where
+    // the shell would expand the message before git runs). Mirrors the lean backend seam so both
+    // compose the same shared note (GS2-27 parity); same code-mode gate as the shell/cwd notes and
+    // independent of virtualMode.
     const codeNotesPrompt =
       this.command === 'code'
         ? appendCommitCoAuthorNote(
@@ -307,22 +317,21 @@ export class GthDeepAgent extends GthAbstractAgent {
                 ? appendVirtualCwdNote(params.systemPrompt)
                 : appendCwdNote(params.systemPrompt, getCurrentWorkDir())
             ),
-            this.config?.commit?.coAuthor
+            this.config?.commit?.coAuthor,
+            modelIdentity
           )
         : params.systemPrompt;
 
     // GS2-34: inject the resolved provider:model identity (mirrors the lean GthLangChainAgent seam so
     // both backends compose the same shared note — GS2-27 parity). Composed OUTSIDE the code-mode
     // gate above: "which model are you?" can be asked in ANY mode (chat/ask/code/exec), so the
-    // identity is visible everywhere, unlike the code-only cwd/os-shell/commit notes. Config opt-out
-    // via `injectModelContext: false` (default ON, defaulted here at the read site); when off — or
-    // when no model resolves — nothing is appended and the prompt is exactly as before. Lives in
-    // init() like the cwd note (not buildDeepAgentParams), so the deepagents-acp transport is
-    // unaffected, consistent with every other init()-composed note. GS2-6 capability note deferred.
-    const modelContextPrompt =
-      this.config?.injectModelContext !== false
-        ? appendModelContextNote(codeNotesPrompt, resolveModelIdentity(this.config))
-        : codeNotesPrompt;
+    // identity is visible everywhere, unlike the code-only cwd/os-shell/commit notes. The
+    // `injectModelContext` opt-out is applied at the single read site above; when it is off — or
+    // when no model resolves — `modelIdentity` is undefined, nothing is appended, and the prompt is
+    // exactly as before. Lives in init() like the cwd note (not buildDeepAgentParams), so the
+    // deepagents-acp transport is unaffected, consistent with every other init()-composed note.
+    // GS2-6 capability note deferred.
+    const modelContextPrompt = appendModelContextNote(codeNotesPrompt, modelIdentity);
 
     // EXT-32: inject the connected MCP servers' discovery `instructions` (captured by the resolver
     // during buildDeepAgentParams' resolveTools call, above) into the prompt — fenced + per-server-

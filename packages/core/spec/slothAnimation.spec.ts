@@ -1,3 +1,4 @@
+import stringWidth from 'string-width';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -36,10 +37,12 @@ describe('sloth animation frames', () => {
 
     it('no face is wider than the face field', () => {
       // 16 columns: RIGHT_COLUMN (22) minus the left margin (1) minus the 5-column gutter.
+      // Measured in COLUMNS, because that is what the field is: art drawn with a two-column glyph
+      // reads as narrow on a code-point count and would be admitted here while over-running there.
       const faceField = RIGHT_COLUMN - LEFT_PAD - 5;
       for (const face of allFaces()) {
         for (const line of face) {
-          expect([...line].length).toBeLessThanOrEqual(faceField);
+          expect(stringWidth(line)).toBeLessThanOrEqual(faceField);
         }
       }
     });
@@ -51,7 +54,7 @@ describe('sloth animation frames', () => {
         expect(rows).toHaveLength(7); // blank + five art rows + blank
         expect(rows.map((row) => row.right)).toEqual(restingRight);
         for (const row of rows) {
-          if (row.right) expect([...row.face].length).toBe(RIGHT_COLUMN);
+          if (row.right) expect(stringWidth(row.face)).toBe(RIGHT_COLUMN);
         }
       }
     });
