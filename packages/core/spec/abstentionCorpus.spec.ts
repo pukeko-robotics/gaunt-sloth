@@ -1,33 +1,29 @@
 /**
- * EXT-65 — **the measurement: how often does the gate interrupt a human over ordinary work?**
+ * EXT-81 — **the measurement: what does the gate now do with ordinary work it cannot parse?**
  *
- * A rater suite grades one round and structurally cannot see a retry, so it cannot answer this
- * question. What can is a corpus of legitimate developer commands driven through the real
- * {@link GthAgentRunner} at `full-auto`, counting how many reach the human approval callback.
+ * A rater suite grades one command in isolation and structurally cannot see a session, so it cannot
+ * answer this. What can is a corpus of legitimate developer commands driven through the real
+ * {@link GthAgentRunner} at `full-auto`, counting what reaches the human and what reaches the model.
  *
  * **The corpus is below, in the file, on purpose.** A number without its method is not a
  * measurement, and a corpus that lives in a report cannot be re-run by the next person.
  *
  * ## What this measures, and what it cannot
  *
- * The BEFORE arm is not a second checkout: it is computed from
- * {@link import('#src/core/shell/rater.js').abstentionReason}, which is exactly the predicate the
- * pre-EXT-65 runner branched on to escalate. A command that abstains escalated; one that resolves
- * was rated. That equivalence is asserted here rather than assumed, so the arm cannot silently
- * become a tautology.
+ * Every arm is measured for real, by running the corpus through the runner. There is no computed
+ * "before" arm: the behaviour this node replaced is gone from the tree, and a before-number derived
+ * by re-implementing the retired rule here would be an arithmetic identity that agreed with itself
+ * whatever the gate did.
  *
- * The AFTER arm is measured for real, by running the corpus through the runner.
- *
- * **The boundary, stated rather than papered over:** this harness has no model, so it cannot
- * measure whether a rewrite SUCCEEDS. It measures the human-prompt rate on the first call — which
- * is the number this node moves — and the second-consecutive rule's behaviour on a fixed sequence.
- * Whether the human is ever reached in a real session additionally depends on the model producing a
- * resolvable rewrite, which only a live run can answer.
+ * **The boundary, stated rather than papered over:** the rater is a stub, so this says nothing
+ * about whether a real model rates these commands correctly. That is [[QA-17]]'s question and
+ * [[BATCH-25]]'s sweep. What is measured here is the SHAPE of the gate around whatever the rater
+ * says — who is asked, who is told, and how many model calls it costs.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { HumanMessage } from '@langchain/core/messages';
 import type { GthConfig } from '#src/config.js';
-import { abstentionReason } from '#src/core/shell/rater.js';
+import { describeAbstention } from '#src/core/shell/abstention.js';
 import { classifyCommand } from '#src/core/shell/arity.js';
 import { normalizeCommand } from '#src/core/shell/normalize.js';
 
@@ -92,17 +88,19 @@ const LEGITIMATE_WORK_CORPUS = [
 ] as const;
 
 const SAFE_VERDICT = { outcome: 'safe', reason: 'read-only' };
+const DESTRUCTIVE_VERDICT = { outcome: 'destructive', reason: 'writes to the working tree' };
 
-function raterConfig(mode: string) {
-  const invoke = vi.fn().mockResolvedValue(SAFE_VERDICT);
+function raterConfig(mode: string, verdict: unknown) {
+  const invoke = vi.fn().mockResolvedValue(verdict);
   const withStructuredOutput = vi.fn().mockReturnValue({ invoke });
   return {
-    ...({
+    config: {
       llm: { withStructuredOutput },
       streamOutput: true,
       approvals: { mode },
       commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
-    } as unknown as GthConfig),
+    } as unknown as GthConfig,
+    invoke,
   };
 }
 
@@ -114,8 +112,11 @@ function streamOf(...chunks: string[]) {
   };
 }
 
-/** Drive `commands` through one runner session and report how many reached the human. */
-async function humanPromptsFor(commands: readonly string[]): Promise<number> {
+/** What one runner session did with `commands`: who was asked, who was told, what it cost. */
+async function measure(
+  commands: readonly string[],
+  verdict: unknown = SAFE_VERDICT
+): Promise<{ humanPrompts: number; rejections: number; ratingCalls: number }> {
   const { GthAgentRunner } = await import('#src/core/GthAgentRunner.js');
   const runner = new GthAgentRunner(vi.fn());
 
@@ -124,18 +125,36 @@ async function humanPromptsFor(commands: readonly string[]): Promise<number> {
     pending = pending.mockResolvedValueOnce([{ name: 'run_shell_command', args: { command } }]);
   }
   pending.mockResolvedValue([]);
-  mockAgent.streamResume.mockReset().mockResolvedValue(streamOf(''));
+  const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+  mockAgent.streamResume.mockReset().mockImplementation(streamResume);
   mockAgent.stream.mockReset().mockResolvedValue(streamOf('x'));
   mockAgent.getRegisteredToolNames.mockReturnValue([]);
 
-  await runner.init('code', raterConfig('full-auto'));
+  const { config, invoke } = raterConfig('full-auto', verdict);
+  await runner.init('code', config);
   const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
   runner.setToolApprovalCallback(human);
   await runner.processMessages([new HumanMessage('go')]);
-  return human.mock.calls.length;
+
+  const rejections = streamResume.mock.calls.filter(
+    (call) => call[0].decisions[0].type === 'reject'
+  ).length;
+  return {
+    humanPrompts: human.mock.calls.length,
+    rejections,
+    ratingCalls: invoke.mock.calls.length,
+  };
 }
 
-describe('EXT-65 measurement — human-prompt rate over a legitimate-work corpus', () => {
+/** The corpus's own split, so every number below is read against a corpus that has both shapes. */
+const unresolvable = LEGITIMATE_WORK_CORPUS.filter(
+  (command) => classifyCommand(command, normalizeCommand) === null
+);
+const resolvable = LEGITIMATE_WORK_CORPUS.filter(
+  (command) => classifyCommand(command, normalizeCommand) !== null
+);
+
+describe('EXT-81 measurement — what the gate does with legitimate work it cannot parse', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockAgent.init.mockResolvedValue(undefined);
@@ -143,75 +162,88 @@ describe('EXT-65 measurement — human-prompt rate over a legitimate-work corpus
   });
 
   /**
-   * The BEFORE arm's own validity check. `abstentionReason` is the predicate the pre-EXT-65 runner
-   * branched on, and it is `classifyCommand` returning null — so a command abstains exactly when it
-   * does not statically resolve. Asserting the equivalence keeps the before-count from drifting
-   * into an arithmetic identity that would agree with itself no matter what the gate did.
+   * The corpus is worth measuring only if it contains the shape under test: one made entirely of
+   * resolvable commands would report flattering zeroes and mean nothing. Pinned as counts so
+   * shrinking the composed half is a red test rather than a quietly better number.
    */
-  it('the BEFORE arm is the same predicate the old runner escalated on', () => {
-    for (const command of LEGITIMATE_WORK_CORPUS) {
-      const abstains = abstentionReason(command) !== null;
-      expect(classifyCommand(command, normalizeCommand) === null, command).toBe(abstains);
-    }
-  });
-
-  /**
-   * **The headline number.** Each command measured as a FIRST call — one session per command —
-   * because that is the situation this node is about: a model emits an ordinary composed command
-   * and the gate has to decide who hears about it.
-   *
-   * BEFORE: every abstaining command escalated, so the count is the number that abstain.
-   * AFTER: measured by running each one through the real runner.
-   */
-  it('measures the first-call human-prompt rate, before vs after', async () => {
-    const before = LEGITIMATE_WORK_CORPUS.filter((c) => abstentionReason(c) !== null).length;
-
-    let after = 0;
-    for (const command of LEGITIMATE_WORK_CORPUS) {
-      after += await humanPromptsFor([command]);
-    }
-
-    // The corpus is worth measuring only if it actually contains the shape under test: a corpus of
-    // entirely resolvable commands would report a flattering 0 → 0 and mean nothing.
-    expect(before).toBeGreaterThan(0);
-    expect(before).toBe(11);
+  it('contains both shapes, and the note is attached to exactly the unresolvable half', () => {
     expect(LEGITIMATE_WORK_CORPUS).toHaveLength(19);
-
-    // 11 of 19 legitimate commands interrupted a human before this node; none does on a first call.
-    expect(after).toBe(0);
+    expect(unresolvable).toHaveLength(11);
+    expect(resolvable).toHaveLength(8);
+    for (const command of unresolvable) {
+      expect(describeAbstention(command), command).not.toBeNull();
+    }
+    for (const command of resolvable) {
+      expect(describeAbstention(command), command).toBeNull();
+    }
   });
 
   /**
-   * **The sequence arm**, which the per-command arm cannot see: the consecutive rule means the
-   * answer depends on ORDER. Run as one session in corpus order, the leading run of composed
-   * commands spends its one retry and then escalates on every subsequent consecutive abstention
-   * until a resolvable command resets the run.
-   *
-   * This is the honest counterweight to the headline: the retry does not make the human-prompt rate
-   * zero in a session that abstains repeatedly with nothing in between. Whether a real session looks
-   * like that depends on the model producing a resolvable rewrite after the first report — which
-   * this harness, having no model, cannot measure.
+   * **THE HEADLINE.** Every command in the corpus is rated and approved: nobody is interrupted, and
+   * nothing is handed back to the model to rewrite. Before this node the 11 composed commands could
+   * not reach a rater at all — the first was refused to the agent and the rest escalated.
    */
-  it('measures the whole corpus as one ordered session', async () => {
-    const prompts = await humanPromptsFor(LEGITIMATE_WORK_CORPUS);
-    // 11 consecutive abstentions at the head of the corpus: the first is refused to the model, the
-    // other 10 escalate. The 8 resolvable commands that follow are rated and approved.
-    expect(prompts).toBe(10);
+  it('interrupts nobody and rejects nothing, on a rater that finds the work safe', async () => {
+    const { humanPrompts, rejections } = await measure(LEGITIMATE_WORK_CORPUS);
+    expect(humanPrompts).toBe(0);
+    expect(rejections).toBe(0);
   });
 
   /**
-   * ...and the same corpus interleaved — one composed command, one resolvable — which is what a
-   * session looks like when the model responds to a defect report at all. Every abstention is then
-   * a FIRST abstention, and nobody is interrupted.
+   * **The COST REVERSAL, as a number.** The rating that was skipped for an unresolvable command is
+   * now bought for every one of them: 19 commands, 19 calls. That is the price of the line above
+   * and it is stated rather than left to be discovered on a bill.
    */
-  it('measures an interleaved session, where every abstention is a first one', async () => {
-    const composed = LEGITIMATE_WORK_CORPUS.filter((c) => abstentionReason(c) !== null);
-    const resolvable = LEGITIMATE_WORK_CORPUS.filter((c) => abstentionReason(c) === null);
+  it('costs one rating call per command, including the ones the parser could not read', async () => {
+    const { ratingCalls } = await measure(LEGITIMATE_WORK_CORPUS);
+    expect(ratingCalls).toBe(LEGITIMATE_WORK_CORPUS.length);
+  });
+
+  /**
+   * **THE CONTROL, and without it the zero above means nothing.** A gate that had simply stopped
+   * asking would also report zero prompts. Rate the identical corpus `destructive` and every
+   * command reaches the human — so the zero is the rater's verdict, not the gate's silence.
+   */
+  it('CONTROL: the same corpus on a `destructive` rater interrupts on every command', async () => {
+    const { humanPrompts, rejections } = await measure(LEGITIMATE_WORK_CORPUS, DESTRUCTIVE_VERDICT);
+    expect(humanPrompts).toBe(LEGITIMATE_WORK_CORPUS.length);
+    expect(rejections).toBe(0);
+  });
+
+  /**
+   * **ORDER NO LONGER MATTERS, and that is a result rather than a tidying.** The retired design
+   * spent a one-shot retry budget per consecutive run, so the same 19 commands produced a different
+   * number of interruptions depending on the order they arrived in — 0 interleaved, 10 in corpus
+   * order. A user cannot control that ordering and could not predict the difference. Three
+   * orderings, one number.
+   */
+  it('reports the same number whatever order the session runs in', async () => {
     const interleaved: string[] = [];
-    for (let i = 0; i < composed.length; i++) {
-      interleaved.push(composed[i], resolvable[i % resolvable.length]);
+    for (let i = 0; i < unresolvable.length; i++) {
+      interleaved.push(unresolvable[i], resolvable[i % resolvable.length]);
     }
 
-    expect(await humanPromptsFor(interleaved)).toBe(0);
+    for (const ordering of [
+      LEGITIMATE_WORK_CORPUS,
+      [...unresolvable, ...resolvable],
+      interleaved,
+    ]) {
+      const { humanPrompts, rejections } = await measure(ordering);
+      expect(humanPrompts, ordering.join(' | ')).toBe(0);
+      expect(rejections, ordering.join(' | ')).toBe(0);
+    }
+  });
+
+  /**
+   * The composed half on its own, which is where the retired design was at its worst: an unbroken
+   * run of composed commands spent its retry on the first and interrupted a human on every one
+   * after it. It now interrupts nobody, and that is measured on the run rather than inferred from
+   * the whole-corpus number, where the resolvable commands would have masked it.
+   */
+  it('runs an unbroken sequence of composed commands with no interruption at all', async () => {
+    const { humanPrompts, rejections, ratingCalls } = await measure(unresolvable);
+    expect(humanPrompts).toBe(0);
+    expect(rejections).toBe(0);
+    expect(ratingCalls).toBe(unresolvable.length);
   });
 });

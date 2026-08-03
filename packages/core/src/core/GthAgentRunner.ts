@@ -55,7 +55,6 @@ import {
   NonInteractiveEscalationError,
 } from '#src/core/shell/approvalStop.js';
 import {
-  abstentionReason,
   applyDestructiveFloor,
   isRaterTimeout,
   mapAllowMatchedVerdictToAction,
@@ -65,7 +64,6 @@ import {
   rateShellCommand,
   type ShellSafetyVerdict,
 } from '#src/core/shell/rater.js';
-import { ABSTENTION_RETRY_LIMIT, buildAbstentionRejection } from '#src/core/shell/abstention.js';
 import {
   type ApprovalRuleDecision,
   type ApprovalRuleLists,
@@ -183,27 +181,6 @@ export class GthAgentRunner {
   private raterTimeouts = 0;
 
   /**
-   * EXT-65 — **how many times this session the gate could not read a command**, over the whole
-   * session. Reported by {@link getAbstentionCount} and surfaced on the `/approvals` display.
-   *
-   * The near-miss is the most valuable signal the gate produces and it was previously invisible: an
-   * abstention no longer interrupts anybody at the rated rungs, so without a count the only
-   * evidence that the gate is failing to parse a session's ordinary work is a vague sense that the
-   * agent is doing things twice. Monotonic — never reset — which is also what lets
-   * {@link decideToolApproval} tell "this decision abstained" from "it did not".
-   */
-  private abstentions = 0;
-
-  /**
-   * EXT-65 — abstentions in an unbroken run, which is what the retry budget is spent from.
-   *
-   * **Consecutive, and reset by any non-abstain decision** ({@link decideToolApproval}). A
-   * per-session budget would mean the second legitimate composed command in a long session
-   * escalates to a human, inverting the goal this path exists to serve.
-   */
-  private consecutiveAbstentions = 0;
-
-  /**
    * EXT-71 §3.1/§6 — what the escalation menu granted at run time, for the life of THIS runner
    * instance: {@link ApprovalEntry} objects, never prefixes, and never anything from config (the
    * declared lists are read-only input consulted straight from the posture). Instance-scoped so
@@ -266,21 +243,6 @@ export class GthAgentRunner {
   /** CFG-27 — the session's current approvals posture (rung + rater profile + declared lists). */
   public getSessionApprovals(): ResolvedApprovals {
     return this.sessionApprovals;
-  }
-
-  /**
-   * EXT-65 — how many commands this session the gate could not statically resolve.
-   *
-   * The aggregate, not the consecutive run: the consecutive count is a budget the retry spends and
-   * is meaningless a moment after it is read, whereas the total answers the question a user
-   * actually has — *"is this gate able to read the work I do?"* A session with a high count is one
-   * where the agent is being sent back to rewrite ordinary commands, which is worth seeing even
-   * though (and precisely because) it no longer interrupts anyone.
-   *
-   * READ-ONLY, like every other `/approvals` accessor: it counts, it never decides.
-   */
-  public getAbstentionCount(): number {
-    return this.abstentions;
   }
 
   /**
@@ -802,11 +764,11 @@ export class GthAgentRunner {
    * 5. **auto-rater** (`auto-safe` / `full-auto` only) — `safe` approves, `destructive` and
    *    `catastrophic` escalate, and `attack` HALTS the run ({@link AttackHaltError}). The other
    *    three rungs consult no model at all. A command whose target the gate cannot statically
-   *    resolve ({@link abstentionReason}) is **not rated at all**: the gate has already decided no
-   *    reading of its meaning is actionable ([[EXT-64]]). [[EXT-65]] then sends that finding to the
-   *    party who can act on it — the FIRST such command is refused straight back to the model as a
-   *    mechanical defect report ({@link buildAbstentionRejection}), and only a **second
-   *    consecutive** one escalates to the human. At those same two rungs a **tool**
+   *    resolve is rated **exactly like any other** ([[EXT-81]]), with a neutral note in the rating
+   *    prompt naming the shape the parser saw. It used to skip the call and be refused straight
+   *    back to the model instead; §6.1's rule is that a deterministic layer fires only where it is
+   *    confident something is a threat, and a parser reporting it could not read a string has
+   *    detected nothing. At those same two rungs a **tool**
    *    call is instead floored deterministically by §4.7.3's open-world rule
    *    ({@link openWorldToolFloorReason} into {@link applyDestructiveFloor} — the one floor the
    *    shell path also reaches): a call whose effective `openWorldHint` is true is `destructive`,
@@ -826,43 +788,6 @@ export class GthAgentRunner {
    * cannot run.
    */
   private async decideToolApproval(tool: PendingToolInterrupt): Promise<ToolApprovalDecision> {
-    // EXT-65 — the consecutive-abstention run is maintained HERE, around the whole decision,
-    // rather than at each of the decision's several exits. The rule is one sentence — *any
-    // non-abstain decision resets it* — and stating it once is what keeps a later exit added to
-    // the body below from silently becoming an exception to it.
-    //
-    // `abstentions` is monotonic and incremented in exactly one place (the abstain branch), so an
-    // unchanged total is precisely "this decision was not an abstention".
-    //
-    // In a `finally` because the two throwing exits — an attack halt and a non-interactive
-    // escalation — end the RUN but not the runner: nothing in core catches either, and a
-    // long-lived TUI runner takes another turn afterwards. Without the `finally` a halted turn
-    // would leave a stale run behind, and the next composed command would escalate to a human on a
-    // retry budget it never spent.
-    const abstentionsBefore = this.abstentions;
-    try {
-      return await this.decideToolApprovalInner(tool);
-    } finally {
-      if (this.abstentions === abstentionsBefore) this.consecutiveAbstentions = 0;
-    }
-  }
-
-  /**
-   * EXT-65 — **the decision point the retry turns on**, named and alone so it is the only thing a
-   * later change has to move.
-   *
-   * A deployment on a small local model may want the escalation immediately rather than a rewrite
-   * it is unlikely to produce, which is its own node ([[EXT-79]]) because `approvals` config is
-   * frozen for GA and this is not in EXT-65's acceptance list. When that lands it becomes one more
-   * conjunct here, and the escalation path below stays exactly as it is — first-class, not a
-   * fallback bolted on afterwards.
-   */
-  private shouldRetryAbstention(consecutive: number): boolean {
-    return consecutive <= ABSTENTION_RETRY_LIMIT;
-  }
-
-  /** {@link decideToolApproval}'s body. Called only from there, which maintains the counter. */
-  private async decideToolApprovalInner(tool: PendingToolInterrupt): Promise<ToolApprovalDecision> {
     const command = typeof tool.args?.command === 'string' ? (tool.args.command as string) : null;
     const isShellCommand = tool.name === SHELL_TOOL_NAME && command !== null;
     const approvals = this.sessionApprovals;
@@ -971,98 +896,33 @@ export class GthAgentRunner {
       // any future divergence in that function sends the call to the FLOOR (fail-closed) rather
       // than silently past it. It is also what carries the command as a non-null string.
       if (subject.kind === 'shell') {
-        // EXT-64 — **the abstention runs BEFORE the rating call, and skipping the call is the
-        // point.** When the gate cannot resolve the command's target it has already decided that no
-        // reading of that command's meaning is actionable; buying one anyway is a paid opinion the
-        // gate discards a line later. The check is deterministic and free, so it costs nothing to
-        // ask first.
+        // The auto-rater. `safe` is approved (the fatigue reducer), `destructive` and
+        // `catastrophic` fall through to the human with the verdict attached, and `attack` ends the
+        // run outright. §4.6's deterministic preflights are applied inside `mapVerdictToAction`,
+        // ahead of the `safe` check.
         //
-        // The consequence, stated because it is a real narrowing and not an oversight: `attack` and
-        // `catastrophic` are unreachable on this path, since nobody rates. The §8 hardline floor
-        // still refuses the deterministic members of that class at exec time under every rung.
-        const abstention = abstentionReason(subject.command);
-        if (abstention !== null) {
-          this.abstentions += 1;
-          this.consecutiveAbstentions += 1;
-
-          // EXT-65 — **the addressee changes.** An abstention is the gate reporting its own limit,
-          // and the only party who can act on that is the AGENT: the defect is in the command's
-          // FORM, so it is closer to a compile error than to a permission denial, and it is the one
-          // finding an agent can comply with rather than argue about. It goes back through the same
-          // `{ type: 'reject' }` channel a deny match uses, carrying the mechanism, the offending
-          // command fenced as inert data, and a remedy that fits its shape.
-          //
-          // **The retry is a NEW tool call and nothing here carries forward as trust.** No grant is
-          // recorded, no verdict is cached, the rung is untouched and no preflight is skipped: a
-          // rewrite arrives as a first-class call and pays the full ladder. That is what makes the
-          // intended win sound — a rewrite that resolves clean runs at `full-auto` without the
-          // human seeing either version — rather than a rejection buying the model a second look at
-          // the same command.
-          //
-          // **This does NOT re-open the rating.** `attack` and `catastrophic` stay unreachable for
-          // an unresolvable command, exactly as [[EXT-64]] left them; a rewrite is rated because it
-          // is a DIFFERENT, resolvable command. The §8 hardline floor still refuses the
-          // deterministic members of that class at exec time under every rung.
-          if (this.shouldRetryAbstention(this.consecutiveAbstentions)) {
-            return {
-              type: 'reject',
-              message: buildAbstentionRejection(subject.command, tool.name, abstention, {
-                grantedTools: this.getGrantedBuiltInTools(),
-              }),
-            };
-          }
-
-          // The budget is spent — a second consecutive abstention means the agent is grinding
-          // against a deterministic wall, so the human is asked exactly as they were before this
-          // node.
-          //
-          // **The DISPLAY path.** The decision carries no verdict — nobody rated — but the approval
-          // prompt renders a `⚠ Auto-rater (…)` row from one, so the runner builds the human-facing
-          // verdict here, through the SAME `applyDestructiveFloor` every other floor reaches.
-          //
-          // **What the human sees, stated exactly, because "nothing changes" would be false.** The
-          // prompt is byte-identical to the one the retired arm produced for a command the rater
-          // called `safe` — which, now that nobody rates, is the only prompt this path can produce.
-          // It is NOT identical to what a rater's own non-`safe` verdict used to put here: the
-          // preflight raised only `safe`, so a `destructive` or `catastrophic` verdict on an
-          // unresolvable command used to reach the human carrying its own sentence, its own badge
-          // and any §4.4 suggestion, and an `attack` one ended the run. None of that is reachable
-          // once the call is skipped. That is the cost of not buying an opinion the gate has
-          // declared unreadable, and it is the trade the acceptance list makes deliberately — the
-          // §8 hardline floor still refuses the deterministic members of that class at exec time
-          // under every rung.
-          safetyVerdict = applyDestructiveFloor(undefined, abstention);
-        } else {
-          // The auto-rater. `safe` is approved (the fatigue reducer), `destructive` and
-          // `catastrophic` fall through to the human with the verdict attached, and `attack` ends
-          // the run outright. §4.6's deterministic preflights are applied inside
-          // `mapVerdictToAction`, ahead of the `safe` check.
-          const verdict = await this.rateCommand(subject.command, { allowMatched: false });
-          const decision = mapVerdictToAction(subject.command, verdict, { rung: approvals.rung });
-          if (decision.action === 'approve') {
-            // Scope `once`: rater approvals are NEVER persisted to the allow-list.
-            return { type: 'approve', scope: 'once' };
-          }
-          if (decision.action === 'halt') {
-            // §4.2 — not a rejection the model can respond to. It ends the agent loop.
-            throw new AttackHaltError(subject.command, decision.verdict?.reason ?? '');
-          }
-          // Escalate: carry the verdict (the honest one — see mapVerdictToAction) to the human.
-          //
-          // `abstain` cannot arrive here, and the reason is worth writing down rather than
-          // trusting: this branch is the `else` of `abstentionReason(subject.command) !== null`,
-          // and `mapVerdictToAction` decides `abstain` by calling that same function on that same
-          // string. The two cannot disagree. If they ever did — a second caller, a signature that
-          // grew an option — the fallthrough would set `undefined` and prompt a human with no
-          // verdict row at all, which is why it is asserted rather than assumed.
-          if (decision.action === 'abstain') {
-            throw new Error(
-              'Internal invariant violated: the rating path produced an abstention for a command ' +
-                'the runner had already resolved. `abstentionReason` disagreed with itself.'
-            );
-          }
-          safetyVerdict = decision.verdict;
+        // **[[EXT-81]] — EVERY shell command reaches this call, including the ones the gate's own
+        // parser cannot resolve.** There used to be a branch above it that skipped the rating for a
+        // composed, substituting or redirecting command and refused the call instead. Two things
+        // followed from that skip, and both are gone with it: `attack` and `catastrophic` were
+        // UNREACHABLE for that entire class (nobody rated, so nobody could say worse than
+        // `destructive`), and the party that heard about it was the parser's, not the rater's — a
+        // component that has just announced it could not read a command is in no position to say
+        // how to rewrite it, and the rewrite it named turned `cd src && ls` into a no-op plus a
+        // listing of the wrong directory, both exit 0. The parser's finding is now a neutral note
+        // in the rating prompt (`buildRaterPrompt`) and nothing else.
+        const verdict = await this.rateCommand(subject.command, { allowMatched: false });
+        const decision = mapVerdictToAction(subject.command, verdict, { rung: approvals.rung });
+        if (decision.action === 'approve') {
+          // Scope `once`: rater approvals are NEVER persisted to the allow-list.
+          return { type: 'approve', scope: 'once' };
         }
+        if (decision.action === 'halt') {
+          // §4.2 — not a rejection the model can respond to. It ends the agent loop.
+          throw new AttackHaltError(subject.command, decision.verdict?.reason ?? '');
+        }
+        // Escalate: carry the verdict (the honest one — see mapVerdictToAction) to the human.
+        safetyVerdict = decision.verdict;
       } else {
         // EXT-70 §4.7.2/§4.7.3 — a tool call whose EFFECTIVE `openWorldHint` is true is floored at
         // `destructive`, through the SAME `applyDestructiveFloor` the shell path reaches via

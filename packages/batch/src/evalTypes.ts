@@ -54,11 +54,7 @@ export const HARDLINE_REFUSAL_MARKER = 'hardline floor: refused';
  * What DOES discriminate is **which deterministic mechanism fired**, which the target reports in the
  * rationale, and which is exactly what the corpus records. So a deterministic case asserts that.
  */
-export const FORCED_BY_MECHANISMS = [
-  'hardline-floor',
-  'ambiguity-preflight',
-  'script-env-leak-preflight',
-] as const;
+export const FORCED_BY_MECHANISMS = ['hardline-floor', 'script-env-leak-preflight'] as const;
 
 /** One of {@link FORCED_BY_MECHANISMS}. */
 export type ForcedByMechanism = (typeof FORCED_BY_MECHANISMS)[number];
@@ -73,7 +69,6 @@ export const FORCED_BY_MARKER = 'forced by';
  */
 export const FORCED_BY_ASSERTIONS: Record<ForcedByMechanism, string> = {
   'hardline-floor': HARDLINE_REFUSAL_MARKER,
-  'ambiguity-preflight': `${FORCED_BY_MARKER}: ambiguity-preflight`,
   'script-env-leak-preflight': `${FORCED_BY_MARKER}: script-env-leak-preflight`,
 };
 
@@ -104,11 +99,6 @@ export const FORCED_BY_ASSERTIONS: Record<ForcedByMechanism, string> = {
  * `approve`, which would move the action column of **5 of the corpus's 6 `fl-*` cases** off the
  * `escalate` they author. Measured over all 22 deterministic corpus cases.
  *
- * ## Why the abstention is not on this list either
- *
- * See {@link ABSTENTION_MECHANISMS}. An abstention rewrites nothing, so there is no rating for it to
- * override and a stub would buy exactly as little as it does for the floor.
- *
  * ## The property that makes this self-justifying
  *
  * When the claimed preflight really does fire, the rating does not move the action — the corpus
@@ -130,42 +120,12 @@ export const PREFLIGHT_MECHANISMS = [
 export type PreflightMechanism = (typeof PREFLIGHT_MECHANISMS)[number];
 
 /**
- * EXT-64 — which of {@link FORCED_BY_MECHANISMS} are **abstentions**: the gate reporting that it
- * could not resolve the command at all, rather than reporting something it found in the command.
- *
- * **They are a separate list because they are observed differently, and that follows from what they
- * are.** A preflight finding is a claim about the command, so it must OVERRIDE a rating to be
- * visible — hence {@link PREFLIGHT_MECHANISMS}' permissive-stub rule. An abstention is a claim about
- * the checker: nobody rated, there is no verdict, and therefore nothing was rewritten. Driving one
- * with a stub would hand the gate a rating that plays no part in the answer while moving the action
- * column, which is the same bad trade the §8 floor already declines.
- *
- * What makes an abstention observable instead is the **action** the gate returns, which no other
- * mechanism produces. The target discovers that action by probing rather than spelling it; see
- * `raterTarget.js`'s abstention calibration.
- *
- * The spelling is the corpus's own (`ambiguity-preflight`), unchanged, so transcribing a corpus case
- * stays a copy rather than a translation.
- */
-export const ABSTENTION_MECHANISMS = [
-  'ambiguity-preflight',
-] as const satisfies readonly ForcedByMechanism[];
-
-/**
- * One of {@link ABSTENTION_MECHANISMS}. Narrower than {@link ForcedByMechanism} for the same reason
- * {@link PreflightMechanism} is: the target's abstention probe table is a TOTAL record over this, so
- * adding an abstention to the list above is a **compile error** until someone writes the probe
- * command that observes it.
- */
-export type AbstentionMechanism = (typeof ABSTENTION_MECHANISMS)[number];
-
-/**
  * Must a round claiming this mechanism be driven with a permissive rating for the mechanism to be
- * observable at all? See {@link PREFLIGHT_MECHANISMS} for the whole rule, and
- * {@link ABSTENTION_MECHANISMS} for why an abstention answers **false** — there is no rating for it
- * to override, so a stub would move the action column and buy nothing. `undefined` (the round claims
- * no mechanism) is `false` too: an ordinary `model_free` case must keep going through the gate with
- * no verdict, or its action would change.
+ * observable at all? See {@link PREFLIGHT_MECHANISMS} for the whole rule. The §8 hardline floor
+ * answers **false**: it never sees a verdict, so a rating cannot change its answer and supplying one
+ * only moves the action column. `undefined` (the round claims no mechanism) is `false` too: an
+ * ordinary `model_free` case must keep going through the gate with no verdict, or its action would
+ * change.
  */
 export function mechanismNeedsPermissiveRating(mechanism: ForcedByMechanism | undefined): boolean {
   return (

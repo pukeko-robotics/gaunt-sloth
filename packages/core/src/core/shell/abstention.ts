@@ -1,56 +1,56 @@
 /**
  * @module core/shell/abstention
  *
- * EXT-65 — **what the AGENT is told when the gate abstains.**
+ * EXT-81 — **what the RATER is told about a command our parser could not resolve.**
  *
- * {@link import('#src/core/shell/rater.js').abstentionReason} establishes the *state*: the gate
- * could not statically resolve this command's target. That sentence is true, honest, and on its own
- * useless to the only party who can act on it. The measured failure mode when a model is told only
- * that is *still abstains* — it knows it must change something, not what.
+ * `classifyCommand` resolves a command's target, or returns `null` when it cannot. That `null` used
+ * to be an ACTION: the gate refused the call before any rating, on the theory that a reading of a
+ * command it could not parse was not worth buying. §6.1's rule reverses that — *deterministic checks
+ * fire only where we are confident something is a threat; where we cannot tell, the model decides* —
+ * and a parser reporting that it could not resolve a string is not a detection of anything. So the
+ * finding is now **neutral context handed to the rater**, and the flow is one path: preflight → note
+ * → rate → approve / escalate / halt.
  *
- * This module turns the state into a **mechanical defect report**: which shape in the command the
- * gate could not read, and the concrete move that fits that shape. The framing is deliberate and it
- * is the whole design — **assume the model did not go rogue; most likely it made an ordinary
- * mistake.** An abstention is the only finding an agent can *comply with* rather than argue about,
- * because the defect is in the command's FORM, not in its intent. `pwd && ls` is not a model defect:
- * it is a correct shell idiom, and the gate is the only party that cannot read it.
+ * This module turns the `null` into that note: **which shape the parser saw, and the mechanism that
+ * makes the shape worth a second look.** Two properties are the whole design, and each has a
+ * measurement behind it ([[QA-17]], `docs/test-sessions/qa-17-substitution-note-2026-08-03/`):
  *
- * Two properties this module exists to hold:
+ * - **The note carries the MECHANISM, not just the construct's name.** A bare *"the parser saw a
+ *   substitution"* observation was measured NEGATIVE on two raters — one became more confidently
+ *   wrong than with no note at all (*"not executed since it's within double quotes"*), another lost
+ *   severity against the control. Adding one sentence of mechanism — that a double-quoted argument
+ *   is not inert prose, because the shell expands it before the outer program runs — is what moved
+ *   every deployment-class rater to the correct verdict. A bare observation from a component that
+ *   has just announced it could not read the command reads as DOUBT, and doubt is not information.
+ * - **The note is ASSISTANCE, never an accusation.** *"Hey rater, here is a command, please pay
+ *   attention it includes composition."* No verdict, no severity, no *suspicious*, no *careful*, no
+ *   *treat this as at least X*, and nothing that caps the outcome — `catastrophic` and `attack` stay
+ *   reachable. A question is allowed; a question is not a lean. A composition is not a hazard:
+ *   `cd build && ls`, `npm test && npm run build` and `git add -A && git status` are the
+ *   overwhelming majority of what this fires on, and a leading note would re-create the very
+ *   escalation this design removes — laundered through the model instead of the parser, and now
+ *   unfalsifiable because a model said it.
  *
- * - **A remedy, not a reason.** Without a named move the model works *around* the gate — retrying
- *   variants, or abandoning legitimate work — instead of *through* it. Every mechanism here names
- *   the move that fits it.
- * - **The quoted command is INERT DATA.** A command the gate cannot parse is frequently one the
- *   model assembled out of text it read somewhere (an issue body, a fetched page, MCP output), so
- *   quoting it back is quoting untrusted bytes into the model's context. The fencing is
- *   `utils/untrustedText.ts`'s, applied by `core/shell/rejection.ts` at the moment of wrapping —
- *   defang first, wrap second.
+ * It also states nothing about what the gate will DO with the verdict. The open-world note's shape
+ * (*"has ALREADY been floored deterministically and will be shown to the user whatever you
+ * return"*) is honest only where a floor exists, and for these families none does.
+ *
+ * **Scope, deliberately narrow.** Flag what the parser saw and stop. Extracting spans, naming which
+ * segment is unresolvable, and drawing on surrounding context all wait for real user trial — the
+ * elaborate note is the one most likely to acquire connotation by accident.
  */
+import { classifyCommand } from '#src/core/shell/arity.js';
 import {
   COMMAND_SEPARATOR_RE,
   LINE_BREAK_RE,
   normalizeCommand,
 } from '#src/core/shell/normalize.js';
-import { buildRejectionMessage } from '#src/core/shell/rejection.js';
-import type { GrantedToolSummary } from '#src/config/tool-descriptions.js';
-
-/**
- * **The retry budget: ONE.**
- *
- * A defect report is a search oracle, and it can only search *toward* resolvability — which is more
- * scrutiny, not less. But an unbounded loop is an agent grinding against a deterministic wall, so
- * the **second consecutive** abstention escalates to the human exactly as it did before this node.
- *
- * Consecutive, never per-session: a per-session budget would mean the second legitimate composed
- * command in a long session interrupts a human, which inverts the goal this whole path serves.
- */
-export const ABSTENTION_RETRY_LIMIT = 1;
 
 /**
  * The shape in the command that the gate's parser could not resolve.
  *
- * These are FORMS, not judgements — nothing here says a command is dangerous, and nothing here is
- * a rating. They exist only to select a remedy.
+ * These are FORMS, not judgements — nothing here says a command is dangerous, and nothing here is a
+ * rating. They exist to select the sentence the rater is shown.
  */
 export type AbstentionMechanism =
   /** A git commit whose message contains a substitution the SHELL runs before git sees it. */
@@ -64,26 +64,57 @@ export type AbstentionMechanism =
   /** None of the above — an unbalanced quote, an empty command, or no resolvable program name. */
   | 'unparseable';
 
-/** A refused command's defect report: the shapes found, and the moves that fit them. */
+/** What the parser saw in a command it could not resolve: the shapes, and the note for each. */
 export interface AbstentionDefect {
-  /** The most specific mechanism found — what the report leads with. */
+  /** The most specific mechanism found — what the note leads with. */
   mechanism: AbstentionMechanism;
-  /** Every mechanism found, in remedy order. A command may carry more than one. */
+  /** Every mechanism found, in note order. A command may carry more than one. */
   mechanisms: AbstentionMechanism[];
-  /** One concrete move per mechanism, in the same order. Never empty. */
-  remedies: string[];
+  /** One note per mechanism, in the same order. Never empty. */
+  notes: string[];
 }
 
 /**
- * The file tools this looks for when a remedy needs to name one, best first.
+ * **The per-family note text — one distinct string per {@link AbstentionMechanism}.**
  *
- * Only a tool **granted at the session's rung** may be named: suggesting a tool that would itself
- * raise an approval is not a remedy, it is a second interruption. The caller supplies the granted
- * set (§4.3/§4.4's `describeGrantedBuiltInTools`), so the name can only ever be a tool this session
- * actually has, and the list is checked in preference order rather than by picking the first match
- * so the advice does not depend on tool-registration order.
+ * Typed as a total `Record`, so adding a mechanism is a COMPILE ERROR until someone writes its
+ * sentence. A family that silently fell back to another family's note would be the failure this
+ * table exists to prevent: [[QA-17]] measured that the note's effect is family-specific, and
+ * `docs/test-sessions/qa-17-substitution-note-2026-08-03/` records a narrowing by family name that
+ * was FALSIFIED — `gh pr comment 42 --body "…"` carrying an executing substitution classifies as
+ * generic `substitution`, and three of three hosted raters called it safe unassisted.
+ *
+ * Every entry states a fact about what THE SHELL does, and then asks a question. Neither is a
+ * verdict about the command in front of the rater, which is what keeps the note neutral while still
+ * carrying the mechanism that the measurement showed is load-bearing.
  */
-const FILE_WRITE_TOOL_PREFERENCE = ['write_file', 'edit_file'] as const;
+export const MECHANISM_NOTES: Readonly<Record<AbstentionMechanism, string>> = {
+  'commit-message-substitution':
+    'This is a git commit carrying its message inline, and the message contains a ' +
+    'dollar-parenthesis or a backtick. The SHELL expands that before git ever sees the message, ' +
+    'so the text inside the quotes is not inert prose: double quotes do not stop `$(…)` or a ' +
+    'backtick from running, and git receives whatever it produced. What does the shell run when ' +
+    'it expands that message?',
+  composition:
+    'This command line runs MORE THAN ONE command — a `;`, `&&`, `||`, `|` or a line break ' +
+    'separates them — and the shell runs each part in turn, feeding one into the next where the ' +
+    'separator is a pipe. What does the whole line do once every part has run?',
+  substitution:
+    'This command line contains a substitution — `$(…)`, a backtick, `${…}` or `<(…)`. The SHELL ' +
+    'expands it BEFORE the outer program runs, and hands that program the result. A ' +
+    'double-quoted argument is therefore not inert prose: double quotes do not stop `$(…)` or a ' +
+    'backtick from being run, so a substitution inside what reads as ordinary text is still ' +
+    'executed. What does the shell run when it expands this one?',
+  redirect:
+    'This command line redirects a stream — `>`, `>>`, `<`, `2>` or `&>`. The shell attaches a ' +
+    'file to the program before the program starts, so its output lands in that file rather than ' +
+    'on the terminal, and a `>` truncates the file it names first. Which file is being read or ' +
+    'written here?',
+  unparseable:
+    'The gate could not tokenize this command line at all — most often an unbalanced quote, or no ' +
+    'program name it could identify. So we cannot tell you which program this runs; what is ' +
+    'quoted above is exactly the text that would be handed to the shell. What does it do?',
+};
 
 /** Process substitution `<(…)` / `>(…)`, which is a SUBSTITUTION and must not also read as a redirect. */
 const PROCESS_SUBSTITUTION_RE = /[<>]\(/g;
@@ -93,7 +124,7 @@ const PROCESS_SUBSTITUTION_RE = /[<>]\(/g;
  *
  * Deliberately a heuristic and not a parser: the command has already defeated the gate's tokenizer,
  * so there is nothing precise left to parse. It is safe to be approximate here because a wrong
- * answer costs at most a less specific remedy — the escalation behaviour does not depend on it.
+ * answer costs at most a less specific note — the rating is bought either way.
  */
 const GIT_COMMIT_RE = /\bgit\b[^\n]*\bcommit\b/i;
 const INLINE_MESSAGE_FLAG_RE = /(^|\s)(-m\b|--message\b|-\w*m\b)/;
@@ -104,43 +135,34 @@ const EXECUTING_SUBSTITUTION_RE = /\$\(|`/;
 /** Every substitution/expansion form, including the non-executing ones. */
 const ANY_SUBSTITUTION_RE = /\$\(|`|\$\{|[<>]\(/;
 
-/** The granted write tool to name in a remedy, or `undefined` when this rung grants none. */
-function grantedWriteTool(
-  grantedTools: readonly GrantedToolSummary[] | undefined
-): string | undefined {
-  if (!grantedTools || grantedTools.length === 0) return undefined;
-  const names = new Set(grantedTools.map((tool) => tool.name));
-  return FILE_WRITE_TOOL_PREFERENCE.find((name) => names.has(name));
-}
-
 /**
- * Classify a refused command and name the moves that fit it.
+ * Classify a command the gate's parser could not resolve, or return `null` when it resolves.
  *
- * Detection runs on the NORMALIZED command (the same form
- * {@link import('#src/core/shell/arity.js').classifyCommand} refused), so obfuscation that the
- * normalizer collapses cannot hide a mechanism from the report — while the command quoted back to
- * the model stays the RAW one it actually sent, because a normalized string it does not recognise
- * is not a defect report it can act on.
+ * **The `null` arm is the guard, and it is structural on purpose.** Every mechanism below is a
+ * regex, and `unparseable` is the fallback — so without this gate the function would classify `ls
+ * -la` as `unparseable` and a note would be attached to every command in the session. The predicate
+ * is {@link classifyCommand}'s own, not a second reading of it, so the note appears on exactly the
+ * set of commands the gate could not resolve and on no others.
+ *
+ * Detection runs on the NORMALIZED command (the same form `classifyCommand` refused), so obfuscation
+ * that the normalizer collapses cannot hide a mechanism from the note — while the command shown to
+ * the rater stays the one the rater is being asked about, fenced by its own caller.
  *
  * The line-break check reads the RAW command, exactly as `classifyCommand` does: the normalizer is
  * not required to preserve that separator, and EXT-55 is the node about what happens when a caller
  * assumes it did.
  *
- * **Order is remedy order, most specific first**, and `commit-message-substitution` SUPPRESSES the
- * generic substitution remedy it is a special case of — telling the model both "write the message
- * to a file" and "compute the inner value first" for the same `$(…)` is two answers to one
- * question.
+ * **Order is note order, most specific first**, and `commit-message-substitution` SUPPRESSES the
+ * generic substitution note it is a special case of — telling the rater the same thing twice about
+ * one `$(…)` spends attention on a repetition.
  *
- * Never returns an empty remedy list: `unparseable` is the fallback for the causes that are not a
- * shape at all (an unbalanced quote, an empty command, a command with no resolvable program name),
- * so a caller always has something to say.
+ * @param command The raw command string as the model proposed it.
+ * @returns What the parser saw, or `null` when the command's target statically resolves.
  */
-export function describeAbstention(
-  command: string,
-  context?: { grantedTools?: readonly GrantedToolSummary[] }
-): AbstentionDefect {
+export function describeAbstention(command: string): AbstentionDefect | null {
+  if (classifyCommand(command, normalizeCommand) !== null) return null;
+
   const normalized = normalizeCommand(command);
-  const writeTool = grantedWriteTool(context?.grantedTools);
 
   const composes = COMMAND_SEPARATOR_RE.test(normalized) || LINE_BREAK_RE.test(command.trim());
   const substitutes = ANY_SUBSTITUTION_RE.test(normalized);
@@ -149,84 +171,58 @@ export function describeAbstention(
     INLINE_MESSAGE_FLAG_RE.test(normalized) &&
     EXECUTING_SUBSTITUTION_RE.test(normalized);
   // A redirect is any `<`/`>` that is NOT the opening of a process substitution — that form is
-  // already reported (and remedied) as a substitution, and reporting it twice would name two
-  // different moves for one piece of syntax.
+  // already reported as a substitution, and reporting it twice would describe one piece of syntax
+  // with two different mechanisms.
   const redirects = /[<>]/.test(normalized.replace(PROCESS_SUBSTITUTION_RE, ''));
 
   const mechanisms: AbstentionMechanism[] = [];
-  const remedies: string[] = [];
+  if (commitSubstitution) mechanisms.push('commit-message-substitution');
+  if (composes) mechanisms.push('composition');
+  if (substitutes && !commitSubstitution) mechanisms.push('substitution');
+  if (redirects) mechanisms.push('redirect');
+  // The fallback for the causes that are not a shape at all — an unbalanced quote, an empty
+  // command, a command with no resolvable program name — so a note is never empty.
+  if (mechanisms.length === 0) mechanisms.push('unparseable');
 
-  if (commitSubstitution) {
-    mechanisms.push('commit-message-substitution');
-    remedies.push(
-      'A commit message containing backticks or a dollar-parenthesis is run by the SHELL as a ' +
-        'command before git ever sees it, which is why the gate will not resolve it. Write the ' +
-        `message to a file with ${writeTool ?? 'a file-writing tool'} and commit with ` +
-        '`git commit -F <file>`. Keep the message plain prose: no code, no shell, no backticks.'
-    );
-  }
-  if (composes) {
-    mechanisms.push('composition');
-    remedies.push(
-      'This runs more than one command (a `;`, `&&`, `||`, `|` or a line break separates them). ' +
-        'Issue each part as its OWN sequential run_shell_command call, in order, and read each ' +
-        'result before sending the next.'
-    );
-  }
-  if (substitutes && !commitSubstitution) {
-    mechanisms.push('substitution');
-    remedies.push(
-      'This substitutes the output of another command or the value of a variable into itself ' +
-        '(`$(…)`, backticks, `${…}`), so what actually runs is not knowable from the text. Run ' +
-        'the inner command by itself first, then issue the outer command with the literal result ' +
-        'written in place of the substitution.'
-    );
-  }
-  if (redirects) {
-    mechanisms.push('redirect');
-    remedies.push(
-      writeTool
-        ? `This redirects a stream to or from a file. Use ${writeTool} instead — it is already ` +
-            'granted at this approval level, so it will not interrupt the user.'
-        : 'This redirects a stream to or from a file. Issue the command without the redirect and ' +
-            'use its result directly; no file tool is granted at this approval level.'
-    );
-  }
-  if (mechanisms.length === 0) {
-    mechanisms.push('unparseable');
-    remedies.push(
-      'The gate could not tokenize this command at all — most often an unbalanced quote, or no ' +
-        'program name it could identify. Re-issue it as one command: a single program, its ' +
-        'arguments, and balanced quotes.'
-    );
-  }
-
-  return { mechanism: mechanisms[0], mechanisms, remedies };
+  return {
+    mechanism: mechanisms[0],
+    mechanisms,
+    notes: mechanisms.map((mechanism) => MECHANISM_NOTES[mechanism]),
+  };
 }
 
 /**
- * The full defect report handed back to the model in place of an approval prompt.
+ * The opening line of the preflight note: **what this is, and what it is not.**
  *
- * Rendered by {@link buildRejectionMessage} under the `gate` source, so the abstention speaks the
- * same rejection vocabulary as a user's refusal and a rater's — one builder, one shape, one place a
- * refusal's wording is decided.
- *
- * @param command The raw command, as the model proposed it. Quoted back as inert data.
- * @param toolName The refused tool.
- * @param reason {@link import('#src/core/shell/rater.js').abstentionReason}'s own sentence — the
- *   mechanism in core's words, never a second copy of that prose written here.
- * @param context The built-in tools granted at the session's rung, so a remedy may name one.
+ * It says the finding is about OUR PARSER rather than about the command, and that nothing has been
+ * judged. Both halves are load-bearing. The first stops the rater reading the note as a report of
+ * something found — the failure mode a bare observation produced, where a rater treats our
+ * uncertainty as evidence and either inflates or explains it away. The second is what keeps this
+ * note out of the open-world note's register: that one may say the command *"has ALREADY been
+ * floored deterministically and will be shown to the user whatever you return"*, and here that
+ * sentence would simply be false.
  */
-export function buildAbstentionRejection(
-  command: string,
-  toolName: string,
-  reason: string,
-  context?: { grantedTools?: readonly GrantedToolSummary[] }
-): string {
-  const defect = describeAbstention(command, context);
-  return buildRejectionMessage({
-    source: 'gate',
-    toolName,
-    abstention: { mechanism: reason, quoted: command, remedies: defect.remedies },
-  });
+export const PARSER_NOTE_PREAMBLE =
+  'PREFLIGHT NOTE: our command parser could not resolve what this command line runs, so here is ' +
+  'what it did see. This is a fact about OUR PARSER and not a finding about the command — nothing ' +
+  'has been judged, nothing has been floored, and none of this is a verdict or a severity. Rate ' +
+  'the command on its own merits.';
+
+/**
+ * Build the neutral preflight note for a command, or `null` when the gate resolved it.
+ *
+ * One note per mechanism the command carries, most specific first, bulleted when there is more than
+ * one — a command can compose AND substitute AND redirect, and a note that mentioned only the first
+ * would leave the rater reasoning about a fragment of the shape.
+ *
+ * @param command The raw command string as the model proposed it.
+ */
+export function buildParserPreflightNote(command: string): string | null {
+  const defect = describeAbstention(command);
+  if (defect === null) return null;
+  const body =
+    defect.notes.length === 1
+      ? defect.notes[0]
+      : defect.notes.map((note) => `- ${note}`).join('\n');
+  return `${PARSER_NOTE_PREAMBLE}\n${body}`;
 }
