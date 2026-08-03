@@ -1443,6 +1443,11 @@ describe('mapVerdictToAction — §4.6 floors an open-world command even when th
       const finding = findComposedOpenWorld(command);
       expect(finding?.flow?.kind, command).toBe(kind);
       expect(hostsMissingFromNote(command), command).toEqual([]);
+      // Both hosts belong to the part the flow describes, so THE FLOW SENTENCE has to name them.
+      // Without these two lines an arm that kept `hosts[0]` would still pass: the host it dropped
+      // would come back as a residual, worded as if another part of the line had named it.
+      expect(finding?.flow?.hosts, command).toEqual(finding?.hosts);
+      expect(buildComposedOpenWorldNote(command), command).not.toContain('of this line also name');
     }
   );
 
