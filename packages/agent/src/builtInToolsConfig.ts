@@ -11,7 +11,9 @@ import {
   getEffectiveDevToolsConfig,
   normalizeBuiltInTools,
   isBuiltInToolEntryEnabled,
+  isFilesystemToolRegistered,
   DEV_TOOL_NAMES,
+  type FilesystemToolsConfig,
 } from '@gaunt-sloth/core/config.js';
 import { displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
@@ -130,11 +132,16 @@ function getCustomTools(config: GthConfig, command?: GthCommand): StructuredTool
 }
 
 /**
- * Filter filesystem tools based on configuration
+ * Filter filesystem tools based on configuration.
+ *
+ * The decision itself lives in core ({@link isFilesystemToolRegistered}) rather than here, because
+ * the system-prompt notes need the same answer: a note that names a tool this filter did not
+ * register tells the model to call something that does not exist. Each tool is judged by the
+ * read/write class the toolkit stamped on it (`gthFileSystemType`), so the class is read from the
+ * tool rather than from a second table of names.
  */
-
 function filterFilesystemTools(
-  filesystemConfig: string[] | 'all' | 'read' | 'none',
+  filesystemConfig: FilesystemToolsConfig,
   aiignoreConfig?: {
     enabled?: boolean;
     patterns?: string[];
@@ -146,44 +153,13 @@ function filterFilesystemTools(
     aiignoreConfig,
     binaryFormats,
   });
-  if (filesystemConfig === 'all') {
-    return toolkit.getTools();
-  }
-
-  if (filesystemConfig === 'none') {
-    return [];
-  }
-
-  if (filesystemConfig === 'read') {
-    // Read-only: only allow read operations
-    return toolkit.getFilteredTools(['read']);
-  }
-
-  if (!Array.isArray(filesystemConfig)) {
-    return toolkit.getTools();
-  }
-
-  if (filesystemConfig.includes('all')) {
-    return toolkit.getTools();
-  }
-
-  // Handle an array of specific tool names or 'read'/'all'
-  const allowedTools: StructuredToolInterface[] = filesystemConfig.includes('read')
-    ? toolkit.getFilteredTools(['read'])
-    : [];
-
-  // Also allow specific tool names
-  const allowedToolNames = new Set(
-    filesystemConfig.filter((name) => name !== 'read' && name !== 'all')
-  );
-  const specificNamedTools = toolkit.getTools().filter((tool) => {
-    return tool.name && allowedToolNames.has(tool.name);
-  });
-
-  // Combine and deduplicate
-  const allAllowedTools = [...allowedTools, ...specificNamedTools];
-  return allAllowedTools.filter(
-    (tool, index, arr) => arr.findIndex((t) => t.name === tool.name) === index
+  return toolkit.getTools().filter((tool) =>
+    isFilesystemToolRegistered(
+      filesystemConfig,
+      tool.name,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (tool as any).gthFileSystemType
+    )
   );
 }
 

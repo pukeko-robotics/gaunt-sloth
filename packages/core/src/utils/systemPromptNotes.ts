@@ -18,6 +18,11 @@
 import type { McpServerInstruction } from '#src/core/types.js';
 import { DEFAULT_COMMIT_CO_AUTHOR_EMAIL, DEFAULT_COMMIT_CO_AUTHOR_NAME } from '#src/constants.js';
 import {
+  isWriteFileToolRegistered,
+  WRITE_FILE_TOOL_NAME,
+  type FilesystemToolsConfig,
+} from '#src/config/filesystem-tools.js';
+import {
   capUntrustedText,
   defangUntrustedDelimiters,
   MCP_FENCE_BEGIN,
@@ -123,6 +128,18 @@ export interface CommitCoAuthor {
  *    measured not to work. A file path carries no shell metacharacters, so the file form removes the
  *    failure mode instead of asking the model to avoid it.
  *
+ * **The clause that names the writing tool is gated on `filesystem`** (EXT-84), through the one
+ * shared derivation {@link isWriteFileToolRegistered} — the same interpretation that decides which
+ * tools are actually registered. Naming an unregistered tool while forbidding both the shell
+ * fallback and the inline flag leaves the model NO compliant path, and its likeliest recovery is
+ * the inline form this note exists to prevent. So when the write tool is registered the note names
+ * it literally (the overwhelmingly common case, and a literal name is what makes the instruction
+ * actionable); when it is not, the note names no tool, keeps both prohibitions and the file form,
+ * and supplies the compliant path that remains: do not commit, and hand the message back to the
+ * user. That branch states no availability claim of its own — the backends read the same
+ * `filesystem` value but register filesystem tools differently, so a note asserting "you have no
+ * file-writing tool" could be flatly false on one of them.
+ *
  * The note's prose carries **no backtick and no other markup** — including no angle-bracket
  * placeholder: it is the one piece of guidance whose subject is how to write a commit message, so
  * quoting its own examples in backticks would demonstrate the exact style rule 2 exists to stop, and
@@ -145,7 +162,8 @@ export interface CommitCoAuthor {
 export function appendCommitCoAuthorNote(
   systemPrompt: string | undefined,
   coAuthor?: CommitCoAuthor,
-  modelIdentity?: ResolvedModelIdentity
+  modelIdentity?: ResolvedModelIdentity,
+  filesystem?: FilesystemToolsConfig
 ): string {
   // EXT-83 — ONE place composes the name, so the parenthesised shape stays a one-line change. The
   // identity decorates ONLY the default name: a configured name is the user's own string and is
@@ -156,6 +174,17 @@ export function appendCommitCoAuthorNote(
     configuredName ||
     (identity ? `${DEFAULT_COMMIT_CO_AUTHOR_NAME} (${identity})` : DEFAULT_COMMIT_CO_AUTHOR_NAME);
   const email = coAuthor?.email?.trim() || DEFAULT_COMMIT_CO_AUTHOR_EMAIL;
+  // EXT-84 — only name the writing tool when that tool is actually registered. Both branches keep
+  // the two prohibitions and the file form; they differ only in whether a tool can be named, and
+  // the second supplies the path that remains when no file can be written.
+  const messageFileRule = isWriteFileToolRegistered(filesystem)
+    ? `Write the message to a file with the ${WRITE_FILE_TOOL_NAME} tool ` +
+      '(never with shell echo or a heredoc, which put the same text back into a shell argument), ' +
+      'then commit it with git commit -F followed by that file path.'
+    : 'Write the message to a file, then commit it with git commit -F followed by that file ' +
+      'path. Do not create that file with shell echo or a heredoc, which put the same text back ' +
+      'into a shell argument. If nothing in this session can write that file, do not create the ' +
+      'commit yourself: say so, and leave the message file and the commit to the user.';
   const note =
     'When you create a git commit, add EXACTLY this co-author trailer line (on its own line, at ' +
     `the end of the commit message):\nCo-Authored-By: ${name} <${email}>\n` +
@@ -164,9 +193,7 @@ export function appendCommitCoAuthorNote(
     'commands, backticks and markup out of it.\n' +
     'Never pass a commit message inline with the -m option: inside double quotes a POSIX shell ' +
     'expands backtick and dollar-parenthesis constructs before git ever runs, so a message that ' +
-    'quotes code is executed as a command. Write the message to a file with the write_file tool ' +
-    '(never with shell echo or a heredoc, which put the same text back into a shell argument), ' +
-    'then commit it with git commit -F followed by that file path.';
+    `quotes code is executed as a command. ${messageFileRule}`;
   return systemPrompt ? `${systemPrompt}\n\n${note}` : note;
 }
 

@@ -7,6 +7,7 @@ import {
   type ResolvedModelIdentity,
 } from '#src/utils/systemPromptNotes.js';
 import { DEFAULT_COMMIT_CO_AUTHOR_EMAIL, DEFAULT_COMMIT_CO_AUTHOR_NAME } from '#src/constants.js';
+import type { FilesystemToolsConfig } from '#src/config/filesystem-tools.js';
 
 /**
  * GS2-35 / EXT-83 — commit guidance: WHO co-authors, and HOW the message reaches git.
@@ -32,15 +33,51 @@ describe('appendCommitCoAuthorNote (GS2-35/EXT-83)', () => {
     note.split('\n').find((line) => line.startsWith('Co-Authored-By:'));
 
   /**
-   * The note MINUS its trailer line — the prose the model reads as instructions. The trailer is
-   * excluded because the RFC form of an address genuinely requires angle brackets; everywhere else
-   * an angle bracket is a placeholder the model may copy literally into a shell.
+   * The note MINUS the trailer's angle-bracketed address — the prose the model reads as
+   * instructions. Only the ADDRESS is excluded, because the RFC form of an address genuinely
+   * requires angle brackets; everywhere else, the rest of the trailer line included, an angle
+   * bracket is a placeholder the model may copy literally into a shell. Dropping the whole trailer
+   * line instead would leave markup placed on that line outside a scan whose title claims to cover
+   * the note.
    */
   const proseOf = (note: string): string =>
     note
       .split('\n')
-      .filter((line) => !line.startsWith('Co-Authored-By:'))
+      .map((line) => {
+        if (!line.startsWith('Co-Authored-By:')) return line;
+        const open = line.indexOf('<');
+        const close = line.indexOf('>', open + 1);
+        return open >= 0 && close > open ? line.slice(0, open) + line.slice(close + 1) : line;
+      })
       .join('\n');
+
+  /** The note alone, for a given `filesystem` config — the EXT-84 gate's only input. */
+  const noteFor = (filesystem?: FilesystemToolsConfig): string =>
+    appendCommitCoAuthorNote(undefined, undefined, undefined, filesystem);
+
+  /** The clause composed when the write tool IS registered — it names the tool literally. */
+  const NAMED_TOOL_CLAUSE =
+    'Write the message to a file with the write_file tool (never with shell echo or a heredoc, ' +
+    'which put the same text back into a shell argument), then commit it with git commit -F ' +
+    'followed by that file path.';
+
+  /** `filesystem` values under which the write tool IS registered. */
+  const WRITE_TOOL_REGISTERED: (FilesystemToolsConfig | undefined)[] = [
+    'all',
+    ['all'],
+    ['write_file'],
+    ['read', 'write_file'],
+    undefined,
+  ];
+
+  /** `filesystem` values under which it is NOT — the string modes and the array forms. */
+  const WRITE_TOOL_ABSENT_STRINGS: FilesystemToolsConfig[] = ['read', 'none'];
+  const WRITE_TOOL_ABSENT_ARRAYS: FilesystemToolsConfig[] = [
+    ['read'],
+    ['read_file'],
+    ['read_file', 'list_directory'],
+    [],
+  ];
 
   it('defaults to the Gaunt Sloth account when no co-author is configured', () => {
     const out = appendCommitCoAuthorNote('BASE PROMPT', undefined);
@@ -161,15 +198,21 @@ describe('appendCommitCoAuthorNote (GS2-35/EXT-83)', () => {
   // is not cosmetic: a model copying `-F <path to that file>` literally emits a SHELL INPUT
   // REDIRECT, which is the very class of accident this note exists to prevent. Asserted on the
   // note ALONE (with a base prompt the return value includes sibling notes that legitimately use
-  // backticks), and on the PROSE (the trailer's RFC `<email>` brackets are legitimate).
+  // backticks), and on the PROSE (only the trailer's RFC `<email>` brackets are legitimate, and
+  // only those are excluded — the rest of that line is scanned like any other).
   it('contains no backtick and no other markup in its prose', () => {
     // Placeholder/markup characters a model could copy verbatim, or that would make the note
     // demonstrate the formatting it forbids.
     const MARKUP = ['`', '<', '>', '*', '#', '[', ']'];
+    // Two axes, each of which changes the scanned text: the co-author NAME (now inside the scan,
+    // since only the address is excluded) and the EXT-84 filesystem branch (a different final
+    // clause). A note wording that is clean on one branch and not the other fails here.
     const notes = [
       appendCommitCoAuthorNote(undefined, undefined),
       appendCommitCoAuthorNote(undefined, undefined, NEUTRAL_IDENTITY),
       appendCommitCoAuthorNote(undefined, { name: 'Acme Bot', email: 'bot@acme.test' }),
+      noteFor('read'),
+      noteFor(['read_file']),
     ];
     for (const note of notes) {
       // A backtick is illegitimate even on the trailer line.
@@ -184,13 +227,11 @@ describe('appendCommitCoAuthorNote (GS2-35/EXT-83)', () => {
   // so its load went up; it is pinned here because nothing else in the suite asserts it and a
   // silent deletion would leave the model free to emit a second trailer naming itself.
   it('instructs the model to emit at most ONE Co-Authored-By trailer', () => {
-    const notes = [
-      appendCommitCoAuthorNote(undefined, undefined),
-      appendCommitCoAuthorNote(undefined, undefined, NEUTRAL_IDENTITY),
-      appendCommitCoAuthorNote(undefined, { name: 'Acme Bot', email: 'bot@acme.test' }),
-    ];
-    for (const note of notes) {
-      expect(note).toContain('Emit at most this one Co-Authored-By trailer.');
+    // Swept over the EXT-84 filesystem branches rather than over co-author shapes: the sentence is
+    // composed identically for every identity, so those shapes could not discriminate, whereas the
+    // branches build the note's tail differently and a rule dropped from one of them fails here.
+    for (const filesystem of ['all', 'read', 'none', ['read_file']] as FilesystemToolsConfig[]) {
+      expect(noteFor(filesystem)).toContain('Emit at most this one Co-Authored-By trailer.');
     }
   });
 
@@ -211,6 +252,73 @@ describe('appendCommitCoAuthorNote (GS2-35/EXT-83)', () => {
     // …and the file must be written by the tool, not by a shell redirect that reintroduces the
     // identical hazard one layer up.
     expect(note).toContain('write_file');
+  });
+
+  // EXT-84 — the clause naming the writing tool is gated on the resolved `filesystem` capability.
+  // Naming a tool that is not registered, while forbidding the shell fallback AND the inline flag,
+  // leaves the model no compliant path at all, and its likeliest recovery is the inline form this
+  // whole note exists to prevent. `filesystem` is a UNION (string modes plus an array of tool
+  // names), so the string and array forms are asserted separately: a gate that handled only the
+  // two string modes would pass the block below and fail the one after it.
+
+  it('leaves the note unchanged under filesystem all, naming the write tool literally', () => {
+    const note = noteFor('all');
+    expect(note).toContain(NAMED_TOOL_CLAUSE);
+    // The pre-EXT-84 call shape (no filesystem argument) composes the SAME note byte for byte, so
+    // the gate is additive: every caller that does not thread a capability is unaffected.
+    expect(note).toBe(appendCommitCoAuthorNote(undefined, undefined));
+  });
+
+  it('names the write tool under every filesystem value that registers it', () => {
+    // Includes the array forms that DO reach it, so "array means restricted" would fail here: the
+    // gate resolves the union, it does not merely test for an array.
+    for (const filesystem of WRITE_TOOL_REGISTERED) {
+      expect(noteFor(filesystem)).toContain(NAMED_TOOL_CLAUSE);
+    }
+  });
+
+  it('names no tool under the read and none string modes', () => {
+    for (const filesystem of WRITE_TOOL_ABSENT_STRINGS) {
+      expect(noteFor(filesystem)).not.toContain('write_file');
+    }
+  });
+
+  it('names no tool under an array form that excludes the write tool', () => {
+    // Asserted apart from the string modes on purpose — this is the case a two-value check misses.
+    for (const filesystem of WRITE_TOOL_ABSENT_ARRAYS) {
+      expect(noteFor(filesystem)).not.toContain('write_file');
+    }
+  });
+
+  it('keeps both prohibitions and supplies a compliant path when no tool is named', () => {
+    // The point of the gate is NOT to drop the rules — it is to stop the model being cornered. The
+    // inline prohibition, its mechanism and the file form all survive, and the note ends with the
+    // one course that remains available when nothing can write the file.
+    for (const filesystem of [...WRITE_TOOL_ABSENT_STRINGS, ...WRITE_TOOL_ABSENT_ARRAYS]) {
+      const note = noteFor(filesystem);
+      expect(note).toContain('Never pass a commit message inline with the -m option');
+      expect(note).toContain(
+        'expands backtick and dollar-parenthesis constructs before git ever runs'
+      );
+      expect(note).toContain('git commit -F');
+      expect(note).toContain('Do not create that file with shell echo or a heredoc');
+      expect(note).toContain(
+        'If nothing in this session can write that file, do not create the commit yourself'
+      );
+    }
+  });
+
+  it('claims nothing about which tools this session has when it names none', () => {
+    // The two backends read the SAME `filesystem` value but register filesystem tools by different
+    // rules, so a note asserting the session HAS no file-writing tool would be flatly false on one
+    // of them. The restricted branch is conditional instead: it never states the absence.
+    for (const filesystem of [...WRITE_TOOL_ABSENT_STRINGS, ...WRITE_TOOL_ABSENT_ARRAYS]) {
+      const note = noteFor(filesystem);
+      expect(note).toContain('If nothing in this session can write that file');
+      expect(note).not.toContain('You have no');
+      expect(note).not.toContain('no file-writing tool is available');
+      expect(note).not.toContain('There is no tool');
+    }
   });
 
   it('appends to a base prompt (keeps it) and returns the note alone when there is no base', () => {

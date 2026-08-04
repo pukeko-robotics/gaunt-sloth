@@ -743,12 +743,17 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // the EXT-83 commit-message rules (plain English, and passed by file — never inline, where the
     // shell would expand the message before git runs). Same code-mode gate as the shell/cwd notes —
     // the git-commit capability rides on `run_shell_command`, which is a code-mode tool.
+    // EXT-84: the effective `filesystem` is threaded in so the note names the writing tool only
+    // where that tool is registered. `this.config` is the command-merged value (getEffectiveConfig,
+    // above) — the SAME value handed to the tool resolver, so the note and the registered toolset
+    // cannot disagree. Mirrored on the deep backend.
     const codeNotesPrompt =
       this.command === 'code'
         ? appendCommitCoAuthorNote(
             appendOsShellNote(appendCwdNote(baseSystemPrompt, getCurrentWorkDir())),
             this.config.commit?.coAuthor,
-            modelIdentity
+            modelIdentity,
+            this.config.filesystem
           )
         : baseSystemPrompt;
 

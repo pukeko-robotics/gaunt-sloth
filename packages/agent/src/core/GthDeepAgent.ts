@@ -309,6 +309,11 @@ export class GthDeepAgent extends GthAbstractAgent {
     // the shell would expand the message before git runs). Mirrors the lean backend seam so both
     // compose the same shared note (GS2-27 parity); same code-mode gate as the shell/cwd notes and
     // independent of virtualMode.
+    // EXT-84: the effective `filesystem` is threaded in so the note names the writing tool only
+    // where that tool is registered. It is the command-merged value set by buildDeepAgentParams
+    // (getEffectiveConfig) — NOT the `filesystem: 'none'` override used purely to keep gsloth's
+    // filesystem toolkit out of tool resolution, which says nothing about the fs access deepagents
+    // itself grants from the same value. Mirrors the lean backend seam.
     const codeNotesPrompt =
       this.command === 'code'
         ? appendCommitCoAuthorNote(
@@ -318,7 +323,8 @@ export class GthDeepAgent extends GthAbstractAgent {
                 : appendCwdNote(params.systemPrompt, getCurrentWorkDir())
             ),
             this.config?.commit?.coAuthor,
-            modelIdentity
+            modelIdentity,
+            this.config?.filesystem
           )
         : params.systemPrompt;
 
