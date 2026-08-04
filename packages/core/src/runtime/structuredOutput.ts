@@ -1,10 +1,11 @@
 /**
  * @module runtime/structuredOutput
  *
- * EXT-88 — the **`withStructuredOutput` boundary**. Every structured-output call in this project
- * goes through {@link structuredOutputBoundary}: `rateShellCommand` (the approvals rater),
+ * EXT-88 — the **`withStructuredOutput` boundary**. Every `withStructuredOutput` call in this
+ * project goes through {@link structuredOutputBoundary}: `rateShellCommand` (the approvals rater),
  * {@link askStructured} (arbitrary caller schemas, including `gth workflow` scripts) and
- * `@gaunt-sloth/batch`'s eval judge.
+ * `@gaunt-sloth/batch`'s eval judge. Review's rating step is deliberately not one of them — it
+ * reaches its schema through a bound TOOL, which is a different path with different rules.
  *
  * ## The problem it exists to solve
  *
@@ -61,12 +62,17 @@
  *
  * It deliberately stops at **unions** (including discriminated unions), **intersections**, `lazy`,
  * `map`, `set`, `pipe`/`transform` and `custom`, leaving those subtrees exactly as the caller wrote
- * them. The reason is that the rewrite and the normalization must cover **precisely the same set**:
- * at a union the incoming value gives no reliable answer to *which branch was taken*, so a `null`
- * could not be stripped back out. Rewriting there while being unable to normalize would manufacture
- * the very parse failure this module removes. An optional inside one of those constructs keeps
- * today's behaviour — correct everywhere it is correct today, and still rejected by OpenAI's strict
- * rule, which is a visible error rather than a silent one.
+ * them, and it leaves a **recursive** schema alone in its entirety. The reason is one rule: the
+ * rewrite and the normalization must cover **precisely the same set**. At a union the incoming value
+ * gives no reliable answer to *which branch was taken*, so a `null` could not be stripped back out;
+ * rewriting there while being unable to normalize would manufacture the very parse failure this
+ * module removes. Recursion is refused for the neighbouring reason — a rewrite that stopped at the
+ * cycle would make a key required at one depth and optional at the next, which satisfies no
+ * provider's strict rule and is harder to reason about than the caller's own schema.
+ *
+ * An optional inside one of those constructs keeps today's behaviour — correct everywhere it is
+ * correct today, and still rejected by OpenAI's strict rule, which is a visible error rather than a
+ * silent one.
  */
 
 import * as z from 'zod';
@@ -239,7 +245,10 @@ function walkTuple(schema: AnySchema, def: SchemaDef): WalkResult {
     ? (value) => {
         if (!Array.isArray(value)) return value;
         return value.map((item, index) => {
-          const normalizeItem = itemResults[index]?.normalize ?? restResult?.normalize;
+          // Gate on POSITION: a prefix item is normalized by its own item schema and never by the
+          // rest schema, which describes a different position entirely.
+          const normalizeItem =
+            index < items.length ? itemResults[index]?.normalize : restResult?.normalize;
           if (!normalizeItem) return item;
           const normalized = normalizeItem(item);
           return normalized === ABSENT ? undefined : normalized;
@@ -297,11 +306,38 @@ function walkWrapper(schema: AnySchema, def: SchemaDef): WalkResult {
 }
 
 /**
+ * Thrown when the walk re-enters a schema it is already inside, i.e. the caller's schema is
+ * recursive. Caught in {@link structuredOutputBoundary}, which then leaves the whole schema alone —
+ * see the module doc's limits.
+ */
+const CYCLIC = Symbol('structured-output-cyclic');
+
+/** The schemas the current walk is inside. A node reached twice on one path is a cycle. */
+const inProgress = new WeakSet<object>();
+
+/**
  * Rewrite one node. Every branch here has a matching arm in the normalizer it returns — the two
  * halves are produced by the **same** walk precisely so their coverage cannot drift apart. Anything
  * not listed is returned untouched, with no normalizer.
+ *
+ * A **recursive** schema aborts the whole walk rather than being partly rewritten. Zod spells
+ * recursion as a getter in an object's shape, which reads as an ordinary `object` here and would
+ * otherwise descend for ever. Rewriting only the levels reached before the cycle would put an
+ * optional key in `required` at one depth and leave it out at the next — an inconsistency that
+ * satisfies no provider's strict rule while making the emitted schema harder to reason about than
+ * the caller's own.
  */
 function walk(schema: AnySchema): WalkResult {
+  if (inProgress.has(schema)) throw CYCLIC;
+  inProgress.add(schema);
+  try {
+    return walkNode(schema);
+  } finally {
+    inProgress.delete(schema);
+  }
+}
+
+function walkNode(schema: AnySchema): WalkResult {
   const def = defOf(schema);
   switch (def.type) {
     case 'optional':
@@ -363,7 +399,15 @@ export function structuredOutputBoundary<T>(schema: z.ZodType<T>): StructuredOut
   const cached = boundaries.get(schema);
   if (cached) return cached as StructuredOutputBoundary<T>;
 
-  const walked = walk(schema as unknown as AnySchema);
+  let walked: WalkResult;
+  try {
+    walked = walk(schema as unknown as AnySchema);
+  } catch (error) {
+    // A recursive schema is left exactly as the caller wrote it — the same answer this module gives
+    // for a union, and for the same reason: it will not rewrite what it cannot also normalize.
+    if (error !== CYCLIC) throw error;
+    walked = { schema: schema as unknown as AnySchema };
+  }
   const normalize = walked.normalize;
   const boundary: StructuredOutputBoundary<T> = {
     wireSchema: walked.schema as unknown as z.ZodType<Record<string, unknown>>,

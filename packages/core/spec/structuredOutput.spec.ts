@@ -248,6 +248,33 @@ describe('structuredOutputBoundary — nested optionals', () => {
     expect(fromTuple.success).toBe(true);
     if (fromTuple.success) expect(Object.hasOwn(fromTuple.data.t[1], 'a')).toBe(false);
   });
+
+  it('normalizes a tuple by position, prefix items and rest separately', () => {
+    /*
+     * A prefix item must be normalized by its OWN schema and never by the rest schema, which
+     * describes a different position. The two positions here disagree about the same key name on
+     * purpose, which is what makes the assertion discriminate: at index 1 `a` is REQUIRED and
+     * nullable, so its `null` is a value and must survive; in the rest it is optional, so its
+     * `null` must become the key being absent. Normalizing the prefix item with the rest's
+     * normalizer would strip a key the schema requires, and the parse would fail.
+     */
+    const Tuple = z.object({
+      t: z.tuple(
+        [z.string(), z.object({ a: z.string().nullable() })],
+        z.object({ a: z.string().optional() })
+      ),
+    });
+
+    const parsed = structuredOutputBoundary(Tuple).safeParse({
+      t: ['x', { a: null }, { a: null }, { a: 'v' }],
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.t[1]).toEqual({ a: null });
+    expect(Object.hasOwn(parsed.data.t[2] as object, 'a')).toBe(false);
+    expect((parsed.data.t[3] as { a?: string }).a).toBe('v');
+  });
 });
 
 describe('structuredOutputBoundary — the documented limits', () => {
@@ -283,6 +310,42 @@ describe('structuredOutputBoundary — the documented limits', () => {
     });
 
     expect(structuredOutputBoundary(Discriminated).wireSchema).toBe(Discriminated);
+  });
+
+  /**
+   * Zod spells recursion as a GETTER in an object's shape, which reads as an ordinary `object` to
+   * the walk — so this is not covered by the `lazy` limit below and would descend for ever without
+   * the cycle guard. `askStructured` takes arbitrary caller schemas, so it is reachable.
+   */
+  it('leaves a recursive schema alone instead of descending for ever', () => {
+    const Node = z.object({
+      id: z.string().describe('ID'),
+      get children() {
+        return z.array(Node).optional();
+      },
+    });
+
+    expect(structuredOutputBoundary(Node).wireSchema).toBe(Node);
+    // Terminating is the point: without the guard this is a RangeError, not a failed assertion.
+    expect(structuredOutputBoundary(Node).safeParse({ id: 'a' }).success).toBe(true);
+  });
+
+  it('leaves a mutually recursive pair alone', () => {
+    const A = z.object({
+      a: z.string(),
+      get b() {
+        return B.optional();
+      },
+    });
+    const B = z.object({
+      b: z.string(),
+      get a() {
+        return A.optional();
+      },
+    });
+
+    expect(structuredOutputBoundary(A).wireSchema).toBe(A);
+    expect(structuredOutputBoundary(B).wireSchema).toBe(B);
   });
 
   it('leaves an intersection and a lazy schema alone', () => {
