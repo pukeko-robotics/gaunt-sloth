@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as z from 'zod';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import type { ApprovalRung, GthConfig } from '#src/config.js';
 import { APPROVAL_RUNGS } from '#src/config.js';
@@ -31,6 +32,7 @@ import {
   type EffectiveToolAnnotations,
   MCP_FAIL_CLOSED_ANNOTATIONS,
 } from '#src/core/approvals/matcher.js';
+import { structuredOutputBoundary } from '#src/runtime/structuredOutput.js';
 
 /**
  * Build a fake BaseChatModel whose `withStructuredOutput(schema).invoke()` returns (or throws)
@@ -538,6 +540,170 @@ describe('§4.4 granted-alternative suggestion — the verdict', () => {
     );
     expect(decision.action).toBe('escalate');
     expect(decision.verdict?.suggestedTool).toBe('edit_file');
+  });
+});
+
+/**
+ * EXT-88 — **the rating call must accept the `null` our own request demands.**
+ *
+ * One Zod object cannot both be the JSON Schema a strict `json_schema` provider will accept and the
+ * validator for what that provider's model answers. Such a provider requires every property to be
+ * listed in `required` and spells optionality as a nullable type, so `suggestedTool` is asked for as
+ * required-and-nullable and a rater with nothing to suggest answers `null` — which a plain
+ * `.optional()` then rejects. Because a rater with no suggestion is the ordinary `safe` case, the
+ * failure is content-dependent rather than per-call: every gated command fails closed to
+ * "could not assess" and interrupts the human.
+ *
+ * The verdict schema therefore stays plain and `structuredOutputBoundary` owns the wire; these
+ * specs pin the behaviour that must hold end to end whichever way the split is expressed.
+ */
+describe('EXT-88 — a `null` suggestion is the answer the wire schema asks for', () => {
+  const GRANTED = [{ name: 'edit_file', description: 'Apply a targeted edit.' }];
+
+  beforeEach(() => vi.resetAllMocks());
+
+  /**
+   * The captured shape, verbatim off the wire. This is the whole ticket: it must parse as a `safe`
+   * verdict, NOT become a fail-closed `destructive`. Reverting the field to `.optional()` turns it
+   * red — the outcome is asserted, not the fail-closed cause, because the cause differs by how far
+   * the `null` travels (a provider's own parser throws; this stubbed model reaches our defensive
+   * `safeParse`), while `safe` versus `destructive` is the property that matters either way.
+   */
+  it('parses a `null` suggestion as a safe verdict rather than failing closed', async () => {
+    const { model } = fakeModel(() => ({
+      outcome: 'safe',
+      reason: 'prints the current date and time',
+      suggestedTool: null,
+    }));
+
+    const result = await rateShellCommand("date '+%Y-%m-%d'", CONFIG, {
+      model,
+      grantedTools: GRANTED,
+    });
+
+    expect(result.outcome).toBe('safe');
+    expect(result.reason).toBe('prints the current date and time');
+    expect(isFailClosed(result)).toBe(false);
+    // …and `null` is normalized to the key being ABSENT, so "no suggestion" has exactly one
+    // spelling for every downstream reader.
+    expect(result.suggestedTool).toBeUndefined();
+    expect(Object.hasOwn(result, 'suggestedTool')).toBe(false);
+  });
+
+  /** The same normalization on the escalating outcomes, where §7 quotes the field. */
+  it('normalizes `null` to absent on every outcome, not only `safe`', async () => {
+    for (const outcome of RATER_OUTCOMES) {
+      const { model } = fakeModel(() => ({ outcome, reason: 'r', suggestedTool: null }));
+      const result = await rateShellCommand('rm -rf build', CONFIG, {
+        model,
+        grantedTools: GRANTED,
+      });
+      expect(result.outcome).toBe(outcome);
+      expect(Object.hasOwn(result, 'suggestedTool')).toBe(false);
+    }
+  });
+
+  /**
+   * The verdict schema itself stays the plain one its CALLERS want — `suggestedTool` optional,
+   * `null` not a value it has ever admitted. Null-tolerance is a property of the boundary the call
+   * goes through, not of this object; asserting it here instead is what previously made one schema
+   * carry two contradicting jobs.
+   */
+  it('keeps the verdict schema itself plain — optional, and no null', () => {
+    expect(ShellSafetyVerdictSchema.safeParse({ outcome: 'safe', reason: 'r' }).success).toBe(true);
+    expect(
+      ShellSafetyVerdictSchema.safeParse({
+        outcome: 'safe',
+        reason: 'r',
+        suggestedTool: 'edit_file',
+      }).success
+    ).toBe(true);
+    expect(
+      ShellSafetyVerdictSchema.safeParse({ outcome: 'safe', reason: 'r', suggestedTool: null })
+        .success
+    ).toBe(false);
+  });
+
+  /** The boundary is where `null` becomes legal — and a wrong TYPE is still rejected there. */
+  it('admits `null` at the boundary and still rejects a non-string suggestion', () => {
+    const boundary = structuredOutputBoundary(ShellSafetyVerdictSchema);
+
+    const fromNull = boundary.safeParse({ outcome: 'safe', reason: 'r', suggestedTool: null });
+    expect(fromNull.success).toBe(true);
+    if (fromNull.success) expect(Object.hasOwn(fromNull.data, 'suggestedTool')).toBe(false);
+
+    expect(boundary.safeParse({ outcome: 'safe', reason: 'r' }).success).toBe(true);
+    expect(
+      boundary.safeParse({ outcome: 'safe', reason: 'r', suggestedTool: 7 }).success,
+      'the boundary is not a blanket accept-anything'
+    ).toBe(false);
+  });
+
+  /**
+   * The trap this ticket has to leave closed. A `.transform()` that maps `null` to `undefined` is
+   * the obvious-looking fix and it silently costs the field its `description` on the wire — the
+   * rater stops being told what a suggestion is for, which no other test would notice. This
+   * assertion is the tripwire, and it reads the schema the provider is ACTUALLY sent: the boundary's
+   * wire schema, not the verdict schema.
+   */
+  it('still emits the suggestedTool description in the JSON Schema the provider is sent', () => {
+    const emitted = z.toJSONSchema(
+      structuredOutputBoundary(ShellSafetyVerdictSchema).wireSchema
+    ) as {
+      properties: Record<string, { description?: string; anyOf?: { type?: string }[] }>;
+      required: string[];
+    };
+    const field = emitted.properties.suggestedTool;
+
+    expect(field.description).toBe(ShellSafetyVerdictSchema.shape.suggestedTool.description);
+    expect(field.description).toMatch(/^OPTIONAL\./);
+    expect(field.description).toMatch(/the exact name of that tool/);
+    // …and the model is told `null` is a legal answer, on a key it is REQUIRED to answer — which is
+    // the pair that satisfies a strict `json_schema` provider instead of being rewritten by one.
+    expect(field.anyOf).toEqual(expect.arrayContaining([{ type: 'null' }, { type: 'string' }]));
+    expect(emitted.required).toEqual(
+      expect.arrayContaining(['outcome', 'reason', 'suggestedTool'])
+    );
+    // The other two fields keep their descriptions, so this is not a schema that lost them all.
+    expect(emitted.properties.outcome.description).toMatch(
+      /^Outcome of running this single command/
+    );
+    expect(emitted.properties.reason.description).toMatch(/^One short sentence/);
+  });
+
+  /**
+   * The positive half: `null` must not become a licence to stop carrying real suggestions. A named,
+   * granted tool still round-trips, and a named, NOT-granted one is still dropped — the §4.4 rule is
+   * unchanged, it just no longer sees `null` as a name to check.
+   */
+  it('still round-trips a real suggestion and still validates it against the granted set', async () => {
+    const { model: suggesting } = fakeModel(() => ({
+      outcome: 'destructive',
+      reason: 'rewrites a file in place; edit_file does this without a shell',
+      suggestedTool: 'edit_file',
+    }));
+    expect(
+      (
+        await rateShellCommand("sed -i 's/a/b/' src/a.ts", CONFIG, {
+          model: suggesting,
+          grantedTools: GRANTED,
+        })
+      ).suggestedTool
+    ).toBe('edit_file');
+
+    const { model: hallucinating } = fakeModel(() => ({
+      outcome: 'destructive',
+      reason: 'use curl instead',
+      suggestedTool: 'curl',
+    }));
+    expect(
+      (
+        await rateShellCommand('wget https://example.com', CONFIG, {
+          model: hallucinating,
+          grantedTools: GRANTED,
+        })
+      ).suggestedTool
+    ).toBeUndefined();
   });
 });
 

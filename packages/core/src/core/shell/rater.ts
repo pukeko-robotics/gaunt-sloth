@@ -46,6 +46,7 @@ import {
   buildComposedOpenWorldNote,
   findOpenWorldHostLiterals,
 } from '#src/core/shell/openWorld.js';
+import { structuredOutputBoundary } from '#src/runtime/structuredOutput.js';
 import { debugLog, debugLogError } from '#src/utils/debugUtils.js';
 
 /**
@@ -82,6 +83,14 @@ export type RaterOutcome = (typeof RATER_OUTCOMES)[number];
  * Structured verdict the rater model must return: one outcome plus one short sentence. There is
  * deliberately nothing else — no severity number, no booleans to recombine into a compound
  * condition. The consequence is a property of the rung, not of a knob.
+ *
+ * **The schema is written plainly, as the verdict the rater's CALLERS want.** `suggestedTool` is a
+ * plain `.optional()` and the parsed verdict's `suggestedTool` is `string | undefined`. What a
+ * strict `json_schema` provider has to be sent instead — the key required and its type nullable —
+ * and the `null` that then comes back are entirely the business of
+ * {@link structuredOutputBoundary}, which {@link rateShellCommand} runs both halves of the call
+ * through. Nothing about the wire belongs in this object; putting it here is what made the schema we
+ * send contradict the schema we validate with.
  */
 export const ShellSafetyVerdictSchema = z.object({
   outcome: z
@@ -117,7 +126,9 @@ export const ShellSafetyVerdictSchema = z.object({
 });
 
 /**
- * The rater's structured verdict on a single shell command.
+ * The rater's structured verdict on a single shell command. `suggestedTool` is `string | undefined`
+ * and never `null` — the boundary the rating call goes through collapses a `null` to the key being
+ * absent before any consumer sees it, so "no suggestion" has exactly one spelling.
  */
 export type ShellSafetyVerdict = z.infer<typeof ShellSafetyVerdictSchema>;
 
@@ -659,18 +670,20 @@ export function buildRaterPrompt(
  * it does not have, so an unrecognised name is DROPPED rather than passed on. Dropping the field
  * never changes the outcome or the reason — the explanation the human sees is the rater's own text
  * either way.
+ *
+ * Every "no suggestion" path returns an object with **no `suggestedTool` key at all**, never one
+ * carrying an empty or null-ish value: a second spelling of "absent" is something the §7 rejection
+ * message and every other reader would each have to handle for themselves.
  */
 function validateSuggestedTool(
   verdict: ShellSafetyVerdict,
   grantedTools: readonly GrantedToolSummary[] | undefined
 ): ShellSafetyVerdict {
-  if (!verdict.suggestedTool) return verdict;
+  const { suggestedTool, ...rest } = verdict;
+  if (!suggestedTool) return rest;
   const granted = new Set((grantedTools ?? []).map((tool) => tool.name));
-  if (granted.has(verdict.suggestedTool)) return verdict;
-  debugLog(
-    `rateShellCommand: dropping suggestedTool '${verdict.suggestedTool}' — not a granted tool.`
-  );
-  const { suggestedTool: _dropped, ...rest } = verdict;
+  if (granted.has(suggestedTool)) return { ...rest, suggestedTool };
+  debugLog(`rateShellCommand: dropping suggestedTool '${suggestedTool}' — not a granted tool.`);
   return rest;
 }
 
@@ -725,7 +738,10 @@ export async function rateShellCommand(
       return failClosedVerdict('no-model');
     }
 
-    const structured = model.withStructuredOutput(ShellSafetyVerdictSchema);
+    // EXT-88 — the schema is sent and read back through the shared boundary, which is what makes a
+    // strict `json_schema` provider's required-and-nullable rewrite land on a value we accept.
+    const boundary = structuredOutputBoundary(ShellSafetyVerdictSchema);
+    const structured = model.withStructuredOutput(boundary.wireSchema);
     const raterPromise = structured.invoke([new SystemMessage(system), new HumanMessage(user)]);
 
     const TIMEOUT = Symbol('rater-timeout');
@@ -739,9 +755,10 @@ export async function rateShellCommand(
       return failClosedVerdict('timeout', timeoutMs);
     }
 
-    // withStructuredOutput already coerces to the schema, but re-validate defensively: a fake or
-    // misbehaving model could return a non-conforming object.
-    const parsed = ShellSafetyVerdictSchema.safeParse(raced);
+    // withStructuredOutput already coerces to the wire schema, but re-validate defensively: a fake
+    // or misbehaving model could return a non-conforming object. This is also where a `null`
+    // suggestion becomes the key being absent — a genuinely malformed verdict still fails closed.
+    const parsed = boundary.safeParse(raced);
     if (!parsed.success) {
       debugLog('rateShellCommand: rater returned unparseable output; failing closed.');
       return failClosedVerdict('unparseable');

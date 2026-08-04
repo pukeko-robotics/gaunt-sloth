@@ -52,6 +52,25 @@ pnpm run it anthropic           # no filter → everything, including frontier
 An `x-small` tier (a mid model such as gemma-31b) can be reintroduced the day a test needs a floor
 *between* xx-small and small — nothing does today, so the scale stays at two named tiers.
 
+### Config names are file names, not provider types
+
+The argument after `pnpm run it` names a file in `configs/`, so one provider can have several
+entries pinning different models — `xai` and `xai-build`, `google-genai` and
+`google-genai-flash-lite`. Any new name must be added to `setup-config.js`'s `validConfigs`, which
+exits 1 on an unknown name before vitest starts.
+
+### Two kinds of test live here
+
+Most tests **spawn the real CLI** through `support/commandRunner.ts` and assert on its output and
+exit code. A few instead **call a runtime function directly** against the configured provider, for
+code that has no CLI entry point or that a verb only reaches indirectly:
+
+- `providerContract.it.ts` **pins** one vendor's config, because it targets that vendor's contract.
+- `structuredOutput.xx-small.it.ts` uses the **ambient** provider — whichever
+  `pnpm run it <provider>` selected — so one file exercises every model in every matrix. It skips
+  cleanly when the ambient provider's key is absent, and prints a line saying which provider it
+  resolved and whether it ran, because a silent skip exits 0 and reads exactly like a pass.
+
 ### Local ollama (free, no API key)
 
 `pnpm run it ollama <tier>` drives a **local ollama** model — no API key, runs anywhere ollama is up.

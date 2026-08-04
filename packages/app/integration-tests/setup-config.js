@@ -7,6 +7,10 @@ const __dirname = path.dirname(__filename);
 
 const configName = process.argv[2];
 
+// A config name is a FILE name (`configs/<name>.gsloth.config.json`), not a provider type: several
+// names pin a different model of a provider already listed here (`xai-build` is `xai`,
+// `google-genai-flash-lite` is `google-genai`). A name missing from this list exits 1 before vitest
+// ever starts, so every name used by a CI matrix leg must appear here.
 const validConfigs = [
   'groq',
   'anthropic',
@@ -17,8 +21,11 @@ const validConfigs = [
   'openai',
   'inception',
   'google-genai',
+  'google-genai-flash-lite',
   'xai',
+  'xai-build',
   'openrouter',
+  'huggingface',
   'ollama',
 ];
 
