@@ -335,6 +335,125 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
     });
   });
 
+  /**
+   * EXT-78 — the same two keys, as the EMITTED JSON SCHEMA sees them. The hosted channels serve
+   * that artefact to editors, so a key it blesses and the CLI refuses is silence where the user is
+   * typing and a failure somewhere they cannot trace it from. Every assertion below therefore runs
+   * a whole config through a real JSON Schema validator over the GENERATED schema — a test that
+   * asserted against a hand-typed copy of the schema could agree with itself while the emitted
+   * artefact stayed wrong, which is the very divergence this node closes. (The committed
+   * `schema/gsloth-config.schema.json` that is actually deployed is tied to this same generator
+   * output by the golden-snapshot test in `configSchema.spec.ts`.)
+   *
+   * The refusals ship with two controls, because a `propertyNames` rule that refused everything, or
+   * one spelt as "may not START with the reserved name", would satisfy the refusals alone while
+   * turning the defect around: an editor red on a config that loads perfectly well.
+   */
+  describe('the two refused mcpServers keys in the emitted JSON Schema', () => {
+    const ajv = new Ajv2020({ strict: false, allErrors: true });
+    const validateJsonSchema = ajv.compile(generateConfigJsonSchema());
+    const accepts = (mcpServers: unknown): boolean =>
+      validateJsonSchema({ ...BASE, mcpServers }) as boolean;
+
+    it('refuses a server keyed with the empty string, and the load agrees', () => {
+      expect(accepts({ '': { command: 'x' } })).toBe(false);
+      expect(validateRawGthConfig({ ...BASE, mcpServers: { '': { command: 'x' } } }).ok).toBe(
+        false
+      );
+    });
+
+    it('refuses a server keyed with the reserved wildcard name, and the load agrees', () => {
+      expect(accepts({ '*': { command: 'x' } })).toBe(false);
+      expect(validateRawGthConfig({ ...BASE, mcpServers: { '*': { command: 'x' } } }).ok).toBe(
+        false
+      );
+    });
+
+    it('accepts an ordinarily named server, so the rule is not a blanket refusal', () => {
+      expect(accepts({ jira: { command: 'x' }, fetcher: { url: 'http://localhost:9000' } })).toBe(
+        true
+      );
+      expectAccepted(validateRawGthConfig({ ...BASE, mcpServers: { jira: { command: 'x' } } }));
+    });
+
+    it('accepts a key containing a newline, so the exclusion did not widen while being made portable', () => {
+      // The obvious portable spelling of "not exactly `*`" is `^(.{2,}|[^*])$` — and it is WRONG,
+      // because `.` does not match a newline, so it refuses this key while the load accepts it.
+      // That is an editor red on a config that starts fine: this rule's own defect class, turned
+      // around. Both surfaces must agree here, which is what makes `[\s\S]` the required spelling.
+      expect(accepts({ 'a\nb': { command: 'x' } })).toBe(true);
+      expectAccepted(validateRawGthConfig({ ...BASE, mcpServers: { 'a\nb': { command: 'x' } } }));
+    });
+
+    it('emits a pattern no lookaround, so a validator that cannot compile one still loads the schema', () => {
+      // The PORTABILITY property itself, pinned separately and deliberately. Every other assertion
+      // here is about WHICH KEYS are accepted, and all of them pass just as happily with a
+      // lookahead restored — so none of them can protect this. RE2 and Rust `regex` backed
+      // validators do not merely mis-evaluate a lookaround, they FAIL TO COMPILE the document, so
+      // this spelling decides whether the hosted schema works at all in those editors.
+      const emitted = generateConfigJsonSchema() as Record<string, unknown>;
+      const patterns: string[] = [];
+      const walk = (node: unknown): void => {
+        if (Array.isArray(node)) return node.forEach(walk);
+        if (node === null || typeof node !== 'object') return;
+        for (const [key, value] of Object.entries(node)) {
+          if (key === 'pattern' && typeof value === 'string') patterns.push(value);
+          walk(value);
+        }
+      };
+      walk(emitted);
+      // The control: if the emitted document carried no pattern at all this test would pass for
+      // free, so assert we are actually looking at something.
+      expect(patterns.length).toBeGreaterThan(0);
+      for (const pattern of patterns) {
+        expect(pattern, pattern).not.toMatch(/\(\?[=!<]/);
+      }
+    });
+
+    it('emits the exact portable spelling of the exclusion, because the spelling IS the contract', () => {
+      // Pinned literally, and on the EMITTED artefact rather than on the source constant, because
+      // this string is published to editors and its exact form is what decides whether they can
+      // compile it. Read it as "one character that is not the reserved one, or two-or-more
+      // characters" — equivalent to "not exactly `*`" only while the reserved name is a SINGLE
+      // character. Should that constant ever grow, a single negated class stops expressing the
+      // rule, and this assertion fails loudly instead of the schema quietly refusing the wrong set.
+      const emitted = generateConfigJsonSchema() as {
+        properties: { mcpServers: { propertyNames: { pattern?: string; minLength?: number } } };
+      };
+      const propertyNames = emitted.properties.mcpServers.propertyNames;
+      expect(propertyNames.pattern).toBe('^([^*]|[\\s\\S]{2,})$');
+      // The empty key is excluded here rather than in the pattern; both halves must survive.
+      expect(propertyNames.minLength).toBe(1);
+    });
+
+    it('accepts a longer name that merely begins with the reserved one', () => {
+      // The load refuses the reserved name by exact equality, so the schema must exclude it by
+      // exact equality too — `*-jira` is an ordinary server name on both surfaces.
+      expect(accepts({ '*-jira': { command: 'x' } })).toBe(true);
+      expectAccepted(validateRawGthConfig({ ...BASE, mcpServers: { '*-jira': { command: 'x' } } }));
+    });
+
+    it('leaves the two explanatory load messages as the ones a user sees', () => {
+      // The schema now refuses both keys as well, so the load could regress into reporting the
+      // parse failure instead — a message that can say WHICH key is wrong but never WHY. These are
+      // the pre-parse messages, which run first and own the explanation; they must survive intact.
+      const reserved = expectRejected(
+        validateRawGthConfig({ ...BASE, mcpServers: { '*': { command: 'x' } } })
+      );
+      expect(reserved).toContain('mcpServers.*');
+      expect(reserved).toContain('is a reserved MCP server name');
+      expect(reserved).toContain('EVERY server');
+      expect(reserved).toContain('Rename the server to anything else');
+
+      const unnameable = expectRejected(
+        validateRawGthConfig({ ...BASE, mcpServers: { '': { command: 'x' } } })
+      );
+      expect(unnameable).toContain('mcpServers.""');
+      expect(unnameable).toContain('may not be keyed with an empty name');
+      expect(unnameable).toContain('Give the server a name');
+    });
+  });
+
   describe('hint patterns', () => {
     it('are refused on a shell entry, while the same matcher on a tool subject loads', () => {
       const message = expectRejected(
@@ -520,10 +639,9 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
    * is checked below, so the two halves are: `maxLength` in the schema, compilation at load.
    *
    * That is a statement about the ENTRY grammar's rows, not about the node's load-time checks as a
-   * whole — the other one is the reserved `mcpServers` key `*`, which is a rule about a config
-   * record's key rather than about an entry field, and is likewise refused only at load
-   * (`findApprovalsGrammarIssues`). Reworking a shared permissive subschema for one reserved name
-   * would be a poor trade when the load already fails closed on it.
+   * whole — the two refused `mcpServers` keys are rules about a config record's KEY rather than
+   * about an entry field, and the schema states them on that record's `propertyNames` (see the
+   * `mcpServers` keys describe above).
    */
   describe('the emitted JSON Schema round-trips', () => {
     const ajv = new Ajv2020({ strict: false, allErrors: true });

@@ -286,6 +286,63 @@ const toolEntrySchema = z.discriminatedUnion('matcher', [
 ]);
 
 /**
+ * EXT-71 §3.1 — the reserved MCP server name. `*` in an entry's `server` field means *every
+ * server*, so a server actually CALLED `*` would make `{ "server": "*" }` ambiguous — it could not
+ * be read as either "every server" or "that one server" without picking, and a rule whose scope
+ * depends on which reading won is worse than no rule. The name is therefore refused at load.
+ */
+const RESERVED_MCP_SERVER_NAME = '*';
+
+/**
+ * EXT-78 §4.7.5 — the key an MCP server may be configured under, and the one spelling of that rule
+ * a JSON Schema can carry. It states exactly what {@link findApprovalsGrammarIssues} refuses ahead
+ * of the parse: a name of at least one character (nothing could be written about a server keyed
+ * with the empty string) and any name other than {@link RESERVED_MCP_SERVER_NAME}.
+ *
+ * It is on the record's KEY so the emitted schema carries both rules as `propertyNames`
+ * (`minLength` plus `pattern`). Without them the hosted channels publish a contract that accepts
+ * two keys the CLI then refuses to start on, and an editor validating against that contract stays
+ * silent while the error arrives from somewhere the user is not looking — the one direction they
+ * cannot debug from where they are working.
+ *
+ * The exclusion is EXACT, matching the pre-parse check's own equality test: a longer name that
+ * merely begins with the reserved one (`*-jira`) is an ordinary name and stays valid. And the
+ * pre-parse check still runs first and still owns the message that explains *why* each key is
+ * refused, which a JSON Schema violation can never say.
+ */
+
+/**
+ * The exclusion, spelt **without lookaround**, because this pattern is published rather than merely
+ * executed here.
+ *
+ * JSON Schema's `pattern` is nominally ECMA-262, but real validators differ and the ones built on
+ * RE2 or Rust's `regex` **cannot compile a lookaround at all** — they reject the document rather
+ * than mis-evaluating one keyword. A `^(?!\*$)` spelling therefore risks taking the *whole* hosted
+ * schema out of service in those editors, which is a worse failure than the gap this rule closes and
+ * defeats the reason the rule exists.
+ *
+ * Read it as: any single character that is not the reserved one, **or** any string of two or more
+ * characters. Only the exact reserved name is left out, which is the pre-parse check's own equality
+ * test. The empty string is excluded by `minLength` instead, which is the clearer home for it.
+ *
+ * **`[\s\S]` and not `.`** — `.` does not match a newline, so a `.`-based spelling refuses a key
+ * containing one while the load accepts it. That is a fresh divergence in the opposite direction:
+ * an editor red on a config that starts fine, i.e. this rule's own defect class, reintroduced by
+ * the fix for it. Measured on `"a\nb"` and `"\n\n"`.
+ *
+ * The construction assumes a **single-character** reserved name — with a longer one, "not exactly
+ * this string" is not expressible as one negated class. {@link mcpServerNameSchema}'s spec asserts
+ * that assumption, so changing the constant fails loudly instead of silently emitting a pattern that
+ * refuses the wrong set.
+ */
+const MCP_SERVER_NAME_PATTERN = `^([^${RESERVED_MCP_SERVER_NAME.replace(
+  /[\\\]^-]/g,
+  '\\$&'
+)}]|[\\s\\S]{2,})$`;
+
+const mcpServerNameSchema = z.string().min(1).regex(new RegExp(MCP_SERVER_NAME_PATTERN));
+
+/**
  * EXT-71 §3.1 — an `mcpTool` entry. `server` is **required** here and exists nowhere else: it is
  * the user's own key in `mcpServers` (§4.7.5), the only stable, unique, user-authored identity a
  * server has. The literal `*` is reserved to mean every server, which is why a configured server
@@ -789,7 +846,9 @@ export const rawGthConfigSchema = z.looseObject({
   recursionLimit: z.number().optional(),
   consoleLevel: z.union([z.string(), z.number()]).optional(),
   customTools: customToolsConfigSchema.optional(),
-  mcpServers: z.record(z.string(), z.unknown()).optional(),
+  // EXT-78 — keyed by the server's own name, whose two refused spellings ride on the key schema so
+  // the emitted JSON Schema states them too ({@link mcpServerNameSchema}).
+  mcpServers: z.record(mcpServerNameSchema, z.unknown()).optional(),
   tls: tlsSchema.optional(),
   a2aAgents: z.record(z.string(), z.unknown()).optional(),
   builtInToolsConfig: z.record(z.string(), z.unknown()).optional(),
@@ -1276,14 +1335,6 @@ export function findDeprecatedConfigIssues(raw: Record<string, unknown>): Deprec
 
   return issues;
 }
-
-/**
- * EXT-71 §3.1 — the reserved MCP server name. `*` in an entry's `server` field means *every
- * server*, so a server actually CALLED `*` would make `{ "server": "*" }` ambiguous — it could not
- * be read as either "every server" or "that one server" without picking, and a rule whose scope
- * depends on which reading won is worse than no rule. The name is therefore refused at load.
- */
-const RESERVED_MCP_SERVER_NAME = '*';
 
 /**
  * EXT-70 §4.7.5 — the MCP server name that cannot be written about. A server key is
