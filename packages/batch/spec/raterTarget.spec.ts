@@ -381,7 +381,12 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
       const outcome = await classifyModelFree(ENV_LEAK, 'script-env-leak-preflight');
 
       expect(outcome.rationale).toContain(FORCED_BY_ASSERTIONS['script-env-leak-preflight']);
-      expect(outcome.rationale).not.toContain(FORCED_BY_ASSERTIONS['ambiguity-preflight']);
+      // The discriminating half, and it must name a mechanism that still EXISTS. It used to name
+      // `ambiguity-preflight`, which EXT-81 removed from `FORCED_BY_MECHANISMS` — so the lookup went
+      // `undefined` and `.not.toContain(undefined)` could no longer fail, while this test's title
+      // went on claiming the discrimination. Specs are outside the build's type-check, so nothing
+      // went red. `hardline-floor` is the other surviving mechanism and is the real contrast.
+      expect(outcome.rationale).not.toContain(FORCED_BY_ASSERTIONS['hardline-floor']);
     });
 
     it('names NO mechanism for a command no mechanism decided', async () => {
