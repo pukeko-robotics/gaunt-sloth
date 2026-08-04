@@ -32,6 +32,7 @@ import {
   type EffectiveToolAnnotations,
   MCP_FAIL_CLOSED_ANNOTATIONS,
 } from '#src/core/approvals/matcher.js';
+import { structuredOutputBoundary } from '#src/runtime/structuredOutput.js';
 
 /**
  * Build a fake BaseChatModel whose `withStructuredOutput(schema).invoke()` returns (or throws)
@@ -543,16 +544,18 @@ describe('§4.4 granted-alternative suggestion — the verdict', () => {
 });
 
 /**
- * EXT-88 — **the verdict schema must accept the `null` our own request demands.**
+ * EXT-88 — **the rating call must accept the `null` our own request demands.**
  *
- * `ShellSafetyVerdictSchema` is one object doing two jobs: it is converted to the JSON Schema the
- * provider is sent, and it is what validates the answer that comes back. On a provider using OpenAI
- * strict `json_schema` structured output the conversion hoists every property into `required` and
- * spells optionality as a nullable type, so `suggestedTool` is asked for as required-and-nullable
- * and a rater with nothing to suggest answers `null`. Declared `.optional()`, the same object then
- * rejects that `null` — and because a rater with no suggestion is the ordinary `safe` case, the
+ * One Zod object cannot both be the JSON Schema a strict `json_schema` provider will accept and the
+ * validator for what that provider's model answers. Such a provider requires every property to be
+ * listed in `required` and spells optionality as a nullable type, so `suggestedTool` is asked for as
+ * required-and-nullable and a rater with nothing to suggest answers `null` — which a plain
+ * `.optional()` then rejects. Because a rater with no suggestion is the ordinary `safe` case, the
  * failure is content-dependent rather than per-call: every gated command fails closed to
  * "could not assess" and interrupts the human.
+ *
+ * The verdict schema therefore stays plain and `structuredOutputBoundary` owns the wire; these
+ * specs pin the behaviour that must hold end to end whichever way the split is expressed.
  */
 describe('EXT-88 — a `null` suggestion is the answer the wire schema asks for', () => {
   const GRANTED = [{ name: 'edit_file', description: 'Apply a targeted edit.' }];
@@ -600,37 +603,67 @@ describe('EXT-88 — a `null` suggestion is the answer the wire schema asks for'
     }
   });
 
-  /** The schema itself admits it, so `withStructuredOutput`'s own coercion cannot reject it first. */
-  it('admits `null` in the schema and still rejects a non-string suggestion', () => {
+  /**
+   * The verdict schema itself stays the plain one its CALLERS want — `suggestedTool` optional,
+   * `null` not a value it has ever admitted. Null-tolerance is a property of the boundary the call
+   * goes through, not of this object; asserting it here instead is what previously made one schema
+   * carry two contradicting jobs.
+   */
+  it('keeps the verdict schema itself plain — optional, and no null', () => {
+    expect(ShellSafetyVerdictSchema.safeParse({ outcome: 'safe', reason: 'r' }).success).toBe(true);
+    expect(
+      ShellSafetyVerdictSchema.safeParse({
+        outcome: 'safe',
+        reason: 'r',
+        suggestedTool: 'edit_file',
+      }).success
+    ).toBe(true);
     expect(
       ShellSafetyVerdictSchema.safeParse({ outcome: 'safe', reason: 'r', suggestedTool: null })
         .success
-    ).toBe(true);
-    expect(ShellSafetyVerdictSchema.safeParse({ outcome: 'safe', reason: 'r' }).success).toBe(true);
+    ).toBe(false);
+  });
+
+  /** The boundary is where `null` becomes legal — and a wrong TYPE is still rejected there. */
+  it('admits `null` at the boundary and still rejects a non-string suggestion', () => {
+    const boundary = structuredOutputBoundary(ShellSafetyVerdictSchema);
+
+    const fromNull = boundary.safeParse({ outcome: 'safe', reason: 'r', suggestedTool: null });
+    expect(fromNull.success).toBe(true);
+    if (fromNull.success) expect(Object.hasOwn(fromNull.data, 'suggestedTool')).toBe(false);
+
+    expect(boundary.safeParse({ outcome: 'safe', reason: 'r' }).success).toBe(true);
     expect(
-      ShellSafetyVerdictSchema.safeParse({ outcome: 'safe', reason: 'r', suggestedTool: 7 }).success
+      boundary.safeParse({ outcome: 'safe', reason: 'r', suggestedTool: 7 }).success,
+      'the boundary is not a blanket accept-anything'
     ).toBe(false);
   });
 
   /**
-   * The trap this ticket has to leave closed. A `.transform()` that maps `null` to `undefined` on
-   * the field is the obvious-looking fix and it silently costs the field its `description` on the
-   * wire — the rater stops being told what a suggestion is for, which no other test would notice.
-   * This assertion is the tripwire: `z.toJSONSchema` refuses to represent a transform at all, so a
-   * transform-based rewrite fails here loudly instead of degrading the prompt quietly.
+   * The trap this ticket has to leave closed. A `.transform()` that maps `null` to `undefined` is
+   * the obvious-looking fix and it silently costs the field its `description` on the wire — the
+   * rater stops being told what a suggestion is for, which no other test would notice. This
+   * assertion is the tripwire, and it reads the schema the provider is ACTUALLY sent: the boundary's
+   * wire schema, not the verdict schema.
    */
   it('still emits the suggestedTool description in the JSON Schema the provider is sent', () => {
-    const emitted = z.toJSONSchema(ShellSafetyVerdictSchema) as {
+    const emitted = z.toJSONSchema(
+      structuredOutputBoundary(ShellSafetyVerdictSchema).wireSchema
+    ) as {
       properties: Record<string, { description?: string; anyOf?: { type?: string }[] }>;
+      required: string[];
     };
     const field = emitted.properties.suggestedTool;
 
     expect(field.description).toBe(ShellSafetyVerdictSchema.shape.suggestedTool.description);
     expect(field.description).toMatch(/^OPTIONAL\./);
     expect(field.description).toMatch(/the exact name of that tool/);
-    // …and the model is told `null` is a legal answer, which is what makes the strict-mode
-    // required-and-nullable rewrite land on a value we accept.
+    // …and the model is told `null` is a legal answer, on a key it is REQUIRED to answer — which is
+    // the pair that satisfies a strict `json_schema` provider instead of being rewritten by one.
     expect(field.anyOf).toEqual(expect.arrayContaining([{ type: 'null' }, { type: 'string' }]));
+    expect(emitted.required).toEqual(
+      expect.arrayContaining(['outcome', 'reason', 'suggestedTool'])
+    );
     // The other two fields keep their descriptions, so this is not a schema that lost them all.
     expect(emitted.properties.outcome.description).toMatch(
       /^Outcome of running this single command/

@@ -22,6 +22,7 @@ import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import * as z from 'zod';
 
 import type { GthConfig } from '#src/config.js';
+import { structuredOutputBoundary } from '#src/runtime/structuredOutput.js';
 
 /**
  * Default wall-clock budget (ms) for the structured LLM call — same value as their
@@ -75,10 +76,11 @@ export async function askStructured<T>(
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    // `withStructuredOutput`'s output type is constrained to a record shape, but the schema here is
-    // an unconstrained `z.ZodType<T>`; the cast is sound because we re-validate the result with
-    // `schema.safeParse` below (a fake or misbehaving model could return a non-conforming object).
-    const structured = model.withStructuredOutput(schema as z.ZodType<Record<string, unknown>>);
+    // EXT-88 — caller schemas are arbitrary, so this is the call site with the widest exposure to
+    // the optional-field problem the boundary exists for; it also does the defensive re-validation
+    // below, against the caller's own schema, so `<T>` is exactly what the caller declared.
+    const boundary = structuredOutputBoundary(schema);
+    const structured = model.withStructuredOutput(boundary.wireSchema);
     const invokePromise = structured.invoke([new SystemMessage(system), new HumanMessage(user)]);
 
     const TIMEOUT = Symbol('ask-structured-timeout');
@@ -91,7 +93,7 @@ export async function askStructured<T>(
       return { ok: false, error: `Structured call timed out after ${timeoutMs}ms.` };
     }
 
-    const parsed = schema.safeParse(raced);
+    const parsed = boundary.safeParse(raced);
     if (!parsed.success) {
       return { ok: false, error: 'Model returned unparseable output.' };
     }

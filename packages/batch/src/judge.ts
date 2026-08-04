@@ -22,6 +22,7 @@
 
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { structuredOutputBoundary } from '@gaunt-sloth/core/runtime/structuredOutput.js';
 import * as z from 'zod';
 
 import type { JudgeOutcome } from '#src/evalTypes.js';
@@ -107,7 +108,11 @@ export async function judgeEvalCase(
   const { system, user } = buildJudgeMessages(answer, rubric);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const structured = model.withStructuredOutput(EvalVerdictSchema);
+    // EXT-88 — routed through the shared boundary like every other structured-output call. The
+    // rubric verdict has no optional field today, so the boundary hands back this very schema by
+    // identity; going through it is what stops a later optional field re-introducing the defect.
+    const boundary = structuredOutputBoundary(EvalVerdictSchema);
+    const structured = model.withStructuredOutput(boundary.wireSchema);
     const judgePromise = structured.invoke([new SystemMessage(system), new HumanMessage(user)]);
 
     const TIMEOUT = Symbol('eval-judge-timeout');
@@ -122,7 +127,7 @@ export async function judgeEvalCase(
 
     // withStructuredOutput already coerces to the schema, but re-validate defensively: a fake or
     // misbehaving model could return a non-conforming object.
-    const parsed = EvalVerdictSchema.safeParse(raced);
+    const parsed = boundary.safeParse(raced);
     if (!parsed.success) {
       return { attempted: true, ok: false, error: 'Judge returned unparseable output.' };
     }

@@ -46,6 +46,7 @@ import {
   buildComposedOpenWorldNote,
   findOpenWorldHostLiterals,
 } from '#src/core/shell/openWorld.js';
+import { structuredOutputBoundary } from '#src/runtime/structuredOutput.js';
 import { debugLog, debugLogError } from '#src/utils/debugUtils.js';
 
 /**
@@ -83,23 +84,13 @@ export type RaterOutcome = (typeof RATER_OUTCOMES)[number];
  * deliberately nothing else — no severity number, no booleans to recombine into a compound
  * condition. The consequence is a property of the rung, not of a knob.
  *
- * **This one object is both the schema we SEND and the schema we VALIDATE WITH, so it must accept
- * every answer it asks for.** On a provider using OpenAI **strict `json_schema`** structured output,
- * the conversion hoists every property into `required` and expresses optionality as a nullable type
- * instead — so `suggestedTool` goes on the wire as required-and-nullable, and a rater with nothing
- * to suggest answers with an explicit `null`. `.nullish()` is what makes that answer valid here:
- * `.optional()` admits `undefined` and not `null`, so the object would reject the very value it
- * demanded, and — since a rater with no suggestion is the ordinary `safe` case — every gated command
- * would fail closed to "could not assess" and escalate to the human.
- *
- * `null` never leaves this module: {@link validateSuggestedTool} normalizes it to the key being
- * ABSENT, which is what lets {@link ShellSafetyVerdict} present `string | undefined` and keeps
- * "absent" from acquiring a second spelling every downstream reader must know about.
- *
- * **Do not express that normalization with `.transform()` on the field.** A transform costs the
- * field its `description` in the emitted JSON Schema, and that description is the only place the
- * model is told what a suggestion is for — the field would go on the wire as a bare `anyOf` and the
- * rater would silently stop being told the rules in {@link buildGrantedToolsGuidance}.
+ * **The schema is written plainly, as the verdict the rater's CALLERS want.** `suggestedTool` is a
+ * plain `.optional()` and the parsed verdict's `suggestedTool` is `string | undefined`. What a
+ * strict `json_schema` provider has to be sent instead — the key required and its type nullable —
+ * and the `null` that then comes back are entirely the business of
+ * {@link structuredOutputBoundary}, which {@link rateShellCommand} runs both halves of the call
+ * through. Nothing about the wire belongs in this object; putting it here is what made the schema we
+ * send contradict the schema we validate with.
  */
 export const ShellSafetyVerdictSchema = z.object({
   outcome: z
@@ -124,7 +115,7 @@ export const ShellSafetyVerdictSchema = z.object({
     ),
   suggestedTool: z
     .string()
-    .nullish()
+    .optional()
     .describe(
       'OPTIONAL. When the outcome is NOT safe AND one of the already-granted tools listed in the ' +
         'system prompt would accomplish the same thing, the exact name of that tool (and name it ' +
@@ -135,25 +126,11 @@ export const ShellSafetyVerdictSchema = z.object({
 });
 
 /**
- * What a rater model may put **on the wire** — the raw inference of
- * {@link ShellSafetyVerdictSchema}, `null` included. It is internal on purpose: it exists only for
- * the few lines between `safeParse` and {@link validateSuggestedTool}, which is the whole span in
- * which a `null` suggestion is a legal value.
+ * The rater's structured verdict on a single shell command. `suggestedTool` is `string | undefined`
+ * and never `null` — the boundary the rating call goes through collapses a `null` to the key being
+ * absent before any consumer sees it, so "no suggestion" has exactly one spelling.
  */
-type ShellSafetyVerdictWire = z.infer<typeof ShellSafetyVerdictSchema>;
-
-/**
- * The rater's structured verdict on a single shell command.
- *
- * Stated as a narrowing of {@link ShellSafetyVerdictWire} rather than inferred from the schema, so
- * `outcome` and `reason` still follow the schema automatically while the ONE field that must differ
- * says so in one place. `suggestedTool` is `string | undefined` and never `null`: the wire admits a
- * `null` because a strict `json_schema` provider demands one (see the schema), and
- * {@link validateSuggestedTool} collapses it to the key being absent before any consumer sees it.
- */
-export type ShellSafetyVerdict = Omit<ShellSafetyVerdictWire, 'suggestedTool'> & {
-  suggestedTool?: string;
-};
+export type ShellSafetyVerdict = z.infer<typeof ShellSafetyVerdictSchema>;
 
 /**
  * The honest reason text used whenever the outcome was NOT assessed by the rater — a rater failure
@@ -686,9 +663,7 @@ export function buildRaterPrompt(
 }
 
 /**
- * EXT-58 (§4.4) — keep a `suggestedTool` only when it names a tool that is actually granted, and
- * (EXT-88) collapse every wire spelling of "no suggestion" to the key being absent. **This is the
- * single boundary between {@link ShellSafetyVerdictWire} and {@link ShellSafetyVerdict}.**
+ * EXT-58 (§4.4) — keep a `suggestedTool` only when it names a tool that is actually granted.
  *
  * The rater is asked for an exact name from a list we supplied; a model can still hallucinate one,
  * or name a tool that is gated. Either would produce a §7 message promising the model a free call
@@ -696,18 +671,14 @@ export function buildRaterPrompt(
  * never changes the outcome or the reason — the explanation the human sees is the rater's own text
  * either way.
  *
- * A `null` is NOT such a drop and must not be logged as one: a strict `json_schema` provider is told
- * the field is required-and-nullable, so `null` is precisely how a rater says it has nothing to
- * suggest — the answer our own request asked for. It comes out as the key being **absent**, because
- * a `null` passed through would be a second spelling of "absent" that the §7 rejection message and
- * every other reader would each have to handle for themselves.
+ * Every "no suggestion" path returns an object with **no `suggestedTool` key at all**, never one
+ * carrying an empty or null-ish value: a second spelling of "absent" is something the §7 rejection
+ * message and every other reader would each have to handle for themselves.
  */
 function validateSuggestedTool(
-  verdict: ShellSafetyVerdictWire,
+  verdict: ShellSafetyVerdict,
   grantedTools: readonly GrantedToolSummary[] | undefined
 ): ShellSafetyVerdict {
-  // Destructure FIRST so every "no suggestion" path returns an object with no `suggestedTool` key
-  // at all, rather than one carrying `null`.
   const { suggestedTool, ...rest } = verdict;
   if (!suggestedTool) return rest;
   const granted = new Set((grantedTools ?? []).map((tool) => tool.name));
@@ -767,7 +738,10 @@ export async function rateShellCommand(
       return failClosedVerdict('no-model');
     }
 
-    const structured = model.withStructuredOutput(ShellSafetyVerdictSchema);
+    // EXT-88 — the schema is sent and read back through the shared boundary, which is what makes a
+    // strict `json_schema` provider's required-and-nullable rewrite land on a value we accept.
+    const boundary = structuredOutputBoundary(ShellSafetyVerdictSchema);
+    const structured = model.withStructuredOutput(boundary.wireSchema);
     const raterPromise = structured.invoke([new SystemMessage(system), new HumanMessage(user)]);
 
     const TIMEOUT = Symbol('rater-timeout');
@@ -781,9 +755,10 @@ export async function rateShellCommand(
       return failClosedVerdict('timeout', timeoutMs);
     }
 
-    // withStructuredOutput already coerces to the schema, but re-validate defensively: a fake or
-    // misbehaving model could return a non-conforming object.
-    const parsed = ShellSafetyVerdictSchema.safeParse(raced);
+    // withStructuredOutput already coerces to the wire schema, but re-validate defensively: a fake
+    // or misbehaving model could return a non-conforming object. This is also where a `null`
+    // suggestion becomes the key being absent — a genuinely malformed verdict still fails closed.
+    const parsed = boundary.safeParse(raced);
     if (!parsed.success) {
       debugLog('rateShellCommand: rater returned unparseable output; failing closed.');
       return failClosedVerdict('unparseable');
