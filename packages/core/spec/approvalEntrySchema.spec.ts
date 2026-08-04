@@ -335,6 +335,75 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
     });
   });
 
+  /**
+   * EXT-78 — the same two keys, as the EMITTED JSON SCHEMA sees them. The hosted channels serve
+   * that artefact to editors, so a key it blesses and the CLI refuses is silence where the user is
+   * typing and a failure somewhere they cannot trace it from. Every assertion below therefore runs
+   * a whole config through a real JSON Schema validator over the GENERATED schema — a test that
+   * asserted against a hand-typed copy of the schema could agree with itself while the emitted
+   * artefact stayed wrong, which is the very divergence this node closes. (The committed
+   * `schema/gsloth-config.schema.json` that is actually deployed is tied to this same generator
+   * output by the golden-snapshot test in `configSchema.spec.ts`.)
+   *
+   * The refusals ship with two controls, because a `propertyNames` rule that refused everything, or
+   * one spelt as "may not START with the reserved name", would satisfy the refusals alone while
+   * turning the defect around: an editor red on a config that loads perfectly well.
+   */
+  describe('the two refused mcpServers keys in the emitted JSON Schema', () => {
+    const ajv = new Ajv2020({ strict: false, allErrors: true });
+    const validateJsonSchema = ajv.compile(generateConfigJsonSchema());
+    const accepts = (mcpServers: unknown): boolean =>
+      validateJsonSchema({ ...BASE, mcpServers }) as boolean;
+
+    it('refuses a server keyed with the empty string, and the load agrees', () => {
+      expect(accepts({ '': { command: 'x' } })).toBe(false);
+      expect(validateRawGthConfig({ ...BASE, mcpServers: { '': { command: 'x' } } }).ok).toBe(
+        false
+      );
+    });
+
+    it('refuses a server keyed with the reserved wildcard name, and the load agrees', () => {
+      expect(accepts({ '*': { command: 'x' } })).toBe(false);
+      expect(validateRawGthConfig({ ...BASE, mcpServers: { '*': { command: 'x' } } }).ok).toBe(
+        false
+      );
+    });
+
+    it('accepts an ordinarily named server, so the rule is not a blanket refusal', () => {
+      expect(accepts({ jira: { command: 'x' }, fetcher: { url: 'http://localhost:9000' } })).toBe(
+        true
+      );
+      expectAccepted(validateRawGthConfig({ ...BASE, mcpServers: { jira: { command: 'x' } } }));
+    });
+
+    it('accepts a longer name that merely begins with the reserved one', () => {
+      // The load refuses the reserved name by exact equality, so the schema must exclude it by
+      // exact equality too — `*-jira` is an ordinary server name on both surfaces.
+      expect(accepts({ '*-jira': { command: 'x' } })).toBe(true);
+      expectAccepted(validateRawGthConfig({ ...BASE, mcpServers: { '*-jira': { command: 'x' } } }));
+    });
+
+    it('leaves the two explanatory load messages as the ones a user sees', () => {
+      // The schema now refuses both keys as well, so the load could regress into reporting the
+      // parse failure instead — a message that can say WHICH key is wrong but never WHY. These are
+      // the pre-parse messages, which run first and own the explanation; they must survive intact.
+      const reserved = expectRejected(
+        validateRawGthConfig({ ...BASE, mcpServers: { '*': { command: 'x' } } })
+      );
+      expect(reserved).toContain('mcpServers.*');
+      expect(reserved).toContain('is a reserved MCP server name');
+      expect(reserved).toContain('EVERY server');
+      expect(reserved).toContain('Rename the server to anything else');
+
+      const unnameable = expectRejected(
+        validateRawGthConfig({ ...BASE, mcpServers: { '': { command: 'x' } } })
+      );
+      expect(unnameable).toContain('mcpServers.""');
+      expect(unnameable).toContain('may not be keyed with an empty name');
+      expect(unnameable).toContain('Give the server a name');
+    });
+  });
+
   describe('hint patterns', () => {
     it('are refused on a shell entry, while the same matcher on a tool subject loads', () => {
       const message = expectRejected(
@@ -520,10 +589,9 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
    * is checked below, so the two halves are: `maxLength` in the schema, compilation at load.
    *
    * That is a statement about the ENTRY grammar's rows, not about the node's load-time checks as a
-   * whole — the other one is the reserved `mcpServers` key `*`, which is a rule about a config
-   * record's key rather than about an entry field, and is likewise refused only at load
-   * (`findApprovalsGrammarIssues`). Reworking a shared permissive subschema for one reserved name
-   * would be a poor trade when the load already fails closed on it.
+   * whole — the two refused `mcpServers` keys are rules about a config record's KEY rather than
+   * about an entry field, and the schema states them on that record's `propertyNames` (see the
+   * `mcpServers` keys describe above).
    */
   describe('the emitted JSON Schema round-trips', () => {
     const ajv = new Ajv2020({ strict: false, allErrors: true });
