@@ -277,6 +277,146 @@ describe('structuredOutputBoundary — nested optionals', () => {
   });
 });
 
+describe('structuredOutputBoundary — an optional inside a wrapper', () => {
+  /*
+   * A wrapper is TRANSPARENT to optionality: `z.string().optional().default('foo')` is still
+   * advertised to the provider as a required key typed `anyOf: [string, null]`. So the provider is
+   * told that `null` is how to say "nothing here", it complies, and the `null` it sends must be
+   * honoured. A normalizer that skips the inner walk whenever the value is `null` re-creates, one
+   * wrapper deep, the exact self-contradiction this module exists to remove.
+   *
+   * What "absent" then MEANS is the caller's own business, because the final validation is the
+   * caller's untouched schema: under `.default('foo')` an absent key resolves to `'foo'`, under
+   * `.readonly()` it stays absent. Both are asserted — the property common to them is that the
+   * wire's `null` never reaches the caller's data.
+   */
+
+  it('admits the null it advertises for an optional wrapped in a default', () => {
+    const Defaulted = z.object({ opt: z.string().optional().default('foo') });
+    const wire = wireOf(Defaulted);
+    const parsed = structuredOutputBoundary(Defaulted).safeParse({ opt: null });
+
+    // What we ASK the provider for…
+    expect(wire.required).toEqual(['opt']);
+    expect(wire.properties?.opt.anyOf).toEqual(
+      expect.arrayContaining([{ type: 'string' }, { type: 'null' }])
+    );
+    // …and what we must therefore ACCEPT.
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.opt).toBe('foo');
+    expect(parsed.data.opt).not.toBeNull();
+  });
+
+  it('turns the null into the key being absent for an optional wrapped in readonly', () => {
+    const ReadOnly = z.object({ opt: z.string().optional().readonly() });
+    const wire = wireOf(ReadOnly);
+    const parsed = structuredOutputBoundary(ReadOnly).safeParse({ opt: null });
+
+    expect(wire.required).toEqual(['opt']);
+    expect(wire.properties?.opt.anyOf).toEqual(
+      expect.arrayContaining([{ type: 'string' }, { type: 'null' }])
+    );
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.opt).toBeUndefined();
+    // Not merely `undefined`: this wrapper declares no default, so the key must not exist.
+    expect(Object.hasOwn(parsed.data, 'opt')).toBe(false);
+  });
+
+  it('normalizes a wrapped optional nested inside an object', () => {
+    const Nested = z.object({ inner: z.object({ opt: z.string().optional().default('foo') }) });
+    const parsed = structuredOutputBoundary(Nested).safeParse({ inner: { opt: null } });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.inner.opt).toBe('foo');
+    expect(parsed.data.inner.opt).not.toBeNull();
+  });
+
+  it('normalizes a wrapped optional inside an object inside an array', () => {
+    // Depth was the original walker defect; a wrapper must not reintroduce a depth limit either.
+    const Deep = z.object({ items: z.array(z.object({ opt: z.string().optional().readonly() })) });
+    const parsed = structuredOutputBoundary(Deep).safeParse({
+      items: [{ opt: null }, { opt: 'kept' }],
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(Object.hasOwn(parsed.data.items[0], 'opt')).toBe(false);
+    expect(parsed.data.items[1].opt).toBe('kept');
+  });
+
+  /*
+   * THE CONTROL. Everything above would also pass under "normalize every null to absent", and that
+   * would be wrong: where the CALLER wrapped in `.nullable()`, `null` is a value in its own right
+   * and stripping it silently discards data the caller asked for. This is the one case the old
+   * blanket guard was genuinely protecting, and it is what decides that the wrapper must ask
+   * whether `null` is meaningful AT THIS NODE rather than skipping the inner walk unconditionally.
+   */
+  it('keeps a null the caller made meaningful by wrapping in nullable', () => {
+    const Nullable = z.object({ opt: z.string().optional().nullable() });
+    const parsed = structuredOutputBoundary(Nullable).safeParse({ opt: null });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.opt).toBeNull();
+    expect(Object.hasOwn(parsed.data, 'opt')).toBe(true);
+  });
+
+  it('treats both spellings of nullable-and-optional the same way', () => {
+    // `.nullable()` outside the optional is resolved by the wrapper walk, `.nullable()` inside it by
+    // the optional walk. They describe the same field, so they must not disagree about its `null`.
+    const Outside = z.object({ opt: z.string().optional().nullable() });
+    const Inside = z.object({ opt: z.string().nullable().optional() });
+
+    const fromOutside = structuredOutputBoundary(Outside).safeParse({ opt: null });
+    const fromInside = structuredOutputBoundary(Inside).safeParse({ opt: null });
+
+    expect(fromOutside.success).toBe(true);
+    expect(fromInside.success).toBe(true);
+    if (fromOutside.success) expect(fromOutside.data.opt).toBeNull();
+    if (fromInside.success) expect(fromInside.data.opt).toBeNull();
+  });
+
+  it('keeps the null of a nullable container that carries an optional', () => {
+    // The wrapper's child here is an object, not an optional. Its `null` says the whole container is
+    // absent and has nothing to do with the optional buried inside it.
+    const Container = z.object({ inner: z.object({ opt: z.string().optional() }).nullable() });
+    const boundary = structuredOutputBoundary(Container);
+
+    const asNull = boundary.safeParse({ inner: null });
+    expect(asNull.success).toBe(true);
+    if (asNull.success) expect(asNull.data.inner).toBeNull();
+
+    // …while an optional INSIDE the container is still normalized as usual.
+    const asObject = boundary.safeParse({ inner: { opt: null } });
+    expect(asObject.success).toBe(true);
+    if (asObject.success) expect(Object.hasOwn(asObject.data.inner as object, 'opt')).toBe(false);
+  });
+
+  it('still rejects a genuinely wrong value inside a wrapper', () => {
+    // Same clause as everywhere else in this module: it removes a FALSE parse failure, it does not
+    // accept anything.
+    const Defaulted = z.object({ opt: z.string().optional().default('foo') });
+
+    expect(structuredOutputBoundary(Defaulted).safeParse({ opt: 7 }).success).toBe(false);
+  });
+
+  it('accepts a missing key through a wrapper, for the providers that do not hoist', () => {
+    const Defaulted = z.object({ opt: z.string().optional().default('foo') });
+    const ReadOnly = z.object({ opt: z.string().optional().readonly() });
+
+    const defaulted = structuredOutputBoundary(Defaulted).safeParse({});
+    expect(defaulted.success).toBe(true);
+    if (defaulted.success) expect(defaulted.data.opt).toBe('foo');
+
+    const readOnly = structuredOutputBoundary(ReadOnly).safeParse({});
+    expect(readOnly.success).toBe(true);
+    if (readOnly.success) expect(Object.hasOwn(readOnly.data, 'opt')).toBe(false);
+  });
+});
+
 describe('structuredOutputBoundary — the documented limits', () => {
   /**
    * The rewrite stops at a union, and this test pins that rather than leaving it assumed.

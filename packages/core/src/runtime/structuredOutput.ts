@@ -289,15 +289,39 @@ function walkRecord(schema: AnySchema, def: SchemaDef): WalkResult {
   };
 }
 
-/** The single-child wrappers: `nullable`, `readonly`, `default`, `prefault`, `nonoptional`. */
+/**
+ * The single-child wrappers: `nullable`, `readonly`, `default`, `prefault`, `nonoptional`.
+ *
+ * A wrapper is **transparent to optionality**. `z.string().optional().default('foo')` is still sent
+ * as a required key typed `anyOf: [T, null]`, so a `null` arriving here is the wire's "nothing here"
+ * and must reach the inner normalizer that knows how to remove it. Passing every `null` straight
+ * through instead would advertise `null` to the provider and then reject the one it sends — the same
+ * self-contradiction this module exists to remove, one wrapper deep. What "absent" then means is the
+ * caller's own business, because the final validation is the caller's untouched schema: under
+ * `.default('foo')` it resolves to `'foo'`, under `.readonly()` the key simply stays absent.
+ *
+ * The exception is a wrapper that makes `null` a value in its own right — the caller wrote
+ * `.nullable()` **outside** the optional. That is the question {@link walkOptional} asks of its own
+ * inner type, asked one level up, and it is what keeps the two spellings of nullable-and-optional
+ * from disagreeing about the same field.
+ *
+ * `undefined` is passed through rather than being given a second meaning here: the wire never
+ * produces one (`prefault` supplies `null` for a missing key), and a genuinely missing object key
+ * never reaches a field normalizer at all — {@link walkObject} skips it.
+ */
 function walkWrapper(schema: AnySchema, def: SchemaDef): WalkResult {
   const inner = def.innerType as AnySchema;
   const result = walk(inner);
   if (result.schema === inner && !result.normalize) return { schema };
 
   const innerNormalize = result.normalize;
+  const nullIsMeaningful = innerNormalize !== undefined && schema.safeParse(null).success;
   const normalize: Normalizer | undefined = innerNormalize
-    ? (value) => (value === null || value === undefined ? value : innerNormalize(value))
+    ? (value) => {
+        if (value === undefined) return value;
+        if (value === null && nullIsMeaningful) return null;
+        return innerNormalize(value);
+      }
     : undefined;
   return {
     schema: result.schema === inner ? schema : cloneWith(schema, { innerType: result.schema }),
