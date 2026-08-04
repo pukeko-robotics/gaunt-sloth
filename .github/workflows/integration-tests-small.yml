@@ -13,7 +13,15 @@ jobs:
       fail-fast: false
       matrix:
         node-version: [24.x]
-        provider: [groq, inception, openrouter, xai]
+        # A matrix value is a config FILE name under packages/app/integration-tests/configs/, not a
+        # provider type, so several models of one provider can each have a leg (xai / xai-build,
+        # google-genai-flash-lite). Every name must also be in setup-config.js's validConfigs.
+        #
+        # A config earns a leg only once the WHOLE xx-small suite is green on it — run
+        # `pnpm run it <config> xx-small` locally before adding one. A leg that is red for a reason
+        # unrelated to the change under test teaches everyone to stop reading the matrix, which
+        # costs more than the coverage it adds.
+        provider: [groq, inception, openrouter, xai, xai-build, google-genai-flash-lite, huggingface]
       max-parallel: 3
 
     steps:
@@ -41,3 +49,8 @@ jobs:
         INCEPTION_API_KEY: ${{ secrets.INCEPTION_API_KEY }}
         OPEN_ROUTER_API_KEY: ${{ secrets.OPEN_ROUTER_API_KEY }}
         XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        # The huggingface provider reads HF_TOKEN first, then HUGGINGFACEHUB_API_TOKEN / HF_API_KEY.
+        # The secret is named HF_TOKEN; any other spelling here makes the leg skip and exit 0,
+        # which is indistinguishable from a pass.
+        HF_TOKEN: ${{ secrets.HF_TOKEN }}
