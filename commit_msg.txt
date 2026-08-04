@@ -1,0 +1,8 @@
+Adopt official @langchain/openrouter in core provider
+
+Replace ChatOpenAI wrapper in providers/openrouter.ts with ChatOpenRouter from @langchain/openrouter.
+Move attribution headers (HTTP-Referer, X-Title) to native siteUrl and siteName fields.
+Rely on ChatOpenRouter native reasoning content extraction to set reasoning_content on AIMessageChunk, removing raw response stashing and aggregation stripping hacks.
+Add singleton dependency tests for @langchain/core and @langchain/openai.
+
+Co-Authored-By: Gaunt Sloth (google-genai:gemini-3.6-flash) <code@gauntsloth.app>

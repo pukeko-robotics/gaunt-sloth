@@ -1,16 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// TUI-C22 — capture the config object ChatOpenAI is constructed with so we can assert the
-// OpenRouter provider enables __includeRawResponse (the only supported way to reach a top-level
-// `reasoning` field the ChatOpenAI completions converter otherwise drops).
-const chatOpenAIConstructorMock = vi.fn();
-vi.mock('@langchain/openai', () => {
-  class ChatOpenAI {
+const chatOpenRouterConstructorMock = vi.fn();
+vi.mock('@langchain/openrouter', () => {
+  class ChatOpenRouter {
     constructor(config: unknown) {
-      chatOpenAIConstructorMock(config);
+      chatOpenRouterConstructorMock(config);
     }
   }
-  return { ChatOpenAI };
+  return { ChatOpenRouter };
 });
 
 const consoleUtilsMock = {
@@ -32,30 +29,60 @@ function buildConfig(overrides: Record<string, unknown> = {}) {
   return { type: 'openrouter', apiKey: 'test-key', model: 'x-ai/grok', ...overrides };
 }
 
-describe('openrouter provider — TUI-C22 raw-response reasoning wiring', () => {
+describe('openrouter provider — ChatOpenRouter adoption & attribution wiring', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     systemUtilsMock.env = { OPEN_ROUTER_API_KEY: 'test-key' };
   });
 
-  it('enables __includeRawResponse by default so a top-level `reasoning` field is reachable', async () => {
+  it('constructs ChatOpenRouter with default attribution fields', async () => {
     const { processJsonConfig } = await import('#src/providers/openrouter.js');
 
     await processJsonConfig(buildConfig() as any);
 
-    expect(chatOpenAIConstructorMock).toHaveBeenCalledTimes(1);
-    const built = chatOpenAIConstructorMock.mock.calls[0][0];
-    expect(built.__includeRawResponse).toBe(true);
-    // The OpenRouter base URL wiring is untouched by this change.
-    expect(built.configuration.baseURL).toBe('https://openrouter.ai/api/v1');
+    expect(chatOpenRouterConstructorMock).toHaveBeenCalledTimes(1);
+    const built = chatOpenRouterConstructorMock.mock.calls[0][0];
+    expect(built.apiKey).toBe('test-key');
+    expect(built.model).toBe('x-ai/grok');
+    expect(built.siteUrl).toBe('https://gauntsloth.app/');
+    expect(built.siteName).toBe('Gaunt Sloth');
   });
 
-  it('honours an explicit __includeRawResponse: false override', async () => {
+  it('honors custom siteUrl and siteName or configuration defaultHeaders fallback', async () => {
     const { processJsonConfig } = await import('#src/providers/openrouter.js');
 
-    await processJsonConfig(buildConfig({ __includeRawResponse: false }) as any);
+    await processJsonConfig(
+      buildConfig({
+        siteUrl: 'https://custom.app',
+        siteName: 'Custom App',
+      }) as any
+    );
 
-    const built = chatOpenAIConstructorMock.mock.calls[0][0];
-    expect(built.__includeRawResponse).toBe(false);
+    const built = chatOpenRouterConstructorMock.mock.calls[0][0];
+    expect(built.siteUrl).toBe('https://custom.app');
+    expect(built.siteName).toBe('Custom App');
+  });
+
+  it('respects OPENROUTER_API_KEY environment variable fallback', async () => {
+    systemUtilsMock.env = { OPENROUTER_API_KEY: 'alt-env-key' };
+    const { processJsonConfig } = await import('#src/providers/openrouter.js');
+
+    await processJsonConfig({ type: 'openrouter', model: 'anthropic/claude-3.5-sonnet' } as any);
+
+    const built = chatOpenRouterConstructorMock.mock.calls[0][0];
+    expect(built.apiKey).toBe('alt-env-key');
+  });
+
+  it('passes baseURL when specified in configuration', async () => {
+    const { processJsonConfig } = await import('#src/providers/openrouter.js');
+
+    await processJsonConfig(
+      buildConfig({
+        configuration: { baseURL: 'https://openrouter.example.com/api/v1' },
+      }) as any
+    );
+
+    const built = chatOpenRouterConstructorMock.mock.calls[0][0];
+    expect(built.baseURL).toBe('https://openrouter.example.com/api/v1');
   });
 });
