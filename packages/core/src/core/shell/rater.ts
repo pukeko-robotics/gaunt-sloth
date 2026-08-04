@@ -82,6 +82,24 @@ export type RaterOutcome = (typeof RATER_OUTCOMES)[number];
  * Structured verdict the rater model must return: one outcome plus one short sentence. There is
  * deliberately nothing else — no severity number, no booleans to recombine into a compound
  * condition. The consequence is a property of the rung, not of a knob.
+ *
+ * **This one object is both the schema we SEND and the schema we VALIDATE WITH, so it must accept
+ * every answer it asks for.** On a provider using OpenAI **strict `json_schema`** structured output,
+ * the conversion hoists every property into `required` and expresses optionality as a nullable type
+ * instead — so `suggestedTool` goes on the wire as required-and-nullable, and a rater with nothing
+ * to suggest answers with an explicit `null`. `.nullish()` is what makes that answer valid here:
+ * `.optional()` admits `undefined` and not `null`, so the object would reject the very value it
+ * demanded, and — since a rater with no suggestion is the ordinary `safe` case — every gated command
+ * would fail closed to "could not assess" and escalate to the human.
+ *
+ * `null` never leaves this module: {@link validateSuggestedTool} normalizes it to the key being
+ * ABSENT, which is what lets {@link ShellSafetyVerdict} present `string | undefined` and keeps
+ * "absent" from acquiring a second spelling every downstream reader must know about.
+ *
+ * **Do not express that normalization with `.transform()` on the field.** A transform costs the
+ * field its `description` in the emitted JSON Schema, and that description is the only place the
+ * model is told what a suggestion is for — the field would go on the wire as a bare `anyOf` and the
+ * rater would silently stop being told the rules in {@link buildGrantedToolsGuidance}.
  */
 export const ShellSafetyVerdictSchema = z.object({
   outcome: z
@@ -106,7 +124,7 @@ export const ShellSafetyVerdictSchema = z.object({
     ),
   suggestedTool: z
     .string()
-    .optional()
+    .nullish()
     .describe(
       'OPTIONAL. When the outcome is NOT safe AND one of the already-granted tools listed in the ' +
         'system prompt would accomplish the same thing, the exact name of that tool (and name it ' +
@@ -117,9 +135,25 @@ export const ShellSafetyVerdictSchema = z.object({
 });
 
 /**
- * The rater's structured verdict on a single shell command.
+ * What a rater model may put **on the wire** — the raw inference of
+ * {@link ShellSafetyVerdictSchema}, `null` included. It is internal on purpose: it exists only for
+ * the few lines between `safeParse` and {@link validateSuggestedTool}, which is the whole span in
+ * which a `null` suggestion is a legal value.
  */
-export type ShellSafetyVerdict = z.infer<typeof ShellSafetyVerdictSchema>;
+type ShellSafetyVerdictWire = z.infer<typeof ShellSafetyVerdictSchema>;
+
+/**
+ * The rater's structured verdict on a single shell command.
+ *
+ * Stated as a narrowing of {@link ShellSafetyVerdictWire} rather than inferred from the schema, so
+ * `outcome` and `reason` still follow the schema automatically while the ONE field that must differ
+ * says so in one place. `suggestedTool` is `string | undefined` and never `null`: the wire admits a
+ * `null` because a strict `json_schema` provider demands one (see the schema), and
+ * {@link validateSuggestedTool} collapses it to the key being absent before any consumer sees it.
+ */
+export type ShellSafetyVerdict = Omit<ShellSafetyVerdictWire, 'suggestedTool'> & {
+  suggestedTool?: string;
+};
 
 /**
  * The honest reason text used whenever the outcome was NOT assessed by the rater — a rater failure
@@ -652,25 +686,33 @@ export function buildRaterPrompt(
 }
 
 /**
- * EXT-58 (§4.4) — keep a `suggestedTool` only when it names a tool that is actually granted.
+ * EXT-58 (§4.4) — keep a `suggestedTool` only when it names a tool that is actually granted, and
+ * (EXT-88) collapse every wire spelling of "no suggestion" to the key being absent. **This is the
+ * single boundary between {@link ShellSafetyVerdictWire} and {@link ShellSafetyVerdict}.**
  *
  * The rater is asked for an exact name from a list we supplied; a model can still hallucinate one,
  * or name a tool that is gated. Either would produce a §7 message promising the model a free call
  * it does not have, so an unrecognised name is DROPPED rather than passed on. Dropping the field
  * never changes the outcome or the reason — the explanation the human sees is the rater's own text
  * either way.
+ *
+ * A `null` is NOT such a drop and must not be logged as one: a strict `json_schema` provider is told
+ * the field is required-and-nullable, so `null` is precisely how a rater says it has nothing to
+ * suggest — the answer our own request asked for. It comes out as the key being **absent**, because
+ * a `null` passed through would be a second spelling of "absent" that the §7 rejection message and
+ * every other reader would each have to handle for themselves.
  */
 function validateSuggestedTool(
-  verdict: ShellSafetyVerdict,
+  verdict: ShellSafetyVerdictWire,
   grantedTools: readonly GrantedToolSummary[] | undefined
 ): ShellSafetyVerdict {
-  if (!verdict.suggestedTool) return verdict;
+  // Destructure FIRST so every "no suggestion" path returns an object with no `suggestedTool` key
+  // at all, rather than one carrying `null`.
+  const { suggestedTool, ...rest } = verdict;
+  if (!suggestedTool) return rest;
   const granted = new Set((grantedTools ?? []).map((tool) => tool.name));
-  if (granted.has(verdict.suggestedTool)) return verdict;
-  debugLog(
-    `rateShellCommand: dropping suggestedTool '${verdict.suggestedTool}' — not a granted tool.`
-  );
-  const { suggestedTool: _dropped, ...rest } = verdict;
+  if (granted.has(suggestedTool)) return { ...rest, suggestedTool };
+  debugLog(`rateShellCommand: dropping suggestedTool '${suggestedTool}' — not a granted tool.`);
   return rest;
 }
 
