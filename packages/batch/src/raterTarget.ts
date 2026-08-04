@@ -45,7 +45,6 @@ import {
   mechanismNeedsPermissiveRating,
 } from '#src/evalTypes.js';
 import type {
-  AbstentionMechanism,
   ClassifyOutcome,
   ClassifyRequest,
   ForcedByMechanism,
@@ -117,37 +116,6 @@ const MECHANISM_PROBES: Readonly<Record<PreflightMechanism, string>> = {
 };
 
 /**
- * EXT-64 — one command per **abstention**, probed the same way and for the same reason, but read off
- * a different signal.
- *
- * An abstention rewrites no outcome — the gate returns no verdict at all, because nobody rated — so
- * {@link MECHANISM_PROBES}' "which outcome did it override" question has no answer here. What it
- * does return is an ACTION no other mechanism produces, and that is what is indexed. The action
- * string is **discovered, never spelled**: this module has no opinion about core's vocabulary, and a
- * literal here would keep naming the mechanism after core had renamed the action out from under it.
- *
- * See {@link ABSTENTION_CONTROL} for what makes that discovery honest under deletion.
- */
-const ABSTENTION_PROBES: Readonly<Record<AbstentionMechanism, string>> = {
-  'ambiguity-preflight': 'echo $(echo probe)',
-};
-
-/**
- * The command an abstention probe is compared AGAINST: one the gate resolves and no mechanism
- * decides, put through the same mapping with the same (absent) rating.
- *
- * **This control is what makes the abstention index honest under deletion, and without it the
- * calibration would fail OPEN.** Indexing whatever action the probe returns would, with core's
- * abstention arm deleted, index the ordinary escalate-everything action instead — and then every
- * escalating decision in every corpus would be attributed to `ambiguity-preflight`, which is not a
- * red test but a silently wrong report. Requiring the probe's action to DIFFER from this control's
- * means a deleted arm makes the two identical, the mechanism is not indexed, and every case
- * asserting it goes red. That is the same "honest under deletion" property {@link MECHANISM_PROBES}
- * gets from `reason === PROBE_REASON`.
- */
-const ABSTENTION_CONTROL = 'ls -la';
-
-/**
  * The reason put ON a probe verdict. It is never a sentence the gate itself writes, so "the gate
  * handed this straight back" is decidable by equality rather than by recognising core's prose — and
  * it must never reach a rationale (asserted, including at `bypass`, where the mapping returns the
@@ -155,18 +123,10 @@ const ABSTENTION_CONTROL = 'ls -la';
  */
 const PROBE_REASON = '__gth-eval probe: not a finding__';
 
-/** What {@link calibrateGate} learned; see {@link MECHANISM_PROBES} and {@link ABSTENTION_PROBES}. */
+/** What {@link calibrateGate} learned; see {@link MECHANISM_PROBES}. */
 interface GateCalibration {
   /** Reason sentence → the preflight that wrote it. */
   index: Map<string, ForcedByMechanism>;
-  /**
-   * Action string → the abstention that produced it. A SECOND index rather than a second kind of
-   * key in the first one, because the two mechanism classes are observable on different signals:
-   * a preflight is visible in the reason it rewrote, an abstention in the action it returned and in
-   * the verdict it did not produce. Merging the key spaces would let a reason sentence that happened
-   * to equal an action string attribute one mechanism as the other.
-   */
-  abstentions: Map<string, ForcedByMechanism>;
   /** The outcome a preflight is willing to override — i.e. the one that sits below core's
    * deterministic floor, discovered rather than spelled. `undefined` = no probe was rewritten at
    * all, so no mechanism is claimable and every `forced_by: <preflight>` case fails loudly. */
@@ -177,16 +137,15 @@ interface GateCalibration {
 let calibration: GateCalibration | undefined;
 
 /**
- * Ask core which sentence each preflight produces and which action each abstention produces, and
- * index both — together with the rating those preflights are willing to override.
+ * Ask core which sentence each preflight produces, and index it — together with the rating those
+ * preflights are willing to override.
  */
 function calibrateGate(): GateCalibration {
   const index = new Map<string, ForcedByMechanism>();
-  const abstentions = new Map<string, ForcedByMechanism>();
   let permissive: string | undefined;
-  // Derived, never spelled: the preflights and the abstention only run at a rated rung.
+  // Derived, never spelled: the preflights only run at a rated rung.
   const rung = APPROVAL_RUNGS.find((candidate) => isRatedRung(candidate));
-  if (rung === undefined) return { index, abstentions, permissive };
+  if (rung === undefined) return { index, permissive };
 
   for (const [mechanism, probe] of Object.entries(MECHANISM_PROBES) as [
     PreflightMechanism,
@@ -210,46 +169,18 @@ function calibrateGate(): GateCalibration {
     }
   }
 
-  // EXT-64 — the abstention pass. Nothing is rated here, exactly as production does not rate a
-  // command it cannot resolve, so what is compared is the ACTION against the one a resolvable
-  // command with the same (absent) rating gets. See {@link ABSTENTION_CONTROL} for why the control
-  // is what keeps this honest rather than merely self-calibrating.
-  const control = mapVerdictToAction(ABSTENTION_CONTROL, undefined, { rung });
-  for (const [mechanism, probe] of Object.entries(ABSTENTION_PROBES) as [
-    AbstentionMechanism,
-    string,
-  ][]) {
-    const decision = mapVerdictToAction(probe, undefined, { rung });
-    // Same action as a command nothing decided, or a verdict where an abstention would have none:
-    // this mechanism is not distinguishable (or no longer fires at all). Not indexed, so every case
-    // claiming it goes red.
-    if (decision.action === control.action || decision.verdict !== undefined) continue;
-    if (abstentions.has(decision.action)) {
-      // Two abstentions, one action: no longer distinguishable, so claim NEITHER — the same rule
-      // the reason index above applies to a shared sentence.
-      abstentions.delete(decision.action);
-    } else {
-      abstentions.set(decision.action, mechanism);
-    }
-  }
-  return { index, abstentions, permissive };
+  return { index, permissive };
 }
 
 /**
- * Ask core which signal each deterministic mechanism produces, and index it: a preflight by the
- * reason sentence it rewrote, an abstention by the action it returned.
- *
- * The two key spaces are heterogeneous on purpose — the key is **the observable signal for that
- * mechanism class**, not a reason — and they are merged into one map here because every caller of
- * this function asks the same question of it ("which mechanisms can the gate still attribute?").
+ * Ask core which reason sentence each deterministic preflight writes, and index it.
  *
  * Exported for the unit suite: a run in which this returns fewer than the probed mechanisms means
  * the gate no longer distinguishes them, and every `forced_by` assertion in every corpus would fail.
  * That must be a red unit test rather than a surprise in someone's eval report.
  */
 export function calibrateMechanisms(): Map<string, ForcedByMechanism> {
-  const { index, abstentions } = calibrateGate();
-  return new Map([...index, ...abstentions]);
+  return new Map(calibrateGate().index);
 }
 
 /**
@@ -266,18 +197,10 @@ export function calibratePermissiveRating(): string | undefined {
  * Which deterministic mechanism forced this decision — read out of what the gate RETURNED, never
  * recomputed from the command. `undefined` when the decision was not forced by an indexed mechanism
  * (a rated verdict, an unrated rung, or a mechanism that no longer fires).
- *
- * It takes the whole DECISION rather than the verdict, because an abstention has no verdict to read:
- * the gate says so by the action it returns and by returning no rating at all. See
- * {@link ABSTENTION_PROBES}.
  */
 function forcedMechanism(decision: RaterDecision): ForcedByMechanism | undefined {
-  const { index, abstentions } = calibrated();
-  // The abstention first, and only when the decision really carries no verdict: an indexed action
-  // arriving WITH a rating is not the shape the probe measured, so attributing it would be a guess.
-  if (decision.verdict === undefined) return abstentions.get(decision.action);
-  if (!decision.verdict.reason) return undefined;
-  return index.get(decision.verdict.reason);
+  if (!decision.verdict?.reason) return undefined;
+  return calibrated().index.get(decision.verdict.reason);
 }
 
 /** The memoized {@link calibrateGate} — core's answers do not change within a run. */
@@ -419,11 +342,6 @@ function buildRationale(
  * from core, and it is the only way a preflight is observable at all since CFG-28. It does not
  * flatter the case — when the claimed preflight really fires the action is the same either way, and
  * when it does not, the marker and the action go red together.
- *
- * **A round claiming an ABSTENTION is not** ({@link ../evalTypes.js ABSTENTION_MECHANISMS}). There
- * is nothing for a rating to override: the gate returns no verdict, and the action itself is what
- * says which mechanism decided. A stub would move the action column and buy nothing, which is the
- * same trade the §8 floor already declines.
  */
 async function classifyOneRound(
   command: string,

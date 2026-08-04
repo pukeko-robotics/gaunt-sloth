@@ -278,45 +278,21 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
   });
 
   /**
-   * [[EXT-65]] acceptance 8 — **the abstention count appears in the session's own reporting.**
+   * [[EXT-81]] — **the abstention row is gone, and its absence is asserted rather than assumed.**
    *
-   * The near-miss is the most valuable signal the gate produces and it was previously invisible.
-   * After EXT-65 an abstention no longer interrupts anybody at the rated rungs — it is handed back
-   * to the model, which usually rewrites the command and moves on — so a gate that cannot parse the
-   * ordinary work of this session leaves no trace at all unless it is counted here.
+   * The display used to carry a count of the commands the gate could not read, because an
+   * abstention refused work back to the model and left no other trace. Nothing abstains now: an
+   * unresolvable command is rated like any other and the parser's finding never reaches the user at
+   * all. A line reporting a count that is always zero would be a display of a fact with no reader.
    */
-  it('EXT-65: the /approvals display reports how many commands the gate could not read', async () => {
+  it('the /approvals display carries NO abstention row', async () => {
     const { approvalsStatusNotice } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const posture = { rung: 'full-auto', allow: [], deny: [], escalate: [] } as any;
-
-    const three = approvalsStatusNotice(
-      posture,
-      { session: 0, always: 0 },
-      [],
-      [],
-      undefined,
-      3
-    ).lines.join(' ');
-    expect(three).toContain('Gate could not read a command 3 times this session');
-    expect(three).toContain('handed back to the model to rewrite');
-
-    // Singular reads as English, not as "1 times".
-    const one = approvalsStatusNotice(
-      posture,
-      { session: 0, always: 0 },
-      [],
-      [],
-      undefined,
-      1
-    ).lines.join(' ');
-    expect(one).toContain('Gate could not read a command once this session');
-
-    // **The control.** Nothing abstained in most sessions, and a permanent `Abstentions: 0` would
-    // spend a line of an already-long display on a fact with no reader. Absent means zero — and
-    // this is what makes the two assertions above about the COUNT rather than about a line that is
-    // always there.
-    const none = approvalsStatusNotice(posture, { session: 0, always: 0 }).lines.join(' ');
-    expect(none).not.toContain('Gate could not read a command');
+    const body = approvalsStatusNotice(posture, { session: 0, always: 0 }).lines.join(' ');
+    expect(body).not.toContain('could not read a command');
+    // ...and the rest of the display is still there, so the assertion above is about the removed
+    // row rather than about a notice that stopped rendering.
+    expect(body).toContain('Allowed: 0 this session');
   });
 
   it('the /approvals display says the rater is unused at the three deterministic rungs', async () => {

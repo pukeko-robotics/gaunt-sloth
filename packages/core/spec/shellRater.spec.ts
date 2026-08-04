@@ -3,7 +3,6 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { ApprovalRung, GthConfig } from '#src/config.js';
 import { APPROVAL_RUNGS } from '#src/config.js';
 import {
-  abstentionReason,
   applyDestructiveFloor,
   buildGrantedToolsGuidance,
   buildRaterPrompt,
@@ -527,17 +526,18 @@ describe('§4.4 granted-alternative suggestion — the verdict', () => {
     expect(decision.verdict?.suggestedTool).toBeUndefined();
   });
 
-  it('drops the suggestion on an ABSTENTION too — there is no verdict to keep it on', () => {
-    // The stronger form of the same rule: when the gate could not resolve the command it returns no
-    // verdict at all, so a §7 message has nothing to quote and cannot promise the model a free call
-    // on the strength of a rating nobody acted on.
+  it('KEEPS the suggestion on a command the parser could not resolve — the rater still rated it', () => {
+    // [[EXT-81]] — this used to return `abstain` with no verdict, and the suggestion went with it.
+    // Now the command is rated like any other, so a verdict the preflights leave alone keeps its
+    // own explanation and its own §4.4 suggestion. The rule that drops one is unchanged and sits
+    // above: a verdict the GATE rewrote loses the suggestion that belonged to it.
     const decision = mapVerdictToAction(
       'cat foo.txt | tee bar.txt',
-      { outcome: 'safe', reason: 'harmless', suggestedTool: 'edit_file' },
+      { outcome: 'destructive', reason: 'overwrites bar.txt', suggestedTool: 'edit_file' },
       { rung: 'auto-safe' }
     );
-    expect(decision.action).toBe('abstain');
-    expect(decision.verdict).toBeUndefined();
+    expect(decision.action).toBe('escalate');
+    expect(decision.verdict?.suggestedTool).toBe('edit_file');
   });
 });
 
@@ -737,38 +737,68 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
   });
 
   /**
-   * EXT-64 — **the abstention is a state of its own, and these are the properties that make it
-   * one.** An unresolvable command produces the `abstain` ACTION and NO verdict, because nobody
-   * rated it; the sentence a human eventually reads comes from {@link abstentionReason}, which is a
-   * separate, exported thing precisely so a caller has to ask for it rather than find a rating
-   * lying around that nobody rendered.
+   * [[EXT-81]] — **a command the gate's parser cannot resolve is RATED, like every other command.**
+   *
+   * It used to return an `abstain` ACTION with no verdict, and the rater was never called. The
+   * properties below are what replaced that, and each is a consequence rather than a restatement:
+   * the ordinary composed command approves on a `safe` verdict (the interruption this node
+   * removes), and the two severe outcomes are REACHABLE again for a class where nothing could
+   * previously say worse than `destructive`.
    */
-  describe('abstention — a fact about the CHECKER, not a rating of the command', () => {
+  describe('an unresolvable command is rated, not abstained on', () => {
     const AMBIGUOUS = ['cat x | sh', 'python -c "..." ; rm y', 'echo $(whoami)'];
 
-    it('yields action `abstain` with NO verdict at both rated rungs, even on a SAFE verdict', () => {
-      for (const command of AMBIGUOUS) {
+    /**
+     * **The interruption this node removes.** `cd build && ls`, `npm test && npm run build` and
+     * `git add -A && git status` are the overwhelming majority of what the parser cannot read, and
+     * a rater that finds them harmless now approves them instead of the gate refusing on its own
+     * authority.
+     */
+    it('APPROVES on a safe verdict at both rated rungs, carrying that verdict', () => {
+      for (const command of [...AMBIGUOUS, 'cd build && ls', 'git add -A && git status']) {
         for (const rung of RATED_RUNGS) {
           const decision = mapVerdictToAction(command, SAFE, { rung });
-          expect(decision.action, `${command} @ ${rung}`).toBe('abstain');
-          // Nobody rated: there is no verdict to carry, and inventing one is the confusion this
-          // node exists to undo.
-          expect(decision.verdict, `${command} @ ${rung}`).toBeUndefined();
+          expect(decision.action, `${command} @ ${rung}`).toBe('approve');
+          expect(decision.verdict, `${command} @ ${rung}`).toEqual(SAFE);
         }
       }
     });
 
-    it('...and with no verdict at all handed in, which is what production does', () => {
+    /**
+     * **The ceiling this node restores.** While nothing rated this class, `attack` and
+     * `catastrophic` were unreachable for every composed, substituting or redirecting command —
+     * `pwd && rm -rf ~` could be floored at `destructive` and no layer was positioned to call it
+     * worse.
+     */
+    it('reaches `halt` on attack and `escalate` on catastrophic, which it could not before', () => {
+      for (const command of [...AMBIGUOUS, 'pwd && rm -rf ~']) {
+        for (const rung of RATED_RUNGS) {
+          const halted = mapVerdictToAction(command, ATTACK, { rung });
+          expect(halted.action, `${command} @ ${rung}`).toBe('halt');
+          expect(halted.verdict?.outcome, `${command} @ ${rung}`).toBe('attack');
+
+          const escalated = mapVerdictToAction(command, CATASTROPHIC, { rung });
+          expect(escalated.action, `${command} @ ${rung}`).toBe('escalate');
+          expect(escalated.verdict?.outcome, `${command} @ ${rung}`).toBe('catastrophic');
+        }
+      }
+    });
+
+    /** With no verdict at all it is the fail-closed `destructive`, exactly as any other command. */
+    it('fails closed to an escalating `destructive` when no rating arrives', () => {
       for (const command of AMBIGUOUS) {
         for (const rung of RATED_RUNGS) {
           const decision = mapVerdictToAction(command, undefined, { rung });
-          expect(decision.action, `${command} @ ${rung}`).toBe('abstain');
-          expect(decision.verdict, `${command} @ ${rung}`).toBeUndefined();
+          expect(decision.action, `${command} @ ${rung}`).toBe('escalate');
+          expect(decision.verdict?.outcome, `${command} @ ${rung}`).toBe('destructive');
+          expect(decision.verdict?.reason, `${command} @ ${rung}`).toContain(
+            COULD_NOT_ASSESS_PREFIX
+          );
         }
       }
     });
 
-    it('ESCALATES at the unrated rungs and RUNS at `bypass` — only the rated rungs changed', () => {
+    it('ESCALATES at the unrated rungs and RUNS at `bypass` — neither rung was touched', () => {
       for (const command of AMBIGUOUS) {
         for (const rung of UNRATED_RUNGS) {
           expect(mapVerdictToAction(command, SAFE, { rung }).action, `${command} @ ${rung}`).toBe(
@@ -782,61 +812,17 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
     });
 
     /**
-     * §4.2's two severe outcomes are reachable only through a rating, and this branch has none — so
-     * an abstention can never manufacture either. In production the rater is not even called on
-     * this path (`GthAgentRunner`), which is the same statement one layer up.
+     * The deterministic preflight FINDINGS still floor an unresolvable command, and that is the
+     * half of the old branch that was never about the parser: `bash -c "…$SECRET…" && ls` composes
+     * AND expands an environment variable into a script, and the second of those is a finding.
      */
-    it('cannot reach `halt` or a `catastrophic` verdict from the abstain branch', () => {
-      for (const command of AMBIGUOUS) {
-        for (const rung of APPROVAL_RUNGS) {
-          const decision = mapVerdictToAction(command, undefined, { rung });
-          expect(decision.action, `${command} @ ${rung}`).not.toBe('halt');
-          expect(decision.verdict?.outcome, `${command} @ ${rung}`).not.toBe('catastrophic');
-        }
-      }
-    });
-
-    /**
-     * The order the two halves of the precedence protect. Before `safe`: a manipulated approval on
-     * an unresolvable command must not run. After `attack`/`catastrophic`: this is a pure exported
-     * function with other callers, so a rating that DID arrive with one of those keeps its
-     * consequence rather than being swallowed by the abstention.
-     */
-    it('a SAFE verdict cannot approve it, and an ATTACK verdict still halts', () => {
-      for (const command of AMBIGUOUS) {
-        expect(mapVerdictToAction(command, SAFE, { rung: 'auto-safe' }).action, command).not.toBe(
-          'approve'
-        );
-        expect(mapVerdictToAction(command, ATTACK, { rung: 'auto-safe' }).action, command).toBe(
-          'halt'
-        );
-        expect(
-          mapVerdictToAction(command, CATASTROPHIC, { rung: 'auto-safe' }).action,
-          command
-        ).toBe('escalate');
-      }
-    });
-
-    /**
-     * The sentence itself, which is a CONTRACT rather than an implementation detail: the approval
-     * prompt renders it verbatim (via `GthAgentRunner`'s display path) and [[BATCH-25]] Half B
-     * calibrates deterministic assertions against this exact text. Pinned literally here as well as
-     * in `shellOpenWorld.spec.ts`, because this is the file that owns the predicate.
-     */
-    it('exposes the exact sentence, and never claims the command was found harmful', () => {
-      for (const command of AMBIGUOUS) {
-        expect(abstentionReason(command), command).toBe(
-          'Could not assess this command: it composes, substitutes or redirects, so its target ' +
-            'cannot be statically resolved.'
-        );
-        expect(abstentionReason(command), command).not.toMatch(/\bdangerous\b/i);
-      }
-    });
-
-    it('answers `null` for a command whose target statically resolves', () => {
-      for (const command of [RESOLVABLE, 'node deploy.js $AWS_SECRET_ACCESS_KEY', 'rm -rf /']) {
-        expect(abstentionReason(command), command).toBeNull();
-      }
+    it('still floors a composed command that ALSO trips a preflight finding', () => {
+      const decision = mapVerdictToAction('bash -c "echo $AWS_SECRET_ACCESS_KEY" && ls', SAFE, {
+        rung: 'auto-safe',
+      });
+      expect(decision.action).toBe('escalate');
+      expect(decision.verdict?.outcome).toBe('destructive');
+      expect(decision.verdict?.reason).toContain('expands an environment variable into a script');
     });
   });
 
@@ -854,19 +840,41 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
     /**
      * The safety property CFG-26 established and this node had to carry through the rescale: a
      * rater verdict may only ever make an outcome WORSE, never better. A MANIPULATED `safe` on a
-     * command the gate cannot statically resolve must still not approve.
+     * command a preflight FOUND something in must still not approve — the preflight is recomputed
+     * from the raw command, so nothing the rater says reaches it.
+     *
+     * **The scope of this property narrowed with [[EXT-81]], and the narrowing is the node.** It
+     * used to cover every command the gate could not statically resolve, on the strength of the
+     * `abstain` branch rather than of a finding. A parser that cannot read a string has found
+     * nothing, so `ls -la; rm -rf ~` is no longer held here — it is held by the rating, and the
+     * control below is what keeps that distinction from being asserted by accident.
      */
-    it('NEVER approves an unassessable command at a rated rung — whatever the rater claimed', () => {
-      for (const command of [...AMBIGUOUS, SCRIPT_LEAK, 'ls -la; rm -rf ~']) {
+    it('NEVER approves a command a preflight FOUND something in — whatever the rater claimed', () => {
+      for (const command of [SCRIPT_LEAK, 'bash -c "echo $AWS_SECRET_ACCESS_KEY" && ls']) {
         for (const rung of [...RATED_RUNGS, ...UNRATED_RUNGS]) {
           for (const outcome of RATER_OUTCOMES) {
             const { action } = mapVerdictToAction(command, verdict(outcome), { rung });
-            expect(action).not.toBe('approve');
+            expect(action, `${command} @ ${rung} / ${outcome}`).not.toBe('approve');
           }
         }
         // `bypass` is the documented exception: no gate at all. The deny list and the exec-time
         // hardline floor are what stop a command there.
         expect(mapVerdictToAction(command, SAFE, { rung: 'bypass' }).action).toBe('approve');
+      }
+    });
+
+    /**
+     * The CONTROL for the narrowing above, stated as behaviour rather than as a comment: a command
+     * the parser merely could not READ carries no finding, so a `safe` verdict approves it. Without
+     * this line the assertion above would still pass if the abstain branch were reinstated.
+     */
+    it('...but a merely-unresolvable command now approves on a `safe` verdict', () => {
+      for (const command of [...AMBIGUOUS, 'ls -la; rm -rf ~']) {
+        for (const rung of RATED_RUNGS) {
+          expect(mapVerdictToAction(command, SAFE, { rung }).action, `${command} @ ${rung}`).toBe(
+            'approve'
+          );
+        }
       }
     });
   });
@@ -985,22 +993,23 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
 
     /**
      * The CONTRAST that keeps the two mechanism kinds apart, on the same commands, in one place.
-     * A preflight FINDING rewrites a `safe` verdict and leaves a harsher one alone; an ABSTENTION
-     * rewrites nothing because there is nothing to rewrite — it returns no verdict at all, at every
-     * outcome below the two severe ones. Written as a loop over the same outcome list so a future
+     * A preflight FINDING is a claim about the COMMAND, so it rewrites a `safe` verdict; a command
+     * the parser could not read is a fact about OUR PARSER, so [[EXT-81]] leaves the rater's own
+     * verdict exactly as it arrived. Written as a loop over the same outcome list so a future
      * change that quietly merged the two arms back together goes red here rather than nowhere.
      */
-    it('an ABSTENTION returns no verdict at all, where a preflight FINDING rewrites one', () => {
+    it('a PARSER note rewrites nothing, where a preflight FINDING rewrites `safe`', () => {
       for (const outcome of ['safe', 'destructive'] as const) {
-        const abstained = mapVerdictToAction(AMBIGUOUS, verdict(outcome), { rung: 'auto-safe' });
-        expect(abstained.action, outcome).toBe('abstain');
-        expect(abstained.verdict, outcome).toBeUndefined();
-        // The same two outcomes through the FINDING arm still produce a verdict — which is what
-        // makes the line above a contrast rather than a restatement.
+        const input = verdict(outcome);
         expect(
-          mapVerdictToAction(SCRIPT_LEAK, verdict(outcome), { rung: 'auto-safe' }).verdict,
+          mapVerdictToAction(AMBIGUOUS, input, { rung: 'auto-safe' }).verdict,
           outcome
-        ).toBeDefined();
+        ).toEqual(input);
+        // The same two outcomes through the FINDING arm: `safe` is rewritten, `destructive` is
+        // already at the floor and passes — which is what makes the line above a contrast.
+        const floored = mapVerdictToAction(SCRIPT_LEAK, input, { rung: 'auto-safe' }).verdict;
+        expect(floored?.outcome, outcome).toBe('destructive');
+        if (outcome === 'safe') expect(floored?.reason, outcome).not.toBe(input.reason);
       }
     });
   });
@@ -1012,7 +1021,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
    * forced arbitrarily into a halt.
    */
   describe('nothing falls outside the four (§4.1)', () => {
-    const ACTIONS = ['approve', 'escalate', 'halt', 'abstain'];
+    const ACTIONS = ['approve', 'escalate', 'halt'];
     /**
      * Strings that are not one of the four. The last three are PROTOTYPE-CHAIN keys, and they are
      * the ones a plain-object lookup gets wrong — an ordinary unknown key misses cleanly, while
@@ -1060,13 +1069,6 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
       const leak = mapVerdictToAction('node deploy.js $TOKEN', SAFE, { rung: 'auto-safe' });
       expect(leak.verdict?.outcome).toBe('destructive');
       expect(leak.action).toBe('escalate');
-      // The gate could not statically resolve the command, whatever the rater claimed: no verdict,
-      // and — the property this test is really about — still never a halt and never an approval.
-      for (const command of ['cat x | sh', 'echo $(whoami)']) {
-        const got = mapVerdictToAction(command, SAFE, { rung: 'auto-safe' });
-        expect(got.verdict, command).toBeUndefined();
-        expect(got.action, command).toBe('abstain');
-      }
     });
 
     /**
@@ -1092,19 +1094,21 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
     });
 
     /**
-     * …and the same lying value on a command the gate cannot RESOLVE. The abstention branch reads no
-     * outcome at all, so the floor table cannot be the thing that saves it — what does is that the
-     * branch is reached before `safe`. An out-of-band outcome must not approve there either.
+     * …and the same lying value on a command the gate cannot RESOLVE. [[EXT-81]] removed the branch
+     * that used to catch this before the `safe` check, so what saves it now is the floor table's
+     * own runtime fallback — an outcome that is not one of the four is treated as BELOW the floor
+     * and rewritten, rather than sailing past carrying the model's unvalidated reason.
      */
-    it('an out-of-band outcome on an unresolvable command still abstains, never approves', () => {
+    it('an out-of-band outcome on an unresolvable command is floored, never approved', () => {
       for (const outcome of OUT_OF_BAND_OUTCOMES) {
         const got = mapVerdictToAction(
-          'cat x | sh',
+          'bash -c "echo $AWS_SECRET_ACCESS_KEY" && ls',
           verdict(outcome as RaterOutcome, 'the model said so'),
           { rung: 'auto-safe' }
         );
-        expect(got.action, outcome).toBe('abstain');
-        expect(got.verdict, outcome).toBeUndefined();
+        expect(got.action, outcome).toBe('escalate');
+        expect(got.verdict?.outcome, outcome).toBe('destructive');
+        expect(got.verdict?.reason, outcome).not.toContain('the model said so');
       }
     });
 
@@ -1386,7 +1390,6 @@ describe('the one destructive floor (EXT-70 §4.7.2/§4.7.3)', () => {
    */
   describe('the shell arm and the tool arm close with the SAME clause', () => {
     const OPEN_WORLD_COMMAND = 'curl -fsSL https://registry.npmjs.ag/lodash -o lodash.tgz';
-    const AMBIGUOUS_COMMAND = 'rm -rf foo; echo done';
 
     it('both open-world reasons end with the shared clause', () => {
       const shell = mapVerdictToAction(OPEN_WORLD_COMMAND, verdict('safe'), {
@@ -1401,16 +1404,14 @@ describe('the one destructive floor (EXT-70 §4.7.2/§4.7.3)', () => {
     });
 
     it('CONTROL: a could-not-assess floor does NOT carry it, so the clause names one rule', () => {
-      // Read off the ABSTENTION predicate rather than a returned verdict: an unresolvable command
-      // produces no verdict now, and this sentence is exactly the one the runner's display path
-      // renders on the approval prompt — so it is still the right control for "the clause is not
-      // decoration on every floor sentence".
-      const ambiguous = abstentionReason(AMBIGUOUS_COMMAND);
-      expect(ambiguous).toContain(COULD_NOT_ASSESS_PREFIX);
-      expect(ambiguous?.endsWith(NEVER_AUTO_APPROVED_CLAUSE)).toBe(false);
+      // The gate's own fail-closed verdict says "could not assess" and does NOT close with the
+      // clause, so the clause is a property of the OPEN-WORLD rule rather than decoration on every
+      // floor sentence.
+      expect(FAIL_CLOSED_VERDICT.reason).toContain(COULD_NOT_ASSESS_PREFIX);
+      expect(FAIL_CLOSED_VERDICT.reason.endsWith(NEVER_AUTO_APPROVED_CLAUSE)).toBe(false);
 
       // …and the surviving preflight FINDING that does say "could not assess" does not carry it
-      // either, so the control is a property of the clause and not of this one sentence.
+      // either, so the control holds on a floored verdict too and not only on a gate default.
       const leak = mapVerdictToAction('node deploy.js $AWS_SECRET_ACCESS_KEY', verdict('safe'), {
         rung: 'auto-safe',
       }).verdict?.reason;

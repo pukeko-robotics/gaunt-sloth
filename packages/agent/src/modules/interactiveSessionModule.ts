@@ -365,8 +365,7 @@ export async function createInteractiveSession(
                   runner.getAllowlistCounts(),
                   runner.getDenylist(),
                   runner.getGrants(),
-                  runner.getMcpAnnotationTrust(),
-                  runner.getAbstentionCount()
+                  runner.getMcpAnnotationTrust()
                 )
               );
             } else if ('trust' in result.approvals) {

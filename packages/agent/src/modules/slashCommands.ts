@@ -542,8 +542,7 @@ export function approvalsStatusNotice(
   allowlist: { session: number; always: number | undefined },
   deny: readonly string[] = [],
   grants: readonly ApprovalGrant[] = [],
-  trust?: McpAnnotationTrustView,
-  abstentions = 0
+  trust?: McpAnnotationTrustView
 ): SlashCommandNotice {
   const rater = isRatedRung(approvals.rung)
     ? (approvals.rater ?? 'main model')
@@ -554,7 +553,6 @@ export function approvalsStatusNotice(
       APPROVAL_RUNG_DESCRIPTIONS[approvals.rung],
       `Auto-rater: ${rater}`,
       `Allowed: ${allowlist.session} this session · ${allowlist.always ?? '—'} remembered · Denied: ${deny.length}`,
-      ...describeAbstentions(abstentions),
       ...describeGrants(grants),
       ...(trust ? [describeMcpTrust(trust)] : []),
       `Switch with /approvals ${APPROVAL_RUNGS.join(' | /approvals ')}.`,
@@ -562,27 +560,6 @@ export function approvalsStatusNotice(
     ],
     tone: approvals.rung === 'bypass' ? 'warn' : 'info',
   };
-}
-
-/**
- * [[EXT-65]] — the abstention line: how many commands this session the gate could not read.
- *
- * **The most valuable signal the gate produces, and the one that is otherwise invisible.** At the
- * rated rungs an abstention no longer interrupts anybody — it is handed back to the model, which
- * usually rewrites the command and moves on — so a gate that cannot parse the ordinary work of this
- * session leaves no trace at all unless it is counted. A user who sees a number here knows to look
- * at what their agent is being sent back over; a user who sees nothing cannot.
- *
- * **Shown only when there is something to show.** Nothing has abstained in most sessions, and a
- * permanent `Abstentions: 0` would spend a line of a display that already has several on a fact
- * with no reader. Absent means zero, which is the ordinary case and needs no words.
- */
-function describeAbstentions(abstentions: number): string[] {
-  if (abstentions <= 0) return [];
-  const times = abstentions === 1 ? 'once' : `${abstentions} times`;
-  return [
-    `Gate could not read a command ${times} this session — handed back to the model to rewrite.`,
-  ];
 }
 
 /** How many grants `/approvals` lists before it summarizes the rest. */

@@ -12,8 +12,8 @@ The floor is deterministic, so a model sweep tells you nothing about the floor i
 everything about the one claim the EXT-62 change rests on: anchoring every destructive-verb pattern
 at a command position removes ten unappealable refusals of ordinary work, and costs the
 interpreter-wrapper forms (`sh -c "rm -rf /"`, `xargs rm -rf /`), which **no deterministic layer
-sees** — `classifyCommand` resolves all of them, so the ambiguity preflight does not fire either.
-What covers them is the rater, and that makes the trade a claim about model behaviour.
+sees** — `classifyCommand` resolves all of them, so not even a parser note is attached. What covers
+them is the rater, and that makes the trade a claim about model behaviour.
 
 ```bash
 cd eval
