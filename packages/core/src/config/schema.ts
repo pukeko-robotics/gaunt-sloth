@@ -310,10 +310,37 @@ const RESERVED_MCP_SERVER_NAME = '*';
  * pre-parse check still runs first and still owns the message that explains *why* each key is
  * refused, which a JSON Schema violation can never say.
  */
-const mcpServerNameSchema = z
-  .string()
-  .min(1)
-  .regex(new RegExp(`^(?!${RESERVED_MCP_SERVER_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$)`));
+
+/**
+ * The exclusion, spelt **without lookaround**, because this pattern is published rather than merely
+ * executed here.
+ *
+ * JSON Schema's `pattern` is nominally ECMA-262, but real validators differ and the ones built on
+ * RE2 or Rust's `regex` **cannot compile a lookaround at all** — they reject the document rather
+ * than mis-evaluating one keyword. A `^(?!\*$)` spelling therefore risks taking the *whole* hosted
+ * schema out of service in those editors, which is a worse failure than the gap this rule closes and
+ * defeats the reason the rule exists.
+ *
+ * Read it as: any single character that is not the reserved one, **or** any string of two or more
+ * characters. Only the exact reserved name is left out, which is the pre-parse check's own equality
+ * test. The empty string is excluded by `minLength` instead, which is the clearer home for it.
+ *
+ * **`[\s\S]` and not `.`** — `.` does not match a newline, so a `.`-based spelling refuses a key
+ * containing one while the load accepts it. That is a fresh divergence in the opposite direction:
+ * an editor red on a config that starts fine, i.e. this rule's own defect class, reintroduced by
+ * the fix for it. Measured on `"a\nb"` and `"\n\n"`.
+ *
+ * The construction assumes a **single-character** reserved name — with a longer one, "not exactly
+ * this string" is not expressible as one negated class. {@link mcpServerNameSchema}'s spec asserts
+ * that assumption, so changing the constant fails loudly instead of silently emitting a pattern that
+ * refuses the wrong set.
+ */
+const MCP_SERVER_NAME_PATTERN = `^([^${RESERVED_MCP_SERVER_NAME.replace(
+  /[\\\]^-]/g,
+  '\\$&'
+)}]|[\\s\\S]{2,})$`;
+
+const mcpServerNameSchema = z.string().min(1).regex(new RegExp(MCP_SERVER_NAME_PATTERN));
 
 /**
  * EXT-71 §3.1 — an `mcpTool` entry. `server` is **required** here and exists nowhere else: it is

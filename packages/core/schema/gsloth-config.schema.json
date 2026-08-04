@@ -617,7 +617,7 @@
       "propertyNames": {
         "type": "string",
         "minLength": 1,
-        "pattern": "^(?!\\*$)"
+        "pattern": "^([^*]|[\\s\\S]{2,})$"
       },
       "additionalProperties": {}
     },

@@ -376,6 +376,56 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
       expectAccepted(validateRawGthConfig({ ...BASE, mcpServers: { jira: { command: 'x' } } }));
     });
 
+    it('accepts a key containing a newline, so the exclusion did not widen while being made portable', () => {
+      // The obvious portable spelling of "not exactly `*`" is `^(.{2,}|[^*])$` — and it is WRONG,
+      // because `.` does not match a newline, so it refuses this key while the load accepts it.
+      // That is an editor red on a config that starts fine: this rule's own defect class, turned
+      // around. Both surfaces must agree here, which is what makes `[\s\S]` the required spelling.
+      expect(accepts({ 'a\nb': { command: 'x' } })).toBe(true);
+      expectAccepted(validateRawGthConfig({ ...BASE, mcpServers: { 'a\nb': { command: 'x' } } }));
+    });
+
+    it('emits a pattern no lookaround, so a validator that cannot compile one still loads the schema', () => {
+      // The PORTABILITY property itself, pinned separately and deliberately. Every other assertion
+      // here is about WHICH KEYS are accepted, and all of them pass just as happily with a
+      // lookahead restored — so none of them can protect this. RE2 and Rust `regex` backed
+      // validators do not merely mis-evaluate a lookaround, they FAIL TO COMPILE the document, so
+      // this spelling decides whether the hosted schema works at all in those editors.
+      const emitted = generateConfigJsonSchema() as Record<string, unknown>;
+      const patterns: string[] = [];
+      const walk = (node: unknown): void => {
+        if (Array.isArray(node)) return node.forEach(walk);
+        if (node === null || typeof node !== 'object') return;
+        for (const [key, value] of Object.entries(node)) {
+          if (key === 'pattern' && typeof value === 'string') patterns.push(value);
+          walk(value);
+        }
+      };
+      walk(emitted);
+      // The control: if the emitted document carried no pattern at all this test would pass for
+      // free, so assert we are actually looking at something.
+      expect(patterns.length).toBeGreaterThan(0);
+      for (const pattern of patterns) {
+        expect(pattern, pattern).not.toMatch(/\(\?[=!<]/);
+      }
+    });
+
+    it('emits the exact portable spelling of the exclusion, because the spelling IS the contract', () => {
+      // Pinned literally, and on the EMITTED artefact rather than on the source constant, because
+      // this string is published to editors and its exact form is what decides whether they can
+      // compile it. Read it as "one character that is not the reserved one, or two-or-more
+      // characters" — equivalent to "not exactly `*`" only while the reserved name is a SINGLE
+      // character. Should that constant ever grow, a single negated class stops expressing the
+      // rule, and this assertion fails loudly instead of the schema quietly refusing the wrong set.
+      const emitted = generateConfigJsonSchema() as {
+        properties: { mcpServers: { propertyNames: { pattern?: string; minLength?: number } } };
+      };
+      const propertyNames = emitted.properties.mcpServers.propertyNames;
+      expect(propertyNames.pattern).toBe('^([^*]|[\\s\\S]{2,})$');
+      // The empty key is excluded here rather than in the pattern; both halves must survive.
+      expect(propertyNames.minLength).toBe(1);
+    });
+
     it('accepts a longer name that merely begins with the reserved one', () => {
       // The load refuses the reserved name by exact equality, so the schema must exclude it by
       // exact equality too — `*-jira` is an ordinary server name on both surfaces.
