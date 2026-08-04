@@ -295,9 +295,10 @@ function buildRationale(
   const reason = verdict?.reason && !handedBack ? verdict.reason : undefined;
   const mechanism = forcedMechanism(decision);
   if (mechanism !== undefined) {
-    // An ABSTENTION has no reason to parenthesise — the gate returned no verdict, which is the whole
-    // of what it said. The marker alone is the honest report, and it is still the exact substring a
-    // `forced_by:` assertion looks for.
+    // A forced mechanism can arrive with no reason worth parenthesising — the `handedBack` case
+    // just above, where the only sentence available came from us rather than from the gate. The
+    // marker alone is then the honest report, and it is still the exact substring a `forced_by:`
+    // assertion looks for.
     parts.push(
       reason === undefined
         ? FORCED_BY_ASSERTIONS[mechanism]
