@@ -20,14 +20,12 @@ vi.mock('@gaunt-sloth/core/utils/systemUtils.js', async (importOriginal) => ({
 }));
 
 const buildSystemMessagesMock = vi.fn();
-const readChatPromptMock = vi.fn();
-const readCodePromptMock = vi.fn();
-const readExecPromptMock = vi.fn();
+// GS2-79: per-command mode-prompt selection lives in core's shared `readModePrompt`, so that one
+// seam is stubbed rather than the individual segment readers. The values are unchanged.
+const readModePromptMock = vi.fn();
 vi.mock('@gaunt-sloth/core/utils/llmUtils.js', () => ({
   buildSystemMessages: buildSystemMessagesMock,
-  readChatPrompt: readChatPromptMock,
-  readCodePrompt: readCodePromptMock,
-  readExecPrompt: readExecPromptMock,
+  readModePrompt: readModePromptMock,
   formatToolCalls: vi.fn(() => ''),
 }));
 
@@ -91,9 +89,7 @@ async function deepSystemPrompt(
 describe('MCP server instructions injected into the composed prompt (EXT-32)', () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    readChatPromptMock.mockReturnValue('chat-mode-prompt');
-    readCodePromptMock.mockReturnValue('code-mode-prompt');
-    readExecPromptMock.mockReturnValue('exec-mode-prompt');
+    readModePromptMock.mockImplementation((command?: string) => `${command ?? 'chat'}-mode-prompt`);
     buildSystemMessagesMock.mockReturnValue([{ content: 'SYSTEM PROMPT' }]);
     vi.spyOn(deepAgentPermissions, 'guardFilesystemBackend').mockImplementation(
       (backend) => backend as never
