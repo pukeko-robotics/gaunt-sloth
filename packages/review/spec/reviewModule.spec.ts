@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeListChatModel } from '@langchain/core/utils/testing';
 import type { GthConfig } from '#src/config.js';
-import { AIMessageChunk, HumanMessage, SystemMessage } from '@langchain/core/messages';
+import {
+  AIMessageChunk,
+  HumanMessage,
+  SystemMessage,
+  type BaseMessage as Message,
+} from '@langchain/core/messages';
 import {
   BaseChatModel,
   BaseChatModelCallOptions,
@@ -188,7 +193,6 @@ describe('reviewModule', () => {
 
     // Verify that runner was called with correct parameters
     expect(gthAgentRunnerInstanceMock.processMessages).toHaveBeenCalledWith([
-      new SystemMessage('test-preamble'),
       new HumanMessage('test-diff'),
     ]);
 
@@ -203,6 +207,49 @@ describe('reviewModule', () => {
     expect(ProgressIndicatorInstanceMock.stop).toHaveBeenCalled();
     expect(artifactStoreMock.deleteArtifact).toHaveBeenCalledWith('gsloth.review.rate');
   });
+
+  // GS2-79 — the review/rating composition site, which the GS2-65 provider-contract guard does not
+  // reach: that guard exercises runSingleShot/runConversation, both of which were converted long
+  // ago, so it stayed green through the whole window in which `gth review` and `gth pr` were broken
+  // on Anthropic. This is the site that regressed.
+  //
+  // The assertion is derived from the MECHANISM, not from a literal message list: the agent
+  // composes its own system prompt and hands it to createAgent as `systemPrompt`, so what the
+  // provider finally receives is [<agent-composed system>, ...whatever the caller passed]. That
+  // request is rejected by @langchain/anthropic ("System messages are only permitted as the first
+  // passed message") exactly when a system message lands at any index above 0 — which is precisely
+  // what a caller-side leading SystemMessage produces. Asserting the rejected SHAPE rather than
+  // "review still works" is what makes this bite for both defects at once: a second system message
+  // anywhere, and a system message that is not first.
+  it.each(['review', 'pr'] as const)(
+    'hands the runner a message list that cannot produce a non-first system message (%s)',
+    async (command) => {
+      const { review } = await import('#src/modules/reviewModule.js');
+
+      await review('test-source', 'test-preamble', 'test-diff', mockConfig, command);
+
+      const messages = gthAgentRunnerInstanceMock.processMessages.mock.calls.at(
+        -1
+      )?.[0] as Message[];
+      expect(messages).toBeDefined();
+
+      // What the provider actually sees once the agent prepends its own composed system prompt.
+      const asTheProviderSeesIt: Message[] = [new SystemMessage('AGENT-COMPOSED'), ...messages];
+      const offendingIndex = asTheProviderSeesIt.findIndex(
+        (message, index) => SystemMessage.isInstance(message) && index > 0
+      );
+      expect(offendingIndex).toBe(-1);
+      // Stated the other way round too, so the guard reads as the rule it enforces: at most ONE
+      // system message reaches the provider, and it is the agent's own.
+      expect(asTheProviderSeesIt.filter((m) => SystemMessage.isInstance(m))).toHaveLength(1);
+
+      // The caller contributes the human turn and nothing else; the preamble it still passes
+      // positionally must not be smuggled in under some other message type either.
+      expect(messages).toHaveLength(1);
+      expect(HumanMessage.isInstance(messages[0])).toBe(true);
+      expect(messages.map((m) => m.content)).not.toContain('test-preamble');
+    }
+  );
 
   it('should write review to a specified string path when writeOutputToFile is a string', async () => {
     // Arrange: configure to use a specific filename via string path
@@ -225,7 +272,6 @@ describe('reviewModule', () => {
 
     // Assert
     expect(gthAgentRunnerInstanceMock.processMessages).toHaveBeenCalledWith([
-      new SystemMessage('test-preamble'),
       new HumanMessage('test-diff'),
     ]);
     expect(consoleUtilsMock.initSessionLogging).toHaveBeenCalled();
@@ -256,7 +302,6 @@ describe('reviewModule', () => {
 
     // Verify the different config was used
     expect(gthAgentRunnerInstanceMock.processMessages).toHaveBeenCalledWith([
-      new SystemMessage('test-preamble'),
       new HumanMessage('test-diff'),
     ]);
 

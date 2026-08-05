@@ -33,14 +33,10 @@ vi.mock('@gaunt-sloth/core/utils/systemUtils.js', async (importOriginal) => ({
 // the gsloth config path. This is the SHARED core module both backends import (lean via #src/…,
 // deep via @gaunt-sloth/core/… → same module identity under the workspace resolver).
 const buildSystemMessagesMock = vi.fn();
-const readChatPromptMock = vi.fn();
-const readCodePromptMock = vi.fn();
-const readExecPromptMock = vi.fn();
+const readModePromptMock = vi.fn();
 vi.mock('@gaunt-sloth/core/utils/llmUtils.js', () => ({
   buildSystemMessages: buildSystemMessagesMock,
-  readChatPrompt: readChatPromptMock,
-  readCodePrompt: readCodePromptMock,
-  readExecPrompt: readExecPromptMock,
+  readModePrompt: readModePromptMock,
   formatToolCalls: vi.fn(() => ''),
 }));
 
@@ -97,9 +93,7 @@ async function deepCodeSystemPrompt(cwd: string): Promise<string> {
 describe('deep/lean system-prompt parity (GS2-27)', () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    readChatPromptMock.mockReturnValue('chat-mode-prompt');
-    readCodePromptMock.mockReturnValue('code-mode-prompt');
-    readExecPromptMock.mockReturnValue('exec-mode-prompt');
+    readModePromptMock.mockImplementation((command: string) => `${command}-mode-prompt`);
     buildSystemMessagesMock.mockReturnValue([{ content: 'SYSTEM PROMPT' }]);
     // Deep wraps the FilesystemBackend via guardFilesystemBackend; make it an identity pass-through.
     vi.spyOn(deepAgentPermissions, 'guardFilesystemBackend').mockImplementation(
@@ -130,6 +124,40 @@ describe('deep/lean system-prompt parity (GS2-27)', () => {
       expect(prompt).toContain('Never pass a commit message inline with the -m option');
       expect(prompt).toContain('before git ever runs');
       expect(prompt).toContain('git commit -F');
+    }
+  });
+
+  // GS2-79 — mode-prompt SELECTION parity. Each backend used to carry its own inline three-branch
+  // ternary, so a command missing from one copy silently got the default (chat) branch instead of
+  // failing; that is how `review`/`pr` came to compose the chat prompt on both. The parity property
+  // is therefore not "they produce the same string" but "they delegate the decision to the same
+  // shared function, passing their own command" — a backend that reintroduces a local ternary stops
+  // calling it and fails here. WHICH prompt each command then resolves to is pinned, with the real
+  // readers, in GthModePromptSelection.spec.ts.
+  it('delegates mode-prompt selection to the SHARED reader on BOTH backends, per command (GS2-79)', async () => {
+    getCurrentWorkDirMock.mockReturnValue('/home/user/proj');
+
+    for (const command of ['code', 'exec', 'chat', 'review', 'pr'] as const) {
+      readModePromptMock.mockClear();
+      createAgentMock.mockReturnValue({ invoke: vi.fn(), stream: vi.fn() });
+      const { GthLangChainAgent } = await import('@gaunt-sloth/core/core/GthLangChainAgent.js');
+      const leanAgent = new GthLangChainAgent(vi.fn(), {
+        resolveTools: vi.fn().mockResolvedValue([]),
+      });
+      await leanAgent.init(command, makeConfig());
+      const leanCalls = readModePromptMock.mock.calls.map(([cmd]) => cmd);
+
+      readModePromptMock.mockClear();
+      createDeepAgentMock.mockReturnValue({ invoke: vi.fn(), stream: vi.fn() });
+      const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+      const deepAgent = new GthDeepAgent(vi.fn(), { resolveTools: vi.fn().mockResolvedValue([]) });
+      await deepAgent.init(command, makeConfig());
+      const deepCalls = readModePromptMock.mock.calls.map(([cmd]) => cmd);
+
+      // Each backend consults the shared reader exactly once, with the command it was initialised
+      // for — so neither can be selecting on something other than the command it was given.
+      expect(leanCalls).toEqual([command]);
+      expect(deepCalls).toEqual([command]);
     }
   });
 

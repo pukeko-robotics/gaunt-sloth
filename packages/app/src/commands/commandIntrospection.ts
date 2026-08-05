@@ -34,6 +34,16 @@ export function getExecSystemPrompt(config: GthConfig): string {
   return flattenSystemMessageContent(config, readExecPrompt(config));
 }
 
+/**
+ * The system prompt a `review` / `pr` run sends.
+ *
+ * Composed from the same segments, in the same order, that the agent backends compose for these
+ * commands — backstory + guidelines + the review instructions (the `review`/`pr` mode prompt) +
+ * system prompt. `commandIntrospectionReviewPrompt.spec.ts` pins the two against each other, so a
+ * change to what a review run is given cannot leave `gth get system-prompt review` reporting the
+ * old thing. That drift is not hypothetical: while the backends composed the CHAT prompt for
+ * `review`/`pr`, this function was the only place the review instructions appeared at all.
+ */
 export function getReviewSystemPrompt(config: GthConfig): string {
   const parts = [readBackstory(config), readGuidelines(config), readReviewInstructions(config)];
   const systemPrompt = readSystemPrompt(config);

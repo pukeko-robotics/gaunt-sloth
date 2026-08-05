@@ -12,7 +12,7 @@ import {
   stopSessionLogging,
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { getCommandOutputFilePath } from '#src/utils/fileUtils.js';
-import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { HumanMessage } from '@langchain/core/messages';
 import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
 import { MemorySaver } from '@langchain/langgraph';
 import { ProgressIndicator } from '@gaunt-sloth/core/utils/ProgressIndicator.js';
@@ -32,9 +32,34 @@ export interface ReviewContext {
   prId?: string;
 }
 
+/**
+ * Run a review of `diff` and print the verdict.
+ *
+ * @param source - Source label, used for the output file name.
+ * @param _preamble - Ignored (GS2-79); see the body comment. Retained positionally so existing
+ *   callers need no change, exactly as `runSingleShot` retains its own.
+ * @param diff - The content under review.
+ * @param config - The resolved config.
+ * @param command - `review` or `pr`; selects the command config and the agent's mode prompt.
+ * @param resolvers - Optional agent resolvers (tools/middleware).
+ * @param reviewContext - Extra review context (binds GitHub-only tools to the PR under review).
+ */
 export async function review(
   source: string,
-  preamble: string,
+  // GS2-79: `_preamble` is retained for signature stability but is NO LONGER injected as a leading
+  // SystemMessage. Both agent backends COMPOSE the full system prompt themselves — backstory +
+  // guidelines + the per-command mode prompt + system prompt — and hand it to createAgent as
+  // `systemPrompt`; for `review`/`pr` that mode prompt IS the review instructions (core's
+  // `readModePrompt`). Passing this preamble as well produced TWO system messages, which
+  // `@langchain/anthropic` rejects outright ("System messages are only permitted as the first
+  // passed message"), breaking every `gth review` and `gth pr` run on Anthropic on both backends
+  // (Google/OpenAI silently merged them, so only Anthropic showed it). The same removal was made in
+  // `runSingleShot` and `conversation` for the same reason.
+  //
+  // Dropping it is content-preserving ONLY because the backends now select the review instructions:
+  // before that they composed the CHAT prompt for `review`/`pr`, so removing the preamble alone
+  // would have silently turned a review into a chat. `GthPromptParity.spec.ts` pins that.
+  _preamble: string,
   diff: string,
   config: GthConfig,
   command: 'pr' | 'review' = 'review',
@@ -43,7 +68,8 @@ export async function review(
 ): Promise<void> {
   const progressIndicator = config.streamOutput ? undefined : new ProgressIndicator('Reviewing.');
   try {
-    const messages = [new SystemMessage(preamble), new HumanMessage(diff)];
+    // Only the human turn: the agent supplies the system prompt via `createAgent({ systemPrompt })`.
+    const messages = [new HumanMessage(diff)];
 
     // REL-2: optionally give the review agent a `gh api` file-read tool so it can fetch the FULL
     // contents of a file when the PR diff truncates large changes. Only added in a GitHub PR
