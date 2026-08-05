@@ -13,6 +13,7 @@ name: Release
 #              ->  integration-tests (big provider)
 #              ->  integration-tests-platforms (mac + win)
 #              ->  tui-e2e (linux + mac + win, via tui-e2e.yml)
+#              ->  evals (judge-free gth eval smoke suite, via evals.yml)
 #              ->  release   (ship CURRENT version, THEN post-bump to next)
 #
 # RELEASE-VERSIONING MODEL B — "release CURRENT, then post-bump to next".
@@ -186,9 +187,25 @@ jobs:
       contents: read
     uses: ./.github/workflows/tui-e2e.yml
 
+  evals:
+    name: Eval smoke gate
+    # OPS-41: the judge-free `gth eval` smoke suite as a pre-release gate — we ship an eval product,
+    # so a release proves itself with it. One case, two cheap identities, deterministic
+    # `must_contain` and no judge: it proves the agent made a REAL tool call and SYNTHESIZED the
+    # result. Parallel with the integration jobs (no data shared); all four fan out off
+    # lint-and-unit and all four gate `release`.
+    #
+    # `secrets: inherit` is required — without it every cell would skip for a missing key. That
+    # cannot pass silently: scripts/eval-gate.mjs fails the gate when no cell passed.
+    needs: lint-and-unit
+    permissions:
+      contents: read
+    uses: ./.github/workflows/evals.yml
+    secrets: inherit
+
   release:
     name: Ship current version, then post-bump main to next (all five)
-    needs: [integration-tests, integration-tests-platforms, tui-e2e]
+    needs: [integration-tests, integration-tests-platforms, tui-e2e, evals]
     runs-on: ubuntu-latest
     # Must match the Environment name in npm's Trusted Publisher config (OIDC
     # only mints a token for a job running in this exact environment).

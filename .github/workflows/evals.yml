@@ -1,0 +1,139 @@
+name: Evals
+
+# OPS-41 — run a `gth eval` suite in CI. We ship an eval product; this is the job that makes us use
+# it on ourselves. Two callers, one job definition:
+#
+#   * workflow_dispatch — a maintainer picks any suite. The full 31-identity matrix lives in
+#     configs-smoke-test.suite.yaml; pass it explicitly when you want it.
+#   * workflow_call     — release.yml calls this as a PRE-RELEASE GATE with the default suite, and
+#     `release` cannot publish unless it is green.
+#
+# NARROWING A RUN IS A SUITE, NOT A FLAG. `gth eval` takes its identity list ONLY from the suite
+# file's `identities:` key — there is deliberately no --identities flag. So a narrower run means a
+# narrower suite file, which is why the input below is a path.
+#
+# SECRETS: workflow_dispatch and release ONLY — never pull_request_target. This job holds more
+# provider keys than any other in the repo, and a `pull_request_target` trigger would expose every
+# one of them to a fork's code. Not negotiable (see gaunt-sloth discussion #304).
+#
+# ollama-* IDENTITIES ARE EXCLUDED FROM EVERY CI SUITE, DELIBERATELY. They need a local GPU and a
+# running ollama daemon; a GitHub runner has neither, so those cells cannot pass here and would only
+# teach people that a red matrix is normal. They stay in the local-only full suite. This is an
+# environment limit, not a gap to fix.
+#
+# THE PRE-RELEASE SUBSET AND WHAT IT COSTS. The default suite runs ONE judge-free case against TWO
+# identities — google-3.5-flash-lite and inception-mercury-2 — chosen because both keys already exist
+# as CI secrets, both are cheap, and both were MEASURED to validate their key lazily (see
+# configs-smoke-test-ci.suite.yaml for why that matters). Measured across two runs: 13k-22k input and
+# 130-190 output tokens for the whole gate — a fraction of a US cent at flash-lite pricing. It is a
+# range, not a constant, because the agent does not always take the same number of tool steps to find
+# the marker. Wall clock ~2-3 min including install and build. The point of keeping the gate that
+# small is that a gate people wait for is a gate people bypass.
+#
+# RETRY POLICY: none. Nothing here is retried automatically, because an auto-retry hides exactly the
+# intermittent tool-call failure this suite exists to detect. The assertions are deterministic
+# (`must_contain`, no judge) and temperature is pinned to 0 in each identity's config, which removes
+# the largest flake sources. If a cell does flap, record it in docs/known-flakes.md and re-run the
+# workflow by hand — do not add a retry loop and do not quietly re-run to green.
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Eval suite path (a directory runs its direct-child suites). Default = the judge-free pre-release smoke subset.'
+        type: string
+        required: false
+        default: configs-smoke-test-ci.suite.yaml
+  workflow_call:
+    inputs:
+      suite:
+        description: 'Eval suite path.'
+        type: string
+        required: false
+        default: configs-smoke-test-ci.suite.yaml
+
+jobs:
+  evals:
+    name: Eval suite
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Carries the provider API keys. A key that is absent here does NOT fail the run: the cell is
+    # reported as a visible SKIP by scripts/eval-gate.mjs.
+    environment: integration tests
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Use Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.x'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Required: pnpm install runs a no-op `prepare`, so dist/ does not exist yet and the CLI
+      # invoked below would not run. (The other integration jobs get this for free because
+      # `pnpm run it` builds first; this job calls the CLI directly.)
+      - name: Build
+        run: pnpm run build
+
+      # QA-12 — prove WHICH build is under test. The existing IT harness spawns a bare launcher name
+      # that can resolve to a globally installed CLI, so it has been capable of passing on a branch
+      # whose code it never executed. Every step below invokes `node packages/app/cli.js` by path, so
+      # no name resolution is involved at all; this asserts that path really is this checkout.
+      - name: Assert the CLI under test is this checkout's build
+        run: |
+          set -euo pipefail
+          EXPECTED="$(node -p "require('./packages/core/package.json').version")"
+          ACTUAL="$(node packages/app/cli.js --version)"
+          echo "checkout version: $EXPECTED"
+          echo "CLI under test:   $ACTUAL  (from $(pwd)/packages/app/cli.js)"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::CLI under test reports $ACTUAL but this checkout is $EXPECTED" >&2
+            exit 1
+          fi
+
+      # Never fails the job itself — the exit code cannot express a mixed run, so the gate step below
+      # is what decides red/green. `--reporter text,junit` keeps the console summary AND writes
+      # results.xml (--reporter REPLACES the default set rather than adding to it); results.json is
+      # written regardless.
+      - name: Run eval suite
+        env:
+          SUITE: ${{ inputs.suite }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          INCEPTION_API_KEY: ${{ secrets.INCEPTION_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPEN_ROUTER_API_KEY: ${{ secrets.OPEN_ROUTER_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+        run: |
+          set +e
+          node packages/app/cli.js eval "$SUITE" --reporter text,junit -o eval-out -j 4
+          code=$?
+          set -e
+          echo "gth eval exit code: $code"
+
+      # The verdict. Classifies every cell from results.json (pass / real failure / environment skip)
+      # and writes the per-cell table into the run summary, so a skip is legible instead of hiding
+      # inside a green tick.
+      - name: Eval gate
+        run: node scripts/eval-gate.mjs eval-out
+
+      # `!cancelled()` rather than `always()`: the results must be uploaded on the RED path too (that
+      # is the run someone needs to read), but `always()` also runs during cancellation and can hang
+      # the job. Whole dir, so a suite-per-subdir run from a directory input is covered as well.
+      - name: Upload eval results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: eval-out/
+          if-no-files-found: warn
