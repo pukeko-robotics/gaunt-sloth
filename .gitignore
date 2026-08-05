@@ -32,6 +32,9 @@ test.log
 /vitest-it.config.js
 /vitest-it.config.js.map
 out/*
+# OPS-41: where the evals workflow (and the same command run locally) writes results.json /
+# results.xml. Ephemeral in CI; ignored here so a local gate run does not dirty the tree.
+/eval-out*/
 briefs/*
 req
 readonly

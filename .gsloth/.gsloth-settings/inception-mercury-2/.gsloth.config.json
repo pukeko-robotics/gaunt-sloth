@@ -3,6 +3,7 @@
   "llm": {
     "type": "openai",
     "model": "mercury-2",
+    "temperature": 0,
     "apiKeyEnvironmentVariable": "INCEPTION_API_KEY",
     "configuration": {
       "baseURL": "https://api.inceptionlabs.ai/v1"

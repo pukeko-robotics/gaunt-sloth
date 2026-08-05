@@ -89,8 +89,13 @@ only after every gate is green. Job graph:
 ```
 lint+unit  ->  integration-tests (big provider)
            ->  integration-tests-platforms (macOS + Windows)
+           ->  tui-e2e (Ink TUI in a PTY; Linux + macOS + Windows)
+           ->  evals (gth eval on the judge-free smoke subset)
            ->  release   (ship CURRENT version, THEN post-bump main to next)
 ```
+
+All four gates run in parallel off `lint+unit`, and `release` needs every one of them — a gate that
+is skipped skips the release rather than passing it.
 
 #### Versioning model: "release CURRENT, then post-bump to next"
 

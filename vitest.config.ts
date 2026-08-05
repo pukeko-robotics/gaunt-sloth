@@ -136,19 +136,21 @@ export default defineConfig({
     setupFiles: ['./packages/app/vitest.setup.ts'],
     server: {
       deps: {
-        // Import the repo-root release helper the way Node does, not through Vitest's inline
-        // transform. `scripts/dist-tag.mjs` is a Node CLI script (`node scripts/dist-tag.mjs`,
-        // mode 0755) and carries a `#!/usr/bin/env node` shebang. Vitest inlines every
-        // non-node_modules `.mjs` by default and evaluates it inside an AsyncFunction wrapper,
-        // where a surviving shebang is a hard `SyntaxError: Invalid or unexpected token`. Vite
-        // strips the shebang on the way out of `fetchModule`, but that strip did not survive the
-        // `/@id/`-prefixed request path Vitest takes for absolute Windows paths — so all of
-        // distTag.spec.ts failed on windows-latest and only there (OPS-26). Externalized, Node
-        // imports the file natively and handles the shebang per spec on every platform.
-        // distTag.spec.ts asserts this entry is in effect, so dropping it fails loudly.
+        // Import the repo-root CLI helpers the way Node does, not through Vitest's inline
+        // transform. Both are Node CLI scripts (`node scripts/<name>.mjs`) carrying a
+        // `#!/usr/bin/env node` shebang. Vitest inlines every non-node_modules `.mjs` by default
+        // and evaluates it inside an AsyncFunction wrapper, where a surviving shebang is a hard
+        // `SyntaxError: Invalid or unexpected token`. Vite strips the shebang on the way out of
+        // `fetchModule`, but that strip did not survive the `/@id/`-prefixed request path Vitest
+        // takes for absolute Windows paths — so all of distTag.spec.ts failed on windows-latest
+        // and only there (OPS-26). Externalized, Node imports the file natively and handles the
+        // shebang per spec on every platform. Any spec importing a shebang'd script under
+        // scripts/ needs an entry here. distTag.spec.ts and evalGate.spec.ts each assert their
+        // own entry is in effect, so dropping one fails loudly everywhere rather than on the
+        // Windows cell alone.
         // The `(\?|$)` tail keeps the match alive when the resolved id carries a query suffix
         // (e.g. `?v=…`, or vitest's `_vitest_original` on an importActual path).
-        external: [/[\\/]scripts[\\/]dist-tag\.mjs(\?|$)/],
+        external: [/[\\/]scripts[\\/]dist-tag\.mjs(\?|$)/, /[\\/]scripts[\\/]eval-gate\.mjs(\?|$)/],
       },
     },
     coverage: {
