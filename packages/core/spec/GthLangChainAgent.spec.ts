@@ -2654,15 +2654,13 @@ describe('GthLangChainAgent', () => {
       expect(events.find((e) => e.type === 'text')?.delta).toBe('Answer');
     });
 
-    it('captures a top-level `reasoning` field from the raw response on a streaming chunk (OpenRouter)', async () => {
-      // The ChatOpenAI converter drops top-level `reasoning`; with __includeRawResponse it is
-      // reachable at additional_kwargs.__raw_response.choices[0].delta.reasoning.
+    it('captures reasoning_content on a streaming chunk', async () => {
       const events = await runStream([
         [
           new AIMessageChunk({
             content: 'The answer.',
             additional_kwargs: {
-              __raw_response: { choices: [{ delta: { reasoning: 'raw thinking' } }] },
+              reasoning_content: 'raw thinking',
             },
           }),
           {},
@@ -2672,13 +2670,13 @@ describe('GthLangChainAgent', () => {
       expect(answerText(events)).toBe('The answer.');
     });
 
-    it('captures a top-level `reasoning` field on a non-chunk AIMessage (resumed/replayed)', async () => {
+    it('captures reasoning_content on a non-chunk AIMessage (resumed/replayed)', async () => {
       const events = await runStream([
         [
           new AIMessage({
             content: 'Final.',
             additional_kwargs: {
-              __raw_response: { choices: [{ message: { reasoning: 'msg thinking' } }] },
+              reasoning_content: 'msg thinking',
             },
           }),
           {},
@@ -2686,22 +2684,6 @@ describe('GthLangChainAgent', () => {
       ]);
       expect(reasoningText(events)).toBe('msg thinking');
       expect(answerText(events)).toBe('Final.');
-    });
-
-    it('prefers reasoning_content over a raw-response `reasoning` (no double emit)', async () => {
-      const events = await runStream([
-        [
-          new AIMessageChunk({
-            content: 'Answer',
-            additional_kwargs: {
-              reasoning_content: 'primary',
-              __raw_response: { choices: [{ delta: { reasoning: 'secondary' } }] },
-            },
-          }),
-          {},
-        ],
-      ]);
-      expect(reasoningText(events)).toBe('primary');
     });
 
     it('keeps think-derived reasoning and answer ordered around an interleaving tool call', async () => {
@@ -2725,61 +2707,39 @@ describe('GthLangChainAgent', () => {
       expect(toolResult).toBeDefined();
     });
 
-    it('TUI-C29: strips __raw_response from the real aggregate while keeping reasoning + tool-call aggregation', async () => {
-      // Observe the ACTUAL aggregate processEventStream builds by spying on concat — its return
-      // value IS the aggregate. A regression that fed the un-stripped chunk into aggregation would
-      // leave __raw_response on it (concat deep-merges additional_kwargs), so this discriminates a
-      // correct fix from a broken one. Each chunk carries both a raw-response reasoning delta and a
-      // split tool_call_chunk to prove aggregation fidelity survives the stripped clone.
-      const concatSpy = vi.spyOn(AIMessageChunk.prototype, 'concat');
-      try {
-        const events = await runStream([
-          [
-            new AIMessageChunk({
-              content: 'Hel',
-              additional_kwargs: {
-                __raw_response: { choices: [{ delta: { reasoning: 'r1' } }] },
-              },
-              tool_call_chunks: [{ id: 'tc-1', name: 'do_it', args: '{"a":', index: 0 }],
-            }),
-            {},
-          ],
-          [
-            new AIMessageChunk({
-              content: 'lo',
-              additional_kwargs: {
-                __raw_response: { choices: [{ delta: { reasoning: 'r2' } }] },
-              },
-              tool_call_chunks: [{ args: '1}', index: 0 }],
-            }),
-            {},
-          ],
-          [new ToolMessage({ content: 'ok', tool_call_id: 'tc-1' }), {}],
-        ]);
+    it('captures multi-chunk reasoning_content and aggregates tool-call chunks', async () => {
+      const events = await runStream([
+        [
+          new AIMessageChunk({
+            content: 'Hel',
+            additional_kwargs: {
+              reasoning_content: 'r1',
+            },
+            tool_call_chunks: [{ id: 'tc-1', name: 'do_it', args: '{"a":', index: 0 }],
+          }),
+          {},
+        ],
+        [
+          new AIMessageChunk({
+            content: 'lo',
+            additional_kwargs: {
+              reasoning_content: 'r2',
+            },
+            tool_call_chunks: [{ args: '1}', index: 0 }],
+          }),
+          {},
+        ],
+        [new ToolMessage({ content: 'ok', tool_call_id: 'tc-1' }), {}],
+      ]);
 
-        // req #2 — multi-chunk reasoning is still captured per-chunk across the stripped aggregation.
-        expect(reasoningText(events)).toBe('r1r2');
-        expect(answerText(events)).toBe('Hello');
+      expect(reasoningText(events)).toBe('r1r2');
+      expect(answerText(events)).toBe('Hello');
 
-        // aggregation fidelity — split tool-call args still collapse to valid JSON through the clone.
-        const toolArgs = events
-          .filter((e) => e.type === 'tool_args')
-          .map((e) => e.delta)
-          .join('');
-        expect(JSON.parse(toolArgs)).toEqual({ a: 1 });
-
-        // req #1 — the real aggregate (concat's return value; its `this` is the first stripped clone,
-        // so a clean aggregate also proves the first chunk was stripped) and every chunk fed into
-        // concat carry no __raw_response.
-        expect(concatSpy).toHaveBeenCalled();
-        const aggregate = concatSpy.mock.results.at(-1)!.value as AIMessageChunk;
-        expect('__raw_response' in aggregate.additional_kwargs).toBe(false);
-        for (const call of concatSpy.mock.calls) {
-          expect('__raw_response' in (call[0] as AIMessageChunk).additional_kwargs).toBe(false);
-        }
-      } finally {
-        concatSpy.mockRestore();
-      }
+      const toolArgs = events
+        .filter((e) => e.type === 'tool_args')
+        .map((e) => e.delta)
+        .join('');
+      expect(JSON.parse(toolArgs)).toEqual({ a: 1 });
     });
   });
 
@@ -3124,45 +3084,5 @@ describe('GthLangChainAgent', () => {
         'Model does not seem to support tools.'
       );
     });
-  });
-});
-
-describe('stripRawResponseForAggregation (TUI-C29)', () => {
-  let stripRawResponseForAggregation: typeof import('#src/core/GthAbstractAgent.js').stripRawResponseForAggregation;
-
-  beforeEach(async () => {
-    vi.resetAllMocks();
-    ({ stripRawResponseForAggregation } = await import('#src/core/GthAbstractAgent.js'));
-  });
-
-  it('returns a clone with __raw_response removed without mutating the original chunk', () => {
-    const original = new AIMessageChunk({
-      content: 'x',
-      additional_kwargs: {
-        reasoning_content: 'keep me',
-        __raw_response: { choices: [{ delta: { reasoning: 'r' } }] },
-      },
-    });
-
-    const stripped = stripRawResponseForAggregation(original);
-
-    // The original is untouched, so the per-chunk reasoning path (pickReasoningDelta) still reads it.
-    expect('__raw_response' in original.additional_kwargs).toBe(true);
-    // The aggregation clone has the raw response removed but keeps every other kwarg (no over-strip).
-    expect('__raw_response' in stripped.additional_kwargs).toBe(false);
-    expect(stripped.additional_kwargs.reasoning_content).toBe('keep me');
-    expect(stripped.content).toBe('x');
-    expect(stripped).not.toBe(original);
-    // It stays a real AIMessageChunk, so it keeps a working .concat when it seeds the aggregate.
-    expect(AIMessageChunk.isInstance(stripped)).toBe(true);
-  });
-
-  it('returns the SAME instance when no __raw_response is present (non-OpenRouter path unchanged)', () => {
-    const original = new AIMessageChunk({
-      content: 'y',
-      additional_kwargs: { reasoning_content: 'thought' },
-    });
-
-    expect(stripRawResponseForAggregation(original)).toBe(original);
   });
 });

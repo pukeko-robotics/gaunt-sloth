@@ -1,0 +1,19 @@
+{
+  "llm": {
+    "type": "huggingface",
+    "model": "deepseek-ai/DeepSeek-V4-Flash",
+    "temperature": 0
+  },
+  "commands": {
+    "api": {
+      "builtInTools": ["show_a2ui_surface"]
+    },
+    "pr": {
+      "filesystem": "none"
+    },
+    "review": {
+      "filesystem": "none"
+    }
+  },
+  "canInterruptInferenceWithEsc": false
+}

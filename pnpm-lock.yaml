@@ -175,6 +175,9 @@ importers:
       '@langchain/openai':
         specifier: ^1.5.5
         version: 1.5.5(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(ws@8.21.1)
+      '@langchain/openrouter':
+        specifier: ^0.4.5
+        version: 0.4.5(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(ws@8.21.1)(zod@4.4.3)
       '@langchain/xai':
         specifier: ^1.4.5
         version: 1.4.5(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(ws@8.21.1)
@@ -255,6 +258,9 @@ importers:
       '@langchain/openai':
         specifier: ^1.5.1
         version: 1.5.5(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(ws@8.21.1)
+      '@langchain/openrouter':
+        specifier: ^0.4.5
+        version: 0.4.5(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(ws@8.21.1)(zod@4.4.3)
       '@langchain/xai':
         specifier: ^1.4.1
         version: 1.4.5(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(ws@8.21.1)
@@ -630,6 +636,12 @@ packages:
 
   '@langchain/openai@1.5.5':
     resolution: {integrity: sha512-wX7dwb9z4nf5FHXlIl/X2mk08pzonvRHCt1D4+s1zXLP0duYDC95j7dulPIQJ6fmhbyYQc9Ki8mEhY/D1lB8kw==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@langchain/core': ^1.2.1
+
+  '@langchain/openrouter@0.4.5':
+    resolution: {integrity: sha512-WI5xpmwW2KqJ5pErFAAq5SUXHVQp2F4RVF/kQzXMqOhjd1UVVeIBrIb22AJGsQy4Tybh91ag4vp6/6f/2vRSwg==}
     engines: {node: '>=20'}
     peerDependencies:
       '@langchain/core': ^1.2.1
@@ -3273,6 +3285,19 @@ snapshots:
       - '@smithy/hash-node'
       - '@smithy/signature-v4'
       - ws
+
+  '@langchain/openrouter@0.4.5(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(ws@8.21.1)(zod@4.4.3)':
+    dependencies:
+      '@langchain/core': 1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1)
+      '@langchain/openai': 1.5.5(@langchain/core@1.2.3(openai@6.47.0(ws@8.21.1)(zod@4.4.3))(ws@8.21.1))(ws@8.21.1)
+      eventsource-parser: 3.1.0
+      openai: 6.47.0(ws@8.21.1)(zod@4.4.3)
+    transitivePeerDependencies:
+      - '@aws-sdk/credential-provider-node'
+      - '@smithy/hash-node'
+      - '@smithy/signature-v4'
+      - ws
+      - zod
 
   '@langchain/protocol@0.0.18': {}
 
