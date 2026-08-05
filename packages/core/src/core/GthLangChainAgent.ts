@@ -7,13 +7,7 @@ import {
 import { GthCommand, StatusLevel } from '#src/core/types.js';
 import { GthAbstractAgent } from '#src/core/GthAbstractAgent.js';
 import { debugLog, debugLogObject } from '#src/utils/debugUtils.js';
-import {
-  buildSystemMessages,
-  formatToolCalls,
-  readChatPrompt,
-  readCodePrompt,
-  readExecPrompt,
-} from '#src/utils/llmUtils.js';
+import { buildSystemMessages, formatToolCalls, readModePrompt } from '#src/utils/llmUtils.js';
 import { getCurrentWorkDir } from '#src/utils/systemUtils.js';
 import { isToolAllowed } from '#src/utils/toolMatching.js';
 import {
@@ -710,14 +704,12 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // the model — the robot (agent.backend: lean) behaved as if it never got its guidelines.
     // This is passed to createAgent as `systemPrompt`, which langchain applies as the agent's
     // static system message on every turn — NOT injected as a separate mid-conversation
-    // SystemMessage (a non-first system message that Anthropic rejects). 'code' uses the code-mode
-    // prompt; 'exec' uses the exec-mode prompt; chat/api/others use the chat prompt.
-    const modePrompt =
-      this.command === 'code'
-        ? readCodePrompt(this.config)
-        : this.command === 'exec'
-          ? readExecPrompt(this.config)
-          : readChatPrompt(this.config);
+    // SystemMessage (a non-first system message that Anthropic rejects). GS2-79: which mode prompt
+    // a command gets is decided ONCE, in core's `readModePrompt` — 'code' the code-mode prompt,
+    // 'exec' the exec-mode prompt, 'review'/'pr' the REVIEW INSTRUCTIONS, chat/api/others the chat
+    // prompt — so this backend and the deep one cannot disagree, and a command left out of the
+    // selection can no longer be served the chat prompt by silent default.
+    const modePrompt = readModePrompt(this.command, this.config);
     const systemMessages = buildSystemMessages(this.config, modePrompt);
     const baseSystemPrompt =
       typeof systemMessages[0]?.content === 'string' ? systemMessages[0].content : undefined;

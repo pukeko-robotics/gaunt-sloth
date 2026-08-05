@@ -43,14 +43,12 @@ vi.mock('deepagents', () => ({
 // Stub the prompt readers (they otherwise hit the gsloth config path on disk) so the composed
 // systemPrompt is deterministic. buildSystemMessages returns a single SystemMessage-shaped object.
 const buildSystemMessagesMock = vi.fn();
-const readChatPromptMock = vi.fn();
-const readCodePromptMock = vi.fn();
-const readExecPromptMock = vi.fn();
+// GS2-79: per-command mode-prompt selection lives in core's shared `readModePrompt`, so that one
+// seam is stubbed rather than the individual segment readers. The values are unchanged.
+const readModePromptMock = vi.fn();
 vi.mock('@gaunt-sloth/core/utils/llmUtils.js', () => ({
   buildSystemMessages: buildSystemMessagesMock,
-  readChatPrompt: readChatPromptMock,
-  readCodePrompt: readCodePromptMock,
-  readExecPrompt: readExecPromptMock,
+  readModePrompt: readModePromptMock,
   formatToolCalls: vi.fn(() => ''),
 }));
 
@@ -86,9 +84,7 @@ describe('GthDeepAgent', () => {
     // Default: a POSIX `/`-rooted cwd → real-path mode (virtualMode off), the code-path default.
     getCurrentWorkDirMock.mockReturnValue('/home/user/proj');
     createDeepAgentMock.mockReturnValue({ invoke: vi.fn(), stream: vi.fn() });
-    readChatPromptMock.mockReturnValue('chat-mode-prompt');
-    readCodePromptMock.mockReturnValue('code-mode-prompt');
-    readExecPromptMock.mockReturnValue('exec-mode-prompt');
+    readModePromptMock.mockImplementation((command?: string) => `${command ?? 'chat'}-mode-prompt`);
     buildSystemMessagesMock.mockReturnValue([{ content: 'SYSTEM PROMPT' }]);
     // EXT-14: GthDeepAgent now wraps the FilesystemBackend in guardFilesystemBackend before
     // handing it to createDeepAgent. Stub it as an identity pass-through here so the pre-existing
@@ -224,8 +220,8 @@ describe('GthDeepAgent', () => {
     await agent.init('chat', config);
 
     // 'code' uses the code-mode prompt; everything else (chat/api/…) uses the chat-mode prompt.
-    expect(readChatPromptMock).toHaveBeenCalledWith(config);
-    expect(readCodePromptMock).not.toHaveBeenCalled();
+    expect(readModePromptMock).toHaveBeenCalledWith('chat', config);
+    expect(readModePromptMock).not.toHaveBeenCalledWith('code', config);
     expect(buildSystemMessagesMock).toHaveBeenCalledWith(config, 'chat-mode-prompt');
     expect(createDeepAgentMock.mock.calls[0][0].systemPrompt).toBe('SYSTEM PROMPT');
   });
@@ -237,7 +233,7 @@ describe('GthDeepAgent', () => {
 
     await agent.init('code', config);
 
-    expect(readCodePromptMock).toHaveBeenCalledWith(config);
+    expect(readModePromptMock).toHaveBeenCalledWith('code', config);
     expect(buildSystemMessagesMock).toHaveBeenCalledWith(config, 'code-mode-prompt');
     // EXT-13 (part b): code mode appends the real cwd + path-model note so the model knows where
     // it is (the fs tools + run_shell_command share one real-absolute-path namespace).
@@ -848,9 +844,7 @@ describe('EXT-22 path-namespace guidance (S2 note + S1 correction middleware)', 
     vi.resetAllMocks();
     getCurrentWorkDirMock.mockReturnValue('/home/user/proj');
     createDeepAgentMock.mockReturnValue({ invoke: vi.fn(), stream: vi.fn() });
-    readChatPromptMock.mockReturnValue('chat-mode-prompt');
-    readCodePromptMock.mockReturnValue('code-mode-prompt');
-    readExecPromptMock.mockReturnValue('exec-mode-prompt');
+    readModePromptMock.mockImplementation((command?: string) => `${command ?? 'chat'}-mode-prompt`);
     buildSystemMessagesMock.mockReturnValue([{ content: 'SYSTEM PROMPT' }]);
   });
 

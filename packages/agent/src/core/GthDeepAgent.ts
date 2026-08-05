@@ -10,9 +10,7 @@ import { debugLog, debugLogObject } from '@gaunt-sloth/core/utils/debugUtils.js'
 import {
   buildSystemMessages,
   formatToolCalls,
-  readChatPrompt,
-  readCodePrompt,
-  readExecPrompt,
+  readModePrompt,
 } from '@gaunt-sloth/core/utils/llmUtils.js';
 import {
   getCurrentWorkDir,
@@ -695,14 +693,12 @@ export class GthDeepAgent extends GthAbstractAgent {
     // `.gsloth.*.md` are honored. This is passed to createDeepAgent as `systemPrompt` — combined
     // additively with deepagents' base + fs prompts into ONE system message — rather than injected
     // as a separate SystemMessage per turn (which produced a non-first system message that
-    // Anthropic rejects). 'code' uses the code-mode prompt; 'exec' uses the prompt-as-script
-    // exec-mode prompt; chat/api/others use the chat prompt.
-    const modePrompt =
-      this.command === 'code'
-        ? readCodePrompt(this.config)
-        : this.command === 'exec'
-          ? readExecPrompt(this.config)
-          : readChatPrompt(this.config);
+    // Anthropic rejects). GS2-79: which mode prompt a command gets is decided ONCE, in core's
+    // `readModePrompt` — 'code' the code-mode prompt, 'exec' the prompt-as-script exec-mode prompt,
+    // 'review'/'pr' the REVIEW INSTRUCTIONS, chat/api/others the chat prompt — so this backend and
+    // the lean one cannot disagree, and a command left out of the selection can no longer be served
+    // the chat prompt by silent default.
+    const modePrompt = readModePrompt(this.command, this.config);
     const systemMessages = buildSystemMessages(this.config, modePrompt);
     const systemPrompt =
       typeof systemMessages[0]?.content === 'string' ? systemMessages[0].content : undefined;

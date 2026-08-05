@@ -13,14 +13,12 @@ vi.mock('@gaunt-sloth/core/config.js', () => ({
 // The prompt readers + buildSystemMessages otherwise hit the config path on disk; stub them so the
 // composed child prompt is deterministic (mirrors GthDeepAgent.spec).
 const buildSystemMessagesMock = vi.fn();
-const readChatPromptMock = vi.fn();
-const readCodePromptMock = vi.fn();
-const readExecPromptMock = vi.fn();
+// GS2-79: the child composes its mode prompt through core's shared `readModePrompt`, the same
+// selector both backends use, so a subagent of a `review`/`pr` run gets the review instructions too.
+const readModePromptMock = vi.fn();
 vi.mock('@gaunt-sloth/core/utils/llmUtils.js', () => ({
   buildSystemMessages: buildSystemMessagesMock,
-  readChatPrompt: readChatPromptMock,
-  readCodePrompt: readCodePromptMock,
-  readExecPrompt: readExecPromptMock,
+  readModePrompt: readModePromptMock,
 }));
 
 vi.mock('@gaunt-sloth/core/utils/debugUtils.js', () => ({ debugLog: vi.fn() }));
@@ -33,9 +31,7 @@ describe('buildProfileSubagents — subagent profile reuse (GS2-33)', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     buildSystemMessagesMock.mockReturnValue([{ content: 'CHILD PROMPT' }]);
-    readChatPromptMock.mockReturnValue('chat-prompt');
-    readCodePromptMock.mockReturnValue('code-prompt');
-    readExecPromptMock.mockReturnValue('exec-prompt');
+    readModePromptMock.mockImplementation((command?: string) => `${command ?? 'chat'}-prompt`);
   });
 
   it("resolves the child under the named profile — the SubAgent's model is the profile's, not the parent's", async () => {
@@ -78,7 +74,7 @@ describe('buildProfileSubagents — subagent profile reuse (GS2-33)', () => {
     );
     expect(subagents[0].tools).toEqual([{ name: 'gth_grep' }]);
     // 'code' mode composes the code-mode prompt for the child.
-    expect(readCodePromptMock).toHaveBeenCalled();
+    expect(readModePromptMock).toHaveBeenCalledWith('code', expect.anything());
   });
 
   it("honours the profile's allowedTools:[] by giving the subagent no tools", async () => {

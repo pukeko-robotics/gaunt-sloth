@@ -14,6 +14,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { debugLog } from '#src/utils/debugUtils.js';
 import { truncateString } from '#src/utils/stringUtils.js';
 import { GthConfig, PromptSegmentName } from '#src/config.js';
+import type { GthCommand } from '#src/core/types.js';
 import { SystemMessage } from '@langchain/core/messages';
 
 /**
@@ -161,6 +162,35 @@ export function readCodePrompt(config: PromptReadConfig): string {
 
 export function readExecPrompt(config: PromptReadConfig): string {
   return readPromptSegment('exec', config);
+}
+
+/**
+ * GS2-79 — the SINGLE place a command's mode prompt is chosen, for every site that composes a
+ * system prompt via {@link buildSystemMessages}: both agent backends and the subagent profiles.
+ *
+ * It exists because the selection used to be an inline three-branch ternary copied to each of
+ * those sites, and a command missing from one copy is silently served the CHAT prompt — the
+ * default branch — rather than failing. That is how `review`/`pr` came to compose the chat prompt
+ * while the review instructions were smuggled in as a caller-side leading `SystemMessage`, which
+ * Anthropic rejects outright ("System messages are only permitted as the first passed message").
+ * One function means a new command is wired once, and `review`/`pr` cannot silently fall back to
+ * chat again.
+ *
+ * `review`/`pr` resolve to the REVIEW INSTRUCTIONS (`.gsloth.review.md`), which is what makes a
+ * review a review; every command without a mode prompt of its own keeps the chat prompt.
+ */
+export function readModePrompt(command: GthCommand | undefined, config: PromptReadConfig): string {
+  switch (command) {
+    case 'code':
+      return readCodePrompt(config);
+    case 'exec':
+      return readExecPrompt(config);
+    case 'review':
+    case 'pr':
+      return readReviewInstructions(config);
+    default:
+      return readChatPrompt(config);
+  }
 }
 
 /**

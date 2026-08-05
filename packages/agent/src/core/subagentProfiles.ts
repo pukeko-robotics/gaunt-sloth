@@ -16,12 +16,7 @@
  */
 import { initConfig, type GthConfig, type SubagentProfileSpec } from '@gaunt-sloth/core/config.js';
 import type { AgentResolvers, GthCommand } from '@gaunt-sloth/core/core/types.js';
-import {
-  buildSystemMessages,
-  readChatPrompt,
-  readCodePrompt,
-  readExecPrompt,
-} from '@gaunt-sloth/core/utils/llmUtils.js';
+import { buildSystemMessages, readModePrompt } from '@gaunt-sloth/core/utils/llmUtils.js';
 import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
 import type { StructuredTool, StructuredToolInterface } from '@langchain/core/tools';
 import type { SubAgent } from 'deepagents';
@@ -51,13 +46,7 @@ function composeChildSystemPrompt(
   config: GthConfig,
   command: GthCommand | undefined
 ): string | undefined {
-  const modePrompt =
-    command === 'code'
-      ? readCodePrompt(config)
-      : command === 'exec'
-        ? readExecPrompt(config)
-        : readChatPrompt(config);
-  const systemMessages = buildSystemMessages(config, modePrompt);
+  const systemMessages = buildSystemMessages(config, readModePrompt(command, config));
   return typeof systemMessages[0]?.content === 'string' ? systemMessages[0].content : undefined;
 }
 

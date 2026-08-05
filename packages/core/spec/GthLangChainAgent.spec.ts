@@ -90,22 +90,21 @@ vi.mock('#src/middleware/registry.js', () => ({
   resolveMiddleware: resolveMiddlewareMock,
 }));
 
-// GS2-21: stub the prompt readers + system-prompt composer so the lean agent's system prompt is
-// deterministic and does not hit the on-disk gsloth config path. Only these four are overridden;
+// GS2-21: stub the mode-prompt selector + system-prompt composer so the lean agent's system prompt
+// is deterministic and does not hit the on-disk gsloth config path. Only these two are overridden;
 // everything else in llmUtils (formatToolCalls, prepareRunConfig, wrapContent, …) stays real via
 // importOriginal so the rest of the suite is unaffected.
+// GS2-79: the per-command selection moved out of this file's three inline reader stubs into core's
+// shared `readModePrompt`, so the stub is now on that one seam. The mode-prompt VALUES below are
+// unchanged, so every downstream assertion still reads the same.
 const buildSystemMessagesMock = vi.fn();
-const readChatPromptMock = vi.fn();
-const readCodePromptMock = vi.fn();
-const readExecPromptMock = vi.fn();
+const readModePromptMock = vi.fn();
 vi.mock('#src/utils/llmUtils.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#src/utils/llmUtils.js')>();
   return {
     ...actual,
     buildSystemMessages: buildSystemMessagesMock,
-    readChatPrompt: readChatPromptMock,
-    readCodePrompt: readCodePromptMock,
-    readExecPrompt: readExecPromptMock,
+    readModePrompt: readModePromptMock,
   };
 });
 
@@ -142,9 +141,9 @@ describe('GthLangChainAgent', () => {
     resolveMiddlewareMock.mockResolvedValue([]);
 
     // GS2-21: deterministic system-prompt composition (reset by vi.resetAllMocks above).
-    readChatPromptMock.mockReturnValue('chat-mode-prompt');
-    readCodePromptMock.mockReturnValue('code-mode-prompt');
-    readExecPromptMock.mockReturnValue('exec-mode-prompt');
+    // GS2-79: keyed by the command the agent was initialised for; an absent command composes the
+    // chat prompt, matching the shared selector's default branch.
+    readModePromptMock.mockImplementation((command?: string) => `${command ?? 'chat'}-mode-prompt`);
     buildSystemMessagesMock.mockReturnValue([{ content: 'SYSTEM PROMPT' }]);
 
     // Setup createAgent mock
@@ -1367,7 +1366,7 @@ describe('GthLangChainAgent', () => {
         await agent.init(undefined, config);
 
         // Default command → chat-mode prompt, fed to buildSystemMessages together with the config.
-        expect(readChatPromptMock).toHaveBeenCalled();
+        expect(readModePromptMock).toHaveBeenCalledWith(undefined, expect.anything());
         expect(buildSystemMessagesMock).toHaveBeenCalledWith(
           expect.objectContaining({ prompts: { guidelines: sentinel } }),
           'chat-mode-prompt'
@@ -1382,8 +1381,8 @@ describe('GthLangChainAgent', () => {
         const agent = new GthLangChainAgent(statusUpdateCallback);
         await agent.init('code', mockConfig);
 
-        expect(readCodePromptMock).toHaveBeenCalled();
-        expect(readChatPromptMock).not.toHaveBeenCalled();
+        expect(readModePromptMock).toHaveBeenCalledWith('code', expect.anything());
+        expect(readModePromptMock).not.toHaveBeenCalledWith('chat', expect.anything());
         expect(buildSystemMessagesMock).toHaveBeenCalledWith(expect.anything(), 'code-mode-prompt');
         // GS2-27: code mode now composes the SHARED code-mode notes on top of the base prompt (the
         // cwd/path-model note + OS/shell-dialect note the deep backend has always carried), so the
@@ -1396,7 +1395,7 @@ describe('GthLangChainAgent', () => {
         const agent = new GthLangChainAgent(statusUpdateCallback);
         await agent.init('exec', mockConfig);
 
-        expect(readExecPromptMock).toHaveBeenCalled();
+        expect(readModePromptMock).toHaveBeenCalledWith('exec', expect.anything());
         expect(buildSystemMessagesMock).toHaveBeenCalledWith(expect.anything(), 'exec-mode-prompt');
       });
 
