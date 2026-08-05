@@ -455,8 +455,9 @@ packages were merged into `agent` long ago; the assistant is no longer excluded
 or published on its own).
 
 Releases run through a single manually-dispatched GitHub Actions pipeline
-(`.github/workflows/release.yml`, `workflow_dispatch`) that gates on
-lint+unit → integration tests → platform integration tests before it ships.
+(`.github/workflows/release.yml`, `workflow_dispatch`) that gates on lint+unit,
+then on four parallel gates it cannot publish without — integration tests,
+platform integration tests, the TUI PTY e2e matrix, and the eval suite.
 It follows versioning Model B — **ship the version currently in
 `packages/core/package.json`, then post-bump `main` to the next version** — so
 the dispatch inputs (`bump`/`preid`/`explicit_version`) describe the *next*
