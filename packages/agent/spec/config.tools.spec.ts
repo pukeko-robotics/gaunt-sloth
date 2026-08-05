@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getDefaultTools } from '#src/builtInToolsConfig.js';
-import { DEFAULT_CONFIG } from '#src/config.js';
+import {
+  DEFAULT_CONFIG,
+  isFilesystemToolRegistered,
+  WRITE_FILE_TOOL_NAME,
+  type FilesystemToolsConfig,
+} from '#src/config.js';
 import type { GthConfig } from '#src/config.js';
 
 const consoleUtilsMock = vi.hoisted(() => ({
@@ -143,6 +148,38 @@ describe('Config Tool Functions', () => {
       expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
         'Unknown built-in tool: does_not_exist'
       );
+    });
+
+    // EXT-84 — the prompt notes must never name a filesystem tool this filter did not register, so
+    // both read the answer from ONE derivation in core. This pins that derivation against the
+    // OBSERVABLE toolset: for every shape of the `filesystem` union, "is write_file among the
+    // registered tools?" must equal what isFilesystemToolRegistered says. If the filter and the
+    // predicate ever drift, the prompt starts naming an absent tool — the defect this closes.
+    it('the shared registration predicate agrees with the tools actually registered', async () => {
+      const CASES: (FilesystemToolsConfig | undefined)[] = [
+        'all',
+        'read',
+        'none',
+        ['all'],
+        ['read'],
+        ['read_file'],
+        ['write_file'],
+        ['read', 'write_file'],
+        ['src'],
+        [],
+        undefined,
+      ];
+      for (const filesystem of CASES) {
+        const result = await getDefaultTools({ filesystem } as Partial<GthConfig> as GthConfig);
+        const registered = result.some((t) => t.name === WRITE_FILE_TOOL_NAME);
+        expect({
+          filesystem,
+          registered,
+        }).toEqual({
+          filesystem,
+          registered: isFilesystemToolRegistered(filesystem, WRITE_FILE_TOOL_NAME, 'write'),
+        });
+      }
     });
 
     // CFG-18 (assembly-level, beyond the resolver): the object form force-disables a default-on

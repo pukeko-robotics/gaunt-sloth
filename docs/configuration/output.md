@@ -346,3 +346,9 @@ That is a safety rule, not a style preference. Inside double quotes a POSIX shel
 and `$(…)` constructs **before git ever runs**, so a message that quotes code the way ordinary
 technical prose does is executed as a command. A file path carries no shell metacharacters, so the
 file form removes the hazard rather than asking the model to avoid it.
+
+Which tool writes that file follows your [`filesystem`](tools.md) setting. Where the setting
+registers `write_file`, the guidance names it. Where it does not — `"read"`, `"none"`, or an
+allow-list without it — the guidance names no tool and tells the agent that if it cannot write the
+message file it must leave the commit to you. Naming a tool the session does not have would corner
+the model into the inline form the rule exists to prevent.

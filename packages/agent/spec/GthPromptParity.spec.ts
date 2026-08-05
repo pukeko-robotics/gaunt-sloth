@@ -157,6 +157,90 @@ describe('deep/lean system-prompt parity (GS2-27)', () => {
     }
   });
 
+  // EXT-84 — the commit note's tool-naming clause is gated on the effective `filesystem`, and the
+  // gate must be wired on BOTH backends: each composes the note from its own call site, so a fix
+  // applied to one leaves the other telling the model to call a tool that is not registered. Both
+  // directions are asserted, because a gate wired on one backend passes a one-directional check.
+  async function bothCodePrompts(over: Partial<GthConfig>): Promise<string[]> {
+    getCurrentWorkDirMock.mockReturnValue('/home/user/proj');
+
+    createAgentMock.mockReturnValue({ invoke: vi.fn(), stream: vi.fn() });
+    const { GthLangChainAgent } = await import('@gaunt-sloth/core/core/GthLangChainAgent.js');
+    const leanAgent = new GthLangChainAgent(vi.fn(), {
+      resolveTools: vi.fn().mockResolvedValue([]),
+    });
+    await leanAgent.init('code', makeConfig(over));
+    const lean = createAgentMock.mock.calls.at(-1)?.[0].systemPrompt as string;
+
+    createDeepAgentMock.mockReturnValue({ invoke: vi.fn(), stream: vi.fn() });
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const deepAgent = new GthDeepAgent(vi.fn(), { resolveTools: vi.fn().mockResolvedValue([]) });
+    await deepAgent.init('code', makeConfig(over));
+    const deep = createDeepAgentMock.mock.calls.at(-1)?.[0].systemPrompt as string;
+
+    return [lean, deep];
+  }
+
+  it('names the commit-message write tool on BOTH backends when filesystem registers it', async () => {
+    for (const filesystem of ['all', ['all'], ['write_file']] as GthConfig['filesystem'][]) {
+      for (const prompt of await bothCodePrompts({ filesystem })) {
+        expect(prompt).toContain('Write the message to a file with the write_file tool');
+      }
+    }
+  });
+
+  it('drops the tool name on BOTH backends when filesystem does not register it', async () => {
+    // The string modes AND an array form that excludes the write tool — the array is the case a
+    // two-value check would miss, and it must fail on either backend that was left unwired.
+    for (const filesystem of [
+      'read',
+      'none',
+      ['read'],
+      ['read_file'],
+    ] as GthConfig['filesystem'][]) {
+      for (const prompt of await bothCodePrompts({ filesystem })) {
+        expect(prompt).not.toContain('Write the message to a file with the write_file tool');
+        // The prohibitions and the file form survive, and so does the path that remains.
+        expect(prompt).toContain('Never pass a commit message inline with the -m option');
+        expect(prompt).toContain('git commit -F');
+        expect(prompt).toContain(
+          'If nothing in this session can write that file, do not create the commit yourself'
+        );
+      }
+    }
+  });
+
+  it('follows a command scoped filesystem override on BOTH backends', async () => {
+    // `commands.code.filesystem` is merged INSIDE the agent (getEffectiveConfig), not by the
+    // loader, and it is the natural way a user expresses this node's trigger. Both directions are
+    // asserted, so a backend reading the raw root value instead of the merged one fails whichever
+    // way the override points.
+    for (const prompt of await bothCodePrompts({
+      filesystem: 'all',
+      commands: { code: { filesystem: 'read' } },
+    } as unknown as Partial<GthConfig>)) {
+      expect(prompt).not.toContain('Write the message to a file with the write_file tool');
+      expect(prompt).toContain('If nothing in this session can write that file');
+    }
+
+    for (const prompt of await bothCodePrompts({
+      filesystem: 'read',
+      commands: { code: { filesystem: 'all' } },
+    } as unknown as Partial<GthConfig>)) {
+      expect(prompt).toContain('Write the message to a file with the write_file tool');
+    }
+  });
+
+  it('composes the same commit note on both backends for the same filesystem value', async () => {
+    // Parity as an equality, not two independent substring checks: whatever the gate decides, the
+    // two backends decide it identically, so one of them cannot silently keep the old text.
+    for (const filesystem of ['all', 'read', ['read_file']] as GthConfig['filesystem'][]) {
+      const [lean, deep] = await bothCodePrompts({ filesystem });
+      const commitNoteOf = (p: string) => p.slice(p.indexOf('When you create a git commit'));
+      expect(commitNoteOf(lean)).toBe(commitNoteOf(deep));
+    }
+  });
+
   it('keeps the deepagents virtual-fs-namespace note DEEP-ONLY (never leaks to lean)', async () => {
     // PATH_NAMESPACE_GUIDANCE is exported from GthDeepAgent; appendVirtualCwdNote injects it into
     // the deep code prompt in virtualMode. It is the one deep-only piece — enumerate it explicitly.
