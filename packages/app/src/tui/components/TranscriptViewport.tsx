@@ -41,6 +41,7 @@ export function TranscriptViewport({
   columns,
   toolsExpanded = false,
   scroll = null,
+  regionRows = 0,
   geometry,
   children,
 }: {
@@ -58,6 +59,18 @@ export function TranscriptViewport({
   toolsExpanded?: boolean;
   /** Where the bottom edge sits, or null while the region follows the newest output. */
   scroll?: TranscriptScroll | null;
+  /**
+   * The region's own measured height, and the one number here that has to be measured.
+   *
+   * Ink applies only the INNERMOST clip when it writes a row (`Output.write` reads `clips.at(-1)`
+   * rather than intersecting the stack), so a clip that reaches above this region's top edge
+   * *replaces* the region's clip instead of nesting inside it — and the rows it lets through land
+   * at negative screen rows and take the whole frame with them. Measured: with one eighty-row turn
+   * on a forty-row terminal, a page back rendered a completely blank conversation. So the clip is
+   * never taller than the region, and the rows the edge is past are lifted out of it by a negative
+   * margin instead. Zero until the first layout, which is before any gesture can arrive.
+   */
+  regionRows?: number;
   /** Where the region publishes its measured layout for the scroll gestures to read. */
   geometry?: TranscriptGeometry;
   /**
@@ -93,6 +106,13 @@ export function TranscriptViewport({
   // back than that — a streaming turn that nobody is looking at costs nothing to leave out.
   const showTail = !scroll || end >= tailIndex - 1;
   const clipEnd = Math.min(end, tailIndex - 1);
+  // How the edge is drawn. The clip shows the anchored block's first `visibleRows` rows — but only
+  // the last region's-worth of those can be on screen anyway, so anything beyond that is lifted out
+  // of the clip rather than making the clip taller than the region (see `regionRows`). The two
+  // forms draw identically; only the second is safe.
+  const visibleRows = scroll ? Math.max(1, scroll.visibleRows) : 0;
+  const clipRows = regionRows > 0 ? Math.min(visibleRows, regionRows) : visibleRows;
+  const liftedRows = visibleRows - clipRows;
 
   const viewportRef = React.useRef<DOMElement | null>(null);
   const tailRef = React.useRef<DOMElement | null>(null);
@@ -144,14 +164,16 @@ export function TranscriptViewport({
           flexDirection="column"
           flexShrink={0}
           overflow="hidden"
-          height={scroll ? Math.max(1, scroll.visibleRows) : undefined}
+          height={scroll ? clipRows : undefined}
         >
-          {below}
-          {showTail ? (
-            <Box ref={tailRef} flexDirection="column" flexShrink={0}>
-              {children}
-            </Box>
-          ) : null}
+          <Box flexDirection="column" flexShrink={0} marginTop={-liftedRows}>
+            {below}
+            {showTail ? (
+              <Box ref={tailRef} flexDirection="column" flexShrink={0}>
+                {children}
+              </Box>
+            ) : null}
+          </Box>
         </Box>
       </Box>
     </Box>

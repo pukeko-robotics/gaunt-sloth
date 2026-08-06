@@ -153,6 +153,7 @@ export function App(props: TuiAppProps): React.ReactElement {
   // terminal scrollback, so this is the only way back to what has already been said.
   const {
     scroll: transcriptScroll,
+    regionRows: transcriptRegionRows,
     geometry: transcriptGeometry,
     scrollByRows,
     scrollByPages,
@@ -920,6 +921,7 @@ export function App(props: TuiAppProps): React.ReactElement {
           columns={terminalColumns}
           toolsExpanded={toolsExpanded}
           scroll={transcriptScroll}
+          regionRows={transcriptRegionRows}
           geometry={transcriptGeometry}
         >
           {clearedBanner ? <ClearBanner /> : null}

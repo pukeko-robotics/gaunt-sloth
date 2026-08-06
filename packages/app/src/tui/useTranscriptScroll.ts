@@ -116,6 +116,8 @@ export class TranscriptGeometry {
 export interface TranscriptScrollController {
   /** The held anchor, or null while the region follows new output. */
   scroll: TranscriptScroll | null;
+  /** The region's measured height, which the region needs back to size its clip safely. */
+  regionRows: number;
   /** Handed to the conversation region so it can publish its layout. */
   geometry: TranscriptGeometry;
   /** Move the bottom edge. Negative rows move towards older output. */
@@ -132,6 +134,12 @@ export interface TranscriptScrollController {
 
 export function useTranscriptScroll(): TranscriptScrollController {
   const [scroll, setScroll] = useState<TranscriptScroll | null>(null);
+  // Fed back into the region so its clip can never be taller than the region itself — see the
+  // `regionRows` prop on `<TranscriptViewport>` for what goes wrong when it is. It is a fixed
+  // point rather than a loop: the region is `flexGrow: 1` under a fixed-height frame beside a
+  // non-shrinking dock, so its height is a function of the terminal and the dock and not of
+  // anything drawn inside it.
+  const [regionRows, setRegionRows] = useState(0);
   const [geometry] = useState(() => new TranscriptGeometry());
   // The handler's own view of the anchor. `scroll` in a closure is the value from the last render,
   // which is one gesture behind whenever a chunk carries more than one.
@@ -202,8 +210,16 @@ export function useTranscriptScroll(): TranscriptScrollController {
     setScroll(next);
   });
 
+  useLayoutEffect(() => {
+    const measured = geometry.viewportRows();
+    // Only on a real change, for the same reason the normalizer above compares: a state update
+    // that changes nothing still re-renders, and this effect runs after every one of them.
+    setRegionRows((previous) => (previous === measured ? previous : measured));
+  });
+
   return {
     scroll,
+    regionRows,
     geometry,
     scrollByRows,
     scrollByPages,

@@ -134,6 +134,26 @@ precedence order.
 The plain readline surface (`--no-tui`) has no mouse layer at all, so nothing changes there and
 `/mouse` reports itself unavailable.
 
+## Reading back over the conversation
+
+The session takes the whole terminal, so the conversation lives in the app rather than in your
+terminal's scrollback — your terminal's own scroll keys will not reach it. Scroll it with:
+
+| | |
+|---|---|
+| mouse wheel | three lines a notch |
+| **Shift** + wheel | one screen |
+| **PageUp** / **PageDown** | one screen (**Fn**+**↑**/**↓** on a keyboard without those keys) |
+| **Ctrl+Home** / **Ctrl+End** | the beginning / the end of the session |
+
+While you are reading back, new output does not drag you away from it — a reply that arrives keeps
+growing below and the lines you are reading stay where they are. Start typing, or press **Escape**,
+to jump back to the newest output.
+
+With mouse reporting off (`/mouse off`, `useMouse: false`, `GTH_NO_MOUSE=1`) the wheel does nothing
+and the keys above are the whole story; nothing becomes unreachable. The plain readline surface
+(`--no-tui`) has no viewport of its own — there you scroll your terminal, as ever.
+
 ## Interrupting a response
 
 Press **Escape** while the agent is working to stop the current response; the session stays open

@@ -769,3 +769,71 @@ test.describe('gth chat — the same config with the TUI left to its default (CF
     await expect(terminal.getByText('Gaunt Sloth is ready to chat')).not.toBeVisible();
   });
 });
+
+/**
+ * TUI-C48 — scrolling the conversation, in a real terminal.
+ *
+ * The alternate screen has no scrollback of its own, so a line that leaves the top of the region
+ * is genuinely gone unless the TUI brings it back. That is exactly the property a unit render
+ * cannot check: `renderToString` has no terminal, no key encoding and no viewport. Here the pty is
+ * 120x40, the fixture answers with eighty numbered lines, and the assertions name a specific line
+ * that must be on screen and a specific line that must not — so the DISTANCE scrolled is asserted,
+ * not merely that something moved.
+ */
+test.describe('gth chat TUI — scrolling the conversation (scroll fixture, TUI-C48)', () => {
+  test.use({
+    program: { file: 'node', args: [cli, 'chat', '--tui'] },
+    env: envFor('scroll.json'),
+    columns: 120,
+    rows: 40,
+  });
+
+  /** Answer one prompt with the fixture's eighty numbered lines and wait for the last of them. */
+  async function longAnswer(terminal: Terminal): Promise<void> {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+    terminal.write('go');
+    await expect(terminal.getByText('> go')).toBeVisible();
+    terminal.submit();
+    await expect(terminal.getByText('scroll-line-080')).toBeVisible();
+  }
+
+  test('PageUp brings back lines that left the top of the screen, and Ctrl+End returns', async ({
+    terminal,
+  }) => {
+    await longAnswer(terminal);
+
+    // The region is 35 rows of a 40-row terminal, so the answer's tail is what is on screen and
+    // line 012 is well above it — thirty-odd rows above, which is what makes the page assertion
+    // below a statement about distance.
+    await expect(terminal.getByText('scroll-line-012')).not.toBeVisible();
+
+    terminal.write('\x1b[5~');
+    // One page is the region less a row of overlap, so line 012 comes into view and the last line
+    // of the answer leaves it. Both halves: "line 012 is visible" alone would pass for any scroll
+    // far enough, and "line 080 is gone" alone would pass for any scroll at all.
+    await expect(terminal.getByText('scroll-line-012')).toBeVisible();
+    await expect(terminal.getByText('scroll-line-080')).not.toBeVisible();
+
+    terminal.write('\x1b[1;5F');
+    await expect(terminal.getByText('scroll-line-080')).toBeVisible();
+    await expect(terminal.getByText('scroll-line-012')).not.toBeVisible();
+  });
+
+  test('the wheel scrolls three lines a notch, and Esc returns to the newest output', async ({
+    terminal,
+  }) => {
+    await longAnswer(terminal);
+    await expect(terminal.getByText('scroll-line-037')).not.toBeVisible();
+
+    // Three SGR wheel-up reports (button 64) at an arbitrary cell: nine rows, which is exactly
+    // enough to bring line 037 in and not enough to have reached line 030. A notch of any other
+    // size fails one of the two.
+    for (let notch = 0; notch < 3; notch++) terminal.write('\x1b[<64;20;10M');
+    await expect(terminal.getByText('scroll-line-037')).toBeVisible();
+    await expect(terminal.getByText('scroll-line-030')).not.toBeVisible();
+
+    terminal.write('\x1b');
+    await expect(terminal.getByText('scroll-line-080')).toBeVisible();
+    await expect(terminal.getByText('scroll-line-037')).not.toBeVisible();
+  });
+});

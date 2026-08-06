@@ -335,7 +335,13 @@ test.describe('gth code TUI — EXT-70 §4.7.1 the trust affordance', () => {
   }) => {
     await expect(terminal.getByText('ready to code')).toBeVisible();
 
+    // Type, confirm the echo, THEN send the return as its own keystroke. A `write` immediately
+    // followed by `submit` lets Ink parse the text and the carriage return out of one stdin chunk
+    // and dispatch them as a single input event, so the command is left sitting in the prompt and
+    // never runs — the same note chat.tui.test.ts carries. It is a race, so it passes most of the
+    // time and then fails on a loaded CI box for reasons that look like anything but this.
     terminal.write('/approvals trust jira openWorldHint');
+    await expect(terminal.getByText('> /approvals trust jira openWorldHint')).toBeVisible();
     terminal.submit();
     await expect(terminal.getByText('MCP annotations believed: jira')).toBeVisible();
 
@@ -347,6 +353,7 @@ test.describe('gth code TUI — EXT-70 §4.7.1 the trust affordance', () => {
     ).toBeVisible();
 
     terminal.write('/approvals trust jira nope');
+    await expect(terminal.getByText('> /approvals trust jira nope')).toBeVisible();
     terminal.submit();
     await expect(terminal.getByText('Not an annotation hint: nope')).toBeVisible();
   });

@@ -313,7 +313,10 @@ their config has a problem.
 
 ## Keyboard model (DL-9 keyboard-first)
 
-- **`Esc`** — abort the in-flight turn (only while running).
+- **`Esc`** — one key, three meanings, resolved by what currently owns the keyboard, in this order:
+  a pending shell approval answers it (rejecting, fail-closed); a turn in flight is aborted; the
+  focused debug pane clears its search or unfocuses; otherwise the conversation returns to the
+  newest output. The order is the specification, not an artefact of where the branches sit.
 - **`Ctrl+C`** — exit the app. (The bare `exit` keyword, `/exit` and `/quit` also quit.)
 - **`Ctrl+T`** — toggle tool-call detail mid-turn (mirrors `/verbose`).
 - **`o` / `s` / `a` / `y` / anything-else** at a pending shell approval — approve once / session /
@@ -329,6 +332,28 @@ their config has a problem.
   *Debug pane search* below). `/` here means "search this pane", **not** the app slash line — that
   is safe because the prompt is unmounted while the pane is focused, so the two `/` meanings never
   contend (DL-9 keyboard-first, DL-4 inspectability).
+- **Scrolling the conversation.** The full-screen surface owns its conversation region and the
+  alternate screen has no scrollback of its own, so these bindings are the *only* way back to what
+  has already been said (DL-3 — the user's content stays reachable):
+  - **wheel** — three lines a notch. **Shift + wheel** — one page.
+  - **`PageUp` / `PageDown`** — one page, meaning the region less a row of overlap so the reader
+    keeps their place. The focused debug pane claims these keys for its own viewport first; they
+    move the conversation only when it is not focused.
+  - **`Ctrl+Home` / `Ctrl+End`** — the oldest and the newest output of the session.
+  - **New output pins the view to the end unless the reader has scrolled up** (DL-1: the newest
+    thing is what you are looking at). Scrolled up, the rows being read stay on the *same screen
+    rows* while the conversation grows below them — a streaming turn must not crawl the page.
+    **Typing a character**, **`Esc`** and **`Ctrl+End`** all return to the end; the character still
+    reaches the prompt.
+  - **Bare `Up`/`Down` are the prompt's**, and stay the prompt's. `Ctrl+Shift+Up`/`Down` and
+    `Cmd+Up`/`Down` are deliberately unbound: kitty binds the first to its own scroll, VTE and
+    Windows Terminal reserve the namespace, and the second has no default terminal encoding at all.
+  - **With mouse reporting off, nothing is unreachable** — the wheel is suppressed rather than
+    delivered as arrow keys, and `PageUp`/`PageDown` and `Ctrl+Home`/`Ctrl+End` are the whole model
+    (DL-9 keyboard-first).
+  - **Name the keys honestly for keyboards that lack them** (DL-5, DL-7): a compact or Mac keyboard
+    sends the identical codes from `Fn`+`Up`/`Down`, so any hint that mentions paging says so rather
+    than naming a key the reader cannot find.
 - **arrows / Enter** — select / submit in the prompt.
 - **multiline paste** — pasting text with newlines buffers it into the prompt intact; the embedded
   newlines do **not** submit — only an explicit `Enter` sends the whole buffered value (DL-9
@@ -400,11 +425,30 @@ The TUI has two zones, and which one a thing belongs in is a design decision, no
 
 - **The conversation viewport** (`tui/components/TranscriptViewport.tsx`) holds the committed
   transcript, the streaming turn and the pre-first-exchange intro. It shows the **tail** of the
-  conversation, pinned to its bottom edge, and mounts **only the items that can reach the visible
-  region** — everything older is unmounted.
+  conversation, pinned to its bottom edge, or an older part of it once the reader scrolls back, and
+  mounts **only the items that can reach the visible region** — everything else is unmounted.
+- **Where the bottom edge sits is a clip, never a calculation.** The block the edge cuts through
+  sits in a fixed-height clipping box that draws its first rows and hides the rest, so no height
+  estimate ever decides where a row lands on screen; estimates only decide how much to mount, and
+  over-mounting merely costs a component the layout throws away. The edge is held as *an item plus
+  how many of its rows are visible, counted from that item's top* — anchoring it to a row offset
+  from the end would make it drift on every chunk of a streaming turn.
+- **No height cache — and adding one is the thing not to do.** A width change re-wraps the whole
+  conversation, so a cache of item heights would have to be discarded and rebuilt on every resize:
+  seconds of frozen terminal on a long session. Heights are measured from the committed layout at
+  the moment a gesture arrives, which costs nothing and cannot go stale. If a measurement has to
+  reach render state, it needs a guard that only updates when the clamped value really differs —
+  measure, clamp, render, measure is an endless re-render that no test sees and a hot CPU does.
 - **The dock** (debug panel, checklist, approval prompt, advisories, status bar, prompt) is pinned
   to the terminal floor and never scrolls. Anything that must stay on screen regardless of how long
   the conversation gets belongs here.
+- **On a terminal too short for the dock, the dock wins and loses its own bottom rows.** The frame
+  is clamped to the terminal height, so what goes first is the dock's last row rather than the
+  conversation. Measured at 80 columns: the prompt and the status bar survive down to a three-row
+  terminal and the exit hint down to four; at five rows and below the conversation region has no
+  rows at all, so scrolling cannot help there either. The readline surface keeps everything visible
+  at those sizes because the terminal itself scrolls — a deliberate divergence (GS2-87), stated
+  rather than discovered, and one that begins well below any terminal anybody works in.
 - **DL-10 is a measured budget, not an assurance.** Windowing bought a cost that is **flat in
   transcript length** — a 2000-turn session renders the same work per frame as a 10-turn one,
   because the cost tracks the viewport rather than the history. What that budget does NOT cover is

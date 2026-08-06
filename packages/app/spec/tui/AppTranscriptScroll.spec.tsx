@@ -119,6 +119,18 @@ const replyingAgent: TuiAgent = {
   },
 };
 
+/** Eighty numbered rows in ONE answer — a single transcript item taller than the whole screen. */
+const NUMBERED_ROWS = Array.from(
+  { length: 80 },
+  (_, i) => `numbered-row-${String(i + 1).padStart(3, '0')}`
+);
+
+const tallAgent: TuiAgent = {
+  async *runTurn(): AsyncGenerator<AgentStreamEvent> {
+    yield { type: 'text', delta: NUMBERED_ROWS.join('\n') };
+  },
+};
+
 /**
  * An agent whose turn the spec feeds chunk by chunk, so output can arrive with no keystroke behind
  * it. That distinction is the whole point of the auto-stick cases: typing deliberately returns the
@@ -665,6 +677,38 @@ describe('<App> keeps the scroll position honest when the layout moves under it'
     unmount();
   }, 40_000);
 
+  it('does not blank the region when the terminal gets SHORTER while scrolled back', async () => {
+    // The clip is sized against the region's measured height, and that measurement is a frame old
+    // when a resize lands. A shrink is the direction that matters: the clip that fitted the old
+    // region can be taller than the new one, which is the shape that renders nothing at all. It
+    // has to be back inside the region by the time anyone could look.
+    const { stdout, stdin, unmount } = renderAt(120, 40, <App {...baseProps} agent={tallAgent} />);
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+    stdin.write('go');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> go'));
+    stdin.write(KEY.enter);
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('turns: 1'), {
+      timeout: TURN_TIMEOUT_MS,
+    });
+
+    stdin.write(KEY.pageUp);
+    await settle(stdout);
+    expect(regionRows(stdout)[0]).toContain('numbered-row-012');
+
+    stdout.resizeTo(120, 20);
+    await vi.waitFor(() => expect(frameRows(stdout)).toHaveLength(20), { timeout: 5000 });
+    await vi.waitFor(() => expect(regionRows(stdout).join('').trim()).not.toBe(''), {
+      timeout: 5000,
+    });
+    expect(frameRows(stdout)).toHaveLength(20);
+
+    stdout.resizeTo(120, 40);
+    await vi.waitFor(() => expect(frameRows(stdout)).toHaveLength(40), { timeout: 5000 });
+    expect(regionRows(stdout).join('').trim()).not.toBe('');
+
+    unmount();
+  }, 40_000);
+
   it('does not reveal the block below when Ctrl+T re-folds the conversation', async () => {
     // Toggling detail changes the height of the block the edge is cutting through. Without the
     // normalizer the clip keeps its old height and quietly shows part of the NEXT item — the
@@ -686,6 +730,58 @@ describe('<App> keeps the scroll position honest when the layout moves under it'
     // The region is still full and the frame still fits the terminal: the two ways this fails.
     expect(frameRows(stdout)).toHaveLength(24);
     expect(regionRows(stdout)[0].trim()).not.toBe('');
+
+    unmount();
+  }, 40_000);
+});
+
+/**
+ * TUI-C48 — one answer taller than the screen, which is the shape that broke.
+ *
+ * With many short turns the edge always lands within a screenful of a block boundary, so the clip
+ * that draws it is never taller than the region and everything works. One long answer is different:
+ * a page back sits forty-odd rows into an eighty-row block, and the clip drawn for that is taller
+ * than the region it lives in.
+ *
+ * That is not a detail. Ink writes each row against the INNERMOST clip on its stack rather than the
+ * intersection of the stack (`Output.write` reads `clips.at(-1)`), so a clip reaching above the
+ * region's top edge REPLACES the region's clip, the rows it lets through are written at negative
+ * screen rows, and the whole conversation disappears. It is silent, it needs no error, and a long
+ * model answer is the commonest thing on this screen.
+ */
+describe('<App> scrolling inside a single answer taller than the screen', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('shows the middle of a long answer instead of a blank screen', async () => {
+    const { stdout, stdin, unmount } = renderAt(120, 40, <App {...baseProps} agent={tallAgent} />);
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+    stdin.write('go');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> go'));
+    stdin.write(KEY.enter);
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('turns: 1'), {
+      timeout: TURN_TIMEOUT_MS,
+    });
+
+    // The tail of the answer is on screen; its beginning is thirty-odd rows above.
+    expect(regionRows(stdout).join('\n')).toContain('numbered-row-080');
+    expect(regionRows(stdout).join('\n')).not.toContain('numbered-row-012');
+
+    stdin.write(KEY.pageUp);
+    await settle(stdout);
+
+    const region = regionRows(stdout);
+    // The three failure modes, each asserted: a blank region, a frame that outgrew the terminal,
+    // and a scroll that landed somewhere other than a page back.
+    expect(region.join('').trim()).not.toBe('');
+    expect(frameRows(stdout)).toHaveLength(40);
+    expect(region[0]).toContain('numbered-row-012');
+    expect(region.join('\n')).not.toContain('numbered-row-080');
+
+    stdin.write(KEY.ctrlEnd);
+    await settle(stdout);
+    expect(regionRows(stdout).join('\n')).toContain('numbered-row-080');
 
     unmount();
   }, 40_000);
