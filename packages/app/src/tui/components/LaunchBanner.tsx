@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Box, Text, useStdout } from 'ink';
+import React, { useMemo } from 'react';
+import { Box, Text } from 'ink';
 import { launchBannerFields, launchBannerRows } from '@gaunt-sloth/core/core/launchBanner.js';
 import type { SlothAnimation } from '@gaunt-sloth/core/core/launchBanner.js';
 import { useHitRegion } from '#src/tui/useMouse.js';
 import { useSlothAnimation } from '#src/tui/useSlothAnimation.js';
+import { useTerminalSize } from '#src/tui/useTerminalSize.js';
 
 /**
  * TUI-C33 — the ASCII-art launch banner at the top of an interactive TUI session: a magenta sloth
@@ -41,21 +42,9 @@ export function LaunchBanner({
   /** TUI-C40 — pin which animation a click plays. Tests only; production takes the random pick. */
   pickAnimation?: () => SlothAnimation;
 }): React.ReactElement {
-  const { stdout } = useStdout();
-  // Re-render on resize, exactly as <Rule> does: keep the live column count in state and refresh
-  // it from stdout's 'resize' event. Recomputing is only string maths, so this stays cheap.
-  const [liveColumns, setLiveColumns] = useState<number | undefined>(stdout?.columns);
-
-  useEffect(() => {
-    if (!stdout) return;
-    const onResize = (): void => setLiveColumns(stdout.columns);
-    // Sync once in case columns changed between initial state and effect subscription.
-    onResize();
-    stdout.on('resize', onResize);
-    return () => {
-      stdout.off('resize', onResize);
-    };
-  }, [stdout]);
+  // Re-render on resize, exactly as <Rule> does: read the live width from the frame's single
+  // shared subscription. Recomputing is only string maths, so this stays cheap.
+  const { columns: liveColumns } = useTerminalSize();
 
   // Version / project dir / home dir are fixed for the life of the session, so resolve them once
   // (the version read touches the filesystem).

@@ -268,6 +268,8 @@ test.describe('gth chat TUI — mouse input (greeting fixture)', () => {
 
     await expect(terminal.getByText('Mouse on')).toBeVisible();
     await expect(terminal.getByText('hold Shift')).toBeVisible();
+    // …and what the wheel itself does, which is the other thing someone opening /mouse is asking.
+    await expect(terminal.getByText('scrolls the conversation')).toBeVisible();
   });
 });
 

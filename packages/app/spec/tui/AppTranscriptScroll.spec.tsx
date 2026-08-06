@@ -736,6 +736,49 @@ describe('<App> scroll bindings yield to their prior claimants', () => {
   }, 60_000);
 });
 
+describe('<App> subscribes to the terminal once, however much is on screen', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('holds one stdout resize listener at the end, scrolled back, and none after unmount', async () => {
+    // Node's default `MaxListeners` is ten, and a component that subscribes for itself makes the
+    // count a function of how many are mounted — and a rule is mounted per separator and inside
+    // every notice. Over the limit Node writes a four-line memory-leak warning through
+    // `console.error`, which Ink's default `patchConsole` puts into the user's alternate screen
+    // with the frame repainted under it. Scrolling back roughly doubles the mounted slice, so the
+    // gesture is what brought an ordinary terminal within reach of it.
+    //
+    // The number is pinned as a LITERAL, not a ceiling: a ceiling under ten is satisfied by a
+    // regression that adds two more subscribers, which is exactly how this arrived.
+    const { stdout, stdin, unmount } = renderAt(
+      120,
+      40,
+      <App {...baseProps} agent={replyingAgent} />
+    );
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+    expect(stdout.listenerCount('resize')).toBe(1);
+
+    await converse(stdout, stdin, 14);
+    expect(stdout.listenerCount('resize')).toBe(1);
+
+    stdin.write(KEY.pageUp);
+    await settle(stdout);
+    // Control: the view really is scrolled back, so the count above is the count in the state that
+    // mounts the most. At 120x40 this is the geometry that used to cross the limit on this key.
+    expect(visibleTurns(stdout)).not.toContain(13);
+    expect(stdout.listenerCount('resize')).toBe(1);
+
+    stdin.write(KEY.ctrlHome);
+    await settle(stdout);
+    expect(stdout.listenerCount('resize')).toBe(1);
+
+    unmount();
+    // …and it is still a subscription, not a leak: it goes away with the tree.
+    expect(stdout.listenerCount('resize')).toBe(0);
+  }, 60_000);
+});
+
 describe('<App> keeps the scroll position honest when the layout moves under it', () => {
   beforeEach(() => {
     vi.resetAllMocks();

@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { SelectCancelledError } from '#src/tui/selectCancelled.js';
+import { useTerminalSize } from '#src/tui/useTerminalSize.js';
 
 export interface SelectItem {
   /** The text shown for this row. */
@@ -141,7 +142,6 @@ export function SelectList({
    */
   viewportRows?: number;
 }): React.ReactElement {
-  const { stdout } = useStdout();
   // CFG-20 — the active type-to-filter query. Empty = show everything.
   const [filter, setFilter] = useState('');
   // `cursor` is a position within the CURRENT filtered view, not an absolute index. With an empty
@@ -151,18 +151,15 @@ export function SelectList({
     initialIndex >= 0 && initialIndex < items.length ? initialIndex : 0
   );
   const [windowStart, setWindowStart] = useState(0);
-  // Track the live terminal height in state and refresh it on resize, so the window resizes
-  // with the terminal (mirrors the resize-aware pattern in Rule.tsx).
-  const [rows, setRows] = useState<number | undefined>(stdout?.rows);
-  useEffect(() => {
-    if (!stdout) return;
-    const onResize = (): void => setRows(stdout.rows);
-    onResize();
-    stdout.on('resize', onResize);
-    return () => {
-      stdout.off('resize', onResize);
-    };
-  }, [stdout]);
+  // The live terminal height, so the window resizes with the terminal. Read from the frame's
+  // single shared subscription (as <Rule> and <LaunchBanner> do), never one of its own.
+  //
+  // `undefined` when the stream reports no height at all, which is what {@link windowSize} means by
+  // "not attached to a TTY" — its fallback for that is deliberately smaller than a terminal-sized
+  // window, so the two must not be conflated.
+  const { stdout } = useStdout();
+  const { rows: liveRows } = useTerminalSize();
+  const rows = stdout?.rows ? liveRows : undefined;
 
   // The absolute indices of the rows that survive the current filter, in source order. Selection
   // maps back through this array so `onSelect` always reports the original index into `items`. This

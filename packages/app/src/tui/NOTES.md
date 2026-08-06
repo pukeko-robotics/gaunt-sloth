@@ -7,8 +7,10 @@ the relevant TUI cluster node (TUI-C2/C3) or as a new node where flagged.
 
 ## Full-width rules — done (TUI-C6)
 `components/Rule.tsx` now spans the live terminal width instead of a fixed 40 chars.
-It reads `useStdout().stdout.columns`, subscribes to the stdout `'resize'` event so the
-rule re-renders at the new width (listener torn down on unmount), and falls back to 80
+It reads the width from `useTerminalSize()` — the frame's single shared stdout `'resize'`
+subscription, published by `<App>` through context, because a rule is mounted per separator
+and per notice and one subscription each would make Node's listener count a function of how
+much conversation is on screen. It falls back to 80
 columns when the width is unknown (non-TTY/tests), clamped to a minimum of 1. The width
 math is the pure, exported `ruleWidth(columns)` helper (unit-tested in
 `spec/tui/ruleWidth.spec.ts`); the component stays single-sourced and is still used both
