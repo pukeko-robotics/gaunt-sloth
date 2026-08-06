@@ -1,1 +1,2 @@
 aiignore-hidden.txt
+glob-aiignore/*.secret.txt
