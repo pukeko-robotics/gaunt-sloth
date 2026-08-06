@@ -108,7 +108,12 @@ describe('startSession reads the tui config key off disk (CFG-37 wiring)', () =>
     expect(interactiveSessionMock.createInteractiveSession).toHaveBeenCalledTimes(1);
   });
 
-  it('starts the TUI for a GLOBAL config that sets tui true', async () => {
+  it('starts the TUI for a GLOBAL config that sets tui true, in a CI env that would auto-off', async () => {
+    // CI=1 is what makes this case mean anything. The shared terminal stub already favours the
+    // TUI, so against that baseline "TUI was started" is the answer auto-detect gives on its own
+    // and the assertion would hold even if the config were never read. Under CI the baseline is
+    // readline, so the TUI can only be reached by the global `tui: true` outranking the heuristic.
+    vi.stubEnv('CI', '1');
     writeGlobalConfig({ llm: LLM_SPEC, tui: true });
 
     const { startSession } = await import('#src/modules/startSession.js');

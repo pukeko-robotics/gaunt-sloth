@@ -88,6 +88,12 @@ describe('tui config key (CFG-37)', () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(resolve(dir, '.gsloth.config.json'), JSON.stringify(config));
   };
+  /** Write a MODULE-format (`configure()`-style) config for a NAMED profile. */
+  const writeModuleProfileConfig = (name: string, source: string): void => {
+    const dir = resolve(projectDir, '.gsloth', '.gsloth-settings', name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(resolve(dir, '.gsloth.config.js'), source);
+  };
 
   describe('loadConfiguredTui — the value the session dispatcher reads', () => {
     it('reads a global-only config (the CFG-8 layer a beginner actually has)', async () => {
@@ -160,6 +166,27 @@ describe('tui config key (CFG-37)', () => {
 
       const { loadConfiguredTui } = await import('#src/config/loader.js');
       expect(await loadConfiguredTui({ identityProfile: 'child-profile' })).toBe(true);
+    });
+
+    it('inherits it through extends for a MODULE-format profile too, the way the run does', async () => {
+      // The pair with the JSON case above: same inheritance, the other config format. The format
+      // must not decide the answer, because initConfig composes `extends` for a module config as
+      // well as a JSON one — so a reader that walked the chain only for JSON would report "nobody
+      // set it" for this profile while the run honours `true`, and the surface chooser would
+      // contradict the session it is choosing for. Reader and run are both asserted here; a single
+      // assertion could not tell agreement from a shared mistake.
+      writeProfileConfig('base-profile', { llm: LLM_SPEC, tui: true });
+      writeModuleProfileConfig(
+        'child-profile',
+        'export async function configure() { return { extends: "base-profile", llm: { type: "vertexai" } }; }\n'
+      );
+
+      const { loadConfiguredTui, initConfig } = await import('#src/config/loader.js');
+      expect(await loadConfiguredTui({ identityProfile: 'child-profile' })).toBe(true);
+
+      const config = await initConfig({ identityProfile: 'child-profile' });
+      expect(exitMock).not.toHaveBeenCalled();
+      expect(config.tui).toBe(true);
     });
 
     it("lets a named profile's own tui win over the base it extends", async () => {

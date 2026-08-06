@@ -676,16 +676,18 @@ async function readProjectConfiguredTui(
     return undefined;
   }
   // GS2-41 — a named profile may inherit `tui` from the profile it extends, so compose the chain
-  // the way a run does. Gated on a JSON-family config because that is the ONLY branch initConfig
-  // resolves `extends` in; composing it for a module config would honour an inheritance the run
-  // itself ignores.
+  // the way a run does, for EVERY config format. `initConfig` resolves `extends` on both of its
+  // branches (the JSON one below and {@link tryModuleConfig}), and `validateConfig` walks it with
+  // no format gate at all — so a format gate here would answer `undefined` for a `.js`/`.mjs`
+  // profile whose `tui` is inherited while the run composes it, which is precisely the
+  // reader-vs-run divergence this seam exists to prevent.
   //
   // Deliberately NOT inside the try above: on a cycle / missing base / malformed base,
   // `resolveConfigExtends` reports the problem and calls `exit(1)`, which ends the process — a
   // catch could not suppress that, and the sentinel throw past it is load-bearing under the specs'
   // mocked `exit` (the convention used throughout this file), so swallowing it would let a test
   // observe a silent fall-through production can never reach.
-  if (isJsonConfigPath(discovered.path) && typeof raw.extends === 'string') {
+  if (typeof raw.extends === 'string') {
     raw = await resolveConfigExtends(raw, commandLineConfigOverrides.identityProfile);
   }
   return typeof raw.tui === 'boolean' ? raw.tui : undefined;
