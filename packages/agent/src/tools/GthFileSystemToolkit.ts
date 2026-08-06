@@ -1280,30 +1280,36 @@ export default class GthFileSystemToolkit extends BaseToolkit {
             const aiignoreConfig = this.aiignoreConfig;
 
             for (const entry of entries) {
+              // `.aiignore` is a privacy boundary, not an annotation: an ignored entry is dropped
+              // outright, exactly as list_directory / list_directory_with_sizes / search_files drop
+              // it. Emitting the entry with a marker still hands the model — and therefore the
+              // provider — the very filename `.aiignore` exists to hide, and a name is often the
+              // whole payload. Tested first so an ignored directory is neither named nor descended.
+              const fullPath = path.join(currentPath, entry.name);
+              if (
+                shouldIgnoreFile(
+                  fullPath,
+                  getCurrentWorkDir(),
+                  aiignoreConfig?.patterns,
+                  aiignoreConfig?.enabled
+                )
+              ) {
+                continue;
+              }
+
               const entryData: TreeEntry = {
                 name: entry.name,
                 type: entry.isDirectory() ? 'directory' : 'file',
               };
+              // Noise directories are listed but never walked. `ignored` is what tells the model
+              // why such a directory carries no `children` — without it an unwalked directory reads
+              // as an empty one — and that is the flag's only remaining purpose.
               if (IGNORED_DIRS.indexOf(entry.name) >= 0) {
                 entryData.ignored = true;
               }
 
-              // Check if file should be ignored by aiignore
-              const fullPath = path.join(currentPath, entry.name);
-              const shouldIgnore = shouldIgnoreFile(
-                fullPath,
-                getCurrentWorkDir(),
-                aiignoreConfig?.patterns,
-                aiignoreConfig?.enabled
-              );
-
-              if (shouldIgnore) {
-                entryData.ignored = true;
-              }
-
               if (entry.isDirectory() && !entryData.ignored) {
-                const subPath = path.join(currentPath, entry.name);
-                entryData.children = await buildTree(subPath);
+                entryData.children = await buildTree(fullPath);
               }
 
               result.push(entryData);
@@ -1327,7 +1333,8 @@ export default class GthFileSystemToolkit extends BaseToolkit {
           description:
             'Get a recursive tree view of files and directories as a JSON structure. ' +
             "Each entry includes 'name', 'type' (file/directory), and 'children' for directories. " +
-            'Files have no children array, while directories always have a children array (which may be empty). ' +
+            "Files have no children array; a directory has one (possibly empty) unless it carries 'ignored': true, " +
+            'which means the directory was listed but not walked, so its contents are unknown rather than absent. ' +
             'The output is formatted with 2-space indentation for readability. Only works within allowed directories.',
           schema: DirectoryTreeArgsSchema,
         },
