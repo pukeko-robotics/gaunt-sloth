@@ -14,6 +14,8 @@
  * - `config/shell-policy.ts` — {@link GthDevToolsConfig} + the shell/dev-tools resolvers.
  * - `config/defaults.ts` — {@link DEFAULT_CONFIG}.
  * - `config/loader.ts` — discovery + the layered load/merge pipeline.
+ * - `config/providerKeys.ts` — {@link MissingProviderKeyError}, the catchable error a load raises
+ *   when a provider has no resolvable API key.
  * - `config/schema.ts` — the Zod schema (single source of truth) + JSON-Schema generator.
  * - `config/tool-descriptions.ts` — EXT-58: the rung-aware tool-description suffixes (§4.5) and
  *   the granted-built-in table the rater's alternative suggestion draws on (§4.4).
@@ -30,3 +32,4 @@ export * from '#src/config/filesystem-tools.js';
 export * from '#src/config/defaults.js';
 export * from '#src/config/loader.js';
 export * from '#src/config/profiles.js';
+export * from '#src/config/providerKeys.js';
