@@ -79,16 +79,18 @@ gth exec scripts/release-notes.md -f CHANGELOG.md
 
 ## Writing the output to a file
 
-`ask` honours the global `-w/--write-output-to-file`. Pass a filename to write there, or `true` for
-a timestamped `gth_<timestamp>_ASK.md` (under `.gsloth/` if that directory exists, otherwise the
-project root):
+`ask` and `exec` both honour the global `-w/--write-output-to-file`. Pass a filename to write there,
+or `true` for a timestamped `gth_<timestamp>_ASK.md` / `gth_<timestamp>_EXEC.md` (under `.gsloth/`
+if that directory exists, otherwise the project root):
 
 ```bash
 gth -w diagnosis.md ask "Summarise the root cause of this build failure." < build.log
+gth exec scripts/release-notes.md -w RELEASE_NOTES.md
 ```
 
-`exec` currently writes no report file — `-w` has no effect on it (a known limitation with a fix
-tracked). Its result streams to stdout, so to save an `exec` result, redirect it:
+Neither command writes a file unless you ask for one, and a `writeOutputToFile` in your config does
+not switch `exec` on — its result streams to stdout so it stays pipeable by default. The report file
+is a full session log, so when you want only the answer, redirect stdout instead:
 
 ```bash
 gth exec scripts/release-notes.md > RELEASE_NOTES.md

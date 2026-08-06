@@ -165,6 +165,41 @@ describe('execCommand', () => {
     expect(passedConfig.canInterruptInferenceWithEsc).toBe(false);
   });
 
+  // GS2-89 — `-w/--write-output-to-file` is declared on the PROGRAM (cli.ts), so commander puts it
+  // on the program's option object and never on `exec`'s own `options`. It reaches a command as
+  // `commandLineConfigOverrides.writeOutputToFile`, which is the only value that can tell an
+  // explicit `-w` apart from a config file's `writeOutputToFile` (exec ignores the latter, as the
+  // "pipe-friendly defaults" test above locks in).
+  it('honours an explicit -w filename from the program-level option', async () => {
+    const { execCommand } = await import('#src/commands/execCommand.js');
+    const program = new Command();
+    execCommand(program, { writeOutputToFile: 'out.md' });
+    await program.parseAsync(['na', 'na', 'exec', 'script.md']);
+
+    const passedConfig = runSingleShot.mock.calls[0][3];
+    expect(passedConfig.writeOutputToFile).toBe('out.md');
+  });
+
+  it('honours the generated-filename form of -w from the program-level option', async () => {
+    const { execCommand } = await import('#src/commands/execCommand.js');
+    const program = new Command();
+    execCommand(program, { writeOutputToFile: true });
+    await program.parseAsync(['na', 'na', 'exec', 'script.md']);
+
+    const passedConfig = runSingleShot.mock.calls[0][3];
+    expect(passedConfig.writeOutputToFile).toBe(true);
+  });
+
+  it('keeps the file off when -w explicitly says false', async () => {
+    const { execCommand } = await import('#src/commands/execCommand.js');
+    const program = new Command();
+    execCommand(program, { writeOutputToFile: false });
+    await program.parseAsync(['na', 'na', 'exec', 'script.md']);
+
+    const passedConfig = runSingleShot.mock.calls[0][3];
+    expect(passedConfig.writeOutputToFile).toBe(false);
+  });
+
   it('applies the --temperature determinism knob to the llm', async () => {
     const { execCommand } = await import('#src/commands/execCommand.js');
     const program = new Command();

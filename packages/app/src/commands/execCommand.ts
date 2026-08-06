@@ -17,8 +17,6 @@ interface ExecCommandOptions {
   message?: string;
   /** Override the LLM sampling temperature for this run (determinism knob). */
   temperature?: number;
-  /** Write the run output to a md file as well as stdout. Off by default for pipe ergonomics. */
-  writeOutputToFile?: boolean | string;
   /**
    * Extra filesystem roots to allow for this run, in addition to the cwd sandbox (repeatable).
    * Opt-in widening of `exec`'s default cwd-only sandbox; LOUD because it removes a guardrail.
@@ -36,15 +34,27 @@ interface ExecCommandOptions {
  * - inference cannot be interrupted with ESC (there is no interactive user);
  * - if a temperature is supplied it is applied to the LLM for near-deterministic output.
  *
+ * `-w/--write-output-to-file` is a PROGRAM-level option, so commander puts it on the program and
+ * never on this subcommand's own `options` — it reaches a command as
+ * `commandLineConfigOverrides.writeOutputToFile`, which is why it is a parameter here rather than
+ * a field of {@link ExecCommandOptions}. That override object is also the only thing that can tell
+ * an explicit `-w` apart from a project config's `writeOutputToFile`: the merged `config` carries
+ * both, and exec must keep piping cleanly under a config that turns reports on generally, so a
+ * config-level value stays off and only the flag switches it on.
+ *
  * Exposed (and unit-tested) separately so the runtime is reusable across the Pukeko impls.
  */
-export function buildExecConfig(config: GthConfig, options: ExecCommandOptions): GthConfig {
+export function buildExecConfig(
+  config: GthConfig,
+  options: ExecCommandOptions,
+  commandLineConfigOverrides: CommandLineConfigOverrides
+): GthConfig {
   const execConfig: GthConfig = {
     ...config,
     // Non-interactive: ESC-to-interrupt only makes sense in a TTY session.
     canInterruptInferenceWithEsc: false,
     // Default to stdout-only so the run output can be piped; honor an explicit -w.
-    writeOutputToFile: options.writeOutputToFile ?? false,
+    writeOutputToFile: commandLineConfigOverrides.writeOutputToFile ?? false,
     // Opt-in sandbox widening: extra allowed roots beyond cwd for this run only.
     ...(options.allowDir && options.allowDir.length > 0 ? { allowDirs: options.allowDir } : {}),
   };
@@ -106,7 +116,8 @@ export function execCommand(
         '  $ gth exec scripts/release-notes.md\n' +
         '  $ gth exec -m "Summarize CHANGELOG.md in three bullets" -t 0\n' +
         '  $ cat scripts/lint-summary.md | gth exec\n' +
-        '  $ gth exec scripts/build-fix.md -f error.log package.json\n'
+        '  $ gth exec scripts/build-fix.md -f error.log package.json\n' +
+        '  $ gth exec scripts/release-notes.md -w RELEASE_NOTES.md\n'
     )
     .action(async (script: string | undefined, options: ExecCommandOptions) => {
       // -m and a positional script path are mutually exclusive: keep path-vs-text unambiguous.
@@ -153,7 +164,7 @@ export function execCommand(
         );
       }
 
-      const execConfig = buildExecConfig(config, options);
+      const execConfig = buildExecConfig(config, options, commandLineConfigOverrides);
 
       const { runSingleShot } = await import('@gaunt-sloth/core/runtime/singleShot.js');
       const { createResolvers } = await import('@gaunt-sloth/agent/resolvers.js');

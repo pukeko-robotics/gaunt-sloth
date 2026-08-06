@@ -26,6 +26,9 @@ That path has a separator, so the review lands at `reviews/pr-42.md` relative to
 Now each command writes `gth_<timestamp>_<COMMAND>.md` under `.gsloth/` (or the project root when you
 have no `.gsloth` directory). The full rules for both the flag and the config field follow.
 
+`exec` is the exception to the config field: its result streams to stdout so a scripted run stays
+pipeable, and only `-w` on the invocation itself makes it write a report file.
+
 ## Controlling Output Files
 
 By default, Gaunt Sloth does **not** write responses to disk. Set `writeOutputToFile` in your
