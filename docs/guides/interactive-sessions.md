@@ -70,18 +70,42 @@ them; in the TUI, typing `/` alone opens a searchable command menu. A few worth 
 A pasted filesystem path such as `/usr/local/bin` is not swallowed as a command — only a line with
 no further `/` after the leading one is parsed as one.
 
-## TUI or plain readline (`--tui` / `--no-tui`)
+## TUI or plain readline (`--tui` / `--no-tui`, `tui`)
 
 Sessions have two surfaces. On a real interactive terminal, `gth` renders the Ink TUI — the full
 terminal UI with the slash-command menu, collapsible tool-call panels, and a docked debug view.
 Anywhere it can't — stdin/stdout is not a TTY, `TERM=dumb`, `CI` is set, `GTH_NO_TUI` is set, or
 the optional `ink` dependency didn't install — it falls back to a plain readline prompt with the
-same slash commands. Two global flags force the choice:
+same slash commands. Two global flags force the choice for one run:
 
 ```bash
 gth --no-tui        # force the plain readline session
 gth --tui code      # force the TUI (e.g. an interactive shell that happens to set CI)
 ```
+
+If your terminal and the TUI don't get along, make the choice permanent with the `tui` key instead
+of typing a flag every time. Put it in your project config to settle it for one repo, or in the
+global `~/.gsloth/.gsloth.config.json` to settle it everywhere:
+
+```json
+{ "tui": false }
+```
+
+Five things decide which surface starts, **highest first**:
+
+| | Condition | Result |
+|---|---|---|
+| 1 | stdin/stdout is not a terminal, `TERM=dumb`, or `ink` is not installed | plain readline |
+| 2 | `--tui` or `--no-tui` was passed | that surface |
+| 3 | `GTH_NO_TUI` is set to any non-empty value | plain readline |
+| 4 | `tui` is set in your config (project layer over global) | that surface |
+| 5 | otherwise | the TUI, unless `CI` is set |
+
+Row 1 asks what the terminal can do rather than what you want, which is why it sits above your
+preferences: `"tui": true` in a piped or `TERM=dumb` run quietly gives you readline instead of
+failing. Row 3 is the escape hatch for a machine you can't edit a config file on, so it outranks
+row 4 — and row 4 outranks the `CI` heuristic in row 5, which is how you get the TUI in an
+interactive shell that happens to export `CI`.
 
 ## Mouse and text selection
 

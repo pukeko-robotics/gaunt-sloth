@@ -53,4 +53,69 @@ describe('tui/shouldUseTui', () => {
     const { shouldUseTui } = await import('#src/tui/shouldUseTui.js');
     expect(shouldUseTui({ ...base, term: undefined })).toBe(true);
   });
+
+  /**
+   * CFG-37 — the config key's rung in the chain. Each case here pairs the value under test with the
+   * neighbour it must beat (or lose to), so a test can only pass while the rung sits where it does:
+   * an inverted or relocated clause flips at least one expectation below.
+   */
+  describe('configuredTui (CFG-37)', () => {
+    it('decides the surface when nothing louder has an opinion', async () => {
+      const { shouldUseTui } = await import('#src/tui/shouldUseTui.js');
+      expect(shouldUseTui({ ...base, configuredTui: true })).toBe(true);
+      expect(shouldUseTui({ ...base, configuredTui: false })).toBe(false);
+    });
+
+    it('leaves auto-detect in charge when unset', async () => {
+      const { shouldUseTui } = await import('#src/tui/shouldUseTui.js');
+      // Both spellings of "nobody set it" behave as the pre-CFG-37 auto default.
+      expect(shouldUseTui(base)).toBe(true);
+      expect(shouldUseTui({ ...base, configuredTui: undefined })).toBe(true);
+      expect(shouldUseTui({ ...base, ci: true, configuredTui: undefined })).toBe(false);
+    });
+
+    it('reads a configured FALSE as an answer, not as "unset"', async () => {
+      const { shouldUseTui } = await import('#src/tui/shouldUseTui.js');
+      // The whole point of the `!== undefined` test: on an otherwise TUI-favourable terminal, the
+      // auto default is `true`, so a `false` that leaks through as "unset" silently starts the TUI.
+      expect(shouldUseTui({ ...base, configuredTui: false })).toBe(false);
+    });
+
+    it('loses to both flags', async () => {
+      const { shouldUseTui } = await import('#src/tui/shouldUseTui.js');
+      expect(shouldUseTui({ ...base, configuredTui: true, noTuiFlag: true })).toBe(false);
+      expect(shouldUseTui({ ...base, configuredTui: false, tuiFlag: true })).toBe(true);
+    });
+
+    it('loses to the GTH_NO_TUI escape hatch', async () => {
+      const { shouldUseTui } = await import('#src/tui/shouldUseTui.js');
+      expect(shouldUseTui({ ...base, configuredTui: true, gthNoTui: true })).toBe(false);
+    });
+
+    it('beats the CI auto-off heuristic', async () => {
+      const { shouldUseTui } = await import('#src/tui/shouldUseTui.js');
+      expect(shouldUseTui({ ...base, ci: true, configuredTui: true })).toBe(true);
+      expect(shouldUseTui({ ...base, ci: true, configuredTui: false })).toBe(false);
+    });
+
+    it.each<[string, Partial<TuiDecisionInput>]>([
+      ['ink not installed', { inkAvailable: false }],
+      ['stdout not a TTY', { stdoutIsTTY: false }],
+      ['stdin not a TTY', { stdinIsTTY: false }],
+      ['TERM=dumb', { term: 'dumb' }],
+    ])('cannot defeat a hard capability gate: %s', async (_label, gate) => {
+      const { shouldUseTui } = await import('#src/tui/shouldUseTui.js');
+      // A preference must never force a mount the terminal cannot support — it degrades to
+      // readline. `--tui` is bundled in to prove the gates outrank the LOUDEST preference too.
+      expect(shouldUseTui({ ...base, ...gate, configuredTui: true })).toBe(false);
+      expect(shouldUseTui({ ...base, ...gate, configuredTui: true, tuiFlag: true })).toBe(false);
+    });
+  });
+
+  it('--tui overrides GTH_NO_TUI (the flag is the loudest preference)', async () => {
+    const { shouldUseTui } = await import('#src/tui/shouldUseTui.js');
+    expect(shouldUseTui({ ...base, gthNoTui: true, tuiFlag: true })).toBe(true);
+    // …and --no-tui still wins when both flags are somehow present.
+    expect(shouldUseTui({ ...base, gthNoTui: true, tuiFlag: true, noTuiFlag: true })).toBe(false);
+  });
 });

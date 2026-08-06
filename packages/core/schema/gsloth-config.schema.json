@@ -537,6 +537,9 @@
     "useMouse": {
       "type": "boolean"
     },
+    "tui": {
+      "type": "boolean"
+    },
     "streamSessionInferenceLog": {
       "type": "boolean"
     },

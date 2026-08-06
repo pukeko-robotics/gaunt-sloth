@@ -619,6 +619,81 @@ export async function hasAnyConfig(
 }
 
 /**
+ * CFG-37 — the layered value of the top-level `tui` config key, read BEFORE a session picks its
+ * surface. `chat`/`code` choose between the Ink TUI and the readline session in the app's
+ * `startSession` dispatcher, and each surface then loads its own config via {@link initConfig} — so
+ * at the moment of the choice there is no resolved {@link GthConfig} to consult, and this is the
+ * seam that supplies the one key the choice needs.
+ *
+ * Layering matches a run: the discovered PROJECT layer wins over the GLOBAL one, and a layer that
+ * does not set `tui` defers to the next rather than overriding it with `undefined`. A scalar needs
+ * no deep merge, so this reads the two layers and picks — it does not fork the merge engine.
+ *
+ * QUIET and fail-soft for the layers it reads ITSELF: it does not validate them and does not
+ * `exit` on a malformed one, because the caller runs moments before {@link initConfig}, which
+ * validates every layer and reports the very same problem — warning twice about one file is worse
+ * than not warning here. A failed read resolves to `undefined`, i.e. "nobody set it", and the
+ * surface auto-detects exactly as it does for a run with no config.
+ *
+ * ONE EXCEPTION, and it is deliberate: a `tui` may be INHERITED through a GS2-41 profile `extends`
+ * chain, so this walks that chain via the SHARED {@link resolveConfigExtends} rather than forking
+ * it — and that traversal owns its own reporting. It validates each base layer (so a base's own
+ * unknown-key warning can appear here as well as from `initConfig`) and hard-`exit`s on a cycle, a
+ * missing base or a malformed base. What the user sees is unchanged — `initConfig` exits on the
+ * same chain with the same message a moment later — but it now happens EARLIER, at surface
+ * selection rather than at config load. Forking the walk to silence it would mean a second
+ * inheritance engine; ignoring `extends` would mean silently dropping an inherited `tui`.
+ *
+ * Ordering: this is DETECTION, so per the GS2-11 invariant above it must run before any
+ * {@link initConfig} in the process — as it does, alongside {@link hasAnyConfig} in `startSession`.
+ */
+export async function loadConfiguredTui(
+  commandLineConfigOverrides: CommandLineConfigOverrides
+): Promise<boolean | undefined> {
+  const projectTui = await readProjectConfiguredTui(commandLineConfigOverrides);
+  if (projectTui !== undefined) {
+    return projectTui;
+  }
+  const globalRaw = await loadGlobalRawConfigUnvalidated();
+  const globalTui = globalRaw?.raw.tui;
+  return typeof globalTui === 'boolean' ? globalTui : undefined;
+}
+
+/** The PROJECT layer's `tui`, or undefined when there is no project config or it does not set it. */
+async function readProjectConfiguredTui(
+  commandLineConfigOverrides: CommandLineConfigOverrides
+): Promise<boolean | undefined> {
+  const discovered = findProjectConfigPath(commandLineConfigOverrides);
+  if (!discovered) {
+    return undefined;
+  }
+  let raw: Record<string, unknown>;
+  try {
+    raw = await readRawConfigAtPath(discovered.path);
+  } catch (e) {
+    // Quiet by design — see the note on loadConfiguredTui. initConfig reports this same file.
+    displayDebug(e instanceof Error ? e : String(e));
+    return undefined;
+  }
+  // GS2-41 — a named profile may inherit `tui` from the profile it extends, so compose the chain
+  // the way a run does, for EVERY config format. `initConfig` resolves `extends` on both of its
+  // branches (the JSON one below and {@link tryModuleConfig}), and `validateConfig` walks it with
+  // no format gate at all — so a format gate here would answer `undefined` for a `.js`/`.mjs`
+  // profile whose `tui` is inherited while the run composes it, which is precisely the
+  // reader-vs-run divergence this seam exists to prevent.
+  //
+  // Deliberately NOT inside the try above: on a cycle / missing base / malformed base,
+  // `resolveConfigExtends` reports the problem and calls `exit(1)`, which ends the process — a
+  // catch could not suppress that, and the sentinel throw past it is load-bearing under the specs'
+  // mocked `exit` (the convention used throughout this file), so swallowing it would let a test
+  // observe a silent fall-through production can never reach.
+  if (typeof raw.extends === 'string') {
+    raw = await resolveConfigExtends(raw, commandLineConfigOverrides.identityProfile);
+  }
+  return typeof raw.tui === 'boolean' ? raw.tui : undefined;
+}
+
+/**
  * Initialize configuration by loading from available config files
  * @returns The loaded GthConfig
  */

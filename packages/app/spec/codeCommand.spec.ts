@@ -15,6 +15,9 @@ vi.mock('#src/config.js', () => ({
     streamSessionInferenceLog: true,
     writeOutputToFile: true,
   }),
+  // CFG-37 — the session dispatcher asks for the layered `tui` preference before choosing a
+  // surface. Unset here, so these command tests keep exercising the auto-detected surface.
+  loadConfiguredTui: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('#src/utils/consoleUtils.js', async () => {
