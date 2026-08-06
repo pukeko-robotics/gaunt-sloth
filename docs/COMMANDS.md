@@ -251,6 +251,9 @@ cat scripts/lint-summary.md | gth exec
 
 # Add context files before the script
 gth exec scripts/build-fix.md -f error.log package.json
+
+# Save the result as a report file instead of (only) streaming it to stdout
+gth exec scripts/release-notes.md -w RELEASE_NOTES.md
 ```
 
 ## chat
