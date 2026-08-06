@@ -139,6 +139,20 @@ describe('tui config key (CFG-37)', () => {
       expect(await loadConfiguredTui({})).toBeUndefined();
     });
 
+    it('treats a NON-BOOLEAN tui as unset, in either layer', async () => {
+      // "Unset" and "set to something that is not a boolean" must reach auto-detect by the same
+      // door. The reader is quiet and fail-soft by design, so it does not warn here — initConfig's
+      // schema validation is what tells the user, moments later. Both layers carry the bad value,
+      // so this pins the guard on the project read AND the guard on the global read; with either
+      // one dropped a truthy string reaches the dispatcher and forces a surface nobody chose.
+      writeGlobalConfig({ llm: LLM_SPEC, tui: 'yes' });
+      writeProjectConfig({ llm: LLM_SPEC, tui: 'yes' });
+
+      const { loadConfiguredTui } = await import('#src/config/loader.js');
+      expect(await loadConfiguredTui({})).toBeUndefined();
+      expect(exitMock).not.toHaveBeenCalled();
+    });
+
     it('is undefined (never a throw) when there is no config at all', async () => {
       const { loadConfiguredTui } = await import('#src/config/loader.js');
       expect(await loadConfiguredTui({})).toBeUndefined();
