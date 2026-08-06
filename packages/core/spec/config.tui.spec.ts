@@ -82,6 +82,12 @@ describe('tui config key (CFG-37)', () => {
   const writeGlobalConfig = (config: Record<string, unknown>): void => {
     writeFileSync(resolve(globalDir, '.gsloth.config.json'), JSON.stringify(config));
   };
+  /** Write a NAMED profile config under the project's `.gsloth/.gsloth-settings/<name>/`. */
+  const writeProfileConfig = (name: string, config: Record<string, unknown>): void => {
+    const dir = resolve(projectDir, '.gsloth', '.gsloth-settings', name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(resolve(dir, '.gsloth.config.json'), JSON.stringify(config));
+  };
 
   describe('loadConfiguredTui — the value the session dispatcher reads', () => {
     it('reads a global-only config (the CFG-8 layer a beginner actually has)', async () => {
@@ -131,6 +137,41 @@ describe('tui config key (CFG-37)', () => {
       const { loadConfiguredTui } = await import('#src/config/loader.js');
       expect(await loadConfiguredTui({})).toBeUndefined();
       expect(exitMock).not.toHaveBeenCalled();
+    });
+
+    it('reads a MODULE-format project config, not just JSON', async () => {
+      // The reader goes through readRawConfigAtPath, which imports a .js/.mjs/.ts config and awaits
+      // its configure(). A user who needs custom middleware or live tools writes one of these, and
+      // a `tui` key they cannot see honoured is worse than one they were never offered.
+      writeFileSync(
+        resolve(projectDir, '.gsloth.config.js'),
+        'export async function configure() { return { llm: { type: "vertexai" }, tui: false }; }\n'
+      );
+
+      const { loadConfiguredTui } = await import('#src/config/loader.js');
+      expect(await loadConfiguredTui({})).toBe(false);
+    });
+
+    it('inherits tui from the profile a named profile extends (GS2-41)', async () => {
+      // The child sets no `tui` of its own, so only a reader that composes the extends chain the
+      // way a run does can answer `true` here.
+      writeProfileConfig('base-profile', { llm: LLM_SPEC, tui: true });
+      writeProfileConfig('child-profile', { extends: 'base-profile', llm: LLM_SPEC });
+
+      const { loadConfiguredTui } = await import('#src/config/loader.js');
+      expect(await loadConfiguredTui({ identityProfile: 'child-profile' })).toBe(true);
+    });
+
+    it("lets a named profile's own tui win over the base it extends", async () => {
+      writeProfileConfig('base-profile', { llm: LLM_SPEC, tui: true });
+      writeProfileConfig('child-profile', {
+        extends: 'base-profile',
+        llm: LLM_SPEC,
+        tui: false,
+      });
+
+      const { loadConfiguredTui } = await import('#src/config/loader.js');
+      expect(await loadConfiguredTui({ identityProfile: 'child-profile' })).toBe(false);
     });
 
     it('stays quiet and undefined on an unreadable project config', async () => {
