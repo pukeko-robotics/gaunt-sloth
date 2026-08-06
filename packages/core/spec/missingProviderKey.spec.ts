@@ -112,6 +112,30 @@ describe('CFG-35 missing provider key', () => {
       });
     });
 
+    it('covers every provider whose SDK rejects a missing key in its constructor', async () => {
+      const { findMissingProviderKey } = await import('#src/providers/modelDiscovery.js');
+
+      // Probing the installed packages found SIX providers that fail eagerly without a key, not
+      // the three the ticket named — anthropic (the common default), xai and deepseek reject it in
+      // their constructors too. The classifier is descriptor-driven so it covers them all; this
+      // pins that, and would go red if a descriptor lost its variable.
+      expect(findMissingProviderKey('anthropic', {})).toEqual({
+        provider: 'anthropic',
+        envVar: 'ANTHROPIC_API_KEY',
+        envVars: ['ANTHROPIC_API_KEY'],
+      });
+      expect(findMissingProviderKey('xai', {})).toEqual({
+        provider: 'xai',
+        envVar: 'XAI_API_KEY',
+        envVars: ['XAI_API_KEY'],
+      });
+      expect(findMissingProviderKey('deepseek', {})).toEqual({
+        provider: 'deepseek',
+        envVar: 'DEEPSEEK_API_KEY',
+        envVars: ['DEEPSEEK_API_KEY'],
+      });
+    });
+
     it('lists every accepted variable, highest precedence first', async () => {
       const { findMissingProviderKey } = await import('#src/providers/modelDiscovery.js');
 
