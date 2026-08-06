@@ -230,6 +230,14 @@ function regionRows(stdout: SizedStdout): string[] {
 /** One turn, as an unbroken run so its height is exactly `ceil(length / columns)` at any width. */
 const turnText = (n: number): string => `t${n}-${'x'.repeat(200)}`;
 
+/**
+ * Numbered one-row lines for a turn the spec grows by hand — `live-001`, `live-002`, … Numbered so
+ * an assertion can name the row it expects at the bottom of the region rather than only saying
+ * something is there.
+ */
+const liveRows = (from: number, to: number): string[] =>
+  Array.from({ length: to - from + 1 }, (_, i) => `live-${String(from + i).padStart(3, '0')}`);
+
 const TURN_TIMEOUT_MS = 10_000;
 
 async function converse(
@@ -785,4 +793,76 @@ describe('<App> scrolling inside a single answer taller than the screen', () => 
 
     unmount();
   }, 40_000);
+
+  it('draws a long answer while it is STILL STREAMING, not only once it commits', async () => {
+    // Every other tall-turn case in this file waits for `turns: N` before it looks, so all of them
+    // assert the COMMITTED shape — the one where the answer has become an ordinary transcript item
+    // above the edge, outside the clip that draws the edge. The state a session actually spends its
+    // life in is following a turn that is still open, and an answer longer than the region is the
+    // commonest thing on this screen. So this case asserts MID-STREAM, and that is the whole point
+    // of it: a clip applied while following cuts the tail block at its own natural height, which
+    // for a turn taller than the region reaches above the region's top edge, replaces the region's
+    // own clip (Ink takes `clips.at(-1)`, not the intersection), and takes every row of the write
+    // with it — a conversation that is blank for as long as the answer takes to finish.
+    const pump = pumpedAgent();
+    const { stdout, stdin, unmount } = renderAt(120, 40, <App {...baseProps} agent={pump.agent} />);
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+
+    for (let i = 0; i < 3; i++) {
+      stdin.write(turnText(i));
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`t${i}-xxx`), {
+        timeout: TURN_TIMEOUT_MS,
+      });
+      stdin.write(KEY.enter);
+      pump.emit('ok');
+      pump.finish();
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
+        timeout: TURN_TIMEOUT_MS,
+      });
+    }
+
+    const regionHeight = regionRows(stdout).length;
+    expect(regionHeight).toBeGreaterThan(10);
+
+    stdin.write('go');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> go'));
+    stdin.write(KEY.enter);
+
+    // A first chunk that FITS the region: the positive control. Everything below is about what
+    // changes when the same open turn grows past the region, so this states it renders beforehand.
+    const fitting = liveRows(1, regionHeight - 5);
+    pump.emit(fitting.join('\n'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain(fitting[fitting.length - 1]), {
+      timeout: TURN_TIMEOUT_MS,
+    });
+
+    // …and now one delta that takes the turn well past the region's height. One delta rather than a
+    // row at a time so there is exactly one state update between here and the assertions.
+    const overflowing = liveRows(regionHeight - 4, regionHeight + 20);
+    const lastRow = overflowing[overflowing.length - 1];
+    const beforeGrowth = stdout.lastFrame();
+    pump.emit(`\n${overflowing.join('\n')}`);
+    await vi.waitFor(() => expect(stdout.lastFrame()).not.toBe(beforeGrowth), {
+      timeout: TURN_TIMEOUT_MS,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    const region = regionRows(stdout);
+    // The three things that have to be true of a followed turn taller than the region: there is a
+    // conversation there at all, the frame still fits the terminal, and it is the NEWEST rows that
+    // sit against the dock rather than the turn's first screenful frozen in place.
+    expect(region.join('').trim()).not.toBe('');
+    expect(frameRows(stdout)).toHaveLength(40);
+    expect(region[region.length - 1]).toContain(lastRow);
+    expect(region.join('\n')).not.toContain('live-001');
+
+    pump.finish();
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('turns: 4'), {
+      timeout: TURN_TIMEOUT_MS,
+    });
+    // Committing it must not lose it either — that is the state the rest of the file looks at.
+    expect(regionRows(stdout).join('\n')).toContain(lastRow);
+
+    unmount();
+  }, 60_000);
 });

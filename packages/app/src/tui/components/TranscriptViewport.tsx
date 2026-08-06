@@ -64,11 +64,14 @@ export function TranscriptViewport({
    *
    * Ink applies only the INNERMOST clip when it writes a row (`Output.write` reads `clips.at(-1)`
    * rather than intersecting the stack), so a clip that reaches above this region's top edge
-   * *replaces* the region's clip instead of nesting inside it — and the rows it lets through land
-   * at negative screen rows and take the whole frame with them. Measured: with one eighty-row turn
-   * on a forty-row terminal, a page back rendered a completely blank conversation. So the clip is
-   * never taller than the region, and the rows the edge is past are lifted out of it by a negative
-   * margin instead. Zero until the first layout, which is before any gesture can arrive.
+   * *replaces* the region's clip instead of nesting inside it. That is not a few misplaced rows:
+   * `Output.get()` skips a row that lands above the frame WITHOUT advancing its offset, so a
+   * multi-line write whose first line is off the top is dropped in full — and a markdown turn is
+   * one such write. Measured: one eighty-row turn on a forty-row terminal rendered a completely
+   * blank conversation. So the clip is never taller than the region, the rows the edge is past are
+   * lifted out of it by a negative margin instead, and where there is no measured region there is
+   * nothing to keep a clip inside — this is zero until the first layout, and nothing clips until
+   * it is known.
    */
   regionRows?: number;
   /** Where the region publishes its measured layout for the scroll gestures to read. */
@@ -110,9 +113,19 @@ export function TranscriptViewport({
   // the last region's-worth of those can be on screen anyway, so anything beyond that is lifted out
   // of the clip rather than making the clip taller than the region (see `regionRows`). The two
   // forms draw identically; only the second is safe.
+  //
+  // **The clipping is conditional, the box is not.** The box is rendered on every frame for the
+  // reason given where it is rendered; the clip is applied only when there is an edge to draw AND a
+  // measured region to keep it inside. Both halves matter. Applied while FOLLOWING, the clip cuts
+  // the tail block at that block's own natural height — so a streaming answer taller than the
+  // region gets a clip reaching above the region's top edge, which is the escape `regionRows`
+  // describes, and the conversation renders blank until the turn ends. An unmeasured region is the
+  // same escape by a different route, since there is nothing to cap against, so it takes the same
+  // branch: unclipped, following, until the layout reports a height.
+  const clipping = scroll !== null && regionRows > 0;
   const visibleRows = scroll ? Math.max(1, scroll.visibleRows) : 0;
-  const clipRows = regionRows > 0 ? Math.min(visibleRows, regionRows) : visibleRows;
-  const liftedRows = visibleRows - clipRows;
+  const clipRows = clipping ? Math.min(visibleRows, regionRows) : 0;
+  const liftedRows = clipping ? visibleRows - clipRows : 0;
 
   const viewportRef = React.useRef<DOMElement | null>(null);
   const tailRef = React.useRef<DOMElement | null>(null);
@@ -154,17 +167,19 @@ export function TranscriptViewport({
     >
       <Box flexDirection="column" flexShrink={0}>
         {above}
-        {/* The clip. It is here on every frame, not only while scrolled, so that the block the
+        {/* The clip. The BOX is here on every frame, not only while scrolled, so that the block the
             edge cuts through does not change parent — and so unmount as a side effect of a
-            gesture — the moment the reader scrolls. Its height is the whole scroll position: a
-            measured value never reaches this render, so the edge cannot drift with an estimate.
-            At least one row, because a zero-height clip collapses its children's measurements to
-            zero and would leave the next gesture with no geometry to move by. */}
+            gesture — the moment the reader scrolls. What it CLIPS is conditional (see `clipping`):
+            while following there is no edge to draw and the region's own bottom-pinned clip is the
+            only one that may be in force. Its height is the whole scroll position: a measured value
+            never reaches this render, so the edge cannot drift with an estimate. At least one row,
+            because a zero-height clip collapses its children's measurements to zero and would leave
+            the next gesture with no geometry to move by. */}
         <Box
           flexDirection="column"
           flexShrink={0}
-          overflow="hidden"
-          height={scroll ? clipRows : undefined}
+          overflow={clipping ? 'hidden' : undefined}
+          height={clipping ? clipRows : undefined}
         >
           <Box flexDirection="column" flexShrink={0} marginTop={-liftedRows}>
             {below}
