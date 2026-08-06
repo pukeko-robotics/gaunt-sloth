@@ -11,10 +11,16 @@
 #   2. Both are cheap, fast models — a release gate people wait for is a gate people keep.
 #   3. MEASURED: both validate their API key LAZILY, at call time. A missing key therefore produces a
 #      real graded cell with `sutOk:false`, which scripts/eval-gate.mjs reports as a visible SKIP.
-#      Providers that validate EAGERLY (groq, openrouter, huggingface) instead abort the whole matrix
-#      from inside config construction with an uncatchable exit(1) and write NO results.json at all —
-#      so one absent secret would take the entire gate down and look like a product regression.
-#      Adding an identity here without measuring that behaviour can silently break the gate.
+#      Providers that validate EAGERLY throw from inside config construction, which still aborts the
+#      whole matrix and writes NO results.json — so one absent secret takes the entire gate down and
+#      looks like a product regression. MEASURED through the real factories with a fake-key control,
+#      the eager set is SIX: anthropic, groq, deepseek, xai, openrouter, huggingface. The lazy set is
+#      openai, google-genai, vertexai, ollama. Note anthropic is the common default, so this is not an
+#      exotic-provider footnote. Adding an identity here without measuring that behaviour can
+#      silently break the gate.
+#      (CFG-35 made the throw CATCHABLE, which restores the harness-vs-product exit distinction, but
+#      the suite still builds every identity's config up front — so a keyless identity still grades
+#      nothing. Ending that is OPS-43's job, not this file's.)
 #   4. Two different providers, so a single vendor outage does not decide a release on its own.
 #
 # temperature: 0 is pinned in each identity's own config dir (.gsloth/.gsloth-settings/<id>/) for the

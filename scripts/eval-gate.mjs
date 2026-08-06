@@ -41,10 +41,15 @@
 // inherit` on the reusable-workflow call would skip every cell and show up as a green release gate —
 // precisely the silent-skip failure this node exists to end.
 //
-// A MISSING results.json is fatal, not a skip. A provider that validates its key EAGERLY (groq,
-// openrouter, huggingface) throws from inside config construction, which loader.ts turns into an
-// uncatchable exit(1) that aborts the whole matrix before any cell is graded and writes no output at
-// all. That is indistinguishable here from a malformed suite, and neither may be reported green.
+// A MISSING results.json is fatal, not a skip. A provider that validates its key EAGERLY throws from
+// inside config construction, aborting the whole matrix before any cell is graded and writing no
+// output at all. That is indistinguishable here from a malformed suite, and neither may be reported
+// green. MEASURED through the real factories with a fake-key control, the eager set is SIX:
+// anthropic, groq, deepseek, xai, openrouter, huggingface — anthropic being the common default, so
+// do not read this as an exotic-provider footnote. The lazy set is openai, google-genai, vertexai,
+// ollama. CFG-35 made that throw CATCHABLE (so a suite-level failure now exits 2 rather than killing
+// the process at 1), but the suite still builds every identity's config up front, so a keyless
+// identity still grades nothing and writes nothing. Ending that is OPS-43's job.
 //
 // KNOWN LIMITATION, PENDING A DECISION — a SKIP does not identify its cause. `sutOk:false` means
 // only "no gradeable answer": an absent API key, a 4xx from a rejected tool schema, a timeout, a
@@ -214,8 +219,8 @@ export function runGate(root) {
       report:
         `### Eval gate: FAIL\n\nNo results.json under ${root} — the eval aborted before grading ` +
         'anything, so nothing was proven. Usual causes: a suite that failed to parse, or an ' +
-        'identity whose provider validates its API key eagerly (groq, openrouter, huggingface) ' +
-        'and killed the whole matrix from config construction.\n',
+        'identity whose provider validates its API key eagerly (anthropic, groq, deepseek, xai, ' +
+        'openrouter, huggingface) and aborted the whole matrix from config construction.\n',
     };
   }
   const summaries = files.map((file) => JSON.parse(readFileSync(file, 'utf8')));
