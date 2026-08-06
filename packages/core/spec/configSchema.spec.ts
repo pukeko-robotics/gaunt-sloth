@@ -908,6 +908,38 @@ describe('config schema (GS2-1 B1)', () => {
     });
   });
 
+  // CFG-37 — `tui` is a real config key, not just a CLI-flag carrier.
+  describe('tui', () => {
+    it('accepts both booleans and rejects a non-boolean with a path-scoped message', () => {
+      expect(rawGthConfigSchema.safeParse({ llm: { type: 'anthropic' }, tui: false }).success).toBe(
+        true
+      );
+      expect(rawGthConfigSchema.safeParse({ llm: { type: 'anthropic' }, tui: true }).success).toBe(
+        true
+      );
+      const bad = rawGthConfigSchema.safeParse({ llm: { type: 'anthropic' }, tui: 'yes' });
+      expect(bad.success).toBe(false);
+      if (!bad.success) {
+        expect(formatConfigValidationError(bad.error)).toContain('tui');
+      }
+    });
+
+    it('is a KNOWN top-level key, so a config that sets it warns about nothing', () => {
+      expect(findUnknownTopLevelKeys({ llm: {}, tui: false })).toEqual([]);
+      expect(validateRawGthConfig({ llm: { type: 'anthropic' }, tui: false })).toEqual({
+        ok: true,
+        warnings: [],
+      });
+    });
+
+    it('is advertised by the published JSON Schema (editor autocomplete)', () => {
+      const generated = generateConfigJsonSchema() as {
+        properties: Record<string, { type?: string }>;
+      };
+      expect(generated.properties.tui).toEqual({ type: 'boolean' });
+    });
+  });
+
   describe('JSON Schema generation (golden snapshot)', () => {
     it('matches the committed schema file', () => {
       const generated = generateConfigJsonSchema();

@@ -619,6 +619,64 @@ export async function hasAnyConfig(
 }
 
 /**
+ * CFG-37 — the layered value of the top-level `tui` config key, read BEFORE a session picks its
+ * surface. `chat`/`code` choose between the Ink TUI and the readline session in the app's
+ * `startSession` dispatcher, and each surface then loads its own config via {@link initConfig} — so
+ * at the moment of the choice there is no resolved {@link GthConfig} to consult, and this is the
+ * seam that supplies the one key the choice needs.
+ *
+ * Layering matches a run: the discovered PROJECT layer wins over the GLOBAL one, and a layer that
+ * does not set `tui` defers to the next rather than overriding it with `undefined`. A scalar needs
+ * no deep merge, so this reads the two layers and picks — it does not fork the merge engine.
+ *
+ * Deliberately QUIET and fail-soft. It neither validates nor `exit`s on a malformed layer: the
+ * caller runs moments before {@link initConfig}, which validates every layer and reports the very
+ * same problem, and warning twice about one file is worse than not warning here at all. Any read
+ * failure resolves to `undefined`, i.e. "nobody set it" — the surface then auto-detects, which is
+ * exactly what a run with no config does.
+ *
+ * Ordering: this is DETECTION, so per the GS2-11 invariant above it must run before any
+ * {@link initConfig} in the process — as it does, alongside {@link hasAnyConfig} in `startSession`.
+ */
+export async function loadConfiguredTui(
+  commandLineConfigOverrides: CommandLineConfigOverrides
+): Promise<boolean | undefined> {
+  const projectTui = await readProjectConfiguredTui(commandLineConfigOverrides);
+  if (projectTui !== undefined) {
+    return projectTui;
+  }
+  const globalRaw = await loadGlobalRawConfigUnvalidated();
+  const globalTui = globalRaw?.raw.tui;
+  return typeof globalTui === 'boolean' ? globalTui : undefined;
+}
+
+/** The PROJECT layer's `tui`, or undefined when there is no project config or it does not set it. */
+async function readProjectConfiguredTui(
+  commandLineConfigOverrides: CommandLineConfigOverrides
+): Promise<boolean | undefined> {
+  const discovered = findProjectConfigPath(commandLineConfigOverrides);
+  if (!discovered) {
+    return undefined;
+  }
+  let raw: Record<string, unknown>;
+  try {
+    raw = await readRawConfigAtPath(discovered.path);
+  } catch (e) {
+    // Quiet by design — see the note on loadConfiguredTui. initConfig reports this same file.
+    displayDebug(e instanceof Error ? e : String(e));
+    return undefined;
+  }
+  // GS2-41 — a named profile may inherit `tui` from the profile it extends, so compose the chain
+  // the way a run does. Gated on a JSON-family config because that is the ONLY branch initConfig
+  // resolves `extends` in; composing it for a module config would honour an inheritance the run
+  // itself ignores.
+  if (isJsonConfigPath(discovered.path) && typeof raw.extends === 'string') {
+    raw = await resolveConfigExtends(raw, commandLineConfigOverrides.identityProfile);
+  }
+  return typeof raw.tui === 'boolean' ? raw.tui : undefined;
+}
+
+/**
  * Initialize configuration by loading from available config files
  * @returns The loaded GthConfig
  */

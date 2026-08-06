@@ -1,4 +1,8 @@
-import { hasAnyConfig, type CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
+import {
+  hasAnyConfig,
+  loadConfiguredTui,
+  type CommandLineConfigOverrides,
+} from '@gaunt-sloth/core/config.js';
 import {
   createInteractiveSession,
   type SessionConfig,
@@ -57,7 +61,13 @@ export async function startSession(
     // Fall through to the normal dispatch with the same `sessionConfig` (code mode for bare `gth`).
   }
 
-  // Cheap gates first (TTY/flags/env). Only probe the optional Ink deps when the
+  // CFG-37 — the persistent `tui` preference, layered project-over-global. Each surface loads its
+  // own config further down, so there is no resolved config here to read it from; this reader is
+  // the seam that supplies just this key, quietly and fail-soft, before the surface is chosen. It
+  // runs alongside the hasAnyConfig detection above and before any initConfig, per GS2-11.
+  const configuredTui = await loadConfiguredTui(commandLineConfigOverrides);
+
+  // Cheap gates first (TTY/flags/env/config). Only probe the optional Ink deps when the
   // environment actually favours the TUI, so we never load React/Ink for a readline run.
   const environmentFavoursTui = shouldUseTui({
     stdoutIsTTY: !!stdout.isTTY,
@@ -68,6 +78,7 @@ export async function startSession(
     ci: !!env.CI,
     gthNoTui: !!env.GTH_NO_TUI,
     inkAvailable: true,
+    configuredTui,
   });
 
   if (environmentFavoursTui && (await isInkAvailable())) {

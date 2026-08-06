@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const configMock = {
   initConfig: vi.fn(),
+  // CFG-37 — the session dispatcher asks for the layered `tui` preference before choosing a
+  // surface. Left unset, so these command tests keep exercising the auto-detected surface.
+  loadConfiguredTui: vi.fn(),
 };
 vi.mock('#src/config.js', () => configMock);
 

@@ -498,6 +498,20 @@ export interface GthConfig {
    */
   toolLoopGuard?: boolean | { warn?: boolean; halt?: boolean; threshold?: number };
   /**
+   * CFG-37 — persistent surface preference for the `chat`/`code` interactive sessions, settable in
+   * both the global and the project config (the project layer wins). `true` asks for the Ink TUI,
+   * `false` for the plain readline session, absent leaves the terminal auto-detect in charge —
+   * which is why it must stay optional, exactly as {@link useColour}/{@link useMouse} do.
+   *
+   * This is the CONFIG-FILE preference, one rung of a chain rather than the answer: the
+   * `--tui`/`--no-tui` flags and the `GTH_NO_TUI` escape hatch both outrank it, and the capability
+   * gates (no TTY, `TERM=dumb`, `ink` not installed) outrank everything because they are checks and
+   * not preferences — so `true` degrades to readline rather than forcing a crash. Deliberately NOT
+   * in {@link DEFAULT_CONFIG}. The flag arrives separately as
+   * {@link CommandLineConfigOverrides.tui}; the two meet only in `shouldUseTui`.
+   */
+  tui?: boolean;
+  /**
    * BATCH-19 — custom `gth eval` reporters, keyed by the NAME they are selected under
    * (`gth eval … --reporter <name>`). Each value is a MODULE PATH, resolved relative to the project
    * dir, whose **default export** is an `EvalReporterFactory` (`() => EvalReporter`). Loaded and
@@ -736,12 +750,15 @@ export interface CommandLineConfigOverrides {
    */
   identityProfile?: string;
   /**
-   * Interactive TUI activation override for chat/code sessions.
-   * - `true` (`--tui`): force the Ink TUI on where the terminal supports it (also overrides
-   *   the CI auto-off heuristic).
+   * Interactive TUI activation override for chat/code sessions, as passed on the command line.
+   * - `true` (`--tui`): force the Ink TUI on where the terminal supports it (it outranks the
+   *   `GTH_NO_TUI` escape hatch, the {@link GthConfig.tui} config key and the CI auto-off
+   *   heuristic).
    * - `false` (`--no-tui`): force the plain readline session.
-   * - `undefined` (default): auto-detect from the terminal.
-   * The decision itself lives in `gaunt-sloth`'s `shouldUseTui`; this only carries the flag.
+   * - `undefined` (default): defer to the next rung down — `GTH_NO_TUI`, then the
+   *   {@link GthConfig.tui} config key, then terminal auto-detect.
+   * This carries only the FLAG; the persistent preference is {@link GthConfig.tui}. The decision
+   * that ranks them lives in `gaunt-sloth`'s `shouldUseTui`.
    */
   tui?: boolean;
   /**

@@ -840,6 +840,15 @@ export const rawGthConfigSchema = z.looseObject({
   // reason as `useColour`: absence is what tells "the user chose true" from the `true` in
   // `defaults.ts`, and rung 2 collapses into rung 4 without it.
   useMouse: z.boolean().optional(),
+  // CFG-37 — persistent surface preference for the `chat`/`code` sessions: `true` asks for the Ink
+  // TUI, `false` for the plain readline session. MUST stay `.optional()` for the same reason as
+  // `useColour`/`useMouse`: absence is what distinguishes "the user chose readline" from "nobody
+  // said", and the auto-detect rung collapses without it. Ranked BELOW the `--tui`/`--no-tui` flags
+  // and the `GTH_NO_TUI` escape hatch, and below the capability gates (no TTY, `TERM=dumb`, `ink`
+  // unavailable) which are checks rather than preferences — so `true` degrades to readline instead
+  // of forcing a crash. The decision itself is `shouldUseTui` in the app package.
+  // User docs: docs/guides/interactive-sessions.md
+  tui: z.boolean().optional(),
   streamSessionInferenceLog: z.boolean().optional(),
   canInterruptInferenceWithEsc: z.boolean().optional(),
   debugLog: z.boolean().optional(),
