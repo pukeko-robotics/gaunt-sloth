@@ -230,6 +230,26 @@ describe('tui config key (CFG-37)', () => {
       expect(exitMock).toHaveBeenCalledWith(1);
     });
 
+    it('hard-exits on a broken chain for a MODULE-format config too', async () => {
+      // The pair with the JSON hard-exit above. Composing `extends` for every format means the
+      // reader can now end the process for a module-format config as well, and that is the one
+      // widened cell whose regression would be USER-VISIBLE (a hard exit) rather than a silent
+      // undefined — so it gets its own pin rather than riding on the JSON case. Nothing a user
+      // sees changes: both surfaces call initConfig before rendering, and initConfig exits on this
+      // same chain with this same message, so no run that used to succeed now fails.
+      writeModuleProfileConfig(
+        'child-profile',
+        'export async function configure() { return { extends: "no-such-base", llm: { type: "vertexai" } }; }\n'
+      );
+
+      const { loadConfiguredTui } = await import('#src/config/loader.js');
+      // exitMock throws here in place of terminating; production really does terminate.
+      await expect(loadConfiguredTui({ identityProfile: 'child-profile' })).rejects.toThrow(
+        'exit(1) called'
+      );
+      expect(exitMock).toHaveBeenCalledWith(1);
+    });
+
     it('stays quiet and undefined on an unreadable project config', async () => {
       // Fail-soft: initConfig reports this same file moments later, so warning here would double
       // the message; starting a session must not depend on the config parsing.
