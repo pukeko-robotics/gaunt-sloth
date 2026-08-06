@@ -41,6 +41,8 @@ import {
 } from '@gaunt-sloth/agent/modules/slashCommands.js';
 import { useTerminalSize } from '#src/tui/useTerminalSize.js';
 import { findMatches, scrollOffsetForLine, stepMatch } from '#src/tui/debugSearch.js';
+import { useTranscriptScroll } from '#src/tui/useTranscriptScroll.js';
+import { isComposingKeystroke, WHEEL_ROWS_PER_NOTCH } from '#src/tui/transcriptScroll.js';
 
 /** Rows of clipping viewport in the docked debug panel (default / restored size). */
 const DEBUG_VIEWPORT_HEIGHT = 8;
@@ -147,6 +149,16 @@ export function App(props: TuiAppProps): React.ReactElement {
   // top rows silently, as missing content rather than as an error). It also drives the maximised
   // debug viewport, and it is resize-aware: Ink relays out on SIGWINCH but does not re-render.
   const { rows: terminalRows, columns: terminalColumns } = useTerminalSize();
+  // TUI-C48 — where the conversation region's bottom edge sits. The alternate screen has no
+  // terminal scrollback, so this is the only way back to what has already been said.
+  const {
+    scroll: transcriptScroll,
+    geometry: transcriptGeometry,
+    scrollByRows,
+    scrollByPages,
+    scrollToBottom,
+    scrollToStart,
+  } = useTranscriptScroll();
   const debugViewport = debugViewportHeight(debugMaximized, terminalRows);
   // PageUp/PageDown step tracks the live viewport so maximise pages by (almost) a full screen.
   const debugPageStep = Math.max(1, debugViewport - 1);
@@ -759,13 +771,60 @@ export function App(props: TuiAppProps): React.ReactElement {
       return;
     }
 
+    // TUI-C48 — the conversation region's own scroll bindings. Everything above this point is a
+    // prior claimant on the same keys, and the ordering is the specification rather than an
+    // accident of where the code was added: a pending approval owns the whole keyboard, Esc while
+    // a turn runs aborts it, and the focused debug pane owns Esc and PageUp/PageDown for its own
+    // viewport. Transcript scrolling is the ELSE branch of all three.
+    if (key.escape) {
+      // Esc's third meaning, after abort and after the debug pane: come back to the newest output.
+      scrollToBottom();
+      return;
+    }
+    if (key.ctrl && key.home) {
+      scrollToStart();
+      return;
+    }
+    if (key.ctrl && key.end) {
+      scrollToBottom();
+      return;
+    }
+    if (key.pageUp) {
+      scrollByPages(-1);
+      return;
+    }
+    if (key.pageDown) {
+      scrollByPages(1);
+      return;
+    }
+
     // Tab focuses the docked panel when it is visible and no turn is running — unless the prompt's
     // slash-command menu is open, in which case Tab completes the highlighted command (TUI-C10).
     if (key.tab && debugVisible && !runningRef.current && !slashMenuActiveRef.current) {
       setDebugFocused(true);
       debugFocusedRef.current = true;
     }
+
+    // Typing returns the view to the end, because a message being composed belongs next to the
+    // output it answers. Deliberately NOT swallowed — the character still reaches the prompt, so
+    // this cannot eat the first letter of what the user is writing.
+    if (isComposingKeystroke(input, key)) scrollToBottom();
   });
+
+  // The wheel, decoded by the TUI-C37 mouse layer. A notch is three lines and Shift makes it a
+  // page — Andrew's bindings. Subscribing separately from `MouseProvider` is deliberate: hit
+  // regions dispatch by coordinate, and scrolling is the one mouse gesture that is about the whole
+  // region rather than about whatever sits under the pointer.
+  const subscribeMouse = props.subscribeMouse;
+  useEffect(() => {
+    if (!subscribeMouse || !mouseEnabled) return;
+    return subscribeMouse((event) => {
+      if (event.type !== 'wheel') return;
+      const direction = event.wheel === 'up' ? -1 : 1;
+      if (event.shift) scrollByPages(direction);
+      else scrollByRows(direction * WHEEL_ROWS_PER_NOTCH);
+    });
+  }, [subscribeMouse, mouseEnabled, scrollByPages, scrollByRows]);
 
   // Run an initial message once on mount, if supplied. Started from a microtask rather than from
   // the effect body itself: `runTurn` pushes the user line and flips `running`/`live` before its
@@ -860,6 +919,8 @@ export function App(props: TuiAppProps): React.ReactElement {
           budgetRows={terminalRows}
           columns={terminalColumns}
           toolsExpanded={toolsExpanded}
+          scroll={transcriptScroll}
+          geometry={transcriptGeometry}
         >
           {clearedBanner ? <ClearBanner /> : null}
           {/* TUI-C33 — the ASCII-art launch banner, ABOVE the ready message and on the same intro

@@ -112,8 +112,18 @@ const TURNS = 14;
 /** Vitest's default waitFor timeout is one second — short for the thirtieth render under load. */
 const TURN_TIMEOUT_MS = 10_000;
 
-/** Drive `TURNS` exchanges and return how many committed turns are still mounted at the end. */
-async function mountedAfterConversation(columns: number, rows: number): Promise<number> {
+/** What a terminal sends for the keys the scroll bindings claim. */
+const PAGE_UP = '\x1b[5~';
+
+/**
+ * Drive `TURNS` exchanges, optionally scroll back, and return how many committed turns are still
+ * mounted at the end.
+ */
+async function mountedAfterConversation(
+  columns: number,
+  rows: number,
+  pageUps = 0
+): Promise<number> {
   const { stdout, stdin, unmount } = renderAt(columns, rows, <App {...baseProps} />);
   await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
   for (let i = 0; i < TURNS; i++) {
@@ -125,6 +135,11 @@ async function mountedAfterConversation(columns: number, rows: number): Promise<
     await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
       timeout: TURN_TIMEOUT_MS,
     });
+  }
+  for (let page = 0; page < pageUps; page++) {
+    const frames = stdout.frames.length;
+    stdin.write(PAGE_UP);
+    await vi.waitFor(() => expect(stdout.frames.length).toBeGreaterThan(frames), { timeout: 2000 });
   }
   // The session is idle here, so the streaming turn is unmounted and what is left is exactly the
   // committed turns the viewport chose to keep.
@@ -165,4 +180,40 @@ describe('<App> mounts a screenful of the transcript, not the whole of it', () =
     expect(mountedTall).toBeGreaterThan(mountedShort);
     expect(mountedTall).toBeLessThanOrEqual(10);
   }, 60_000);
+
+  it('keeps the slice bounded by the screen at a SCROLLED position too', async () => {
+    // The DL-10 acceptance is "bounded at any scroll position", and a count taken only at the end
+    // of the conversation measures the one position where the below-the-edge half of the window is
+    // empty — so it says nothing about scrolling at all. Scrolled back, the viewport also mounts a
+    // screenful BELOW the edge, because a scroll back down has to measure real heights and only a
+    // mounted block has one. So the number rises once and then must stop: what would break DL-10
+    // is a slice that keeps growing with how far back the reader has gone.
+    //
+    // Measured on the shipped code at 80x24: four mounted at the end, eight two pages back, eight
+    // four pages back. Literals, not expressions over the production constants.
+    const atEnd = await mountedAfterConversation(80, 24, 0);
+    expect(atEnd).toBeLessThanOrEqual(6);
+
+    lifecycle.mounts = 0;
+    lifecycle.unmounts = 0;
+    const twoPages = await mountedAfterConversation(80, 24, 2);
+
+    lifecycle.mounts = 0;
+    lifecycle.unmounts = 0;
+    const fourPages = await mountedAfterConversation(80, 24, 4);
+
+    expect(twoPages).toBeLessThanOrEqual(9);
+    // Four pages back is most of the way to the start of a fourteen-turn conversation, and the
+    // mounted set is the SAME size as two pages back. Equality rather than a ceiling: a ceiling
+    // alone would be satisfied by a slice that grew slowly.
+    expect(fourPages).toBe(twoPages);
+
+    lifecycle.mounts = 0;
+    lifecycle.unmounts = 0;
+    const tallTwoPages = await mountedAfterConversation(80, 48, 2);
+    // …and the bound is the SCREEN, not a constant: twice the terminal height mounts more. Without
+    // this the two assertions above would also pass on a viewport that mounted a fixed nine items
+    // whatever the terminal did.
+    expect(tallTwoPages).toBeGreaterThan(twoPages);
+  }, 90_000);
 });

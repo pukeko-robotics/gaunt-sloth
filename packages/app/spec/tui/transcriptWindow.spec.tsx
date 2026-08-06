@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { Box, renderToString } from 'ink';
-import { estimateItemRows, transcriptWindowStart } from '#src/tui/transcriptWindow.js';
+import {
+  estimateItemRows,
+  transcriptWindowEnd,
+  transcriptWindowStart,
+} from '#src/tui/transcriptWindow.js';
 import { TranscriptViewport } from '#src/tui/components/TranscriptViewport.js';
 import type { TranscriptItem } from '#src/tui/types.js';
 import { initialTurnViewModel, type TurnViewModel } from '#src/tui/viewModel.js';
@@ -320,5 +324,68 @@ describe('transcriptWindowStart accounts for WRAPPING, not just logical lines', 
     const at200 = items.length - transcriptWindowStart(items, 40, 200, false);
     expect(at40).toBeLessThan(at80);
     expect(at80).toBeLessThan(at200);
+  });
+});
+
+/**
+ * TUI-C48 — the window when the reader has scrolled back.
+ *
+ * A scrolled viewport cuts the list around the EDGE rather than around the end of the conversation,
+ * and it mounts a budget's worth on both sides of it. The half below the edge is drawn nowhere; it
+ * exists so that scrolling back down can measure real heights instead of estimating them, which is
+ * what keeps a scroll position from drifting.
+ */
+describe('the window around a scrolled edge', () => {
+  const line = (id: number): TranscriptItem => ({
+    kind: 'system',
+    id,
+    level: 'INFO',
+    text: `line-${id}`,
+  });
+
+  it('walks back from the edge, not from the end of the conversation', () => {
+    const items = Array.from({ length: 50 }, (_, i) => line(i));
+    // Fifty one-row items, a ten-row budget, edge at item 20: ten items cover the budget and one
+    // more is slack, so the window opens at index 10 — not at 39, which is where a walk from the
+    // end would put it. Written as literals; deriving them from the slack constant would make the
+    // assertion unable to fail when that constant changes.
+    expect(transcriptWindowStart(items, 10, 80, false, 20)).toBe(10);
+    expect(transcriptWindowStart(items, 10, 80, false)).toBe(39);
+  });
+
+  it('is unchanged from the walk it has always done when the edge is the newest item', () => {
+    const items = Array.from({ length: 50 }, (_, i) => line(i));
+    expect(transcriptWindowStart(items, 10, 80, false, items.length - 1)).toBe(
+      transcriptWindowStart(items, 10, 80, false)
+    );
+  });
+
+  it('mounts a budget of conversation below the edge as well', () => {
+    const items = Array.from({ length: 50 }, (_, i) => line(i));
+    // Ten one-row items cover a ten-row budget, plus one of slack: 20 + 11 = 31.
+    expect(transcriptWindowEnd(items, 10, 80, false, 20)).toBe(31);
+  });
+
+  it('stops at the newest item rather than running past it', () => {
+    const items = Array.from({ length: 50 }, (_, i) => line(i));
+    expect(transcriptWindowEnd(items, 10, 80, false, 46)).toBe(49);
+    expect(transcriptWindowEnd(items, 10, 80, false, 49)).toBe(49);
+    // The edge may name the tail block, which is one past the newest item and not an item at all.
+    expect(transcriptWindowEnd(items, 10, 80, false, 50)).toBe(49);
+  });
+
+  it('has nothing to mount for an empty transcript', () => {
+    expect(transcriptWindowEnd([], 10, 80, false, 0)).toBe(-1);
+  });
+
+  it('mounts a set whose size tracks the budget, not the distance scrolled back', () => {
+    // The DL-10 property in the estimator's own terms: the same budget mounts the same number of
+    // items whether the edge is near the end of a long conversation or near its beginning.
+    const items = Array.from({ length: 400 }, (_, i) => line(i));
+    const spanAt = (edge: number) =>
+      transcriptWindowEnd(items, 24, 80, false, edge) -
+      transcriptWindowStart(items, 24, 80, false, edge);
+    expect(spanAt(350)).toBe(spanAt(100));
+    expect(spanAt(100)).toBe(spanAt(50));
   });
 });

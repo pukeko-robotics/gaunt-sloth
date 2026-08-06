@@ -139,7 +139,7 @@ export function useHitRegion(id: string, handler: HitRegionHandler, enabled = tr
  * ancestors' computed layout — each yoga node knows where it sits inside its parent, and summing
  * that chain is what turns "this box is 5 rows tall" into "this box starts at row 12".
  */
-function elementOffset(element: DOMElement): { top: number; left: number } {
+export function elementOffset(element: DOMElement): { top: number; left: number } {
   let top = 0;
   let left = 0;
   let node: DOMElement | undefined = element;

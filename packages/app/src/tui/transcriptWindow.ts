@@ -148,8 +148,13 @@ export function estimateItemRows(
 }
 
 /**
- * Index of the first transcript item the viewport needs to mount, walking back from the newest
+ * Index of the first transcript item the viewport needs to mount, walking back from `bottomIndex`
  * until the row budget is covered.
+ *
+ * `bottomIndex` is the item the viewport's bottom edge cuts through; it defaults to the newest, so
+ * a viewport following the conversation asks for exactly what it always did. Walking from the edge
+ * rather than from the end is what keeps the mounted set bounded by the region's height however far
+ * back the reader has scrolled.
  *
  * `budgetRows` is the terminal height rather than the measured viewport, deliberately: the dock
  * and the live turn take rows out of the region, and over-shooting the slice only costs a mounted
@@ -164,13 +169,14 @@ export function transcriptWindowStart(
   items: TranscriptItem[],
   budgetRows: number,
   columns: number,
-  toolsExpanded: boolean
+  toolsExpanded: boolean,
+  bottomIndex: number = items.length - 1
 ): number {
   if (items.length === 0) return 0;
   const budget = Math.max(1, budgetRows);
   const firstUserIndex = items.findIndex((i) => i.kind === 'user');
   let rows = 0;
-  let start = items.length;
+  let start = Math.min(items.length, Math.max(0, bottomIndex + 1));
   while (start > 0 && rows < budget) {
     start -= 1;
     rows += estimateItemRows(items[start], {
@@ -180,4 +186,41 @@ export function transcriptWindowStart(
     });
   }
   return Math.max(0, start - TRANSCRIPT_WINDOW_SLACK_ITEMS);
+}
+
+/**
+ * Index of the last transcript item the viewport needs to mount when it is scrolled back — the
+ * mirror of {@link transcriptWindowStart}, walking forwards from `bottomIndex`.
+ *
+ * Scrolling back DOWN has to know how tall the items below the edge are, and a height is only
+ * knowable by measuring something that is mounted. So a scrolled viewport mounts a region's worth
+ * of conversation below the edge as well as above it, drawn nowhere (the clip swallows it) and
+ * measured on demand. That is what keeps every scroll position exact instead of estimated, and it
+ * costs a mounted set that is still a function of the region's height rather than of the
+ * transcript's length.
+ *
+ * The budget is spent against the same lower-bound estimates, so the real rows mounted below the
+ * edge are always at least `budgetRows` — one gesture can never ask for geometry that is not there.
+ */
+export function transcriptWindowEnd(
+  items: TranscriptItem[],
+  budgetRows: number,
+  columns: number,
+  toolsExpanded: boolean,
+  bottomIndex: number
+): number {
+  if (items.length === 0) return -1;
+  const budget = Math.max(1, budgetRows);
+  const firstUserIndex = items.findIndex((i) => i.kind === 'user');
+  let rows = 0;
+  let end = Math.max(-1, Math.min(items.length - 1, bottomIndex));
+  while (end < items.length - 1 && rows < budget) {
+    end += 1;
+    rows += estimateItemRows(items[end], {
+      columns,
+      toolsExpanded,
+      separator: items[end].kind === 'user' && end !== firstUserIndex,
+    });
+  }
+  return Math.min(items.length - 1, end + TRANSCRIPT_WINDOW_SLACK_ITEMS);
 }
