@@ -1,11 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { Box, renderToString } from 'ink';
-import {
-  estimateItemRows,
-  transcriptWindowStart,
-  TRANSCRIPT_WINDOW_SLACK_ITEMS,
-} from '#src/tui/transcriptWindow.js';
+import { estimateItemRows, transcriptWindowStart } from '#src/tui/transcriptWindow.js';
 import { TranscriptViewport } from '#src/tui/components/TranscriptViewport.js';
 import type { TranscriptItem } from '#src/tui/types.js';
 import { initialTurnViewModel, type TurnViewModel } from '#src/tui/viewModel.js';
@@ -238,10 +234,13 @@ describe('transcriptWindowStart', () => {
   });
 
   it('cuts to the tail once the transcript exceeds the budget', () => {
-    // 50 one-row items against a 10-row budget: 10 items cover it, plus the slack item.
+    // 50 one-row items against a 10-row budget: 10 items cover it, plus one item of slack, so the
+    // window opens at index 39. The 39 is written out rather than derived from the slack constant
+    // on purpose — an assertion that names a constant on both sides cannot fail when it changes,
+    // which is the whole reason this number is worth asserting.
     const items = Array.from({ length: 50 }, (_, i) => line(i));
     const start = transcriptWindowStart(items, 10, 80, false);
-    expect(start).toBe(50 - 10 - TRANSCRIPT_WINDOW_SLACK_ITEMS);
+    expect(start).toBe(39);
     expect(items.length - start).toBeLessThan(items.length);
   });
 
@@ -255,7 +254,9 @@ describe('transcriptWindowStart', () => {
       return items.length - transcriptWindowStart(items, 40, 80, false);
     });
     expect(new Set(sizes).size).toBe(1);
-    expect(sizes[0]).toBeLessThanOrEqual(40 + TRANSCRIPT_WINDOW_SLACK_ITEMS);
+    // 40 one-row items cover the 40-row budget, plus one of slack. Exact, and stated as a number:
+    // written as `40 + TRANSCRIPT_WINDOW_SLACK_ITEMS` it would follow the constant anywhere.
+    expect(sizes[0]).toBe(41);
   });
 
   it('never mounts fewer than the newest item, even when one item dwarfs the viewport', () => {
@@ -271,11 +272,13 @@ describe('transcriptWindowStart', () => {
   });
 
   it('bounds the mounted count by the budget at every viewport size', () => {
+    // One-row items, so the count is the budget plus a single item of slack at every size. The
+    // `+ 1` is that slack written as a number: with the constant on both sides this assertion
+    // would hold for any value it took, which is exactly what it exists to rule out.
     const items = Array.from({ length: 200 }, (_, i) => line(i));
     for (const budget of [1, 8, 40, 120]) {
       const mounted = items.length - transcriptWindowStart(items, budget, 80, false);
-      expect(mounted).toBeLessThanOrEqual(budget + TRANSCRIPT_WINDOW_SLACK_ITEMS);
-      expect(mounted).toBeGreaterThanOrEqual(1);
+      expect(mounted).toBe(budget + 1);
     }
   });
 });

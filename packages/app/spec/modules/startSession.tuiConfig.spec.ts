@@ -166,18 +166,20 @@ describe('startSession reads the tui config key off disk (CFG-37 wiring)', () =>
     expect(interactiveSessionMock.createInteractiveSession).toHaveBeenCalledTimes(1);
   });
 
-  // TUI-C48 — the seam between the two nodes, and the half neither of them covers on its own.
+  // TUI-C48 — what the dispatcher does with the session once the config has decided.
   //
-  // CFG-37 made `tui: false` a real persistent opt-out and the tests above prove it reaches the
-  // dispatch. What TUI-C48 changes is what the opt-out is FOR: the surface it avoids now takes over
-  // the whole terminal (the alternate screen, entered inside `createTuiSession` and nowhere else —
-  // pinned in `tuiSessionModule.spec`). So the property that matters is not merely "readline was
-  // chosen" but "readline was handed the session unchanged, and nothing touched the terminal".
+  // Both session surfaces are mocked in this file, so what it can see is the dispatch: which
+  // surface was called and what it was handed. That is the right question here and the wrong one
+  // for the terminal — nothing at this level observes a buffer switch, and an assertion that a
+  // mock was not called must not be described as one. The terminal-level half of the seam is a
+  // pair of cases in `tui-e2e/chat.tui.test.ts`, which plant this same config on disk, launch the
+  // real binary in a real pty, and assert the opted-out session is still on the user's screen
+  // after it exits — with the control alongside showing a session that isn't.
   //
-  // The two halves are asserted together deliberately: a dispatcher that called BOTH surfaces would
-  // satisfy the readline half alone, and a dispatcher that dropped the message would satisfy the
-  // "no TUI" half alone.
-  it('hands an opted-out session to readline unchanged, and never enters the alternate screen', async () => {
+  // The two halves below are asserted together deliberately: a dispatcher that called BOTH
+  // surfaces would satisfy the readline half alone, and one that dropped the message would satisfy
+  // the "no TUI" half alone.
+  it('hands an opted-out session to readline with its config and message unchanged', async () => {
     writeGlobalConfig({ llm: LLM_SPEC, tui: false });
 
     const { startSession } = await import('#src/modules/startSession.js');

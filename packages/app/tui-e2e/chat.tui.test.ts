@@ -24,6 +24,32 @@ const envFor = (fixtureName: string): Record<string, string | undefined> => {
   return env;
 };
 
+/**
+ * Windows has no POSIX signals: `process.kill` there terminates the target outright, so nothing
+ * the process would have done on its way out can be observed. The cases gated on this measure the
+ * platform's signal delivery rather than our code when run there — the Ctrl+C case below covers
+ * the same restore on every platform. Same gating shape, and the same reason, as
+ * `mouse.tui.test.ts`.
+ */
+const SIGNALS_REACH_THE_PROGRAM = os.platform() !== 'win32';
+
+/**
+ * The pid of the program tui-test spawned in the pty.
+ *
+ * The harness spawns the program directly (no shell in between), so this is the `gth` process
+ * itself and a signal sent to it is the signal a user's Ctrl+C or `kill` would deliver. The pty
+ * handle is private to the harness and there is no public accessor, so this reaches for it and
+ * throws rather than degrading quietly if a harness upgrade moves it — a silently-undeliverable
+ * signal would leave the tests below passing while proving nothing.
+ */
+const programPid = (terminal: Terminal): number => {
+  const pid = (terminal as unknown as { _pty?: { pid?: number } })._pty?.pid;
+  if (typeof pid !== 'number') {
+    throw new Error('tui-test no longer exposes the pty pid; the signal tests cannot send one');
+  }
+  return pid;
+};
+
 async function waitForExit(
   terminal: Terminal,
   timeoutMs = 15_000
@@ -119,6 +145,7 @@ test.describe('gth chat TUI — greeting fixture', () => {
     expect(lines[bottom].startsWith('   ▀█')).toBe(true);
 
     terminal.write('hello');
+    await expect(terminal.getByText('> hello')).toBeVisible();
     terminal.submit();
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
     await expect(terminal.getByText('┗┛┗┻┗┻┛┗┗')).not.toBeVisible();
@@ -151,15 +178,16 @@ test.describe('gth chat TUI — greeting fixture', () => {
 
     terminal.resize(60, 20);
     await expect(terminal.getByText('chat  ·  turns: 0  ·  ready')).toBeVisible();
+    // The closing rule reaching row 19 is what `screenAfterResize` polls for and throws on, so it
+    // is already proven here and re-asserting it would only add an assertion that cannot fail.
+    // What is left to check is where the rest of the dock landed relative to it.
     const shrunk = await screenAfterResize(terminal, 20);
-    expect(shrunk[19].trim()).toMatch(/^─+$/);
     expect(shrunk[17]).toContain('>');
     expect(shrunk[16]).toContain('chat  ·  turns: 0  ·  ready');
 
     // Growing back must move the dock down again, not leave it stranded mid-screen.
     terminal.resize(100, 34);
     const grown = await screenAfterResize(terminal, 34);
-    expect(grown[33].trim()).toMatch(/^─+$/);
     expect(grown[30]).toContain('chat  ·  turns: 0  ·  ready');
 
     terminal.write('hello');
@@ -199,6 +227,7 @@ test.describe('gth chat TUI — greeting fixture', () => {
 
     // One exchange later the newest output is still the row immediately above the dock.
     terminal.write('hello');
+    await expect(terminal.getByText('> hello')).toBeVisible();
     terminal.submit();
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
 
@@ -217,6 +246,7 @@ test.describe('gth chat TUI — greeting fixture', () => {
   test('hands the terminal back on exit, leaving none of the dock behind', async ({ terminal }) => {
     await expect(terminal.getByText('ready to chat')).toBeVisible();
     terminal.write('hello');
+    await expect(terminal.getByText('> hello')).toBeVisible();
     terminal.submit();
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
 
@@ -227,6 +257,56 @@ test.describe('gth chat TUI — greeting fixture', () => {
     expect(result?.exitCode).toBe(0);
 
     // The alternate buffer is discarded with everything that was drawn on it.
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).not.toBeVisible();
+    await expect(terminal.getByText('Hello from the fixture agent.')).not.toBeVisible();
+    await expect(terminal.getByText("Type 'exit'")).not.toBeVisible();
+  });
+
+  // TUI-C48 — the exit paths the user does not type.
+  //
+  // The restore is entirely Ink's, so the risk this guards is not that Ink stops working: it is
+  // that OUR code grows an exit path of its own that runs first. A `process.on('SIGINT')` handler
+  // anywhere in the session that called `process.exit()` ahead of Ink's own hook would leave the
+  // user staring at their shell prompt inside the alternate buffer, with the conversation gone and
+  // the screen they started from never coming back. Nothing else in the suite would notice.
+  //
+  // The assertions are deliberately the same three as the `exit`-command test above, because that
+  // shape is known to discriminate: with the alternate screen off, the dock is still painted on the
+  // primary buffer after the process is gone and each of them fails.
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+    test.when(
+      SIGNALS_REACH_THE_PROGRAM,
+      `hands the terminal back when the session is killed by ${signal}`,
+      async ({ terminal }) => {
+        await expect(terminal.getByText('ready to chat')).toBeVisible();
+        terminal.write('hello');
+        await expect(terminal.getByText('> hello')).toBeVisible();
+        terminal.submit();
+        await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+
+        process.kill(programPid(terminal), signal);
+        expect(await waitForExit(terminal)).not.toBeNull();
+
+        await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).not.toBeVisible();
+        await expect(terminal.getByText('Hello from the fixture agent.')).not.toBeVisible();
+        await expect(terminal.getByText("Type 'exit'")).not.toBeVisible();
+      }
+    );
+  }
+
+  // Ctrl+C is not a signal here — the terminal is in raw mode, so the byte reaches Ink and Ink
+  // unmounts — but it is how most sessions actually end, and it runs on every platform including
+  // the one where the signal cases above cannot.
+  test('hands the terminal back on Ctrl+C', async ({ terminal }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+    terminal.write('hello');
+    await expect(terminal.getByText('> hello')).toBeVisible();
+    terminal.submit();
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+
+    terminal.write('\x03');
+    expect(await waitForExit(terminal)).not.toBeNull();
+
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).not.toBeVisible();
     await expect(terminal.getByText('Hello from the fixture agent.')).not.toBeVisible();
     await expect(terminal.getByText("Type 'exit'")).not.toBeVisible();
@@ -575,5 +655,117 @@ test.describe('gth chat TUI — /debug-dump --unsafe-no-redact: loud UNSANITIZED
     const archiveDir = path.join(dumpsDir, entries[0]);
     const transcriptJson = fs.readFileSync(path.join(archiveDir, 'transcript.json'), 'utf8');
     expect(transcriptJson).toContain('hello');
+  });
+});
+
+/**
+ * TUI-C48 ↔ CFG-37 — the persistent opt-out, in a real terminal, from the config file to the
+ * surface that actually runs.
+ *
+ * This is the seam neither node covers on its own. CFG-37 made `tui: false` a real per-user and
+ * per-project preference and proves it reaches the dispatcher's decision; TUI-C48 is what makes
+ * that decision matter, because the surface it declines now takes over the whole screen and takes
+ * the conversation with it when it goes. What a user opting out is buying is exactly that: a
+ * session that stays in their scrollback. So the assertion is the terminal's, not a mock's — the
+ * session's output is still on screen after the process has exited, which cannot be true of a
+ * session that ran in the alternate buffer.
+ *
+ * Both directions are here on purpose, in the same harness and off the same real config loader. A
+ * negative on its own ("the dock never appeared") is satisfied by a session that failed to start
+ * at all; the control is what shows the harness can see the difference.
+ */
+function projectWithConfig(config: Record<string, unknown>): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gth-e2e-tui-config-'));
+  // A `.git` dir stops the up-tree config walk here, so discovery can never escape into the repo
+  // this suite runs from.
+  fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.gsloth.config.json'),
+    JSON.stringify({ llm: { type: 'openai', model: 'gpt-4o-mini' }, ...config })
+  );
+  return root;
+}
+
+/**
+ * The env for a config-driven run: the project dir the config lives in, a home of its own so no
+ * real global config can steer the case, and a placeholder key.
+ *
+ * The key is set rather than inherited, and it is deliberately a dummy: the readline session
+ * builds its provider at startup but contacts nothing until a prompt is submitted, and no test
+ * here submits one. Inheriting the developer's real key would put it in the process env of a
+ * session whose whole point is that it is hermetic.
+ */
+const configRunEnv = (root: string): Record<string, string | undefined> => ({
+  ...envFor('greeting.json'),
+  HOME: root,
+  USERPROFILE: root,
+  INIT_CWD: root,
+  OPENAI_API_KEY: 'not-a-real-key-nothing-is-sent',
+});
+
+test.describe('gth chat — a config file that turns the TUI off (CFG-37 seam)', () => {
+  const root = projectWithConfig({ tui: false });
+
+  test.use({
+    // No `--tui` flag: the config file is the only thing deciding which surface starts.
+    program: { file: 'node', args: [cli, 'chat'] },
+    env: configRunEnv(root),
+    columns: 100,
+    rows: 30,
+  });
+
+  test.afterAll(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test('runs the readline session and leaves it in the terminal after exit', async ({
+    terminal,
+  }) => {
+    // The run header is the readline surface writing straight to stdout. The TUI never prints it
+    // there — it routes those lines into the notice surface inside the frame — so seeing it is
+    // what says which surface started.
+    await expect(terminal.getByText('Workdir:')).toBeVisible();
+    await expect(terminal.getByText('Gaunt Sloth is ready to chat')).toBeVisible();
+    // …and the full-screen dock is not on the screen at all.
+    await expect(terminal.getByText('chat  ·  turns: 0  ·  ready')).not.toBeVisible();
+
+    terminal.write('exit');
+    await expect(terminal.getByText('> exit')).toBeVisible();
+    terminal.submit();
+    expect(await waitForExit(terminal)).not.toBeNull();
+
+    // The session is still there after the process is gone. A session that had entered the
+    // alternate screen would have taken all of this with it — which is precisely what the
+    // opt-out exists to avoid, and what the assertion above cannot prove on its own.
+    await expect(terminal.getByText('Gaunt Sloth is ready to chat')).toBeVisible();
+  });
+});
+
+test.describe('gth chat — the same config with the TUI left to its default (CFG-37 seam control)', () => {
+  const root = projectWithConfig({});
+
+  test.use({
+    program: { file: 'node', args: [cli, 'chat'] },
+    env: configRunEnv(root),
+    columns: 100,
+    rows: 30,
+  });
+
+  test.afterAll(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test('takes the full screen, and hands it back leaving nothing behind', async ({ terminal }) => {
+    // Same config, same loader, same launch — only the `tui` key is absent, and the full-screen
+    // dock is what starts. The status bar is the discriminator: it exists on this surface only.
+    await expect(terminal.getByText('chat  ·  turns: 0  ·  ready')).toBeVisible();
+
+    terminal.write('exit');
+    await expect(terminal.getByText('> exit')).toBeVisible();
+    terminal.submit();
+    expect(await waitForExit(terminal)).not.toBeNull();
+
+    await expect(terminal.getByText('chat  ·  turns: 0  ·  ready')).not.toBeVisible();
+    await expect(terminal.getByText('Gaunt Sloth is ready to chat')).not.toBeVisible();
   });
 });
