@@ -174,6 +174,21 @@ describe('tui config key (CFG-37)', () => {
       expect(await loadConfiguredTui({ identityProfile: 'child-profile' })).toBe(false);
     });
 
+    it('hard-exits on a BROKEN extends chain, exactly as a run does (just earlier)', async () => {
+      // The documented exception to "quiet and fail-soft": walking the inheritance chain means
+      // reusing the shared traversal, and that traversal reports and exits on its own. initConfig
+      // would exit on this same chain with this same message moments later, so what a user sees is
+      // unchanged — but the reader must be honest that it can end the process, and this pins it.
+      writeProfileConfig('child-profile', { extends: 'no-such-base', llm: LLM_SPEC });
+
+      const { loadConfiguredTui } = await import('#src/config/loader.js');
+      // exitMock throws here in place of terminating; production really does terminate.
+      await expect(loadConfiguredTui({ identityProfile: 'child-profile' })).rejects.toThrow(
+        'exit(1) called'
+      );
+      expect(exitMock).toHaveBeenCalledWith(1);
+    });
+
     it('stays quiet and undefined on an unreadable project config', async () => {
       // Fail-soft: initConfig reports this same file moments later, so warning here would double
       // the message; starting a session must not depend on the config parsing.

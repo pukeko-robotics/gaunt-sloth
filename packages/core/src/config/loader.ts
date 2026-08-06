@@ -629,11 +629,20 @@ export async function hasAnyConfig(
  * does not set `tui` defers to the next rather than overriding it with `undefined`. A scalar needs
  * no deep merge, so this reads the two layers and picks — it does not fork the merge engine.
  *
- * Deliberately QUIET and fail-soft. It neither validates nor `exit`s on a malformed layer: the
- * caller runs moments before {@link initConfig}, which validates every layer and reports the very
- * same problem, and warning twice about one file is worse than not warning here at all. Any read
- * failure resolves to `undefined`, i.e. "nobody set it" — the surface then auto-detects, which is
- * exactly what a run with no config does.
+ * QUIET and fail-soft for the layers it reads ITSELF: it does not validate them and does not
+ * `exit` on a malformed one, because the caller runs moments before {@link initConfig}, which
+ * validates every layer and reports the very same problem — warning twice about one file is worse
+ * than not warning here. A failed read resolves to `undefined`, i.e. "nobody set it", and the
+ * surface auto-detects exactly as it does for a run with no config.
+ *
+ * ONE EXCEPTION, and it is deliberate: a `tui` may be INHERITED through a GS2-41 profile `extends`
+ * chain, so this walks that chain via the SHARED {@link resolveConfigExtends} rather than forking
+ * it — and that traversal owns its own reporting. It validates each base layer (so a base's own
+ * unknown-key warning can appear here as well as from `initConfig`) and hard-`exit`s on a cycle, a
+ * missing base or a malformed base. What the user sees is unchanged — `initConfig` exits on the
+ * same chain with the same message a moment later — but it now happens EARLIER, at surface
+ * selection rather than at config load. Forking the walk to silence it would mean a second
+ * inheritance engine; ignoring `extends` would mean silently dropping an inherited `tui`.
  *
  * Ordering: this is DETECTION, so per the GS2-11 invariant above it must run before any
  * {@link initConfig} in the process — as it does, alongside {@link hasAnyConfig} in `startSession`.
@@ -670,6 +679,12 @@ async function readProjectConfiguredTui(
   // the way a run does. Gated on a JSON-family config because that is the ONLY branch initConfig
   // resolves `extends` in; composing it for a module config would honour an inheritance the run
   // itself ignores.
+  //
+  // Deliberately NOT inside the try above: on a cycle / missing base / malformed base,
+  // `resolveConfigExtends` reports the problem and calls `exit(1)`, which ends the process — a
+  // catch could not suppress that, and the sentinel throw past it is load-bearing under the specs'
+  // mocked `exit` (the convention used throughout this file), so swallowing it would let a test
+  // observe a silent fall-through production can never reach.
   if (isJsonConfigPath(discovered.path) && typeof raw.extends === 'string') {
     raw = await resolveConfigExtends(raw, commandLineConfigOverrides.identityProfile);
   }
