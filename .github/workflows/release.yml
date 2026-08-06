@@ -140,6 +140,10 @@ jobs:
           BIG_TEST_PROVIDER: ${{ vars.BIG_TEST_PROVIDER }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # providerContract.it.ts is glob-collected under every IT run and its Anthropic block
+          # gates on this key alone, not on BIG_TEST_PROVIDER — so this is what makes the GS2-64
+          # double-SystemMessage guard actually fire at the release gate it originally escaped.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   integration-tests-platforms:
     name: Integration tests platforms
