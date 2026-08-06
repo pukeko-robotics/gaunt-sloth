@@ -54,16 +54,18 @@ function Frame({
   items,
   height,
   budgetRows,
+  columns = 100,
   dockRows = 0,
 }: {
   items: TranscriptItem[];
   height: number;
   budgetRows?: number;
+  columns?: number;
   dockRows?: number;
 }) {
   return (
     <Box flexDirection="column" height={height}>
-      <TranscriptViewport items={items} budgetRows={budgetRows ?? height} />
+      <TranscriptViewport items={items} budgetRows={budgetRows ?? height} columns={columns} />
       <Box flexDirection="column" flexShrink={0}>
         {Array.from({ length: dockRows }, (_, i) => (
           <Text key={i}>{`dock-${i}`}</Text>
@@ -217,6 +219,67 @@ describe('<TranscriptViewport>', () => {
 
       expect(new Set(counts).size).toBe(1);
       expect(counts[0]).toBeLessThanOrEqual(12);
+    });
+  });
+
+  describe('re-renders committed items when the terminal width changes', () => {
+    // Committed items are memoised, which is what keeps a spinner tick from repainting the whole
+    // window. Width has to be one of the memo inputs anyway, because it is a real input to how an
+    // item RENDERS: the markdown renderer draws fence and horizontal rules at the full terminal
+    // width. Memoised on item identity alone, a committed markdown turn would keep the rules it
+    // was first drawn with and the frame would be visibly half-reflowed after a resize — with
+    // nothing failing, because every other component subscribes to the resize event itself.
+    const fenced: TranscriptItem = {
+      kind: 'assistant',
+      id: 1,
+      turn: {
+        text: '```js\nconst fenced = 1;\n```',
+        reasoning: '',
+        isReasoning: false,
+        toolCalls: [],
+      },
+    };
+
+    /** Longest run of the rule glyph anywhere in the frame — the fence rules are the widest. */
+    const widestRule = (frame: string | undefined): number =>
+      Math.max(0, ...[...(frame ?? '').matchAll(/─+/g)].map((m) => m[0].length));
+
+    it('redraws a committed fenced block at the new width', async () => {
+      const systemUtils = await import('@gaunt-sloth/core/utils/systemUtils.js');
+      const original = systemUtils.stdout.columns;
+      try {
+        // `renderMarkdown` reads the live terminal width from systemUtils when the caller passes
+        // none, which is what `<LiveTurn>` does — so the width has to move HERE as well as in the
+        // prop, exactly as it does when a real terminal is resized.
+        (systemUtils.stdout as { columns: number }).columns = 60;
+        const { lastFrame, rerender, unmount } = render(
+          <Frame items={[fenced]} height={10} columns={60} />
+        );
+        const narrow = widestRule(lastFrame());
+        expect(narrow).toBeGreaterThan(0);
+
+        (systemUtils.stdout as { columns: number }).columns = 100;
+        rerender(<Frame items={[fenced]} height={10} columns={100} />);
+        const wide = widestRule(lastFrame());
+
+        expect(wide).toBeGreaterThan(narrow);
+        unmount();
+      } finally {
+        (systemUtils.stdout as { columns: number }).columns = original;
+      }
+    });
+
+    it('still memoises away a re-render that changes nothing', () => {
+      // The control: the reflow above must not have been bought by dropping memoisation.
+      const items = Array.from({ length: 20 }, (_, i) => notice(i));
+      const { rerender, unmount } = render(<Frame items={items} height={12} columns={100} />);
+      const after = { mounts: lifecycle.mounts, unmounts: lifecycle.unmounts };
+
+      for (let i = 0; i < 5; i += 1) rerender(<Frame items={items} height={12} columns={100} />);
+
+      expect(lifecycle.mounts).toBe(after.mounts);
+      expect(lifecycle.unmounts).toBe(after.unmounts);
+      unmount();
     });
   });
 });

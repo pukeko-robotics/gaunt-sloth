@@ -30,12 +30,20 @@ import { transcriptWindowStart } from '#src/tui/transcriptWindow.js';
 export function TranscriptViewport({
   items,
   budgetRows,
+  columns,
   toolsExpanded = false,
   children,
 }: {
   items: TranscriptItem[];
   /** Row budget for the slice — the terminal height (see {@link transcriptWindowStart}). */
   budgetRows: number;
+  /**
+   * The terminal width. It decides how many rows an item wraps to, and it is also what tells a
+   * memoised committed item that it has to re-render: the markdown renderer draws fence and
+   * horizontal rules at the full terminal width, so an item that skipped the re-render would keep
+   * the rules it was first drawn with.
+   */
+  columns: number;
   /** Whether committed tool-call panels show their args/result body (App-level Ctrl+T). */
   toolsExpanded?: boolean;
   /**
@@ -48,7 +56,7 @@ export function TranscriptViewport({
   // Index of the first 'user' item; the separator above it is suppressed so the transcript does
   // not open with a stray rule.
   const firstUserIndex = items.findIndex((i) => i.kind === 'user');
-  const start = transcriptWindowStart(items, budgetRows, toolsExpanded);
+  const start = transcriptWindowStart(items, budgetRows, columns, toolsExpanded);
 
   return (
     <Box
@@ -65,6 +73,7 @@ export function TranscriptViewport({
             key={item.id}
             item={item}
             toolsExpanded={toolsExpanded}
+            columns={columns}
             separator={item.kind === 'user' && start + offset !== firstUserIndex}
           />
         ))}
@@ -78,6 +87,10 @@ export function TranscriptViewport({
  * One committed item. Memoised on its props so an unrelated frame (a spinner tick, a keystroke)
  * re-renders the dock without re-rendering every item still in the window — the transcript items
  * are the expensive half, and their props only change when the item itself does.
+ *
+ * `columns` is among the props precisely because of that: width IS an input to how an item renders
+ * (the markdown renderer reads it for fence and horizontal rules), so leaving it out would memoise
+ * away the reflow and strand a committed turn at its old width.
  */
 const TranscriptRow = React.memo(function TranscriptRow({
   item,
@@ -86,6 +99,8 @@ const TranscriptRow = React.memo(function TranscriptRow({
 }: {
   item: TranscriptItem;
   toolsExpanded: boolean;
+  /** Not read here — it is a memo input, see the note above. */
+  columns: number;
   separator: boolean;
 }): React.ReactElement {
   return (

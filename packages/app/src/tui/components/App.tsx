@@ -39,7 +39,7 @@ import {
   parseSlashCommand,
   toolsToggleNotice,
 } from '@gaunt-sloth/agent/modules/slashCommands.js';
-import { useTerminalRows } from '#src/tui/useTerminalRows.js';
+import { useTerminalSize } from '#src/tui/useTerminalSize.js';
 import { findMatches, scrollOffsetForLine, stepMatch } from '#src/tui/debugSearch.js';
 
 /** Rows of clipping viewport in the docked debug panel (default / restored size). */
@@ -146,7 +146,7 @@ export function App(props: TuiAppProps): React.ReactElement {
   // terminal floor AND what stops a frame from overflowing the screen (a taller frame loses its
   // top rows silently, as missing content rather than as an error). It also drives the maximised
   // debug viewport, and it is resize-aware: Ink relays out on SIGWINCH but does not re-render.
-  const terminalRows = useTerminalRows();
+  const { rows: terminalRows, columns: terminalColumns } = useTerminalSize();
   const debugViewport = debugViewportHeight(debugMaximized, terminalRows);
   // PageUp/PageDown step tracks the live viewport so maximise pages by (almost) a full screen.
   const debugPageStep = Math.max(1, debugViewport - 1);
@@ -858,6 +858,7 @@ export function App(props: TuiAppProps): React.ReactElement {
         <TranscriptViewport
           items={transcript}
           budgetRows={terminalRows}
+          columns={terminalColumns}
           toolsExpanded={toolsExpanded}
         >
           {clearedBanner ? <ClearBanner /> : null}

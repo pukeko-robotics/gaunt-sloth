@@ -49,7 +49,7 @@ gth chat "Let's discuss the architecture of this project"
 Inside a session, a line starting with `/` is a command, not a prompt. Run `/help` to list all of
 them; in the TUI, typing `/` alone opens a searchable command menu. A few worth knowing:
 
-- `/clear` — wipe the transcript
+- `/clear` — wipe the transcript and the model's memory of it (it is gone, not scrolled away)
 - `/status` — mode, model, and turn count
 - `/model` — show the current model / provider
 - `/verbose` — expand or collapse tool-call detail (Ctrl+T does the same mid-response)

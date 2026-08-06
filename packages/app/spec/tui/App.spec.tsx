@@ -4,7 +4,7 @@ import { render } from 'ink-testing-library';
 import type { AgentStreamEvent } from '@gaunt-sloth/core/core/types.js';
 import type { TuiAgent } from '#src/tui/types.js';
 import { App } from '#src/tui/components/App.js';
-import { FALLBACK_TERMINAL_ROWS } from '#src/tui/useTerminalRows.js';
+import { FALLBACK_TERMINAL_ROWS } from '#src/tui/useTerminalSize.js';
 
 /** A fake agent that replays a fixed event script for each turn. */
 function scriptedAgent(events: AgentStreamEvent[]): TuiAgent {

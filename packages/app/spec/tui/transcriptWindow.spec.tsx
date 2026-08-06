@@ -154,7 +154,12 @@ function actualRows(item: TranscriptItem, columns: number, toolsExpanded: boolea
   // this measures exactly the tree the app mounts — not a hand-rebuilt approximation of it.
   const frame = renderToString(
     <Box flexDirection="column">
-      <TranscriptViewport items={[item]} budgetRows={1} toolsExpanded={toolsExpanded} />
+      <TranscriptViewport
+        items={[item]}
+        budgetRows={1}
+        columns={columns}
+        toolsExpanded={toolsExpanded}
+      />
     </Box>,
     { columns }
   );
@@ -176,7 +181,7 @@ describe('transcriptWindow — the estimate is a LOWER bound on the rendered row
       describe(`at ${columns} columns, tool detail ${toolsExpanded ? 'on' : 'off'}`, () => {
         for (const { name, item } of CASES) {
           it(`never over-counts: ${name}`, () => {
-            const estimate = estimateItemRows(item, { toolsExpanded, separator: false });
+            const estimate = estimateItemRows(item, { columns, toolsExpanded, separator: false });
             const actual = actualRows(item, columns, toolsExpanded);
             expect(
               estimate,
@@ -190,8 +195,8 @@ describe('transcriptWindow — the estimate is a LOWER bound on the rendered row
 
   it('counts the separator rule above a non-first user line', () => {
     const item: TranscriptItem = { kind: 'user', id: 1, text: 'hi' };
-    const without = estimateItemRows(item, { toolsExpanded: false, separator: false });
-    const withRule = estimateItemRows(item, { toolsExpanded: false, separator: true });
+    const without = estimateItemRows(item, { columns: 80, toolsExpanded: false, separator: false });
+    const withRule = estimateItemRows(item, { columns: 80, toolsExpanded: false, separator: true });
     expect(withRule).toBe(without + 1);
   });
 
@@ -205,8 +210,12 @@ describe('transcriptWindow — the estimate is a LOWER bound on the rendered row
         toolCalls: [toolCall({ result: Array.from({ length: 30 }, (_, i) => `r${i}`).join('\n') })],
       }),
     };
-    const collapsed = estimateItemRows(item, { toolsExpanded: false, separator: false });
-    const expanded = estimateItemRows(item, { toolsExpanded: true, separator: false });
+    const collapsed = estimateItemRows(item, {
+      columns: 80,
+      toolsExpanded: false,
+      separator: false,
+    });
+    const expanded = estimateItemRows(item, { columns: 80, toolsExpanded: true, separator: false });
     expect(expanded).toBeGreaterThan(collapsed);
   });
 });
@@ -220,18 +229,18 @@ describe('transcriptWindowStart', () => {
   });
 
   it('returns 0 for an empty transcript', () => {
-    expect(transcriptWindowStart([], 24, false)).toBe(0);
+    expect(transcriptWindowStart([], 24, 80, false)).toBe(0);
   });
 
   it('keeps everything when the whole transcript fits the budget', () => {
     const items = [1, 2, 3].map(line);
-    expect(transcriptWindowStart(items, 24, false)).toBe(0);
+    expect(transcriptWindowStart(items, 24, 80, false)).toBe(0);
   });
 
   it('cuts to the tail once the transcript exceeds the budget', () => {
     // 50 one-row items against a 10-row budget: 10 items cover it, plus the slack item.
     const items = Array.from({ length: 50 }, (_, i) => line(i));
-    const start = transcriptWindowStart(items, 10, false);
+    const start = transcriptWindowStart(items, 10, 80, false);
     expect(start).toBe(50 - 10 - TRANSCRIPT_WINDOW_SLACK_ITEMS);
     expect(items.length - start).toBeLessThan(items.length);
   });
@@ -243,7 +252,7 @@ describe('transcriptWindowStart', () => {
     // comparison is between three genuinely windowed transcripts.
     const sizes = [50, 500, 2000].map((n) => {
       const items = Array.from({ length: n }, (_, i) => line(i));
-      return items.length - transcriptWindowStart(items, 40, false);
+      return items.length - transcriptWindowStart(items, 40, 80, false);
     });
     expect(new Set(sizes).size).toBe(1);
     expect(sizes[0]).toBeLessThanOrEqual(40 + TRANSCRIPT_WINDOW_SLACK_ITEMS);
@@ -258,15 +267,55 @@ describe('transcriptWindowStart', () => {
       turn: turn({ text: Array.from({ length: 200 }, (_, i) => `row ${i}`).join('\n') }),
     };
     const items = [line(0), tall];
-    expect(items.length - transcriptWindowStart(items, 8, false)).toBeGreaterThanOrEqual(1);
+    expect(items.length - transcriptWindowStart(items, 8, 80, false)).toBeGreaterThanOrEqual(1);
   });
 
   it('bounds the mounted count by the budget at every viewport size', () => {
     const items = Array.from({ length: 200 }, (_, i) => line(i));
     for (const budget of [1, 8, 40, 120]) {
-      const mounted = items.length - transcriptWindowStart(items, budget, false);
+      const mounted = items.length - transcriptWindowStart(items, budget, 80, false);
       expect(mounted).toBeLessThanOrEqual(budget + TRANSCRIPT_WINDOW_SLACK_ITEMS);
       expect(mounted).toBeGreaterThanOrEqual(1);
     }
+  });
+});
+
+describe('transcriptWindowStart accounts for WRAPPING, not just logical lines', () => {
+  // The defect a width-blind estimate produces, and the reason `columns` is a required argument.
+  // A wall of unbroken prose — the single commonest shape a model emits — is ONE logical line and
+  // a couple of dozen rendered rows. Counted as one row, the walk keeps taking items long after
+  // the screen is full: measured at 80 columns on a 40-row viewport, it mounted 28 items and ~210
+  // rows of content where 4 items cover the region. It is invisible on screen (the extra items are
+  // simply clipped) and shows up only as several times the render work per frame.
+  const PARA =
+    'This is a long unbroken paragraph of prose of the kind a model produces whenever it is ' +
+    'explaining something at any length, and it contains no newline characters at all. ';
+
+  const wrapHeavy = (n: number): TranscriptItem[] =>
+    Array.from({ length: n }, (_, i) => ({
+      kind: 'system' as const,
+      id: i,
+      level: 'INFO',
+      text: PARA.repeat(3),
+    }));
+
+  it('mounts far fewer items for wrap-heavy prose than a logical-line count would', () => {
+    const items = wrapHeavy(200);
+    const mounted = items.length - transcriptWindowStart(items, 40, 80, false);
+    // ~510 characters over 80 columns is ~7 rows per item, so a 40-row budget needs ~6 of them.
+    expect(mounted).toBeLessThanOrEqual(8);
+    // The control that makes the number mean something: the same items counted at a width where
+    // they do NOT wrap need many more items to cover the same budget.
+    const unwrapped = items.length - transcriptWindowStart(items, 40, 4000, false);
+    expect(unwrapped).toBeGreaterThan(mounted * 3);
+  });
+
+  it('mounts MORE items as the terminal gets wider, because each one wraps less', () => {
+    const items = wrapHeavy(200);
+    const at40 = items.length - transcriptWindowStart(items, 40, 40, false);
+    const at80 = items.length - transcriptWindowStart(items, 40, 80, false);
+    const at200 = items.length - transcriptWindowStart(items, 40, 200, false);
+    expect(at40).toBeLessThan(at80);
+    expect(at80).toBeLessThan(at200);
   });
 });

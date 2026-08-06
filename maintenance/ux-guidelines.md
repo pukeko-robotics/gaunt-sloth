@@ -428,8 +428,8 @@ The TUI has two zones, and which one a thing belongs in is a design decision, no
 - **Concise, plain language, beginner-friendly. No jargon.** Prefer "The model no longer sees the
   prior conversation" over "context window flushed."
 - **Always say what happened AND how it affects the user** — the title is the *what*, the body lines
-  are the *how* (`History cleared` → "The model no longer sees the prior conversation" +
-  "Scroll up to revisit…").
+  are the *how* (`History cleared` → "The model no longer sees the prior conversation" + "The
+  earlier messages are gone from this session too").
 - Tell the user the next move when there is one ("Run `/verbose` again to collapse…", "Run `/help` to
   see everything available").
 - Match the tone of the existing notices in `slashCommands.ts`; don't introduce a louder or
