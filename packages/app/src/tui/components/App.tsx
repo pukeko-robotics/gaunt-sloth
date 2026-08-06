@@ -14,7 +14,8 @@ import type { ApprovalRung } from '@gaunt-sloth/core/config.js';
 import { buildRejectionMessage } from '@gaunt-sloth/core/core/shell/rejection.js';
 import { Transcript } from '#src/tui/components/Transcript.js';
 import { ApprovalPrompt } from '#src/tui/components/ApprovalPrompt.js';
-import { LiveTurn } from '#src/tui/components/LiveTurn.js';
+import { LiveTurn, ChecklistPanel } from '#src/tui/components/LiveTurn.js';
+import { extractActiveChecklist } from '#src/tui/viewModel.js';
 import { StatusBar } from '#src/tui/components/StatusBar.js';
 import { NoticeBar, McpFailureBar } from '#src/tui/components/NoticeBar.js';
 import { PromptInput } from '#src/tui/components/PromptInput.js';
@@ -840,6 +841,12 @@ export function App(props: TuiAppProps): React.ReactElement {
   // exchange, so it stops padding the bottom dock once the conversation is underway.
   const showIntro = !initialMessage && transcript.length === 0 && !live;
 
+  // Extract active checklist items from live turn or transcript so it stays pinned at the bottom.
+  const activeChecklist = useMemo(
+    () => extractActiveChecklist(live, transcript),
+    [live, transcript]
+  );
+
   return (
     // TUI-C37 — the provider measures this frame and owns the hit-region registry, so a component
     // anywhere below can claim a clickable rectangle without knowing where the frame sits on screen.
@@ -887,6 +894,8 @@ export function App(props: TuiAppProps): React.ReactElement {
       ) : null}
       {/* Input dock: bracketed top and bottom by rules so the status bar, prompt and hint
           read as a distinct control zone rather than blending into the scrollback. */}
+      {/* Pinned active checklist panel */}
+      {activeChecklist ? <ChecklistPanel items={activeChecklist} /> : null}
       {/* Tool-approval affordance (EXT-9 Phase B2): when an approval is pending it sits just above
           the input dock, owns the keyboard, and suspends the normal prompt below. */}
       {pendingApproval ? <ApprovalPrompt pending={pendingApproval.pending} /> : null}
