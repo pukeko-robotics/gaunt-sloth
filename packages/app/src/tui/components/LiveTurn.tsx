@@ -12,7 +12,7 @@ import type {
   ToolCallViewModel,
   ChecklistItemViewModel,
 } from '#src/tui/viewModel.js';
-import { CHECKLIST_TOOL_NAME, parseChecklistArgs } from '#src/tui/viewModel.js';
+import { CHECKLIST_TOOL_NAME } from '#src/tui/viewModel.js';
 import { renderMarkdown } from '#src/tui/markdown.js';
 
 /** Status glyph + word for a tool call's compact summary line. */
@@ -178,7 +178,7 @@ function checklistRow(status: ChecklistItemViewModel['status']): { glyph: string
  * caller only routes here once {@link parseChecklistArgs} yields rows; a still-streaming/partial
  * args buffer falls back to the generic {@link ToolCallPanel}.
  */
-function ChecklistPanel({ items }: { items: ChecklistItemViewModel[] }): React.ReactElement {
+export function ChecklistPanel({ items }: { items: ChecklistItemViewModel[] }): React.ReactElement {
   const done = items.filter((i) => i.status === 'completed').length;
   return (
     <Box flexDirection="column">
@@ -230,11 +230,8 @@ export function LiveTurn({
         <ReasoningPanel reasoning={turn.reasoning} expanded={toolsExpanded} live={streaming} />
       ) : null}
       {turn.toolCalls.map((tc) => {
-        // The checklist tool renders as a dedicated live plan panel once its args parse; until
-        // then (or if it never parses) it falls back to the generic collapsible tool panel.
         if (tc.name === CHECKLIST_TOOL_NAME) {
-          const items = parseChecklistArgs(tc.argsText);
-          if (items) return <ChecklistPanel key={tc.id} items={items} />;
+          return null;
         }
         return <ToolCallPanel key={tc.id} tc={tc} expanded={toolsExpanded} live={streaming} />;
       })}

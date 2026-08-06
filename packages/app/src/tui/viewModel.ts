@@ -1,4 +1,5 @@
 import type { AgentStreamEvent } from '@gaunt-sloth/core/core/types.js';
+import type { TranscriptItem } from '#src/tui/types.js';
 
 /**
  * Pure view-model layer for the Ink TUI.
@@ -352,4 +353,40 @@ export function parseChecklistArgs(argsText: string): ChecklistItemViewModel[] |
     }
   }
   return rows.length ? rows : null;
+}
+
+/**
+ * Extract the most recent checklist items from the in-progress live turn or committed transcript.
+ * Returns `null` if no valid checklist tool calls exist.
+ */
+export function extractActiveChecklist(
+  live: TurnViewModel | null,
+  transcript: TranscriptItem[]
+): ChecklistItemViewModel[] | null {
+  // First check the live turn tool calls in reverse order
+  if (live) {
+    for (let i = live.toolCalls.length - 1; i >= 0; i--) {
+      const tc = live.toolCalls[i];
+      if (tc.name === CHECKLIST_TOOL_NAME) {
+        const items = parseChecklistArgs(tc.argsText);
+        if (items) return items;
+      }
+    }
+  }
+
+  // Next search transcript items in reverse order
+  for (let i = transcript.length - 1; i >= 0; i--) {
+    const item = transcript[i];
+    if (item.kind === 'assistant') {
+      for (let j = item.turn.toolCalls.length - 1; j >= 0; j--) {
+        const tc = item.turn.toolCalls[j];
+        if (tc.name === CHECKLIST_TOOL_NAME) {
+          const items = parseChecklistArgs(tc.argsText);
+          if (items) return items;
+        }
+      }
+    }
+  }
+
+  return null;
 }

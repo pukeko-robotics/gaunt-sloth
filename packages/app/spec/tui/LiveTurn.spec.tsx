@@ -344,28 +344,11 @@ describe('tui <LiveTurn>', () => {
       ],
     });
 
-    it('renders a dedicated checkbox panel with a done/total header, expanded', () => {
+    it('suppresses rendering within LiveTurn (rendered in pinned bottom dock)', () => {
       const { lastFrame, unmount } = render(<LiveTurn turn={withChecklist} />);
       const f = stripAnsi(lastFrame() ?? '');
-      expect(f).toContain('📋 Checklist (1/3)');
-      expect(f).toContain('[x] Set up config');
-      expect(f).toContain('[~] Implement tool');
-      expect(f).toContain('[ ] Write tests');
-      // Not the generic tool-call summary line.
-      expect(f).not.toContain('running');
-      unmount();
-    });
-
-    it('falls back to the generic tool panel while the args are still partial', () => {
-      const partial = turn({
-        toolCalls: [
-          { id: 'c1', name: 'gth_checklist', argsText: '{"items":[{"cont', status: 'running' },
-        ],
-      });
-      const { lastFrame, unmount } = render(<LiveTurn turn={partial} />);
-      const f = stripAnsi(lastFrame() ?? '');
-      expect(f).toContain('gth_checklist'); // generic summary line
       expect(f).not.toContain('📋 Checklist');
+      expect(f).not.toContain('[x] Set up config');
       unmount();
     });
   });

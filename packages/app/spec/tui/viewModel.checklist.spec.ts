@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { parseChecklistArgs, CHECKLIST_TOOL_NAME } from '#src/tui/viewModel.js';
+import {
+  parseChecklistArgs,
+  extractActiveChecklist,
+  CHECKLIST_TOOL_NAME,
+  type TurnViewModel,
+} from '#src/tui/viewModel.js';
+import type { TranscriptItem } from '#src/tui/types.js';
 
 describe('viewModel — checklist parsing', () => {
   it('exposes the checklist tool name', () => {
@@ -46,5 +52,51 @@ describe('viewModel — checklist parsing', () => {
     expect(parseChecklistArgs('{"items":"x"}')).toBeNull();
     expect(parseChecklistArgs('{}')).toBeNull();
     expect(parseChecklistArgs('{"items":[]}')).toBeNull();
+  });
+
+  it('extractActiveChecklist prefers live turn and falls back to transcript in reverse order', () => {
+    const live: TurnViewModel = {
+      text: '',
+      reasoning: '',
+      isReasoning: false,
+      toolCalls: [
+        {
+          id: '1',
+          name: CHECKLIST_TOOL_NAME,
+          argsText: JSON.stringify({ items: [{ content: 'Live item', status: 'in_progress' }] }),
+          status: 'running',
+        },
+      ],
+    };
+
+    const transcript: TranscriptItem[] = [
+      {
+        kind: 'assistant',
+        id: 1,
+        turn: {
+          text: '',
+          reasoning: '',
+          isReasoning: false,
+          toolCalls: [
+            {
+              id: '0',
+              name: CHECKLIST_TOOL_NAME,
+              argsText: JSON.stringify({ items: [{ content: 'Old item', status: 'completed' }] }),
+              status: 'done',
+            },
+          ],
+        },
+      },
+    ];
+
+    expect(extractActiveChecklist(live, transcript)).toEqual([
+      { content: 'Live item', status: 'in_progress' },
+    ]);
+
+    expect(extractActiveChecklist(null, transcript)).toEqual([
+      { content: 'Old item', status: 'completed' },
+    ]);
+
+    expect(extractActiveChecklist(null, [])).toBeNull();
   });
 });
