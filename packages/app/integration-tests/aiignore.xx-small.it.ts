@@ -58,9 +58,16 @@ describe('Aiignore Integration Tests', () => {
    * in the listing and this case goes red.
    *
    * **Why its own subdirectory.** It gives this case a short listing that cannot be perturbed by
-   * the root case or by accumulated run artifacts, and it keeps the root listing's 10-line tool
-   * preview cap (`TOOL_OUTPUT_PREVIEW_LINES`) intact — the directory name sorts after
-   * `aiignore-visible.txt`, so that entry's position in the capped panel is unchanged.
+   * the root case or by accumulated run artifacts, and it keeps these fixtures out of the root
+   * listing's 10-line tool preview cap (`TOOL_OUTPUT_PREVIEW_LINES`), where they would otherwise
+   * push `aiignore-visible.txt` out of the panel.
+   *
+   * That margin is a convenience, not the guarantee: `list_directory` emits `fs.readdir` order
+   * verbatim and does **not** sort (unlike `list_directory_with_sizes`), so entry position follows
+   * directory order and a hash-ordered filesystem is not obliged to preserve it. What actually
+   * keeps the root case's assertions robust is that the model restates the listing in its own
+   * prose, where `aiignore-visible.txt` appears regardless of where the capped panel stops —
+   * observed on every real run of this file.
    */
   it('should hide entries matched by an aiignore glob while keeping the near-miss control', async () => {
     expect(
