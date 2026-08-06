@@ -17,6 +17,7 @@ import { insightsCommand } from '#src/commands/insightsCommand.js';
 import { modelsCommand } from '#src/commands/modelsCommand.js';
 import { argv, exit, getSlothVersion, readStdin } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { commandSkipsStdin, resolveInvokedCommandName } from '#src/utils/stdinPolicy.js';
+import { guardProgramConfigErrors } from '#src/utils/configErrorGuard.js';
 import type { CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
 
 import { coerceBooleanOrString, displayError } from '@gaunt-sloth/core/utils/consoleUtils.js';
@@ -141,4 +142,7 @@ if (commandSkipsStdin(invokedCommand)) {
   program.setOptionValue('nopipe', true);
 }
 
-await readStdin(program);
+// CFG-35 — the config loader raises a catchable error when a provider has no resolvable API key,
+// so programmatic callers can classify it. For a person at a terminal there is nothing to classify,
+// so the `gth` CLI makes the terminating choice here, once, instead of in every command action.
+await readStdin(guardProgramConfigErrors(program));

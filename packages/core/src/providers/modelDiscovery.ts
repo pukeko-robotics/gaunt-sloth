@@ -24,6 +24,7 @@
  * `{ providerId, model }` maps directly onto a `RawGthConfig.llm`.
  */
 import { availableDefaultConfigs, type ConfigType } from '#src/config.js';
+import type { MissingProviderKeyDetails } from '#src/config/providerKeys.js';
 import { CONFIG_SCHEMA_POINTER } from '#src/constants.js';
 import { displayDebug } from '#src/utils/consoleUtils.js';
 import { env } from '#src/utils/systemUtils.js';
@@ -336,6 +337,59 @@ export function findApiKeyEnvVar(descriptor: ProviderDescriptor): string | undef
     }
   }
   return undefined;
+}
+
+/** A non-empty string, ignoring surrounding whitespace. */
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+/**
+ * Decide whether an LLM spec has **no resolvable API key at all** for its provider, and if so
+ * report which provider and which variable names would have supplied one.
+ *
+ * This is the classifier the config loader uses to tell a missing secret apart from a provider
+ * that broke for some other reason, and it answers that question from the ENVIRONMENT rather than
+ * from the text of whatever error a provider SDK happened to throw. Message-sniffing would be
+ * wrong on both sides: SDK wording is not ours to depend on, and several providers word the same
+ * failure differently (some name the variable, some do not).
+ *
+ * Returns `undefined` — meaning "not a missing-key failure" — when any of these hold:
+ * - the provider is unknown here, or authenticates outside an env-var key (vertexai via ADC,
+ *   ollama locally), so there is no key to be missing;
+ * - the config carries an inline `llm.apiKey`;
+ * - the config names an `llm.apiKeyEnvironmentVariable` that IS set;
+ * - any variable the provider accepts is set.
+ *
+ * The last two matter for correctness, not tidiness: classifying a provider outage as a missing
+ * key when a key was in fact present would defeat the whole distinction.
+ */
+export function findMissingProviderKey(
+  providerType: string | undefined,
+  llmConfig: { apiKey?: unknown; apiKeyEnvironmentVariable?: unknown } | undefined
+): MissingProviderKeyDetails | undefined {
+  const descriptor = PROVIDER_DESCRIPTORS.find((candidate) => candidate.id === providerType);
+  if (!descriptor || descriptor.apiKeyEnvironmentVariables.length === 0) {
+    return undefined;
+  }
+  if (isNonEmptyString(llmConfig?.apiKey)) {
+    return undefined;
+  }
+  const declaredEnvVar = isNonEmptyString(llmConfig?.apiKeyEnvironmentVariable)
+    ? llmConfig.apiKeyEnvironmentVariable.trim()
+    : undefined;
+  if (declaredEnvVar && isNonEmptyString(env[declaredEnvVar])) {
+    return undefined;
+  }
+  if (findApiKeyEnvVar(descriptor)) {
+    return undefined;
+  }
+  // The config-declared variable leads: it is the name the user chose, so it is the name they will
+  // look for. The provider's own accepted names follow, in the order it checks them.
+  const envVars = declaredEnvVar
+    ? [declaredEnvVar, ...descriptor.apiKeyEnvironmentVariables.filter((n) => n !== declaredEnvVar)]
+    : [...descriptor.apiKeyEnvironmentVariables];
+  return { provider: descriptor.id, envVar: envVars[0], envVars };
 }
 
 /**

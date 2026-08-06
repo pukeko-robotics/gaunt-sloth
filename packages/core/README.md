@@ -36,6 +36,12 @@ const response = await config.llm.invoke('Say hello');
 console.log(response.text);
 ```
 
+When the configured provider has no API key anywhere — not in `llm.apiKey`, not in
+`llm.apiKeyEnvironmentVariable`, not in any variable that provider accepts — `initConfig` rejects
+with a `MissingProviderKeyError` carrying `provider` and `envVars`, so a caller running several
+configs can report which one lacked a secret and carry on with the rest. Use
+`isMissingProviderKeyError(error)` to recognise it.
+
 All config keys (providers, prompts, tools, per-command settings) are documented in
 [the configuration guide](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/docs/configuration/index.md).
 

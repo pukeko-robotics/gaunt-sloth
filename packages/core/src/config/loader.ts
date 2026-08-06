@@ -35,6 +35,7 @@ import {
   type RawConfigValidationResult,
 } from '#src/config/schema.js';
 import { parseJsonc } from '#src/config/jsonc.js';
+import { isMissingProviderKeyError, MissingProviderKeyError } from '#src/config/providerKeys.js';
 import { getGslothConfigReadPath, importExternalFile } from '#src/utils/fileUtils.js';
 import { getGlobalGslothConfigReadPath } from '#src/utils/globalConfigUtils.js';
 import {
@@ -749,6 +750,14 @@ export async function initConfig(
         throw new Error('Unexpected error occurred.');
       }
     } catch (e) {
+      // CFG-35 — the format fall-through must not swallow a resolvable-config-but-no-API-key
+      // failure. This catch exists to move on to the next config FORMAT when the JSON layer could
+      // not be read; a config that read fine and named a provider we have no key for is not a
+      // read failure, and falling through would end in the terminal "No configuration file found"
+      // exit — the opposite of catchable, and a misleading message besides.
+      if (isMissingProviderKeyError(e)) {
+        throw e;
+      }
       displayDebug(e instanceof Error ? e : String(e));
       displayError(`Failed to read config from ${jsonConfigName}, will try other formats.`);
       // Continue to try other formats
@@ -900,10 +909,33 @@ export async function tryJsonConfig(
   } catch (e) {
     if (e instanceof Error && e.message.includes('Cannot find module')) {
       displayError(`LLM type '${(jsonConfig.llm as LLMConfig).type}' not supported.`);
+      exit(1);
     } else {
-      displayError(`Error processing LLM config: ${e instanceof Error ? e.message : String(e)}`);
+      const message = `Error processing LLM config: ${e instanceof Error ? e.message : String(e)}`;
+      // CFG-35 — a provider that could not be built because NO API key is resolvable for it is a
+      // CATCHABLE error, not a process exit. Several provider SDKs validate the key in their
+      // constructor (groq, anthropic, xai, deepseek, openrouter) and two of our factories check it
+      // themselves (openrouter, huggingface); every one of those throws landed here and killed the
+      // process, so a multi-identity `gth eval` run — the case that is DESIGNED for partial
+      // secrets — lost every other identity's result and wrote no artifacts at all.
+      //
+      // Whether this is a missing key is decided from the environment, never from the SDK's
+      // wording (see findMissingProviderKey). Imported dynamically because it is an error-path
+      // question and a static import of the provider layer would put a cycle through the config
+      // barrel. The message is exactly the string this branch has always printed, so a caller that
+      // reports `error.message` produces the same output; the provider and variable names ride as
+      // FIELDS, which is what a report consumer needs to tell a missing key from an outage.
+      const { findMissingProviderKey } = await import('#src/providers/modelDiscovery.js');
+      const missingKey = findMissingProviderKey(
+        (jsonConfig.llm as LLMConfig | undefined)?.type,
+        jsonConfig.llm as { apiKey?: unknown; apiKeyEnvironmentVariable?: unknown } | undefined
+      );
+      if (missingKey) {
+        throw new MissingProviderKeyError(message, missingKey, { cause: e });
+      }
+      displayError(message);
+      exit(1);
     }
-    exit(1);
   }
   // This throw is unreachable due to exit(1) above, but satisfies TS type analysis and prevents tests from exiting
   throw new Error('Unexpected error occurred.');
