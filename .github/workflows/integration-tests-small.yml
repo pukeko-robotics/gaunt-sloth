@@ -21,7 +21,7 @@ jobs:
         # `pnpm run it <config> xx-small` locally before adding one. A leg that is red for a reason
         # unrelated to the change under test teaches everyone to stop reading the matrix, which
         # costs more than the coverage it adds.
-        provider: [groq, inception, openrouter, xai, xai-build, google-genai-flash-lite, huggingface]
+        provider: [anthropic, groq, inception, openrouter, xai, xai-build, google-genai-flash-lite, huggingface]
       max-parallel: 3
 
     steps:
@@ -45,6 +45,7 @@ jobs:
       run: pnpm run it ${{ matrix.provider }} xx-small
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         INCEPTION_API_KEY: ${{ secrets.INCEPTION_API_KEY }}
         OPEN_ROUTER_API_KEY: ${{ secrets.OPEN_ROUTER_API_KEY }}

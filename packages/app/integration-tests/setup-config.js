@@ -137,9 +137,22 @@ if (fs.existsSync(settingsRoot)) {
   console.warn(`Profiles settings directory not found: ${settingsRoot}`);
 }
 
-// Clean up testreview.md from workdir
-const workdirReviewPath = path.join(__dirname, 'workdir', 'testreview.md');
+// Clean up per-run artifacts from workdir. They are gitignored, so CI never sees them; this is
+// local hygiene, and it matters because the workdir is a fixture directory that tests LIST. The
+// aiignore case asserts on the tool panel, which prints only the first TOOL_OUTPUT_PREVIEW_LINES
+// lines of the listing, so artifacts accumulating between local runs steadily push real fixtures
+// out of the previewed window.
+const workdirPath = path.join(__dirname, 'workdir');
+const workdirReviewPath = path.join(workdirPath, 'testreview.md');
 if (fs.existsSync(workdirReviewPath)) {
   fs.unlinkSync(workdirReviewPath);
   console.log(`Removed workdir/testreview.md`);
+}
+
+for (const name of fs.readdirSync(workdirPath)) {
+  if (!name.startsWith('gth_')) continue;
+  const artifactPath = path.join(workdirPath, name);
+  if (!fs.statSync(artifactPath).isFile()) continue;
+  fs.unlinkSync(artifactPath);
+  console.log(`Removed workdir/${name}`);
 }

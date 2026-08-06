@@ -11,6 +11,7 @@ integration-tests/
 │   ├── .gsloth.guidelines.md    # Test guidelines
 │   ├── .gsloth.review.md        # Test review config
 │   ├── .aiignore                 # Aiignore patterns for tests
+│   ├── glob-aiignore/            # Fixture pair for the .aiignore glob case; both files asserted
 │   ├── filewithgoodcode.js      # Test data: good code example
 │   ├── filewithbadcode.js       # Test data: bad code example
 │   ├── image.png, image2.png    # Test data: binary images
