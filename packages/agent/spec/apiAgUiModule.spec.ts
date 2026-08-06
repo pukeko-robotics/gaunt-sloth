@@ -656,6 +656,114 @@ describe('apiAgUiModule', () => {
     });
   });
 
+  // ─── Checkpoint thread rotation ────────────────────────────────────────────
+  //
+  // The client replays its whole history every turn, and a replayed message carries no id the
+  // checkpoint recognises, so `add_messages` mints one and appends rather than reconciling.
+  // Sharing a single checkpoint thread across turns therefore stacks each turn's replay onto the
+  // previous turn's state; once that history contains a tool result the duplicate puts two
+  // `tool_result` blocks under one `tool_use` id, which the provider rejects and which kills the
+  // thread permanently. A fresh run must get a fresh checkpoint thread. A resume must NOT — it has
+  // to reach the graph that is actually suspended.
+
+  describe('checkpoint thread rotation', () => {
+    async function getHandler() {
+      const { startAgUiServer } = await import('#src/modules/apiAgUiModule.js');
+      await startAgUiServer(baseConfig, 3000);
+      return mockPostFn.mock.calls[0][1] as (_req: unknown, _res: unknown) => Promise<void>;
+    }
+
+    function configurableOf(call: unknown[]): { thread_id: string } {
+      return (call[1] as { configurable: { thread_id: string } }).configurable;
+    }
+
+    function runThreadIds(): string[] {
+      return gthLangChainAgentStreamWithEventsMock.mock.calls.map(
+        (c) => configurableOf(c).thread_id
+      );
+    }
+
+    it('gives two fresh runs on one client thread different checkpoint threads', async () => {
+      gthLangChainAgentStreamWithEventsMock.mockImplementation(() => emptyStream());
+      const handler = await getHandler();
+
+      await handler(makeRunReq({ threadId: 'chat-1', runId: 'r1' }), makeMockRes());
+      await handler(makeRunReq({ threadId: 'chat-1', runId: 'r2' }), makeMockRes());
+
+      const [first, second] = runThreadIds();
+      expect(first).toBeTruthy();
+      expect(second).toBeTruthy();
+      // Keying both turns on 'chat-1' is the defect: turn 2's replay lands on turn 1's state.
+      expect(second).not.toBe(first);
+      expect([first, second]).not.toContain('chat-1');
+    });
+
+    it('resumes onto the checkpoint thread its interrupted run used', async () => {
+      gthLangChainAgentStreamWithEventsMock.mockImplementation(() => emptyStream());
+      gthLangChainAgentStreamWithEventsResumeMock.mockImplementation(() => emptyStream());
+      const handler = await getHandler();
+
+      // The run that suspends at a client tool, then the client's resume carrying its result.
+      await handler(makeRunReq({ threadId: 'chat-2', runId: 'r1' }), makeMockRes());
+      await handler(
+        makeRunReq({
+          threadId: 'chat-2',
+          runId: 'r2',
+          forwardedProps: { command: { resume: '{"mimeType":"image/jpeg","data":"AAA"}' } },
+        }),
+        makeMockRes()
+      );
+
+      // Rotating on a resume would strand it on an empty thread with no suspended graph, so this
+      // is the constraint that stops the rotation being "simplified" to a per-request id.
+      const [resumeCall] = gthLangChainAgentStreamWithEventsResumeMock.mock.calls;
+      expect(configurableOf(resumeCall).thread_id).toBe(runThreadIds()[0]);
+    });
+
+    it('rotates again for the turn that follows a resume', async () => {
+      gthLangChainAgentStreamWithEventsMock.mockImplementation(() => emptyStream());
+      gthLangChainAgentStreamWithEventsResumeMock.mockImplementation(() => emptyStream());
+      const handler = await getHandler();
+
+      // The live sequence behind the bug: capture turn, its resume, then the next user message
+      // replaying a history that now contains the capture's tool result.
+      await handler(makeRunReq({ threadId: 'chat-3', runId: 'r1' }), makeMockRes());
+      await handler(
+        makeRunReq({
+          threadId: 'chat-3',
+          runId: 'r2',
+          forwardedProps: { command: { resume: 'ok' } },
+        }),
+        makeMockRes()
+      );
+      await handler(
+        makeRunReq({
+          threadId: 'chat-3',
+          runId: 'r3',
+          messages: [{ role: 'user', content: 'save it to the desktop', id: 'm1' }],
+        }),
+        makeMockRes()
+      );
+
+      const [capture, followUp] = runThreadIds();
+      expect(followUp).not.toBe(capture);
+    });
+
+    it('keeps the client threadId as the protocol identity the events report', async () => {
+      gthLangChainAgentStreamWithEventsMock.mockImplementation(() => emptyStream());
+      const handler = await getHandler();
+
+      await handler(makeRunReq({ threadId: 'chat-4', runId: 'r1' }), makeMockRes());
+
+      const events = mockEncoderInstance.encode.mock.calls.map((c) => c[0]) as Array<
+        Record<string, unknown>
+      >;
+      // Only the checkpoint key rotates; the client must still recognise its own thread.
+      expect(events.find((e) => e.type === 'RUN_STARTED')).toMatchObject({ threadId: 'chat-4' });
+      expect(events.find((e) => e.type === 'RUN_FINISHED')).toMatchObject({ threadId: 'chat-4' });
+    });
+  });
+
   // ─── Client-tool dedup (run-input tools are authoritative) ─────────────────
   //
   // A server config may declare the same (client-fulfilled) tools the browser

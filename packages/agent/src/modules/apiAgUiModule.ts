@@ -326,6 +326,37 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
   // on first sighting of a given toolset.
   const toolAgentCache = new Map<string, GthAbstractAgent>();
 
+  // The client is the source of truth for history — it re-sends the full message list every turn.
+  // The checkpointer is NOT where that history lives; it exists so a graph suspended at an
+  // `interrupt()` survives between the run that suspends it and the POST that resumes it.
+  //
+  // Those two roles cannot share one thread. `add_messages` can only reconcile an incoming message
+  // with the checkpoint when the message carries an `id` the checkpoint already knows; a replayed
+  // client message has none, so the reducer mints a fresh id and APPENDS. Each turn therefore
+  // stacks the whole replayed history on top of the previous turn's checkpoint. For text that is
+  // invisible bloat, but once a tool result is in the history the thread is dead: two `tool_result`
+  // blocks under one `tool_use` id is the one duplication providers reject outright.
+  //
+  // So a fresh run gets a fresh checkpoint thread, making the replayed history the sole history —
+  // the same rotation `runConversation` performs for the CLI's multi-turn replay — while a resume
+  // stays on the thread whose graph is actually suspended. The client's own `threadId` remains the
+  // protocol-facing identity reported in RUN_STARTED / RUN_FINISHED; only the checkpoint key
+  // rotates.
+  const checkpointThreads = new Map<string, string>();
+
+  function rotateCheckpointThread(clientThreadId: string): string {
+    const retired = checkpointThreads.get(clientThreadId);
+    const fresh = randomUUID();
+    checkpointThreads.set(clientThreadId, fresh);
+    // Reclaim the superseded thread so a long-lived local server does not accumulate one dead
+    // checkpoint per turn. Housekeeping only — never a reason to fail a run.
+    const saver = checkpointSaver as { deleteThread?: (id: string) => Promise<void> };
+    if (retired && typeof saver.deleteThread === 'function') {
+      void Promise.resolve(saver.deleteThread(retired)).catch(() => {});
+    }
+    return fresh;
+  }
+
   function toolSignature(tools: RunInputTool[]): string {
     return JSON.stringify(
       tools
@@ -420,11 +451,32 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
 
       const messageId = randomUUID();
 
+      // C-a (spike): detect CopilotKit's resume shape. CopilotKit fulfils a
+      // frontend tool client-side and then RE-RUNS the agent with the full
+      // message history, the tool result appended as a trailing `tool` message
+      // — it does NOT send `forwardedProps.command.resume`. When that lands on a
+      // thread whose graph is suspended at our interrupt() stub, translate the
+      // trailing tool result into a graph resume so the suspended run continues
+      // (instead of starting a fresh run that just re-calls the tool).
+      const lastMsg =
+        Array.isArray(messages) && messages.length > 0 ? messages[messages.length - 1] : undefined;
+      const isCopilotToolResume =
+        hasClientTools && forwardedProps?.command?.resume === undefined && lastMsg?.role === 'tool';
+      const isResume = isCopilotToolResume || forwardedProps?.command?.resume !== undefined;
+
+      // A resume must reach the suspended graph, so it stays on the thread the interrupted run
+      // used; anything else is a fresh run and gets a fresh checkpoint thread (see
+      // `rotateCheckpointThread`). The fallback covers a resume for which we hold no mapping —
+      // a client resuming across a server restart — where the client's own id is the best guess.
+      const checkpointThreadId = isResume
+        ? (checkpointThreads.get(effectiveThreadId) ?? effectiveThreadId)
+        : rotateCheckpointThread(effectiveThreadId);
+
       // Get runnable config with thread_id for checkpointing. config.recursionLimit
       // (when set by the consumer) caps the agent's super-steps per run.
       const runConfig = {
         ...getNewRunnableConfig(config.recursionLimit),
-        configurable: { thread_id: effectiveThreadId },
+        configurable: { thread_id: checkpointThreadId },
       };
 
       // Stream the response with typed events. Text runs MUST be delimited
@@ -443,18 +495,6 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
           textRunId = null;
         }
       };
-
-      // C-a (spike): detect CopilotKit's resume shape. CopilotKit fulfils a
-      // frontend tool client-side and then RE-RUNS the agent with the full
-      // message history, the tool result appended as a trailing `tool` message
-      // — it does NOT send `forwardedProps.command.resume`. When that lands on a
-      // thread whose graph is suspended at our interrupt() stub, translate the
-      // trailing tool result into a graph resume so the suspended run continues
-      // (instead of starting a fresh run that just re-calls the tool).
-      const lastMsg =
-        Array.isArray(messages) && messages.length > 0 ? messages[messages.length - 1] : undefined;
-      const isCopilotToolResume =
-        hasClientTools && forwardedProps?.command?.resume === undefined && lastMsg?.role === 'tool';
 
       let eventStream;
       if (isCopilotToolResume) {
