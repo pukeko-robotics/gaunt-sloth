@@ -352,7 +352,11 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
     // checkpoint per turn. Housekeeping only — never a reason to fail a run.
     const saver = checkpointSaver as { deleteThread?: (id: string) => Promise<void> };
     if (retired && typeof saver.deleteThread === 'function') {
-      void Promise.resolve(saver.deleteThread(retired)).catch(() => {});
+      // Called from inside the `.then` so a SYNCHRONOUS throw is caught too — invoking it directly
+      // would evaluate it before `.catch` is attached and take the request handler down with it.
+      void Promise.resolve()
+        .then(() => saver.deleteThread?.(retired))
+        .catch(() => {});
     }
     return fresh;
   }
