@@ -480,7 +480,7 @@ export function mouseToggleNotice(enabled: boolean): SlashCommandNotice {
     title: enabled ? 'Mouse on' : 'Mouse off',
     lines: enabled
       ? [
-          'Clickable parts of the interface respond to the mouse, and the wheel scrolls a focused panel.',
+          'Clickable parts of the interface respond to the mouse, and the wheel scrolls the conversation — hold Shift to move a page at a time.',
           MOUSE_SELECTION_HINT,
           'Turn it off for this session with /mouse off, or always with useMouse false in your config.',
         ]

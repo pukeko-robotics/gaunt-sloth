@@ -128,8 +128,6 @@ export interface TranscriptScrollController {
   scrollToBottom: () => void;
   /** Jump to the oldest output the session still holds. */
   scrollToStart: () => void;
-  /** True while the region is showing something other than the newest output. */
-  scrolledBack: boolean;
 }
 
 export function useTranscriptScroll(): TranscriptScrollController {
@@ -225,6 +223,5 @@ export function useTranscriptScroll(): TranscriptScrollController {
     scrollByPages,
     scrollToBottom,
     scrollToStart,
-    scrolledBack: scroll !== null,
   };
 }

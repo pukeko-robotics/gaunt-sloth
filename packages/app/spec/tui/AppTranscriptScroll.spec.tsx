@@ -3,7 +3,7 @@ import React from 'react';
 import { EventEmitter } from 'node:events';
 import { render as inkRender } from 'ink';
 import type { AgentStreamEvent } from '@gaunt-sloth/core/core/types.js';
-import type { TuiAgent } from '#src/tui/types.js';
+import type { TuiAgent, TuiDebugCapture } from '#src/tui/types.js';
 import type { MouseEvent } from '#src/tui/mouseParser.js';
 import { App } from '#src/tui/components/App.js';
 
@@ -82,18 +82,6 @@ function fakeMouse() {
       };
       for (const listener of [...listeners]) listener(event);
     },
-    press: () => {
-      const event: MouseEvent = {
-        type: 'press',
-        button: 'left',
-        column: 10,
-        row: 5,
-        shift: false,
-        meta: false,
-        ctrl: false,
-      };
-      for (const listener of [...listeners]) listener(event);
-    },
   };
 }
 
@@ -141,13 +129,16 @@ const END_OF_TURN = Symbol('end of turn');
 
 function pumpedAgent(): {
   agent: TuiAgent;
-  emit: (delta: string) => void;
+  emit: (event: AgentStreamEvent | string) => void;
   finish: () => void;
+  /** Whether the session aborted the open turn — Esc's first meaning. */
+  wasAborted: () => boolean;
 } {
   // A queue with an explicit end marker rather than a flag, so a test may queue a whole turn before
   // the generator has even started without the end overtaking the chunks.
   const pending: (AgentStreamEvent | typeof END_OF_TURN)[] = [];
   let wake: (() => void) | null = null;
+  let aborted = false;
   const nudge = () => {
     const resume = wake;
     wake = null;
@@ -155,27 +146,33 @@ function pumpedAgent(): {
   };
   return {
     agent: {
-      async *runTurn(): AsyncGenerator<AgentStreamEvent> {
+      async *runTurn(_input, signal): AsyncGenerator<AgentStreamEvent> {
+        signal.addEventListener('abort', () => {
+          aborted = true;
+          nudge();
+        });
         for (;;) {
           while (pending.length) {
             const next = pending.shift() as AgentStreamEvent | typeof END_OF_TURN;
             if (next === END_OF_TURN) return;
             yield next;
           }
+          if (signal.aborted) return;
           await new Promise<void>((resolve) => {
             wake = resolve;
           });
         }
       },
     },
-    emit: (delta: string) => {
-      pending.push({ type: 'text', delta });
+    emit: (event: AgentStreamEvent | string) => {
+      pending.push(typeof event === 'string' ? { type: 'text', delta: event } : event);
       nudge();
     },
     finish: () => {
       pending.push(END_OF_TURN);
       nudge();
     },
+    wasAborted: () => aborted,
   };
 }
 
@@ -227,6 +224,20 @@ function regionRows(stdout: SizedStdout): string[] {
   return rows.slice(0, panelTop >= 0 && panelTop < dockTop ? panelTop : dockTop);
 }
 
+/**
+ * The docked debug pane's own scroll status: the `first-last/total` range it prints below its
+ * viewport whenever the section is taller than the window. It is the only thing on screen that
+ * distinguishes "the pane paged" from "the key went nowhere", and the pane prints it as a plain
+ * line count instead when nothing overflows — so an empty match is a fixture that gave the pane
+ * nothing to scroll, not a pane that refused to.
+ */
+function paneRange(stdout: SizedStdout): string {
+  const match = frameRows(stdout)
+    .map((row) => row.match(/\d+-\d+\/\d+/))
+    .find((m) => m !== null);
+  return match ? match[0] : '';
+}
+
 /** One turn, as an unbroken run so its height is exactly `ceil(length / columns)` at any width. */
 const turnText = (n: number): string => `t${n}-${'x'.repeat(200)}`;
 
@@ -264,13 +275,16 @@ async function settle(stdout: SizedStdout): Promise<void> {
   await vi.waitFor(() => expect(stdout.frames.length).toBeGreaterThan(before), { timeout: 2000 });
 }
 
+/** Turn numbers drawn in a captured set of region rows. */
+function turnsIn(rows: string[]): number[] {
+  return [
+    ...new Set(rows.flatMap((row) => [...row.matchAll(/t(\d+)-x/g)].map((m) => Number(m[1])))),
+  ].sort((a, b) => a - b);
+}
+
 /** Turn numbers currently drawn in the conversation region. */
 function visibleTurns(stdout: SizedStdout): number[] {
-  return [
-    ...new Set(
-      regionRows(stdout).flatMap((row) => [...row.matchAll(/t(\d+)-x/g)].map((m) => Number(m[1])))
-    ),
-  ].sort((a, b) => a - b);
+  return turnsIn(regionRows(stdout));
 }
 
 describe('<App> transcript scrolling', () => {
@@ -436,8 +450,21 @@ describe('<App> auto-stick to the newest output', () => {
     // is what an item-anchored position buys and a position held as a row offset from the end
     // loses on every chunk. Output has to arrive with no keystroke behind it, because typing is
     // itself defined to return the view to the end.
+    //
+    // The gesture is a WHEEL NOTCH over a THIRTY-ROW first chunk, and both halves are the case.
+    // The edge is held as a count of rows from the TOP of the block it cuts rather than from that
+    // block's bottom, and for a block that is not growing the two are the same number — so an edge
+    // parked in committed conversation cannot tell them apart however long a turn streams below
+    // it. Only an edge sitting INSIDE the growing block does, and landing one there needs a tail
+    // taller than the gesture: a page clears a thirty-row tail outright, a three-row notch lands
+    // three rows into it.
+    const mouse = fakeMouse();
     const pump = pumpedAgent();
-    const { stdout, stdin, unmount } = renderAt(80, 24, <App {...baseProps} agent={pump.agent} />);
+    const { stdout, stdin, unmount } = renderAt(
+      80,
+      24,
+      <App {...baseProps} agent={pump.agent} mouseEnabled subscribeMouse={mouse.subscribe} />
+    );
     await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
 
     for (let i = 0; i < 12; i++) {
@@ -453,19 +480,23 @@ describe('<App> auto-stick to the newest output', () => {
       });
     }
 
-    // A thirteenth turn that stays open, so the spec can grow it a chunk at a time.
+    // A thirteenth turn that stays open, so the spec can grow it a chunk at a time — opening with
+    // thirty rows, ten times the wheel notch that follows.
     stdin.write('grow');
     await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> grow'));
     stdin.write(KEY.enter);
-    pump.emit('first chunk');
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('first chunk'), {
+    pump.emit(liveRows(1, 30).join('\n'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('live-030'), {
       timeout: TURN_TIMEOUT_MS,
     });
 
-    stdin.write(KEY.pageUp);
+    mouse.wheel('up');
     await settle(stdout);
     const parked = regionRows(stdout);
-    expect(parked.join('')).not.toContain('first chunk');
+    // The edge is three rows up from the newest row, which puts it INSIDE the streaming block —
+    // the only position at which the two conventions disagree, and so the only one worth holding
+    // still. Named rather than implied: without this the case could park anywhere and still pass.
+    expect(parked[parked.length - 1]).toContain('live-027');
 
     for (let chunk = 0; chunk < 6; chunk++) {
       pump.emit(`\nchunk ${chunk} ${'y'.repeat(70)}`);
@@ -473,7 +504,9 @@ describe('<App> auto-stick to the newest output', () => {
     }
 
     // Six chunks of a growing turn later — roughly a screenful of new rows — and not one row of
-    // what the reader is looking at has moved.
+    // what the reader is looking at has moved. Counted from the block's BOTTOM the edge would have
+    // walked down with every chunk, and this row would now be six chunks further on.
+    expect(regionRows(stdout)[regionRows(stdout).length - 1]).toContain('live-027');
     expect(regionRows(stdout)).toEqual(parked);
 
     pump.finish();
@@ -545,52 +578,75 @@ describe('<App> scroll bindings yield to their prior claimants', () => {
   });
 
   it('Esc aborts the running turn instead of returning to the end', async () => {
-    let aborted = false;
-    const hangingAgent: TuiAgent = {
-      async *runTurn(_input, signal) {
-        yield { type: 'text', delta: 'streaming' };
-        await new Promise<void>((resolve) => {
-          if (signal.aborted) return resolve();
-          signal.addEventListener('abort', () => {
-            aborted = true;
-            resolve();
-          });
-        });
-      },
-    };
-    const { stdout, stdin, unmount } = renderAt(
-      80,
-      24,
-      <App {...baseProps} agent={replyingAgent} />
-    );
+    // Both halves in ONE session, because the claim is about which owner takes the key: the abort
+    // landed, AND the view the reader had parked is exactly where they left it. Two sessions could
+    // only ever have said "an abort works somewhere and a page-up works somewhere else".
+    const pump = pumpedAgent();
+    const { stdout, stdin, unmount } = renderAt(80, 24, <App {...baseProps} agent={pump.agent} />);
     await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
-    await converse(stdout, stdin, 14);
+
+    for (let i = 0; i < 14; i++) {
+      stdin.write(turnText(i));
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`t${i}-xxx`), {
+        timeout: TURN_TIMEOUT_MS,
+      });
+      stdin.write(KEY.enter);
+      pump.emit('ok');
+      pump.finish();
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
+        timeout: TURN_TIMEOUT_MS,
+      });
+    }
+    const atEnd = visibleTurns(stdout);
+
+    // A fifteenth turn that stays open, so Esc has a running turn to abort.
+    stdin.write('go');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> go'));
+    stdin.write(KEY.enter);
+    pump.emit('streaming');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('streaming'), {
+      timeout: TURN_TIMEOUT_MS,
+    });
 
     stdin.write(KEY.pageUp);
     await settle(stdout);
     const parked = regionRows(stdout);
+    // Control: the page really moved the view, so "still parked" below is a statement about
+    // something. Without it both outcomes would be the same screen.
+    expect(turnsIn(parked)).not.toEqual(atEnd);
 
-    // Swap in the agent that hangs, start a turn, and press Esc while it streams.
+    stdin.write(KEY.escape);
+    await vi.waitFor(() => expect(pump.wasAborted()).toBe(true), { timeout: TURN_TIMEOUT_MS });
+    // A fixed wait rather than a frame wait: an Esc that was correctly swallowed by the abort has
+    // no reason to draw anything, so "the next frame" is not an event this can wait on.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Esc went to the abort, not to the scroll: the reader is still reading what they were.
+    expect(visibleTurns(stdout)).not.toEqual(atEnd);
+    expect(regionRows(stdout)).toEqual(parked);
+
     unmount();
-    const second = renderAt(80, 24, <App {...baseProps} agent={hangingAgent} />);
-    await vi.waitFor(() => expect(second.stdout.lastFrame()).toContain('ready'));
-    second.stdin.write('go');
-    await vi.waitFor(() => expect(second.stdout.lastFrame()).toContain('> go'));
-    second.stdin.write(KEY.enter);
-    await vi.waitFor(() => expect(second.stdout.lastFrame()).toContain('streaming'));
-
-    second.stdin.write(KEY.escape);
-    await vi.waitFor(() => expect(aborted).toBe(true), { timeout: TURN_TIMEOUT_MS });
-
-    expect(parked.length).toBeGreaterThan(0);
-    second.unmount();
   }, 60_000);
 
   it('PageUp scrolls the focused debug pane, not the conversation', async () => {
+    // Both halves of the name, and the second is the one that was missing: a change that broke the
+    // PANE's own paging would leave "the conversation did not move" perfectly true. So the pane is
+    // given a section long enough to overflow its viewport — its footer reports the line range it
+    // is showing — and that range is what the assertions are about.
+    let pushDebug: ((capture: TuiDebugCapture) => void) | null = null;
     const { stdout, stdin, unmount } = renderAt(
       80,
       30,
-      <App {...baseProps} agent={replyingAgent} />
+      <App
+        {...baseProps}
+        agent={replyingAgent}
+        subscribeDebug={(cb) => {
+          pushDebug = cb;
+          return () => {
+            pushDebug = null;
+          };
+        }}
+      />
     );
     await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
     await converse(stdout, stdin, 14);
@@ -601,15 +657,39 @@ describe('<App> scroll bindings yield to their prior claimants', () => {
     await vi.waitFor(() => expect(stdout.lastFrame()).toContain('Subagents'), {
       timeout: TURN_TIMEOUT_MS,
     });
+    pushDebug?.({
+      kind: 'request',
+      text: 'history',
+      system: Array.from({ length: 60 }, (_, i) => `sys-${String(i + 1).padStart(3, '0')}`).join(
+        '\n'
+      ),
+      tools: 'tools',
+      mcp: 'mcp',
+    });
+    // Focus the pane, then step it on to the section that has those sixty lines.
     stdin.write(KEY.tab);
     await settle(stdout);
+    stdin.write(KEY.tab);
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('/60'), {
+      timeout: TURN_TIMEOUT_MS,
+    });
 
+    // Page the pane down first, so PageUp has somewhere to come back from.
+    stdin.write(KEY.pageDown);
+    await vi.waitFor(() => expect(paneRange(stdout)).not.toMatch(/^1-/), {
+      timeout: TURN_TIMEOUT_MS,
+    });
     const parked = regionRows(stdout);
-    stdin.write(KEY.pageUp);
-    stdin.write(KEY.pageUp);
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    const pagedDown = paneRange(stdout);
 
-    // The pane owns the key while it is focused; the conversation above it must not have moved.
+    stdin.write(KEY.pageUp);
+    await vi.waitFor(() => expect(paneRange(stdout)).not.toBe(pagedDown), {
+      timeout: TURN_TIMEOUT_MS,
+    });
+
+    // The pane moved back up — the key reached its owner and did the thing it is bound to.
+    expect(paneRange(stdout)).toMatch(/^1-/);
+    // …and the conversation above it did not move a row.
     expect(regionRows(stdout)).toEqual(parked);
 
     unmount();
@@ -624,16 +704,24 @@ describe('<App> scroll bindings yield to their prior claimants', () => {
     await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
     await converse(stdout, stdin, 14);
 
-    stdin.write(KEY.pageUp);
-    await settle(stdout);
-    const parked = regionRows(stdout);
-
+    // The pane is opened BEFORE the reader parks, because typing is itself defined to return the
+    // view to the end — parking first and then typing `/debug` would have thrown the position away
+    // before Esc was ever pressed, and left the case comparing the end against the end.
     stdin.write('/debug');
     await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> /debug'));
     stdin.write(KEY.enter);
     await vi.waitFor(() => expect(stdout.lastFrame()).toContain('Subagents'), {
       timeout: TURN_TIMEOUT_MS,
     });
+    const atEnd = visibleTurns(stdout);
+
+    stdin.write(KEY.pageUp);
+    await settle(stdout);
+    const parkedTurns = visibleTurns(stdout);
+    // Control: parked and at-the-end are different screens, so the comparison after the Esc says
+    // something. Naming one old turn that is off screen in both would not.
+    expect(parkedTurns).not.toEqual(atEnd);
+
     stdin.write(KEY.tab);
     await settle(stdout);
     stdin.write(KEY.escape);
@@ -642,9 +730,7 @@ describe('<App> scroll bindings yield to their prior claimants', () => {
     // The pane took the Esc. The prompt is back (unfocused) and the conversation has NOT jumped to
     // the end — a second Esc is what does that.
     await vi.waitFor(() => expect(stdout.lastFrame()).toContain('  >'));
-    expect(regionRows(stdout).some((row) => row.includes('t0-x'))).toBe(
-      parked.some((row) => row.includes('t0-x'))
-    );
+    expect(visibleTurns(stdout)).toEqual(parkedTurns);
 
     unmount();
   }, 60_000);
@@ -721,26 +807,104 @@ describe('<App> keeps the scroll position honest when the layout moves under it'
     // Toggling detail changes the height of the block the edge is cutting through. Without the
     // normalizer the clip keeps its old height and quietly shows part of the NEXT item — the
     // position moves with no gesture, and nothing on screen says so.
+    //
+    // Three things here are what make the toggle actually reach that path, and none of them is
+    // incidental: the turns carry TOOL PANELS, so there is something to fold; `/verbose` expands
+    // them first, so the keystroke makes blocks SHORTER, which is the direction that over-runs an
+    // edge; and a turn is left OPEN, because Ctrl+T is bound only while one is running — idle, the
+    // prompt owns the key and types a stray character instead.
+    const mouse = fakeMouse();
+    const pump = pumpedAgent();
     const { stdout, stdin, unmount } = renderAt(
       80,
       24,
-      <App {...baseProps} agent={replyingAgent} />
+      <App {...baseProps} agent={pump.agent} mouseEnabled subscribeMouse={mouse.subscribe} />
     );
     await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
-    await converse(stdout, stdin, 14);
+
+    for (let i = 0; i < 8; i++) {
+      stdin.write(turnText(i));
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`t${i}-xxx`), {
+        timeout: TURN_TIMEOUT_MS,
+      });
+      stdin.write(KEY.enter);
+      pump.emit({ type: 'tool_start', id: `call-${i}`, name: 'read_file' });
+      pump.emit({ type: 'tool_args', id: `call-${i}`, delta: `{"path":"file-${i}.ts"}` });
+      pump.emit({ type: 'tool_end', id: `call-${i}` });
+      pump.emit({
+        type: 'tool_result',
+        id: `call-${i}`,
+        content: Array.from({ length: 6 }, (_, line) => `result-${i}-line-${line}`).join('\n'),
+      });
+      // A per-turn last row, so the assertions below can name the row the edge sits on.
+      pump.emit(`answer-${i}`);
+      pump.finish();
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
+        timeout: TURN_TIMEOUT_MS,
+      });
+    }
+
+    // Expand every committed panel, so there is height to lose.
+    stdin.write('/verbose');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> /verbose'));
+    stdin.write(KEY.enter);
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('result-7-line-'), {
+      timeout: TURN_TIMEOUT_MS,
+    });
+
+    // A ninth turn that stays open, so Ctrl+T is live.
+    stdin.write('go');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> go'));
+    stdin.write(KEY.enter);
+    pump.emit('streaming');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('streaming'), {
+      timeout: TURN_TIMEOUT_MS,
+    });
 
     stdin.write(KEY.pageUp);
     await settle(stdout);
 
-    stdin.write(KEY.ctrlT);
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    // Walk the edge up until it sits on the LAST row of an assistant block. That position is the
+    // whole point: it is where a block that then gets SHORTER leaves the edge past its own bottom,
+    // and an edge that is not brought back inside uncovers the block below. Parked anywhere in a
+    // user item — which the toggle cannot resize — the case would exercise nothing. A bounded walk
+    // with an assertion on the outcome, so it cannot silently stop finding that position.
+    let onBlockEnd = false;
+    for (let notch = 0; notch < 12 && !onBlockEnd; notch++) {
+      const rows = regionRows(stdout);
+      if (/answer-\d/.test(rows[rows.length - 1] ?? '')) onBlockEnd = true;
+      else {
+        mouse.wheel('up');
+        await settle(stdout);
+      }
+    }
+    expect(onBlockEnd).toBe(true);
 
-    // The region is still full and the frame still fits the terminal: the two ways this fails.
+    const before = regionRows(stdout);
+    const argsLine = /^\s*args: /m;
+    // Control on the fixture: there IS an expanded panel inside the parked view, so the keystroke
+    // below has something to change. Without this the case would pass over a conversation the
+    // toggle cannot touch, which is exactly how it passed while doing nothing.
+    expect(before.join('\n')).toMatch(argsLine);
+
+    stdin.write(KEY.ctrlT);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const after = regionRows(stdout);
+
+    // The region is still full and the frame still fits the terminal. These two hold for any
+    // viewport that renders at all, so they are kept first and deliberately not relied on.
     expect(frameRows(stdout)).toHaveLength(24);
-    expect(regionRows(stdout)[0].trim()).not.toBe('');
+    expect(after[0].trim()).not.toBe('');
+    // Control on the keystroke: it landed and it folded. The expanded body is gone from the view.
+    expect(after.join('\n')).not.toMatch(argsLine);
+    // The behaviour the case is named for. Every block on screen just lost a row, so an edge held
+    // as anything other than a position inside its own block would slide down and uncover what
+    // sits below it — the bottom row of the region is precisely where that shows.
+    expect(after[after.length - 1]).toBe(before[before.length - 1]);
+    expect(Math.max(...turnsIn(after))).toBe(Math.max(...turnsIn(before)));
 
     unmount();
-  }, 40_000);
+  }, 60_000);
 });
 
 /**

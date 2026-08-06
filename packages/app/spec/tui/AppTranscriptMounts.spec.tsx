@@ -116,14 +116,20 @@ const TURN_TIMEOUT_MS = 10_000;
 const PAGE_UP = '\x1b[5~';
 
 /**
- * Drive `TURNS` exchanges, optionally scroll back, and return how many committed turns are still
- * mounted at the end.
+ * Drive `TURNS` exchanges, optionally scroll back, and report both what the run mounted and what it
+ * was looking at.
+ *
+ * The count is of mounted **assistant turns**, not of mounted components: the lifecycle probe
+ * replaces `LiveTurn`, which a committed assistant turn renders and a user line does not, so it
+ * sees about half of the mounted slice. The literals below are in those units. The turn numbers are
+ * what the run had on screen, and they are what says a gesture moved anything at all — the counts
+ * alone are equally satisfied by a viewport in which `PageUp` does nothing.
  */
-async function mountedAfterConversation(
+async function conversationRun(
   columns: number,
   rows: number,
   pageUps = 0
-): Promise<number> {
+): Promise<{ mounted: number; turns: number[] }> {
   const { stdout, stdin, unmount } = renderAt(columns, rows, <App {...baseProps} />);
   await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
   for (let i = 0; i < TURNS; i++) {
@@ -144,8 +150,13 @@ async function mountedAfterConversation(
   // The session is idle here, so the streaming turn is unmounted and what is left is exactly the
   // committed turns the viewport chose to keep.
   const mounted = lifecycle.mounts - lifecycle.unmounts;
+  const turns = [
+    ...new Set(
+      [...(stdout.lastFrame() ?? '').matchAll(/t(\d+)-x/g)].map((match) => Number(match[1]))
+    ),
+  ].sort((a, b) => a - b);
   unmount();
-  return mounted;
+  return { mounted, turns };
 }
 
 describe('<App> mounts a screenful of the transcript, not the whole of it', () => {
@@ -169,16 +180,16 @@ describe('<App> mounts a screenful of the transcript, not the whole of it', () =
     // holds under that budget (eleven really is fewer than fourteen) and only the ceiling catches
     // it. The floor catches the opposite error, and the inequality is what stops all of them from
     // being satisfied by a viewport that mounts a fixed number of items whatever the terminal does.
-    const mountedShort = await mountedAfterConversation(80, 24);
-    expect(mountedShort).toBeGreaterThanOrEqual(3);
-    expect(mountedShort).toBeLessThanOrEqual(6);
+    const short = await conversationRun(80, 24);
+    expect(short.mounted).toBeGreaterThanOrEqual(3);
+    expect(short.mounted).toBeLessThanOrEqual(6);
 
     lifecycle.mounts = 0;
     lifecycle.unmounts = 0;
 
-    const mountedTall = await mountedAfterConversation(80, 48);
-    expect(mountedTall).toBeGreaterThan(mountedShort);
-    expect(mountedTall).toBeLessThanOrEqual(10);
+    const tall = await conversationRun(80, 48);
+    expect(tall.mounted).toBeGreaterThan(short.mounted);
+    expect(tall.mounted).toBeLessThanOrEqual(10);
   }, 60_000);
 
   it('keeps the slice bounded by the screen at a SCROLLED position too', async () => {
@@ -191,29 +202,40 @@ describe('<App> mounts a screenful of the transcript, not the whole of it', () =
     //
     // Measured on the shipped code at 80x24: four mounted at the end, eight two pages back, eight
     // four pages back. Literals, not expressions over the production constants.
-    const atEnd = await mountedAfterConversation(80, 24, 0);
-    expect(atEnd).toBeLessThanOrEqual(6);
+    const atEnd = await conversationRun(80, 24, 0);
+    expect(atEnd.mounted).toBeLessThanOrEqual(6);
 
     lifecycle.mounts = 0;
     lifecycle.unmounts = 0;
-    const twoPages = await mountedAfterConversation(80, 24, 2);
+    const twoPages = await conversationRun(80, 24, 2);
 
     lifecycle.mounts = 0;
     lifecycle.unmounts = 0;
-    const fourPages = await mountedAfterConversation(80, 24, 4);
+    const fourPages = await conversationRun(80, 24, 4);
 
-    expect(twoPages).toBeLessThanOrEqual(9);
+    // FIRST, that the gesture did anything. Every bound below is satisfied by a viewport in which
+    // PageUp is a no-op — same count, same screen — so without these two the whole case is about a
+    // conversation nobody scrolled. Different content on screen at each depth is the statement; the
+    // counts are only meaningful once it holds.
+    expect(twoPages.turns).not.toEqual(atEnd.turns);
+    expect(fourPages.turns).not.toEqual(twoPages.turns);
+    // …and mounting more while scrolled back is the thing the ceilings then bound: scrolled, the
+    // viewport also mounts a screenful BELOW the edge, because only a mounted block has a measured
+    // height to scroll back down by.
+    expect(twoPages.mounted).toBeGreaterThan(atEnd.mounted);
+
+    expect(twoPages.mounted).toBeLessThanOrEqual(9);
     // Four pages back is most of the way to the start of a fourteen-turn conversation, and the
     // mounted set is the SAME size as two pages back. Equality rather than a ceiling: a ceiling
     // alone would be satisfied by a slice that grew slowly.
-    expect(fourPages).toBe(twoPages);
+    expect(fourPages.mounted).toBe(twoPages.mounted);
 
     lifecycle.mounts = 0;
     lifecycle.unmounts = 0;
-    const tallTwoPages = await mountedAfterConversation(80, 48, 2);
+    const tallTwoPages = await conversationRun(80, 48, 2);
     // …and the bound is the SCREEN, not a constant: twice the terminal height mounts more. Without
     // this the two assertions above would also pass on a viewport that mounted a fixed nine items
     // whatever the terminal did.
-    expect(tallTwoPages).toBeGreaterThan(twoPages);
+    expect(tallTwoPages.mounted).toBeGreaterThan(twoPages.mounted);
   }, 90_000);
 });
