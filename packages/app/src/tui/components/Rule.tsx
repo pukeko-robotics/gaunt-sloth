@@ -4,9 +4,9 @@ import { ruleWidth } from '#src/tui/ruleWidth.js';
 
 /**
  * A dim, full-width horizontal rule. Single-sourced so the two places that delimit regions
- * stay visually identical: between committed turns in the {@link Transcript}, and bracketing
- * the input dock at the bottom of the screen (status bar + prompt + hint) so the controls
- * read as a distinct zone rather than blending into the scrollback.
+ * stay visually identical: between committed turns in the transcript viewport, and bracketing
+ * the input dock at the terminal floor (status bar + prompt + hint) so the controls read as a
+ * distinct zone rather than blending into the conversation.
  *
  * The rule spans the live terminal width via {@link useStdout} and re-renders on resize.
  * Callers may pass an explicit `width` (e.g. when they already measure one); otherwise it

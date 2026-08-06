@@ -3,12 +3,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { render } from 'ink-testing-library';
 
-import {
-  FALLBACK_TERMINAL_ROWS,
-  MouseProvider,
-  useHitRegion,
-  useMouseEnabled,
-} from '#src/tui/useMouse.js';
+import { MouseProvider, useHitRegion, useMouseEnabled } from '#src/tui/useMouse.js';
 import type { MouseEvent } from '#src/tui/mouseParser.js';
 
 const press = (row: number, column: number): MouseEvent => ({
@@ -69,12 +64,12 @@ describe('tui useMouse', () => {
   /**
    * The absolute screen row of a given row of the rendered frame.
    *
-   * The test renderer reports no terminal height, so the provider falls back to
-   * {@link FALLBACK_TERMINAL_ROWS}; the frame's own height is read back off what actually rendered
-   * rather than assumed, so these stay honest if a component's layout changes.
+   * TUI-C48 made this the identity: the frame is laid out to the whole terminal height, so it
+   * starts at screen row 0 and a frame row IS a screen row. It stays a named helper rather than
+   * being inlined so the assumption has one place to be wrong, and so a future layout that moved
+   * the origin would have one place to be fixed.
    */
-  const screenRow = (frame: string | undefined, rowInFrame: number) =>
-    FALLBACK_TERMINAL_ROWS - (frame ?? '').split('\n').length + rowInFrame;
+  const screenRow = (_frame: string | undefined, rowInFrame: number) => rowInFrame;
 
   it('delivers a click to the component rendered at that cell', () => {
     const source = mouseSource();
@@ -150,8 +145,8 @@ describe('tui useMouse', () => {
       </MouseProvider>
     );
 
-    // Above the live frame — that is committed <Static> scrollback, which is not clickable.
-    source.emit(press(2, 0));
+    // Well below the one-row frame — empty screen, which claims nothing.
+    source.emit(press(12, 0));
 
     expect(onClick).not.toHaveBeenCalled();
   });
@@ -166,7 +161,7 @@ describe('tui useMouse', () => {
     );
 
     expect(source.listenerCount).toBe(0);
-    source.emit(press(FALLBACK_TERMINAL_ROWS - 1, 0));
+    source.emit(press(0, 0));
     expect(onClick).not.toHaveBeenCalled();
   });
 

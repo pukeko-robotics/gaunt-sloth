@@ -15,19 +15,23 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Box, measureElement, useStdout, type DOMElement } from 'ink';
-import { HitRegionRegistry, liveRegionOrigin, type HitRegionHandler } from '#src/tui/hitRegions.js';
+import { Box, measureElement, type DOMElement } from 'ink';
+import { HitRegionRegistry, type HitRegionHandler } from '#src/tui/hitRegions.js';
 import type { MouseEvent } from '#src/tui/mouseParser.js';
 
 /** Subscribe to decoded mouse events; returns an unsubscribe. Mirrors the App's other bridges. */
 export type MouseSubscribe = (listener: (event: MouseEvent) => void) => () => void;
 
 /**
- * Terminal height to assume when the stream does not report one — a headless or test renderer.
- * Only the frame ORIGIN depends on it, so a wrong guess shifts hit regions rather than breaking
- * them, and a real terminal always reports its own height.
+ * Absolute screen row the live frame's first row sits on.
+ *
+ * TUI-C48 made this a constant rather than a guess. The frame is laid out to exactly the terminal
+ * height, so it fills the alternate screen from its top row and every registered rectangle's frame
+ * offset IS its screen row. Before that the origin had to be inferred from how much output had
+ * scrolled past, which was exact at launch and exact once the screen had filled and wrong in
+ * between — the window that put a click a few rows off its target.
  */
-export const FALLBACK_TERMINAL_ROWS = 24;
+const FRAME_ORIGIN_ROW = 0;
 
 interface MouseContextValue {
   registry: HitRegionRegistry;
@@ -49,63 +53,33 @@ export interface MouseProviderProps {
   /** The session's event source; absent when mouse is off. */
   subscribe?: MouseSubscribe;
   enabled: boolean;
-  /**
-   * Where the live frame currently sits on screen.
-   *
-   * `top` — nothing has been committed yet, so the frame is painted from row 0 with empty screen
-   * below it. That is the state at launch, right after the viewport bump, and it is when the launch
-   * banner is clickable.
-   *
-   * `bottom` (the default) — output has scrolled the screen, so the frame ends on the last row.
-   *
-   * A session briefly sits between the two: one short turn committed on a tall terminal leaves the
-   * frame neither at row 0 nor at the bottom, and clicks in that window can land a few rows off.
-   * Narrowing that needs the count of rows Ink has written into `<Static>`, which Ink does not
-   * expose; it is recorded in `NOTES.md` rather than guessed at here.
-   */
-  anchor?: 'top' | 'bottom';
   children: React.ReactNode;
 }
 
 /**
- * Wraps the live region, measures it, and dispatches clicks against it.
+ * Wraps the live region and dispatches clicks against it.
  *
- * The measured element is the live frame itself, so `origin` is recomputed whenever the frame grows
- * or the window resizes — the two things that would otherwise silently shift every registered
- * region by a few rows and make clicks land one panel off.
+ * A region's claimed rectangle is an offset inside the frame, and the frame starts at screen row 0
+ * (see {@link FRAME_ORIGIN_ROW}), so a claim maps to absolute screen cells with no arithmetic and
+ * nothing to keep in step as the frame reflows.
  */
-export function MouseProvider({ subscribe, enabled, anchor, children }: MouseProviderProps) {
+export function MouseProvider({ subscribe, enabled, children }: MouseProviderProps) {
   // The registry is rendered (it goes into the context value), so it is state, not a ref: a ref
   // would have to be read during render, and every render would build a throwaway registry just to
   // discard it. A `useState` initializer runs exactly once, which matters here because the object
   // holds the live registrations — recreating it would silently unclaim every hit region.
   const [registry] = useState(() => new HitRegionRegistry());
-  const liveRef = useRef<DOMElement | null>(null);
-  const { stdout } = useStdout();
-  // Read at dispatch time rather than captured in the subscription: a click must resolve against
-  // the frame as it is now, not as it was when the listener was attached.
-  const heightRef = useRef(0);
-
-  useLayoutEffect(() => {
-    if (liveRef.current) heightRef.current = measureElement(liveRef.current).height;
-  });
 
   useEffect(() => {
     if (!enabled || !subscribe) return;
     return subscribe((event) => {
-      const rows = stdout?.rows ?? FALLBACK_TERMINAL_ROWS;
-      // `bottom` is expressed as "as far down as it will go", which `liveRegionOrigin` then clamps
-      // to the screen — so the two anchors share one formula rather than branching on the caller.
-      const rowsAbove = anchor === 'top' ? 0 : Number.MAX_SAFE_INTEGER;
-      registry.dispatch(event, liveRegionOrigin(rows, heightRef.current, rowsAbove));
+      registry.dispatch(event, FRAME_ORIGIN_ROW);
     });
-  }, [enabled, subscribe, stdout, anchor, registry]);
+  }, [enabled, subscribe, registry]);
 
   return (
     <MouseContext.Provider value={{ registry, enabled }}>
-      <Box flexDirection="column" ref={liveRef}>
-        {children}
-      </Box>
+      <Box flexDirection="column">{children}</Box>
     </MouseContext.Provider>
   );
 }

@@ -103,27 +103,38 @@ is a decision the user never sees, so the transparency has to move somewhere rat
 
 ## `/clear` (DL-3 preserve context, DL-5 respect host)
 
-`/clear` resets the session **without destroying history**:
+`/clear` resets the session:
 
-- **Bump up, never wipe.** Write `viewportBumpSequence(rows)` (`tui/terminal.ts`): a screenful of
-  newlines to scroll prior content up and out of the viewport, then `ESC[H` + `ESC[J` to land the
-  fresh frame cleanly at the top. **Never emit `ESC[3J`** — that erases the terminal's scrollback
-  and defeats the whole point. Native scroll and copy must survive a clear.
-- **Feedback is the `ClearBanner`** (`tui/components/ClearBanner.tsx`, built on `CommandNotice`),
-  rendered in the **live (non-`<Static>`) frame**. This is deliberate: pushing a committed notice
-  right after `setTranscript([])` is swallowed because clearing `<Static>`'s items resets its
-  internal index (TUI-C12). The banner is dropped the moment the next turn starts so it doesn't
-  linger above a fresh conversation.
+- **Empty the buffer, write no escapes.** The transcript is a buffer the app owns, so
+  `setTranscript([])` IS the clear — the viewport re-renders with nothing in it. `/clear` must not
+  write terminal escapes at all: there is no scrollback in the alternate screen to scroll content
+  into, so a scroll-and-clear sequence would be motion with no meaning.
+- **Say that it is a deletion.** The banner must not offer to let the user scroll up and revisit
+  the conversation; that was true when the transcript was the terminal's own scrollback and is
+  false now, and confirming something that did not happen is a DL-4 failure.
+- **Feedback is the `ClearBanner`** (`tui/components/ClearBanner.tsx`, built on `CommandNotice`).
+  It is dropped the moment the next turn starts so it doesn't linger above a fresh conversation.
 - **Clear resets BOTH the view and the model thread.** Wiping only the on-screen transcript would
   leave the LangGraph checkpointer's thread intact, so the model would still "remember" everything —
   a transparency lie (DL-4). Call `agent.resetThread?.()` so the model's context truly matches the
   now-empty screen, and **reset the turn counter to 0** so the status bar agrees.
 
-## Bump-on-launch (DL-3, DL-5)
+## The full-screen dock (DL-3, DL-5, TUI-C48)
 
-On interactive launch (**TTY only**), bump the screen with the same `viewportBumpSequence` so the
-session opens at a clean top while preserving anything already in the user's scrollback. Do not bump
-in non-TTY / piped contexts.
+The interactive TUI renders into the **alternate screen** (`render(…, { alternateScreen: true })`),
+with the status bar and prompt pinned to the terminal floor and the conversation in a viewport above
+them. Three rules hold it up:
+
+- **Entering and leaving the alternate screen is Ink's job, not ours.** Ink restores the primary
+  buffer and the user's original content on unmount, a thrown error, `process.exit`, an uncaught
+  exception and SIGINT/SIGTERM/SIGHUP, and correctly no-ops the whole thing on a non-interactive or
+  non-TTY stream. Do not write a second teardown path beside it.
+- **A frame must never be taller than the terminal.** The root box is laid out to exactly the
+  terminal height. A taller frame does not error — it loses its top rows off the top of the screen,
+  which reads as missing content and nothing reports it.
+- **Anything the user must keep is written AFTER unmount.** Ink treats alternate-screen teardown
+  output as disposable, so a final summary or error written during unmount never reaches the
+  restored screen.
 
 ## Launch banner (DL-6 cross-surface consistency, DL-7 graceful degradation, TUI-C33)
 
@@ -196,10 +207,10 @@ rendering supplied by the **surface-agnostic tool-display registry** (TUI-C30,
   kept off the collapsed preview), and the uncapped output/result — **deduped** for shell-shaped
   calls whose result's `<COMMAND_OUTPUT>` body repeats the live output (the live output renders
   once, plus the closing status line).
-- **Honest limitation — committed turns are frozen.** Toggling tool detail only affects the **live
-  and future turns**. Committed turns live in Ink's `<Static>` and never re-fold, so an already-
-  rendered turn won't retro-expand. The notice copy says exactly this ("Applies to new turns").
-  Don't pretend otherwise; document it, don't paper over it.
+- **Toggling tool detail applies to the whole conversation on screen.** Committed turns are
+  ordinary components in a viewport the app owns, so they re-fold with the live one, and the notice
+  copy says exactly that. Keep the copy matched to what the toggle actually reaches — a state-aware
+  notice that overstates or understates its scope is the DL-4 failure it exists to prevent.
 - **The checklist tool renders as a live plan panel.** A `gth_checklist` tool call is NOT shown as a
   generic collapsible panel: it renders a dedicated, always-expanded `📋 Checklist (done/total)` list
   with per-item checkboxes (`[x]` green completed, `[~]` yellow in-progress, `[ ]` dim pending). The
@@ -261,14 +272,11 @@ not chatter (DL-1 no important action is silent). Plain (non-TUI) CLI keeps all 
   `useStdout().columns` and falls back to 80 cols (clamped to ≥1) when width is unknown. Rules
   delimit committed turns and bracket the input dock so the controls read as a distinct zone.
   Anything else that draws a full-width bar takes its width from the same `ruleWidth` math.
-- **Only the live frame follows a resize, and that is accepted.** `Rule` does subscribe to the
-  stdout `resize` event, but that only reaches the live region — the dock and the running turn.
-  Committed turns render inside Ink's `<Static>`, which emits each item exactly once, so a rule
-  already in the scrollback (a turn separator, or one the markdown renderer drew) keeps the width
-  it was committed at: widening leaves it short, narrowing wraps it. This is how terminal
-  scrollback works and it is **not** a defect to fix. In particular, do not chase it with a further
-  resize subscription or by re-keying `<Static>` — Ink cannot rewrite output it has already
-  emitted, and forcing a re-print duplicates the whole transcript into the scrollback.
+- **The whole frame follows a resize.** Everything on screen is a mounted component, so a rule
+  drawn between two committed turns re-renders at the new width along with the dock. `App` tracks
+  the terminal height the same way `Rule` tracks the width — from the stdout `resize` event —
+  because Ink relays out on `SIGWINCH` without re-rendering React, and a frame that keeps its old
+  height is either short of the floor or overflowing the screen.
 - **Single-line, stable status bar** (`tui/components/StatusBar.tsx`). One dim line carrying
   session context — **mode · model · turn counter · ready** — when idle; a spinner +
   `Thinking… (Esc to interrupt)` while a turn runs. Keep it to one line and free of streaming
@@ -289,12 +297,12 @@ their config has a problem.
   `advisories` prop. Validation itself is untouched (GS2-1 owns it); this only re-surfaces what it
   already produced. Keep the plumbing generic (a plain string list) so other non-fatal startup
   advisories can post here later without a schema change.
-- **A standing line in the live chrome, OUTSIDE `<Static>`.** When there is at least one advisory,
-  `NoticeBar` renders a single yellow line by the status bar: `⚠ Your config has problems · type
-  /config to see details`. It lives in the live (non-`<Static>`) frame (like the status bar and the
-  `⚡ auto-approve ON` badge), so it stays pinned and survives transcript growth rather than
-  flushing away with the write-once scrollback. A clean config renders nothing (no advisories, no
-  line), so the chrome is unchanged when there is nothing to say.
+- **A standing line in the pinned dock.** When there is at least one advisory, `NoticeBar` renders
+  a single yellow line by the status bar: `⚠ Your config has problems · type /config to see
+  details`. It lives in the dock (like the status bar and the `⚡ auto-approve ON` badge), so it
+  stays on screen and survives transcript growth rather than scrolling out of the conversation
+  region. A clean config renders nothing (no advisories, no line), so the chrome is unchanged when
+  there is nothing to say.
 - **The pointer resolves to the detail (DL-2 progressive disclosure).** The standing line is a
   compact pointer, not the full text; `/config` renders the actual validation warnings above the
   resolved summary (and flips to `warn` tone while warnings are present), so the user gets the
@@ -386,26 +394,34 @@ Colour is **meaningful, not decorative**. Use the shared palette consistently:
 - **dim** — secondary/contextual text: body lines, rules, the status bar, system lines.
 - **bold** — the load-bearing line (the notice title; the *what*).
 
-## `<Static>` (committed) vs the live region (DL-2, DL-10)
+## The conversation viewport vs the dock (DL-2, DL-10)
 
-The TUI has two zones and the boundary is a hard design constraint:
+The TUI has two zones, and which one a thing belongs in is a design decision, not a detail:
 
-- **Committed scrollback lives in Ink's `<Static>`** (`tui/components/Transcript.tsx`): each item
-  is written **exactly once**, above the live region, and never re-rendered. This is what gives no
-  flicker and clean native terminal scrollback (DL-10) — and it is **why committed turns are
-  immutable.** You **cannot retro-update a committed turn** (the tool-detail limitation above is a
-  direct consequence). State changes apply to the live / next turn only — say so in the copy.
-- **The live region** (live turn, debug panel, `ClearBanner`, status bar, prompt) is the only part
-  that re-renders. Anything that must update in place, or must survive a `setTranscript([])`, belongs
-  here — not in `<Static>`.
-- **Recall, don't retro-mutate (`/reasoning`, TUI-C18).** Because a committed turn's thinking is
-  frozen collapsed and can never re-expand in place, `/reasoning [n]` **reprints** a past turn's
-  thinking as a *fresh* committed block instead of mutating the old one. No number recalls the most
-  recent turn that recorded thinking; `<n>` recalls that 1-based turn (out-of-range / no-thinking
-  give a friendly notice). The reprint reuses the same `ReasoningPanel` (💭 + cyan `│` gutter, DL-8)
-  so a recalled block looks identical to the original, tagged `Thinking · turn <n> (recalled)`. It is
-  `availableDuringRun` (read-only recall, DL-9). This is the sanctioned pattern for surfacing frozen
-  `<Static>` content: emit anew, never reach back in.
+- **The conversation viewport** (`tui/components/TranscriptViewport.tsx`) holds the committed
+  transcript, the streaming turn and the pre-first-exchange intro. It shows the **tail** of the
+  conversation, pinned to its bottom edge, and mounts **only the items that can reach the visible
+  region** — everything older is unmounted.
+- **The dock** (debug panel, checklist, approval prompt, advisories, status bar, prompt) is pinned
+  to the terminal floor and never scrolls. Anything that must stay on screen regardless of how long
+  the conversation gets belongs here.
+- **DL-10 is a measured budget, not an assurance.** Windowing bought a cost that is **flat in
+  transcript length** — a 2000-turn session renders the same work per frame as a 10-turn one,
+  because the cost tracks the viewport rather than the history. What that budget does NOT cover is
+  terminal *height*: a very tall terminal renders more of the conversation per frame and costs
+  proportionally more. Any change here must keep the flatness, and the suite pins it by asserting
+  the number of mounted transcript components stays bounded as the transcript grows.
+- **Key the window by `item.id`, never by index.** With index keys React keeps one component per
+  slot and swaps its props as the window advances, so nothing scrolling out is ever unmounted — the
+  unmount guarantee above would be false while every test of it still passed.
+- **Recall, don't retro-mutate (`/reasoning`, TUI-C18).** `/reasoning [n]` **reprints** a past
+  turn's thinking as a *fresh* committed block. No number recalls the most recent turn that recorded
+  thinking; `<n>` recalls that 1-based turn (out-of-range / no-thinking give a friendly notice). The
+  reprint reuses the same `ReasoningPanel` (💭 + cyan `│` gutter, DL-8) so a recalled block looks
+  identical to the original, tagged `Thinking · turn <n> (recalled)`. It is `availableDuringRun`
+  (read-only recall, DL-9). Recall keeps the request and its answer next to each other at the bottom
+  of the conversation, where the user is looking, instead of changing something they have scrolled
+  away from.
 
 ## Copy voice (DL-1, beginner-first)
 

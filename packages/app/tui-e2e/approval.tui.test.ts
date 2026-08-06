@@ -71,9 +71,7 @@ test.describe('gth code TUI — EXT-52 lean shell approval prompt (real agent, s
     ).toBeVisible();
     await expect(terminal.getByText('[o]nce', { strict: false })).toBeVisible();
     // ...and the graph is SUSPENDED: the command has not produced its output marker yet.
-    await expect(
-      terminal.getByText('approval-out-marker', { full: true, strict: false })
-    ).not.toBeVisible();
+    await expect(terminal.getByText('approval-out-marker', { strict: false })).not.toBeVisible();
 
     // Grant once.
     terminal.write('o');
@@ -86,9 +84,7 @@ test.describe('gth code TUI — EXT-52 lean shell approval prompt (real agent, s
     await expect(terminal.getByText('Approved this single invocation only.')).toBeVisible();
 
     // The resumed run executed the command (its OUTPUT marker appears) and concluded.
-    await expect(
-      terminal.getByText('approval-out-marker', { full: true, strict: false })
-    ).toBeVisible();
+    await expect(terminal.getByText('approval-out-marker', { strict: false })).toBeVisible();
     await expect(
       terminal.getByText('approval-final-answer-marker', { strict: false })
     ).toBeVisible();
@@ -133,9 +129,7 @@ test.describe('gth code TUI — EXT-52 reject keeps the command from running', (
       terminal.getByText('approval-final-answer-marker', { strict: false })
     ).toBeVisible();
     await expect(terminal.getByText('turns: 1  ·  ready', { strict: false })).toBeVisible();
-    await expect(
-      terminal.getByText('approval-out-marker', { full: true, strict: false })
-    ).not.toBeVisible();
+    await expect(terminal.getByText('approval-out-marker', { strict: false })).not.toBeVisible();
   });
 });
 
@@ -182,9 +176,7 @@ test.describe('gth code TUI — EXT-52/CFG-27 rung switching restores prompting 
     terminal.write('run it');
     await expect(terminal.getByText('> run it')).toBeVisible();
     terminal.submit();
-    await expect(
-      terminal.getByText('approval-out-marker', { full: true, strict: false })
-    ).toBeVisible();
+    await expect(terminal.getByText('approval-out-marker', { strict: false })).toBeVisible();
     await expect(terminal.getByText('turns: 1  ·  ready', { strict: false })).toBeVisible();
     await expect(
       terminal.getByText('The agent wants to run a shell command via run_shell_command')

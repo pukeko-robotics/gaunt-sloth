@@ -54,8 +54,7 @@ function ToolBodyLine({ line }: { line: ToolDisplayLine }): React.ReactElement {
  *   "Executing" notice, and the uncapped formatter output (deduped for shell calls whose
  *   result repeats the live output).
  *
- * The whole turn's tool calls expand together via the App-level toggle; committed turns are
- * frozen in Ink's `<Static>` and cannot re-fold.
+ * The whole turn's tool calls expand together via the App-level toggle.
  */
 function ToolCallPanel({
   tc,

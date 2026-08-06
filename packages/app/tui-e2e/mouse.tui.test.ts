@@ -242,7 +242,7 @@ test.describe('gth chat TUI — mouse input (greeting fixture)', () => {
     await expect(terminal.getByText('> hello')).toBeVisible();
     terminal.submit();
 
-    await expect(terminal.getByText('fixture agent', { full: true })).toBeVisible();
+    await expect(terminal.getByText('fixture agent')).toBeVisible();
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
   });
 

@@ -166,6 +166,31 @@ describe('startSession reads the tui config key off disk (CFG-37 wiring)', () =>
     expect(interactiveSessionMock.createInteractiveSession).toHaveBeenCalledTimes(1);
   });
 
+  // TUI-C48 — the seam between the two nodes, and the half neither of them covers on its own.
+  //
+  // CFG-37 made `tui: false` a real persistent opt-out and the tests above prove it reaches the
+  // dispatch. What TUI-C48 changes is what the opt-out is FOR: the surface it avoids now takes over
+  // the whole terminal (the alternate screen, entered inside `createTuiSession` and nowhere else —
+  // pinned in `tuiSessionModule.spec`). So the property that matters is not merely "readline was
+  // chosen" but "readline was handed the session unchanged, and nothing touched the terminal".
+  //
+  // The two halves are asserted together deliberately: a dispatcher that called BOTH surfaces would
+  // satisfy the readline half alone, and a dispatcher that dropped the message would satisfy the
+  // "no TUI" half alone.
+  it('hands an opted-out session to readline unchanged, and never enters the alternate screen', async () => {
+    writeGlobalConfig({ llm: LLM_SPEC, tui: false });
+
+    const { startSession } = await import('#src/modules/startSession.js');
+    await startSession(sessionConfig, {}, 'do the thing');
+
+    expect(tuiSessionMock.createTuiSession).not.toHaveBeenCalled();
+    expect(interactiveSessionMock.createInteractiveSession).toHaveBeenCalledTimes(1);
+    const [passedSessionConfig, , passedMessage] =
+      interactiveSessionMock.createInteractiveSession.mock.calls[0];
+    expect(passedSessionConfig).toBe(sessionConfig);
+    expect(passedMessage).toBe('do the thing');
+  });
+
   it('auto-detects (TUI here) when a real config sets no tui key at all', async () => {
     writeProjectConfig({ llm: LLM_SPEC });
 

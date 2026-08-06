@@ -4,6 +4,7 @@ import { render } from 'ink-testing-library';
 import type { AgentStreamEvent } from '@gaunt-sloth/core/core/types.js';
 import type { TuiAgent } from '#src/tui/types.js';
 import { App } from '#src/tui/components/App.js';
+import { FALLBACK_TERMINAL_ROWS } from '#src/tui/useTerminalRows.js';
 
 /** A fake agent that replays a fixed event script for each turn. */
 function scriptedAgent(events: AgentStreamEvent[]): TuiAgent {
@@ -870,9 +871,10 @@ describe('tui <App>', () => {
   });
 
   it('/clear shows the "history cleared" banner as visible feedback (TUI-C12)', async () => {
-    // The old one-line "Transcript cleared." was swallowed because clearing <Static>'s items
-    // resets its internal index. The banner now renders outside <Static>, so it must be present
-    // in the live frame after a /clear.
+    // A clear that says nothing reads as a command that did nothing (DL-1), so the banner is the
+    // feedback — and its second line has to describe the clear that actually happened: in the
+    // full-screen dock the transcript is a buffer this app owns, so clearing it is a deletion and
+    // there is no scrollback to send the user back to.
     const agent = scriptedAgent([{ type: 'text', delta: 'hi there' }]);
     const { stdin, lastFrame, unmount } = render(
       <App {...baseProps} agent={agent} initialMessage="remember this" />
@@ -888,43 +890,52 @@ describe('tui <App>', () => {
 
     await vi.waitFor(() => {
       const f = lastFrame() ?? '';
-      expect(f).toContain('History cleared'); // banner line 1
-      expect(f).toContain('Scroll up'); // banner hint line
+      expect(f).toContain('History cleared'); // banner title
+      expect(f).toContain('The model no longer sees the prior conversation.');
+      expect(f).toContain('gone from this session');
     });
+    // …and it must NOT promise a scrollback that the alternate screen does not have.
+    expect(lastFrame() ?? '').not.toContain('Scroll up');
 
     unmount();
   });
 
-  it('/clear bumps the viewport (scroll + clear) without erasing scrollback, and resets the Ink frame (TUI-C12)', async () => {
-    // /clear must scroll the prior conversation up + clear the *visible* screen (ESC[H / ESC[J)
-    // but never emit ESC[3J (which would destroy scrollback), and must reset Ink's frame
-    // accounting via onResetFrame so the re-render lands cleanly at the top.
-    let resetFrameCalls = 0;
+  it('/clear empties the owned transcript and writes NO terminal escapes (TUI-C48)', async () => {
+    // TUI-C12 chose a scroll-and-clear "bump up" that preserved the terminal's own scrollback.
+    // That choice was correct then and is re-decided here rather than silently broken: in the
+    // alternate screen there is no scrollback to preserve and the transcript is a buffer this app
+    // owns, so emptying that buffer IS the clear. Asserting the ABSENCE of the old escapes is what
+    // catches the bump being reinstated by a merge or a well-meaning "restore the clear" change.
     const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
     const { stdin, stdout, lastFrame, unmount } = render(
-      <App
-        {...baseProps}
-        agent={agent}
-        initialMessage="go"
-        onResetFrame={() => {
-          resetFrameCalls += 1;
-        }}
-      />
+      <App {...baseProps} agent={agent} initialMessage="go" />
     );
 
     await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('go'));
+    const before = stdout.frames.length;
 
     stdin.write('/clear');
     await vi.waitFor(() => expect(lastFrame()).toContain('/clear'));
     stdin.write('\r');
 
-    await vi.waitFor(() => expect(resetFrameCalls).toBe(1));
+    // The conversation really is gone from the viewport — the user line committed above it no
+    // longer renders — and the counter is back to zero.
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).toContain('History cleared');
+      expect(f).toContain('turns: 0');
+      expect(f).not.toContain('You › go');
+    });
 
-    const written = stdout.frames.join('');
-    expect(written).toContain('\x1b[H'); // cursor home
-    expect(written).toContain('\x1b[J'); // clear to end of *visible* screen
-    expect(written).toContain('\n'); // newlines that bump prior content into scrollback
-    expect(written).not.toContain('\x1b[3J'); // must NOT erase scrollback
+    // Nothing the app wrote since the clear is a viewport-bump escape. The three that must not
+    // appear are exactly the ones `viewportBumpSequence` emitted, so reinstating it turns this
+    // red. (Blank rows are NOT a signal here: a full-screen frame legitimately pads the region
+    // above a short conversation, so counting newlines would pass on anything.)
+    const writtenSinceClear = stdout.frames.slice(before).join('');
+    expect(writtenSinceClear).not.toContain('\x1b[H');
+    expect(writtenSinceClear).not.toContain('\x1b[J');
+    expect(writtenSinceClear).not.toContain('\x1b[3J');
 
     unmount();
   });
@@ -951,8 +962,8 @@ describe('tui <App>', () => {
   });
 
   it('/verbose commits a state-aware notice confirming the new fold state while idle (TUI-C9/C14)', async () => {
-    // Committed turns are frozen in <Static> and cannot re-fold, so /verbose while idle would be
-    // a silent no-op; instead it must confirm the new state via a visible notice.
+    // /verbose while idle must confirm the new state via a visible notice rather than reading as
+    // a command that did nothing (DL-1).
     const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
     const { stdin, lastFrame, frames, unmount } = render(<App {...baseProps} agent={agent} />);
 
@@ -1049,9 +1060,8 @@ describe('tui <App>', () => {
   });
 
   it('/verbose sets the tool-call detail mode applied to the (live) turn that follows', async () => {
-    // A blocking agent so the turn stays live for the assertion. Committed turns live in
-    // Ink's <Static> and are frozen once written, so the collapsible affordance is a
-    // live-turn concern; /verbose sets the mode that the next live turn picks up.
+    // A blocking agent so the turn stays live for the assertion: /verbose sets the mode that the
+    // live turn picks up.
     const agent: TuiAgent = {
       async *runTurn(_input, signal) {
         yield { type: 'tool_start', id: 't1', name: 'read_file' };
@@ -1362,8 +1372,8 @@ describe('tui <App>', () => {
     });
   });
 
-  // TUI-C19 — persistent config-advisory line in the chrome (outside <Static>), plus /config
-  // surfacing the actual warning text.
+  // TUI-C19 — persistent config-advisory line in the pinned dock, plus /config surfacing the
+  // actual warning text.
   describe('config-advisory notice (TUI-C19)', () => {
     const CONFIG_WARNING =
       'Unknown top-level config key in .gsloth.config.json: pullrequest. It is kept as-is but ignored by Gaunt Sloth; check for typos.';
@@ -1398,39 +1408,42 @@ describe('tui <App>', () => {
       unmount();
     });
 
-    it('renders the line in the dock chrome OUTSIDE <Static> — below the transcript, above the status bar', async () => {
-      // ink-testing-library renders with Ink's debug mode, so every frame is a full composite of
-      // all committed <Static> output + the live region — a plain `frame.toContain(line)` after a
-      // turn therefore CANNOT discriminate Static from non-Static placement (both show up). The
-      // real discriminator is POSITION: Ink lays the tree out top-to-bottom, so the write-once
-      // <Static> transcript sits at the TOP and the live dock chrome (Rule → NoticeBar → StatusBar
-      // → prompt) at the BOTTOM. So the standing advisory line must appear:
-      //   - AFTER the committed transcript text (it's below the scrollback, not interleaved in it),
-      //   - and BEFORE the status-bar 'ready' segment (it sits with the dock chrome).
-      // If NoticeBar were (mis)placed inside <Transcript>'s <Static>, it would render at the top,
-      // ABOVE the transcript text, and the first assertion would flip red.
+    it('renders the line in the pinned dock — below the conversation, above the status bar', async () => {
+      // TUI-C48 replaced this test's mechanism rather than porting it. It used to discriminate by
+      // <Static> placement (committed output at the top, live chrome after it), and <Static> is
+      // gone. The full-screen layout gives a stronger discriminator in its place: the dock is the
+      // LAST rows of a frame that is exactly the terminal height, so the advisory line's position
+      // can be checked against the terminal floor rather than against a render-order convention.
+      //
+      // The three assertions below fail for three different mistakes: putting NoticeBar inside the
+      // conversation viewport (it would sit above the committed text, or scroll out of it),
+      // putting it below the status bar, or letting the frame stop short of the terminal floor.
       const agent = scriptedAgent([{ type: 'text', delta: 'committed answer' }]);
       const { lastFrame, unmount } = render(
         <App {...baseProps} agent={agent} advisories={[CONFIG_WARNING]} initialMessage="hello" />
       );
 
-      // Turn commits (assistant text in <Static>) and the session returns to idle (status bar shows
-      // 'ready'), so the frame now contains both the transcript content and the full dock chrome.
       await vi.waitFor(() => {
         const frame = lastFrame() ?? '';
         expect(frame).toContain('committed answer');
         expect(frame).toContain('ready');
       });
 
-      const frame = lastFrame() ?? '';
-      const linePos = frame.indexOf(STANDING_LINE);
-      const transcriptPos = frame.indexOf('committed answer');
-      const statusPos = frame.indexOf('ready');
-      expect(linePos).toBeGreaterThan(-1); // present at all (advisories → shown)
-      // Below the committed transcript (outside/after the write-once <Static> region)…
-      expect(linePos).toBeGreaterThan(transcriptPos);
-      // …and up in the dock with the status bar (pinned live chrome, not the scrollback).
-      expect(linePos).toBeLessThan(statusPos);
+      const rows = (lastFrame() ?? '').split('\n');
+      const rowOf = (needle: string) => rows.findIndex((line) => line.includes(needle));
+      const lineRow = rowOf(STANDING_LINE);
+      const transcriptRow = rowOf('committed answer');
+      const statusRow = rowOf('chat');
+
+      // Present at all (advisories → shown), and below the committed conversation.
+      expect(lineRow).toBeGreaterThan(-1);
+      expect(lineRow).toBeGreaterThan(transcriptRow);
+      // …up in the dock with the status bar…
+      expect(lineRow).toBeLessThan(statusRow);
+      // …and the dock really is the floor: the status bar sits in the last handful of rows of a
+      // frame that fills the terminal, not somewhere in the middle of it.
+      expect(rows.length).toBe(FALLBACK_TERMINAL_ROWS);
+      expect(statusRow).toBeGreaterThan(rows.length - 6);
 
       unmount();
     });

@@ -5,20 +5,17 @@
  * itself, which is the point — the arithmetic has exactly one tricky step and it should be wrong or
  * right in one place rather than in each consumer.
  *
- * **The one tricky step.** A terminal reports clicks in ABSOLUTE screen cells: row 0 is the top of
- * the visible viewport, not the top of anything Ink drew. So a region's position within the live
- * frame has to be offset by where that frame starts on screen, which is {@link liveRegionOrigin}.
+ * **The one tricky step, and why it is no longer tricky.** A terminal reports clicks in ABSOLUTE
+ * screen cells: row 0 is the top of the visible viewport, not the top of anything Ink drew. Ink
+ * paints its frame at the cursor, so where that frame starts used to depend on how much output had
+ * scrolled past — exact at launch, exact once the screen had filled, and unresolvable in between.
+ * TUI-C48's full-screen frame is laid out to the whole terminal height, so it starts at screen row
+ * 0 unconditionally and a region's offset within the frame IS its screen row.
  *
- * Where that is depends on how much has been printed. Ink paints the frame at the cursor, so at
- * launch it starts at row 0 with empty screen below, and only once output has scrolled the viewport
- * does it end on the last row. Assuming one or the other unconditionally is the single easiest way
- * to make every click land somewhere the user did not press.
- *
- * **`<Static>` content is out of reach, permanently.** Committed turns are written into real
- * scrollback; Ink cannot re-render them and the terminal reports nothing that distinguishes a click
- * on scrolled-off history from a click on the row that now occupies that cell. Clicks therefore
- * resolve against the live region only. That is a property of the terminal, not a gap to fill in
- * later — consumers should design for it rather than try to defeat it.
+ * **Everything on screen is in reach.** The transcript is a viewport the app owns and re-renders,
+ * so a click on a committed turn lands on a mounted component rather than on terminal scrollback
+ * that Ink could neither address nor redraw. What a click cannot reach is conversation scrolled out
+ * of the viewport — it is not on screen, so the terminal never reports a cell for it.
  */
 
 import type { MouseEvent } from '#src/tui/mouseParser.js';
@@ -44,28 +41,6 @@ export interface HitRegionEvent extends MouseEvent {
 }
 
 export type HitRegionHandler = (event: HitRegionEvent) => void;
-
-/**
- * Where the live region's first row sits in absolute screen coordinates.
- *
- * **Ink does not pin the live frame to the bottom of the screen — it paints wherever the cursor
- * is.** That only coincides with the bottom once enough output has scrolled the screen full. At
- * launch it is the opposite: the TUI-C13 viewport bump homes the cursor, so the first frame is
- * painted at row 0 with the rest of the screen empty below it. Assuming the bottom there puts every
- * hit region a dozen rows below where it is drawn, which is why `rowsAbove` exists.
- *
- * `rowsAbove` is how much committed output sits above the frame. The frame starts there, unless
- * that would push it past the bottom of the screen — once content exceeds the viewport, the
- * terminal has scrolled and the frame ends on the last row.
- *
- * **The result is deliberately allowed to go negative, and must not be clamped.** When the frame is
- * taller than the window its top rows have scrolled off above the screen, so it starts at a row the
- * viewport cannot show — a 30-row frame in a 24-row terminal starts at -6, and the region sitting at
- * frame row 10 is on screen row 4. Clamping to 0 would shift every target down by the overflow.
- */
-export function liveRegionOrigin(terminalRows: number, liveHeight: number, rowsAbove = 0): number {
-  return Math.min(rowsAbove, terminalRows - liveHeight);
-}
 
 /** Is an absolute cell inside this region, given where the live frame starts on screen? */
 export function regionContains(region: HitRegion, row: number, column: number, origin: number) {

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Text, useApp, useInput, useStdout } from 'ink';
+import { Box, Text, useApp, useInput } from 'ink';
 import {
   foldEvents,
   foldSubagentEvents,
@@ -12,7 +12,7 @@ import type { PendingApproval, TranscriptItem, TuiAppProps } from '#src/tui/type
 import type { ToolApprovalScope } from '@gaunt-sloth/core/core/types.js';
 import type { ApprovalRung } from '@gaunt-sloth/core/config.js';
 import { buildRejectionMessage } from '@gaunt-sloth/core/core/shell/rejection.js';
-import { Transcript } from '#src/tui/components/Transcript.js';
+import { TranscriptViewport } from '#src/tui/components/TranscriptViewport.js';
 import { ApprovalPrompt } from '#src/tui/components/ApprovalPrompt.js';
 import { LiveTurn, ChecklistPanel } from '#src/tui/components/LiveTurn.js';
 import { extractActiveChecklist } from '#src/tui/viewModel.js';
@@ -39,7 +39,7 @@ import {
   parseSlashCommand,
   toolsToggleNotice,
 } from '@gaunt-sloth/agent/modules/slashCommands.js';
-import { viewportBumpSequence } from '#src/tui/terminal.js';
+import { useTerminalRows } from '#src/tui/useTerminalRows.js';
 import { findMatches, scrollOffsetForLine, stepMatch } from '#src/tui/debugSearch.js';
 
 /** Rows of clipping viewport in the docked debug panel (default / restored size). */
@@ -111,10 +111,8 @@ export function App(props: TuiAppProps): React.ReactElement {
   // Mirror for the synchronous approval useInput handler, so `y` can read the current posture
   // without a stale closure.
   const approvalsRef = useRef(props.initialApprovals);
-  // Whether to show the post-`/clear` "history cleared" banner. Lives in the live (non-Static)
-  // frame so it is reliably visible — pushing a system line right after setTranscript([]) is
-  // swallowed because clearing <Static>'s items resets its internal index (TUI-C12). Hidden
-  // again the moment the next user turn starts so it doesn't linger above a fresh conversation.
+  // Whether to show the post-`/clear` "history cleared" banner. Hidden again the moment the next
+  // user turn starts so it doesn't linger above a fresh conversation.
   const [clearedBanner, setClearedBanner] = useState(false);
   // Tool-approval queue (EXT-9 Phase B2). The head record (if any) is the approval currently
   // shown; while it is non-null the approval prompt OWNS keyboard input and the normal prompt is
@@ -144,9 +142,11 @@ export function App(props: TuiAppProps): React.ReactElement {
   // the top-level Tab handler (debug-panel focus) stands down while the menu is open.
   const slashMenuActiveRef = useRef(false);
   const { exit } = useApp();
-  // Terminal height drives the maximised viewport size; useStdout keeps it resize-aware.
-  const { stdout } = useStdout();
-  const terminalRows = stdout?.rows;
+  // TUI-C48 — the full-screen frame is exactly this tall, which is what pins the dock to the
+  // terminal floor AND what stops a frame from overflowing the screen (a taller frame loses its
+  // top rows silently, as missing content rather than as an error). It also drives the maximised
+  // debug viewport, and it is resize-aware: Ink relays out on SIGWINCH but does not re-render.
+  const terminalRows = useTerminalRows();
   const debugViewport = debugViewportHeight(debugMaximized, terminalRows);
   // PageUp/PageDown step tracks the live viewport so maximise pages by (almost) a full screen.
   const debugPageStep = Math.max(1, debugViewport - 1);
@@ -287,8 +287,6 @@ export function App(props: TuiAppProps): React.ReactElement {
 
   // Flip the tool-detail mode and commit the matching notice. Single-sourced so the `/verbose`
   // command and the Ctrl+T key handler give the user identical, state-aware feedback (TUI-C14).
-  // Committed turns are frozen in Ink's <Static> and never re-fold, so this only affects the
-  // live / next turn — the notice copy says exactly that.
   const toggleTools = useCallback(() => {
     const next = !toolsExpandedRef.current;
     toolsExpandedRef.current = next;
@@ -517,16 +515,14 @@ export function App(props: TuiAppProps): React.ReactElement {
           setDebugTools([]);
           setDebugMcp([]);
           setDebugResponse([]);
-          // Show visible feedback for the clear. Rendered outside <Static> (see clearedBanner)
-          // so the known index-reset swallow quirk can't eat it (TUI-C12).
+          // Show visible feedback for the clear.
+          //
+          // TUI-C48 re-decided the mechanism, it did not silently break it. TUI-C12 chose a
+          // scroll-and-clear "bump up" that deliberately preserved the terminal's own scrollback
+          // and never emitted ESC[3J. In the alternate screen there is no scrollback to preserve
+          // and the transcript is a buffer we own, so emptying that buffer IS the clear: the
+          // viewport re-renders with nothing in it and no terminal escape is written at all.
           setClearedBanner(true);
-          // "Bump up" the screen the clear/Ctrl+L way: scroll the prior conversation up and out
-          // of the visible viewport (it stays in scrollback — we never emit ESC[3J), so the
-          // session restarts at the top. We write the sequence ourselves and then reset Ink's
-          // frame accounting (onResetFrame → instance.clear()) so the next render lands cleanly
-          // at the top with no leftover artifacts.
-          stdout?.write(viewportBumpSequence(stdout?.rows));
-          props.onResetFrame?.();
           // Clearing only the on-screen transcript would leave the model's conversation
           // thread intact (the LangGraph checkpointer replays it on the next turn), so the
           // model would still "remember" everything. Reset the agent's thread too so the
@@ -572,8 +568,8 @@ export function App(props: TuiAppProps): React.ReactElement {
             return next;
           });
         }
-        // TUI-C18 — /reasoning reprint: commit a reasoning block that reuses the TUI-C15 styling
-        // (the original committed turn is frozen in <Static> and can't re-expand in place).
+        // TUI-C18 — /reasoning reprint: commit a reasoning block that reuses the TUI-C15 styling,
+        // tagged with the turn it was recalled from so a recalled block is self-describing.
         if (result.reprintReasoning) {
           push({ kind: 'reasoning', ...result.reprintReasoning });
         }
@@ -850,94 +846,104 @@ export function App(props: TuiAppProps): React.ReactElement {
   return (
     // TUI-C37 — the provider measures this frame and owns the hit-region registry, so a component
     // anywhere below can claim a clickable rectangle without knowing where the frame sits on screen.
-    <MouseProvider
-      subscribe={props.subscribeMouse}
-      enabled={mouseEnabled}
-      // TUI-C40 — until something is committed to <Static>, the launch bump has homed the cursor
-      // and Ink paints this frame from row 0 with empty screen below. Once output starts scrolling
-      // past, the frame ends on the last row instead. Getting this wrong puts every hit region a
-      // dozen rows from where it is drawn, which is exactly what the banner click surfaced.
-      anchor={transcript.length === 0 ? 'top' : 'bottom'}
-    >
-      <Transcript items={transcript} toolsExpanded={toolsExpanded} />
-      {clearedBanner ? <ClearBanner /> : null}
-      {/* TUI-C33 — the ASCII-art launch banner, ABOVE the ready message and on the same intro
-          lifecycle, so it greets the user on arrival and gets out of the way once the conversation
-          starts. `showLaunchBanner` carries the session module's stdout.isTTY gate. */}
-      {showIntro && props.showLaunchBanner ? (
-        <LaunchBanner model={modelDisplayName} provider={props.modelProviderType} />
-      ) : null}
-      {showIntro ? <Text dimColor>{readyMessage.trim()}</Text> : null}
-      {live ? <LiveTurn turn={live} toolsExpanded={toolsExpanded} streaming /> : null}
-      {/* Docked debug/subagent panel: full-width, below the transcript / live turn and above
-          the input dock. Lives in the live (non-static) frame, so it coexists with the
-          <Static> scrollback. Toggled by /debug; Tab focuses it for PageUp/PageDown scrolling. */}
-      {debugVisible ? (
-        <DebugPanel
-          subagents={subagents}
-          historyLines={debugHistory}
-          systemLines={debugSystem}
-          toolsLines={debugTools}
-          mcpLines={debugMcp}
-          responseLines={debugResponse}
-          activeTab={debugTab}
-          scrollOffset={debugScroll}
-          focused={debugFocused}
-          viewportHeight={debugViewport}
-          maximized={debugMaximized}
-          searchQuery={debugSearchQuery}
-          searchActive={debugSearchInput}
-          matchCount={debugMatches.length}
-          currentMatchIndex={debugSearchCurrent}
-          currentMatchLine={currentMatchLine}
-        />
-      ) : null}
-      {/* Input dock: bracketed top and bottom by rules so the status bar, prompt and hint
-          read as a distinct control zone rather than blending into the scrollback. */}
-      {/* Pinned active checklist panel */}
-      {activeChecklist ? <ChecklistPanel items={activeChecklist} /> : null}
-      {/* Tool-approval affordance (EXT-9 Phase B2): when an approval is pending it sits just above
+    <MouseProvider subscribe={props.subscribeMouse} enabled={mouseEnabled}>
+      {/* TUI-C48 — the full-screen frame. Its height is EXACTLY the terminal height, which does
+          three things at once: it pins the dock below to the terminal floor, it anchors the frame
+          at screen row 0 in the alternate screen (a short first frame paints wherever the cursor
+          happened to be), and it is the clamp — a frame taller than the screen loses its top rows
+          silently, as missing content rather than as an error. */}
+      <Box flexDirection="column" height={terminalRows}>
+        {/* The conversation region: the tail of the transcript, then the streaming turn and the
+            intro chrome, pinned to the bottom of whatever the dock leaves. */}
+        <TranscriptViewport
+          items={transcript}
+          budgetRows={terminalRows}
+          toolsExpanded={toolsExpanded}
+        >
+          {clearedBanner ? <ClearBanner /> : null}
+          {/* TUI-C33 — the ASCII-art launch banner, ABOVE the ready message and on the same intro
+              lifecycle, so it greets the user on arrival and gets out of the way once the
+              conversation starts. `showLaunchBanner` carries the session module's isTTY gate. */}
+          {showIntro && props.showLaunchBanner ? (
+            <LaunchBanner model={modelDisplayName} provider={props.modelProviderType} />
+          ) : null}
+          {showIntro ? <Text dimColor>{readyMessage.trim()}</Text> : null}
+          {live ? <LiveTurn turn={live} toolsExpanded={toolsExpanded} streaming /> : null}
+        </TranscriptViewport>
+        {/* The dock: everything from here down is pinned to the terminal floor and never scrolls.
+            `flexShrink: 0` is what makes the conversation region — not the controls — give up the
+            rows when the terminal is short. */}
+        <Box flexDirection="column" flexShrink={0}>
+          {/* Docked debug/subagent panel: full-width, above the input dock. Toggled by /debug;
+          Tab focuses it for PageUp/PageDown scrolling. */}
+          {debugVisible ? (
+            <DebugPanel
+              subagents={subagents}
+              historyLines={debugHistory}
+              systemLines={debugSystem}
+              toolsLines={debugTools}
+              mcpLines={debugMcp}
+              responseLines={debugResponse}
+              activeTab={debugTab}
+              scrollOffset={debugScroll}
+              focused={debugFocused}
+              viewportHeight={debugViewport}
+              maximized={debugMaximized}
+              searchQuery={debugSearchQuery}
+              searchActive={debugSearchInput}
+              matchCount={debugMatches.length}
+              currentMatchIndex={debugSearchCurrent}
+              currentMatchLine={currentMatchLine}
+            />
+          ) : null}
+          {/* Input dock: bracketed top and bottom by rules so the status bar, prompt and hint
+          read as a distinct control zone rather than blending into the conversation. */}
+          {/* Pinned active checklist panel */}
+          {activeChecklist ? <ChecklistPanel items={activeChecklist} /> : null}
+          {/* Tool-approval affordance (EXT-9 Phase B2): when an approval is pending it sits just above
           the input dock, owns the keyboard, and suspends the normal prompt below. */}
-      {pendingApproval ? <ApprovalPrompt pending={pendingApproval.pending} /> : null}
-      <Rule />
-      {/* TUI-C19 — persistent startup-advisory line. Lives here in the live (non-<Static>) chrome,
-          right by the status bar, so a config-validation warning stays pinned and survives
-          transcript growth instead of scrolling away the moment Ink takes over (DL-1). Renders
-          nothing when there are no advisories. */}
-      <NoticeBar advisories={props.advisories} />
-      {/* Companion to NoticeBar for MCP connection failures (own line, own pointer → /debug MCP
+          {pendingApproval ? <ApprovalPrompt pending={pendingApproval.pending} /> : null}
+          <Rule />
+          {/* TUI-C19 — persistent startup-advisory line. Lives here in the pinned dock, right by the
+          status bar, so a config-validation warning stays on screen and survives transcript
+          growth instead of scrolling out of the conversation region (DL-1). Renders nothing when
+          there are no advisories. */}
+          <NoticeBar advisories={props.advisories} />
+          {/* Companion to NoticeBar for MCP connection failures (own line, own pointer → /debug MCP
           tab). Without it a failed MCP server is invisible in the TUI — the connect-time
           displayWarning scrolls under Ink's first frame. */}
-      <McpFailureBar failures={props.mcpFailures} />
-      <StatusBar
-        running={running}
-        mode={mode}
-        modelDisplayName={modelDisplayName}
-        turnCount={turnCount}
-        debugHint={debugVisible && !debugFocused}
-        approvals={
-          approvals
-            ? {
-                rung: approvals.rung,
-                raterProfile: approvals.rater,
-              }
-            : undefined
-        }
-      />
-      {/* The prompt stays mounted while a turn streams (EXT-12), so the user can run mid-turn
+          <McpFailureBar failures={props.mcpFailures} />
+          <StatusBar
+            running={running}
+            mode={mode}
+            modelDisplayName={modelDisplayName}
+            turnCount={turnCount}
+            debugHint={debugVisible && !debugFocused}
+            approvals={
+              approvals
+                ? {
+                    rung: approvals.rung,
+                    raterProfile: approvals.rater,
+                  }
+                : undefined
+            }
+          />
+          {/* The prompt stays mounted while a turn streams (EXT-12), so the user can run mid-turn
           slash commands like /approvals; handleSubmit + dispatch gate what's allowed then. It
           is suspended only when the debug panel is focused or a tool approval owns the keyboard. */}
-      {!debugFocused && !pendingApproval ? (
-        <PromptInput
-          onSubmit={handleSubmit}
-          commands={registry}
-          onMenuStateChange={(active) => {
-            slashMenuActiveRef.current = active;
-          }}
-        />
-      ) : null}
-      <Text dimColor>{exitMessage.trim()}</Text>
-      <Rule />
+          {!debugFocused && !pendingApproval ? (
+            <PromptInput
+              onSubmit={handleSubmit}
+              commands={registry}
+              onMenuStateChange={(active) => {
+                slashMenuActiveRef.current = active;
+              }}
+            />
+          ) : null}
+          <Text dimColor>{exitMessage.trim()}</Text>
+          <Rule />
+        </Box>
+      </Box>
     </MouseProvider>
   );
 }

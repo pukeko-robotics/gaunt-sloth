@@ -67,9 +67,9 @@ export function LaunchBanner({
   const rows = launchBannerRows({ ...fields, columns: columns ?? liveColumns, face });
 
   // Claim the whole block as clickable. `useHitRegion` is inert when mouse is off or the surface has
-  // no mouse layer, so this costs a keyboard-only session nothing. The banner lives in the live
-  // region at launch and scrolls into <Static> once the conversation starts, at which point it is
-  // out of reach — expected, and the same boundary every other click affordance has.
+  // no mouse layer, so this costs a keyboard-only session nothing. The banner shows only before
+  // the first exchange and is unmounted once the conversation starts, so it stops being clickable
+  // because it stops existing.
   const ref = useHitRegion('launch-banner', (event) => {
     if (event.type === 'press') play();
   });

@@ -405,9 +405,8 @@ describe('tui <LiveTurn>', () => {
   });
 
   // TUI-C18 — the `/reasoning` reprint renders the exported ReasoningPanel directly (expanded,
-  // non-live) with a turn-tagged label. Asserting the panel itself (not through <Transcript>/<Static>)
-  // because ink-testing-library's lastFrame() returns the last DYNAMIC frame — <Static> content is
-  // written once above it and would be absent here.
+  // non-live) with a turn-tagged label. Asserted on the panel itself so the styling contract is
+  // pinned where it is defined; the viewport that mounts it has its own spec.
   describe('reprinted reasoning block (ReasoningPanel export, TUI-C18)', () => {
     it('carries the recalled thinking text with the TUI-C15 💭 + gutter styling', () => {
       const { lastFrame, unmount } = render(

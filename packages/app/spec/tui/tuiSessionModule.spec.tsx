@@ -115,7 +115,7 @@ const sessionConfig = {
 } as SessionConfig;
 const overrides = {} as CommandLineConfigOverrides;
 
-describe('createTuiSession — launch bump (TUI-C13)', () => {
+describe('createTuiSession — the full-screen surface (TUI-C48)', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     systemUtilsMock.env = {}; // no fixture -> production path
@@ -132,23 +132,64 @@ describe('createTuiSession — launch bump (TUI-C13)', () => {
     });
   });
 
-  it('writes the bump sequence to stdout BEFORE render when stdout is an interactive TTY', async () => {
+  // TUI-C48 — the one seam that makes the session full-screen. Ink owns entering and leaving the
+  // alternate buffer AND restoring the user's original screen on every exit path including signals
+  // (measured), so what this repo has to get right is exactly this option being set — and it is
+  // the sort of thing a refactor drops silently, because nothing else observably changes.
+  it('renders into the alternate screen', async () => {
     const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
 
     await createTuiSession(sessionConfig, overrides);
 
-    expect(systemUtilsMock.stdout.write).toHaveBeenCalledTimes(1);
-    const written = systemUtilsMock.stdout.write.mock.calls[0][0] as string;
-    expect(written).toContain('\n'); // newlines bump prior content into scrollback
-    expect(written).toContain('\x1b[H'); // cursor home
-    expect(written).toContain('\x1b[J'); // clear to end of *visible* screen
-    expect(written).not.toContain('\x1b[3J'); // must NOT erase scrollback
-
-    // Written before Ink paints its first frame.
-    const writeOrder = systemUtilsMock.stdout.write.mock.invocationCallOrder[0];
-    const renderOrder = renderMock.mock.invocationCallOrder[0];
-    expect(writeOrder).toBeLessThan(renderOrder);
     expect(renderMock).toHaveBeenCalledTimes(1);
+    const options = renderMock.mock.calls[0][1] as { alternateScreen?: boolean };
+    expect(options.alternateScreen).toBe(true);
+  });
+
+  it('writes no viewport bump of its own — the alternate screen replaced it', async () => {
+    // The TUI-C13 launch bump pushed a screenful of newlines into the user's scrollback and then
+    // homed the cursor. In the alternate screen that is both pointless and destructive: the buffer
+    // Ink switches to is already blank, and the newlines would scroll the user's real screen away
+    // for nothing. Assert on the BYTES rather than on the absence of a call, because the session
+    // legitimately writes other escapes (see the alternate-scroll block below).
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await createTuiSession(sessionConfig, overrides);
+
+    const written = systemUtilsMock.stdout.write.mock.calls.map((c: unknown[]) => c[0]).join('');
+    expect(written).not.toContain('\n');
+    expect(written).not.toContain('\x1b[H');
+    expect(written).not.toContain('\x1b[J');
+  });
+
+  // TUI-C48 constraint 7 — in the alternate screen a terminal with NO mouse mode set converts wheel
+  // notches into bare Up/Down arrows, which the slash-command menu claims. Exactly one of the two
+  // terminal modes is installed at a time, and this is the pair that proves it: neither "always
+  // suppress" nor "never suppress" passes both halves.
+  describe('alternate-scroll suppression', () => {
+    it('suppresses alternate-scroll when mouse tracking is OFF', async () => {
+      initConfigMock.mockResolvedValue({ useMouse: false });
+      const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+      await createTuiSession(sessionConfig, overrides);
+
+      const written = systemUtilsMock.stdout.write.mock.calls.map((c: unknown[]) => c[0]).join('');
+      expect(written).toContain('\x1b[?1007l');
+      expect(written).not.toContain('\x1b[?1000h');
+    });
+
+    it('leaves alternate-scroll alone when mouse tracking is ON', async () => {
+      // With tracking on the terminal reports the wheel as an SGR event and alternate-scroll never
+      // applies, so touching it would change a user's terminal setting for no reason.
+      initConfigMock.mockResolvedValue({ useMouse: true });
+      const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+      await createTuiSession(sessionConfig, overrides);
+
+      const written = systemUtilsMock.stdout.write.mock.calls.map((c: unknown[]) => c[0]).join('');
+      expect(written).toContain('\x1b[?1000h');
+      expect(written).not.toContain('\x1b[?1007l');
+    });
   });
 
   it('selects the agent backend via resolveAgentFactory(config, "lean") — B5 (regression: TUI path)', async () => {
@@ -200,15 +241,19 @@ describe('createTuiSession — launch bump (TUI-C13)', () => {
     expect(appElement.props.configSummary).not.toContain('Filesystem: none');
   });
 
-  it('does NOT write the bump sequence when stdout is not a TTY (piped/redirected/tests)', async () => {
+  it('still asks for the alternate screen on a non-TTY, because Ink is what no-ops it', async () => {
+    // Ink resolves `alternateScreen` against its own interactive/TTY detection and writes nothing
+    // on a pipe. Gating it here as well would be a second copy of that policy, free to drift — and
+    // the surface that would break is the one nobody watches.
     systemUtilsMock.stdout.isTTY = false;
     const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
 
     await createTuiSession(sessionConfig, overrides);
 
-    expect(systemUtilsMock.stdout.write).not.toHaveBeenCalled();
-    // The session still mounts the app — only the cosmetic bump is suppressed.
     expect(renderMock).toHaveBeenCalledTimes(1);
+    expect((renderMock.mock.calls[0][1] as { alternateScreen?: boolean }).alternateScreen).toBe(
+      true
+    );
   });
 
   // TUI-C33 — the banner is terminal chrome, so it must be gated on stdout being a real TTY on

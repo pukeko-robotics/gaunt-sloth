@@ -36,6 +36,43 @@ async function waitForExit(
   return null;
 }
 
+/**
+ * The terminal's own rows, with `serialize()`'s framing box stripped.
+ *
+ * `serialize().view` wraps the viewport in a box, so row 0 and the last row are border art and each
+ * real row arrives as `│<cells>│`. Index 0 of what this returns is screen row 0.
+ */
+const screenRows = (terminal: Terminal): string[] =>
+  terminal
+    .serialize()
+    .view.split('\n')
+    .slice(1, -1)
+    .map((line) => line.replace(/^│/, '').replace(/│$/, ''));
+
+/**
+ * Wait for the repaint that follows a resize, then return the screen.
+ *
+ * A resize is asynchronous end to end — SIGWINCH, Ink's relayout, React's re-render — so reading
+ * the buffer straight after `terminal.resize()` reads the pre-resize frame. Polling on the row
+ * count alone would NOT do: `serialize()` reports the terminal's height whatever the app painted,
+ * so a frame left at its old height would satisfy it while sitting several rows short of the floor.
+ * The condition polled for is therefore the dock actually reaching the last row — and when it never
+ * does, this throws instead of letting the assertions below run against a half-resized screen.
+ */
+async function screenAfterResize(terminal: Terminal, rows: number): Promise<string[]> {
+  const deadline = Date.now() + 15_000;
+  let current: string[] = [];
+  while (Date.now() < deadline) {
+    current = screenRows(terminal);
+    if (current.length === rows && /^─+$/.test((current[rows - 1] ?? '').trim())) return current;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `the dock never reached row ${rows - 1} of a ${rows}-row terminal ` +
+      `(frame was ${current.length} rows, last row ${JSON.stringify(current[current.length - 1])})`
+  );
+}
+
 test.describe('gth chat TUI — greeting fixture', () => {
   test.use({
     program: { file: 'node', args: [cli, 'chat', '--tui'] },
@@ -95,22 +132,104 @@ test.describe('gth chat TUI — greeting fixture', () => {
     terminal.write('hello');
     await expect(terminal.getByText('> hello')).toBeVisible();
     terminal.submit();
-    await expect(terminal.getByText('read_file', { full: true })).toBeVisible();
-    await expect(terminal.getByText('fixture agent', { full: true })).toBeVisible();
+    await expect(terminal.getByText('read_file')).toBeVisible();
+    await expect(terminal.getByText('fixture agent')).toBeVisible();
     // After the turn the prompt returns to the ready state, with the turn counter bumped.
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
   });
 
-  // Spike check: Ink repaints on SIGWINCH and the frame stays addressable after a reflow,
-  // and streaming still works at the new size.
-  test('reflows on terminal resize and keeps streaming', async ({ terminal }) => {
+  // Ink repaints on SIGWINCH and the frame stays addressable after a reflow, and streaming still
+  // works at the new size. TUI-C48 added the half that matters now: the dock has to end up on the
+  // NEW bottom row. Ink recalculates its layout on a resize but does not re-render React, so a
+  // height captured once at mount survives the reflow and leaves the dock floating N rows above
+  // the floor — visible to a user, invisible to any assertion that only checks text.
+  test('reflows on terminal resize and keeps the dock on the NEW bottom row', async ({
+    terminal,
+  }) => {
     await expect(terminal.getByText('ready to chat')).toBeVisible();
+    expect(screenRows(terminal)).toHaveLength(30);
+
     terminal.resize(60, 20);
     await expect(terminal.getByText('chat  ·  turns: 0  ·  ready')).toBeVisible();
+    const shrunk = await screenAfterResize(terminal, 20);
+    expect(shrunk[19].trim()).toMatch(/^─+$/);
+    expect(shrunk[17]).toContain('>');
+    expect(shrunk[16]).toContain('chat  ·  turns: 0  ·  ready');
+
+    // Growing back must move the dock down again, not leave it stranded mid-screen.
+    terminal.resize(100, 34);
+    const grown = await screenAfterResize(terminal, 34);
+    expect(grown[33].trim()).toMatch(/^─+$/);
+    expect(grown[30]).toContain('chat  ·  turns: 0  ·  ready');
+
     terminal.write('hello');
     await expect(terminal.getByText('> hello')).toBeVisible();
     terminal.submit();
-    await expect(terminal.getByText('fixture agent', { full: true })).toBeVisible();
+    await expect(terminal.getByText('fixture agent')).toBeVisible();
+    // …and streaming at the new size still lands against the dock, not somewhere above it.
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+    const streamed = screenRows(terminal);
+    expect(streamed[33].trim()).toMatch(/^─+$/);
+    expect(streamed[28]).toContain('Hello from the fixture agent.');
+  });
+
+  // TUI-C48 — the node's central claim, asserted at the only level that can prove it. Ink renders
+  // inline by default, so "the dock is at the bottom" is a property of the TERMINAL, not of the
+  // component tree: only a real pty of a known size can say which row anything landed on.
+  test('pins the dock to the terminal floor, with the conversation growing up from it', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    const rows = screenRows(terminal);
+    // The frame fills the 30-row terminal this describe configures.
+    expect(rows).toHaveLength(30);
+    // The dock's closing rule is the LAST row of the screen, and the four dock rows above it are
+    // in their fixed order. Inline rendering put every one of these directly under the banner,
+    // around row 8 of 30, with 20 blank rows below — which is the bug this node exists to fix.
+    expect(rows[29].trim()).toMatch(/^─+$/);
+    expect(rows[28]).toContain("Type 'exit'");
+    expect(rows[27]).toContain('>');
+    expect(rows[26]).toContain('chat  ·  turns: 0  ·  ready');
+    expect(rows[25].trim()).toMatch(/^─+$/);
+    // Above the dock the conversation region is padded at the TOP: the intro sits against the
+    // dock, and the empty screen is above it rather than below.
+    expect(rows[24]).toContain('ready to chat');
+    expect(rows[0].trim()).toBe('');
+
+    // One exchange later the newest output is still the row immediately above the dock.
+    terminal.write('hello');
+    terminal.submit();
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+
+    const after = screenRows(terminal);
+    expect(after).toHaveLength(30);
+    expect(after[29].trim()).toMatch(/^─+$/);
+    expect(after[26]).toContain('chat  ·  turns: 1  ·  ready');
+    expect(after[24]).toContain('Hello from the fixture agent.');
+    expect(after[0].trim()).toBe('');
+  });
+
+  // TUI-C48 — the alternate screen is entered on launch and the terminal is handed back on exit.
+  // Ink owns both halves; this is the assertion that we actually asked for it, taken from outside
+  // the process. Without the alternate screen the dock would still be painted on the primary
+  // buffer after exit and the text below would still be found.
+  test('hands the terminal back on exit, leaving none of the dock behind', async ({ terminal }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+    terminal.write('hello');
+    terminal.submit();
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+
+    terminal.write('exit');
+    await expect(terminal.getByText('> exit')).toBeVisible();
+    terminal.submit();
+    const result = await waitForExit(terminal);
+    expect(result?.exitCode).toBe(0);
+
+    // The alternate buffer is discarded with everything that was drawn on it.
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).not.toBeVisible();
+    await expect(terminal.getByText('Hello from the fixture agent.')).not.toBeVisible();
+    await expect(terminal.getByText("Type 'exit'")).not.toBeVisible();
   });
 
   // (4) `exit` -> the app unmounts and the process terminates cleanly (raw mode restored).
@@ -119,7 +238,7 @@ test.describe('gth chat TUI — greeting fixture', () => {
     terminal.write('hello');
     await expect(terminal.getByText('> hello')).toBeVisible();
     terminal.submit();
-    await expect(terminal.getByText('fixture agent', { full: true })).toBeVisible();
+    await expect(terminal.getByText('fixture agent')).toBeVisible();
     terminal.write('exit');
     await expect(terminal.getByText('> exit')).toBeVisible();
     terminal.submit();
@@ -150,24 +269,24 @@ test.describe('gth chat TUI — markdown + collapsible tool calls (markdown fixt
     terminal.submit();
 
     // Tool-call summary line (collapsed): name + inline shortened params (TUI-C30).
-    await expect(terminal.getByText('read_file(path=NOTES.md)', { full: true })).toBeVisible();
+    await expect(terminal.getByText('read_file(path=NOTES.md)')).toBeVisible();
     // Markdown list bullet renders (proves the markdown path ran, not raw "- ").
-    await expect(terminal.getByText('first item', { full: true })).toBeVisible();
-    await expect(terminal.getByText('second item', { full: true })).toBeVisible();
-    await expect(terminal.getByText('Summary', { full: true })).toBeVisible();
+    await expect(terminal.getByText('first item')).toBeVisible();
+    await expect(terminal.getByText('second item')).toBeVisible();
+    await expect(terminal.getByText('Summary')).toBeVisible();
     // The turn completed and returned to ready.
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
     // TUI-C30 (deliberate change from the original collapsed-hides-body assertion): the first
     // lines of the result now PREVIEW inline while collapsed. Beyond-cap hiding is asserted by
     // the tool-preview fixture below.
-    await expect(terminal.getByText('secret-tool-result-body', { full: true })).toBeVisible();
+    await expect(terminal.getByText('secret-tool-result-body')).toBeVisible();
     // Fenced code survives the commit-time render: the body is on screen indented, the fence
     // markers are consumed, and the language tag is inlaid in the top rule. The unit spec owns
     // the "body carries no dim/grey SGR" half; this proves the fence path actually paints in a
     // real terminal, on every OS in the matrix.
-    await expect(terminal.getByText('  const fenced = 1;', { full: true })).toBeVisible();
-    await expect(terminal.getByText('── js ─', { full: false })).toBeVisible();
-    await expect(terminal.getByText('```', { full: false })).not.toBeVisible();
+    await expect(terminal.getByText('  const fenced = 1;')).toBeVisible();
+    await expect(terminal.getByText('── js ─')).toBeVisible();
+    await expect(terminal.getByText('```')).not.toBeVisible();
   });
 });
 
@@ -195,16 +314,10 @@ test.describe('gth chat TUI — live tool output in the managed frame (tool-outp
     terminal.write('go');
     await expect(terminal.getByText('> go')).toBeVisible();
     terminal.submit();
-    await expect(
-      terminal.getByText('run_shell_command(command=ls -la)', { full: true })
-    ).toBeVisible();
-    await expect(terminal.getByText('Listed the files.', { full: true })).toBeVisible();
+    await expect(terminal.getByText('run_shell_command(command=ls -la)')).toBeVisible();
+    await expect(terminal.getByText('Listed the files.')).toBeVisible();
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
-    // strict:false — the marker can legitimately sit in the buffer twice (the committed panel
-    // plus a stale pre-commit live frame scrolled into the buffer history).
-    await expect(
-      terminal.getByText('live-output-marker-line', { full: true, strict: false })
-    ).toBeVisible();
+    await expect(terminal.getByText('live-output-marker-line')).toBeVisible();
     await expect(terminal.getByText('Executing run_shell_command')).not.toBeVisible();
 
     // Expand tool detail (GS2-8: /verbose, formerly /tools), then run turn 2: the routed
@@ -217,12 +330,8 @@ test.describe('gth chat TUI — live tool output in the managed frame (tool-outp
     terminal.write('again');
     await expect(terminal.getByText('> again')).toBeVisible();
     terminal.submit();
-    await expect(
-      terminal.getByText('Executing run_shell_command: ls -la', { strict: false })
-    ).toBeVisible();
-    await expect(
-      terminal.getByText('live-output-marker-line', { full: true, strict: false })
-    ).toBeVisible();
+    await expect(terminal.getByText('Executing run_shell_command: ls -la')).toBeVisible();
+    await expect(terminal.getByText('live-output-marker-line')).toBeVisible();
     await expect(terminal.getByText('chat  ·  turns: 2  ·  ready')).toBeVisible();
   });
 });
@@ -248,21 +357,11 @@ test.describe('gth chat TUI — TUI-C30 tool preview + diff (tool-preview fixtur
     terminal.write('go');
     await expect(terminal.getByText('> go')).toBeVisible();
     terminal.submit();
-    // strict:false on content lines — a stale pre-commit live frame can leave a second copy in
-    // the buffer history; at least one visible occurrence is what matters.
-    await expect(
-      terminal.getByText('read_file(path=notes/example.txt)', { full: true, strict: false })
-    ).toBeVisible();
-    await expect(
-      terminal.getByText('preview-line-01', { full: true, strict: false })
-    ).toBeVisible();
-    await expect(
-      terminal.getByText('preview-line-10', { full: true, strict: false })
-    ).toBeVisible();
-    await expect(
-      terminal.getByText('(+2 more lines)', { full: true, strict: false })
-    ).toBeVisible();
-    await expect(terminal.getByText('preview-line-12', { full: true })).not.toBeVisible();
+    await expect(terminal.getByText('read_file(path=notes/example.txt)')).toBeVisible();
+    await expect(terminal.getByText('preview-line-01')).toBeVisible();
+    await expect(terminal.getByText('preview-line-10')).toBeVisible();
+    await expect(terminal.getByText('(+2 more lines)')).toBeVisible();
+    await expect(terminal.getByText('preview-line-12')).not.toBeVisible();
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
 
     // Turn 2: edit_file renders the change as a diff (removed then added), params inline
@@ -270,15 +369,9 @@ test.describe('gth chat TUI — TUI-C30 tool preview + diff (tool-preview fixtur
     terminal.write('next');
     await expect(terminal.getByText('> next')).toBeVisible();
     terminal.submit();
-    await expect(
-      terminal.getByText('edit_file(path=src/answer.ts,', { full: true, strict: false })
-    ).toBeVisible();
-    await expect(
-      terminal.getByText('- const answer = 41;', { full: true, strict: false })
-    ).toBeVisible();
-    await expect(
-      terminal.getByText('+ const answer = 42;', { full: true, strict: false })
-    ).toBeVisible();
+    await expect(terminal.getByText('edit_file(path=src/answer.ts,')).toBeVisible();
+    await expect(terminal.getByText('- const answer = 41;')).toBeVisible();
+    await expect(terminal.getByText('+ const answer = 42;')).toBeVisible();
     await expect(terminal.getByText('chat  ·  turns: 2  ·  ready')).toBeVisible();
   });
 });
@@ -299,9 +392,9 @@ test.describe('gth chat TUI — slow fixture (interrupt)', () => {
     terminal.submit();
     // The status bar shows the running spinner + interrupt hint while streaming.
     await expect(terminal.getByText('Thinking')).toBeVisible();
-    await expect(terminal.getByText('streaming', { full: true })).toBeVisible();
+    await expect(terminal.getByText('streaming')).toBeVisible();
     terminal.keyEscape();
-    await expect(terminal.getByText('Interrupted', { full: true })).toBeVisible();
+    await expect(terminal.getByText('Interrupted')).toBeVisible();
     // ...and the app recovers to the ready prompt rather than crashing.
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
   });
@@ -336,7 +429,7 @@ test.describe('gth chat TUI — debug pane `/` search (search fixture, TUI-C21)'
     await expect(terminal.getByText('Tab: section')).toBeVisible();
 
     // "line-30" is below the 8-row viewport fold before searching.
-    await expect(terminal.getByText('line-30', { full: true })).not.toBeVisible();
+    await expect(terminal.getByText('line-30')).not.toBeVisible();
 
     // Open search (`/`) then type "30": the sole match is the body line "line-30".
     terminal.write('/');
@@ -345,7 +438,7 @@ test.describe('gth chat TUI — debug pane `/` search (search fixture, TUI-C21)'
     terminal.write('0');
 
     // The viewport jumped to the match (query echo is only "30"), and the indicator reads 1/1.
-    await expect(terminal.getByText('line-30', { full: true })).toBeVisible();
+    await expect(terminal.getByText('line-30')).toBeVisible();
     await expect(terminal.getByText('1/1')).toBeVisible();
   });
 });
@@ -399,19 +492,16 @@ test.describe('gth chat TUI — /debug-dump default: redacted (GS2-46/GS2-47, gr
     terminal.submit();
 
     // Notice title for the default (redacted) path (debugDumpNotice, slashCommands.ts).
-    await expect(
-      terminal.getByText('Debug dump written — secrets redacted', { full: true })
-    ).toBeVisible();
+    await expect(terminal.getByText('Debug dump written — secrets redacted')).toBeVisible();
     // The softened redacted-body line.
     await expect(
       terminal.getByText(
-        'Secrets were redacted (API keys, tokens and auth headers replaced with <redacted>).',
-        { full: true }
+        'Secrets were redacted (API keys, tokens and auth headers replaced with <redacted>).'
       )
     ).toBeVisible();
     // The printed archive path sits under the tmp home we set, not the real home directory —
     // proof the HOME/USERPROFILE override actually took effect (cross-platform).
-    await expect(terminal.getByText(tmpHome, { full: true })).toBeVisible();
+    await expect(terminal.getByText(tmpHome)).toBeVisible();
 
     // Filesystem assertion: prove the write actually happened, not just the UI text.
     const dumpsDir = path.join(tmpHome, '.gsloth', 'debug-dumps');
@@ -469,16 +559,14 @@ test.describe('gth chat TUI — /debug-dump --unsafe-no-redact: loud UNSANITIZED
 
     // Notice title — stable substring, skipping the leading emoji (debugDumpNotice, slashCommands.ts).
     await expect(
-      terminal.getByText('Debug dump written — UNSANITIZED, review before sharing', { full: true })
+      terminal.getByText('Debug dump written — UNSANITIZED, review before sharing')
     ).toBeVisible();
     // The loud sensitive-data warning body.
     await expect(
-      terminal.getByText('it may include secrets: API keys, tokens, file contents, env vars.', {
-        full: true,
-      })
+      terminal.getByText('it may include secrets: API keys, tokens, file contents, env vars.')
     ).toBeVisible();
     // Archive path under the tmp home — cross-platform override proof.
-    await expect(terminal.getByText(tmpHome, { full: true })).toBeVisible();
+    await expect(terminal.getByText(tmpHome)).toBeVisible();
 
     // Filesystem assertion: the raw archive was actually written.
     const dumpsDir = path.join(tmpHome, '.gsloth', 'debug-dumps');

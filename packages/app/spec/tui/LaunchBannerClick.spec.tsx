@@ -4,7 +4,6 @@ import { render } from 'ink-testing-library';
 
 import { LaunchBanner } from '#src/tui/components/LaunchBanner.js';
 import { MouseProvider } from '#src/tui/useMouse.js';
-import { FALLBACK_TERMINAL_ROWS } from '#src/tui/useMouse.js';
 import { RESTING_FACE, SLOTH_ANIMATION_STEPS } from '@gaunt-sloth/core/core/launchBanner.js';
 import type { MouseEvent } from '#src/tui/mouseParser.js';
 
@@ -51,9 +50,13 @@ describe('tui <LaunchBanner> click', () => {
     vi.useRealTimers();
   });
 
-  /** The banner is the whole frame here, so its rows run from the frame origin. */
-  const bannerRow = (frame: string | undefined, row: number) =>
-    FALLBACK_TERMINAL_ROWS - (frame ?? '').split('\n').length + row;
+  /**
+   * TUI-C48 — the frame starts at screen row 0, so a banner row IS a screen row. Kept as a named
+   * helper so the assumption has one place to live rather than being spelled out at each click.
+   */
+  const bannerRow = (_frame: string | undefined, row: number) => row;
+  /** The first screen row BELOW everything rendered — guaranteed to claim nothing. */
+  const belowFrame = (frame: string | undefined) => (frame ?? '').split('\n').length + 1;
 
   it('plays an animation when its region is clicked', async () => {
     const source = mouseSource();
@@ -125,8 +128,8 @@ describe('tui <LaunchBanner> click', () => {
       </MouseProvider>
     );
 
-    // Well above the live frame — committed <Static> scrollback, which is not clickable.
-    source.emit(press(0, 4));
+    // Below the banner entirely — empty screen, which claims nothing.
+    source.emit(press(belowFrame(lastFrame()), 4));
     await flush();
 
     expect(lastFrame()).toContain(RESTING_FACE[2]);

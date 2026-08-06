@@ -115,8 +115,8 @@ rather than using them to select text, so **hold Shift (Option in some macOS ter
 dragging** to select and copy as usual.
 
 Click the sloth in the launch banner and it does something — a blink, a nod, a look around, or an
-eye-roll, picked at random. It only ever animates on a click, never on its own, and it stops being
-clickable once the first exchange scrolls it into the scrollback.
+eye-roll, picked at random. It only ever animates on a click, never on its own, and it goes away
+once the first exchange starts.
 
 If you would rather have unmodified selection back, turn reporting off mid-session — it takes effect
 immediately and the session carries on:
