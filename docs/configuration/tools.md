@@ -217,7 +217,7 @@ root's, while `deny` and `escalate` add to it rather than replacing it — a com
 runs unprompted, never widen what is prohibited). It takes one of five mode names — `manual`, `write`,
 `assisted` (the default), `auto`, `bypass` — either on its own or as `mode` inside an object
 carrying the extras. See
-[Migration](../MIGRATION.md#i-approvals-and-the-ai-rater-hard) for the retired keys.
+[Migration](../MIGRATION.md#i-approvals-and-the-auto-rater-hard) for the retired keys.
 
 - `mode` — the approvals mode. Defaults to `assisted` in every context, interactive or not. What changes
   without a human is what an escalation *does* (it exits non-zero rather than prompting), not which

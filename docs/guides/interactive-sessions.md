@@ -23,8 +23,9 @@ Rename the `timeoutMs` option to `requestTimeoutMs` everywhere, including the RE
 
 The agent reads the relevant files, edits them in place, and runs shell commands through the
 approvals gate — by default the auto-rater lets clearly-safe ones through and asks you about the
-rest (`/approvals write` to confirm every one yourself). Follow up in the same conversation — "now add a CHANGELOG entry" — context carries
-across turns. Type `exit` or press Ctrl+C to leave.
+rest (`/approvals write` to confirm each one — and every other tool call — yourself, while its
+built-in file tools keep working inside your working folder). Follow up in the same conversation —
+"now add a CHANGELOG entry" — context carries across turns. Type `exit` or press Ctrl+C to leave.
 
 ## `gth` vs `gth code` vs `gth chat`
 

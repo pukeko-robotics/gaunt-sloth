@@ -21,12 +21,18 @@ agent](#what-actually-contains-an-agent) for why it cannot.
 the remote's default branch is protected, and know when your last backup ran. What comes back after
 a bad hour is whatever a remote or a backup still holds.
 
-**3. Then pick the mode, and deny the handful of things you could not undo.** Auto is the mode for
-an unattended run: Assisted stops and waits for an answer you are not there to give, and in a
-non-interactive run it exits non-zero instead. Auto is not a promise that nothing stops — it still
-brings anything it cannot undo to you, and it ends the run outright on a command whose structure is
-hostile — so plan to come back to a prompt sometimes. The mode is one line in the same `approvals`
-object; the denials are the part worth writing out. In `.gsloth.config.json` at your project root:
+**3. Then pick the mode, and deny the handful of things you could not undo.** Auto is the mode named
+for an unattended run, and it is where a rater will one day settle a risky command by itself — but
+that negotiation is not built, so today Auto stops wherever Assisted stops. Each mode's own
+description, which `/approvals` prints and [the ladder](shell-tool-and-approvals.md#the-ladder-approvals)
+lists, is the current word on what it does. So plan to come back to prompts either way: anything the
+rater will not clear on its own is brought to a person, and a command whose structure is hostile ends
+the run outright. Whether that is a wait or a failure is decided by the surface rather than the mode —
+a session you walked away from holds the prompt until you come back, while a run with nobody to ask
+at all (CI, a one-shot `gth exec`) exits non-zero rather than hanging. The one thing that makes a
+*particular* command stop asking is naming it in `approvals.allow`. The mode is one line in the same
+`approvals` object; the denials are the part worth writing out. In `.gsloth.config.json` at your
+project root:
 
 ```json
 {
