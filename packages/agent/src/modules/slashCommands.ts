@@ -573,9 +573,15 @@ export function approvalsRungNotice(approvals: ResolvedApprovals): SlashCommandN
  * CFG-39 — the first sentence of a mode's description, for the one-line forms (the picker rows and
  * the usage hint). Split on the sentence boundary rather than truncated, so a row never ends
  * mid-clause; the terminating period is restored because the split consumes it.
+ *
+ * **A single-sentence description keeps its own period rather than gaining a second one.** The
+ * split only consumes the separator when there IS one, so an unsplit description arrives already
+ * terminated — appending unconditionally would render it as `No gate..`. Every surface that shows
+ * one line of a mode's copy goes through here, so this is the only place that has to know it.
  */
-function firstSentence(description: string): string {
-  return `${description.split('. ')[0]}.`;
+export function firstSentence(description: string): string {
+  const head = description.split('. ')[0];
+  return head.endsWith('.') ? head : `${head}.`;
 }
 
 /** CFG-39 — one selectable row of the `/approvals` picker. */

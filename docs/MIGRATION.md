@@ -550,9 +550,12 @@ share one command registry):
 6. Move any `commands.<cmd>.devTools` into the `builtInTools` registry (`run_*` → `{ "command": … }`,
    `shell` → the `run_shell_command` entry) (G).
 7. Replace every approvals knob — `yolo` / `judge` / `allowlist` / `persistAllowlist` on
-   `run_shell_command`, and `strictness` / `escalate` / an object-form `rater` / the `auto` and
-   `ask` modes on `approvals` — with one of the five rungs, plus `approvals.allow` / `.deny` where
-   you need them. Decide whether you want the new `assisted` default or `"write"` (I).
+   `run_shell_command`, and `strictness` / `escalate` / an object-form `rater` on `approvals` —
+   with one of the five rungs, plus `approvals.allow` / `.deny` where you need them. Rename the
+   retired `mode` values: `read-only` → `manual`, `auto-safe` → `assisted`, `full-auto` → `auto`
+   (all three the same mode under a new name), and `ask` → `write` if you want file edits in your
+   working folder granted, or `manual` if you want to be asked about those too. Decide whether you
+   want the new `assisted` default or `"write"` (I).
 8. Rename `projectGuidelines` → `prompts.guidelines` and `projectReviewInstructions` →
    `prompts.review` (H).
 9. Run `gth config validate` (and optionally `gth config print`) to confirm the result.

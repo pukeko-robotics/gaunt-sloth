@@ -202,7 +202,8 @@ The choice you are really making is **`manual` → `assisted` → `auto`, plus `
 are what `/approvals` offers you. `write` is not a further step along that line: it is `manual` with
 edits inside your working folder granted as well as reads, so it is a variant of `manual` rather
 than something between `manual` and `assisted`. Set it whenever you want it, with
-`/approvals write` or in config; it simply does not take up a row in the picker.
+`/approvals write` or in config; it simply does not take up a row in
+[the picker](interactive-sessions.md#slash-commands).
 
 `manual`, `write` and `bypass` consult no model at all, so they are reproducible and cost
 nothing. `assisted` spends one rating call per gated command.

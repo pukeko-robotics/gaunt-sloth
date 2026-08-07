@@ -1107,12 +1107,18 @@ const RETIRED_ESCALATE_THRESHOLD_MESSAGE =
  * Caught here rather than by the enum so the error NAMES the rung instead of listing five
  * identifiers and leaving the user to guess which one preserves their intent.
  *
- * **Every mapping is to an equally-permissive rung.** That is the property to preserve when adding
- * an entry: a retired name silently remapped to something MORE permissive would raise a user's
- * autonomy setting on their behalf, at the moment they are least watching — the config already
- * worked, so nothing prompts them to re-read it. `manual`/`assisted`/`auto` are pure renames of
- * `read-only`/`auto-safe`/`full-auto` and carry identical behaviour; `ask` names the two rungs that
- * ask about everything, both at or below what it did.
+ * **No rung is raised without the user choosing it.** That is the property to preserve when adding
+ * an entry: a retired name remapped to something MORE permissive would raise a user's autonomy
+ * setting on their behalf, at the moment they are least watching — the config already worked, so
+ * nothing prompts them to re-read it.
+ *
+ * `manual`/`assisted`/`auto` are pure renames of `read-only`/`auto-safe`/`full-auto` and carry
+ * identical behaviour, so they preserve it trivially. `ask` is the one entry that does not, and the
+ * exception is worth stating rather than glossing: `write` auto-grants working-folder file edits
+ * that `ask` prompted for, which is strictly a widening. It is safe here only because nothing is
+ * remapped silently — every entry is a hard validation ERROR, and this one offers `write` or
+ * `manual` as a labelled choice with the difference spelled out, so the user picks. An entry that
+ * widened while merely warning, or while coercing, would break the property.
  *
  * `write` and `bypass` are deliberately ABSENT — they are live rung names, not retired ones.
  *

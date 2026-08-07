@@ -234,18 +234,18 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     expect(bypass.lines.join(' ')).not.toMatch(/hardline|floor/i);
 
     // `assisted` must state plainly that files are STILL rewritten and deleted without asking.
-    const autoSafe = approvalsRungNotice(posture('assisted'));
-    expect(autoSafe.title).toBe('Approvals: Assisted');
-    expect(autoSafe.tone).toBe('info');
-    expect(autoSafe.lines.join(' ')).toContain(
+    const assistedNotice = approvalsRungNotice(posture('assisted'));
+    expect(assistedNotice.title).toBe('Approvals: Assisted');
+    expect(assistedNotice.tone).toBe('info');
+    expect(assistedNotice.lines.join(' ')).toContain(
       'rewrite and delete files in your working folder without asking'
     );
 
     // `auto` is described as safer than bypass and explicitly not safe.
-    const fullAuto = approvalsRungNotice(posture('auto'));
-    expect(fullAuto.title).toBe('Approvals: Auto');
-    expect(fullAuto.lines.join(' ')).toContain('safer than bypass');
-    expect(fullAuto.lines.join(' ')).toContain('it is not safe');
+    const autoNotice = approvalsRungNotice(posture('auto'));
+    expect(autoNotice.title).toBe('Approvals: Auto');
+    expect(autoNotice.lines.join(' ')).toContain('safer than bypass');
+    expect(autoNotice.lines.join(' ')).toContain('it is not safe');
 
     // A configured rater profile is named at the rated rungs (the spec's status requirement).
     expect(approvalsRungNotice(posture('assisted', 'safety-rater')).lines.join(' ')).toContain(
@@ -337,6 +337,27 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
       expect(choice.label).toBe(APPROVAL_RUNG_LABELS[choice.rung]);
     }
     expect(choices.filter((c) => c.current).map((c) => c.rung)).toEqual(['assisted']);
+  });
+
+  /**
+   * The one-line forms (picker rows, the text fallback, the usage hint) all shorten through
+   * `firstSentence`. A description that is already ONE sentence keeps its own period rather than
+   * gaining a second — `split('. ')` only consumes the separator when there is one. No current
+   * description is a single sentence; CFG-31 rewrites exactly this prose next.
+   */
+  it('CFG-39: firstSentence terminates a shortened description with exactly one period', async () => {
+    const { firstSentence } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    expect(firstSentence('No gate.')).toBe('No gate.');
+    expect(firstSentence('It asks first. Then it acts.')).toBe('It asks first.');
+    // An unterminated single sentence still gains its period.
+    expect(firstSentence('No gate')).toBe('No gate.');
+  });
+
+  it('CFG-39: the text fallback shortens a single-sentence description without doubling the period', async () => {
+    const { approvalPostureLines } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    for (const line of approvalPostureLines('assisted')) {
+      expect(line).not.toContain('..');
+    }
   });
 
   it('CFG-39: on `write` no posture row claims to be current, so the display stays honest', async () => {

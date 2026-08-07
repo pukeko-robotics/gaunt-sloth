@@ -354,8 +354,8 @@ test.describe('gth code TUI — EXT-70 §4.7.1 the trust affordance', () => {
 
     // CFG-39 — the no-arg form also OPENS the mode picker, which owns the keyboard while it is up
     // (as the approval prompt does). Esc dismisses it without changing the mode, and that is what
-    // returns the prompt: without it the next command below would be typed into the picker's
-    // filter rather than the prompt, which is exactly how this cell caught the modality.
+    // returns the prompt: without it the picker swallows the next command below instead of the
+    // prompt receiving it, which is exactly how this cell caught the modality.
     await expect(terminal.getByText('Choose an approvals mode:')).toBeVisible();
     terminal.keyEscape();
     await expect(terminal.getByText('Choose an approvals mode:')).not.toBeVisible();

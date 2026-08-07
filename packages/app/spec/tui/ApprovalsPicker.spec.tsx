@@ -78,6 +78,34 @@ describe('tui <ApprovalsPicker> (CFG-39)', () => {
     }
   });
 
+  /**
+   * A ONE-SENTENCE description must not gain a second period. `split('. ')` only consumes the
+   * separator when there is one, so an unsplit description arrives already terminated. No current
+   * description is one sentence — CFG-31 rewrites exactly this prose next, which is when it stops
+   * being hypothetical. Asserted as the EXACT row, since a `toContain` cannot see a doubled period.
+   */
+  it('renders a single-sentence description with one period, not two', () => {
+    expect(
+      pickerRowLabel({
+        rung: 'bypass',
+        label: 'Bypass',
+        description: 'No gate.',
+        current: false,
+      })
+    ).toBe('○ Bypass — No gate.');
+  });
+
+  it('renders the first sentence of a multi-sentence description, exactly, with its period', () => {
+    expect(
+      pickerRowLabel({
+        rung: 'manual',
+        label: 'Manual',
+        description: 'It asks first. Then it acts.',
+        current: true,
+      })
+    ).toBe('● Manual — It asks first.');
+  });
+
   it('starts on the mode in force, so Enter confirms it rather than silently changing it', async () => {
     const onSelect = vi.fn();
     const { stdin } = render(
@@ -138,6 +166,57 @@ describe('tui <ApprovalsPicker> (CFG-39)', () => {
         onCancel={onCancel}
       />
     );
+    await tick();
+    stdin.write(ESC);
+    await tick();
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The picker turns SelectList's type-to-filter OFF. Four rows need no filtering, and leaving it
+   * on would cost: a stray keystroke narrows the list to nothing and leaves Enter with no row to
+   * pick. Typed characters are swallowed instead — the list stays whole and Enter still works.
+   */
+  it('a typed character does not filter the rows away, and Enter still picks', async () => {
+    const onSelect = vi.fn();
+    const { stdin, lastFrame } = render(
+      <ApprovalsPicker
+        choices={approvalPostureChoices('assisted')}
+        onSelect={onSelect}
+        onCancel={vi.fn()}
+      />
+    );
+    await tick();
+    stdin.write('z');
+    await tick();
+    const frame = lastFrame() ?? '';
+    for (const label of ['Manual', 'Assisted', 'Auto', 'Bypass']) {
+      expect(frame).toContain(label);
+    }
+    expect(frame).not.toContain('filter:');
+    expect(frame).not.toContain('no matches');
+    stdin.write(ENTER);
+    await tick();
+    expect(onSelect).toHaveBeenCalledWith('assisted');
+  });
+
+  /**
+   * …and because no filter can be active, the FIRST Esc cancels — which is what the footer
+   * promises. With filtering on, that Esc would have been spent clearing the filter.
+   */
+  it('one Esc cancels even after a keystroke that would otherwise have started a filter', async () => {
+    const onSelect = vi.fn();
+    const onCancel = vi.fn();
+    const { stdin } = render(
+      <ApprovalsPicker
+        choices={approvalPostureChoices('assisted')}
+        onSelect={onSelect}
+        onCancel={onCancel}
+      />
+    );
+    await tick();
+    stdin.write('z');
     await tick();
     stdin.write(ESC);
     await tick();

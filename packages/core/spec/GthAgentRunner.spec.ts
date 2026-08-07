@@ -449,7 +449,7 @@ describe('GthAgentRunner', () => {
      * somewhere between the graph and the prompt would leave `manual` exactly as false as it was.
      */
     describe('EXT-80 — a newly gated non-shell tool reaches the human', () => {
-      const READ_ONLY_CONFIG = { streamOutput: true as const, approvals: 'manual' as const };
+      const MANUAL_CONFIG = { streamOutput: true as const, approvals: 'manual' as const };
 
       it('prompts the human for write_file at manual and resumes with the decision', async () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
@@ -463,7 +463,7 @@ describe('GthAgentRunner', () => {
         const streamResume = vi.fn().mockResolvedValue(streamOf(' done'));
         (mockAgent as any).streamResume = streamResume;
 
-        await runner.init(undefined, { ...mockConfig, ...READ_ONLY_CONFIG } as any);
+        await runner.init(undefined, { ...mockConfig, ...MANUAL_CONFIG } as any);
         const human = vi.fn().mockResolvedValue({ type: 'approve' });
         runner.setToolApprovalCallback(human);
 
@@ -494,7 +494,7 @@ describe('GthAgentRunner', () => {
         const streamResume = vi.fn().mockResolvedValue(streamOf(' stopped'));
         (mockAgent as any).streamResume = streamResume;
 
-        await runner.init(undefined, { ...mockConfig, ...READ_ONLY_CONFIG } as any);
+        await runner.init(undefined, { ...mockConfig, ...MANUAL_CONFIG } as any);
         runner.setToolApprovalCallback(vi.fn().mockResolvedValue({ type: 'reject' }));
 
         await runner.processMessages([new HumanMessage('delete notes')]);
@@ -519,7 +519,7 @@ describe('GthAgentRunner', () => {
           .mockReturnValue(new Map([['mcp__docs__search', { readOnlyHint: true }]]));
         (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
 
-        await runner.init(undefined, { ...mockConfig, ...READ_ONLY_CONFIG } as any);
+        await runner.init(undefined, { ...mockConfig, ...MANUAL_CONFIG } as any);
         const human = vi.fn().mockResolvedValue({ type: 'approve' });
         runner.setToolApprovalCallback(human);
 
@@ -537,7 +537,7 @@ describe('GthAgentRunner', () => {
           .mockResolvedValueOnce([]);
         (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
 
-        await runner.init(undefined, { ...mockConfig, ...READ_ONLY_CONFIG } as any);
+        await runner.init(undefined, { ...mockConfig, ...MANUAL_CONFIG } as any);
         const human = vi.fn().mockResolvedValue({ type: 'approve' });
         runner.setToolApprovalCallback(human);
 
@@ -561,7 +561,7 @@ describe('GthAgentRunner', () => {
         const streamResume = vi.fn().mockResolvedValue(streamOf(''));
         (mockAgent as any).streamResume = streamResume;
 
-        await runner.init(undefined, { ...mockConfig, ...READ_ONLY_CONFIG } as any);
+        await runner.init(undefined, { ...mockConfig, ...MANUAL_CONFIG } as any);
         // No setToolApprovalCallback → the CI / one-shot / server case.
 
         const error = await runner
@@ -585,7 +585,7 @@ describe('GthAgentRunner', () => {
 
         await runner.init(undefined, {
           ...mockConfig,
-          ...READ_ONLY_CONFIG,
+          ...MANUAL_CONFIG,
           approvals: {
             rung: 'manual',
             deny: [{ type: 'tool', matcher: 'exact', pattern: 'my_custom_tool' }],

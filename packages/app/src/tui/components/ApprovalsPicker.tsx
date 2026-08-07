@@ -4,7 +4,10 @@ import { Rule } from '#src/tui/components/Rule.js';
 import { SelectList, type SelectItem } from '#src/tui/components/SelectList.js';
 import type { ApprovalRung } from '@gaunt-sloth/core/config.js';
 import { APPROVAL_WRITE_MODIFIER_HINT } from '@gaunt-sloth/core/config.js';
-import type { ApprovalPostureChoice } from '@gaunt-sloth/agent/modules/slashCommands.js';
+import {
+  firstSentence,
+  type ApprovalPostureChoice,
+} from '@gaunt-sloth/agent/modules/slashCommands.js';
 
 /**
  * CFG-39 — the row label for one posture: the display spelling, a marker when the session is
@@ -13,10 +16,13 @@ import type { ApprovalPostureChoice } from '@gaunt-sloth/agent/modules/slashComm
  * The description is NOT authored here. Six surfaces describe these modes and a picker carrying
  * its own copy becomes the one that contradicts the other five, so the text arrives on the choice
  * (from `APPROVAL_RUNG_DESCRIPTIONS`) and this function only lays it out.
+ *
+ * Shortening to one sentence is {@link firstSentence}'s, shared with the text fallback and the
+ * usage hint, so a picker row and the same mode's line on a non-TTY surface cannot end differently.
  */
 export function pickerRowLabel(choice: ApprovalPostureChoice): string {
   const marker = choice.current ? '●' : '○';
-  return `${marker} ${choice.label} — ${choice.description.split('. ')[0]}.`;
+  return `${marker} ${choice.label} — ${firstSentence(choice.description)}`;
 }
 
 /**
@@ -28,10 +34,15 @@ export function pickerRowLabel(choice: ApprovalPostureChoice): string {
  * notice reports the live mode honestly rather than letting a highlighted Manual row imply the
  * session is somewhere it is not.
  *
- * Keyboard handling, filtering and cancellation are {@link SelectList}'s — the same widget the
- * first-run dialog and the slash-command menu use — so arrow keys, Enter, Esc and Ctrl+C behave
- * here exactly as they do everywhere else in the TUI. While it is mounted the parent `<App>`
- * suspends the prompt, as it does for `<ApprovalPrompt>`.
+ * Keyboard handling and cancellation are {@link SelectList}'s — the same widget the first-run
+ * dialog and the slash-command menu use — so arrow keys, Enter, Esc and Ctrl+C behave here exactly
+ * as they do everywhere else in the TUI. While it is mounted the parent `<App>` suspends the
+ * prompt, as it does for `<ApprovalPrompt>`.
+ *
+ * **Type-to-filter is off** (`filterable={false}`). Four rows are readable at a glance, so
+ * filtering could only cost: one stray keystroke would empty the list and leave Enter with nothing
+ * to pick, and the first Esc would go on clearing the filter rather than closing the picker — which
+ * is the opposite of what the footer below promises. With it off the footer is true as written.
  */
 export function ApprovalsPicker({
   choices,
@@ -55,6 +66,7 @@ export function ApprovalsPicker({
         // Start on the mode in force, so Enter is a no-op rather than a silent change. On `write`
         // no row is current and the cursor rests at the top.
         initialIndex={currentIndex >= 0 ? currentIndex : 0}
+        filterable={false}
         onSelect={(index) => onSelect(choices[index].rung)}
         onCancel={onCancel}
       />
