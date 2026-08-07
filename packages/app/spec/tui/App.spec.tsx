@@ -1204,8 +1204,13 @@ describe('tui <App>', () => {
    * it happens, the binding is free to work idle, which is when a reader paging back over the
    * conversation actually wants a turn's arguments and results. Assert the toggle without the
    * buffer and a later fix could "simplify" the sentinel away unnoticed.
+   *
+   * The message is carried on ACROSS the chord, one character per input event, because that is the
+   * flow the expanded panel invites: read the earlier turn, keep writing. It is also the only shape
+   * that discriminates — a chord leaves the text input's cursor stale, and a burst written as one
+   * event hides that where four separate keystrokes expose it.
    */
-  it('Ctrl+T expands a COMMITTED turn while idle, without typing into the prompt', async () => {
+  it('Ctrl+T expands a COMMITTED turn while idle, without disturbing the prompt', async () => {
     const CTRL_T = '\x14';
     const longBody = Array.from(
       { length: 12 },
@@ -1246,10 +1251,28 @@ describe('tui <App>', () => {
     expect(lastFrame()).not.toContain('draftt');
     expect(lastFrame()).toContain('draft');
 
+    // Carry on writing, one keystroke at a time, with exactly one chord behind us — waiting for
+    // each character to be drawn, so the next one cannot be batched into the same input event.
+    // Refused only at onChange, this reads `draftorem`.
+    const rest = 'more';
+    for (let i = 0; i < rest.length; i++) {
+      stdin.write(rest[i]);
+      const expected = `draft${rest.slice(0, i + 1)}`;
+      await vi.waitFor(() => expect(lastFrame()).toContain(expected));
+    }
+
     // And back: the same key re-folds it, so this is a toggle rather than a one-way reveal.
     stdin.write(CTRL_T);
     await vi.waitFor(() => expect(lastFrame()).not.toContain('body-12'));
-    expect(lastFrame()).not.toContain('draftt');
+    expect(lastFrame()).toContain('draftmore');
+    // The SECOND chord's letter has its own assertion: `draftmore` is a substring of `draftmoret`,
+    // so the line above would pass with the stray `t` appended and prove only the first chord.
+    expect(lastFrame()).not.toContain('draftmoret');
+
+    // The message the user is about to send is what they wrote.
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('You › draftmore'));
+    expect(lastFrame()).not.toContain('You › draftmoret');
 
     unmount();
   });

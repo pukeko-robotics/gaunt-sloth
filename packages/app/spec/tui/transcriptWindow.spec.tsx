@@ -154,11 +154,13 @@ function actualRows(item: TranscriptItem, columns: number, toolsExpanded: boolea
   // this measures exactly the tree the app mounts — not a hand-rebuilt approximation of it.
   const frame = renderToString(
     <Box flexDirection="column">
+      {/* No `scroll`, so nothing clips: zero states that, rather than leaving it to a default. */}
       <TranscriptViewport
         items={[item]}
         budgetRows={1}
         columns={columns}
         toolsExpanded={toolsExpanded}
+        regionRows={0}
       />
     </Box>,
     { columns }

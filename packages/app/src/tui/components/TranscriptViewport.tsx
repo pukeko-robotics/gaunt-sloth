@@ -41,7 +41,7 @@ export function TranscriptViewport({
   columns,
   toolsExpanded = false,
   scroll = null,
-  regionRows = 0,
+  regionRows,
   geometry,
   children,
 }: {
@@ -72,8 +72,13 @@ export function TranscriptViewport({
    * lifted out of it by a negative margin instead, and where there is no measured region there is
    * nothing to keep a clip inside — this is zero until the first layout, and nothing clips until
    * it is known.
+   *
+   * **Required, because zero is the value that turns the clip off.** A caller that passes `scroll`
+   * and forgets this one would silently take the unclipped path — the failure above, with nothing
+   * on screen or in a test to say which prop was missing. Passing an explicit zero is how a caller
+   * says it is not scrolling.
    */
-  regionRows?: number;
+  regionRows: number;
   /** Where the region publishes its measured layout for the scroll gestures to read. */
   geometry?: TranscriptGeometry;
   /**

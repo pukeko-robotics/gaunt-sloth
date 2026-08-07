@@ -138,14 +138,21 @@ them. Three rules hold it up:
 
 ## Mouse modes and on-screen selection (DL-5 respect the host, TUI-C37, TUI-C48)
 
-The TUI requests exactly two terminal mouse modes: **`1000`** (normal button tracking) and
+The TUI requests exactly two mouse **tracking** modes: **`1000`** (normal button tracking) and
 **`1006`** (SGR extended encoding). `1006` is a correctness requirement rather than a feature — the
 legacy encoding cannot express a column past 223, so without it clicks on the right of a wide
-terminal report the wrong cell.
+terminal report the wrong cell. Those two are not the only DECSET modes it writes, and a reader who
+takes the count literally will not find the third: `mouseReporting.ts` also turns **alternate scroll
+(`1007`) off**, and restores it on every exit path. That one is installed exactly when tracking is
+**off** — with tracking on the wheel arrives as an SGR event and alternate scroll never applies,
+while with tracking off the terminal would otherwise translate wheel notches into bare arrow keys
+indistinguishable from a real arrow press.
 
 **`1002` (button-event tracking) is deliberately not requested, and dropping it does not buy
-selection back.** Measured in a real terminal, with drags synthesised through XTEST and the
-selection read out of the X11 PRIMARY buffer:
+selection back.** Measured in **Konsole 26.04.3 on X11/xcb**, with drags synthesised through XTEST
+and the selection read out of the X11 PRIMARY buffer. That is one terminal family and the behaviour
+below is not known to be universal — kitty, Ghostty, VTE, iTerm2 and Windows Terminal are unmeasured,
+as is whether macOS Option-drag is the override there:
 
 - With `1000 + 1006` and **no** `1002`, a plain drag produces **no selection**. `1000` alone is
   already enough for the terminal to swallow the button press and refuse to start one.
@@ -154,9 +161,10 @@ selection read out of the X11 PRIMARY buffer:
 
 So the reason to leave `1002` out is cost, not selection: nothing in the codebase consumes a drag,
 and it would be a dozen decoded-and-discarded reports per gesture. And **the answer to "why can't I
-select text any more" is Shift+drag** (Option in some macOS terminals) — every place that tells a
-user about mouse reporting says so, because the moment someone reaches for `/mouse` is the moment
-they are trying to copy something.
+select text any more" is Shift+drag** — every place that tells a user about mouse reporting says so,
+because the moment someone reaches for `/mouse` is the moment they are trying to copy something. The
+user-facing wording adds "Option in some macOS terminals"; that is inherited convention, not a
+measurement, and it belongs in the unmeasured set above.
 
 Two consequences worth stating rather than rediscovering:
 
@@ -359,11 +367,18 @@ their config has a problem.
   newest output. The order is the specification, not an artefact of where the branches sit.
 - **`Ctrl+C`** — exit the app. (The bare `exit` keyword, `/exit` and `/quit` also quit.)
 - **`Ctrl+T`** — toggle tool-call detail, running or idle (mirrors `/verbose`).
-- **A control chord never types its letter.** `ink-text-input` claims only `Ctrl+C` and inserts the
-  letter of every other chord, so the prompt keeps the whole class out of its buffer
-  (`PromptInput.tsx`). Without that, each keybinding the app adds also drops a stray character into
-  whatever the user was part-way through writing — and gating a binding on "a turn is running" does
-  not avoid it, because the prompt stays mounted while a turn streams.
+- **A control chord never types its letter, and never moves the message under it.**
+  `ink-text-input` claims only `Ctrl+C` and inserts the letter of every other chord, so the prompt
+  keeps the whole class out of its buffer (`PromptInput.tsx`). Without that, each keybinding the app
+  adds also drops a stray character into whatever the user was part-way through writing — and gating
+  a binding on "a turn is running" does not avoid it, because the prompt stays mounted while a turn
+  streams. **Refusing the value is only half the job**: the text input commits its cursor offset
+  before it asks whether the value may change, and repairs an out-of-range offset only from an
+  effect keyed on that value, so a refusal alone leaves the cursor past the end of the buffer, erases
+  it from the screen and makes every later keystroke insert one place early. The prompt therefore
+  remounts the input on a refused chord, which re-derives the offset from the value. The cost is
+  that a cursor the user had moved into the middle of the buffer returns to the end — visible, and
+  recoverable with the arrow keys; the line editor (TUI-C25) owns the cursor and settles it properly.
 - **`o` / `s` / `a` / `y` / anything-else** at a pending shell approval — approve once / session /
   always / turn on auto-approve-all (then approve this one) / reject (fail-closed).
 - **slash commands mid-turn** — the prompt stays mounted while a turn streams, so run-safe commands

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import React from 'react';
 import { render } from 'ink-testing-library';
+import { Box, renderToString } from 'ink';
 import chalk from 'chalk';
 import stripAnsi from 'strip-ansi';
 import { LiveTurn, ReasoningPanel } from '#src/tui/components/LiveTurn.js';
@@ -447,6 +448,71 @@ describe('tui <LiveTurn>', () => {
         expect(gutterLines(lastFrame() ?? '')).toEqual([]);
         expect(stripAnsi(lastFrame() ?? '')).toContain('💭 Thinking');
         unmount();
+      });
+
+      /**
+       * The cap is in SCREEN ROWS, and the cases above cannot tell the difference.
+       *
+       * A logical line is not a row. Reasoning streams as prose paragraphs and the newline arrives
+       * at the end of one, so the ordinary shape of a first thinking turn is one or two paragraphs
+       * with no newline in them yet — which wrapped to nine and seventeen rows at 80 columns, more
+       * of the screen than the ten-line tool preview this cap exists to be smaller than. Measure
+       * the drawn rows, at the width, or the number two means nothing.
+       */
+      describe('the cap is measured in drawn rows, not logical lines', () => {
+        const paragraph = (n: number) => 'x'.repeat(n);
+        /** Rows the collapsed streaming panel really draws, measured with Ink's own renderer. */
+        const drawnRows = (reasoning: string, columns: number): number =>
+          renderToString(
+            <Box flexDirection="column">
+              <ReasoningPanel reasoning={reasoning} expanded={false} live />
+            </Box>,
+            { columns }
+          ).split('\n').length;
+
+        it('draws the header plus one row per previewed line at 80 columns', () => {
+          // The measurement that motivated the cap: unwrapped, these were 9 and 17 rows.
+          expect(drawnRows('alpha\nbeta', 80)).toBe(3);
+          expect(drawnRows(paragraph(600), 80)).toBe(2);
+          expect(drawnRows(`${paragraph(600)}\n${paragraph(600)}`, 80)).toBe(3);
+        });
+
+        for (const columns of [80, 40, 24]) {
+          it(`is the same height whatever the model emits, at ${columns} columns`, () => {
+            // Stated against a two-short-line baseline rather than an absolute number, because the
+            // header itself wraps on a narrow terminal and that is not the preview's doing. What
+            // the cap promises is that the panel's height does not depend on the thought's length.
+            const baseline = drawnRows('alpha\nbeta', columns);
+            expect(drawnRows(`${paragraph(600)}\n${paragraph(600)}`, columns)).toBe(baseline);
+            expect(drawnRows(`${paragraph(4000)}\n${paragraph(4000)}`, columns)).toBe(baseline);
+          });
+        }
+
+        it('keeps the NEWEST text of an over-long line, not its opening', () => {
+          // Truncating at the end would freeze the preview on the first row of a paragraph and
+          // leave it there for as long as the model kept writing — the "frozen opening" the panel
+          // is documented not to be.
+          const frame = renderToString(
+            <Box flexDirection="column">
+              <ReasoningPanel reasoning={`${'a'.repeat(200)}NEWEST`} expanded={false} live />
+            </Box>,
+            { columns: 80 }
+          );
+          expect(stripAnsi(frame)).toContain('NEWEST');
+        });
+
+        it('leaves the EXPANDED thought wrapping in full', () => {
+          // Expanded is where the whole thought is read; the cap belongs to the collapsed preview
+          // alone, so a long line still wraps onto as many rows as it needs.
+          expect(
+            renderToString(
+              <Box flexDirection="column">
+                <ReasoningPanel reasoning={paragraph(600)} expanded live />
+              </Box>,
+              { columns: 80 }
+            ).split('\n').length
+          ).toBeGreaterThan(3);
+        });
       });
     });
 

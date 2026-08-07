@@ -111,20 +111,27 @@ function ToolCallPanel({
 }
 
 /**
- * Lines of reasoning a STREAMING turn shows while collapsed.
+ * Screen ROWS of reasoning a STREAMING turn shows while collapsed.
  *
  * **This is deliberately not the canonical ten-line tool-output preview, and the two must not be
  * harmonised.** Tool output is a discrete artefact you go and inspect: it arrives complete, it is
  * the evidence for what the agent did, and ten lines is how much of it is worth having in front of
  * you. Reasoning is ambient and continuous — it streams for as long as the model thinks, it is
  * superseded by the answer, and its value while collapsed is only "something is happening, and it
- * is about this". Two lines carry that; ten would let thinking take over the screen it is meant to
+ * is about this". Two rows carry that; ten would let thinking take over the screen it is meant to
  * stay out of, which is the whole reason the panel collapses by default.
+ *
+ * **Rows, not logical lines, and the difference is the whole cap.** Reasoning streams as prose
+ * paragraphs and the newline arrives at the end of one, so two logical lines are routinely two
+ * paragraphs: at 80 columns two 600-character paragraphs wrap to seventeen rows, more of the screen
+ * than the ten-line tool preview this number exists to be smaller than. Each previewed line is
+ * therefore drawn on exactly one row, truncated at its START so the window stays on the newest
+ * text the model has produced rather than freezing on the opening of a paragraph.
  *
  * It applies only while the turn streams. A committed turn's collapsed panel is its header alone,
  * unchanged, so what the transcript holds after the fact is unaffected.
  */
-export const LIVE_REASONING_PREVIEW_LINES = 2;
+export const LIVE_REASONING_PREVIEW_ROWS = 2;
 
 /**
  * The `💭 Thinking` region: the model's reasoning/chain-of-thought, rendered as a distinct
@@ -137,10 +144,10 @@ export const LIVE_REASONING_PREVIEW_LINES = 2;
  * dim+italic underneath the coloured gutter.
  *
  * While a turn is STREAMING and collapsed it keeps its newest
- * {@link LIVE_REASONING_PREVIEW_LINES} lines on screen, in the same gutter styling, so a thinking
+ * {@link LIVE_REASONING_PREVIEW_ROWS} rows on screen, in the same gutter styling, so a thinking
  * model shows what it is thinking about instead of a bare header. The preview follows the stream:
- * it is always the newest lines, so it reads as a window onto the tail rather than as a frozen
- * opening.
+ * it is always the newest lines, and a line longer than the terminal is truncated at its start, so
+ * it reads as a window onto the tail rather than as a frozen opening.
  */
 export function ReasoningPanel({
   reasoning,
@@ -168,7 +175,7 @@ export function ReasoningPanel({
     ? reasoning.split('\n')
     : preview === ''
       ? []
-      : preview.split('\n').slice(-LIVE_REASONING_PREVIEW_LINES);
+      : preview.split('\n').slice(-LIVE_REASONING_PREVIEW_ROWS);
   return (
     <Box flexDirection="column">
       <Text color="cyan">
@@ -178,7 +185,12 @@ export function ReasoningPanel({
       {lines.map((line, i) => (
         <Box key={i}>
           <Text color="cyan">{'│ '}</Text>
-          <Text dimColor italic>
+          {/* Expanded shows the thought in full and wraps as ordinary text. The collapsed preview
+              is capped in ROWS, so each previewed line gets exactly one — Ink measures the width
+              itself, which keeps the cap true at any terminal size without a width calculation
+              here. Truncating at the START keeps the newest text visible, which is what makes the
+              two rows a window that follows the stream. */}
+          <Text wrap={expanded ? undefined : 'truncate-start'} dimColor italic>
             {line}
           </Text>
         </Box>

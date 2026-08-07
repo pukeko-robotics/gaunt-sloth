@@ -176,7 +176,14 @@ test.describe('gth chat TUI — greeting fixture', () => {
   // The toggle is exercised IDLE, which is the state it was refused in until this node: it is now
   // bound in every state, because paging back over the conversation to read an earlier turn's
   // arguments and results is exactly when nothing is running.
-  test('Ctrl+T toggles tool detail while idle and never lands in the prompt', async ({
+  //
+  // The message is then carried on with ONE chord behind it, a character at a time, waiting for
+  // each to be drawn before writing the next. Both parts are what make it discriminate: a chord
+  // leaves the text input's cursor one place past the value, an EVEN number of chords repairs that
+  // by accident, and a burst written as one event takes the repairing branch in a single step. Four
+  // separate keystrokes after a single chord are what a person actually does, and the only shape
+  // that sees it.
+  test('Ctrl+T toggles tool detail while idle, and the message survives it', async ({
     terminal,
   }) => {
     await expect(terminal.getByText('ready to chat')).toBeVisible();
@@ -191,14 +198,24 @@ test.describe('gth chat TUI — greeting fixture', () => {
     await expect(terminal.getByText('> draftt')).not.toBeVisible();
     await expect(terminal.getByText('> draft')).toBeVisible();
 
+    // Keep writing with the panel open — the flow the expanded detail invites.
+    const rest = 'more';
+    for (let i = 0; i < rest.length; i++) {
+      terminal.write(rest[i]);
+      await expect(terminal.getByText(`> draft${rest.slice(0, i + 1)}`)).toBeVisible();
+    }
+
     // The same key folds it back, so this is a toggle rather than a one-way reveal.
     terminal.write('\x14');
     await expect(terminal.getByText('Tool details: off')).toBeVisible();
-    await expect(terminal.getByText('> draftt')).not.toBeVisible();
+    // The SECOND chord's letter needs saying separately: these matchers are substring searches, so
+    // `draftmore` is satisfied by `draftmoret` and would prove only the first chord.
+    await expect(terminal.getByText('> draftmoret')).not.toBeVisible();
 
-    // …and the buffer is still submittable, unchanged.
+    // …and what is sent is what was written. A cursor left stale by the chord sends `draftorem`.
     terminal.submit();
-    await expect(terminal.getByText('You › draft')).toBeVisible();
+    await expect(terminal.getByText('You › draftmore')).toBeVisible();
+    await expect(terminal.getByText('You › draftmoret')).not.toBeVisible();
   });
 
   // Ink repaints on SIGWINCH and the frame stays addressable after a reflow, and streaming still

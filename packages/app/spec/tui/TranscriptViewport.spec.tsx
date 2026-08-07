@@ -65,7 +65,13 @@ function Frame({
 }) {
   return (
     <Box flexDirection="column" height={height}>
-      <TranscriptViewport items={items} budgetRows={budgetRows ?? height} columns={columns} />
+      {/* No `scroll`, so nothing clips: zero states that, rather than leaving it to a default. */}
+      <TranscriptViewport
+        items={items}
+        budgetRows={budgetRows ?? height}
+        columns={columns}
+        regionRows={0}
+      />
       <Box flexDirection="column" flexShrink={0}>
         {Array.from({ length: dockRows }, (_, i) => (
           <Text key={i}>{`dock-${i}`}</Text>
