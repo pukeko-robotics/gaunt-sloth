@@ -212,7 +212,7 @@ zero.
 
 `floor-still-fires` is the case worth copying. It is `model_free`, so it **costs no model call** —
 it asserts what the deterministic layer does on its own — and it is a regression test for the
-hardline floor, the one refusal that applies under every rung. A floor that silently stopped
+hardline floor, the one refusal that applies under every mode. A floor that silently stopped
 matching is invisible to your unit tests and visible here, for free. (Model-free means no model
 *call*; the run still loads your config, so it still needs a working `llm` block.)
 

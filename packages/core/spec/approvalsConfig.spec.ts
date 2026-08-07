@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  APPROVAL_PROTECTION_DOCS_LINES,
+  APPROVAL_PROTECTION_DOCS_URL,
   APPROVAL_RUNG_DESCRIPTIONS,
   APPROVAL_RUNG_LABELS,
   APPROVAL_RUNGS,
@@ -461,18 +463,48 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
   });
 
   /**
-   * §10 — the five descriptions are copied verbatim from the specification and their wording is
-   * constrained by four normative rules plus §8.1. These pin the CONSTRAINTS, not the prose, so a
-   * well-meaning edit that breaks one of them fails here rather than in review.
+   * §10 — the five descriptions say what each mode is FOR, in at most two sentences, under four
+   * normative rules plus §8.1. These pin the CONSTRAINTS, not the prose, so a well-meaning edit
+   * that breaks one of them fails here rather than in review.
    */
   describe('§10 — the user-facing descriptions', () => {
+    /**
+     * A sentence ends at `.`, `?` or `!` followed by a space or the end of the string, and an
+     * ellipsis is a pause rather than three of them — the same boundary `firstSentence` cuts at.
+     * Counted here rather than imported because `firstSentence` lives a layer up, in the agent
+     * package, and core does not depend on it.
+     */
+    const countSentences = (text: string): number =>
+      (text.match(/(?<!\.)[.?!](?=\s|$)/g) ?? []).length;
+
+    it('the budget: every mode is described in at most two sentences', () => {
+      for (const rung of APPROVAL_RUNGS) {
+        const text = APPROVAL_RUNG_DESCRIPTIONS[rung];
+        expect(countSentences(text), `${rung}'s description: "${text}"`).toBeLessThanOrEqual(2);
+        // Two, not one run-on: the first sentence has to end somewhere, because it is the whole of
+        // what a picker row and the usage hint show.
+        expect(countSentences(text)).toBeGreaterThanOrEqual(2);
+      }
+    });
+
+    /**
+     * The category error this copy exists to prevent: Manual reads as "the safe one", so it gets
+     * chosen for a long unattended run — where every decision falls to a human, and a human's
+     * decision quality degrades with volume while a rater's does not. Both deterministic modes
+     * say they are for a bounded amount of work.
+     */
+    it('Manual and Write are described as bounded-volume tools, not as the safe choice', () => {
+      expect(APPROVAL_RUNG_DESCRIPTIONS['manual']).toContain('not a mode to leave running');
+      expect(APPROVAL_RUNG_DESCRIPTIONS['write']).toContain('like Manual a bounded stretch');
+    });
+
     it('rule 1: assisted states that files are STILL rewritten and deleted without asking', () => {
       const text = APPROVAL_RUNG_DESCRIPTIONS['assisted'];
       expect(text).toContain('rewrite and delete files in your working folder without asking');
       expect(text).toContain('not that nothing changes');
     });
 
-    it('rule 2: every rung that asks for approval states the always-allow carve-out', () => {
+    it('rule 2: every mode that asks for approval states the always-allow carve-out', () => {
       for (const rung of ['manual', 'write'] as const) {
         expect(APPROVAL_RUNG_DESCRIPTIONS[rung]).toContain(
           'until you tell it to always allow a command'
@@ -480,25 +512,35 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       }
     });
 
-    it('rule 3: auto is safer than bypass and explicitly NOT safe, and points at real gates', () => {
-      const text = APPROVAL_RUNG_DESCRIPTIONS['auto'];
-      expect(text).toContain('safer than bypass');
-      expect(text).toContain('it is not safe');
-      expect(text).toContain('deployment approvals, two-factor, branch protection');
+    /**
+     * The half of Assisted that is a feature rather than a restriction: the approval prompt carries
+     * the rater's reason, so a user reading it learns what the command does instead of only judging
+     * it. Hedged deliberately — the reason comes from a model, and on a rating timeout it says only
+     * that the command could not be assessed, so the copy may claim the explanation but never
+     * promise it is always there or always right.
+     */
+    it('rule 3: assisted offers the explanation without promising it', () => {
+      const text = APPROVAL_RUNG_DESCRIPTIONS['assisted'];
+      expect(text).toContain('explaining what it does');
+      expect(text).toMatch(/usually/);
+      expect(text).not.toMatch(/always explains|tells you exactly what/i);
     });
 
     /**
-     * Rule 3 again, on the half that went stale: what this rung claims the rater still DOES has to
-     * be a claim the rater is specified to keep. It names the four structural `attack` tests (§4.1.1)
-     * and the §6.1 irreversibility question — not an outcome. The clause it replaced promised a halt
-     * on "anything that would send your secrets off the machine", which §11.1b's narrowing made
-     * false: a secret handed to a working tool rates `destructive`, so it comes to the user rather
-     * than ending the run. A description may only promise what the scale actually delivers.
+     * Rule 3 on the mode with the most room to overclaim. What Auto may NOT say is that it runs
+     * without stopping: [[EXT-29]]'s agent–rater negotiation is unbuilt, so a `destructive` outcome
+     * escalates to the human exactly as it does at Assisted. Shipping copy that advertises a
+     * difference the product does not have is the one unacceptable outcome here, and a field tester
+     * hit precisely this on `git clone`.
      */
-    it('rule 3: auto describes what the rater tests for, not an outcome it cannot guarantee', () => {
+    it('rule 3: auto is explicitly not safe and says the negotiation is not yet active', () => {
       const text = APPROVAL_RUNG_DESCRIPTIONS['auto'];
-      expect(text).toContain('brings anything it cannot undo to you');
-      expect(text).toContain('reads your keys or passwords');
+      expect(text).toContain('It is not safe');
+      expect(text).toContain('will change and delete things');
+      expect(text).toContain('is not built yet');
+      expect(text).toContain('still stops and asks you');
+      // The promise the mode cannot keep while the negotiation is unbuilt.
+      expect(text).not.toMatch(/does not stop to ask/i);
     });
 
     it('§8.1: no description advertises the hardline floor — only the deny list is cited', () => {
@@ -507,6 +549,35 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       }
       expect(APPROVAL_RUNG_DESCRIPTIONS.bypass).toContain('deny list');
       expect(APPROVAL_RUNG_DESCRIPTIONS['auto']).toContain('deny list');
+    });
+
+    /**
+     * **No description may imply containment.** "The agent cannot write outside your working
+     * folder" is false wherever the agent has a shell — measured: `write_file` refused a path that
+     * `touch` then wrote. The narrow true form is that the built-in file *tools* are confined, and
+     * it is stated once, on `write`, in the same breath as the fact that the shell is not.
+     */
+    it('rule 3: the working-folder claim is made once, about the TOOLS, and never generalised', () => {
+      const text = APPROVAL_RUNG_DESCRIPTIONS['write'];
+      expect(text).toContain('built-in file tools run free inside your working folder');
+      expect(text).toContain('The shell is not confined that way');
+      for (const rung of APPROVAL_RUNGS) {
+        expect(
+          APPROVAL_RUNG_DESCRIPTIONS[rung],
+          `${rung}'s description claims the agent itself is confined`
+        ).not.toMatch(/cannot (write|reach|go|touch|escape)/i);
+      }
+    });
+
+    /**
+     * [[EXT-94]] — the AG-UI and ACP servers build their own agent and never drain an approval
+     * interrupt, so a universal "Gaunt Sloth always asks" is false there. These strings render on
+     * terminal surfaces only, so the claim is scoped to the session the user is in.
+     */
+    it('rule 3: no description promises that Gaunt Sloth ALWAYS asks', () => {
+      for (const rung of APPROVAL_RUNGS) {
+        expect(APPROVAL_RUNG_DESCRIPTIONS[rung]).not.toMatch(/always asks|will always ask/i);
+      }
     });
 
     /**
@@ -534,6 +605,25 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
     it('every rung has one', () => {
       for (const rung of APPROVAL_RUNGS) {
         expect(APPROVAL_RUNG_DESCRIPTIONS[rung].length).toBeGreaterThan(40);
+      }
+    });
+
+    /**
+     * The two-sentence budget is affordable only because the reasoning has somewhere to live. The
+     * pointer is a pair of LINES — label, then the bare URL — because every notice surface renders
+     * one line per entry: a URL alone on its line is what keeps a narrow pane from breaking it
+     * mid-path, and what lets a terminal that linkifies URLs pick up the whole address.
+     */
+    it('the docs pointer is two lines, and the URL is one of them, bare', () => {
+      expect(APPROVAL_PROTECTION_DOCS_LINES).toHaveLength(2);
+      expect(APPROVAL_PROTECTION_DOCS_LINES[1]).toBe(APPROVAL_PROTECTION_DOCS_URL);
+      expect(APPROVAL_PROTECTION_DOCS_URL).toMatch(/^https:\/\/\S+$/);
+      expect(APPROVAL_PROTECTION_DOCS_URL).toContain('what-approvals-protect-you-from');
+    });
+
+    it('no description carries the URL itself — the surfaces print it once, beside the copy', () => {
+      for (const rung of APPROVAL_RUNGS) {
+        expect(APPROVAL_RUNG_DESCRIPTIONS[rung]).not.toContain('http');
       }
     });
   });

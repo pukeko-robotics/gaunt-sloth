@@ -163,10 +163,14 @@ test.describe('gth code TUI — EXT-52/CFG-27 rung switching restores prompting 
     await expect(terminal.getByText('> /approvals bypass')).toBeVisible();
     terminal.submit();
     await expect(terminal.getByText('Approvals: Bypass')).toBeVisible();
-    // The notice must state that the auto-rater is skipped too, not just the prompt...
-    await expect(
-      terminal.getByText('without asking and without rating', { strict: false })
-    ).toBeVisible();
+    // The notice must state that the auto-rater is skipped too ("rated"), not just the prompt
+    // ("asked"). **Matched a word at a time, never a phrase.** `getByText` searches one rendered
+    // line, and a PTY wraps at the pane width wherever the copy happens to reach it — a phrase
+    // straddling that break fails on layout while the copy is perfectly correct. A single word
+    // cannot be split, and each of these still disappears from the screen if its claim is dropped
+    // from the copy, which is what makes them worth asserting.
+    await expect(terminal.getByText('rated', { strict: false })).toBeVisible();
+    await expect(terminal.getByText('asked', { strict: false })).toBeVisible();
     // ...and it cites only the deny list — §8.1 forbids user-facing copy leaning on the floor.
     await expect(terminal.getByText('deny list', { strict: false })).toBeVisible();
     // The status bar carries the warn-styled rung badge, in §10's display spelling.

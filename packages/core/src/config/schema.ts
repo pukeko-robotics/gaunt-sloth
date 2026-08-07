@@ -1046,7 +1046,7 @@ const RETIRED_SHELL_TOOL_PAIRS: ReadonlyArray<readonly [string, string]> = [
     '"approvals": "assisted" (or "auto"), optionally with "approvals.rater" naming an ' +
       'identity profile — the low/medium/high tiers became the ' +
       'safe/destructive/catastrophic/attack outcomes, and autoApproveLow/blockHigh are replaced ' +
-      'by the rung you choose',
+      'by the mode you choose',
   ],
   ['allowlist', '"approvals.allow" (a declared list of rule entries)'],
   [
@@ -1078,7 +1078,7 @@ const SHELL_TOOL_REGISTRY_KEY = 'run_shell_command';
 const RETIRED_APPROVALS_KEYS: ReadonlyArray<readonly [string, string]> = [
   [
     'strictness',
-    'nothing — there are no strictness levels any more. Choose a rung instead: ' +
+    'nothing — there are no strictness levels any more. Choose a mode instead: ' +
       '"manual"/"write" never rate, "assisted" escalates anything not rated safe, ' +
       '"auto" lets the auto-rater decide',
   ],
@@ -1098,8 +1098,8 @@ const RETIRED_APPROVALS_KEYS: ReadonlyArray<readonly [string, string]> = [
  */
 const RETIRED_ESCALATE_THRESHOLD_MESSAGE =
   'is now the third rule LIST (an array of {type, matcher, pattern} entries that always ask the ' +
-  'human), not a severity threshold. There is no escalate threshold any more: "assisted" ' +
-  'escalates everything the auto-rater does not rate safe, and "auto" does not stop to ask.';
+  'human), not a severity threshold. There is no escalate threshold any more: at "assisted" and ' +
+  '"auto" everything the auto-rater does not rate safe comes to you.';
 
 /**
  * Retired `approvals.mode` VALUES → the rung that replaced them.
@@ -1130,9 +1130,9 @@ const RETIRED_ESCALATE_THRESHOLD_MESSAGE =
  * name a hard validation error on arrival.
  */
 const RETIRED_APPROVAL_MODES: ReadonlyArray<readonly [string, string]> = [
-  ['read-only', '"manual" (the same rung, renamed)'],
-  ['auto-safe', '"assisted" (the same rung, renamed)'],
-  ['full-auto', '"auto" (the same rung, renamed)'],
+  ['read-only', '"manual" (the same mode, renamed)'],
+  ['auto-safe', '"assisted" (the same mode, renamed)'],
+  ['full-auto', '"auto" (the same mode, renamed)'],
   [
     'ask',
     '"write" (Gaunt Sloth edits files freely and asks about everything else) or "manual" ' +
@@ -1210,7 +1210,7 @@ function collectRetiredApprovalsIssues(
           path: pathPrefix,
           message:
             `Approval mode "${retired}" is no longer supported: approvals is now one ordered ` +
-            `ladder of five rungs (${APPROVAL_RUNG_LIST}). ` +
+            `ladder of five modes (${APPROVAL_RUNG_LIST}). ` +
             `Use ${replacement} instead. ${MIGRATION_HINT}`,
         });
       }
@@ -1227,8 +1227,8 @@ function collectRetiredApprovalsIssues(
         path: `${pathPrefix}.${retired}`,
         message:
           `Config property "${retired}" in ${pathPrefix} is no longer supported: approvals is now ` +
-          `one ordered ladder of five rungs (${APPROVAL_RUNG_LIST}), ` +
-          `and each rung fully determines behaviour. Use ${replacement}. ${MIGRATION_HINT}`,
+          `one ordered ladder of five modes (${APPROVAL_RUNG_LIST}), ` +
+          `and each mode fully determines behaviour. Use ${replacement}. ${MIGRATION_HINT}`,
       });
     }
   }
@@ -1251,7 +1251,7 @@ function collectRetiredApprovalsIssues(
       message:
         `Config property "rater" in ${pathPrefix} is now a bare identity-profile name, not an ` +
         `object or a boolean (e.g. "rater": "safety-rater"). Whether the rater runs at all is ` +
-        `decided by the rung: "assisted" and "auto" rate, the other three never do. ` +
+        `decided by the mode: "assisted" and "auto" rate, the other three never do. ` +
         MIGRATION_HINT,
     });
   }
@@ -1262,7 +1262,7 @@ function collectRetiredApprovalsIssues(
         path: `${pathPrefix}.mode`,
         message:
           `Approval mode "${retired}" is no longer supported: approvals is now one ordered ladder ` +
-          `of five rungs (${APPROVAL_RUNG_LIST}). Use ${replacement} ` +
+          `of five modes (${APPROVAL_RUNG_LIST}). Use ${replacement} ` +
           `instead. ${MIGRATION_HINT}`,
       });
     }

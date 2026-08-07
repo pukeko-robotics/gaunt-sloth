@@ -522,7 +522,9 @@ describe('config schema (GS2-1 B1)', () => {
             expect(issues).toHaveLength(1);
             expect(issues[0].path).toBe('approvals.mode');
             expect(issues[0].message).toContain(rung);
-            expect(issues[0].message).toContain('ladder of five rungs');
+            // CFG-39/CFG-31 settled on ONE noun for the user-facing vocabulary: mode, not rung.
+            expect(issues[0].message).toContain('ladder of five modes');
+            expect(issues[0].message).not.toContain('rung');
           });
 
           it(`hard-errors on the retired SCALAR "${retired}" too, naming ${rung}`, () => {

@@ -395,7 +395,7 @@ describe('tui <App>', () => {
     stdin.write('\r');
 
     await vi.waitFor(() => {
-      expect(frames.join('\n')).toContain('without asking and without rating');
+      expect(frames.join('\n')).toContain('nothing is rated and nothing is asked');
       expect(lastFrame()).toContain('⚡ Bypass');
     });
     // §8.1 — the copy names only a protection the user can inspect and extend.

@@ -190,13 +190,16 @@ There is one approvals setting, and it takes the mode name:
 { "approvals": "assisted" }
 ```
 
-| Mode | What it grants | Rater |
+| Mode | What it is for | Rater |
 |---|---|---|
-| `manual` | Gaunt Sloth may automatically read and list files in the current working folder. It asks for approval for anything else, until you tell it to always allow a command. | no |
-| `write` | Gaunt Sloth may automatically read, edit, create and delete files in the current working folder. It asks for approval for anything else, until you tell it to always allow a command. | no |
-| `assisted` | Same as write, plus the auto-rater rates everything else and automatically approves what it rates as safe; anything questionable comes to you. Gaunt Sloth can still rewrite and delete files in your working folder without asking — "safe" means each action is checked for reaching outside that folder or harming your system, not that nothing changes. | yes |
-| `auto` | The auto-rater steers Gaunt Sloth: it decides for itself and does not stop to ask you. This is safer than bypass — the auto-rater still stops the run on a command that reads your keys or passwords, weakens permissions, installs itself to run again later, or hides what it does; it brings anything it cannot undo to you rather than deciding alone; and your deny list still applies — but it is **not** safe. Gaunt Sloth will change and delete things. Use it where the consequences are recoverable, and put real gates (deployment approvals, two-factor, branch protection) on anything that is not. | yes |
-| `bypass` | No gate. Gaunt Sloth runs whatever it decides to run, without asking and without rating. Only the refusals configured in the deny list in your config still apply. | no |
+| `manual` | For a handful of commands you want to read yourself — not a mode to leave running. In this session Gaunt Sloth reads and lists files in your working folder on its own; everything else — shell, file changes, MCP and custom tools — comes to you, until you tell it to always allow a command. | no |
+| `write` | Manual for work that is mostly editing, and like Manual a bounded stretch: the built-in file tools run free inside your working folder. The shell is not confined that way, so shell commands, MCP calls and custom tools still come to you, until you tell it to always allow a command. | no |
+| `assisted` | For everyday work: safe commands run, anything riskier comes to you — usually with a line explaining what it does. Gaunt Sloth can still rewrite and delete files in your working folder without asking — "safe" means each action is checked for reaching outside that folder or harming your system, not that nothing changes. | yes |
+| `auto` | For recoverable work where you want as few interruptions as possible: the auto-rater judges each command instead of you. It is not safe — Gaunt Sloth will change and delete things, your deny list still applies, and the negotiation that would let Auto settle a risky command by itself is not built yet, so anything rated destructive still stops and asks you exactly as Assisted does. | yes |
+| `bypass` | No gate, for a throwaway environment you would not mind losing. Whatever Gaunt Sloth decides to run, runs — nothing is rated and nothing is asked; only the refusals in your config’s deny list still apply. | no |
+
+These are the same sentences `/approvals` shows in a session, so the guide and the picker cannot
+describe a mode differently.
 
 The choice you are really making is **`manual` → `assisted` → `auto`, plus `bypass`** — those four
 are what `/approvals` offers you. `write` is not a further step along that line: it is `manual` with
@@ -208,8 +211,8 @@ than something between `manual` and `assisted`. Set it whenever you want it, wit
 `manual`, `write` and `bypass` consult no model at all, so they are reproducible and cost
 nothing. `assisted` spends one rating call per gated command.
 
-`bypass` is **not** a higher-autonomy mode than `auto` — both let the agent act without asking;
-`bypass` is the same autonomy with the checks removed.
+`bypass` is **not** a higher-autonomy mode than `auto` — both let the agent act on what the rater
+clears without asking you; `bypass` is the same autonomy with the checks removed.
 
 What any of these modes does and does **not** protect you from, and what has to sit outside Gaunt
 Sloth to cover the rest, is
