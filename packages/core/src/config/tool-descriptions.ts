@@ -14,20 +14,25 @@
  *
  * 1. **A tool that is auto-approved gets NO suffix.** The absence of the sentence is what marks it
  *    free. Appending "this tool is already approved" would be the opposite of the design.
- * 2. **The suffix is derived from the rung in force AND from the set of tools the gate actually
+ * 2. **The suffix is derived from the rung in force AND from the set of tools that rung actually
  *    gates.** "A description that disagrees with what the gate will actually do is worse than no
- *    description at all" (§4.5), so {@link isGrantedAtRung} takes the gated set as a parameter and
- *    both backends pass the SAME set they wire into the approval interrupt. The two can therefore
- *    not drift: widening the gate ([[EXT-30]]) widens the descriptions in the same breath.
+ *    description at all" (§4.5), so {@link isGrantedAtRung} takes the LIVE gated set as a parameter
+ *    and both backends pass the SAME `resolveGatedToolNames` result. The two can therefore not
+ *    drift: widening what a rung gates ([[EXT-30]]) widens the descriptions in the same breath.
+ *    That set is narrower than the rung-independent one wired into the interrupt
+ *    (`resolveInterruptToolNames`), because a call the live rung does not gate is approved on
+ *    arrival and so is genuinely free.
  *
- * **Scope boundary, per §4.3:** *"The first implementation and the measurement corpus cover the
- * shell only. Every other tool is granted or escalated by the rung without a rating call until
- * EXT-30 widens the gate."* Today `run_shell_command` is the only tool either backend wires into
- * the approval interrupt, so it is the only tool that can ever require approval — every other tool
- * is **granted**, and a granted tool gets no suffix. The rung-vs-access-class rule below
- * (read tools granted from `read-only` up, write tools from `write` up) is implemented in full and
- * unit-tested against an injected wider gated set, so EXT-30 inherits it rather than re-deriving
- * it; it simply has no observable effect while the gated set is the shell alone.
+ * **Scope, per §4.3.** The *rater* covers the shell only: every other gated tool goes to the human
+ * without a rating call until [[EXT-30]] widens the rater. The *gate* is wider than the rater. At
+ * the two deterministic rungs (`read-only`, `write`) both backends gate every bound tool the rung's
+ * access class does not auto-grant — the write built-ins, the shell, MCP tools (whatever their
+ * `readOnlyHint` says) and custom tools — so at those rungs a non-granted call always reaches the
+ * human. At `auto-safe`, `full-auto` and `bypass` the gated set is the shell alone.
+ *
+ * `config/shell-policy.ts`'s `isToolGatedAtRung` is the single rule for all of that, and both the
+ * live gated set and this module's grant are projections of it, so what a rung gates and the grant
+ * reported here cannot disagree.
  */
 import type { ApprovalRung } from '#src/config/shell-policy.js';
 
@@ -79,11 +84,15 @@ export type BuiltInToolAccess = 'read' | 'write';
  * two sets overlap on `read_file`/`write_file`/`edit_file`, which is exactly why one flat table
  * keyed by name serves both.
  *
- * Deliberately absent: `run_shell_command`, the fixed dev-command tools, `gth_web_fetch`,
- * `gth_checklist`, `gth_status_update`, `show_a2ui_surface`, MCP/custom/A2A tools. None of them is
- * "reading or writing files in the working folder", so none is granted by a rung's access class.
- * (They are still *granted today* — the gate does not gate them — which {@link isGrantedAtRung}
- * decides on the gated set, not on this table.)
+ * Deliberately absent: `run_shell_command`, deepagents' `execute`, the fixed dev-command tools,
+ * `gth_web_fetch`, `gth_checklist`, `gth_status_update`, `show_a2ui_surface`, MCP/custom/A2A tools.
+ * None of them is "reading or writing files in the working folder", so none is granted by a rung's
+ * access class, and at `read-only`/`write` every one of them escalates to the human.
+ *
+ * **An MCP tool's own `readOnlyHint` earns it nothing here.** A server's self-declared annotation is
+ * least earned exactly where the ladder is strictest, so it must not skip the prompt at those two
+ * rungs; membership of this table is the only thing that does. Adding a name here grants it at a
+ * rung, so add one only for a tool that genuinely reads or writes files in the working folder.
  */
 export const BUILT_IN_TOOL_ACCESS: Readonly<Record<string, BuiltInToolAccess>> = {
   // gsloth GthFileSystemToolkit (lean backend)
@@ -175,22 +184,54 @@ export function getRungToolDescriptionSuffix(rung: ApprovalRung): string | null 
 }
 
 /**
+ * §2 — does `rung`'s own grant cover this tool's **access class**, i.e. is the tool free *on its
+ * class alone*, before anything is asked about whether the gate gates it?
+ *
+ * - `read` — granted at every rung (§2.1).
+ * - `write` — granted from `write` up (§2.2, and §2.3/§2.4 which grant "everything `write` grants"),
+ *   so it escalates at `read-only`.
+ * - **no class at all** — the shell, deepagents' `execute`, a network call, an MCP tool, a custom or
+ *   agent-authored tool: granted by no rung. There is no implicit exemption; a tool is free here
+ *   only by appearing in {@link BUILT_IN_TOOL_ACCESS}.
+ *
+ * **This is the one implementation of that rule.** {@link isGrantedAtRung} decides a grant with it,
+ * and `config/shell-policy.ts`'s `isToolGatedAtRung` decides gated-set membership with it — which
+ * is in turn what the backends' interrupt set and `GthAgentRunner`'s own live-rung check are built
+ * from. So the gate cannot escalate a call the descriptions and the rater's granted list call free
+ * — the drift §4.5 names as worse than having no description at all. Two derivations of one rule is
+ * exactly what this function exists to prevent; do not inline it back into either caller.
+ *
+ * `bypass` is not special-cased: it grants everything for a reason unrelated to access class (the
+ * gate is off), which {@link isGrantedAtRung} states where that belongs.
+ */
+export function isAccessClassGrantedAtRung(toolName: string, rung: ApprovalRung): boolean {
+  const access = BUILT_IN_TOOL_ACCESS[toolName];
+  if (access === 'read') return true;
+  if (access === 'write') return rung !== 'read-only';
+  return false;
+}
+
+/**
  * Is `toolName` auto-approved (granted, free, no prompt and no rating) at `rung`?
  *
  * @param toolName The registered tool name.
  * @param rung The rung in force for the session.
- * @param gatedTools The names the gate actually wires into the approval interrupt. **This is the
- *   parameter that keeps the descriptions honest**: a tool the gate does not gate cannot require
- *   approval, whatever a rung's table row says about tool classes, so it is granted. Both backends
- *   pass the same set they hand to `interruptOn` / `humanInTheLoopMiddleware`.
+ * @param gatedTools The LIVE gated set — what `rung` actually gates, i.e.
+ *   `resolveGatedToolNames` for the rung in force. **This is the parameter that keeps the
+ *   descriptions honest**: a tool the rung does not gate cannot require approval, whatever a rung's
+ *   table row says about tool classes, so it is granted. It is deliberately NOT the wider,
+ *   rung-independent set the backends wire into `interruptOn` (`resolveInterruptToolNames`): a call
+ *   the live rung does not gate is auto-approved the moment it arrives at the runner, so describing
+ *   it as needing approval would be a promise nothing keeps.
  *
  * Order:
  * 1. `bypass` grants everything (§2.5) — the gate is off.
- * 2. A tool the gate does not gate is granted at every rung (§4.3's scope boundary).
- * 3. A gated tool is granted only where the rung's own grant covers its access class: read tools
- *    from `read-only` up (§2.1), write tools from `write` up (§2.2, and §2.3/§2.4 which grant
- *    "everything `write` grants"). A gated tool with no access class — the shell, a network call,
- *    an MCP tool — is granted at no rung but `bypass`.
+ * 2. A tool the live rung does not gate cannot require approval, so it is granted at every rung.
+ * 3. A gated tool is granted only where the rung's own grant covers its access class —
+ *    {@link isAccessClassGrantedAtRung}, the same rule `resolveGatedToolNames` selects the gated set
+ *    with. At the two deterministic rungs those two uses are complementary by construction: a tool
+ *    is gated there precisely when this returns false, so step 3 answers false for every tool step 2
+ *    let through, and the gate and the description say the same thing.
  */
 export function isGrantedAtRung(
   toolName: string,
@@ -199,10 +240,7 @@ export function isGrantedAtRung(
 ): boolean {
   if (rung === 'bypass') return true;
   if (!gatedTools.includes(toolName)) return true;
-  const access = BUILT_IN_TOOL_ACCESS[toolName];
-  if (access === 'read') return true;
-  if (access === 'write') return rung !== 'read-only';
-  return false;
+  return isAccessClassGrantedAtRung(toolName, rung);
 }
 
 /**

@@ -23,6 +23,34 @@ export const FILESYSTEM_TOOL_NAMES = [
   'execute',
 ] as const;
 
+/**
+ * **Every tool name `createDeepAgent` registers on its own** — the filesystem set above plus the
+ * tools its other standard middleware installs unconditionally: `write_todos` (`todoListMiddleware`)
+ * and `task` (`createSubAgentMiddleware`). None of them ever appears in the tool array gsloth passes
+ * `createDeepAgent`, so this is the only way the approval policy can see them.
+ *
+ * **It exists because the approval question is "what did the graph bind", not "what did we supply".**
+ * `task` and `write_todos` have no entry in core's `BUILT_IN_TOOL_ACCESS`, so the two deterministic
+ * rungs must escalate them — `task` most of all, since it delegates to a subagent. A set built from
+ * `FILESYSTEM_TOOL_NAMES` alone left both bound and ungated at `read-only` and `write`, under a rung
+ * description promising to ask about anything else. A subagent's OWN calls are gated too —
+ * `createSubAgentMiddleware` inherits this set, and a nested interrupt does reach the parent state
+ * the runner drains (measured in `deepAgentNestedInterrupt.spec.ts`) — so gating `task` is about the
+ * delegation itself being a thing the user agreed to, not about reaching the child's writes.
+ *
+ * Like {@link FILESYSTEM_TOOL_NAMES} this MIRRORS deepagents (its own `BUILTIN_TOOL_NAMES` is
+ * declared in the types but not exported at runtime, and the graph must be handed `interruptOn`
+ * before it exists, so the registered set cannot be read back). **It must track deepagents:** a tool
+ * a future version registers itself and this list has not learned about is bound and ungated.
+ * deepagents' async-task tools are deliberately absent — that middleware is installed only for
+ * async subagents, which this backend never configures.
+ */
+export const DEEP_AGENT_BUILT_IN_TOOL_NAMES = [
+  ...FILESYSTEM_TOOL_NAMES,
+  'write_todos',
+  'task',
+] as const;
+
 /** The slice of GthConfig the permission mapping consumes. */
 export interface PermissionConfigSlice {
   filesystem: string[] | 'all' | 'read' | 'none';

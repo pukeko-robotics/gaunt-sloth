@@ -1021,9 +1021,10 @@ function preflightFloorReason(command: string): string | null {
  *    floor still apply, but neither is decided here.
  * 2. Unrated rungs (`read-only`, `write`) → `escalate`. No model is consulted at all; the
  *    allow-list is checked by the caller BEFORE this function, so reaching here means the human
- *    decides. (Both rungs behave identically for the shell because the shell is the only gated
- *    tool today — the built-in read/write tools each rung grants are not gated until [[EXT-30]]
- *    widens the gate. That is a scope boundary, not a missing branch.)
+ *    decides. (The two rungs behave identically here, and that is not a missing branch: what
+ *    separates them is which tools they auto-grant, decided once in `resolveGatedToolNames` when the
+ *    gated set is built. A call that reaches this function is already one the rung did not grant,
+ *    and the shell — this function's only subject — is granted by neither.)
  * 3. **The deterministic preflight FINDINGS, which FLOOR the outcome at `destructive` and never
  *    lower one** ({@link preflightFloorReason}): the script-env-leak preflight
  *    ({@link hasScriptEnvLeakRisk}) and EXT-61's open-world preflight

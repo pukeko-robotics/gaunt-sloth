@@ -12,7 +12,9 @@ import {
   type McpApprovalsConfig,
   type McpToolApprovalEntry,
   type ResolvedApprovals,
+  isToolGatedAtRung,
   resolveApprovals,
+  resolveGatedToolNames,
   resolveShellApprovalGate,
   SHELL_TOOL_NAME,
   TOOL_ANNOTATION_HINTS,
@@ -152,9 +154,11 @@ export class GthAgentRunner {
   /**
    * CFG-27 — the runtime, session-scoped approvals posture, seeded at {@link init} from
    * {@link resolveApprovals} and thereafter switchable for the session by `/approvals <rung>`.
-   * The shell tool stays gated (in `interruptOn`) at EVERY rung, so this is consulted at the top
-   * of {@link decideToolApproval} and a config that pre-selects `bypass` remains switchable back
-   * mid-session. Never persisted.
+   * **This field, not the interrupt wiring, is where the rung lives.** The backends wire the
+   * interrupt rung-independently, so every tool any rung could gate arrives at the top of
+   * {@link decideToolApproval} and is judged against the rung recorded here — which is what makes
+   * `/approvals read-only` take effect mid-session, and what keeps a config that pre-selects
+   * `bypass` switchable back. Never persisted.
    *
    * It does NOT disable the hardline floor — catastrophic commands are still refused at exec time
    * in `GthDevToolkit.executeCommand` under every rung.
@@ -786,11 +790,31 @@ export class GthAgentRunner {
    * Hardline catastrophic commands remain refused at exec time regardless of any approval here
    * (defense in depth in `GthDevToolkit.executeCommand`), so an allow-listed `rm -rf /` still
    * cannot run.
+   *
+   * **Step 0 is the rung.** The backends wire the interrupt over every tool ANY rung could gate,
+   * because the graph is built once and `/approvals <rung>` moves the rung under it for the rest of
+   * the session. So a call arriving here has not yet been judged against the rung in force: this is
+   * where that happens, on `sessionApprovals.rung`, which a mid-session switch has already updated.
+   * A call the live rung does not gate is approved on the spot — no rule matching, no rating, no
+   * prompt — which is what keeps `auto-safe`, `full-auto` and `bypass` behaving exactly as they did
+   * when the interrupt held the shell alone. It sits ABOVE the deny check for the same reason: an
+   * ungated call never reached this method at all before, so a deny entry could not fire on one, and
+   * a security fix for two rungs is not the place to change that. (The shell is gated at every rung
+   * whenever the shell gate is on, so §2.5's rule that the deny list survives `bypass` is untouched.)
    */
   private async decideToolApproval(tool: PendingToolInterrupt): Promise<ToolApprovalDecision> {
     const command = typeof tool.args?.command === 'string' ? (tool.args.command as string) : null;
     const isShellCommand = tool.name === SHELL_TOOL_NAME && command !== null;
     const approvals = this.sessionApprovals;
+
+    // (0) Does the rung IN FORCE gate this tool at all? Same shared predicate the backends built the
+    // interrupt from, asked about this one call, so the wiring and the decision cannot disagree.
+    // Scope `once`, so nothing is written to any allow-list: this is not a grant, it is the absence
+    // of a gate.
+    const { gateShell } = resolveShellApprovalGate(this.config ?? undefined, this.command);
+    if (!isToolGatedAtRung({ toolName: tool.name, rung: approvals.rung, gateShell })) {
+      return { type: 'approve', scope: 'once' };
+    }
 
     // ONE subject and ONE annotation source per decision, shared by the rule matcher and the
     // §4.7.3 floor below. Building a second source for the floor would let a `hint` entry and the
@@ -851,10 +875,9 @@ export class GthAgentRunner {
     //
     // The `bypass` term is deliberate and not redundant with the early return above. That return
     // only covers a SHELL call, so without this term a non-shell subject would still carry an
-    // escalate match into the prompt at `bypass` — unreachable while `run_shell_command` is the
-    // only gated tool, but §2.5's rule is about the rung, not about which tool asked. Make the
-    // invariant true rather than incidentally true, so [[EXT-30]] widening the gate cannot quietly
-    // break it.
+    // escalate match into the prompt at `bypass`, and §2.5's rule is about the rung, not about which
+    // tool asked. Non-shell subjects do reach this line — the deterministic rungs gate the write
+    // built-ins, MCP and custom tools — so the term is doing work rather than guarding a hypothesis.
     const escalatedBy =
       rule?.action === 'escalate' && approvals.rung !== 'bypass'
         ? describeApprovalEntry(rule.entry)
@@ -1072,10 +1095,23 @@ export class GthAgentRunner {
   private getGrantedBuiltInTools(): GrantedToolSummary[] {
     const registered = this.agent?.getRegisteredToolNames?.() ?? [];
     if (registered.length === 0) return [];
-    // The gated set is resolved from the SAME shared policy both backends wire their interrupt
-    // from, so "granted" here means exactly what it means at tool-registration time (§4.5).
+    // The LIVE gated set, from the SAME shared policy `decideToolApproval` decides on and the
+    // backends derive their interrupt from, so "granted" here means exactly what it means at
+    // tool-registration time (§4.5) and at the gate.
+    //
+    // EXT-80 makes this non-drift property load-bearing rather than incidental. At `read-only` the
+    // write built-ins are gated, so they are NOT granted, and a summary still offering `write_file`
+    // there would tell the model a tool is free while the gate stops and asks for it — the rater
+    // suggesting the one thing guaranteed to interrupt the user. It is computed per rating from
+    // `sessionApprovals.rung`, so it follows a mid-session `/approvals` change — unlike the
+    // interrupt set, which is fixed when the graph is built and is rung-independent for exactly
+    // that reason.
     const { gateShell } = resolveShellApprovalGate(this.config ?? undefined, this.command);
-    const gatedTools = gateShell ? [SHELL_TOOL_NAME] : [];
+    const gatedTools = resolveGatedToolNames({
+      rung: this.sessionApprovals.rung,
+      gateShell,
+      boundToolNames: registered,
+    });
     return describeGrantedBuiltInTools(registered, this.sessionApprovals.rung, gatedTools);
   }
 
