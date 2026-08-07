@@ -2,8 +2,8 @@
 
 In `gth code`, the agent can run shell commands so it can test its own work — run your suite, check
 `git status`, install a package — instead of only reading and writing files. **Approvals** decide
-which of those commands run on their own and which stop to ask you. There is one setting, and it is
-a ladder of five modes.
+which of those commands run on their own and which stop to ask you — and, at the strictest modes,
+which file edits and tool calls do too. There is one setting, and it is a ladder of five modes.
 
 ## The main use case: let the agent run your tests, on your terms
 
@@ -25,7 +25,8 @@ Anything else stops and asks you:
 The agent wants to run a shell command via run_shell_command
     rm -rf node_modules
 ⚠ Auto-rater (destructive): deletes a directory tree without confirmation
-[s]/[a] will remember exactly this command: { "type": "shell", "matcher": "exact", "pattern": "rm -rf node_modules" }
+[s]/[a] will remember rm -rf node_modules
+    stored as { "type": "shell", "matcher": "exact", "pattern": "rm -rf node_modules" }
 Approve?  [o]nce   [s]ession   [a]lways   [N]o
 ```
 
@@ -110,7 +111,8 @@ Saving a host counts too, not just fetching from one: `git config remote.origin.
 stored fetch target redirects every later fetch rather than one.
 
 If you fetch from the same host all day, put it in `approvals.allow` (below). That list is checked
-first, so it costs no prompt and no rating call.
+first, so the fetch stops asking you — and whether the rater still watches it is the entry's own
+`rate` (below).
 
 This check is a floor, not the whole of your safety, and it has two edges. It knows the common
 network tools, not every program that can open a socket, so something like `svn checkout https://…`
@@ -154,9 +156,11 @@ budget:
 It is a number you set rather than one gth guesses from the provider, because a guess about your
 hardware that turns out wrong fails quietly.
 
-To have the agent run tests *without* any of this, give it the fixed `run_tests` dev-command tool:
-you set the exact command, and because there is nothing for the model to choose, it runs with **no
-rating and no prompt**. Put this in `.gsloth.config.json` at your project root:
+To have the agent run tests *without* a rating call, give it the fixed `run_tests` dev-command tool:
+you set the exact command, so there is nothing for the model to compose and **nothing for the rater
+to judge**. What it does not escape is the mode: whether a call runs on its own or comes to you is
+the mode's row in [the table below](#the-ladder-approvals), for this tool as for every other. Put
+this in `.gsloth.config.json` at your project root:
 
 ```json
 {
@@ -175,7 +179,8 @@ rating and no prompt**. Put this in `.gsloth.config.json` at your project root:
 ```
 
 Now `run_tests` runs `npm test` on demand, while any *other* command the agent composes (a `git`
-commit, `npm install`, a one-off script) goes through the rater. The `timeout` bump gives a slow
+commit, `npm install`, a one-off script) is an ordinary shell command and gets whatever the mode in
+force does with one — the auto-rater at `assisted` and `auto`. The `timeout` bump gives a slow
 command up to 300000 ms (5 minutes) before it is killed; the default is 120000 ms.
 
 A per-command `builtInTools` object **replaces** the default set entirely, which is why
@@ -209,10 +214,11 @@ than something between `manual` and `assisted`. Set it whenever you want it, wit
 [the picker](interactive-sessions.md#slash-commands).
 
 `manual`, `write` and `bypass` consult no model at all, so they are reproducible and cost
-nothing. `assisted` spends one rating call per gated command.
+nothing. `assisted` and `auto` each spend one rating call per gated command.
 
-`bypass` is **not** a higher-autonomy mode than `auto` — both let the agent act on what the rater
-clears without asking you; `bypass` is the same autonomy with the checks removed.
+Choosing `bypass` is not choosing more trust in the rater: it switches the gate off. Nothing is
+rated, nothing is asked, and only your deny list still applies — so what runs under it is not what
+some check cleared, it is whatever the agent decided to do.
 
 What any of these modes does and does **not** protect you from, and what has to sit outside Gaunt
 Sloth to cover the rest, is
@@ -282,8 +288,8 @@ for `{ "mode": <value> }`:
   resolve is a config error, never a silent fallback. It is only consulted at `assisted` and
   `auto`.
 - **`allow`** — what you trust. Checked **before** the rater at every mode except `bypass`, so an
-  allow-listed call never prompts. This is the supported way to make a non-interactive pipeline
-  pass.
+  allow-listed call does not stop to ask you — the one exception is the `rate` tripwire below. This
+  is the supported way to make a non-interactive pipeline pass.
 - **`deny`** — what never runs. Checked **before** `allow` and before the rater, and it is the one
   check `bypass` keeps: choosing `bypass` means *"stop asking me"*, not *"forget what I told you
   never to do"*.
@@ -316,9 +322,9 @@ The lists do not all merge the same way, and the difference is deliberate:
   list, and the root's no longer applies there.
 
 The reason they differ is what each mistake costs you. A missed `allow` entry means one extra
-prompt; a missed `deny` entry means the rater still looks at the call. Neither runs anything. A
-**too-broad `allow` entry runs, without asking and without rating** — so the restrictive lists
-grow across scopes, and the permissive one does not.
+prompt; a missed `deny` entry only leaves the call to whatever your mode would have done with it
+anyway. A **too-broad `allow` entry runs, without asking and without rating** — so the restrictive
+lists grow across scopes, and the permissive one does not.
 
 ### Writing an entry
 
@@ -350,9 +356,9 @@ and is almost always what was meant.
 cover `npm test -- --watch`, and an `exact` deny entry for `npm publish` does not stop
 `npm publish --access public`. Use a `glob` when you mean the family. This is the cost the design
 accepts, and it is worth what it buys: a missed `allow` entry only asks you, and a missed `deny`
-entry still reaches the rater and the prompt — neither is an execution — while a too-broad `allow`
-entry has no such backstop. Under `bypass` the `deny` list is one of only two checks left, so write
-globs there.
+entry leaves the call to whatever your mode would have done with it — while a too-broad `allow`
+entry has no such backstop. Under `bypass` your mode would have run it: the `deny` list is one of
+only two checks left there, so write globs in it.
 
 **A pattern cannot span a command separator.** No `allow` entry of any matcher matches a command
 Gaunt Sloth cannot statically resolve — anything that composes, substitutes or redirects — so
@@ -410,13 +416,13 @@ never times out into an approval. Declare what the pipeline is allowed to run:
 ## Examples
 
 ```json
-// Confirm every shell command yourself, while the agent still edits files freely
+// Approve everything yourself except the agent's own edits inside your working folder
 { "approvals": "write" }
 
 // Rate with a stronger model than the session's
 { "approvals": { "mode": "assisted", "rater": "safety-rater" } }
 
-// Let the agent work unattended, but never let it publish
+// Rate every command, and put publishing beyond anything a rating can approve
 { "approvals": { "mode": "auto", "deny": [
   { "type": "shell", "matcher": "glob", "pattern": "npm publish*" },
   { "type": "shell", "matcher": "glob", "pattern": "git push --force*" }
@@ -442,6 +448,6 @@ never times out into an approval. Declare what the pipeline is allowed to run:
 - Every `builtInTools` key and its defaults: [Tools configuration](../configuration/tools.md).
 - The `/approvals` slash command: [Interactive sessions](interactive-sessions.md#slash-commands).
 - Migrating a pre-2.0 `yolo` / `judge` config, or a CFG-26 `mode`/`strictness`/`escalate` one:
-  [Migration](../MIGRATION.md#i-approvals-and-the-ai-rater-hard).
+  [Migration](../MIGRATION.md#i-approvals-and-the-auto-rater-hard).
 - The `code` / `exec` commands and their flags: [Commands](../COMMANDS.md#code).
 - Give the agent project rules while it codes: [Code with your rules](code-with-your-rules.md).
