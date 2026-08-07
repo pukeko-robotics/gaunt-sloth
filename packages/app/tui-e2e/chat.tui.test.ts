@@ -151,6 +151,29 @@ test.describe('gth chat TUI — greeting fixture', () => {
     await expect(terminal.getByText('┗┛┗┻┗┻┛┗┗')).not.toBeVisible();
   });
 
+  // TUI-C63 — the hint row is the only thing on screen that says the conversation scrolls, and this
+  // surface took the terminal's own scrollback away. It is composed in the TUI from the shared
+  // `exitMessage` plus a fragment this surface owns, so the readline session never inherits keys it
+  // does not have; here it is asserted as the one sentence the user actually reads.
+  test('the hint row advertises scrolling, and survives a /help taller than the region', async ({
+    terminal,
+  }) => {
+    const hintRow =
+      "Type 'exit' or Ctrl+C to exit chat · /help for commands · PgUp/PgDn to scroll history";
+    await expect(terminal.getByText(hintRow)).toBeVisible();
+
+    terminal.write('/help');
+    await expect(terminal.getByText('> /help')).toBeVisible();
+    terminal.submit();
+
+    // At 30 rows the notice is taller than the conversation region, so its tail is what shows —
+    // and the pinned dock (status bar, prompt, hint row) must still be there under it. A notice
+    // that pushed the dock off screen would take the scroll advice with it.
+    await expect(terminal.getByText('Ctrl+C — exit')).toBeVisible();
+    await expect(terminal.getByText('chat  ·  turns: 0  ·  ready')).toBeVisible();
+    await expect(terminal.getByText(hintRow)).toBeVisible();
+  });
+
   // (2) type a prompt -> the tool-call line and streamed assistant text appear.
   test('streams a tool call and assistant text after a prompt', async ({ terminal }) => {
     await expect(terminal.getByText('ready to chat')).toBeVisible();
@@ -888,5 +911,76 @@ test.describe('gth chat TUI — scrolling the conversation (scroll fixture, TUI-
     terminal.write('\x1b');
     await expect(terminal.getByText('scroll-line-080')).toBeVisible();
     await expect(terminal.getByText('scroll-line-037')).not.toBeVisible();
+  });
+
+  // TUI-C63 — the suite had never sent a MODIFIED wheel report, so the whole Shift+wheel path could
+  // have broken without a single test noticing. `/help` now advertises the binding (qualified: some
+  // terminals never set the Shift bit, and there the app receives a plain notch), which makes an
+  // assertion that it does what it claims part of the claim.
+  test('Shift and the wheel move a page, where the terminal forwards the modifier', async ({
+    terminal,
+  }) => {
+    await longAnswer(terminal);
+    await expect(terminal.getByText('scroll-line-012')).not.toBeVisible();
+
+    // ONE report — button 64 (wheel up) | 4 (shift) = 68. One is the whole point: a second would
+    // clamp at the top of the conversation and pass for any page size at all. The three-line
+    // control is the neighbouring case, which sends the same report without the modifier.
+    terminal.write('\x1b[<68;20;10M');
+    await expect(terminal.getByText('scroll-line-012')).toBeVisible();
+    await expect(terminal.getByText('scroll-line-080')).not.toBeVisible();
+  });
+});
+
+/**
+ * TUI-C63 — the surface advertises its own keyboard, at a real terminal.
+ *
+ * Both halves are wording, which is precisely what [TUI-C28]'s gate exists to catch: a hint row and
+ * a `/help` section are strings no unit render proves are on screen. The terminal is deliberately
+ * tall here so the assertions are about what the text SAYS rather than about what survives the clip
+ * — the short-terminal case (does the pinned dock survive a `/help` taller than the region?) is
+ * asserted in the greeting block above, at 30 rows.
+ */
+test.describe('gth chat TUI — /help lists the key bindings (greeting fixture, TUI-C63)', () => {
+  test.use({
+    program: { file: 'node', args: [cli, 'chat', '--tui'] },
+    env: envFor('greeting.json'),
+    columns: 120,
+    rows: 80,
+  });
+
+  test('renders the bindings, grouped by the context each one is reachable in', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+    terminal.write('/help');
+    await expect(terminal.getByText('> /help')).toBeVisible();
+    terminal.submit();
+
+    // The title says the block carries both, and the command list is still the first half.
+    await expect(terminal.getByText('Slash commands and keys')).toBeVisible();
+    await expect(terminal.getByText('/verbose — ')).toBeVisible();
+
+    // Grouped by context — the groups exist as their own lines, and their bindings under them.
+    await expect(terminal.getByText('Scrolling the conversation')).toBeVisible();
+    await expect(
+      terminal.getByText('Ctrl+Home / Ctrl+End — the start of the session / the newest output')
+    ).toBeVisible();
+    await expect(terminal.getByText('Wheel — three lines a notch')).toBeVisible();
+    await expect(terminal.getByText('At the prompt')).toBeVisible();
+    await expect(
+      terminal.getByText('Ctrl+T — fold and unfold tool output and thinking')
+    ).toBeVisible();
+    await expect(terminal.getByText('Ctrl+C — exit')).toBeVisible();
+
+    // The keyboard-honest half, which is the reason `/help` carries the detail and the hint row
+    // does not: the keys named on the row do not exist on a Mac laptop, and this says so.
+    await expect(
+      terminal.getByText('on Mac and compact keyboards sends the same codes')
+    ).toBeVisible();
+    // Shift+wheel is listed with its condition, never flat beside the keys that always work.
+    await expect(
+      terminal.getByText('a page, in terminals that forward Shift with the wheel')
+    ).toBeVisible();
   });
 });

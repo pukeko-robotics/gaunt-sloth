@@ -163,6 +163,22 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
     expect(runnerInstanceMock.processMessages).not.toHaveBeenCalled();
   });
 
+  // TUI-C63 — the Ink TUI's `/help` also lists its key bindings, supplied as data on the shared
+  // context. This surface supplies none, and must not: it mounts no Ink components, has no mouse
+  // layer and keeps the terminal's own scrollback, so every one of these keys does nothing here.
+  // Asserted through the real session loop rather than against the formatter, because the claim is
+  // about what THIS module passes (GS2-87 — the divergence is deliberate and stated).
+  it('/help on this surface advertises no key the surface does not have', async () => {
+    await runSession('/help', 'exit');
+    const out = allOutput();
+    expect(out).toContain('Slash commands');
+    // The title stays the plain one: nothing but commands is listed here.
+    expect(out).not.toContain('Slash commands and keys');
+    for (const key of ['PgUp', 'PgDn', 'Ctrl+Home', 'Ctrl+End', 'Ctrl+T', 'wheel']) {
+      expect(out.toLowerCase()).not.toContain(key.toLowerCase());
+    }
+  });
+
   it('/quit ends the session exactly like /exit (equal-citizen alias)', async () => {
     await runSession('/quit');
     expect(consoleUtilsMock.display).toHaveBeenCalledWith('Exiting...');
