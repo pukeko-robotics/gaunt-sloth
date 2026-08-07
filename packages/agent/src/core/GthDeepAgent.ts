@@ -1,5 +1,6 @@
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import {
+  commandAnswersApprovals,
   resolveApprovals,
   resolveGatedToolNames,
   resolveInterruptToolNames,
@@ -747,9 +748,14 @@ export class GthDeepAgent extends GthAbstractAgent {
         .filter((name): name is string => typeof name === 'string' && name.length > 0),
       ...DEEP_AGENT_BUILT_IN_TOOL_NAMES,
     ];
-    const interruptTools = resolveInterruptToolNames({ gateShell, boundToolNames });
     // The LIVE gated set — what THIS rung gates — for the §4.5 tool descriptions below.
     const gatedTools = resolveGatedToolNames({ rung, gateShell, boundToolNames });
+    // Rung-independent WHERE THE RUNG CAN MOVE. A command with no approval drain (`api`) both keeps
+    // its rung for the whole session and has nobody to answer an interrupt, so it gets the live set
+    // — which at the default rung is the shell alone, exactly as before this node.
+    const interruptTools = commandAnswersApprovals(this.command)
+      ? resolveInterruptToolNames({ gateShell, boundToolNames })
+      : gatedTools;
     // Keyed off the interrupt SET, not `gateShell`: at a deterministic rung there is a gate to
     // install even when the shell tool is disabled, and deepagents installs no HITL middleware at
     // all when `interruptOn` is undefined.

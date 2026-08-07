@@ -37,6 +37,7 @@ import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import type { GthConfig } from '#src/config.js';
 import type { ApprovalRung } from '#src/config.js';
+import { getNewRunnableConfig } from '#src/utils/llmUtils.js';
 import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
 import type { PendingToolInterrupt, ToolApprovalDecision } from '#src/core/types.js';
 
@@ -298,6 +299,50 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
 
       expect(human).toHaveBeenCalledTimes(1);
       expect(ran).toEqual([]);
+    });
+  });
+
+  /**
+   * **A surface with no approval drain must not be handed an approval interrupt.** The AG-UI server
+   * (`api`) drives the agent directly — `init` + `streamWithEvents` — and never calls
+   * `getPendingToolInterrupts`; its resume path serves its own frontend-tool stubs. A gated call
+   * there suspends the graph with nobody to resume it, so the tool never runs, the client is never
+   * asked, and the turn ends with that tool call unanswered.
+   *
+   * Measured while checking this branch: with the interrupt wired rung-independently at `api`,
+   * `write_file` stopped executing at the DEFAULT rung — a silent regression for every AG-UI
+   * session. `commandAnswersApprovals` is what keeps that from shipping; the cell below is driven
+   * through the agent exactly as the AG-UI module drives it, with no runner in the picture.
+   */
+  describe('a surface that drains no approvals keeps the pre-EXT-80 wiring', () => {
+    const apiAgentWithWriteTool = async () => {
+      const { GthLangChainAgent } = await import('#src/core/GthLangChainAgent.js');
+      const agent = new GthLangChainAgent(vi.fn(), {
+        resolveTools: async () => makeTools(),
+        resolveMiddleware: async (m: unknown[] | undefined) => m ?? [],
+      } as never);
+      const config = {
+        ...BASE_CONFIG,
+        llm: new ScriptedToolCallingModel([
+          { name: 'write_file', args: { path: 'notes.md', content: 'hi' } },
+        ]),
+      } as unknown as GthConfig;
+      await agent.init('api', config, new MemorySaver());
+      return agent;
+    };
+
+    it('runs write_file on an api session at the default rung, and parks no interrupt', async () => {
+      const agent = await apiAgentWithWriteTool();
+      const runConfig = { ...getNewRunnableConfig(50), configurable: { thread_id: 'api-default' } };
+
+      for await (const _ of agent.streamWithEvents([new HumanMessage('write it')], runConfig)) {
+        // drained for effect
+      }
+
+      expect(ran).toEqual(['write_file:notes.md']);
+      // The observable that made the regression silent: a suspended graph parks the call here, and
+      // nothing on this surface ever reads it.
+      expect(await agent.getPendingToolInterrupts(runConfig)).toEqual([]);
     });
   });
 

@@ -1,5 +1,6 @@
 import {
   GthConfig,
+  commandAnswersApprovals,
   resolveApprovals,
   resolveGatedToolNames,
   resolveInterruptToolNames,
@@ -671,11 +672,19 @@ export class GthLangChainAgent extends GthAbstractAgent {
     const boundToolNames = tools
       .map((tool) => tool?.name)
       .filter((name): name is string => typeof name === 'string' && name.length > 0);
-    const interruptTools = resolveInterruptToolNames({ gateShell, boundToolNames });
+    // Rung-independent WHERE THE RUNG CAN MOVE. A command with no approval drain (`api`) both keeps
+    // its rung for the whole session and has nobody to answer an interrupt, so it gets the live set
+    // — which at the default rung is the shell alone, exactly as before this node.
     // The LIVE gated set — what THIS rung gates — for the §4.5 tool descriptions below. Narrower
     // than the interrupt set at the rated rungs, and it must stay so: a description promising an
     // approval the runner will not ask for is the drift §4.5 calls worse than no description.
     const gatedTools = resolveGatedToolNames({ rung, gateShell, boundToolNames });
+    // Rung-independent WHERE THE RUNG CAN MOVE. A command with no approval drain (`api`) both keeps
+    // its rung for the whole session and has nobody to answer an interrupt, so it gets the live set
+    // — which at the default rung is the shell alone, exactly as before this node.
+    const interruptTools = commandAnswersApprovals(this.command)
+      ? resolveInterruptToolNames({ gateShell, boundToolNames })
+      : gatedTools;
     // Installed on the interrupt SET, not on `gateShell`: at a deterministic rung there is a gate to
     // install even when the shell tool is disabled or the command emits no dev tools (a plain
     // `chat` session with MCP servers). Keying the install off `gateShell` there would leave every
