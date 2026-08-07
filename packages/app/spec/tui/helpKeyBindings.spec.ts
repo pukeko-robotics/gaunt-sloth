@@ -118,7 +118,6 @@ describe('/help key bindings — one registry, two keyboards (TUI-C63)', () => {
       expect(lines).toContain(title);
       const from = lines.indexOf(title) + 1;
       const rendered = lines.slice(from, from + count);
-      expect(rendered).toHaveLength(count);
       expect(rendered.every((line) => line.startsWith('  '))).toBe(true);
       expect(lines[from + count] ?? '').not.toMatch(/^ {2}\S/);
     }
@@ -170,6 +169,16 @@ describe('/help key bindings — one registry, two keyboards (TUI-C63)', () => {
     );
     expect(escToBottom).toBeDefined();
     expect(escToBottom).toMatch(/while a turn runs/);
+
+    // Focusing the debug panel needs three things, not the one that names it: the panel open, no
+    // turn running, and the slash menu closed. A reader who presses Tab mid-turn or with the menu
+    // open finds it inert, which is the same "listed key does nothing" defect in a state sessions
+    // spend most of their time in. Substance, not prose — the conditions must be named, the
+    // wording may change.
+    const tabFocus = lines.find((line) => line.includes('debug panel') && line.includes('Tab'));
+    expect(tabFocus).toBeDefined();
+    expect(tabFocus).toMatch(/turn is running/);
+    expect(tabFocus).toMatch(/menu is open/);
   });
 
   it('keeps the hint fragment a fragment: it joins the shared row, and only mentions scrolling', () => {

@@ -1452,6 +1452,17 @@ describe('tui <App>', () => {
       stdin.write('/');
       for (const ch of 'needle') stdin.write(ch);
       await vi.waitFor(() => expect(lastFrame()).toContain('1/3'));
+
+      // TUI-C63 — the legend has to stay ONE row, and this is the state that decides it: focused,
+      // with a live query, so `Esc` reads `clear search` (its longest form) and `m` reads `maximise`
+      // (longer than `restore`). ink-testing-library renders at 100 columns — the width the it-tui
+      // search case also uses — and the panel's border leaves 98 cells, which the row now fills
+      // exactly. So the opening `[Tab: section` and the closing bracket must land on the SAME frame
+      // line; a wrap moves the tail to the next one and costs the conversation a row.
+      const legendRow = (lastFrame() ?? '').split('\n').find((l) => l.includes('Tab: section'));
+      expect(legendRow).toBeDefined();
+      expect(legendRow).toContain('clear search]');
+
       stdin.write('\r'); // confirm: leave typing mode, keep highlights (n/N now navigate)
 
       // n steps forward; a third n wraps back to the first.

@@ -153,8 +153,11 @@ terminal's scrollback — your terminal's own scroll keys will not reach it. Scr
 | **Ctrl+Home** / **Ctrl+End** | the beginning / the end of the session |
 
 While you are reading back, new output does not drag you away from it — a reply that arrives keeps
-growing below and the lines you are reading stay where they are. Start typing, or press **Escape**,
-to jump back to the newest output.
+growing below and the lines you are reading stay where they are. Start typing, or press
+**Ctrl+End**, to jump back to the newest output; both work whether or not a reply is still arriving,
+and the character you typed still reaches the prompt. **Escape** jumps back too, but only once
+nothing is running: while a reply is arriving the first **Escape** stops it (see
+[Interrupting a response](#interrupting-a-response)), and it takes a second one to jump back.
 
 With mouse reporting off (`/mouse off`, `useMouse: false`, `GTH_NO_MOUSE=1`) the wheel does nothing
 and the keys above are the whole story; nothing becomes unreachable. The plain readline surface
