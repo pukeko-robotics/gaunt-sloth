@@ -36,10 +36,12 @@ describe('tui <TerminalSizeProvider>', () => {
 
   it('does not re-render consumers when the caller rebuilds an equal size object', async () => {
     const { Consumer, renders } = makeConsumer();
+    const hostRenders: number[] = [];
     let bump: () => void = () => {};
 
     function Host(): React.ReactElement {
-      const [, setTick] = React.useState(0);
+      const [tick, setTick] = React.useState(0);
+      hostRenders.push(tick);
       bump = () => setTick((t) => t + 1);
       // A fresh object every render, with the same numbers — the natural way to write a call site,
       // and the thing that must not reach the consumers.
@@ -53,11 +55,14 @@ describe('tui <TerminalSizeProvider>', () => {
     const { unmount } = render(<Host />);
     expect(renders).toEqual(['120x40']);
 
-    // Five re-renders of the publisher, none of them a resize.
-    for (let i = 0; i < 5; i += 1) {
+    // Five re-renders of the publisher, none of them a resize. Waiting on the PUBLISHER's own count
+    // is the load-bearing part: waiting on anything the consumer does would let the case pass
+    // without the publisher ever having re-rendered, and then it could not fail at all.
+    for (let i = 1; i <= 5; i += 1) {
       bump();
-      await vi.waitFor(() => expect(renders.length).toBeGreaterThan(0));
+      await vi.waitFor(() => expect(hostRenders).toContain(i));
     }
+    expect(hostRenders).toEqual([0, 1, 2, 3, 4, 5]);
 
     // The literal count, not a ceiling: a ceiling of "under ten" is satisfied by a regression that
     // adds one render per frame, which is exactly the shape this guards against.
