@@ -133,12 +133,12 @@ const WRAPPER_ARMS: readonly string[] = [
  * `echo "(a) rm -rf / is bad"`, so the two cannot both hold lexically. **So the cases are DROPPED.**
  *
  * **A miss here is not naked.** `classifyCommand` returns `null` for seven of the eight forms — the
- * `;` inside them makes the command unclassifiable — so they escalate at `auto-safe` and
- * `full-auto`, where the rater rates them (measured `catastrophic` on `claude-haiku-4-5`,
+ * `;` inside them makes the command unclassifiable — so they escalate at `assisted` and
+ * `auto`, where the rater rates them (measured `catastrophic` on `claude-haiku-4-5`,
  * `gemini-3.6-flash`, `gemini-3.5-flash-lite` and `google/gemma-3-12b-it`). `(rm -rf /)` is the
  * eighth and resolves to prefix `(rm`, which no allow-list will hold. **`bypass` consults neither,
  * so there they are uncovered** — knowingly: that rung's whole meaning is "stop asking me", and a
- * user who wants the catastrophic set actually stopped belongs on `read-only`.
+ * user who wants the catastrophic set actually stopped belongs on `manual`.
  *
  * **Wrapped invocations whose flag takes a space-separated value** are the same shape and the same
  * answer — `sudo --user root rm -rf /`, `timeout --kill-after 5s 10s rm -rf /`, `nice --adjustment

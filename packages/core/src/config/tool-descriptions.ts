@@ -25,10 +25,10 @@
  *
  * **Scope, per §4.3.** The *rater* covers the shell only: every other gated tool goes to the human
  * without a rating call until [[EXT-30]] widens the rater. The *gate* is wider than the rater. At
- * the two deterministic rungs (`read-only`, `write`) both backends gate every bound tool the rung's
+ * the two deterministic rungs (`manual`, `write`) both backends gate every bound tool the rung's
  * access class does not auto-grant — the write built-ins, the shell, MCP tools (whatever their
  * `readOnlyHint` says) and custom tools — so at those rungs a non-granted call always reaches the
- * human. At `auto-safe`, `full-auto` and `bypass` the gated set is the shell alone.
+ * human. At `assisted`, `auto` and `bypass` the gated set is the shell alone.
  *
  * `config/shell-policy.ts`'s `isToolGatedAtRung` is the single rule for all of that, and both the
  * live gated set and this module's grant are projections of it, so what a rung gates and the grant
@@ -40,26 +40,26 @@ import type { ApprovalRung } from '#src/config/shell-policy.js';
  * §4.5's table, **verbatim**. The wordings are normative copy the model reads; do not paraphrase,
  * re-punctuate or "improve" them.
  *
- * - `read-only` and `write` share one sentence: at both rungs a non-granted call goes to the human,
+ * - `manual` and `write` share one sentence: at both rungs a non-granted call goes to the human,
  *   so the user's approval is a certainty, not a possibility.
- * - `auto-safe` softens `will` to `MAY`: the rater approves what it rates safe, so only some calls
+ * - `assisted` softens `will` to `MAY`: the rater approves what it rates safe, so only some calls
  *   reach the user.
- * - `full-auto` gets its **own** wording because the consequence differs — the user is not asked
+ * - `auto` gets its **own** wording because the consequence differs — the user is not asked
  *   there, so promising the user's approval would be false. What can happen is a refusal by the
  *   rater.
  * - `bypass` appends nothing to anything: no gate, so no sentence could be true.
  */
 export const RUNG_TOOL_DESCRIPTION_SUFFIXES: Readonly<Record<ApprovalRung, string | null>> = {
-  'read-only':
+  manual:
     "Calling this tool will require the user's approval. Only use it when the result cannot be " +
     'achieved with the other provided tools.',
   write:
     "Calling this tool will require the user's approval. Only use it when the result cannot be " +
     'achieved with the other provided tools.',
-  'auto-safe':
+  assisted:
     "Calling this tool MAY require the user's approval if it does not look safe. Only use it when " +
     'it is impossible to achieve the result with the other provided tools.',
-  'full-auto':
+  auto:
     'Calling this tool MAY be refused by the auto-rater if it does not look safe. Only use it ' +
     'when it is impossible to achieve the result with the other provided tools.',
   bypass: null,
@@ -87,7 +87,7 @@ export type BuiltInToolAccess = 'read' | 'write';
  * Deliberately absent: `run_shell_command`, deepagents' `execute`, the fixed dev-command tools,
  * `gth_web_fetch`, `gth_checklist`, `gth_status_update`, `show_a2ui_surface`, MCP/custom/A2A tools.
  * None of them is "reading or writing files in the working folder", so none is granted by a rung's
- * access class, and at `read-only`/`write` every one of them escalates to the human.
+ * access class, and at `manual`/`write` every one of them escalates to the human.
  *
  * **An MCP tool's own `readOnlyHint` earns it nothing here.** A server's self-declared annotation is
  * least earned exactly where the ladder is strictest, so it must not skip the prompt at those two
@@ -189,7 +189,7 @@ export function getRungToolDescriptionSuffix(rung: ApprovalRung): string | null 
  *
  * - `read` — granted at every rung (§2.1).
  * - `write` — granted from `write` up (§2.2, and §2.3/§2.4 which grant "everything `write` grants"),
- *   so it escalates at `read-only`.
+ *   so it escalates at `manual`.
  * - **no class at all** — the shell, deepagents' `execute`, a network call, an MCP tool, a custom or
  *   agent-authored tool: granted by no rung. There is no implicit exemption; a tool is free here
  *   only by appearing in {@link BUILT_IN_TOOL_ACCESS}.
@@ -207,7 +207,7 @@ export function getRungToolDescriptionSuffix(rung: ApprovalRung): string | null 
 export function isAccessClassGrantedAtRung(toolName: string, rung: ApprovalRung): boolean {
   const access = BUILT_IN_TOOL_ACCESS[toolName];
   if (access === 'read') return true;
-  if (access === 'write') return rung !== 'read-only';
+  if (access === 'write') return rung !== 'manual';
   return false;
 }
 

@@ -103,7 +103,15 @@ const binaryFormatsSchema = z.union([z.literal(false), z.array(binaryFormatConfi
  * pre-parse source of truth for what the config channel accepts; `APPROVAL_RUNGS` in
  * `shell-policy.ts` is the runtime twin and `configSchema.spec.ts` pins the two together.
  */
-const APPROVAL_RUNG_VALUES = ['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'] as const;
+const APPROVAL_RUNG_VALUES = ['manual', 'write', 'assisted', 'auto', 'bypass'] as const;
+
+/**
+ * The rung names as an error message lists them. Derived from {@link APPROVAL_RUNG_VALUES} rather
+ * than written out again at each site: four messages below enumerate the ladder, and a hand-copied
+ * list is exactly what goes stale when a rung is renamed — the failure mode being that a config
+ * error names values the schema no longer accepts.
+ */
+const APPROVAL_RUNG_LIST = APPROVAL_RUNG_VALUES.join(', ');
 
 /**
  * EXT-71 §3.1 — the **subject** axis of a rule entry, and only that: `shell` is a command, `tool`
@@ -489,11 +497,11 @@ export function renderApprovalEntryForString(pattern: string): string {
  * are needed** (spec §9). There are no other approvals keys.
  *
  * ```jsonc
- * { "approvals": "auto-safe" }
+ * { "approvals": "assisted" }
  * ```
  * ```jsonc
  * { "approvals": {
- *     "mode": "auto-safe",
+ *     "mode": "assisted",
  *     "rater": "safety-rater",                     // identity profile the rater runs under
  *     "allow":    [ { "type": "shell", "matcher": "exact", "pattern": "npm test" } ],
  *     "deny":     [ { "type": "shell", "matcher": "glob",  "pattern": "npm publish*" } ],
@@ -509,7 +517,7 @@ export function renderApprovalEntryForString(pattern: string): string {
  *   `RATER_DEFAULT_TIMEOUT_MS` (30s) at the read site. **It exists because 30s is a hosted-model
  *   number and a local model is knowably slower**: measured 2026-07-31, `gemma4:12b` over Ollama
  *   answered a 23-case corpus in 6.0s–114.7s, and at the fixed limit 3 of 18 calls in one run and
- *   9 of 17 in the next were cut off — so a local `full-auto` session degraded toward escalating
+ *   9 of 17 in the next were cut off — so a local `auto` session degraded toward escalating
  *   everything, which is the opposite of what the rung is for. Deliberately a number the user owns
  *   rather than a provider→timeout table: a table is a guess about someone else's hardware, and
  *   the failure it causes is silent.
@@ -820,7 +828,7 @@ export const rawGthConfigSchema = z.looseObject({
   // CFG-27 — the approvals ladder: a rung name, or an object carrying the rater profile and the
   // declared allow/deny lists. Settable at the root or per command
   // (`commands.<command>.approvals`, which per §9.1 overrides only the fields it names — the
-  // restrictive lists concatenate across scopes, `allow` replaces). Absent = `auto-safe`
+  // restrictive lists concatenate across scopes, `allow` replaces). Absent = `assisted`
   // (`resolveApprovals` in shell-policy.ts).
   approvals: approvalsSchema.optional(),
   // Live tool instances / toolkits in JS configs — kept permissive.
@@ -1035,7 +1043,7 @@ const RETIRED_SHELL_TOOL_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ['yolo', '"approvals": "bypass"'],
   [
     'judge',
-    '"approvals": "auto-safe" (or "full-auto"), optionally with "approvals.rater" naming an ' +
+    '"approvals": "assisted" (or "auto"), optionally with "approvals.rater" naming an ' +
       'identity profile — the low/medium/high tiers became the ' +
       'safe/destructive/catastrophic/attack outcomes, and autoApproveLow/blockHigh are replaced ' +
       'by the rung you choose',
@@ -1056,7 +1064,7 @@ const SHELL_TOOL_REGISTRY_KEY = 'run_shell_command';
  * ordered ladder of five rungs. `[retired, "how to say it now"]`.
  *
  * Rejected PRE-PARSE rather than left to the union: `approvalsSchema`'s object arm is a `z.object`,
- * which silently strips unknown keys, so an `approvals: { mode: "auto-safe", strictness: "strict" }`
+ * which silently strips unknown keys, so an `approvals: { mode: "assisted", strictness: "strict" }`
  * would otherwise run with its declared posture quietly ignored — the worst possible failure for a
  * safety gate, and exactly what CFG-26 fixed for the per-tool knobs.
  *
@@ -1071,8 +1079,8 @@ const RETIRED_APPROVALS_KEYS: ReadonlyArray<readonly [string, string]> = [
   [
     'strictness',
     'nothing — there are no strictness levels any more. Choose a rung instead: ' +
-      '"read-only"/"write" never rate, "auto-safe" escalates anything not rated safe, ' +
-      '"full-auto" lets the auto-rater decide',
+      '"manual"/"write" never rate, "assisted" escalates anything not rated safe, ' +
+      '"auto" lets the auto-rater decide',
   ],
   ['allowlist', '"approvals.allow" (a declared list of rule entries)'],
   [
@@ -1090,26 +1098,38 @@ const RETIRED_APPROVALS_KEYS: ReadonlyArray<readonly [string, string]> = [
  */
 const RETIRED_ESCALATE_THRESHOLD_MESSAGE =
   'is now the third rule LIST (an array of {type, matcher, pattern} entries that always ask the ' +
-  'human), not a severity threshold. There is no escalate threshold any more: "auto-safe" ' +
-  'escalates everything the auto-rater does not rate safe, and "full-auto" does not stop to ask.';
+  'human), not a severity threshold. There is no escalate threshold any more: "assisted" ' +
+  'escalates everything the auto-rater does not rate safe, and "auto" does not stop to ask.';
 
 /**
- * CFG-27 — retired `approvals.mode` VALUES → the rung that replaced them. The three-mode
- * vocabulary is gone: `auto` was the rater-mediated mode (now the `auto-safe` rung) and `ask`
- * meant "prompt for everything the allow-list does not cover" (now `read-only`, or `write` if the
- * agent should still edit files freely). `bypass` survives unchanged and is deliberately absent.
+ * Retired `approvals.mode` VALUES → the rung that replaced them.
  *
  * Caught here rather than by the enum so the error NAMES the rung instead of listing five
  * identifiers and leaving the user to guess which one preserves their intent.
+ *
+ * **Every mapping is to an equally-permissive rung.** That is the property to preserve when adding
+ * an entry: a retired name silently remapped to something MORE permissive would raise a user's
+ * autonomy setting on their behalf, at the moment they are least watching — the config already
+ * worked, so nothing prompts them to re-read it. `manual`/`assisted`/`auto` are pure renames of
+ * `read-only`/`auto-safe`/`full-auto` and carry identical behaviour; `ask` names the two rungs that
+ * ask about everything, both at or below what it did.
+ *
+ * `write` and `bypass` are deliberately ABSENT — they are live rung names, not retired ones.
+ *
+ * **`auto` is deliberately absent too, and that is a reversal.** It named the pre-2.0
+ * rater-mediated mode and used to error here; it is now the canonical name of the most permissive
+ * rated rung. Reviving the token is not a back-compat concern (Andrew, 2026-08-07): the value was
+ * born during 2.0 alpha work, so no released configuration carries it with the old meaning. This
+ * entry and the rename must land together — an `auto` left in this table makes the newly canonical
+ * name a hard validation error on arrival.
  */
 const RETIRED_APPROVAL_MODES: ReadonlyArray<readonly [string, string]> = [
-  [
-    'auto',
-    '"auto-safe" (the auto-rater rates every gated call and escalates anything questionable)',
-  ],
+  ['read-only', '"manual" (the same rung, renamed)'],
+  ['auto-safe', '"assisted" (the same rung, renamed)'],
+  ['full-auto', '"auto" (the same rung, renamed)'],
   [
     'ask',
-    '"write" (Gaunt Sloth edits files freely and asks about everything else) or "read-only" ' +
+    '"write" (Gaunt Sloth edits files freely and asks about everything else) or "manual" ' +
       '(it asks before writing too)',
   ],
 ];
@@ -1184,7 +1204,7 @@ function collectRetiredApprovalsIssues(
           path: pathPrefix,
           message:
             `Approval mode "${retired}" is no longer supported: approvals is now one ordered ` +
-            `ladder of five rungs (read-only, write, auto-safe, full-auto, bypass). ` +
+            `ladder of five rungs (${APPROVAL_RUNG_LIST}). ` +
             `Use ${replacement} instead. ${MIGRATION_HINT}`,
         });
       }
@@ -1201,7 +1221,7 @@ function collectRetiredApprovalsIssues(
         path: `${pathPrefix}.${retired}`,
         message:
           `Config property "${retired}" in ${pathPrefix} is no longer supported: approvals is now ` +
-          `one ordered ladder of five rungs (read-only, write, auto-safe, full-auto, bypass), ` +
+          `one ordered ladder of five rungs (${APPROVAL_RUNG_LIST}), ` +
           `and each rung fully determines behaviour. Use ${replacement}. ${MIGRATION_HINT}`,
       });
     }
@@ -1225,7 +1245,7 @@ function collectRetiredApprovalsIssues(
       message:
         `Config property "rater" in ${pathPrefix} is now a bare identity-profile name, not an ` +
         `object or a boolean (e.g. "rater": "safety-rater"). Whether the rater runs at all is ` +
-        `decided by the rung: "auto-safe" and "full-auto" rate, the other three never do. ` +
+        `decided by the rung: "assisted" and "auto" rate, the other three never do. ` +
         MIGRATION_HINT,
     });
   }
@@ -1236,7 +1256,7 @@ function collectRetiredApprovalsIssues(
         path: `${pathPrefix}.mode`,
         message:
           `Approval mode "${retired}" is no longer supported: approvals is now one ordered ladder ` +
-          `of five rungs (read-only, write, auto-safe, full-auto, bypass). Use ${replacement} ` +
+          `of five rungs (${APPROVAL_RUNG_LIST}). Use ${replacement} ` +
           `instead. ${MIGRATION_HINT}`,
       });
     }
@@ -1548,7 +1568,7 @@ export function findApprovalsRaterProfiles(raw: Record<string, unknown>): RaterP
   const refs: RaterProfileRef[] = [];
 
   const collect = (approvals: unknown, prefix: string): void => {
-    // The scalar sugar form (`"approvals": "auto-safe"`) carries no rater.
+    // The scalar sugar form (`"approvals": "assisted"`) carries no rater.
     if (!approvals || typeof approvals !== 'object' || Array.isArray(approvals)) return;
     const rater = (approvals as Record<string, unknown>).rater;
     if (typeof rater === 'string' && rater.trim().length > 0) {

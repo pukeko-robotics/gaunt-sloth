@@ -11,7 +11,7 @@
  *
  * **Measured here: it does propagate, and the decision routes back into the child.** So a
  * subagent's own gated calls are gated in their own right, and gating `task` is belt-and-braces
- * rather than the only thing between a `read-only` session and an unprompted nested write. Both
+ * rather than the only thing between a `manual` session and an unprompted nested write. Both
  * halves are asserted, because "it surfaces" alone would leave open the worse failure — a run that
  * suspends where the runner can see it and resumes somewhere else.
  *
@@ -140,7 +140,7 @@ describe("EXT-80 — a subagent's own gated call, seen from the parent", () => {
    * `state.tasks[].interrupts[].value.actionRequests` — the one place
    * `GthAbstractAgent.getPendingToolInterrupts` looks. So a subagent's writes are gated in their own
    * right and the gate on `task` is belt-and-braces rather than the only thing standing between a
-   * `read-only` session and an unprompted write.
+   * `manual` session and an unprompted write.
    */
   it('surfaces a nested write_file interrupt in the PARENT state, where the runner reads it', async () => {
     const { pending, model } = await runAndInspect(gated('write_file'), 'nested-only');

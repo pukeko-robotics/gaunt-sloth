@@ -25,7 +25,7 @@ import { TOOL_ANNOTATION_HINTS } from '#src/config/shell-policy.js';
 
 const BASE = { llm: { type: 'openai' } } as const;
 
-const validate = (mcp: unknown, mode = 'auto-safe') =>
+const validate = (mcp: unknown, mode = 'assisted') =>
   validateRawGthConfig({ ...BASE, approvals: { mode, mcp } });
 
 function expectAccepted(result: ReturnType<typeof validateRawGthConfig>): void {
@@ -68,7 +68,7 @@ describe('the approvals.mcp block (EXT-70 §4.7, §9)', () => {
         validateRawGthConfig({
           ...BASE,
           mcpServers: { confluence: { command: 'x' } },
-          approvals: { mode: 'auto-safe', mcp: { servers: { jira: { trustAnnotations: [] } } } },
+          approvals: { mode: 'assisted', mcp: { servers: { jira: { trustAnnotations: [] } } } },
         })
       );
     });
@@ -179,7 +179,7 @@ describe('the approvals.mcp block (EXT-70 §4.7, §9)', () => {
     const ajv = new Ajv2020({ strict: false, allErrors: true });
     const validateJsonSchema = ajv.compile(generateConfigJsonSchema());
     const accepts = (mcp: unknown): boolean =>
-      validateJsonSchema({ ...BASE, approvals: { mode: 'auto-safe', mcp } }) as boolean;
+      validateJsonSchema({ ...BASE, approvals: { mode: 'assisted', mcp } }) as boolean;
 
     it('accepts the §9 shape', () => {
       expect(

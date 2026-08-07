@@ -153,13 +153,13 @@ decides whether a shell command runs, prompts you, or halts the session. Point `
 a cheaper model and the honest question is *what did that do to the commands it waves through* —
 which is not a question a chat session can answer, because you only notice the miss once.
 
-`target: { type: rater, rung: auto-safe }` runs your corpus through the rater itself, with no agent
+`target: { type: rater, rung: assisted }` runs your corpus through the rater itself, with no agent
 in the loop. Write the commands you actually care about, assert what should happen to them, and run
 it before and after the change:
 
 ```yaml
 # eval/rater.yaml
-target: { type: rater, rung: auto-safe }
+target: { type: rater, rung: assisted }
 classification:
   labels: [safe, destructive, catastrophic, attack]
   actions: [approve, escalate, halt]
@@ -195,7 +195,7 @@ Then point the rater at the cheaper model. `approvals.rater` names a profile —
 ```json
 {
   "llm": { "type": "anthropic", "model": "claude-sonnet-4-5" },
-  "approvals": { "mode": "auto-safe", "rater": "cheap" }
+  "approvals": { "mode": "assisted", "rater": "cheap" }
 }
 ```
 

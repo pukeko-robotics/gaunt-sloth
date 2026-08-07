@@ -54,15 +54,15 @@ const verdict = (outcome: RaterOutcome, reason = `${outcome} verdict`): ShellSaf
   reason,
 });
 
-const SAFE = verdict('safe', 'read-only');
+const SAFE = verdict('safe', 'manual');
 const DESTRUCTIVE = verdict('destructive', 'deletes files');
 const CATASTROPHIC = verdict('catastrophic', 'drops a production database irrecoverably');
 const ATTACK = verdict('attack', 'reads a private key as the operation itself');
 
 const CONFIG = {} as GthConfig;
 
-const RATED_RUNGS: readonly ApprovalRung[] = ['auto-safe', 'full-auto'];
-const UNRATED_RUNGS: readonly ApprovalRung[] = ['read-only', 'write'];
+const RATED_RUNGS: readonly ApprovalRung[] = ['assisted', 'auto'];
+const UNRATED_RUNGS: readonly ApprovalRung[] = ['manual', 'write'];
 
 describe('hasScriptEnvLeakRisk', () => {
   it('flags interpreter+script with ALL_CAPS env expansion', () => {
@@ -264,7 +264,7 @@ describe('buildRaterPrompt', () => {
   /**
    * §4.1.1's measured note. A cheap model rated a typosquatted host `safe` while NAMING the
    * deception in its own reasoning, and split identically-shaped commands at random; a property
-   * that holds only on the good model is not a property, and `auto-safe` is the default for people
+   * that holds only on the good model is not a property, and `assisted` is the default for people
    * pointed at small local models. So the prompt tells the rater that origin trust is not its job,
    * in both directions — an unfamiliar host is not evidence of an attack, and a familiar one is not
    * evidence of safety.
@@ -509,7 +509,7 @@ describe('§4.4 granted-alternative suggestion — the verdict', () => {
     const escalated = mapVerdictToAction(
       'rm -f a.txt',
       { outcome: 'destructive', reason: 'deletes a file', suggestedTool: 'edit_file' },
-      { rung: 'auto-safe' }
+      { rung: 'assisted' }
     );
     expect(escalated.action).toBe('escalate');
     expect(escalated.verdict?.suggestedTool).toBe('edit_file');
@@ -521,7 +521,7 @@ describe('§4.4 granted-alternative suggestion — the verdict', () => {
     const decision = mapVerdictToAction(
       'node deploy.js $AWS_SECRET_ACCESS_KEY',
       { outcome: 'safe', reason: 'harmless', suggestedTool: 'edit_file' },
-      { rung: 'auto-safe' }
+      { rung: 'assisted' }
     );
     expect(decision.action).toBe('escalate');
     expect(decision.verdict?.reason).toContain(COULD_NOT_ASSESS_PREFIX);
@@ -536,7 +536,7 @@ describe('§4.4 granted-alternative suggestion — the verdict', () => {
     const decision = mapVerdictToAction(
       'cat foo.txt | tee bar.txt',
       { outcome: 'destructive', reason: 'overwrites bar.txt', suggestedTool: 'edit_file' },
-      { rung: 'auto-safe' }
+      { rung: 'assisted' }
     );
     expect(decision.action).toBe('escalate');
     expect(decision.verdict?.suggestedTool).toBe('edit_file');
@@ -730,7 +730,7 @@ describe('rateShellCommand', () => {
 
   it('never fails closed to `attack` or `catastrophic` — a failure to assess must not halt', () => {
     expect(FAIL_CLOSED_VERDICT.outcome).toBe('destructive');
-    expect(mapVerdictToAction('ls -la', FAIL_CLOSED_VERDICT, { rung: 'auto-safe' }).action).toBe(
+    expect(mapVerdictToAction('ls -la', FAIL_CLOSED_VERDICT, { rung: 'assisted' }).action).toBe(
       'escalate'
     );
   });
@@ -794,7 +794,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
   /** The full mapping matrix from §4.2, on a statically resolvable command. */
   const EXPECTED: Record<ApprovalRung, Record<RaterOutcome, string>> = {
     // No model is consulted at all: anything the allow-list did not approve asks the human.
-    'read-only': {
+    manual: {
       safe: 'escalate',
       destructive: 'escalate',
       catastrophic: 'escalate',
@@ -806,7 +806,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
       catastrophic: 'escalate',
       attack: 'escalate',
     },
-    'auto-safe': {
+    assisted: {
       safe: 'approve',
       destructive: 'escalate',
       catastrophic: 'escalate',
@@ -815,7 +815,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
     // EXT-29 will turn `destructive` into a negotiation here; until then it escalates, which is
     // strictly more conservative. `catastrophic` escalates at BOTH rated rungs and never enters
     // that negotiation at all (§4.2), so this column must keep matching the one above it for it.
-    'full-auto': {
+    auto: {
       safe: 'approve',
       destructive: 'escalate',
       catastrophic: 'escalate',
@@ -869,9 +869,9 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
   /**
    * §4.2 — `catastrophic` escalates at BOTH rated rungs. It is not a halt (it is not an attack, and
    * halting on `terraform destroy` would spend the one stop control we have on routine work), and
-   * it is not an approval at either rung. At `full-auto` it MUST NOT enter §5: being *argued into*
+   * it is not an approval at either rung. At `auto` it MUST NOT enter §5: being *argued into*
    * a `mkfs` is the failure mode that rung is most exposed to, so it gets no rounds to argue —
-   * which is why `full-auto` has to keep matching `auto-safe` here once EXT-29 lands.
+   * which is why `auto` has to keep matching `assisted` here once EXT-29 lands.
    */
   it('`catastrophic` escalates at BOTH rated rungs — never approved, never halted', () => {
     for (const rung of RATED_RUNGS) {
@@ -880,8 +880,8 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
       expect(decision.verdict?.outcome).toBe('catastrophic');
     }
     // The two rated rungs agree, and that agreement is the "never negotiable" property in code.
-    expect(mapVerdictToAction(RESOLVABLE, CATASTROPHIC, { rung: 'auto-safe' })).toEqual(
-      mapVerdictToAction(RESOLVABLE, CATASTROPHIC, { rung: 'full-auto' })
+    expect(mapVerdictToAction(RESOLVABLE, CATASTROPHIC, { rung: 'assisted' })).toEqual(
+      mapVerdictToAction(RESOLVABLE, CATASTROPHIC, { rung: 'auto' })
     );
   });
 
@@ -984,7 +984,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
      */
     it('still floors a composed command that ALSO trips a preflight finding', () => {
       const decision = mapVerdictToAction('bash -c "echo $AWS_SECRET_ACCESS_KEY" && ls', SAFE, {
-        rung: 'auto-safe',
+        rung: 'assisted',
       });
       expect(decision.action).toBe('escalate');
       expect(decision.verdict?.outcome).toBe('destructive');
@@ -997,7 +997,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
     const SCRIPT_LEAK = 'node deploy.js $AWS_SECRET_ACCESS_KEY';
 
     it('rewrites a script-env-leak command to destructive + "could not assess" on a SAFE verdict', () => {
-      const decision = mapVerdictToAction(SCRIPT_LEAK, SAFE, { rung: 'auto-safe' });
+      const decision = mapVerdictToAction(SCRIPT_LEAK, SAFE, { rung: 'assisted' });
       expect(decision.verdict?.outcome).toBe('destructive');
       expect(decision.verdict?.reason).toContain(COULD_NOT_ASSESS_PREFIX);
       expect(decision.action).toBe('escalate');
@@ -1046,7 +1046,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
   });
 
   it('returns the rater verdict untouched when the command IS statically resolvable', () => {
-    const decision = mapVerdictToAction(RESOLVABLE, SAFE, { rung: 'auto-safe' });
+    const decision = mapVerdictToAction(RESOLVABLE, SAFE, { rung: 'assisted' });
     expect(decision.verdict).toEqual(SAFE);
   });
 
@@ -1108,7 +1108,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
         reason: 'fetches a tarball from a typosquat of registry.npmjs.org',
         suggestedTool: 'read_file',
       };
-      const decision = mapVerdictToAction(OPEN_WORLD, rated, { rung: 'auto-safe' });
+      const decision = mapVerdictToAction(OPEN_WORLD, rated, { rung: 'assisted' });
       expect(decision.action).toBe('escalate');
       expect(decision.verdict).toEqual(rated);
     });
@@ -1116,7 +1116,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
     it('`safe` is the only outcome the OPEN-WORLD arm rewrites', () => {
       for (const outcome of RATER_OUTCOMES) {
         const input = verdict(outcome);
-        const got = mapVerdictToAction(OPEN_WORLD, input, { rung: 'auto-safe' }).verdict;
+        const got = mapVerdictToAction(OPEN_WORLD, input, { rung: 'assisted' }).verdict;
         if (outcome === 'safe') {
           expect(got?.outcome).toBe('destructive');
           expect(got?.reason).not.toBe(input.reason);
@@ -1138,7 +1138,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
         reason: 'deletes the build output and then echoes',
         suggestedTool: 'edit_file',
       };
-      const decision = mapVerdictToAction(SCRIPT_LEAK, rated, { rung: 'auto-safe' });
+      const decision = mapVerdictToAction(SCRIPT_LEAK, rated, { rung: 'assisted' });
       expect(decision.action).toBe('escalate');
       expect(decision.verdict).toEqual(rated);
       expect(decision.verdict?.reason).not.toContain(COULD_NOT_ASSESS_PREFIX);
@@ -1147,7 +1147,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
     it('`safe` is the ONLY outcome a preflight rewrites', () => {
       for (const outcome of RATER_OUTCOMES) {
         const input = verdict(outcome);
-        const got = mapVerdictToAction(SCRIPT_LEAK, input, { rung: 'auto-safe' }).verdict;
+        const got = mapVerdictToAction(SCRIPT_LEAK, input, { rung: 'assisted' }).verdict;
         if (outcome === 'safe') {
           expect(got?.outcome).toBe('destructive');
           expect(got?.reason).toContain(COULD_NOT_ASSESS_PREFIX);
@@ -1167,13 +1167,12 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
     it('a PARSER note rewrites nothing, where a preflight FINDING rewrites `safe`', () => {
       for (const outcome of ['safe', 'destructive'] as const) {
         const input = verdict(outcome);
-        expect(
-          mapVerdictToAction(AMBIGUOUS, input, { rung: 'auto-safe' }).verdict,
-          outcome
-        ).toEqual(input);
+        expect(mapVerdictToAction(AMBIGUOUS, input, { rung: 'assisted' }).verdict, outcome).toEqual(
+          input
+        );
         // The same two outcomes through the FINDING arm: `safe` is rewritten, `destructive` is
         // already at the floor and passes — which is what makes the line above a contrast.
-        const floored = mapVerdictToAction(SCRIPT_LEAK, input, { rung: 'auto-safe' }).verdict;
+        const floored = mapVerdictToAction(SCRIPT_LEAK, input, { rung: 'assisted' }).verdict;
         expect(floored?.outcome, outcome).toBe('destructive');
         if (outcome === 'safe') expect(floored?.reason, outcome).not.toBe(input.reason);
       }
@@ -1232,7 +1231,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
         );
       }
       // A preflight FINDING the gate could not let a `safe` verdict past.
-      const leak = mapVerdictToAction('node deploy.js $TOKEN', SAFE, { rung: 'auto-safe' });
+      const leak = mapVerdictToAction('node deploy.js $TOKEN', SAFE, { rung: 'assisted' });
       expect(leak.verdict?.outcome).toBe('destructive');
       expect(leak.action).toBe('escalate');
     });
@@ -1250,7 +1249,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
         const got = mapVerdictToAction(
           'node deploy.js $AWS_SECRET_ACCESS_KEY',
           verdict(outcome as RaterOutcome, 'the model said so'),
-          { rung: 'auto-safe' }
+          { rung: 'assisted' }
         );
         expect(got.verdict?.outcome).toBe('destructive');
         expect(got.verdict?.reason).toContain(COULD_NOT_ASSESS_PREFIX);
@@ -1270,7 +1269,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
         const got = mapVerdictToAction(
           'bash -c "echo $AWS_SECRET_ACCESS_KEY" && ls',
           verdict(outcome as RaterOutcome, 'the model said so'),
-          { rung: 'auto-safe' }
+          { rung: 'assisted' }
         );
         expect(got.action, outcome).toBe('escalate');
         expect(got.verdict?.outcome, outcome).toBe('destructive');
@@ -1316,7 +1315,7 @@ describe('rateShellCommand — the timeout is configurable, and a timeout says s
 
   it('takes the timeout from approvals config when no option is given', async () => {
     const { model } = hangingModel();
-    const config = { approvals: { mode: 'full-auto', raterTimeoutMs: 7 } } as unknown as GthConfig;
+    const config = { approvals: { mode: 'auto', raterTimeoutMs: 7 } } as unknown as GthConfig;
     const result = await rateShellCommand('ls -la', config, { model });
     expect(isRaterTimeout(result), 'the configured budget was honoured').toBe(true);
     expect(result.reason).toContain('7ms');
@@ -1325,7 +1324,7 @@ describe('rateShellCommand — the timeout is configurable, and a timeout says s
   it('lets an explicit option override the configured budget', async () => {
     const { model } = hangingModel();
     const config = {
-      approvals: { mode: 'full-auto', raterTimeoutMs: 900_000 },
+      approvals: { mode: 'auto', raterTimeoutMs: 900_000 },
     } as unknown as GthConfig;
     // Without the override this would hang for fifteen minutes rather than fail the test.
     const result = await rateShellCommand('ls -la', config, { model, timeoutMs: 4 });
@@ -1335,7 +1334,7 @@ describe('rateShellCommand — the timeout is configurable, and a timeout says s
   it('falls back to the default when neither is set', async () => {
     expect(RATER_DEFAULT_TIMEOUT_MS).toBe(30_000);
     const { model } = hangingModel();
-    const config = { approvals: 'full-auto' } as unknown as GthConfig;
+    const config = { approvals: 'auto' } as unknown as GthConfig;
     // The budget has to be OBSERVED, not merely outlasted. This test used to race the call against
     // a 50ms timer and assert it was "still-running" — which is true of ANY budget above 50ms, so
     // it passed unchanged with the fallback mutated to 777_000ms and proved only that 30s is not
@@ -1368,7 +1367,7 @@ describe('rateShellCommand — the timeout is configurable, and a timeout says s
       expect(verdict.outcome, `${cause} still fails closed`).toBe('destructive');
       expect(isFailClosed(verdict), `${cause} is recognisable as a gate failure`).toBe(true);
       expect(
-        mapVerdictToAction('ls -la', verdict, { rung: 'full-auto' }).action,
+        mapVerdictToAction('ls -la', verdict, { rung: 'auto' }).action,
         `${cause} never approves and never halts`
       ).toBe('escalate');
     }
@@ -1559,7 +1558,7 @@ describe('the one destructive floor (EXT-70 §4.7.2/§4.7.3)', () => {
 
     it('both open-world reasons end with the shared clause', () => {
       const shell = mapVerdictToAction(OPEN_WORLD_COMMAND, verdict('safe'), {
-        rung: 'auto-safe',
+        rung: 'assisted',
       }).verdict?.reason;
       expect(shell).toContain(NAMES_A_HOST_PREFIX);
       expect(shell?.endsWith(NEVER_AUTO_APPROVED_CLAUSE)).toBe(true);
@@ -1579,7 +1578,7 @@ describe('the one destructive floor (EXT-70 §4.7.2/§4.7.3)', () => {
       // …and the surviving preflight FINDING that does say "could not assess" does not carry it
       // either, so the control holds on a floored verdict too and not only on a gate default.
       const leak = mapVerdictToAction('node deploy.js $AWS_SECRET_ACCESS_KEY', verdict('safe'), {
-        rung: 'auto-safe',
+        rung: 'assisted',
       }).verdict?.reason;
       expect(leak).toContain(COULD_NOT_ASSESS_PREFIX);
       expect(leak?.endsWith(NEVER_AUTO_APPROVED_CLAUSE)).toBe(false);

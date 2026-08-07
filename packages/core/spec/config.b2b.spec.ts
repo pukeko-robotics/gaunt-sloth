@@ -232,7 +232,7 @@ describe('config B2b behavior changes', () => {
 
     it('a project deny list ADDS to the global one rather than replacing it', async () => {
       setupGlobalAndProject(
-        { approvals: { mode: 'auto-safe', deny: [GLOBAL_DENY] } },
+        { approvals: { mode: 'assisted', deny: [GLOBAL_DENY] } },
         {
           llm: { type: 'vertexai' },
           approvals: { mode: 'bypass', deny: [PROJECT_DENY] },
@@ -260,7 +260,7 @@ describe('config B2b behavior changes', () => {
       // The same rule one level down. Listing only the root path in the merge policy would leave
       // the identical silent loss one keystroke away.
       setupGlobalAndProject(
-        { commands: { code: { approvals: { mode: 'auto-safe', deny: [GLOBAL_DENY] } } } },
+        { commands: { code: { approvals: { mode: 'assisted', deny: [GLOBAL_DENY] } } } },
         {
           llm: { type: 'vertexai' },
           commands: { code: { approvals: { mode: 'bypass', deny: [PROJECT_DENY] } } },
@@ -292,7 +292,7 @@ describe('config B2b behavior changes', () => {
      */
     it('a global ROOT deny and a project PER-COMMAND deny both bite for that command', async () => {
       setupGlobalAndProject(
-        { approvals: { mode: 'auto-safe', deny: [GLOBAL_DENY] } },
+        { approvals: { mode: 'assisted', deny: [GLOBAL_DENY] } },
         {
           llm: { type: 'vertexai' },
           commands: { code: { approvals: { mode: 'bypass', deny: [PROJECT_DENY] } } },
@@ -310,7 +310,7 @@ describe('config B2b behavior changes', () => {
       // CONTROL — the other direction of scope: `review` has no per-command block, so it keeps the
       // global root rung and the global entry, and never sees the project's command-specific one.
       const review = await decide(config, 'review', 'git push --force origin main');
-      expect(review.rung).toBe('auto-safe');
+      expect(review.rung).toBe('assisted');
       expect(review.action).toBeUndefined();
       expect((await decide(config, 'review', 'npm publish --access public')).action).toBe('deny');
 
@@ -328,7 +328,7 @@ describe('config B2b behavior changes', () => {
       setupGlobalAndProject(
         {
           approvals: {
-            mode: 'auto-safe',
+            mode: 'assisted',
             allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
             deny: [GLOBAL_DENY],
           },
@@ -384,7 +384,7 @@ describe('config B2b behavior changes', () => {
         setupGlobalAndProject(
           {
             approvals: {
-              mode: 'auto-safe',
+              mode: 'assisted',
               mcp: { servers: { jira: { trustAnnotations: ['readOnlyHint'] } } },
               deny: [GLOBAL_DENY],
             },
@@ -408,7 +408,7 @@ describe('config B2b behavior changes', () => {
         setupGlobalAndProject(
           {
             approvals: {
-              mode: 'auto-safe',
+              mode: 'assisted',
               mcp: { servers: { jira: { trustAnnotations: ['readOnlyHint'] } } },
             },
           },
@@ -427,7 +427,7 @@ describe('config B2b behavior changes', () => {
       setupGlobalAndProject(
         {
           approvals: {
-            mode: 'auto-safe',
+            mode: 'assisted',
             allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
           },
         },
@@ -444,7 +444,7 @@ describe('config B2b behavior changes', () => {
       // §9.1's union collapsing is a second route to the same loss: a bare string on the
       // higher-precedence layer would otherwise overwrite the lower layer's whole block.
       setupGlobalAndProject(
-        { approvals: { mode: 'auto-safe', rater: 'safety-rater', deny: [GLOBAL_DENY] } },
+        { approvals: { mode: 'assisted', rater: 'safety-rater', deny: [GLOBAL_DENY] } },
         { llm: { type: 'vertexai' }, approvals: 'bypass' }
       );
       const { initConfig } = await import('#src/config.js');
@@ -471,7 +471,7 @@ describe('config B2b behavior changes', () => {
     it('two scalar layers stay a scalar — the project rung wins, the shape does not change', async () => {
       // Neither layer carries a list, so there is nothing to preserve and nothing to expand.
       setupGlobalAndProject(
-        { approvals: 'auto-safe' },
+        { approvals: 'assisted' },
         { llm: { type: 'vertexai' }, approvals: 'bypass' }
       );
       const { initConfig } = await import('#src/config.js');

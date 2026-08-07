@@ -157,7 +157,7 @@ export class GthAgentRunner {
    * **This field, not the interrupt wiring, is where the rung lives.** The backends wire the
    * interrupt rung-independently, so every tool any rung could gate arrives at the top of
    * {@link decideToolApproval} and is judged against the rung recorded here — which is what makes
-   * `/approvals read-only` take effect mid-session, and what keeps a config that pre-selects
+   * `/approvals manual` take effect mid-session, and what keeps a config that pre-selects
    * `bypass` switchable back. Never persisted.
    *
    * It does NOT disable the hardline floor — catastrophic commands are still refused at exec time
@@ -490,7 +490,7 @@ export class GthAgentRunner {
     //
     // Loaded whenever a profile is NAMED, without a second "will the rater actually run?" gate:
     // naming a rater profile at an unrated rung is a config the user can hold (they may switch to
-    // `auto-safe` mid-session with `/approvals`), and a broken profile should still fail loudly at
+    // `assisted` mid-session with `/approvals`), and a broken profile should still fail loudly at
     // startup rather than at the moment they switch.
     const raterProfile = this.sessionApprovals.rater;
     this.raterModel = raterProfile ? await resolveRaterModel(raterProfile) : undefined;
@@ -753,19 +753,19 @@ export class GthAgentRunner {
    *    prohibition that catches something unresolvable errs in the direction that costs nothing.
    * 2. **`bypass`** — the gate is off for this session; approve at scope `once`.
    * 3. **escalate** (§3.2) — a declared entry always asks the human, whatever the rung would have
-   *    done, **including outranking the automatic grants of `read-only` and `write`** and any allow
+   *    done, **including outranking the automatic grants of `manual` and `write`** and any allow
    *    entry that also matched. It goes straight to the human with **no rating call**, and it never
-   *    enters the `full-auto` negotiation. It is **inert at `bypass`**, which is why it sits below
+   *    enters the `auto` negotiation. It is **inert at `bypass`**, which is why it sits below
    *    the rung check: the rung chosen for this session wins, and a stop that must survive `bypass`
    *    is a deny entry and only that.
    * 4. **allow** (§3, §3.2) — a declared entry or a grant the human made at an earlier prompt this
    *    session (or persisted), matched against the whole normalized command and only when that
    *    command statically resolves. An allow match settles the human's part: no prompt. Whether the rater
    *    still reviews the call is the entry's own `rate` (§3.2) — honored at the rater rungs and
-   *    inert at the deterministic ones, so no entry can smuggle a model call into `read-only` or
+   *    inert at the deterministic ones, so no entry can smuggle a model call into `manual` or
    *    `write` — and a rated allow match is a TRIPWIRE, not a re-adjudication
    *    ({@link mapAllowMatchedVerdictToAction}).
-   * 5. **auto-rater** (`auto-safe` / `full-auto` only) — `safe` approves, `destructive` and
+   * 5. **auto-rater** (`assisted` / `auto` only) — `safe` approves, `destructive` and
    *    `catastrophic` escalate, and `attack` HALTS the run ({@link AttackHaltError}). The other
    *    three rungs consult no model at all. A command whose target the gate cannot statically
    *    resolve is rated **exactly like any other** ([[EXT-81]]), with a neutral note in the rating
@@ -796,7 +796,7 @@ export class GthAgentRunner {
    * the session. So a call arriving here has not yet been judged against the rung in force: this is
    * where that happens, on `sessionApprovals.rung`, which a mid-session switch has already updated.
    * A call the live rung does not gate is approved on the spot — no rule matching, no rating, no
-   * prompt — which is what keeps `auto-safe`, `full-auto` and `bypass` behaving exactly as they did
+   * prompt — which is what keeps `assisted`, `auto` and `bypass` behaving exactly as they did
    * when the interrupt held the shell alone. It sits ABOVE the deny check for the same reason: an
    * ungated call never reached this method at all before, so a deny entry could not fire on one, and
    * a security fix for two rungs is not the place to change that. (The shell is gated at every rung
@@ -889,7 +889,7 @@ export class GthAgentRunner {
     let safetyVerdict: ShellSafetyVerdict | undefined;
     if (allowlistApplies && rule?.action === 'allow') {
       // §3.2 — `rate` is honored at the rater rungs and INERT at the deterministic ones, so an
-      // entry can never smuggle a model call into `read-only` or `write`. A tool subject is not
+      // entry can never smuggle a model call into `manual` or `write`. A tool subject is not
       // rated either: the rater's first implementation covers the shell only (§4.3, [[EXT-30]]).
       if (!rule.rate || !isRatedRung(approvals.rung) || !isShellCommand || command === null) {
         return { type: 'approve', scope: 'session' };
@@ -1049,7 +1049,7 @@ export class GthAgentRunner {
       grantedTools: this.getGrantedBuiltInTools(),
       // EXT-66 — the user-owned budget for ONE rating call, `undefined` when unset so
       // rateShellCommand applies RATER_DEFAULT_TIMEOUT_MS. 30s is a hosted-model number and a
-      // local rater is knowably slower; without this a local `full-auto` session drifts toward
+      // local rater is knowably slower; without this a local `auto` session drifts toward
       // escalating everything, which is the failure the rung exists to prevent.
       timeoutMs: approvals.raterTimeoutMs,
     });
@@ -1099,7 +1099,7 @@ export class GthAgentRunner {
     // backends derive their interrupt from, so "granted" here means exactly what it means at
     // tool-registration time (§4.5) and at the gate.
     //
-    // EXT-80 makes this non-drift property load-bearing rather than incidental. At `read-only` the
+    // EXT-80 makes this non-drift property load-bearing rather than incidental. At `manual` the
     // write built-ins are gated, so they are NOT granted, and a summary still offering `write_file`
     // there would tell the model a tool is free while the gate stops and asks for it — the rater
     // suggesting the one thing guaranteed to interrupt the user. It is computed per rating from

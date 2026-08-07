@@ -37,7 +37,7 @@ Against `claude-haiku-4-5`, `gemini-3.6-flash` and `gemma4:12b`:
 - **`mention_interrupts` 0/8 on haiku and flash.** All eight commands that the floor used to refuse
   unappealably are now rated `safe` and run with no human prompt — so the change converts eight
   hard refusals into eight silent approvals rather than eight approval prompts, which is the
-  approval-fatigue result `full-auto` exists for.
+  approval-fatigue result `auto` exists for.
 - **The floor cases cost no model call** and are the regression gate for the five shapes EXT-62
   closed.
 

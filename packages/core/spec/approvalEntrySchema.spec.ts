@@ -36,7 +36,7 @@ function validate(approvals: unknown, extra: Record<string, unknown> = {}) {
 
 /** Validate a config whose `allow` list holds exactly `entry`. */
 function validateEntry(entry: unknown, list: 'allow' | 'deny' | 'escalate' = 'allow') {
-  return validate({ mode: 'auto-safe', [list]: [entry] });
+  return validate({ mode: 'assisted', [list]: [entry] });
 }
 
 function expectAccepted(result: ReturnType<typeof validateRawGthConfig>): void {
@@ -95,7 +95,7 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
 
     it('accepts every form §3.1 writes out, in all three lists', () => {
       for (const list of ['allow', 'deny', 'escalate'] as const) {
-        expectAccepted(validate({ mode: 'auto-safe', [list]: SPEC_ENTRIES }));
+        expectAccepted(validate({ mode: 'assisted', [list]: SPEC_ENTRIES }));
       }
     });
 
@@ -117,7 +117,7 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
     it.each(['allow', 'deny', 'escalate'] as const)(
       'is refused in %s with the object form of that same string, while the object form loads',
       (list) => {
-        const message = expectRejected(validate({ mode: 'auto-safe', [list]: ['npm test'] }));
+        const message = expectRejected(validate({ mode: 'assisted', [list]: ['npm test'] }));
         expect(message).toContain('bare strings are no longer accepted');
         expect(message).toContain('{ "type": "shell", "matcher": "exact", "pattern": "npm test" }');
         expect(message).toContain(`approvals.${list}[0]`);
@@ -125,7 +125,7 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
         // The control: the entry the message just told the user to write.
         expectAccepted(
           validate({
-            mode: 'auto-safe',
+            mode: 'assisted',
             [list]: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
           })
         );
@@ -133,9 +133,7 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
     );
 
     it('renders the offending string, not a fixed example, and escapes it as JSON', () => {
-      const message = expectRejected(
-        validate({ mode: 'auto-safe', deny: ['git commit -m "wip"'] })
-      );
+      const message = expectRejected(validate({ mode: 'assisted', deny: ['git commit -m "wip"'] }));
       expect(message).toContain(renderApprovalEntryForString('git commit -m "wip"'));
       expect(message).toContain('\\"wip\\"');
       expect(message).not.toContain('"pattern": "npm test"');
@@ -144,7 +142,7 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
     it('names the INDEX of each offending entry, and reports every one', () => {
       const message = expectRejected(
         validate({
-          mode: 'auto-safe',
+          mode: 'assisted',
           allow: [{ type: 'shell', matcher: 'exact', pattern: 'ok' }, 'npm test', 'git status'],
         })
       );
@@ -157,7 +155,7 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
       const message = expectRejected(
         validateRawGthConfig({
           ...BASE,
-          commands: { code: { approvals: { mode: 'auto-safe', deny: ['npm publish'] } } },
+          commands: { code: { approvals: { mode: 'assisted', deny: ['npm publish'] } } },
         })
       );
       expect(message).toContain('commands.code.approvals.deny[0]');
@@ -167,7 +165,7 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
           commands: {
             code: {
               approvals: {
-                mode: 'auto-safe',
+                mode: 'assisted',
                 deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
               },
             },
@@ -181,7 +179,7 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
     it.each(['allow', 'deny'] as const)(
       'refuses a scalar %s naming the shape it wants, while the array form loads',
       (list) => {
-        const message = expectRejected(validate({ mode: 'auto-safe', [list]: 'npm test' }));
+        const message = expectRejected(validate({ mode: 'assisted', [list]: 'npm test' }));
         expect(message).toContain(`approvals.${list}`);
         expect(message).toContain('must be a LIST of rule entries');
         // Not the union's bland fallback, which is what this whole surface exists to replace.
@@ -189,7 +187,7 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
 
         expectAccepted(
           validate({
-            mode: 'auto-safe',
+            mode: 'assisted',
             [list]: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
           })
         );
@@ -197,7 +195,7 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
     );
 
     it('leaves a scalar escalate to the retired-threshold message, which is more specific', () => {
-      const message = expectRejected(validate({ mode: 'auto-safe', escalate: 'danger' }));
+      const message = expectRejected(validate({ mode: 'assisted', escalate: 'danger' }));
       expect(message).toContain('third rule LIST');
       expect(message).not.toContain('must be a LIST of rule entries');
     });
@@ -662,7 +660,7 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
 
     it('accepts every §3.1 form, in all three lists', () => {
       for (const list of ['allow', 'deny', 'escalate'] as const) {
-        expect(accepts({ mode: 'auto-safe', [list]: SPEC_ENTRIES })).toBe(true);
+        expect(accepts({ mode: 'assisted', [list]: SPEC_ENTRIES })).toBe(true);
       }
     });
 
@@ -684,19 +682,19 @@ describe('approvals rule entry grammar (EXT-71 §3.1)', () => {
       ],
       ['an unknown field', { type: 'shell', matcher: 'exact', pattern: 'x', severity: 'high' }],
     ])('refuses %s', (_label, entry) => {
-      expect(accepts({ mode: 'auto-safe', allow: [entry] })).toBe(false);
+      expect(accepts({ mode: 'assisted', allow: [entry] })).toBe(false);
       // …and the load agrees. Two enforcement surfaces, one answer.
       expect(validateEntry(entry).ok).toBe(false);
     });
 
     it('is the ONE row it cannot express: an uncompilable regexp passes the schema, not the load', () => {
       const entry = { type: 'shell', matcher: 'regexp', pattern: '^git commit (' };
-      expect(accepts({ mode: 'auto-safe', allow: [entry] })).toBe(true);
+      expect(accepts({ mode: 'assisted', allow: [entry] })).toBe(true);
       expect(validateEntry(entry).ok).toBe(false);
     });
 
     it('still accepts the rung-string form, which this node did not touch', () => {
-      for (const rung of ['read-only', 'write', 'auto-safe', 'full-auto', 'bypass']) {
+      for (const rung of ['manual', 'write', 'assisted', 'auto', 'bypass']) {
         expect(accepts(rung)).toBe(true);
       }
     });

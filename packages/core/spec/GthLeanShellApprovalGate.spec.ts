@@ -314,7 +314,7 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
   it('allow-list: a DECLARED entry approves a host-bearing command without reaching the rater at all', async () => {
     const runner = await makeRunner(['curl https://internal.example.com/health'], {
       approvals: {
-        mode: 'auto-safe',
+        mode: 'assisted',
         // EXT-71 §3.1 — an `exact` entry is the COMMAND, so it is written out in full. §3.2 then
         // defaults it to `rate: false`, which is why this costs no model call.
         allow: [
@@ -347,7 +347,7 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
     mapVerdictToActionMock.mockReturnValue({ action: 'escalate', verdict });
     const runner = await makeRunner(['curl https://internal.example.com/health'], {
       approvals: {
-        mode: 'auto-safe',
+        mode: 'assisted',
         allow: [{ type: 'shell', matcher: 'exact', pattern: 'curl' }],
       },
     } as unknown as Partial<GthConfig>);
@@ -362,11 +362,11 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
   });
 
   it('rater: a SAFE verdict approves with NO human prompt (and the rater is consulted with the command)', async () => {
-    const verdict = { outcome: 'safe', reason: 'read-only' };
+    const verdict = { outcome: 'safe', reason: 'manual' };
     rateShellCommandMock.mockResolvedValue(verdict);
     mapVerdictToActionMock.mockReturnValue({ action: 'approve', verdict });
     const runner = await makeRunner(['ls -la'], {
-      approvals: 'auto-safe',
+      approvals: 'assisted',
     } as Partial<GthConfig>);
     const human = vi.fn();
     runner.setToolApprovalCallback(human);
@@ -392,7 +392,7 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
     rateShellCommandMock.mockResolvedValue(verdict);
     mapVerdictToActionMock.mockReturnValue({ action: 'halt', verdict });
     const runner = await makeRunner(['cat ~/.ssh/id_rsa'], {
-      approvals: 'auto-safe',
+      approvals: 'assisted',
     } as Partial<GthConfig>);
     const human = vi.fn();
     runner.setToolApprovalCallback(human);
@@ -414,7 +414,7 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
     rateShellCommandMock.mockResolvedValue(verdict);
     mapVerdictToActionMock.mockReturnValue({ action: 'escalate', verdict });
     const runner = await makeRunner(['touch /tmp/x'], {
-      approvals: 'auto-safe',
+      approvals: 'assisted',
     } as Partial<GthConfig>);
     const human = vi.fn().mockResolvedValue({ type: 'reject', message: 'no' });
     runner.setToolApprovalCallback(human);
@@ -510,7 +510,7 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
 
   /**
    * §9.1/§11.1f, end to end on the real graph — **a per-command rung does not discard the root's
-   * deny list.** This is the exact config the amendment was ratified over: a root `auto-safe` with
+   * deny list.** This is the exact config the amendment was ratified over: a root `assisted` with
    * one prohibition, and the friendly per-command spelling `"code": { "approvals": "bypass" }`,
    * which reads as "let the code command run without prompting me" and must not also mean "and
    * forget everything I forbade". `bypass` is where it matters: the deny list and the §8 floor are
@@ -519,7 +519,7 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
   it('a per-command bypass keeps the ROOT deny list, on the real graph', async () => {
     const runner = await makeRunner(['npm publish --access public'], {
       approvals: {
-        mode: 'auto-safe',
+        mode: 'assisted',
         deny: [{ type: 'shell', matcher: 'glob', pattern: 'npm publish*' }],
       },
       commands: { code: { approvals: 'bypass' } },
@@ -528,7 +528,7 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
     runner.setToolApprovalCallback(human);
 
     // CONTROL — the per-command override really took effect for this session. Without it the
-    // refusal below would be equally satisfied by a config still sitting at the root's `auto-safe`,
+    // refusal below would be equally satisfied by a config still sitting at the root's `assisted`,
     // where a refusal proves nothing about `bypass`.
     expect(runner.getSessionApprovals().rung).toBe('bypass');
 
@@ -541,12 +541,12 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
   /**
    * The control for the test above: the rung really is `bypass` and the gate is not simply
    * refusing everything. A command the root deny list does not name runs unprompted and unrated —
-   * which at `auto-safe` it could not, since the rater would have been consulted.
+   * which at `assisted` it could not, since the rater would have been consulted.
    */
   it('a per-command bypass still RUNS a command the root deny list does not name', async () => {
     const runner = await makeRunner(['rm -rf node_modules'], {
       approvals: {
-        mode: 'auto-safe',
+        mode: 'assisted',
         deny: [{ type: 'shell', matcher: 'glob', pattern: 'npm publish*' }],
       },
       commands: { code: { approvals: 'bypass' } },
@@ -568,7 +568,7 @@ describe('EXT-52: lean-backend run_shell_command approval gate (real createAgent
   it('a per-command deny adds to the root deny — both entries refuse, on the real graph', async () => {
     const configExtra = {
       approvals: {
-        mode: 'auto-safe',
+        mode: 'assisted',
         deny: [{ type: 'shell', matcher: 'glob', pattern: 'npm publish*' }],
       },
       commands: {

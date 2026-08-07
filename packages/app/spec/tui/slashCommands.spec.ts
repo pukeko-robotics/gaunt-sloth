@@ -170,7 +170,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
-    for (const rung of ['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'] as const) {
+    for (const rung of ['manual', 'write', 'assisted', 'auto', 'bypass'] as const) {
       expect(
         dispatchSlashCommand(parseSlashCommand(`/approvals ${rung}`)!, registry, ctx).approvals
       ).toEqual({ rung });
@@ -187,11 +187,13 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
    * alpha, and a silent alias would leave the user believing in a vocabulary the gate no longer
    * has. `/auto-approve off` in particular had to mean one of two different rungs.
    */
-  it('the retired `auto`/`ask` spellings and the /auto-approve, /bypass-approve commands are gone', async () => {
+  it('the retired mode spellings and the /auto-approve, /bypass-approve commands are gone', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
-    for (const retired of ['auto', 'ask']) {
+    // CFG-39 — `auto` is absent from this list because it is a LIVE mode name now; the cell below
+    // pins that `/approvals auto` is accepted rather than explained away.
+    for (const retired of ['read-only', 'auto-safe', 'full-auto', 'ask']) {
       const result = dispatchSlashCommand(
         parseSlashCommand(`/approvals ${retired}`)!,
         registry,
@@ -231,22 +233,22 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     expect(bypass.lines.join(' ')).toContain('deny list');
     expect(bypass.lines.join(' ')).not.toMatch(/hardline|floor/i);
 
-    // `auto-safe` must state plainly that files are STILL rewritten and deleted without asking.
-    const autoSafe = approvalsRungNotice(posture('auto-safe'));
-    expect(autoSafe.title).toBe('Approvals: Auto safe');
+    // `assisted` must state plainly that files are STILL rewritten and deleted without asking.
+    const autoSafe = approvalsRungNotice(posture('assisted'));
+    expect(autoSafe.title).toBe('Approvals: Assisted');
     expect(autoSafe.tone).toBe('info');
     expect(autoSafe.lines.join(' ')).toContain(
       'rewrite and delete files in your working folder without asking'
     );
 
-    // `full-auto` is described as safer than bypass and explicitly not safe.
-    const fullAuto = approvalsRungNotice(posture('full-auto'));
-    expect(fullAuto.title).toBe('Approvals: Full auto');
+    // `auto` is described as safer than bypass and explicitly not safe.
+    const fullAuto = approvalsRungNotice(posture('auto'));
+    expect(fullAuto.title).toBe('Approvals: Auto');
     expect(fullAuto.lines.join(' ')).toContain('safer than bypass');
     expect(fullAuto.lines.join(' ')).toContain('it is not safe');
 
     // A configured rater profile is named at the rated rungs (the spec's status requirement).
-    expect(approvalsRungNotice(posture('auto-safe', 'safety-rater')).lines.join(' ')).toContain(
+    expect(approvalsRungNotice(posture('assisted', 'safety-rater')).lines.join(' ')).toContain(
       'safety-rater'
     );
     // ...and never at an unrated one, where naming it would promise a call that never happens.
@@ -259,7 +261,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     const { approvalsStatusNotice } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const notice = approvalsStatusNotice(
       {
-        rung: 'auto-safe',
+        rung: 'assisted',
         rater: 'safety-rater',
         allow: [],
         deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
@@ -268,7 +270,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
       { session: 3, always: undefined },
       ['npm publish']
     );
-    expect(notice.title).toBe('Approvals: Auto safe');
+    expect(notice.title).toBe('Approvals: Assisted');
     const body = notice.lines.join(' ');
     expect(body).toContain('safety-rater');
     expect(body).toContain('3 this session');
@@ -287,7 +289,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
    */
   it('the /approvals display carries NO abstention row', async () => {
     const { approvalsStatusNotice } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
-    const posture = { rung: 'full-auto', allow: [], deny: [], escalate: [] } as any;
+    const posture = { rung: 'auto', allow: [], deny: [], escalate: [] } as any;
     const body = approvalsStatusNotice(posture, { session: 0, always: 0 }).lines.join(' ');
     expect(body).not.toContain('could not read a command');
     // ...and the rest of the display is still there, so the assertion above is about the removed
@@ -297,13 +299,70 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   it('the /approvals display says the rater is unused at the three deterministic rungs', async () => {
     const { approvalsStatusNotice } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
-    for (const rung of ['read-only', 'write', 'bypass'] as const) {
+    for (const rung of ['manual', 'write', 'bypass'] as const) {
       const notice = approvalsStatusNotice(
         { rung, rater: 'safety-rater', allow: [], deny: [] } as any,
         { session: 0, always: 0 }
       );
-      expect(notice.lines.join(' ')).toContain('not used at this rung');
+      expect(notice.lines.join(' ')).toContain('not used in this mode');
     }
+  });
+
+  /**
+   * CFG-39 — the four postures the picker offers, and the text fallback every non-TTY surface
+   * prints in its place. `write` is deliberately not a row: it is a modifier of Manual, settable
+   * with `/approvals write` and named by the footer hint rather than by a row of its own.
+   */
+  it('CFG-39: /approvals auto is accepted as a mode, not explained as retired', async () => {
+    const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
+      await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    const result = dispatchSlashCommand(
+      parseSlashCommand('/approvals auto')!,
+      createCommandRegistry(),
+      ctx
+    );
+    expect(result.approvals).toEqual({ rung: 'auto' });
+  });
+
+  it('CFG-39: the picker offers the four postures, reading their copy from the descriptions', async () => {
+    const { approvalPostureChoices } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    const { APPROVAL_RUNG_DESCRIPTIONS, APPROVAL_RUNG_LABELS } =
+      await import('@gaunt-sloth/core/config.js');
+    const choices = approvalPostureChoices('assisted');
+    expect(choices.map((c) => c.rung)).toEqual(['manual', 'assisted', 'auto', 'bypass']);
+    expect(choices.map((c) => c.rung)).not.toContain('write');
+    // The copy is the descriptions' own, never authored by the menu.
+    for (const choice of choices) {
+      expect(choice.description).toBe(APPROVAL_RUNG_DESCRIPTIONS[choice.rung]);
+      expect(choice.label).toBe(APPROVAL_RUNG_LABELS[choice.rung]);
+    }
+    expect(choices.filter((c) => c.current).map((c) => c.rung)).toEqual(['assisted']);
+  });
+
+  it('CFG-39: on `write` no posture row claims to be current, so the display stays honest', async () => {
+    const { approvalPostureChoices } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    expect(approvalPostureChoices('write').some((c) => c.current)).toBe(false);
+  });
+
+  it('CFG-39: the no-arg display carries the selectable list, and drops it for an interactive surface', async () => {
+    const { approvalsStatusNotice } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    const posture = { rung: 'assisted', allow: [], deny: [] } as any;
+    const text = approvalsStatusNotice(posture, { session: 0, always: 0 }).lines.join('\n');
+    // The text fallback names every posture and the Write modifier.
+    for (const label of ['Manual', 'Assisted', 'Auto', 'Bypass']) expect(text).toContain(label);
+    expect(text).toContain('/approvals write');
+    // A surface rendering the picker itself does not also print the rows.
+    const interactive = approvalsStatusNotice(
+      posture,
+      { session: 0, always: 0 },
+      [],
+      [],
+      undefined,
+      { interactive: true }
+    );
+    expect(interactive.lines.join('\n')).not.toContain('Choose a mode with');
+    // …but it still answers "what am I on", which is the question /approvals has always answered.
+    expect(interactive.title).toBe('Approvals: Assisted');
   });
 
   it('dispatch during a run refuses idle-only commands but allows availableDuringRun ones', async () => {
@@ -632,7 +691,7 @@ describe('tui/slashCommands /approvals trust (EXT-70 §4.7.1)', () => {
 
   describe('the /approvals display', () => {
     const posture = {
-      rung: 'auto-safe',
+      rung: 'assisted',
       rater: undefined,
       allow: [],
       deny: [],

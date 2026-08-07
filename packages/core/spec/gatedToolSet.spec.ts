@@ -1,7 +1,7 @@
 /**
  * [[EXT-80]] acceptance — **which tools the two deterministic rungs actually gate.**
  *
- * `read-only` and `write` publish a promise: everything beyond reading (respectively, beyond
+ * `manual` and `write` publish a promise: everything beyond reading (respectively, beyond
  * reading and writing files in the working folder) comes to the user for approval. That promise is
  * kept by {@link resolveGatedToolNames}, which both backends and `GthAgentRunner` build their gated
  * set from.
@@ -128,12 +128,12 @@ describe('EXT-80 — the access-class predicate', () => {
     }
   });
 
-  it('grants the write built-ins everywhere except read-only', () => {
+  it('grants the write built-ins everywhere except manual', () => {
     for (const name of WRITE_BUILT_INS) {
-      expect(isAccessClassGrantedAtRung(name, 'read-only')).toBe(false);
+      expect(isAccessClassGrantedAtRung(name, 'manual')).toBe(false);
       expect(isAccessClassGrantedAtRung(name, 'write')).toBe(true);
-      expect(isAccessClassGrantedAtRung(name, 'auto-safe')).toBe(true);
-      expect(isAccessClassGrantedAtRung(name, 'full-auto')).toBe(true);
+      expect(isAccessClassGrantedAtRung(name, 'assisted')).toBe(true);
+      expect(isAccessClassGrantedAtRung(name, 'auto')).toBe(true);
     }
   });
 
@@ -155,16 +155,13 @@ describe('EXT-80 — the access-class predicate', () => {
   });
 
   it('separates the deterministic rungs from the rest', () => {
-    expect(APPROVAL_RUNGS.filter((rung) => isDeterministicRung(rung))).toEqual([
-      'read-only',
-      'write',
-    ]);
+    expect(APPROVAL_RUNGS.filter((rung) => isDeterministicRung(rung))).toEqual(['manual', 'write']);
   });
 });
 
 describe('EXT-80 — resolveGatedToolNames membership', () => {
-  it('gates everything but the read built-ins at read-only', () => {
-    expect([...gatedAt('read-only')].sort()).toEqual(
+  it('gates everything but the read built-ins at manual', () => {
+    expect([...gatedAt('manual')].sort()).toEqual(
       [...WRITE_BUILT_INS, ...UNCLASSED].sort() as string[]
     );
   });
@@ -173,14 +170,14 @@ describe('EXT-80 — resolveGatedToolNames membership', () => {
     expect([...gatedAt('write')].sort()).toEqual([...UNCLASSED].sort() as string[]);
   });
 
-  it.each(['auto-safe', 'full-auto', 'bypass'] as const)(
+  it.each(['assisted', 'auto', 'bypass'] as const)(
     'gates the shell and nothing else at %s',
     (rung) => {
       expect(gatedAt(rung)).toEqual([SHELL_TOOL_NAME]);
     }
   );
 
-  it.each(['auto-safe', 'full-auto', 'bypass'] as const)(
+  it.each(['assisted', 'auto', 'bypass'] as const)(
     'gates nothing at all at %s when the shell tool is disabled',
     (rung) => {
       expect(gatedAt(rung, false)).toEqual([]);
@@ -188,12 +185,12 @@ describe('EXT-80 — resolveGatedToolNames membership', () => {
   );
 
   it('still gates the non-granted tools at a deterministic rung when the shell gate is off', () => {
-    // A `chat` session wires no shell gate but may hold MCP and custom tools, and `read-only`
+    // A `chat` session wires no shell gate but may hold MCP and custom tools, and `manual`
     // promises those come to the user. Keying the gate off `gateShell` would break that promise.
     // The shell tool being disabled means it is not bound either, so it is absent from both sides.
     const withoutShell = BOUND.filter((name) => name !== SHELL_TOOL_NAME);
     const gated = resolveGatedToolNames({
-      rung: 'read-only',
+      rung: 'manual',
       gateShell: false,
       boundToolNames: withoutShell,
     });
@@ -207,23 +204,23 @@ describe('EXT-80 — resolveGatedToolNames membership', () => {
     // Not a scenario production reaches (a disabled shell tool is never bound), but the rule must
     // hold by class rather than by tool identity: an unstated exemption for one name is the defect
     // class this node exists to remove. `gateShell` widens the set; it never narrows it.
-    expect(gatedAt('read-only', false)).toContain(SHELL_TOOL_NAME);
+    expect(gatedAt('manual', false)).toContain(SHELL_TOOL_NAME);
     expect(gatedAt('write', false)).toContain(SHELL_TOOL_NAME);
   });
 
   it('gates an MCP tool that declares readOnlyHint exactly like one that does not', () => {
-    for (const rung of ['read-only', 'write'] as const) {
+    for (const rung of ['manual', 'write'] as const) {
       expect(gatedAt(rung)).toContain('mcp__docs__search');
       expect(gatedAt(rung)).toContain('mcp__jira__create_issue');
     }
   });
 
-  it('gates move_file at read-only', () => {
-    expect(gatedAt('read-only')).toContain('move_file');
+  it('gates move_file at manual', () => {
+    expect(gatedAt('manual')).toContain('move_file');
   });
 
   it("gates deepagents' execute at both deterministic rungs", () => {
-    expect(gatedAt('read-only')).toContain('execute');
+    expect(gatedAt('manual')).toContain('execute');
     expect(gatedAt('write')).toContain('execute');
   });
 
@@ -234,14 +231,14 @@ describe('EXT-80 — resolveGatedToolNames membership', () => {
       'gth_web_fetch',
       'show_a2ui_surface',
     ]) {
-      expect(gatedAt('read-only')).toContain(name);
+      expect(gatedAt('manual')).toContain(name);
       expect(gatedAt('write')).toContain(name);
     }
   });
 
   it('never gates a bound tool the rung grants', () => {
     for (const name of READ_BUILT_INS) {
-      expect(gatedAt('read-only')).not.toContain(name);
+      expect(gatedAt('manual')).not.toContain(name);
       expect(gatedAt('write')).not.toContain(name);
     }
     for (const name of WRITE_BUILT_INS) {
@@ -251,7 +248,7 @@ describe('EXT-80 — resolveGatedToolNames membership', () => {
 
   it('gates only tools that are actually bound', () => {
     const gated = resolveGatedToolNames({
-      rung: 'read-only',
+      rung: 'manual',
       gateShell: false,
       boundToolNames: ['read_file', 'write_file'],
     });
@@ -260,7 +257,7 @@ describe('EXT-80 — resolveGatedToolNames membership', () => {
 
   it('puts the shell first and otherwise keeps bound order, collapsing duplicates', () => {
     const gated = resolveGatedToolNames({
-      rung: 'read-only',
+      rung: 'manual',
       gateShell: true,
       boundToolNames: ['edit_file', SHELL_TOOL_NAME, 'my_custom_tool', 'edit_file'],
     });
@@ -269,7 +266,7 @@ describe('EXT-80 — resolveGatedToolNames membership', () => {
 
   it('ignores nameless entries', () => {
     const gated = resolveGatedToolNames({
-      rung: 'read-only',
+      rung: 'manual',
       gateShell: false,
       boundToolNames: ['', 'edit_file'],
     });
@@ -282,13 +279,11 @@ describe('EXT-80 — isToolGatedAtRung, asked about ONE call', () => {
    * **This is what `GthAgentRunner.decideToolApproval` consults, and it takes no bound toolset on
    * purpose.** The runner sees the names the graph reported registering, and on the deep backend
    * that list omits tools deepagents registers itself — `execute` above all. A decision that
-   * consulted a bound list would grant deepagents' shell at `read-only` purely because the runner
+   * consulted a bound list would grant deepagents' shell at `manual` purely because the runner
    * could not see it.
    */
   it("gates deepagents' execute at the deterministic rungs with no bound set in play", () => {
-    expect(isToolGatedAtRung({ toolName: 'execute', rung: 'read-only', gateShell: false })).toBe(
-      true
-    );
+    expect(isToolGatedAtRung({ toolName: 'execute', rung: 'manual', gateShell: false })).toBe(true);
     expect(isToolGatedAtRung({ toolName: 'execute', rung: 'write', gateShell: false })).toBe(true);
   });
 
@@ -299,7 +294,7 @@ describe('EXT-80 — isToolGatedAtRung, asked about ONE call', () => {
   });
 
   it('gates nothing but the shell at the rated rungs and bypass', () => {
-    for (const rung of ['auto-safe', 'full-auto', 'bypass'] as const) {
+    for (const rung of ['assisted', 'auto', 'bypass'] as const) {
       for (const name of [...WRITE_BUILT_INS, ...UNCLASSED.filter((n) => n !== SHELL_TOOL_NAME)]) {
         expect(isToolGatedAtRung({ toolName: name, rung, gateShell: true })).toBe(false);
       }
@@ -337,8 +332,8 @@ describe('EXT-80 — resolveInterruptToolNames: the rung-independent interrupt s
     }
   });
 
-  it('equals the read-only gated set, since read-only is the strictest rung', () => {
-    expect([...wired()].sort()).toEqual([...gatedAt('read-only')].sort());
+  it('equals the manual gated set, since manual is the strictest rung', () => {
+    expect([...wired()].sort()).toEqual([...gatedAt('manual')].sort());
   });
 
   it('leaves out the read built-ins, which no rung gates', () => {
@@ -353,7 +348,7 @@ describe('EXT-80 — resolveInterruptToolNames: the rung-independent interrupt s
     }
   });
 
-  it('is non-empty for a chat session with no shell gate, so read-only stays reachable there', () => {
+  it('is non-empty for a chat session with no shell gate, so manual stays reachable there', () => {
     const chatTools = ['read_file', 'mcp__docs__search', 'my_custom_tool'];
     expect(resolveInterruptToolNames({ gateShell: false, boundToolNames: chatTools })).toEqual([
       'mcp__docs__search',
@@ -405,6 +400,23 @@ describe('EXT-80 — commandAnswersApprovals: which surfaces can be handed an in
   it('treats an unset command as runner-driven, since nothing else leaves it unset', () => {
     expect(commandAnswersApprovals(undefined)).toBe(true);
   });
+
+  /**
+   * CFG-39 — **fail-SAFE for a value outside the union.** The record lookup yields `undefined` for
+   * an unknown command, and `undefined` is falsy, so without the `?? true` the caller is told to
+   * install NO approval interrupt — the one direction this predicate must never fail in.
+   *
+   * TypeScript makes this unreachable from inside the repo, which is exactly why it needs a cell:
+   * the function is re-exported from the public `@gaunt-sloth/core/config.js` barrel, so an
+   * untyped consumer can reach it, and a compile-time guarantee does not travel across that
+   * boundary. The cast is the point of the test, not a shortcut around it.
+   */
+  it.each(['', 'nonsense', 'API', 'serve'])(
+    'an out-of-union command (%s) fails SAFE — it answers approvals rather than skipping the gate',
+    (bogus) => {
+      expect(commandAnswersApprovals(bogus as GthCommand)).toBe(true);
+    }
+  );
 });
 
 describe('EXT-80 — the gated set and isGrantedAtRung cannot disagree', () => {
@@ -422,19 +434,19 @@ describe('EXT-80 — the gated set and isGrantedAtRung cannot disagree', () => {
     }
   });
 
-  it('reports every non-read built-in as NOT granted at read-only', () => {
-    const gated = gatedAt('read-only');
+  it('reports every non-read built-in as NOT granted at manual', () => {
+    const gated = gatedAt('manual');
     for (const name of [...WRITE_BUILT_INS, ...UNCLASSED]) {
-      expect(isGrantedAtRung(name, 'read-only', gated)).toBe(false);
+      expect(isGrantedAtRung(name, 'manual', gated)).toBe(false);
     }
     for (const name of READ_BUILT_INS) {
-      expect(isGrantedAtRung(name, 'read-only', gated)).toBe(true);
+      expect(isGrantedAtRung(name, 'manual', gated)).toBe(true);
     }
   });
 
-  it('reports the write built-ins as granted at write but not at read-only', () => {
+  it('reports the write built-ins as granted at write but not at manual', () => {
     for (const name of WRITE_BUILT_INS) {
-      expect(isGrantedAtRung(name, 'read-only', gatedAt('read-only'))).toBe(false);
+      expect(isGrantedAtRung(name, 'manual', gatedAt('manual'))).toBe(false);
       expect(isGrantedAtRung(name, 'write', gatedAt('write'))).toBe(true);
     }
   });
@@ -443,11 +455,11 @@ describe('EXT-80 — the gated set and isGrantedAtRung cannot disagree', () => {
    * The composition `GthAgentRunner.getGrantedBuiltInTools` performs for the rater's §4.4
    * granted-alternative list: resolve the gated set for the rung in force, then report grants
    * against it. Pinned here rather than through the runner because the rater is consulted only at
-   * the RATED rungs, so no runtime path reaches this composition at `read-only` today — the
+   * the RATED rungs, so no runtime path reaches this composition at `manual` today — the
    * property is structural, and this is what keeps it true if EXT-30 widens the rater.
    *
    * What it must never do is offer the model a tool the gate would stop: the rater suggesting
-   * `write_file` at `read-only` would be suggesting the one thing guaranteed to interrupt the user.
+   * `write_file` at `manual` would be suggesting the one thing guaranteed to interrupt the user.
    */
   it('never offers a rater alternative the gate would escalate', () => {
     const registered = ['read_file', 'gth_grep', 'write_file', 'edit_file', SHELL_TOOL_NAME];
@@ -460,7 +472,7 @@ describe('EXT-80 — the gated set and isGrantedAtRung cannot disagree', () => {
     }
   });
 
-  it('drops the write built-ins from the rater alternatives at read-only, keeps them at write', () => {
+  it('drops the write built-ins from the rater alternatives at manual, keeps them at write', () => {
     const registered = ['read_file', 'gth_grep', 'write_file', 'edit_file', SHELL_TOOL_NAME];
     const offeredAt = (rung: ApprovalRung): string[] =>
       describeGrantedBuiltInTools(
@@ -469,7 +481,7 @@ describe('EXT-80 — the gated set and isGrantedAtRung cannot disagree', () => {
         resolveGatedToolNames({ rung, gateShell: true, boundToolNames: registered })
       ).map((t) => t.name);
 
-    expect(offeredAt('read-only')).toEqual(['read_file', 'gth_grep']);
+    expect(offeredAt('manual')).toEqual(['read_file', 'gth_grep']);
     expect(offeredAt('write')).toEqual(['read_file', 'gth_grep', 'write_file', 'edit_file']);
   });
 });

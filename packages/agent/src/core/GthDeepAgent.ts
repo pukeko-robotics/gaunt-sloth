@@ -718,14 +718,14 @@ export class GthDeepAgent extends GthAbstractAgent {
       this.command
     );
     //
-    // EXT-80: at `read-only` and `write` every bound tool the rung's access class does not
+    // EXT-80: at `manual` and `write` every bound tool the rung's access class does not
     // auto-grant must reach the human. Both sets below come from core's shared policy — the same one
     // the lean backend and `GthAgentRunner` call — so the three cannot disagree about what is gated.
     //
     // **The interrupt is wired rung-INDEPENDENTLY, over every tool any rung could gate.** It is
     // built once, here, while `/approvals <rung>` moves the rung for the rest of the session without
     // rebuilding the graph; a set that carried the rung would be frozen at the rung the session
-    // started on, and since the default is `auto-safe`, typing `/approvals read-only` would leave
+    // started on, and since the default is `assisted`, typing `/approvals manual` would leave
     // exactly the write tools ungated. `GthAgentRunner.decideToolApproval` decides on the rung in
     // force, so wiring wider does not gate wider.
     //
@@ -733,7 +733,7 @@ export class GthDeepAgent extends GthAbstractAgent {
     // tools, `execute`, `task` and `write_todos` itself (this backend resolves with
     // `filesystem: 'none'`), so they never appear in `passThroughTools`; deriving the set from that
     // array alone would leave `write_file`, `edit_file`, `execute`, `task` and `write_todos` ungated
-    // at `read-only` on this backend — precisely the defect this change exists to remove. Gating
+    // at `manual` on this backend — precisely the defect this change exists to remove. Gating
     // them by name works because deepagents installs the very same langchain
     // `humanInTheLoopMiddleware`, which matches the model's tool CALLS by name in `afterModel` and so
     // does not care which party registered the tool.
@@ -752,11 +752,13 @@ export class GthDeepAgent extends GthAbstractAgent {
     // **What a surface that answers no approval gets — for BOTH sets below.** An interrupt nobody
     // can answer suspends the graph forever: the tool never runs and the client is never asked. So
     // such a surface is wired with exactly what the shell gate itself requires and nothing more,
-    // and is not TOLD it will be asked either. This matters most here, because this backend IS the
-    // AG-UI server (`apiAgUiModule` constructs a `GthDeepAgent`): at `read-only` and `write` the
-    // live set is non-empty, so a write, an MCP call, `task` or deepagents' own `write_todos`
-    // bookkeeping would simply vanish — or be announced to the model as approvable when nothing
-    // will ever approve it.
+    // and is not TOLD it will be asked either. This backend is ONE of the two the AG-UI server can
+    // run on — `apiAgUiModule.createConfiguredAgent` builds a `GthDeepAgent` only when
+    // `agent.backend === 'deep'` (and warns that it is experimental); every other configuration,
+    // the default included, gets the lean `GthLangChainAgent`, which carries the same wiring for
+    // the same reason. It matters on both: at `manual` and `write` the live set is non-empty, so a
+    // write, an MCP call, `task` or deepagents' own `write_todos` bookkeeping would simply vanish —
+    // or be announced to the model as approvable when nothing will ever approve it.
     const answersApprovals = commandAnswersApprovals(this.command);
     const noDrainTools = gateShell ? [SHELL_TOOL_NAME] : [];
     // The LIVE gated set — what THIS rung gates — for the §4.5 tool descriptions below.

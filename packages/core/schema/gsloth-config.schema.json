@@ -402,10 +402,10 @@
         {
           "type": "string",
           "enum": [
-            "read-only",
+            "manual",
             "write",
-            "auto-safe",
-            "full-auto",
+            "assisted",
+            "auto",
             "bypass"
           ]
         },
@@ -415,10 +415,10 @@
             "mode": {
               "type": "string",
               "enum": [
-                "read-only",
+                "manual",
                 "write",
-                "auto-safe",
-                "full-auto",
+                "assisted",
+                "auto",
                 "bypass"
               ]
             },
@@ -748,10 +748,10 @@
                 {
                   "type": "string",
                   "enum": [
-                    "read-only",
+                    "manual",
                     "write",
-                    "auto-safe",
-                    "full-auto",
+                    "assisted",
+                    "auto",
                     "bypass"
                   ]
                 },
@@ -761,10 +761,10 @@
                     "mode": {
                       "type": "string",
                       "enum": [
-                        "read-only",
+                        "manual",
                         "write",
-                        "auto-safe",
-                        "full-auto",
+                        "assisted",
+                        "auto",
                         "bypass"
                       ]
                     },
@@ -1066,10 +1066,10 @@
                 {
                   "type": "string",
                   "enum": [
-                    "read-only",
+                    "manual",
                     "write",
-                    "auto-safe",
-                    "full-auto",
+                    "assisted",
+                    "auto",
                     "bypass"
                   ]
                 },
@@ -1079,10 +1079,10 @@
                     "mode": {
                       "type": "string",
                       "enum": [
-                        "read-only",
+                        "manual",
                         "write",
-                        "auto-safe",
-                        "full-auto",
+                        "assisted",
+                        "auto",
                         "bypass"
                       ]
                     },
@@ -1375,10 +1375,10 @@
                 {
                   "type": "string",
                   "enum": [
-                    "read-only",
+                    "manual",
                     "write",
-                    "auto-safe",
-                    "full-auto",
+                    "assisted",
+                    "auto",
                     "bypass"
                   ]
                 },
@@ -1388,10 +1388,10 @@
                     "mode": {
                       "type": "string",
                       "enum": [
-                        "read-only",
+                        "manual",
                         "write",
-                        "auto-safe",
-                        "full-auto",
+                        "assisted",
+                        "auto",
                         "bypass"
                       ]
                     },
@@ -1664,10 +1664,10 @@
                 {
                   "type": "string",
                   "enum": [
-                    "read-only",
+                    "manual",
                     "write",
-                    "auto-safe",
-                    "full-auto",
+                    "assisted",
+                    "auto",
                     "bypass"
                   ]
                 },
@@ -1677,10 +1677,10 @@
                     "mode": {
                       "type": "string",
                       "enum": [
-                        "read-only",
+                        "manual",
                         "write",
-                        "auto-safe",
-                        "full-auto",
+                        "assisted",
+                        "auto",
                         "bypass"
                       ]
                     },
@@ -1953,10 +1953,10 @@
                 {
                   "type": "string",
                   "enum": [
-                    "read-only",
+                    "manual",
                     "write",
-                    "auto-safe",
-                    "full-auto",
+                    "assisted",
+                    "auto",
                     "bypass"
                   ]
                 },
@@ -1966,10 +1966,10 @@
                     "mode": {
                       "type": "string",
                       "enum": [
-                        "read-only",
+                        "manual",
                         "write",
-                        "auto-safe",
-                        "full-auto",
+                        "assisted",
+                        "auto",
                         "bypass"
                       ]
                     },
@@ -2242,10 +2242,10 @@
                 {
                   "type": "string",
                   "enum": [
-                    "read-only",
+                    "manual",
                     "write",
-                    "auto-safe",
-                    "full-auto",
+                    "assisted",
+                    "auto",
                     "bypass"
                   ]
                 },
@@ -2255,10 +2255,10 @@
                     "mode": {
                       "type": "string",
                       "enum": [
-                        "read-only",
+                        "manual",
                         "write",
-                        "auto-safe",
-                        "full-auto",
+                        "assisted",
+                        "auto",
                         "bypass"
                       ]
                     },
@@ -2531,10 +2531,10 @@
                 {
                   "type": "string",
                   "enum": [
-                    "read-only",
+                    "manual",
                     "write",
-                    "auto-safe",
-                    "full-auto",
+                    "assisted",
+                    "auto",
                     "bypass"
                   ]
                 },
@@ -2544,10 +2544,10 @@
                     "mode": {
                       "type": "string",
                       "enum": [
-                        "read-only",
+                        "manual",
                         "write",
-                        "auto-safe",
-                        "full-auto",
+                        "assisted",
+                        "auto",
                         "bypass"
                       ]
                     },

@@ -218,14 +218,14 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
   /**
    * [[EXT-80]] — the prompt has to render for a **non-shell** subject, not just receive one.
    *
-   * `read-only` now gates `write_file` and friends, so the approval prompt is fed a `tool` subject
+   * `manual` now gates `write_file` and friends, so the approval prompt is fed a `tool` subject
    * for the first time. Everything downstream of the runner was built and measured against shell
    * subjects, which carry a command string; a `tool` subject carries arguments instead. Asserting
    * that the callback was CALLED (as the runner specs do) would not have caught a prompt that then
    * rendered blank, threw, or offered a sticky control that stores nothing — and an unusable prompt
-   * makes `read-only` unusable for exactly the user this rung exists for.
+   * makes `manual` unusable for exactly the user this rung exists for.
    */
-  it('EXT-80: a gated write_file at read-only renders the prompt and approve resumes the run', async () => {
+  it('EXT-80: a gated write_file at manual renders the prompt and approve resumes the run', async () => {
     let suspended = false;
     const agent: GthAgentInterface = {
       async init() {},
@@ -261,7 +261,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       command as never,
       {
         ...FULL_CONFIG,
-        approvals: 'read-only',
+        approvals: 'manual',
       } as unknown as GthConfig
     );
     runner.setToolApprovalCallback((pending) => bridge.request(pending));
@@ -330,7 +330,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       command as never,
       {
         ...FULL_CONFIG,
-        approvals: 'read-only',
+        approvals: 'manual',
       } as unknown as GthConfig
     );
     runner.setToolApprovalCallback(async (pending) => {
@@ -449,7 +449,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
           }),
         }),
       } as unknown as GthConfig['llm'],
-      approvals: { mode: 'auto-safe' },
+      approvals: { mode: 'assisted' },
       commands: {
         code: { builtInTools: { run_shell_command: { enabled: true, allowlist: false } } },
       },
@@ -559,10 +559,10 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
    * CFG-27 — the property the CFG-26 `[y]` test really pinned was "the rater was actually CALLED,
    * not waved through". That survives the ladder; the key that triggered it does not (§6's
    * escalation menu has no rung-switching choice, so the affordance was removed). Here the
-   * session starts at `auto-safe`, the rater rates everything `safe`, and the run proceeds with
+   * session starts at `assisted`, the rater rates everything `safe`, and the run proceeds with
    * NO human prompt at all — a check in the loop rather than none.
    */
-  it('at auto-safe the rater is CALLED and a safe verdict runs the command with no prompt', async () => {
+  it('at assisted the rater is CALLED and a safe verdict runs the command with no prompt', async () => {
     let phase = 0;
     const agent: GthAgentInterface = {
       async init() {},
@@ -597,7 +597,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       {
         ...FULL_CONFIG,
         llm: raterLlm,
-        approvals: 'auto-safe',
+        approvals: 'assisted',
         commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
       } as GthConfig
     );
@@ -625,7 +625,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     expect(promptCount).toBe(0);
     expect(rate).toHaveBeenCalledTimes(2);
     // §10 rule 4 — the badge carries the display spelling.
-    expect(lastFrame()).toContain('approvals: Auto safe');
+    expect(lastFrame()).toContain('approvals: Assisted');
 
     unmount();
   });
@@ -637,7 +637,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       approvedAnswer: 'read it',
       rejectedAnswer: 'skipped',
     });
-    // A `destructive` verdict at `auto-safe` → escalate to the human with the verdict attached.
+    // A `destructive` verdict at `assisted` → escalate to the human with the verdict attached.
     const invoke = vi.fn().mockResolvedValue({
       outcome: 'destructive',
       reason: 'accesses a system-wide sensitive file outside the project directory',
@@ -651,7 +651,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       {
         ...FULL_CONFIG,
         llm: raterLlm,
-        approvals: 'auto-safe',
+        approvals: 'assisted',
         commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
       } as GthConfig
     );

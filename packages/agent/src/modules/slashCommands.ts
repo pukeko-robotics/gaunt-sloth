@@ -22,9 +22,11 @@ import type {
   ToolAnnotationHint,
 } from '@gaunt-sloth/core/config.js';
 import {
+  APPROVAL_POSTURES,
   APPROVAL_RUNG_DESCRIPTIONS,
   APPROVAL_RUNG_LABELS,
   APPROVAL_RUNGS,
+  APPROVAL_WRITE_MODIFIER_HINT,
   isRatedRung,
   TOOL_ANNOTATION_HINTS,
 } from '@gaunt-sloth/core/config.js';
@@ -568,9 +570,71 @@ export function approvalsRungNotice(approvals: ResolvedApprovals): SlashCommandN
 }
 
 /**
- * CFG-27 — the `/approvals` DISPLAY: the rung and its description, the rater profile at the two
- * rated rungs, and the allow/deny list sizes. Pure: the surface reads the live posture from the
+ * CFG-39 — the first sentence of a mode's description, for the one-line forms (the picker rows and
+ * the usage hint). Split on the sentence boundary rather than truncated, so a row never ends
+ * mid-clause; the terminating period is restored because the split consumes it.
+ */
+function firstSentence(description: string): string {
+  return `${description.split('. ')[0]}.`;
+}
+
+/** CFG-39 — one selectable row of the `/approvals` picker. */
+export interface ApprovalPostureChoice {
+  /** The mode this row sets. */
+  rung: ApprovalRung;
+  /** Display spelling ({@link APPROVAL_RUNG_LABELS}) — never the config identifier (§9.1). */
+  label: string;
+  /** The mode's own one-line description, from {@link APPROVAL_RUNG_DESCRIPTIONS}. */
+  description: string;
+  /** Whether the session is on this mode right now. */
+  current: boolean;
+}
+
+/**
+ * CFG-39 — **the picker's rows**: the four postures, in ladder order, each carrying its own copy.
+ *
+ * **The strings come from {@link APPROVAL_RUNG_DESCRIPTIONS}, never from the menu.** Six surfaces
+ * describe these modes; a picker that authored its own text would become the seventh and the one
+ * that contradicts the rest. Whoever owns that constant owns this copy too, with no second edit.
+ *
+ * `write` has no row — it is a modifier of Manual rather than a fifth posture — but it stays
+ * settable via `/approvals write`. When the session IS on `write`, no row is marked `current`,
+ * which is correct: the caller reports the live mode from its own title rather than letting a
+ * picker row claim the session is on Manual when it is not.
+ */
+export function approvalPostureChoices(current: ApprovalRung): ApprovalPostureChoice[] {
+  return APPROVAL_POSTURES.map((rung) => ({
+    rung,
+    label: APPROVAL_RUNG_LABELS[rung],
+    description: APPROVAL_RUNG_DESCRIPTIONS[rung],
+    current: rung === current,
+  }));
+}
+
+/**
+ * CFG-39 — the picker as TEXT: the selectable list every non-TTY surface (ACP, AG-UI, the readline
+ * `--no-tui` session, a piped stdout) prints in place of the interactive rows.
+ *
+ * The same {@link approvalPostureChoices} the TTY picker renders, so the two cannot list different
+ * modes or describe them differently — the text fallback is a rendering of the picker, not a
+ * second implementation of it.
+ */
+export function approvalPostureLines(current: ApprovalRung): string[] {
+  return approvalPostureChoices(current).map(
+    (choice) =>
+      `${choice.current ? '●' : '○'} ${choice.label} — ${firstSentence(choice.description)}`
+  );
+}
+
+/**
+ * CFG-27 — the `/approvals` DISPLAY: the mode and its description, the rater profile in the two
+ * rated modes, and the allow/deny list sizes. Pure: the surface reads the live posture from the
  * runner and hands it in.
+ *
+ * CFG-39 — it also carries the selectable list, so `/approvals` with no argument answers "which
+ * mode am I on?" and "what else could I be on?" in one place on EVERY surface. On a TTY the TUI
+ * renders {@link approvalPostureChoices} as an interactive picker instead; this is what everything
+ * else shows.
  *
  * `always: undefined` means the persisted store has not been loaded, and is rendered `—` rather
  * than a misleading `0` — a display must not create the store in order to count it.
@@ -580,11 +644,22 @@ export function approvalsStatusNotice(
   allowlist: { session: number; always: number | undefined },
   deny: readonly string[] = [],
   grants: readonly ApprovalGrant[] = [],
-  trust?: McpAnnotationTrustView
+  trust?: McpAnnotationTrustView,
+  options: {
+    /**
+     * CFG-39 — set by a surface that is about to render {@link approvalPostureChoices} as an
+     * interactive picker, so the same four modes are not also printed as text right above it.
+     *
+     * **Opt-OUT, not opt-in**, and that direction is deliberate: every surface that says nothing
+     * gets the full text answer, so a new non-TTY surface cannot ship a `/approvals` that silently
+     * omits the list. Only the TUI, which demonstrably renders the rows another way, turns it off.
+     */
+    interactive?: boolean;
+  } = {}
 ): SlashCommandNotice {
   const rater = isRatedRung(approvals.rung)
     ? (approvals.rater ?? 'main model')
-    : 'not used at this rung';
+    : 'not used in this mode';
   return {
     title: `Approvals: ${APPROVAL_RUNG_LABELS[approvals.rung]}`,
     lines: [
@@ -593,7 +668,13 @@ export function approvalsStatusNotice(
       `Allowed: ${allowlist.session} this session · ${allowlist.always ?? '—'} remembered · Denied: ${deny.length}`,
       ...describeGrants(grants),
       ...(trust ? [describeMcpTrust(trust)] : []),
-      `Switch with /approvals ${APPROVAL_RUNGS.join(' | /approvals ')}.`,
+      ...(options.interactive
+        ? []
+        : [
+            'Choose a mode with /approvals <name>:',
+            ...approvalPostureLines(approvals.rung),
+            APPROVAL_WRITE_MODIFIER_HINT,
+          ]),
       TRUST_USAGE_LINE,
     ],
     tone: approvals.rung === 'bypass' ? 'warn' : 'info',
@@ -677,12 +758,18 @@ export type ApprovalsAction =
 
 /**
  * CFG-27/EXT-70 — parse the `/approvals` argument: no arg SHOWS the current posture; any of the
- * five kebab-case rung names switches to it; `trust` / `untrust` move which of a server's
- * annotation hints are believed (§4.7.1). Returns `null` for an unrecognized first argument so the
- * command renders a usage hint instead of guessing.
+ * five mode names switches to it; `trust` / `untrust` move which of a server's annotation hints are
+ * believed (§4.7.1). Returns `null` for an unrecognized first argument so the command renders a
+ * usage hint instead of guessing.
  *
- * The retired `auto` / `ask` spellings are NOT accepted as aliases — this is still alpha, and a
- * silent alias would leave the user believing in a vocabulary the gate no longer has.
+ * **All five names are accepted, not the four the picker offers.** `write` is a modifier of
+ * `manual` rather than a posture of its own, so it leaves quick access — but it stays fully
+ * settable here and in config, which is the whole of what "demoted" means.
+ *
+ * The retired `read-only` / `auto-safe` / `full-auto` / `ask` spellings are NOT accepted as
+ * aliases — this is still alpha, and a silent alias would leave the user believing in a vocabulary
+ * the gate no longer has. They are named, with their replacements, by the config-layer error in
+ * `RETIRED_APPROVAL_MODES`.
  *
  * **Only the subcommand token is lower-cased.** A server key is the user's own `mcpServers` key
  * (§4.7.5) and is case-sensitive, so folding it would name a different server — one that believes
@@ -1017,8 +1104,8 @@ export function createCommandRegistry(): SlashCommand[] {
     {
       name: 'approvals',
       description:
-        'Show or switch the approvals rung ' +
-        '(/approvals read-only|write|auto-safe|full-auto|bypass; no arg shows it), ' +
+        'Show or switch the approvals mode ' +
+        `(/approvals ${APPROVAL_RUNGS.join('|')}; no arg shows it and offers a picker), ` +
         'or believe an MCP server’s annotation hints (/approvals trust|untrust <server> <hint…>)',
       // Available mid-turn so the user can change how the run's REMAINING tool calls are handled
       // (EXT-12's reason, generalized to the rung). The surface owns the runner posture, so it
@@ -1035,9 +1122,9 @@ export function createCommandRegistry(): SlashCommand[] {
             notice: {
               title: `Unknown option: ${args[0]}`,
               lines: [
-                `Usage: /approvals [${APPROVAL_RUNGS.join('|')}] — with no argument it shows the current rung.`,
+                `Usage: /approvals [${APPROVAL_RUNGS.join('|')}] — with no argument it shows the current mode.`,
                 ...APPROVAL_RUNGS.map(
-                  (rung) => `${rung} — ${APPROVAL_RUNG_DESCRIPTIONS[rung].split('. ')[0]}.`
+                  (rung) => `${rung} — ${firstSentence(APPROVAL_RUNG_DESCRIPTIONS[rung])}`
                 ),
                 TRUST_USAGE_LINE,
               ],

@@ -266,7 +266,7 @@ describe('tui <App>', () => {
   // CFG-27 — a posture stub standing in for the runner: it lands the requested rung, exactly as
   // GthAgentRunner.setSessionApprovalRung does.
   const approvalsAgent = (
-    initial = 'auto-safe',
+    initial = 'assisted',
     extra?: Partial<TuiAgent>
   ): { agent: TuiAgent; rung: () => string } => {
     let rung = initial;
@@ -298,26 +298,89 @@ describe('tui <App>', () => {
     const { stdin, frames, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
 
     await vi.waitFor(() => expect(lastFrame()).toContain('>'));
-    stdin.write('/approvals auto-safe');
-    await vi.waitFor(() => expect(lastFrame()).toContain('/approvals auto-safe'));
+    stdin.write('/approvals assisted');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/approvals assisted'));
     stdin.write('\r');
 
     await vi.waitFor(() => {
-      expect(frames.join('\n')).toContain('Approvals: Auto safe');
+      expect(frames.join('\n')).toContain('Approvals: Assisted');
       // §10 rule 4: the badge uses the DISPLAY spelling, never the kebab-case identifier.
-      expect(lastFrame()).toContain('approvals: Auto safe');
+      expect(lastFrame()).toContain('approvals: Assisted');
     });
-    expect(rung()).toBe('auto-safe');
+    expect(rung()).toBe('assisted');
     expect(lastFrame()).not.toContain('Bypass');
 
-    stdin.write('/approvals read-only');
-    await vi.waitFor(() => expect(lastFrame()).toContain('/approvals read-only'));
+    stdin.write('/approvals manual');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/approvals manual'));
     stdin.write('\r');
     await vi.waitFor(() => {
-      expect(frames.join('\n')).toContain('Approvals: Read only');
-      expect(lastFrame()).toContain('approvals: Read only');
+      expect(frames.join('\n')).toContain('Approvals: Manual');
+      expect(lastFrame()).toContain('approvals: Manual');
     });
-    expect(rung()).toBe('read-only');
+    expect(rung()).toBe('manual');
+
+    unmount();
+  });
+
+  /**
+   * CFG-39 — **the picker's wiring, end to end inside the App**: `/approvals` with no argument
+   * opens the four-posture picker, and choosing a row actually moves the session mode through the
+   * runner. The component spec proves the picker reports the right mode; this proves the App does
+   * something with it. Without this cell a regression that passed the wrong mode — or never called
+   * the setter at all — is green everywhere.
+   */
+  it('/approvals with no arg opens the picker, and choosing a row lands that mode', async () => {
+    const { agent, rung } = approvalsAgent('write');
+    const { stdin, frames, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    stdin.write('/approvals');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/approvals'));
+    stdin.write('\r');
+
+    // The status answer is still committed, AND the picker is offered.
+    await vi.waitFor(() => {
+      expect(frames.join('\n')).toContain('Approvals: Write');
+      expect(lastFrame()).toContain('Choose an approvals mode:');
+    });
+    // Four postures, and no Write row — it is a modifier, reachable via `/approvals write`.
+    for (const label of ['Manual', 'Assisted', 'Auto', 'Bypass']) {
+      expect(lastFrame()).toContain(label);
+    }
+    expect(rung()).toBe('write');
+
+    // On `write` no row is current, so the cursor rests on Manual; one step down is Assisted.
+    stdin.write('\x1b[B');
+    await vi.waitFor(() => expect(lastFrame()).toContain('❯'));
+    stdin.write('\r');
+
+    await vi.waitFor(() => {
+      // The mode really moved, through the runner…
+      expect(rung()).toBe('assisted');
+      // …the landed notice was committed, and the badge follows.
+      expect(frames.join('\n')).toContain('Approvals: Assisted');
+      expect(lastFrame()).toContain('approvals: Assisted');
+      // The picker is transient: it closes on selection and the prompt comes back.
+      expect(lastFrame()).not.toContain('Choose an approvals mode:');
+    });
+
+    unmount();
+  });
+
+  it('CFG-39: Esc dismisses the picker and leaves the mode exactly as it was', async () => {
+    const { agent, rung } = approvalsAgent('write');
+    const { stdin, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    stdin.write('/approvals');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/approvals'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Choose an approvals mode:'));
+
+    stdin.write('\x1b');
+    await vi.waitFor(() => expect(lastFrame()).not.toContain('Choose an approvals mode:'));
+    expect(rung()).toBe('write');
+    expect(lastFrame()).toContain('approvals: Write');
 
     unmount();
   });
@@ -367,16 +430,16 @@ describe('tui <App>', () => {
    * safe commands with no prompt. It asserts the rendered RUNG, not the absence of a word, so a
    * future boolean-shaped regression cannot slip past it.
    */
-  it('seeds the badge from the RESOLVED posture: the auto-safe default is visible from frame 1', async () => {
+  it('seeds the badge from the RESOLVED posture: the assisted default is visible from frame 1', async () => {
     const agent = scriptedAgent([]);
     const { lastFrame, unmount } = render(
       <App
         {...baseProps}
         agent={agent}
-        initialApprovals={{ rung: 'auto-safe', allow: [], deny: [] }}
+        initialApprovals={{ rung: 'assisted', allow: [], deny: [] }}
       />
     );
-    await vi.waitFor(() => expect(lastFrame()).toContain('approvals: Auto safe'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('approvals: Assisted'));
     // ...and it says WHO is rating, so the rung is never an unexplained word.
     expect(lastFrame()).toContain('auto-rater');
     unmount();
@@ -388,10 +451,10 @@ describe('tui <App>', () => {
       <App
         {...baseProps}
         agent={agent}
-        initialApprovals={{ rung: 'full-auto', rater: 'safety-rater', allow: [], deny: [] }}
+        initialApprovals={{ rung: 'auto', rater: 'safety-rater', allow: [], deny: [] }}
       />
     );
-    await vi.waitFor(() => expect(lastFrame()).toContain('approvals: Full auto (safety-rater)'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('approvals: Auto (safety-rater)'));
     unmount();
   });
 
@@ -438,11 +501,11 @@ describe('tui <App>', () => {
     await vi.waitFor(() => expect(frames.join('\n')).toContain('only slash commands'));
 
     // While running, /approvals IS honoured (the rung switches, the badge appears by the spinner).
-    stdin.write('/approvals auto-safe');
-    await vi.waitFor(() => expect(lastFrame()).toContain('> /approvals auto-safe'));
+    stdin.write('/approvals assisted');
+    await vi.waitFor(() => expect(lastFrame()).toContain('> /approvals assisted'));
     stdin.write('\r');
-    await vi.waitFor(() => expect(rung).toBe('auto-safe'));
-    await vi.waitFor(() => expect(lastFrame()).toContain('approvals: Auto safe'));
+    await vi.waitFor(() => expect(rung).toBe('assisted'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('approvals: Assisted'));
 
     stdin.write(String.fromCharCode(27)); // Esc to end the run cleanly
     unmount();

@@ -26,7 +26,7 @@ import type { EvalSuite, EvalSuiteSummary, EvalSweep, EvalSweepValue } from '#sr
 export interface SweepCell {
   /** `axis=value` joined by ` · ` across axes — stable, and derived from the declared names. */
   name: string;
-  /** A filename-safe form of {@link name} (`rung-auto-safe__model-flash`), used as an output-dir
+  /** A filename-safe form of {@link name} (`rung-assisted__model-flash`), used as an output-dir
    * component. Built from parse-time-validated path-safe tokens, so it can neither traverse nor
    * escape the output root. */
   dirName: string;
