@@ -843,6 +843,144 @@ describe('apiAgUiModule', () => {
     });
   });
 
+  // ─── RC-33: never echo a tool result the client itself supplied ────────────
+  //
+  // `@ag-ui/client` splices a TOOL_CALL_RESULT into its history without checking whether a tool
+  // message for that toolCallId is already there, so echoing back a client-fulfilled tool's result
+  // leaves the client holding two results under one tool_use id — and the provider 400s on the
+  // next turn. A server-side tool's result must still be echoed: that is the client's only way to
+  // learn it.
+
+  describe('client-fulfilled tool result echo (RC-33)', () => {
+    const CLIENT_TOOLS = [
+      { name: 'capture_image', parameters: { type: 'object', properties: {} } },
+    ];
+
+    function toolResultStream(...ids: string[]) {
+      return (async function* () {
+        for (const id of ids) {
+          yield { type: 'tool_result' as const, id, content: `result of ${id}` };
+        }
+      })();
+    }
+
+    function resultIds() {
+      return mockEncoderInstance.encode.mock.calls
+        .map((c) => c[0])
+        .filter((e) => e.type === 'TOOL_CALL_RESULT')
+        .map((e) => e.toolCallId);
+    }
+
+    async function getRunHandler() {
+      const { startAgUiServer } = await import('#src/modules/apiAgUiModule.js');
+      await startAgUiServer(baseConfig, 3000);
+      return mockPostFn.mock.calls[0][1] as (_req: unknown, _res: unknown) => Promise<void>;
+    }
+
+    /** The CopilotKit implicit-resume shape: full history, trailing client-fulfilled tool result. */
+    function resumeReq(threadId: string) {
+      return makeRunReq({
+        threadId,
+        tools: CLIENT_TOOLS,
+        messages: [
+          { id: 'm1', role: 'user', content: 'Take a photo.' },
+          {
+            id: 'm2',
+            role: 'assistant',
+            content: '',
+            toolCalls: [
+              {
+                id: 'call-client',
+                type: 'function',
+                function: { name: 'capture_image', arguments: '{}' },
+              },
+            ],
+          },
+          {
+            id: 'm3',
+            role: 'tool',
+            toolCallId: 'call-client',
+            content: '{"mimeType":"image/png","data":"QUFBQg=="}',
+          },
+        ],
+      });
+    }
+
+    it('does not echo the result of the tool call the client fulfilled', async () => {
+      gthLangChainAgentStreamWithEventsResumeMock.mockReturnValue(toolResultStream('call-client'));
+
+      const handler = await getRunHandler();
+      await handler(resumeReq('rc33-suppress'), makeMockRes());
+
+      expect(resultIds()).not.toContain('call-client');
+    });
+
+    it('still echoes a server-side tool result in the same resumed run', async () => {
+      gthLangChainAgentStreamWithEventsResumeMock.mockReturnValue(
+        toolResultStream('call-client', 'call-server')
+      );
+
+      const handler = await getRunHandler();
+      await handler(resumeReq('rc33-mixed'), makeMockRes());
+
+      // Exactly the server-side one survives — the suppression is targeted, not a blanket mute.
+      expect(resultIds()).toEqual(['call-server']);
+    });
+
+    it('echoes every tool result on a fresh run, where the client holds none of them', async () => {
+      gthLangChainAgentStreamWithEventsMock.mockReturnValue(toolResultStream('call-a', 'call-b'));
+
+      const handler = await getRunHandler();
+      const req = makeRunReq({
+        threadId: 'rc33-fresh',
+        messages: [{ id: 'm1', role: 'user', content: 'List the files.' }],
+      });
+      await handler(req, makeMockRes());
+
+      expect(resultIds()).toEqual(['call-a', 'call-b']);
+    });
+
+    it('suppresses by the id the client sent, not by position in the history', async () => {
+      // A history whose client-held result sits mid-conversation rather than last: the guard is
+      // keyed on the ids present in the request, so it holds wherever they appear.
+      gthLangChainAgentStreamWithEventsMock.mockReturnValue(
+        toolResultStream('call-old', 'call-new')
+      );
+
+      const handler = await getRunHandler();
+      const req = makeRunReq({
+        threadId: 'rc33-midhistory',
+        tools: CLIENT_TOOLS,
+        messages: [
+          { id: 'm1', role: 'user', content: 'Take a photo.' },
+          {
+            id: 'm2',
+            role: 'assistant',
+            content: '',
+            toolCalls: [
+              {
+                id: 'call-old',
+                type: 'function',
+                function: { name: 'capture_image', arguments: '{}' },
+              },
+            ],
+          },
+          {
+            id: 'm3',
+            role: 'tool',
+            toolCallId: 'call-old',
+            content: '{"mimeType":"image/png","data":"QQ=="}',
+          },
+          { id: 'm4', role: 'assistant', content: 'Got the photo.' },
+          { id: 'm5', role: 'user', content: 'save to downloads' },
+        ],
+      });
+      await handler(req, makeMockRes());
+
+      expect(resultIds()).toEqual(['call-new']);
+    });
+  });
+
   // ─── RC-22: config.middleware reaches the per-toolset (client-tool) agent ───
   //
   // `capture_image` runs ONLY on the per-request client-tool agent that getAgentForTools builds

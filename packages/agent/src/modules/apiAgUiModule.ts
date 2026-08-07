@@ -495,6 +495,28 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
         hasClientTools && forwardedProps?.command?.resume === undefined && lastMsg?.role === 'tool';
       const isResume = isCopilotToolResume || forwardedProps?.command?.resume !== undefined;
 
+      // RC-33: the tool results this request's own history already carries. A `TOOL_CALL_RESULT`
+      // for one of these must NOT be echoed back — the client is where it came from.
+      //
+      // The echo is right for a server-side tool: streaming it is the client's only way to learn
+      // what the tool returned. It is wrong for a CLIENT-fulfilled (frontend) tool, whose result
+      // the client computed, appended to its own history, and posted to us. `@ag-ui/client` does
+      // not dedupe on the way back in: its TOOL_CALL_RESULT branch locates the parenting assistant
+      // message, walks PAST any tool messages already sitting after it, and splices the echo in
+      // unconditionally. The client's history then holds two `tool` messages under one
+      // `toolCallId`, it replays both on the next turn, and the provider rejects the pair
+      // ("each tool_use must have a single result") — killing every turn after a capture.
+      //
+      // Keyed on what the client sent us in THIS request rather than on the toolset, so it stays
+      // correct without carrying tool-call state between runs, and can never suppress a result the
+      // client does not already hold.
+      const clientHeldToolResultIds = new Set<string>(
+        (Array.isArray(messages) ? messages : [])
+          .filter((m: { role?: string }) => m?.role === 'tool')
+          .map((m: { toolCallId?: string; id?: string }) => m.toolCallId || m.id)
+          .filter((id: string | undefined): id is string => Boolean(id))
+      );
+
       // A resume must reach the suspended graph, so it stays on the thread the interrupted run
       // used; anything else is a fresh run and gets a fresh checkpoint thread (see
       // `rotateCheckpointThread`). The fallback covers a resume for which we hold no mapping —
@@ -622,6 +644,8 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
             break;
           }
           case 'tool_result': {
+            // RC-33: never hand a result back to the client that the client itself supplied.
+            if (clientHeldToolResultIds.has(event.id)) break;
             res.write(
               encoder.encode({
                 type: EventType.TOOL_CALL_RESULT,
