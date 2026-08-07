@@ -1,7 +1,8 @@
 # What approvals protect you from
 
-Approvals decide which shell commands Gaunt Sloth runs on its own and which stop to ask you. This
-page is about what that buys you: the kind of failure the ladder catches, the kind it cannot catch
+Approvals decide which shell commands Gaunt Sloth runs on its own and which stop to ask you — and,
+at the strictest modes, which file edits and tool calls do too. This page is about what that buys
+you: the kind of failure the ladder catches, the kind it cannot catch
 at any setting, and what has to sit outside Gaunt Sloth to cover the difference. Configuring it is
 a different page — [Shell tool & approvals](shell-tool-and-approvals.md).
 
