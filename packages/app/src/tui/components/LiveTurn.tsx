@@ -111,6 +111,22 @@ function ToolCallPanel({
 }
 
 /**
+ * Lines of reasoning a STREAMING turn shows while collapsed.
+ *
+ * **This is deliberately not the canonical ten-line tool-output preview, and the two must not be
+ * harmonised.** Tool output is a discrete artefact you go and inspect: it arrives complete, it is
+ * the evidence for what the agent did, and ten lines is how much of it is worth having in front of
+ * you. Reasoning is ambient and continuous — it streams for as long as the model thinks, it is
+ * superseded by the answer, and its value while collapsed is only "something is happening, and it
+ * is about this". Two lines carry that; ten would let thinking take over the screen it is meant to
+ * stay out of, which is the whole reason the panel collapses by default.
+ *
+ * It applies only while the turn streams. A committed turn's collapsed panel is its header alone,
+ * unchanged, so what the transcript holds after the fact is unaffected.
+ */
+export const LIVE_REASONING_PREVIEW_LINES = 2;
+
+/**
  * The `💭 Thinking` region: the model's reasoning/chain-of-thought, rendered as a distinct
  * *layer* from the answer. Collapsible like {@link ToolCallPanel} (shares the turn's Ctrl+T
  * detail toggle) and collapsed by default, so ephemeral thinking never competes with the answer
@@ -119,6 +135,12 @@ function ToolCallPanel({
  * dim-only: dim is the least reliably-rendered ANSI attribute and vanishes on many themes, so a
  * dim-only region reads as the answer. Cyan carries the layer boundary as colour; the body stays
  * dim+italic underneath the coloured gutter.
+ *
+ * While a turn is STREAMING and collapsed it keeps its newest
+ * {@link LIVE_REASONING_PREVIEW_LINES} lines on screen, in the same gutter styling, so a thinking
+ * model shows what it is thinking about instead of a bare header. The preview follows the stream:
+ * it is always the newest lines, so it reads as a window onto the tail rather than as a frozen
+ * opening.
  */
 export function ReasoningPanel({
   reasoning,
@@ -138,22 +160,29 @@ export function ReasoningPanel({
   label?: string;
 }): React.ReactElement {
   const caret = expanded ? '▾' : '▸';
+  // Expanded shows everything; collapsed-and-live shows the newest few lines; collapsed on a
+  // committed turn shows the header alone. Trailing newlines are dropped first so a chunk that
+  // happens to arrive ending in one does not spend a preview line on a blank row.
+  const preview = live ? reasoning.replace(/\n+$/, '') : '';
+  const lines = expanded
+    ? reasoning.split('\n')
+    : preview === ''
+      ? []
+      : preview.split('\n').slice(-LIVE_REASONING_PREVIEW_LINES);
   return (
     <Box flexDirection="column">
       <Text color="cyan">
         {`${caret} 💭 ${label}`}
         {live && !expanded ? <Text dimColor>{'  (Ctrl+T to expand)'}</Text> : null}
       </Text>
-      {expanded
-        ? reasoning.split('\n').map((line, i) => (
-            <Box key={i}>
-              <Text color="cyan">{'│ '}</Text>
-              <Text dimColor italic>
-                {line}
-              </Text>
-            </Box>
-          ))
-        : null}
+      {lines.map((line, i) => (
+        <Box key={i}>
+          <Text color="cyan">{'│ '}</Text>
+          <Text dimColor italic>
+            {line}
+          </Text>
+        </Box>
+      ))}
     </Box>
   );
 }

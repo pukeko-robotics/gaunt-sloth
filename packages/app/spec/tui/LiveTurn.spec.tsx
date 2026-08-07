@@ -387,6 +387,69 @@ describe('tui <LiveTurn>', () => {
       unmount();
     });
 
+    /**
+     * TUI-C48 — while a turn streams, the collapsed panel keeps its newest lines on screen, so a
+     * thinking model shows what it is thinking about rather than a bare header.
+     *
+     * The cap is its own number and not the ten-line tool-output preview: the cases below assert
+     * the count exactly rather than "some lines", because a preview that silently grew to ten
+     * would let thinking take over the screen the panel collapses to stay out of, and nothing on
+     * screen would look wrong.
+     */
+    describe('live preview while streaming (TUI-C48)', () => {
+      const thoughts = ['one.', 'two.', 'three.', 'four.', 'five.'];
+      const streamingTurn = turn({ reasoning: thoughts.join('\n'), text: '' });
+
+      /** The gutter rows of the reasoning region — one per previewed line. */
+      const gutterLines = (frame: string): string[] =>
+        stripAnsi(frame)
+          .split('\n')
+          .filter((row) => row.trimStart().startsWith('│'))
+          .map((row) => row.slice(row.indexOf('│') + 1).trim());
+
+      it('shows exactly the newest two lines, and not the ones before them', () => {
+        const { lastFrame, unmount } = render(<LiveTurn turn={streamingTurn} streaming />);
+        expect(gutterLines(lastFrame() ?? '')).toEqual(['four.', 'five.']);
+        unmount();
+      });
+
+      it('follows the stream: newer lines replace older ones', () => {
+        const { lastFrame, rerender, unmount } = render(
+          <LiveTurn turn={turn({ reasoning: 'one.\ntwo.', text: '' })} streaming />
+        );
+        expect(gutterLines(lastFrame() ?? '')).toEqual(['one.', 'two.']);
+
+        rerender(<LiveTurn turn={turn({ reasoning: 'one.\ntwo.\nthree.', text: '' })} streaming />);
+        expect(gutterLines(lastFrame() ?? '')).toEqual(['two.', 'three.']);
+        unmount();
+      });
+
+      it('does not spend a preview line on a trailing newline', () => {
+        const { lastFrame, unmount } = render(
+          <LiveTurn turn={turn({ reasoning: 'one.\ntwo.\n', text: '' })} streaming />
+        );
+        expect(gutterLines(lastFrame() ?? '')).toEqual(['one.', 'two.']);
+        unmount();
+      });
+
+      it('Ctrl+T still expands the streaming panel to the WHOLE thought', () => {
+        const { lastFrame, unmount } = render(
+          <LiveTurn turn={streamingTurn} streaming toolsExpanded />
+        );
+        expect(gutterLines(lastFrame() ?? '')).toEqual(thoughts);
+        unmount();
+      });
+
+      it('is live-only: a committed turn collapses to its header alone', () => {
+        // The transcript keeps what it always kept, which is also what makes the row estimator's
+        // committed-panel count of one still exact.
+        const { lastFrame, unmount } = render(<LiveTurn turn={streamingTurn} />);
+        expect(gutterLines(lastFrame() ?? '')).toEqual([]);
+        expect(stripAnsi(lastFrame() ?? '')).toContain('💭 Thinking');
+        unmount();
+      });
+    });
+
     it('renders nothing for the reasoning region when there is no reasoning', () => {
       const { lastFrame, unmount } = render(<LiveTurn turn={turn({ text: 'hi' })} />);
       expect(stripAnsi(lastFrame() ?? '')).not.toContain('💭 Thinking');

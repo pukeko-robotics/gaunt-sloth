@@ -1194,6 +1194,66 @@ describe('tui <App>', () => {
     unmount();
   });
 
+  /**
+   * TUI-C48 — Ctrl+T is bound in every state, and the letter never reaches the prompt.
+   *
+   * The two halves are one case on purpose. Ctrl+T used to stand off while idle to keep
+   * `ink-text-input` — which types any control chord it does not itself claim — from dropping a
+   * stray `t` into the buffer, and that stand-off never worked: the prompt stays mounted while a
+   * turn streams, so the letter arrived anyway. Now that the chord is kept out of the buffer where
+   * it happens, the binding is free to work idle, which is when a reader paging back over the
+   * conversation actually wants a turn's arguments and results. Assert the toggle without the
+   * buffer and a later fix could "simplify" the sentinel away unnoticed.
+   */
+  it('Ctrl+T expands a COMMITTED turn while idle, without typing into the prompt', async () => {
+    const CTRL_T = '\x14';
+    const longBody = Array.from(
+      { length: 12 },
+      (_, i) => `body-${String(i + 1).padStart(2, '0')}`
+    ).join('\n');
+    // Unlike the case above, this turn ENDS: the toggle is exercised with nothing running.
+    const agent: TuiAgent = {
+      async *runTurn(): AsyncGenerator<AgentStreamEvent> {
+        yield { type: 'tool_start', id: 't1', name: 'read_file' };
+        yield { type: 'tool_args', id: 't1', delta: '{"path":"done.ts"}' };
+        yield { type: 'tool_end', id: 't1' };
+        yield { type: 'tool_result', id: 't1', content: longBody };
+        yield { type: 'text', delta: 'finished' };
+      },
+    };
+    const { stdin, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} initialMessage="go" />
+    );
+
+    // The turn is committed: the panel is collapsed and the session is idle.
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).toContain('read_file(path=done.ts)');
+      expect(f).toContain('finished');
+      expect(f).not.toContain('body-12');
+    });
+
+    // A half-written message in the prompt, so the buffer has something to be corrupted.
+    stdin.write('draft');
+    await vi.waitFor(() => expect(lastFrame()).toContain('draft'));
+
+    stdin.write(CTRL_T);
+
+    // The idle toggle works…
+    await vi.waitFor(() => expect(lastFrame()).toContain('body-12'));
+    // …and the chord did not land in the buffer. `draftt` is what the unguarded text input
+    // produces, so it is the assertion that states the difference.
+    expect(lastFrame()).not.toContain('draftt');
+    expect(lastFrame()).toContain('draft');
+
+    // And back: the same key re-folds it, so this is a toggle rather than a one-way reveal.
+    stdin.write(CTRL_T);
+    await vi.waitFor(() => expect(lastFrame()).not.toContain('body-12'));
+    expect(lastFrame()).not.toContain('draftt');
+
+    unmount();
+  });
+
   it('renders completed assistant markdown as formatted output in the transcript', async () => {
     const agent = scriptedAgent([
       { type: 'text', delta: '# Heading\n' },

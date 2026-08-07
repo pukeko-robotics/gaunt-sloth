@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Box, Text, useInput, usePaste } from 'ink';
 import TextInput from 'ink-text-input';
 import { SlashCommandMenu } from '#src/tui/components/SlashCommandMenu.js';
@@ -32,6 +32,26 @@ import { normalizePastedText } from '#src/tui/pasteParser.js';
  * continuation-line rendering is intentionally NOT handled here — that is node TUI-C25; a buffered
  * multi-line value may render imperfectly, but the submitted value is correct and intact.
  */
+/**
+ * Records whether the input event now being delivered is a control chord.
+ *
+ * `ink-text-input` claims only Ctrl+C among control chords and **types** the rest: Ink reports
+ * Ctrl+T as `input` `'t'` with `key.ctrl`, and the text input's handler falls through to its insert
+ * branch, so a keystroke the app binds elsewhere also drops a stray letter into whatever the user
+ * was writing. Ink fans one event out to every registered handler and offers no way to stop it, so
+ * the only place to catch this is *before* the text input sees it — which is what this is for.
+ *
+ * It renders nothing and exists only for its position: `useInput` subscribes from an effect, and
+ * effects fire in mount order, so a sibling rendered ahead of the text input is called ahead of it.
+ * That ordering is what the "leaves the buffer alone" case pins.
+ */
+function ControlChordSentinel({ onKey }: { onKey: (isControlChord: boolean) => void }): null {
+  useInput((input, key) => {
+    onKey(key.ctrl && input.length > 0);
+  });
+  return null;
+}
+
 export function PromptInput({
   onSubmit,
   commands = [],
@@ -51,6 +71,8 @@ export function PromptInput({
   // Esc dismisses the menu without clearing the input; typing anything re-opens it (onChange
   // clears this flag), matching how palette menus behave elsewhere.
   const [dismissed, setDismissed] = useState(false);
+  // Set by <ControlChordSentinel> for every keystroke, read by onChange below.
+  const controlChordRef = useRef(false);
 
   const query = slashMenuQuery(value);
   const matches = query !== null && !dismissed ? filterSlashCommands(commands, query) : [];
@@ -104,11 +126,19 @@ export function PromptInput({
   return (
     <Box flexDirection="column">
       {menuActive ? <SlashCommandMenu commands={matches} selectedIndex={selectedIndex} /> : null}
+      {/* Ahead of the text input, and that is the whole point — see ControlChordSentinel. */}
+      <ControlChordSentinel
+        onKey={(isControlChord) => {
+          controlChordRef.current = isControlChord;
+        }}
+      />
       <Box>
         <Text color="cyan">{'  > '}</Text>
         <TextInput
           value={value}
           onChange={(next) => {
+            // A control chord belongs to whoever bound it, never to the buffer.
+            if (controlChordRef.current) return;
             setValue(next);
             setDismissed(false);
             setCursor(0);

@@ -259,3 +259,50 @@ describe('tui <PromptInput> multiline paste (TUI-C24)', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * TUI-C48 — control chords belong to whoever bound them, not to the buffer.
+ *
+ * `ink-text-input` claims only Ctrl+C and **types** every other control chord: Ink reports Ctrl+T
+ * as the letter `t` with `key.ctrl`, so the app's own keybindings each dropped a stray character
+ * into whatever the user was part-way through writing. The value is asserted through `onSubmit`
+ * rather than off the frame, because the frame draws the cursor as an inverse cell and a one-letter
+ * difference in it is exactly the thing a reader skims past.
+ */
+describe('tui <PromptInput> control chords (TUI-C48)', () => {
+  const CTRL_T = '\x14';
+  const CTRL_R = '\x12';
+
+  it('leaves the buffer alone when a control chord the app binds arrives', async () => {
+    const onSubmit = vi.fn();
+    const { stdin } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write('draft');
+    await tick();
+    stdin.write(CTRL_T);
+    await tick();
+    stdin.write(CTRL_R);
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    // Unguarded, this submits 'drafttr'.
+    expect(onSubmit).toHaveBeenCalledWith('draft');
+  });
+
+  it('still types the same letters when they arrive without the control modifier', async () => {
+    // The control for the case above: a guard that swallowed the letter outright, rather than the
+    // chord, would satisfy it while making the keyboard useless.
+    const onSubmit = vi.fn();
+    const { stdin } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write('draft');
+    await tick();
+    stdin.write('tr');
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('drafttr');
+  });
+});

@@ -655,11 +655,17 @@ export function App(props: TuiAppProps): React.ReactElement {
       return;
     }
 
-    // Ctrl+T toggles tool-call detail (compact summary ⇄ expanded args/result) while a turn
-    // is streaming — the moment a live tool watch is most useful. We gate it on `running`
-    // because the prompt's <TextInput> (mounted only when idle) would otherwise also receive
-    // the keystroke and insert a stray 't'. The `/verbose` slash command covers the idle case.
-    if (key.ctrl && input === 't' && runningRef.current) {
+    // Ctrl+T toggles tool-call detail (compact summary ⇄ expanded args/result), in EVERY state.
+    // Watching a tool run is what it was first for, but with a scrollable conversation the idle
+    // case is at least as useful: the reader pages back to an earlier turn and wants that turn's
+    // arguments and results, which is exactly when a turn is not running. `/verbose` remains the
+    // typed twin of the same toggle, not a substitute for reaching it from the keyboard.
+    //
+    // The stray letter this used to stand off from is handled where it happens rather than by
+    // declining to bind the key: `ink-text-input` types any control chord it does not itself claim,
+    // and <PromptInput>'s sentinel keeps the whole class out of the buffer (the prompt is mounted
+    // while a turn streams too, so gating on `running` never prevented it).
+    if (key.ctrl && input === 't') {
       // Share the /verbose helper so the same state-aware notice is committed (TUI-C14).
       toggleTools();
       return;

@@ -422,6 +422,63 @@ describe('<App> transcript scrolling', () => {
 
     unmount();
   }, 40_000);
+
+  it('keeps the WHOLE conversation reachable by keyboard with the mouse disabled', async () => {
+    // The node's acceptance names keyboard-only operation with the mouse off, and every other case
+    // here happens to run that way without saying so — which is coverage by accident, and would be
+    // lost the moment someone added `mouseEnabled` to the shared props. This states the
+    // configuration and walks the whole binding set inside it, with a live wheel source attached so
+    // "the keyboard still works" and "the wheel does nothing" are asserted about the same session
+    // rather than about two different ones.
+    //
+    // Reachability is the property, not any single key: with the wheel gone these four bindings are
+    // the only way back to what has already been said, so the case ends at the oldest output and
+    // returns from it.
+    const mouse = fakeMouse();
+    const { stdout, stdin, unmount } = renderAt(
+      80,
+      24,
+      <App
+        {...baseProps}
+        agent={replyingAgent}
+        mouseEnabled={false}
+        subscribeMouse={mouse.subscribe}
+      />
+    );
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+    await converse(stdout, stdin, 14);
+    const atBottom = visibleTurns(stdout);
+
+    // The wheel is inert…
+    mouse.wheel('up');
+    mouse.wheel('up');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(visibleTurns(stdout)).toEqual(atBottom);
+
+    // …and PageUp still reaches older output.
+    stdin.write(KEY.pageUp);
+    await settle(stdout);
+    const paged = visibleTurns(stdout);
+    expect(paged[0]).toBeLessThan(atBottom[0]);
+
+    // PageDown comes back down from it.
+    stdin.write(KEY.pageDown);
+    await settle(stdout);
+    expect(visibleTurns(stdout)[0]).toBeGreaterThan(paged[0]);
+
+    // Ctrl+Home reaches the very first exchange, and the region is full there.
+    stdin.write(KEY.ctrlHome);
+    await settle(stdout);
+    await vi.waitFor(() => expect(visibleTurns(stdout)).toContain(0), { timeout: TURN_TIMEOUT_MS });
+    expect(regionRows(stdout)[0].trim()).not.toBe('');
+
+    // Esc returns to the newest output — the same view the session started at.
+    stdin.write(KEY.escape);
+    await settle(stdout);
+    expect(visibleTurns(stdout)).toEqual(atBottom);
+
+    unmount();
+  }, 40_000);
 });
 
 describe('<App> auto-stick to the newest output', () => {
