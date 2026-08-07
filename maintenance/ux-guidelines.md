@@ -407,7 +407,9 @@ their config has a problem.
     thing is what you are looking at). Scrolled up, the rows being read stay on the *same screen
     rows* while the conversation grows below them — a streaming turn must not crawl the page.
     **Typing a character**, **`Esc`** and **`Ctrl+End`** all return to the end; the character still
-    reaches the prompt.
+    reaches the prompt. `Esc` gets there only when nothing else claims it — while a turn is in
+    flight the first `Esc` aborts the turn (the order above), so anything that advertises `Esc` as
+    the way back to the newest output says so on the same line (DL-5).
   - **Bare `Up`/`Down` are the prompt's**, and stay the prompt's. `Ctrl+Shift+Up`/`Down` and
     `Cmd+Up`/`Down` are deliberately unbound: kitty binds the first to its own scroll, VTE and
     Windows Terminal reserve the namespace, and the second has no default terminal encoding at all.
