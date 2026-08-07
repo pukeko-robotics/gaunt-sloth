@@ -215,6 +215,150 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     unmount();
   });
 
+  /**
+   * [[EXT-80]] — the prompt has to render for a **non-shell** subject, not just receive one.
+   *
+   * `read-only` now gates `write_file` and friends, so the approval prompt is fed a `tool` subject
+   * for the first time. Everything downstream of the runner was built and measured against shell
+   * subjects, which carry a command string; a `tool` subject carries arguments instead. Asserting
+   * that the callback was CALLED (as the runner specs do) would not have caught a prompt that then
+   * rendered blank, threw, or offered a sticky control that stores nothing — and an unusable prompt
+   * makes `read-only` unusable for exactly the user this rung exists for.
+   */
+  it('EXT-80: a gated write_file at read-only renders the prompt and approve resumes the run', async () => {
+    let suspended = false;
+    const agent: GthAgentInterface = {
+      async init() {},
+      async invoke() {
+        return '';
+      },
+      async stream() {
+        throw new Error('not used');
+      },
+      async *streamWithEvents(): AsyncGenerator<AgentStreamEvent> {
+        suspended = true;
+        yield { type: 'text', delta: 'Writing the file…' };
+      },
+      async getPendingToolInterrupts(): Promise<PendingToolInterrupt[]> {
+        if (!suspended) return [];
+        suspended = false;
+        return [{ name: 'write_file', args: { path: 'notes.md', content: 'hello' } }];
+      },
+      async *streamWithEventsResume(resumeValue: unknown): AsyncGenerator<AgentStreamEvent> {
+        const decisions = (resumeValue as { decisions?: ToolApprovalDecision[] })?.decisions ?? [];
+        if (decisions[0]?.type === 'approve') {
+          yield { type: 'tool_result', id: 't1', content: 'wrote notes.md' };
+          yield { type: 'text', delta: 'Saved your notes.' };
+        } else {
+          yield { type: 'text', delta: 'Left the file alone.' };
+        }
+      },
+      async cleanup() {},
+    };
+
+    const { runner, bridge, tuiAgent, command } = wireRunner(agent, FULL_CONFIG);
+    await runner.init(
+      command as never,
+      {
+        ...FULL_CONFIG,
+        approvals: 'read-only',
+      } as unknown as GthConfig
+    );
+    runner.setToolApprovalCallback((pending) => bridge.request(pending));
+
+    const { stdin, lastFrame, frames, unmount } = render(
+      <App
+        {...baseProps}
+        agent={tuiAgent}
+        subscribeApproval={bridge.subscribe}
+        initialMessage="write my notes"
+      />
+    );
+
+    // The prompt renders, names the tool, and offers the chooser — no blank frame, no throw.
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).toContain('write_file');
+      expect(f.toLowerCase()).toContain('approve');
+    });
+
+    stdin.write('o');
+
+    await vi.waitFor(() => {
+      const all = frames.join('\n');
+      expect(all).toContain('wrote notes.md');
+      expect(all).toContain('Saved your notes.');
+    });
+
+    unmount();
+  });
+
+  /**
+   * §6 — **the menu must display what it is about to store.** A `tool` subject does produce a sticky
+   * grant (`toolGrantEntry` returns an `exact` entry on the tool name), so the always-approve
+   * affordance is real here rather than advertised and withdrawn. Asserted on the payload the prompt
+   * is handed, because that is what the menu renders its control from.
+   */
+  it('EXT-80: a gated non-shell call carries a grant preview the menu can display', async () => {
+    let suspended = false;
+    const agent: GthAgentInterface = {
+      async init() {},
+      async invoke() {
+        return '';
+      },
+      async stream() {
+        throw new Error('not used');
+      },
+      async *streamWithEvents(): AsyncGenerator<AgentStreamEvent> {
+        suspended = true;
+        yield { type: 'text', delta: 'Deleting…' };
+      },
+      async getPendingToolInterrupts(): Promise<PendingToolInterrupt[]> {
+        if (!suspended) return [];
+        suspended = false;
+        return [{ name: 'delete_file', args: { path: 'old.md' } }];
+      },
+      async *streamWithEventsResume(): AsyncGenerator<AgentStreamEvent> {
+        yield { type: 'text', delta: 'done' };
+      },
+      async cleanup() {},
+    };
+
+    const seen: unknown[] = [];
+    const { runner, tuiAgent, command } = wireRunner(agent, FULL_CONFIG);
+    await runner.init(
+      command as never,
+      {
+        ...FULL_CONFIG,
+        approvals: 'read-only',
+      } as unknown as GthConfig
+    );
+    runner.setToolApprovalCallback(async (pending) => {
+      seen.push(pending);
+      return { type: 'reject' };
+    });
+
+    for await (const _ of tuiAgent.runTurn('delete it', new AbortController().signal)) {
+      // drain
+    }
+
+    expect(seen).toHaveLength(1);
+    const pending = seen[0] as {
+      name: string;
+      grantPreview?: string;
+      grantSummary?: string;
+    };
+    expect(pending.name).toBe('delete_file');
+    // A tool subject IS rememberable, so the menu has a real always-approve to show, and what it
+    // shows is the entry that would be written.
+    expect(pending.grantPreview).toBe(
+      '{ "type": "tool", "matcher": "exact", "pattern": "delete_file" }'
+    );
+    // The summary carries the subject type, so a tool grant reads differently from a shell grant
+    // in the menu — the two are different kinds of promise and the human should see which they got.
+    expect(pending.grantSummary).toBe('tool delete_file');
+  });
+
   it('interrupt → reject → graceful continue (no execution, no tool_result)', async () => {
     const agent = fakeInterruptingAgent({
       command: 'rm -rf build',
