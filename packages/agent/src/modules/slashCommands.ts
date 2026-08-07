@@ -32,6 +32,28 @@ import type { ApprovalGrant } from '@gaunt-sloth/core/core/approvals/grants.js';
 import { describeApprovalEntry } from '@gaunt-sloth/core/core/approvals/matcher.js';
 import { MOUSE_SELECTION_HINT } from '@gaunt-sloth/core/config/mouse.js';
 
+/**
+ * TUI-C63 — one advertised key binding: the keys as the user's keyboard spells them, and what
+ * they do. The keys are a display string, not a parsed chord — this module never matches on it.
+ */
+export interface KeyBinding {
+  /** e.g. `PgUp / PgDn`. Named for keyboards that lack the key where that differs (DL-5, DL-7). */
+  keys: string;
+  /** What the keys do, in one short phrase. */
+  description: string;
+}
+
+/**
+ * TUI-C63 — bindings grouped by the context they are reachable in. The bindings are modal (Esc
+ * alone means three different things depending on what owns the keyboard), so a flat list of every
+ * bound key would mislead; the group is what makes each line true.
+ */
+export interface KeyBindingGroup {
+  /** The context the group's bindings apply in, e.g. `Scrolling the conversation`. */
+  title: string;
+  bindings: readonly KeyBinding[];
+}
+
 /** Read-only session context a command may surface (e.g. `/status`, `/model`). */
 export interface SlashCommandContext {
   mode: string;
@@ -105,6 +127,17 @@ export interface SlashCommandContext {
    * actual I/O. Omitted ⇒ `/debug-dump` reports itself unavailable (fixture / no session state).
    */
   dumpDebugSession?: (input: DebugDumpInput) => { archiveDir: string };
+  /**
+   * TUI-C63 — the key bindings THIS surface actually has, grouped by context, appended to `/help`.
+   *
+   * Supplied by the surface rather than held as a constant here, because this registry is shared
+   * (GS2-8) and the two surfaces have different keyboards: the full-screen TUI owns its conversation
+   * region and every key that scrolls it, while the readline session has no Ink components, no mouse
+   * layer and the terminal's own scrollback — so wheel, PgUp/PgDn, Ctrl+Home/Ctrl+End and Ctrl+T
+   * mean nothing there. Readline passes nothing and its `/help` stays the command list alone.
+   * GS2-87: the divergence is deliberate and stated, never accidental.
+   */
+  keyBindings?: readonly KeyBindingGroup[];
 }
 
 /**
@@ -481,7 +514,11 @@ export function mouseToggleNotice(enabled: boolean): SlashCommandNotice {
     lines: enabled
       ? [
           'Clickable parts of the interface respond to the mouse, and the wheel scrolls the conversation.',
-          'Shift and the wheel together move a page at a time.',
+          // Qualified rather than promised: the binding is correct, but a terminal that never sets
+          // the Shift bit on a wheel report (Konsole is one) delivers a plain notch, so the page
+          // never happens there. Naming a key that silently does nothing is the defect TUI-C11 had
+          // to correct once already.
+          'Shift and the wheel together move a page, in terminals that forward Shift with the wheel.',
           MOUSE_SELECTION_HINT,
           'Turn it off for this session with /mouse off, or always with useMouse false in your config.',
         ]
@@ -1130,11 +1167,33 @@ export function createCommandRegistry(): SlashCommand[] {
   ];
 }
 
-/** Build the `/help` notice from a registry: one body line per command (`/name — description`). */
-export function formatHelp(registry: SlashCommand[]): SlashCommandNotice {
+/**
+ * Build the `/help` notice from a registry: one body line per command (`/name — description`),
+ * followed by the calling surface's own key bindings when it supplies any (TUI-C63).
+ *
+ * The bindings are a PARAMETER, never a constant in this module: `/help` is the reference for the
+ * surface the reader is looking at, and a key that surface does not have is worse than no entry at
+ * all. A surface that passes nothing gets exactly the command list, byte for byte.
+ */
+export function formatHelp(
+  registry: SlashCommand[],
+  keyBindings: readonly KeyBindingGroup[] = []
+): SlashCommandNotice {
+  const lines = registry.map((c) => `/${c.name} — ${c.description}`);
+  // One separator row where the commands end and the keys begin. A SPACE, not the empty string: a
+  // sibling <Text> holding '' collapses to nothing in Ink's column, so an empty line here would be
+  // code that claims a gap the screen never draws. Groups below need none — an unindented title
+  // above indented bindings already reads as a group, and this block is long enough already.
+  if (keyBindings.length > 0) lines.push(' ');
+  for (const group of keyBindings) {
+    lines.push(group.title);
+    for (const binding of group.bindings) lines.push(`  ${binding.keys} — ${binding.description}`);
+  }
   return {
-    title: 'Slash commands',
-    lines: registry.map((c) => `/${c.name} — ${c.description}`),
+    // The title states what the block actually contains, so it cannot promise keys to a surface
+    // that has none.
+    title: keyBindings.length > 0 ? 'Slash commands and keys' : 'Slash commands',
+    lines,
   };
 }
 
@@ -1155,7 +1214,9 @@ export function dispatchSlashCommand(
   options: { duringRun?: boolean } = {}
 ): SlashCommandResult {
   if (parsed.name === 'help') {
-    return { notice: formatHelp(registry) };
+    // TUI-C63 — the bindings section comes from the context, so each surface advertises its own
+    // keyboard and only its own.
+    return { notice: formatHelp(registry, ctx.keyBindings) };
   }
   const command = registry.find((c) => c.name === parsed.name);
   if (!command) {

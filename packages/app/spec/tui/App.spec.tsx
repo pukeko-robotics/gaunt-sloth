@@ -134,6 +134,31 @@ describe('tui <App>', () => {
     unmount();
   });
 
+  // TUI-C63 — the full-screen surface took away the terminal's scrollback and replaced it with
+  // bindings nothing on screen mentioned. The hint row is where the replacement is advertised, and
+  // it is composed HERE (not in the shared exitMessage) so the readline session, which still has
+  // the terminal's own scrollback, never inherits the claim.
+  it('appends the scroll fragment to the hint row, without touching the shared exitMessage', async () => {
+    const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
+    const { lastFrame, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
+
+    await vi.waitFor(() => {
+      const frame = lastFrame() ?? '';
+      // The whole row, as one sentence: the command's own half plus this surface's fragment.
+      expect(frame).toContain(
+        "Type 'exit' or Ctrl+C to exit chat · /help for commands · PgUp/PgDn to scroll history"
+      );
+    });
+    // That the shared literal itself is untouched is asserted where it is declared — chatCommand
+    // and codeCommand's specs pin their exitMessage exactly — not here, where the only string in
+    // reach is this file's own fixture.
+    // The row stays a nudge: the keyboard-honest Fn note belongs in /help, which has room for it
+    // (naming a key a Mac laptop does not have is the TUI-C11 defect this must not repeat).
+    expect(lastFrame() ?? '').not.toContain('Fn+');
+
+    unmount();
+  });
+
   it('shows mode, model name and a turn counter in the idle status bar', async () => {
     const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
     const { lastFrame, unmount } = render(
@@ -193,7 +218,18 @@ describe('tui <App>', () => {
     await vi.waitFor(() => expect(lastFrame()).toContain('/help'));
     stdin.write('\r');
 
+    // TUI-C63 — the notice now carries this surface's key bindings after the command list, so on a
+    // short terminal its tail is what the region shows. Assert the tail here, then scroll to the
+    // top for the command list: the commands are still there, and reaching them is exactly the
+    // gesture the hint row and the bindings section now advertise.
     await vi.waitFor(() => {
+      // The last group, so it survives the clip on a short terminal — and a line that exists only
+      // in the bindings data, so this fails if <App> stops supplying them.
+      expect(frames.join('\n')).toContain('Ctrl+C — exit');
+    });
+    stdin.write('\x1b[1;5H'); // Ctrl+Home
+    await vi.waitFor(() => {
+      expect(frames.join('\n')).toContain('Slash commands and keys');
       expect(frames.join('\n')).toContain('/clear');
       expect(frames.join('\n')).toContain('/exit');
     });

@@ -395,7 +395,10 @@ their config has a problem.
 - **Scrolling the conversation.** The full-screen surface owns its conversation region and the
   alternate screen has no scrollback of its own, so these bindings are the *only* way back to what
   has already been said (DL-3 — the user's content stays reachable):
-  - **wheel** — three lines a notch. **Shift + wheel** — one page.
+  - **wheel** — three lines a notch. **Shift + wheel** — one page, and only where the terminal
+    forwards Shift with the wheel: some (Konsole among them) emit the identical report with and
+    without it, so the app receives a plain notch. The binding is correct; what must stay qualified
+    is the promise (DL-5, DL-7 — same rule as naming `PageUp` to a keyboard that has none).
   - **`PageUp` / `PageDown`** — one page, meaning the region less a row of overlap so the reader
     keeps their place. The focused debug pane claims these keys for its own viewport first; they
     move the conversation only when it is not focused.
@@ -414,6 +417,20 @@ their config has a problem.
   - **Name the keys honestly for keyboards that lack them** (DL-5, DL-7): a compact or Mac keyboard
     sends the identical codes from `Fn`+`Up`/`Down`, so any hint that mentions paging says so rather
     than naming a key the reader cannot find.
+- **The keyboard is advertised where the user is already looking** (DL-1, DL-9). A binding nobody
+  can discover is a binding nobody has, and the full-screen surface removed the one thing everybody
+  already knew — the terminal's scrollback. So:
+  - the hint row under the prompt names the scroll keys, and nothing more: it is a nudge, sized to
+    one dim line;
+  - **`/help` is the reference** and carries the whole set, **grouped by the context each binding is
+    reachable in** — a flat dump would state four contradictory things about `Esc` alone — plus the
+    detail the row has no room for (the `Fn`+`↑`/`↓` note, the wheel, terminal-dependent chords).
+  - **Both are supplied by the surface, never by the shared layer.** The slash-command registry and
+    the `exitMessage` hint string are shared with the readline session, which has no Ink components,
+    no mouse layer and its own scrollback, so a key section baked into the shared formatter — or a
+    scroll clause added to the shared literal — would advertise keys that do nothing there. The TUI
+    passes its bindings in as data and composes its own hint fragment; readline passes nothing and
+    its output is unchanged by construction (GS2-87).
 - **arrows / Enter** — select / submit in the prompt.
 - **multiline paste** — pasting text with newlines buffers it into the prompt intact; the embedded
   newlines do **not** submit — only an explicit `Enter` sends the whole buffered value (DL-9

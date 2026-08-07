@@ -43,6 +43,7 @@ import { TerminalSizeProvider, useTerminalSize } from '#src/tui/useTerminalSize.
 import { findMatches, scrollOffsetForLine, stepMatch } from '#src/tui/debugSearch.js';
 import { useTranscriptScroll } from '#src/tui/useTranscriptScroll.js';
 import { isComposingKeystroke, WHEEL_ROWS_PER_NOTCH } from '#src/tui/transcriptScroll.js';
+import { TUI_HINT_SUFFIX, TUI_KEY_BINDINGS } from '#src/tui/keyBindings.js';
 
 /** Rows of clipping viewport in the docked debug panel (default / restored size). */
 const DEBUG_VIEWPORT_HEIGHT = 8;
@@ -520,6 +521,10 @@ export function App(props: TuiAppProps): React.ReactElement {
             transcript,
             resolvedConfig: props.resolvedConfig,
             dumpDebugSession: props.dumpDebugSession,
+            // TUI-C63 — this surface's own keyboard, for the `/help` bindings section. The readline
+            // session dispatches through the same registry and passes none, so its `/help` never
+            // grows keys it does not have (GS2-87).
+            keyBindings: TUI_KEY_BINDINGS,
           },
           { duringRun: running }
         );
@@ -1020,7 +1025,13 @@ export function App(props: TuiAppProps): React.ReactElement {
                 }}
               />
             ) : null}
-            <Text dimColor>{exitMessage.trim()}</Text>
+            {/* TUI-C63 — the shared hint row plus this surface's own scroll fragment. `exitMessage`
+          is the readline session's line too (printed there via displayInfo), and readline still has
+          the terminal's scrollback, so the mention is COMPOSED here rather than added to the shared
+          literal: the other surface is then untouched by construction, not by memory (GS2-87). The
+          row stays a nudge — the Fn+↑/↓ note for keyboards without PgUp/PgDn belongs in /help, which
+          has room to be honest about it (DL-5, DL-7, TUI-C11). */}
+            <Text dimColor>{`${exitMessage.trim()}${TUI_HINT_SUFFIX}`}</Text>
             <Rule />
           </Box>
         </Box>
