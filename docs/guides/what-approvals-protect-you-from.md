@@ -46,8 +46,9 @@ gth code "make the failing orders tests pass"
 ```
 
 A `deny` entry is checked before everything else and is the one check you write that survives every
-mode, so it is the strongest thing you can say to the agent from inside a config file. It stops the
-mistake. It does not stop a way around it — which is the rest of this page.
+mode, so it is the strongest thing you can say about which commands may run — short of not granting
+the shell at all. It stops the mistake. It does not stop a way around it — which is the rest of
+this page.
 
 ## The ladder reads text, so it catches accidents and not intent
 
@@ -64,10 +65,11 @@ npm run build          → a build command, and nothing else
 ```
 
 Neither call's text is a lie, so no improvement to the reading catches it. This is measured, not
-argued: the same payload proposed directly was caught by a deny rule and stopped before it reached
-the shell; written to a file and then run, it matched nothing, tripped nothing, and executed. The
-auto-rater's entire view of the second version is the string `bash payload.sh` — the payload is not
-in its input, so no model, however capable, could have judged it.
+argued — with a shell script standing in for the build script above: the same payload proposed
+directly was caught by a deny rule and stopped before it reached the shell; written to a file and
+then run, it matched nothing, tripped nothing, and executed. The auto-rater's entire view of the
+second version is the string `bash payload.sh` — the payload is not in its input, so no model,
+however capable, could have judged it.
 
 **So the ladder protects you against accidents, and not against intent.** An accident is the agent
 doing the wrong thing while trying to do the right thing: the destructive cleanup, the command whose
@@ -84,17 +86,19 @@ been asked anything.
 Two controls inside Gaunt Sloth remove a capability instead of reading a string:
 
 - The **file tools refuse a path outside the folder Gaunt Sloth is running in**, at every mode,
-  Bypass included.
+  Bypass included — unless you widen the sandbox yourself, which `gth exec --allow-dir <path>` does.
 - The **LLM and cloud provider keys Gaunt Sloth holds are stripped from the environment** of any
-  command it runs, so an approved command cannot read them back out. A `GITHUB_TOKEN` is
-  deliberately left in place, because Gaunt Sloth's own review workflows shell out to `gh`.
+  command it runs, so the environment is not a route to them — but a key you have written into a
+  config file or a `.env` is a file on disk like any other, and an approved command can read it.
+  A `GITHUB_TOKEN` is deliberately left in place, because Gaunt Sloth's own review workflows shell
+  out to `gh`.
 
 Each of those closes one route. Neither of them bounds the agent, and the difference is the whole
 point. Take one path outside that folder, and write to it two ways:
 
 ```
-write_file  ~/notes/todo.md   → refused, at every mode
-touch       ~/notes/todo.md   → the same path, written
+write_file  /tmp/notes.txt   → refused, at every mode
+touch       /tmp/notes.txt   → the same path, written
 ```
 
 Wherever a shell command can run without your seeing it — Assisted, Auto and Bypass — the agent can
@@ -131,9 +135,11 @@ one driving the session. Suppressing those escalations would only make a number 
 
 ## Manual and Write are for a few commands, not a long run
 
-They are the modes where every shell command is a question to you. (Write is a modifier on Manual,
-not a further step along the ladder.) That is a real control, and it is not the strong one over a
-long run.
+They are the modes where every shell command is a question to you, along with every MCP call and
+every custom tool. At Manual, so is every file edit inside the working folder — creating, editing
+and deleting a file each stop and ask. Write is that same posture with those file edits granted, and
+that is what makes it a modifier on Manual rather than a further step along the ladder. That is a
+real control, and it is not the strong one over a long run.
 
 A rater judges the two-thousandth command exactly as well as the third. A person does not. Ask
 someone three questions and you get three precise answers; ask them ten and you get three answers.
