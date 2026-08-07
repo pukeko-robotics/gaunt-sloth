@@ -882,8 +882,8 @@ describe('checkHardline — the wrapper enumeration (EXT-69)', () => {
  *
  * The trade goes this way because the two errors are not symmetric, and both sides were measured:
  * `classifyCommand` returns `null` for seven of the eight forms, so they cannot be auto-matched and
- * they escalate at `auto-safe` and `full-auto` where the rater rates them catastrophic — while a
- * false positive here is unappealable at every rung including `read-only`.
+ * they escalate at `assisted` and `auto` where the rater rates them catastrophic — while a
+ * false positive here is unappealable at every rung including `manual`.
  *
  * `bypass` consults neither, so those seven are genuinely uncovered there. That is written down in
  * `hardline.ts` rather than left to be rediscovered, and closing it properly needs the CFG-29 span
@@ -1002,7 +1002,7 @@ describe('checkHardline — the openers not modelled, and the prose that decides
    * preferred, and these seven forms are what that changes. Each one reads as a destructive command
    * only if you ignore that the flag before it takes a value: `sudo -u rm -rf /` names `rm` as the
    * USER and runs `/`. The shell never runs `rm` here, so refusing it was a false positive of
-   * exactly the EXT-62 class — unappealable at every rung, including `read-only`.
+   * exactly the EXT-62 class — unappealable at every rung, including `manual`.
    *
    * Pinned so the narrowing is a decision on the record rather than a side effect noticed later.
    */

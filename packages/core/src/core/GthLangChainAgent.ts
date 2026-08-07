@@ -652,7 +652,7 @@ export class GthLangChainAgent extends GthAbstractAgent {
       this.command
     );
     //
-    // EXT-80: the shell is not the whole story. At `read-only` and `write` every bound tool the
+    // EXT-80: the shell is not the whole story. At `manual` and `write` every bound tool the
     // rung's access class does not auto-grant — the write built-ins, MCP tools, custom tools — must
     // reach the human, because those two rungs promise the user that anything beyond reading
     // (respectively, beyond reading and writing files here) comes to them.
@@ -660,7 +660,7 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // **The interrupt is wired rung-INDEPENDENTLY, over every tool any rung could gate.** It is
     // installed once, here, while `/approvals <rung>` moves the rung for the rest of the session
     // without rebuilding this graph; a set that carried the rung would be frozen at the rung the
-    // session started on, and since the default is `auto-safe`, typing `/approvals read-only` would
+    // session started on, and since the default is `assisted`, typing `/approvals manual` would
     // leave exactly the write tools ungated. `GthAgentRunner.decideToolApproval` decides on the rung
     // in force instead, which is where the rung has always been read — so wiring wider does not gate
     // wider: at a rated rung a non-shell call is approved there with no rating call and no prompt.
@@ -677,7 +677,7 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // can answer suspends the graph forever: the tool never runs and the client is never asked. So
     // such a surface is wired with exactly what the shell gate itself requires and nothing more,
     // and is not TOLD it will be asked either. Neither the live set nor the interrupt set is a safe
-    // fallback here — both are non-empty at `read-only` and `write`, which is precisely where an
+    // fallback here — both are non-empty at `manual` and `write`, which is precisely where an
     // AG-UI server's writes and MCP calls would vanish, or be announced as approvable when nothing
     // will ever approve them.
     const answersApprovals = commandAnswersApprovals(this.command);

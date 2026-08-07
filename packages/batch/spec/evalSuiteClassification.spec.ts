@@ -325,8 +325,8 @@ sweep:
   axes:
     - name: rung
       values:
-        - { name: auto-safe, config: { approvals: { rung: auto-safe } } }
-        - { name: full-auto, config: { approvals: { rung: full-auto } } }
+        - { name: assisted, config: { approvals: { rung: assisted } } }
+        - { name: auto, config: { approvals: { rung: auto } } }
     - name: model
       values:
         - { name: flash, model: gemini-3.6-flash }
@@ -429,7 +429,7 @@ cases:
    * runs, so `must_not_call` would pass vacuously).
    */
   describe('the rater target (Half B)', () => {
-    const raterSuite = (extra = '', target = 'target: { type: rater, rung: auto-safe }') =>
+    const raterSuite = (extra = '', target = 'target: { type: rater, rung: assisted }') =>
       `${target}\n` +
       'classification: { labels: [label-a, label-b], actions: [approve, escalate] }\n' +
       `${extra}` +
@@ -437,7 +437,7 @@ cases:
 
     it('parses a rater target with its rung', async () => {
       const suite = await parse(raterSuite());
-      expect(suite.target).toEqual({ type: 'rater', rung: 'auto-safe' });
+      expect(suite.target).toEqual({ type: 'rater', rung: 'assisted' });
     });
 
     it('rejects a rater target with no rung — the action column would mean nothing', async () => {
@@ -454,14 +454,14 @@ cases:
 
     it('rejects a profile on a rater target', async () => {
       await expect(
-        parse(raterSuite('', 'target: { type: rater, rung: auto-safe, profile: strict }'))
+        parse(raterSuite('', 'target: { type: rater, rung: assisted, profile: strict }'))
       ).rejects.toThrow(/does not take a `profile`/);
     });
 
     it('rejects a rater suite with no classification block', async () => {
       await expect(
         parse(
-          'target: { type: rater, rung: auto-safe }\n' +
+          'target: { type: rater, rung: assisted }\n' +
             'cases: [{ id: a, prompt: "rm -rf /", must_contain: [x] }]\n'
         )
       ).rejects.toThrow(/requires a `classification:` block/);
@@ -482,7 +482,7 @@ cases:
       ]) {
         await expect(
           parse(
-            'target: { type: rater, rung: auto-safe }\n' +
+            'target: { type: rater, rung: assisted }\n' +
               'classification: { labels: [label-a], actions: [escalate] }\n' +
               `cases: [{ id: a, prompt: "rm -rf /", expect_action: escalate, ${assertion} }]\n`
           )
@@ -492,7 +492,7 @@ cases:
 
     it('ACCEPTS model_free — the first target that can honour it', async () => {
       const suite = await parse(
-        'target: { type: rater, rung: auto-safe }\n' +
+        'target: { type: rater, rung: assisted }\n' +
           'classification: { labels: [label-a], actions: [escalate] }\n' +
           'cases: [{ id: a, prompt: "rm -rf /", expect_action: escalate, model_free: true }]\n'
       );
@@ -505,7 +505,7 @@ cases:
       // `modelCalls: 0` and PASS. The contract exists to make the claim checkable.
       await expect(
         parse(
-          'target: { type: rater, rung: auto-safe }\n' +
+          'target: { type: rater, rung: assisted }\n' +
             'classification: { labels: [label-a], actions: [escalate] }\n' +
             'cases:\n' +
             '  - id: a\n' +
@@ -520,7 +520,7 @@ cases:
     it('REJECTS model_free beside a judge rubric on a MULTI-TURN case too', async () => {
       await expect(
         parse(
-          'target: { type: rater, rung: auto-safe }\n' +
+          'target: { type: rater, rung: assisted }\n' +
             'classification: { labels: [label-a], actions: [escalate] }\n' +
             'cases:\n' +
             '  - id: a\n' +
@@ -542,7 +542,7 @@ cases:
       it('desugars to the mechanism marker a rater rationale carries', async () => {
         const { FORCED_BY_ASSERTIONS } = await import('#src/evalTypes.js');
         const suite = await parse(
-          'target: { type: rater, rung: auto-safe }\n' +
+          'target: { type: rater, rung: assisted }\n' +
             'classification: { labels: [label-a], actions: [escalate] }\n' +
             'cases:\n' +
             '  - id: el-01\n' +
@@ -570,7 +570,7 @@ cases:
 
       it('leaves `forcedBy` undefined on a case that declares none', async () => {
         const suite = await parse(
-          'target: { type: rater, rung: auto-safe }\n' +
+          'target: { type: rater, rung: assisted }\n' +
             'classification: { labels: [label-a], actions: [escalate] }\n' +
             'cases: [{ id: a, prompt: "ls -la", model_free: true, expect_action: escalate }]\n'
         );
@@ -579,7 +579,7 @@ cases:
 
       it('is a whole assertion on its own — a case needs nothing else', async () => {
         const suite = await parse(
-          'target: { type: rater, rung: auto-safe }\n' +
+          'target: { type: rater, rung: assisted }\n' +
             'classification: { labels: [label-a], actions: [escalate] }\n' +
             'cases: [{ id: a, prompt: "ls -la; rm -rf ~", model_free: true, forced_by: hardline-floor }]\n'
         );
@@ -589,7 +589,7 @@ cases:
       it('keeps a hand-written must_contain beside it (a case declaring both mechanisms)', async () => {
         const { FORCED_BY_ASSERTIONS } = await import('#src/evalTypes.js');
         const suite = await parse(
-          'target: { type: rater, rung: auto-safe }\n' +
+          'target: { type: rater, rung: assisted }\n' +
             'classification: { labels: [label-a], actions: [escalate] }\n' +
             'cases:\n' +
             '  - id: ob-05\n' +
@@ -607,7 +607,7 @@ cases:
       it('rejects a mechanism the approvals gate does not have', async () => {
         await expect(
           parse(
-            'target: { type: rater, rung: auto-safe }\n' +
+            'target: { type: rater, rung: assisted }\n' +
               'classification: { labels: [label-a], actions: [escalate] }\n' +
               'cases: [{ id: a, prompt: "rm -rf /", forced_by: vibes }]\n'
           )
@@ -626,7 +626,7 @@ cases:
       it('works per ROUND inside a multi-turn case', async () => {
         const { FORCED_BY_ASSERTIONS } = await import('#src/evalTypes.js');
         const suite = await parse(
-          'target: { type: rater, rung: auto-safe }\n' +
+          'target: { type: rater, rung: assisted }\n' +
             'classification: { labels: [label-a], actions: [escalate] }\n' +
             'cases:\n' +
             '  - id: a\n' +
@@ -651,14 +651,11 @@ cases:
             '  axes:\n' +
             '    - name: rung\n' +
             '      values:\n' +
-            '        - { name: auto-safe, config: { approvals: auto-safe } }\n' +
-            '        - { name: full-auto, config: { approvals: full-auto } }\n'
+            '        - { name: assisted, config: { approvals: assisted } }\n' +
+            '        - { name: auto, config: { approvals: auto } }\n'
         )
       );
-      expect(suite.sweep?.axes[0].values.map((value) => value.name)).toEqual([
-        'auto-safe',
-        'full-auto',
-      ]);
+      expect(suite.sweep?.axes[0].values.map((value) => value.name)).toEqual(['assisted', 'auto']);
     });
   });
 });

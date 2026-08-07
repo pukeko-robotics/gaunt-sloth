@@ -9,7 +9,11 @@ import { FakeStreamingChatModel } from '@langchain/core/utils/testing';
 import type { GthConfig } from '#src/config.js';
 
 // Mock modules
-vi.mock('#src/config.js', () => ({
+// Partial mock (spread the real module): the shared slash-command registry reads the real
+// approvals vocabulary (APPROVAL_RUNGS) while building the `/approvals` entry, so a bare stub of
+// this barrel leaves that constant undefined and the session fails to start.
+vi.mock('#src/config.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('#src/config.js')>()),
   initConfig: vi.fn().mockResolvedValue({
     llm: 'Mock LLM',
     streamSessionInferenceLog: true,

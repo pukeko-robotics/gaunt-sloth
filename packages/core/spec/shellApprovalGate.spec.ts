@@ -19,7 +19,7 @@ const RATED_NOTICE = (rung: string, tail: string) =>
   `anything it does not rate safe is still ${tail}`;
 const BYPASS_NOTICE =
   'Shell tool (run_shell_command): commands run without asking and without rating ' +
-  '(approvals: bypass). Only your deny list still applies — type /approvals auto-safe to ' +
+  '(approvals: bypass). Only your deny list still applies — type /approvals assisted to ' +
   'rate commands again.';
 
 describe('resolveShellApprovalGate (EXT-52 shared gate policy, CFG-27 ladder)', () => {
@@ -44,12 +44,12 @@ describe('resolveShellApprovalGate (EXT-52 shared gate policy, CFG-27 ladder)', 
   });
 
   describe('gated — the per-command approval interrupt is wired', () => {
-    it('code mode by default: the default rung is auto-safe, so the notice names the rater', () => {
+    it('code mode by default: the default rung is assisted, so the notice names the rater', () => {
       const expected = {
         gateShell: true,
         notice: {
           level: StatusLevel.INFO,
-          message: RATED_NOTICE('auto-safe', 'escalated to you.'),
+          message: RATED_NOTICE('assisted', 'escalated to you.'),
         },
       };
       expect(resolveShellApprovalGate(config({}), 'code')).toEqual(expected);
@@ -57,17 +57,17 @@ describe('resolveShellApprovalGate (EXT-52 shared gate policy, CFG-27 ladder)', 
       expect(resolveShellApprovalGate(undefined, 'code')).toEqual(expected);
     });
 
-    it('full-auto says the rater REFUSES OR ESCALATES — it does not promise to ask you', () => {
-      expect(resolveShellApprovalGate(config({ approvals: 'full-auto' }), 'code')).toEqual({
+    it('auto says the rater REFUSES OR ESCALATES — it does not promise to ask you', () => {
+      expect(resolveShellApprovalGate(config({ approvals: 'auto' }), 'code')).toEqual({
         gateShell: true,
         notice: {
           level: StatusLevel.INFO,
-          message: RATED_NOTICE('full-auto', 'refused or escalated.'),
+          message: RATED_NOTICE('auto', 'refused or escalated.'),
         },
       });
     });
 
-    it.each(['read-only', 'write'] as const)(
+    it.each(['manual', 'write'] as const)(
       'the unrated rung %s gates with the per-command prompt notice',
       (rung) => {
         expect(resolveShellApprovalGate(config({ approvals: rung }), 'code')).toEqual({
@@ -160,7 +160,7 @@ describe('resolveShellApprovalGate (EXT-52 shared gate policy, CFG-27 ladder)', 
     });
 
     it('§8.1 — no notice advertises the hardline floor; the bypass one cites the deny list', () => {
-      for (const rung of ['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'] as const) {
+      for (const rung of ['manual', 'write', 'assisted', 'auto', 'bypass'] as const) {
         const { notice } = resolveShellApprovalGate(
           config({ approvals: rung, builtInTools: { run_shell_command: true } }),
           'code'

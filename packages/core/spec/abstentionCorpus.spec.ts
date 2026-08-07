@@ -3,7 +3,7 @@
  *
  * A rater suite grades one command in isolation and structurally cannot see a session, so it cannot
  * answer this. What can is a corpus of legitimate developer commands driven through the real
- * {@link GthAgentRunner} at `full-auto`, counting what reaches the human and what reaches the model.
+ * {@link GthAgentRunner} at `auto`, counting what reaches the human and what reaches the model.
  *
  * **The corpus is below, in the file, on purpose.** A number without its method is not a
  * measurement, and a corpus that lives in a report cannot be re-run by the next person.
@@ -130,7 +130,7 @@ async function measure(
   mockAgent.stream.mockReset().mockResolvedValue(streamOf('x'));
   mockAgent.getRegisteredToolNames.mockReturnValue([]);
 
-  const { config, invoke } = raterConfig('full-auto', verdict);
+  const { config, invoke } = raterConfig('auto', verdict);
   await runner.init('code', config);
   const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
   runner.setToolApprovalCallback(human);

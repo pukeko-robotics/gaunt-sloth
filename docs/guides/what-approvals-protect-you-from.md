@@ -31,6 +31,7 @@ object; the denials are the part worth writing out. In `.gsloth.config.json` at 
 ```json
 {
   "approvals": {
+    "mode": "auto",
     "deny": [
       { "type": "shell", "matcher": "glob", "pattern": "npm publish*" },
       { "type": "shell", "matcher": "glob", "pattern": "git push --force*" },

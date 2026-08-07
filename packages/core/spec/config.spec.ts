@@ -554,7 +554,7 @@ describe('config', async () => {
     it('Should HARD-reject a bare-string approvals entry at LOAD, showing the object form (EXT-71)', async () => {
       const jsonConfig = {
         llm: { type: 'vertexai' },
-        approvals: { mode: 'auto-safe', deny: ['npm publish'] },
+        approvals: { mode: 'assisted', deny: ['npm publish'] },
       } as unknown as RawGthConfig;
 
       fsMock.existsSync.mockImplementation((path: string) => {
@@ -597,7 +597,7 @@ describe('config', async () => {
       const jsonConfig = {
         llm: { type: 'vertexai' },
         approvals: {
-          mode: 'auto-safe',
+          mode: 'assisted',
           deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
         },
       } as unknown as RawGthConfig;
@@ -624,7 +624,7 @@ describe('config', async () => {
       expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
       expect(systemUtilsMock.exit).not.toHaveBeenCalled();
       expect(config.approvals).toEqual({
-        mode: 'auto-safe',
+        mode: 'assisted',
         deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
       });
     });
@@ -1031,7 +1031,7 @@ describe('config', async () => {
         path === `/mock/read/${PROJECT_JSON_MARKER}`
           ? JSON.stringify({
               llm: { type: 'vertexai' },
-              approvals: { mode: 'auto-safe', rater: 'missing-rater' },
+              approvals: { mode: 'assisted', rater: 'missing-rater' },
             })
           : ''
       );
@@ -1101,7 +1101,7 @@ describe('config', async () => {
         path === `/mock/read/${PROJECT_JSON_MARKER}`
           ? JSON.stringify({
               llm: { type: 'vertexai' },
-              approvals: { mode: 'auto-safe', rater: 'safety-rater' },
+              approvals: { mode: 'assisted', rater: 'safety-rater' },
             })
           : ''
       );
@@ -1116,7 +1116,7 @@ describe('config', async () => {
       expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
       expect(systemUtilsMock.exit).not.toHaveBeenCalled();
       expect(config.approvals).toEqual({
-        mode: 'auto-safe',
+        mode: 'assisted',
         rater: 'safety-rater',
       });
     });

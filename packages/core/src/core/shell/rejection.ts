@@ -60,7 +60,7 @@ export interface RejectionMessageOptions {
   /**
    * The rating that accompanied the escalation, when one exists. Carries both the explanation the
    * model is owed and — when the rater named one — the granted alternative (§4.4). Absent at the
-   * unrated rungs (`read-only`, `write`), where there is no rating at all and the descriptions of
+   * unrated rungs (`manual`, `write`), where there is no rating at all and the descriptions of
    * §4.5 are the only mechanism in play.
    */
   verdict?: ShellSafetyVerdict;

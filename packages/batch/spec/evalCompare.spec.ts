@@ -18,8 +18,8 @@ describe('evalCompare', () => {
           {
             name: 'rung',
             values: [
-              { name: 'auto-safe', config: { approvals: { rung: 'auto-safe' } } },
-              { name: 'full-auto', config: { approvals: { rung: 'full-auto' } } },
+              { name: 'assisted', config: { approvals: { rung: 'assisted' } } },
+              { name: 'auto', config: { approvals: { rung: 'auto' } } },
             ],
           },
           {
@@ -35,25 +35,25 @@ describe('evalCompare', () => {
       const cells = expandSweep(sweep);
       expect(cells).toHaveLength(4);
       expect(cells.map((cell) => cell.name)).toEqual([
-        'rung=auto-safe · model=flash',
-        'rung=auto-safe · model=gemma',
-        'rung=full-auto · model=flash',
-        'rung=full-auto · model=gemma',
+        'rung=assisted · model=flash',
+        'rung=assisted · model=gemma',
+        'rung=auto · model=flash',
+        'rung=auto · model=gemma',
       ]);
       expect(cells.map((cell) => cell.dirName)).toEqual([
-        'rung-auto-safe__model-flash',
-        'rung-auto-safe__model-gemma',
-        'rung-full-auto__model-flash',
-        'rung-full-auto__model-gemma',
+        'rung-assisted__model-flash',
+        'rung-assisted__model-gemma',
+        'rung-auto__model-flash',
+        'rung-auto__model-gemma',
       ]);
       // Each cell carries BOTH axes' contributions.
       expect(cells[0]).toMatchObject({
         model: 'gemini-3.6-flash',
-        config: { approvals: { rung: 'auto-safe' } },
+        config: { approvals: { rung: 'assisted' } },
       });
       expect(cells[3]).toMatchObject({
         model: 'gemma4:12b',
-        config: { approvals: { rung: 'full-auto' } },
+        config: { approvals: { rung: 'auto' } },
       });
     });
 

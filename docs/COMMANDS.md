@@ -533,10 +533,10 @@ The console gains a `CLASSIFICATION` block: a coverage line, the confusion matri
 
 ### The rater target
 
-`target: { type: rater, rung: auto-safe }` grades **gth's own approvals rater** instead of an agent. Each case's `prompt` is a shell command; `eval` puts it through the same rating prompt and the same rung-keyed decision mapping the [approvals gate](guides/shell-tool-and-approvals.md) uses in a session, and reports the outcome as the label and the resulting action as the action. Nothing is executed, and no agent runs.
+`target: { type: rater, rung: assisted }` grades **gth's own approvals rater** instead of an agent. Each case's `prompt` is a shell command; `eval` puts it through the same rating prompt and the same rung-keyed decision mapping the [approvals gate](guides/shell-tool-and-approvals.md) uses in a session, and reports the outcome as the label and the resulting action as the action. Nothing is executed, and no agent runs.
 
 ```yaml
-target: { type: rater, rung: auto-safe }
+target: { type: rater, rung: assisted }
 classification:
   labels: [safe, destructive, catastrophic, attack]
   actions: [approve, escalate, halt]
@@ -552,9 +552,9 @@ cases:
     forced_by: hardline-floor
 ```
 
-`rung` is required: the same outcome maps to a different action per rung, so a suite that did not say which rung it rates at would report an action column that means nothing. A run whose **config** declares a rung (`approvals: full-auto`, or `approvals: { mode: … }`) overrides it — that is how a sweep moves the rung — and the override is announced on the console when it differs from the suite's. An `approvals` block that declares no `mode` leaves the suite's rung alone.
+`rung` is required: the same outcome maps to a different action per rung, so a suite that did not say which rung it rates at would report an action column that means nothing. A run whose **config** declares a rung (`approvals: auto`, or `approvals: { mode: … }`) overrides it — that is how a sweep moves the rung — and the override is announced on the console when it differs from the suite's. An `approvals` block that declares no `mode` leaves the suite's rung alone.
 
-**`model_free: true` is only accepted for this target**, and it is what makes a deterministic corpus free to run. It short-circuits the rating call, and the run **fails** the case if the target reports any model call. An unrated rung (`read-only`, `write`, `bypass`) rings no model either — production consults none there. A `judge:` rubric on a `model_free` case is a parse error: the judge is a second model call, which the target's own model-call count cannot see. (Free of model *calls*, not of config: `eval` still resolves the run's `llm` before it builds any target, so a suite of nothing but model-free cases still needs a loadable provider config and its key.)
+**`model_free: true` is only accepted for this target**, and it is what makes a deterministic corpus free to run. It short-circuits the rating call, and the run **fails** the case if the target reports any model call. An unrated rung (`manual`, `write`, `bypass`) rings no model either — production consults none there. A `judge:` rubric on a `model_free` case is a parse error: the judge is a second model call, which the target's own model-call count cannot see. (Free of model *calls*, not of config: `eval` still resolves the run's `llm` before it builds any target, so a suite of nothing but model-free cases still needs a loadable provider config and its key.)
 
 **Grade a model-free case with `forced_by`, not with `expect_action`.** With no verdict the decision mapping substitutes its fail-closed one, which yields the **same action for every command** at a rated rung — `expect_action: escalate` passes for `ls -la` exactly as it does for `rm -rf /`, and would still pass with the floor and both preflights deleted. What does differ per command is which deterministic mechanism decided it, which the rationale reports and `forced_by` asserts:
 
@@ -572,7 +572,7 @@ A command whose target the gate cannot statically resolve (it composes, substitu
 - **`script-env-leak-preflight` is a FINDING about the command.** Its whole job is to override a permissive rating, and it only ever *raises* an outcome — so with no rating there is nothing to raise and every command comes back with the same "could not assess" sentence. A round declaring it is therefore put through the gate with a **stubbed permissive rating** for it to override. Still no model call. When it really fires the stub does not change the action; when it does **not** fire, the rating stands and the action moves too, so the case fails on the marker *and* the action. That is the discrimination, not a defect.
 - **`hardline-floor`** is not driven with a stub either. The floor is checked at execution time and never sees a rating, so a stub would buy nothing — and since the decision mapping does not consult the floor, a permissive rating on `rm -rf /` maps to `approve` and would move the action column of a floor case off the `escalate` it expects.
 
-**The preflight only runs at a rated rung** (`auto-safe`, `full-auto`) — at `read-only`, `write` and `bypass` the gate consults nothing, exactly as a session does — so a `forced_by: script-env-leak-preflight` case **fails** at those rungs. The floor is not a rung decision and refuses at all five. Keep that in mind before adding an unrated rung to a sweep axis: the column of failures is real behaviour, not a regression.
+**The preflight only runs at a rated rung** (`assisted`, `auto`) — at `manual`, `write` and `bypass` the gate consults nothing, exactly as a session does — so a `forced_by: script-env-leak-preflight` case **fails** at those rungs. The floor is not a rung decision and refuses at all five. Keep that in mind before adding an unrated rung to a sweep axis: the column of failures is real behaviour, not a regression.
 
 **On a *rated* case, a preflight marker only appears when the rater was permissive.** A preflight raises an outcome that sits below the deterministic floor and leaves anything at or above it alone — a rater that already found the command harmful keeps its own explanation, because a "could not assess" note would be false when it *did* assess. So `forced_by: script-env-leak-preflight` on a case you let the model rate is satisfiable only when the model rates that command permissively. Assert it on a `model_free` case instead.
 
@@ -666,8 +666,8 @@ sweep:
   axes:
     - name: rung
       values:
-        - { name: auto-safe, config: { approvals: auto-safe } }
-        - { name: full-auto, config: { approvals: full-auto } }
+        - { name: assisted, config: { approvals: assisted } }
+        - { name: auto, config: { approvals: auto } }
     - name: model
       values:
         - { name: flash, model: gemini-3.6-flash }
@@ -683,9 +683,9 @@ sweep:
   axes:
     - name: rater
       values:
-        - { name: haiku, config: { approvals: { mode: full-auto, rater: haiku } } }
-        - { name: flash, config: { approvals: { mode: full-auto, rater: flash } } }
-        - { name: gemma, config: { approvals: { mode: full-auto, rater: gemma } } }
+        - { name: haiku, config: { approvals: { mode: auto, rater: haiku } } }
+        - { name: flash, config: { approvals: { mode: auto, rater: flash } } }
+        - { name: gemma, config: { approvals: { mode: auto, rater: gemma } } }
 ```
 
 with `.gsloth/.gsloth-settings/{haiku,flash,gemma}/.gsloth.config.json` each declaring its own `type` and `model`.
@@ -695,11 +695,11 @@ One thing to check before believing a cross-provider comparison: **a rating call
 If that is what you are seeing, raise the budget rather than reading the column. One rating call gets 30 seconds by default, which is a hosted-model number; a 12B over Ollama measured 6s to nearly two minutes on the same commands, and the harder the command the longer it thought — so the default clips exactly the cases worth comparing. It is a normal config key, so a sweep axis sets it like any other:
 
 ```yaml
-target: { type: rater, rung: full-auto }
+target: { type: rater, rung: auto }
 sweep:
   rater:
-    - { config: { approvals: { mode: full-auto, rater: haiku } } }
-    - { config: { approvals: { mode: full-auto, rater: local, raterTimeoutMs: 120000 } } }
+    - { config: { approvals: { mode: auto, rater: haiku } } }
+    - { config: { approvals: { mode: auto, rater: local, raterTimeoutMs: 120000 } } }
 ```
 
 **Sweeping `model:` moves the judge too.** By default `judge:` rubrics are graded by the SUT's own model, so a model axis changes the grader along with the thing graded and the comparison's `pass rate` row is no longer comparable across cells. Set `judge_profile:` (or `--judge`) to pin the grader to one model whenever you sweep `model:` on a suite that uses rubrics.

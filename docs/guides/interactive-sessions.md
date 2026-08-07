@@ -55,9 +55,11 @@ there opens a searchable command menu. A few worth knowing:
 - `/model` — show the current model / provider
 - `/verbose` — expand or collapse tool-call detail (Ctrl+T does the same, at any time)
 - `/reasoning` — reprint a turn's thinking (`/reasoning 2` for turn 2)
-- `/approvals` — show the current rung, the rater, the allow/deny counts, what you have approved so
-  far and which MCP annotation hints you believe;
-  `/approvals read-only|write|auto-safe|full-auto|bypass` switches the rung for this session
+- `/approvals` — show the current mode, the rater, the allow/deny counts, what you have approved so
+  far and which MCP annotation hints you believe. In the TUI it also opens a picker: the four modes
+  as rows, arrow keys to move, Enter to choose, Esc to keep the one you are on. `write` has no row
+  — it is a variant of `manual` rather than a further step — but
+  `/approvals manual|write|assisted|auto|bypass` sets any of the five directly, for this session
 - `/approvals trust <server> <hint…>` — believe one MCP server's tool annotations, named by the key
   you gave it under `mcpServers`; `/approvals untrust` stops believing them. Each hint
   (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) is believed separately, so

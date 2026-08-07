@@ -432,7 +432,7 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
     if (!rung) {
       throw new Error(
         `Invalid eval suite${suffix}: a "rater" target requires a \`rung\` — the approvals rung the ` +
-          'corpus is rated at (e.g. `target: { type: rater, rung: auto-safe }`), because the same ' +
+          'corpus is rated at (e.g. `target: { type: rater, rung: assisted }`), because the same ' +
           `outcome maps to a different action per rung. One of: ${APPROVAL_RUNGS.join(', ')}.`
       );
     }

@@ -582,13 +582,13 @@ describe('GthLangChainAgent', () => {
       };
 
       it('gates code mode by default (shell defaults ON in code) and announces the gate', async () => {
-        // CFG-27 — the default rung is `auto-safe`, so the notice names the rater. The unrated
+        // CFG-27 — the default rung is `assisted`, so the notice names the rater. The unrated
         // rungs are asserted separately below.
         await initAgent('code', mockConfig);
         expect(middlewareNames()).toContain('HumanInTheLoopMiddleware');
         expect(statusUpdateCallback).toHaveBeenCalledWith(
           StatusLevel.INFO,
-          'Shell tool (run_shell_command) rated by the auto-rater (approvals: auto-safe); ' +
+          'Shell tool (run_shell_command) rated by the auto-rater (approvals: assisted); ' +
             'anything it does not rate safe is still escalated to you.'
         );
       });
@@ -652,7 +652,7 @@ describe('GthLangChainAgent', () => {
           expect(statusUpdateCallback).toHaveBeenCalledWith(
             StatusLevel.WARNING,
             'Shell tool (run_shell_command): commands run without asking and without rating ' +
-              '(approvals: bypass). Only your deny list still applies — type /approvals auto-safe ' +
+              '(approvals: bypass). Only your deny list still applies — type /approvals assisted ' +
               'to rate commands again.'
           );
         }

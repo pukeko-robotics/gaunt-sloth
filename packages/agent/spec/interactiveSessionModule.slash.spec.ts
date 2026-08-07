@@ -126,7 +126,7 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
     runnerInstanceMock.cleanup.mockResolvedValue(undefined);
     // CFG-27 — the runner owns the posture; the module reads back what it LANDED on, so the mock
     // mirrors that contract (set → the module then re-reads getSessionApprovals).
-    let rung = 'auto-safe';
+    let rung = 'assisted';
     runnerInstanceMock.setSessionApprovalRung.mockImplementation((r: string) => {
       rung = r;
       return r;
@@ -233,7 +233,7 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
   // CFG-27 — `/approvals <rung>` is the whole surface. `/auto-approve` and `/bypass-approve`
   // went with the three-mode vocabulary that named them: "auto-approve off" had to mean one of
   // two different rungs, so neither could be mapped onto the ladder honestly.
-  it.each(['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'] as const)(
+  it.each(['manual', 'write', 'assisted', 'auto', 'bypass'] as const)(
     '/approvals %s switches the session rung and reports the §10 description',
     async (rung) => {
       await runSession(`/approvals ${rung}`, 'exit');
@@ -254,7 +254,7 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
     await runSession('/approvals', 'exit');
     expect(runnerInstanceMock.setSessionApprovalRung).not.toHaveBeenCalled();
     const out = allOutput();
-    expect(out).toContain('Approvals: Auto safe');
+    expect(out).toContain('Approvals: Assisted');
     expect(out).toContain('Auto-rater:');
   });
 
@@ -266,10 +266,25 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
     expect(runnerInstanceMock.setSessionApprovalRung).not.toHaveBeenCalled();
   });
 
-  it('the retired `auto` / `ask` spellings are NOT accepted as rung aliases', async () => {
-    await runSession('/approvals auto', 'exit');
+  it('the retired mode spellings are NOT accepted as aliases', async () => {
+    for (const retired of ['read-only', 'auto-safe', 'full-auto', 'ask']) {
+      await runSession(`/approvals ${retired}`, 'exit');
+      expect(allOutput()).toContain(`Unknown option: ${retired}`);
+    }
     expect(runnerInstanceMock.setSessionApprovalRung).not.toHaveBeenCalled();
-    expect(allOutput()).toContain('Unknown option: auto');
+  });
+
+  /**
+   * CFG-39 — the readline session is a NON-TTY surface, so `/approvals` with no argument must
+   * still answer in text: the mode in force plus the selectable list. It is the fallback the
+   * interactive picker replaces only on the TUI.
+   */
+  it('`/approvals` with no argument prints the current mode and the selectable list', async () => {
+    await runSession('/approvals', 'exit');
+    const output = allOutput();
+    for (const label of ['Manual', 'Assisted', 'Auto', 'Bypass']) expect(output).toContain(label);
+    expect(output).toContain('/approvals write');
+    expect(runnerInstanceMock.setSessionApprovalRung).not.toHaveBeenCalled();
   });
 
   // CFG-26 — deleted pre-beta with NO deprecation alias.

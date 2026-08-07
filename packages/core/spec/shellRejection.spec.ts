@@ -42,7 +42,7 @@ describe('§7 rejection message', () => {
   });
 
   it('omits the explanation at the unrated rungs, where there is no rating at all', () => {
-    // read-only / write consult no model, so there is nothing to quote — but the moves still apply.
+    // manual / write consult no model, so there is nothing to quote — but the moves still apply.
     const message = buildRejectionMessage({ source: 'user', toolName: 'run_shell_command' });
     expect(message).not.toContain('Explanation:');
     expect(message).toContain(REJECTION_MOVES);

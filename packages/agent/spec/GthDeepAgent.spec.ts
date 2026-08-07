@@ -2,6 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SystemMessage } from '@langchain/core/messages';
 import { GraphInterrupt } from '@langchain/langgraph';
 import type { GthConfig } from '#src/config.js';
+// The rung sweeps below iterate the union itself, so a sixth mode is swept here automatically
+// rather than being silently skipped until someone remembers to extend a hand-written list.
+// Imported from the policy module directly, NOT the `config.js` barrel: the barrel is vi.mock'd
+// below with an `importOriginal` factory, and a static import of it here would pull the mocked
+// module graph before the hoisted factories' variables exist.
+import { APPROVAL_RUNGS } from '@gaunt-sloth/core/config/shell-policy.js';
 import { buildPermissions } from '#src/core/deepAgentPermissions.js';
 import * as deepAgentPermissions from '#src/core/deepAgentPermissions.js';
 
@@ -774,13 +780,13 @@ describe('GthDeepAgent', () => {
   );
 
   /**
-   * [[EXT-80]] — at `read-only` and `write` the interrupt takes every bound tool the rung does not
+   * [[EXT-80]] — at `manual` and `write` the interrupt takes every bound tool the rung does not
    * auto-grant, not just the shell.
    *
    * The load-bearing part on THIS backend: deepagents registers its own filesystem tools and
    * `execute` itself, so they never appear in the array gsloth passes to `createDeepAgent`.
    * Deriving the gated set from that array alone would leave `write_file`, `edit_file` and
-   * `execute` ungated here — the very defect at `read-only`. Gating them by NAME works because
+   * `execute` ungated here — the very defect at `manual`. Gating them by NAME works because
    * deepagents installs the same langchain `humanInTheLoopMiddleware`, which matches the model's
    * tool calls by name in `afterModel` and does not care who registered the tool.
    */
@@ -814,7 +820,7 @@ describe('GthDeepAgent', () => {
     ];
 
     it("wires deepagents' OWN write tools, execute, task and write_todos", async () => {
-      const interruptOn = await initAt('read-only', 'code', [fakeTool('my_custom_tool')]);
+      const interruptOn = await initAt('manual', 'code', [fakeTool('my_custom_tool')]);
 
       expect(Object.keys(interruptOn ?? {}).sort()).toEqual(EVERY_GATEABLE_TOOL);
       // The read tools deepagents registers stay out — no rung gates them.
@@ -825,20 +831,17 @@ describe('GthDeepAgent', () => {
 
     /**
      * **The property the mid-session switch rests on, on this backend.** deepagents builds the
-     * graph once with this `interruptOn`; `/approvals read-only` does not rebuild it. A set that
+     * graph once with this `interruptOn`; `/approvals manual` does not rebuild it. A set that
      * differed by rung would be frozen on the rung the session started at — and the default is
-     * `auto-safe`, so the ordinary route to the strict mode is exactly the one that would stay
+     * `assisted`, so the ordinary route to the strict mode is exactly the one that would stay
      * ungated. What each rung then GRANTS is decided per call by `GthAgentRunner`, asserted on a
      * real graph in core's `approvalRungTransition.spec.ts`.
      */
-    it.each(['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'])(
-      'wires the same rung-independent set at %s',
-      async (rung) => {
-        const interruptOn = await initAt(rung, 'code', [fakeTool('my_custom_tool')]);
+    it.each(APPROVAL_RUNGS)('wires the same rung-independent set at %s', async (rung) => {
+      const interruptOn = await initAt(rung, 'code', [fakeTool('my_custom_tool')]);
 
-        expect(Object.keys(interruptOn ?? {}).sort()).toEqual(EVERY_GATEABLE_TOOL);
-      }
-    );
+      expect(Object.keys(interruptOn ?? {}).sort()).toEqual(EVERY_GATEABLE_TOOL);
+    });
 
     /**
      * [[EXT-80]] review finding — `task` and `write_todos` are registered by deepagents'
@@ -848,13 +851,13 @@ describe('GthDeepAgent', () => {
      * `task` is the one that matters: it delegates to a subagent.
      */
     it('gates task and write_todos, which no gsloth-supplied array ever contains', async () => {
-      const interruptOn = await initAt('read-only', 'code', []);
+      const interruptOn = await initAt('manual', 'code', []);
 
       expect(interruptOn).toHaveProperty('task');
       expect(interruptOn).toHaveProperty('write_todos');
     });
 
-    it('gates an MCP tool at read-only whatever its readOnlyHint says', async () => {
+    it('gates an MCP tool at manual whatever its readOnlyHint says', async () => {
       const readOnlyMcp = fakeTool('mcp__docs__search', {
         mcp: { serverName: 'docs', annotations: { readOnlyHint: true } },
       });
@@ -862,16 +865,16 @@ describe('GthDeepAgent', () => {
         mcp: { serverName: 'jira', annotations: { readOnlyHint: false } },
       });
 
-      const interruptOn = await initAt('read-only', 'code', [readOnlyMcp, writingMcp]);
+      const interruptOn = await initAt('manual', 'code', [readOnlyMcp, writingMcp]);
 
       expect(interruptOn).toHaveProperty('mcp__docs__search');
       expect(interruptOn).toHaveProperty('mcp__jira__create_issue');
     });
 
-    it('installs an interrupt at read-only on chat, where no shell gate exists', async () => {
+    it('installs an interrupt at manual on chat, where no shell gate exists', async () => {
       // `chat` wires no shell gate, so keying the install off `gateShell` would leave a chat
-      // session's MCP and custom tools ungated while `read-only` promised they would be asked about.
-      const interruptOn = await initAt('read-only', 'chat', [fakeTool('mcp__docs__search')]);
+      // session's MCP and custom tools ungated while `manual` promised they would be asked about.
+      const interruptOn = await initAt('manual', 'chat', [fakeTool('mcp__docs__search')]);
 
       expect(interruptOn).toBeDefined();
       expect(Object.keys(interruptOn ?? {}).sort()).toEqual([
@@ -887,8 +890,9 @@ describe('GthDeepAgent', () => {
 
     /**
      * **A surface that answers no approval must not be handed an interrupt** — and the AG-UI server
-     * is THIS backend (`apiAgUiModule` constructs a `GthDeepAgent`), so the property has to be
-     * asserted here and not only on the lean one.
+     * can run on THIS backend (`apiAgUiModule.createConfiguredAgent` builds a `GthDeepAgent` when
+     * `agent.backend === 'deep'`), so the property has to be asserted here as well as on the lean
+     * backend, which is the default and serves every other configuration.
      *
      * That server drives the agent directly and never drains a suspended graph, so an interrupt it
      * cannot answer stops the tool from running at all: the call is parked, the client is never
@@ -897,7 +901,7 @@ describe('GthDeepAgent', () => {
      *
      * **Swept over every rung, and the sweep is the assertion.** `commands.api.approvals` is a
      * first-class schema field and a root-level `approvals` reaches `api` as well, so an ordinary
-     * config puts this surface on `read-only` or `write` — the two rungs where the LIVE gated set
+     * config puts this surface on `manual` or `write` — the two rungs where the LIVE gated set
      * is non-empty and therefore carries exactly the same trap. Pinned to the default rung alone
      * this property cannot fail, because the default is the one rung where every candidate set is
      * already empty. The per-rung control is the `code` sweep above, which wires the full set at
@@ -909,7 +913,7 @@ describe('GthDeepAgent', () => {
      * nothing asked, the call succeeds, and the model cannot discover the sentence was false. §4.5
      * rates that worse than carrying no description at all.
      */
-    it.each(['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'])(
+    it.each(APPROVAL_RUNGS)(
       'neither interrupts nor announces an approval on api at %s',
       async (rung) => {
         const custom = fakeTool('my_custom_tool');
@@ -925,24 +929,24 @@ describe('GthDeepAgent', () => {
 
     it('CONTROL: the same rung and tools on code DO get the interrupt', async () => {
       // Without this, the cell above would pass on a build that installed no interrupt anywhere.
-      const interruptOn = await initAt('auto-safe', 'code', [fakeTool('my_custom_tool')]);
+      const interruptOn = await initAt('assisted', 'code', [fakeTool('my_custom_tool')]);
 
       expect(Object.keys(interruptOn ?? {}).sort()).toEqual(EVERY_GATEABLE_TOOL);
     });
 
-    it('CONTROL: on code at read-only the same tool IS interrupted AND IS announced', async () => {
+    it('CONTROL: on code at manual the same tool IS interrupted AND IS announced', async () => {
       // The description half needs its own control at a rung that actually gates the tool:
-      // `auto-safe` above grants an unclassed tool, so nothing is suffixed there on any command.
+      // `assisted` above grants an unclassed tool, so nothing is suffixed there on any command.
       const custom = fakeTool('my_custom_tool');
 
-      const interruptOn = await initAt('read-only', 'code', [custom]);
+      const interruptOn = await initAt('manual', 'code', [custom]);
 
       expect(Object.keys(interruptOn ?? {}).sort()).toEqual(EVERY_GATEABLE_TOOL);
       expect(custom.description).not.toBe('my_custom_tool');
     });
 
     it('carries the approve/reject decision shape onto every newly gated tool', async () => {
-      const interruptOn = await initAt('read-only', 'code', [fakeTool('my_custom_tool')]);
+      const interruptOn = await initAt('manual', 'code', [fakeTool('my_custom_tool')]);
 
       for (const value of Object.values(interruptOn ?? {})) {
         expect(value).toEqual({ allowedDecisions: ['approve', 'reject'] });

@@ -256,11 +256,19 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
    *    enters the approvals stack, and it enters as a claim: nothing here decides whether it is
    *    believed.
    *
-   * `gatedTools` MUST be the same set the caller wires into the approval interrupt
-   * (`humanInTheLoopMiddleware`'s `interruptOn` on lean, deepagents' `interruptOn` on deep). That
-   * shared parameter is what makes it impossible for a description to promise an approval the gate
-   * will not ask for — §4.5's "a description that disagrees with what the gate will actually do is
-   * worse than no description at all".
+   * `gatedTools` MUST be the **LIVE gated set for the rung in force** — `resolveGatedToolNames` for
+   * that rung — and NOT the set the caller wires into the approval interrupt. The two are different
+   * on purpose: the interrupt is installed once, at agent init, and is deliberately
+   * rung-independent (`resolveInterruptToolNames`, the union over every rung) so that
+   * `/approvals <mode>` can move the mode underneath it for the rest of the session. Passing that
+   * wider set here would describe tools as needing approval that the live mode does not gate — and
+   * a call the live mode does not gate is auto-approved the moment it reaches the runner, so the
+   * sentence would be a promise nothing keeps.
+   *
+   * What keeps a description from promising an approval the gate will not ask for is therefore that
+   * both this and `GthAgentRunner`'s own check are projections of the SAME rule,
+   * `isToolGatedAtRung`, evaluated against the SAME live mode — §4.5's "a description that disagrees
+   * with what the gate will actually do is worse than no description at all".
    *
    * `additionalToolNames` covers tools the graph builder registers itself and that therefore never
    * appear in `tools` — deepagents' own filesystem tools on the deep backend. Their descriptions

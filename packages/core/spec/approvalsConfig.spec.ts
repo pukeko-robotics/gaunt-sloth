@@ -17,7 +17,7 @@ import type { GthCommand } from '#src/core/types.js';
 /**
  * CFG-27 — `resolveApprovals` is the ONE place the `approvals` value is turned into a posture.
  *
- * There is deliberately NO context matrix left to pin: §1.1 makes `auto-safe` the default in
+ * There is deliberately NO context matrix left to pin: §1.1 makes `assisted` the default in
  * EVERY context, interactive or not, and it does not vary with the configured model. What varies
  * without a human is what an escalation DOES (§6.2 — the runner exits instead of prompting), not
  * which rung the session starts on. So the resolver neither detects nor accepts a "context", and
@@ -48,10 +48,10 @@ const decisionFor = (
   )?.action;
 
 describe('resolveApprovals (CFG-27 ladder)', () => {
-  describe('§1.1 — the default rung is auto-safe, everywhere', () => {
-    it.each(ALL_COMMANDS)('%s with no `approvals` key resolves to auto-safe', (command) => {
+  describe('§1.1 — the default rung is assisted, everywhere', () => {
+    it.each(ALL_COMMANDS)('%s with no `approvals` key resolves to assisted', (command) => {
       expect(resolveApprovals(undefined, command)).toEqual({
-        rung: 'auto-safe',
+        rung: 'assisted',
         rater: undefined,
         allow: [],
         deny: [],
@@ -59,9 +59,9 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       });
     });
 
-    it('is auto-safe for an unknown/absent command too', () => {
-      expect(resolveApprovals(undefined, undefined).rung).toBe('auto-safe');
-      expect(DEFAULT_APPROVAL_RUNG).toBe('auto-safe');
+    it('is assisted for an unknown/absent command too', () => {
+      expect(resolveApprovals(undefined, undefined).rung).toBe('assisted');
+      expect(DEFAULT_APPROVAL_RUNG).toBe('assisted');
     });
 
     it('takes no context/TTY argument at all — there is no second default to disagree with', () => {
@@ -104,7 +104,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       pattern: 'npm publish*',
     };
     const SCALAR_OVERRIDE_CONFIG = {
-      approvals: { mode: 'auto-safe', deny: [ROOT_DENY] },
+      approvals: { mode: 'assisted', deny: [ROOT_DENY] },
       commands: { code: { approvals: 'bypass' } },
     } as unknown as ApprovalsInput;
 
@@ -122,7 +122,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
     it('the scalar sets the rung and NOTHING else — rater and raterTimeoutMs inherit', () => {
       const resolved = resolveApprovals(
         {
-          approvals: { mode: 'auto-safe', rater: 'safety-rater', raterTimeoutMs: 90_000 },
+          approvals: { mode: 'assisted', rater: 'safety-rater', raterTimeoutMs: 90_000 },
           commands: { code: { approvals: 'bypass' } },
         } as unknown as ApprovalsInput,
         'code'
@@ -137,7 +137,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       // which a resolver that ignored the per-command block entirely would also satisfy.
       const resolved = resolveApprovals(
         {
-          approvals: { mode: 'auto-safe', rater: 'safety-rater', raterTimeoutMs: 90_000 },
+          approvals: { mode: 'assisted', rater: 'safety-rater', raterTimeoutMs: 90_000 },
           commands: { code: { approvals: { rater: 'strict-rater', raterTimeoutMs: 5_000 } } },
         } as unknown as ApprovalsInput,
         'code'
@@ -145,13 +145,13 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       expect(resolved.rater).toBe('strict-rater');
       expect(resolved.raterTimeoutMs).toBe(5_000);
       // `mode` was not named, so it is inherited rather than reset to the default.
-      expect(resolved.rung).toBe('auto-safe');
+      expect(resolved.rung).toBe('assisted');
     });
 
     it('an explicit per-command deny ADDS to the root deny rather than replacing it', () => {
       const resolved = resolveApprovals(
         {
-          approvals: { mode: 'auto-safe', deny: [ROOT_DENY] },
+          approvals: { mode: 'assisted', deny: [ROOT_DENY] },
           commands: {
             code: {
               approvals: {
@@ -176,7 +176,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       const resolved = resolveApprovals(
         {
           approvals: {
-            mode: 'auto-safe',
+            mode: 'assisted',
             escalate: [{ type: 'shell', matcher: 'exact', pattern: 'terraform apply' }],
           },
           commands: {
@@ -212,7 +212,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       it("a per-command allow REPLACES the root's", () => {
         const resolved = resolveApprovals(
           {
-            approvals: { mode: 'auto-safe', allow: [ROOT_ALLOW], deny: [ROOT_DENY] },
+            approvals: { mode: 'assisted', allow: [ROOT_ALLOW], deny: [ROOT_DENY] },
             commands: {
               code: {
                 approvals: {
@@ -238,7 +238,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
         // which a resolver that ignored `allow` entirely would satisfy just as well.
         const resolved = resolveApprovals(
           {
-            approvals: { mode: 'auto-safe', allow: [ROOT_ALLOW] },
+            approvals: { mode: 'assisted', allow: [ROOT_ALLOW] },
             commands: { code: { approvals: 'write' } },
           } as unknown as ApprovalsInput,
           'code'
@@ -248,16 +248,16 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       });
 
       it('the measured regression: a restrictive rung with its own allow does NOT inherit', () => {
-        // The case that motivated the amendment, in its own words: `pr` is set to `read-only`
+        // The case that motivated the amendment, in its own words: `pr` is set to `manual`
         // precisely because it should ask, and §2.1 applies the allow-list at that rung — so an
         // inherited root grant would auto-approve there exactly what the rung was chosen to stop.
         const resolved = resolveApprovals(
           {
-            approvals: { mode: 'auto-safe', allow: [ROOT_ALLOW] },
+            approvals: { mode: 'assisted', allow: [ROOT_ALLOW] },
             commands: {
               pr: {
                 approvals: {
-                  mode: 'read-only',
+                  mode: 'manual',
                   allow: [{ type: 'shell', matcher: 'exact', pattern: 'git status' }],
                 },
               },
@@ -265,7 +265,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
           } as unknown as ApprovalsInput,
           'pr'
         );
-        expect(resolved.rung).toBe('read-only'); // CONTROL — the rung really is the restrictive one
+        expect(resolved.rung).toBe('manual'); // CONTROL — the rung really is the restrictive one
         expect(decisionFor('npm test', resolved)).toBeUndefined();
         expect(decisionFor('git status', resolved)).toBe('allow');
       });
@@ -275,7 +275,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
         // truthiness check would read it as "said nothing" and hand back the root's list.
         const resolved = resolveApprovals(
           {
-            approvals: { mode: 'auto-safe', allow: [ROOT_ALLOW] },
+            approvals: { mode: 'assisted', allow: [ROOT_ALLOW] },
             commands: { code: { approvals: { allow: [] } } },
           } as unknown as ApprovalsInput,
           'code'
@@ -307,11 +307,11 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       it("a per-command mcp REPLACES the root's, and does not inherit its servers", () => {
         const resolved = resolveApprovals(
           {
-            approvals: { mode: 'auto-safe', mcp: ROOT_MCP, deny: [ROOT_DENY] },
+            approvals: { mode: 'assisted', mcp: ROOT_MCP, deny: [ROOT_DENY] },
             commands: {
               pr: {
                 approvals: {
-                  mode: 'read-only',
+                  mode: 'manual',
                   mcp: { servers: { confluence: { trustAnnotations: ['readOnlyHint'] } } },
                 },
               },
@@ -319,7 +319,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
           } as unknown as ApprovalsInput,
           'pr'
         );
-        expect(resolved.rung).toBe('read-only'); // CONTROL — the per-command value really applied
+        expect(resolved.rung).toBe('manual'); // CONTROL — the per-command value really applied
         expect(jiraReadOnly(resolved)).toBe(false);
         // CONTROL — narrowing trust did not weaken the restrictive list.
         expect(decisionFor('npm publish --access public', resolved)).toBe('deny');
@@ -330,7 +330,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
         // which a resolver that ignored `mcp` entirely would satisfy just as well.
         const resolved = resolveApprovals(
           {
-            approvals: { mode: 'auto-safe', mcp: ROOT_MCP },
+            approvals: { mode: 'assisted', mcp: ROOT_MCP },
             commands: { code: { approvals: 'write' } },
           } as unknown as ApprovalsInput,
           'code'
@@ -342,7 +342,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       it('an EXPLICIT empty mcp believes nothing — it is a statement, not a silence', () => {
         const resolved = resolveApprovals(
           {
-            approvals: { mode: 'auto-safe', mcp: ROOT_MCP },
+            approvals: { mode: 'assisted', mcp: ROOT_MCP },
             commands: { code: { approvals: { mcp: {} } } },
           } as unknown as ApprovalsInput,
           'code'
@@ -352,7 +352,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
 
       it('is left undefined when no scope states one, so the config snapshot does not churn', () => {
         expect(
-          resolveApprovals({ approvals: 'auto-safe' } as ApprovalsInput, 'code').mcp
+          resolveApprovals({ approvals: 'assisted' } as ApprovalsInput, 'code').mcp
         ).toBeUndefined();
       });
     });
@@ -368,18 +368,18 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
 
     it('a command with NO per-command block sees exactly the root value', () => {
       const resolved = resolveApprovals(SCALAR_OVERRIDE_CONFIG, 'review');
-      expect(resolved.rung).toBe('auto-safe');
+      expect(resolved.rung).toBe('assisted');
       expect(resolved.deny).toEqual([ROOT_DENY]);
     });
 
     it('a per-command scalar sets the rung for that command only (the §9 example)', () => {
       const config = {
-        approvals: 'full-auto',
-        commands: { pr: { approvals: 'read-only' }, review: { approvals: 'read-only' } },
+        approvals: 'auto',
+        commands: { pr: { approvals: 'manual' }, review: { approvals: 'manual' } },
       } as unknown as ApprovalsInput;
-      expect(resolveApprovals(config, 'pr').rung).toBe('read-only');
-      expect(resolveApprovals(config, 'review').rung).toBe('read-only');
-      expect(resolveApprovals(config, 'code').rung).toBe('full-auto');
+      expect(resolveApprovals(config, 'pr').rung).toBe('manual');
+      expect(resolveApprovals(config, 'review').rung).toBe('manual');
+      expect(resolveApprovals(config, 'code').rung).toBe('auto');
     });
 
     it('a root value applies to a one-shot command too — the default is defaults ONLY', () => {
@@ -392,7 +392,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
   describe('§9.1 — rater is a bare profile name; the three lists are read-only input', () => {
     it('carries the rater profile through as a plain string', () => {
       const resolved = resolveApprovals(
-        { approvals: { mode: 'auto-safe', rater: 'safety-rater' } } as ApprovalsInput,
+        { approvals: { mode: 'assisted', rater: 'safety-rater' } } as ApprovalsInput,
         'code'
       );
       expect(resolved.rater).toBe('safety-rater');
@@ -417,7 +417,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
         { type: 'mcpTool', server: '*', matcher: 'hint', pattern: { destructiveHint: true } },
       ];
       const resolved = resolveApprovals(
-        { approvals: { mode: 'auto-safe', allow, deny, escalate } } as ApprovalsInput,
+        { approvals: { mode: 'assisted', allow, deny, escalate } } as ApprovalsInput,
         'code'
       );
       expect(resolved.allow).toEqual(allow);
@@ -428,24 +428,25 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
 
   describe('the rung vocabulary', () => {
     it('is exactly the five ordered rungs', () => {
-      expect([...APPROVAL_RUNGS]).toEqual([
-        'read-only',
-        'write',
-        'auto-safe',
-        'full-auto',
-        'bypass',
-      ]);
+      expect([...APPROVAL_RUNGS]).toEqual(['manual', 'write', 'assisted', 'auto', 'bypass']);
     });
 
-    it('rates at auto-safe and full-auto only — rungs 1, 2 and 5 consult no model', () => {
-      expect(APPROVAL_RUNGS.filter(isRatedRung)).toEqual(['auto-safe', 'full-auto']);
+    it('rates at assisted and auto only — rungs 1, 2 and 5 consult no model', () => {
+      expect(APPROVAL_RUNGS.filter(isRatedRung)).toEqual(['assisted', 'auto']);
     });
 
-    it('recognises only the five kebab-case identifiers (the retired ones are not aliases)', () => {
+    it('recognises only the five identifiers (the retired spellings are not aliases)', () => {
       for (const rung of APPROVAL_RUNGS) expect(isApprovalRung(rung)).toBe(true);
-      for (const retired of ['auto', 'ask', 'yolo', 'Read only', '']) {
+      // CFG-39 — the three renamed spellings, plus the pre-2.0 vocabulary, a display label and the
+      // empty string. `auto` is deliberately NOT in this list: it is a live identifier now, and the
+      // cell below pins that.
+      for (const retired of ['read-only', 'auto-safe', 'full-auto', 'ask', 'yolo', 'Manual', '']) {
         expect(isApprovalRung(retired)).toBe(false);
       }
+    });
+
+    it('CFG-39: "auto" is a live identifier, not a retired one', () => {
+      expect(isApprovalRung('auto')).toBe(true);
     });
 
     it('§9.1 — identifiers are kebab-case and survive a shell; labels keep their spaces', () => {
@@ -453,9 +454,9 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
         expect(rung).toMatch(/^[a-z]+(-[a-z]+)*$/);
         expect(APPROVAL_RUNG_LABELS[rung]).toBeTruthy();
       }
-      expect(APPROVAL_RUNG_LABELS['read-only']).toBe('Read only');
-      expect(APPROVAL_RUNG_LABELS['auto-safe']).toBe('Auto safe');
-      expect(APPROVAL_RUNG_LABELS['full-auto']).toBe('Full auto');
+      expect(APPROVAL_RUNG_LABELS['manual']).toBe('Manual');
+      expect(APPROVAL_RUNG_LABELS['assisted']).toBe('Assisted');
+      expect(APPROVAL_RUNG_LABELS['auto']).toBe('Auto');
     });
   });
 
@@ -465,22 +466,22 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
    * well-meaning edit that breaks one of them fails here rather than in review.
    */
   describe('§10 — the user-facing descriptions', () => {
-    it('rule 1: auto-safe states that files are STILL rewritten and deleted without asking', () => {
-      const text = APPROVAL_RUNG_DESCRIPTIONS['auto-safe'];
+    it('rule 1: assisted states that files are STILL rewritten and deleted without asking', () => {
+      const text = APPROVAL_RUNG_DESCRIPTIONS['assisted'];
       expect(text).toContain('rewrite and delete files in your working folder without asking');
       expect(text).toContain('not that nothing changes');
     });
 
     it('rule 2: every rung that asks for approval states the always-allow carve-out', () => {
-      for (const rung of ['read-only', 'write'] as const) {
+      for (const rung of ['manual', 'write'] as const) {
         expect(APPROVAL_RUNG_DESCRIPTIONS[rung]).toContain(
           'until you tell it to always allow a command'
         );
       }
     });
 
-    it('rule 3: full-auto is safer than bypass and explicitly NOT safe, and points at real gates', () => {
-      const text = APPROVAL_RUNG_DESCRIPTIONS['full-auto'];
+    it('rule 3: auto is safer than bypass and explicitly NOT safe, and points at real gates', () => {
+      const text = APPROVAL_RUNG_DESCRIPTIONS['auto'];
       expect(text).toContain('safer than bypass');
       expect(text).toContain('it is not safe');
       expect(text).toContain('deployment approvals, two-factor, branch protection');
@@ -494,8 +495,8 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
      * false: a secret handed to a working tool rates `destructive`, so it comes to the user rather
      * than ending the run. A description may only promise what the scale actually delivers.
      */
-    it('rule 3: full-auto describes what the rater tests for, not an outcome it cannot guarantee', () => {
-      const text = APPROVAL_RUNG_DESCRIPTIONS['full-auto'];
+    it('rule 3: auto describes what the rater tests for, not an outcome it cannot guarantee', () => {
+      const text = APPROVAL_RUNG_DESCRIPTIONS['auto'];
       expect(text).toContain('brings anything it cannot undo to you');
       expect(text).toContain('reads your keys or passwords');
     });
@@ -505,13 +506,27 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
         expect(APPROVAL_RUNG_DESCRIPTIONS[rung]).not.toMatch(/hardline|floor|blocklist/i);
       }
       expect(APPROVAL_RUNG_DESCRIPTIONS.bypass).toContain('deny list');
-      expect(APPROVAL_RUNG_DESCRIPTIONS['full-auto']).toContain('deny list');
+      expect(APPROVAL_RUNG_DESCRIPTIONS['auto']).toContain('deny list');
     });
 
-    it('rule 4: the kebab-case identifiers never appear in the prose', () => {
+    /**
+     * CFG-39 — rule 4 used to be spelled "the kebab-case identifiers never appear in the prose",
+     * and a substring test could enforce it because `read-only` / `auto-safe` / `full-auto` were
+     * not words anyone would write. The renamed identifiers ARE ordinary words, and two of them
+     * legitimately occur in this copy — "the auto-rater" contains `auto`, and `assisted`'s own
+     * sentence refers to what `write` grants. So a substring test now asserts something false
+     * rather than something useful.
+     *
+     * What it is re-pointed at is the failure the rename actually threatens: a RETIRED spelling
+     * surviving in copy the user reads, which would name a mode the gate no longer has.
+     */
+    it('rule 4: no retired mode spelling survives in the prose', () => {
       for (const rung of APPROVAL_RUNGS) {
-        for (const identifier of ['read-only', 'auto-safe', 'full-auto']) {
-          expect(APPROVAL_RUNG_DESCRIPTIONS[rung]).not.toContain(identifier);
+        for (const retired of ['read-only', 'auto-safe', 'full-auto']) {
+          expect(
+            APPROVAL_RUNG_DESCRIPTIONS[rung],
+            `${rung}'s description still names the retired spelling "${retired}"`
+          ).not.toContain(retired);
         }
       }
     });

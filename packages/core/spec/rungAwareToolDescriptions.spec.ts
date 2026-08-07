@@ -8,7 +8,7 @@
  *    set** — twice, with the gated set INJECTED both times, because the suffix is a function of the
  *    set and not of any particular caller's. Once with the shell alone, which is what the rated
  *    rungs and `bypass` wire; once with a wide set, which is what the deterministic rungs wire. The
- *    second pass is what makes the rung's access-class rule observable — `read-only` grants read
+ *    second pass is what makes the rung's access-class rule observable — `manual` grants read
  *    tools only, `write` and up also grant write tools.
  *
  *    Which set each rung actually receives is `resolveGatedToolNames`' job and is pinned in
@@ -109,23 +109,23 @@ function suffixedNames(tools: { name: string; description: string }[]): Record<s
 
 describe('§4.5 suffix table', () => {
   it('carries the four wordings verbatim, with bypass appending nothing', () => {
-    // read-only and write share one sentence: at both rungs the user's approval is a certainty.
-    expect(SUFFIX['read-only']).toBe(
+    // manual and write share one sentence: at both rungs the user's approval is a certainty.
+    expect(SUFFIX['manual']).toBe(
       "Calling this tool will require the user's approval. Only use it when the result cannot be " +
         'achieved with the other provided tools.'
     );
-    expect(SUFFIX.write).toBe(SUFFIX['read-only']);
-    expect(SUFFIX['auto-safe']).toBe(
+    expect(SUFFIX.write).toBe(SUFFIX['manual']);
+    expect(SUFFIX['assisted']).toBe(
       "Calling this tool MAY require the user's approval if it does not look safe. Only use it " +
         'when it is impossible to achieve the result with the other provided tools.'
     );
-    // full-auto has its OWN wording: the user is not asked there, so promising the user's
+    // auto has its OWN wording: the user is not asked there, so promising the user's
     // approval would be false — what can happen is a refusal by the rater.
-    expect(SUFFIX['full-auto']).toBe(
+    expect(SUFFIX['auto']).toBe(
       'Calling this tool MAY be refused by the auto-rater if it does not look safe. Only use it ' +
         'when it is impossible to achieve the result with the other provided tools.'
     );
-    expect(SUFFIX['full-auto']).not.toContain("user's approval");
+    expect(SUFFIX['auto']).not.toContain("user's approval");
     expect(SUFFIX.bypass).toBeNull();
   });
 
@@ -135,15 +135,15 @@ describe('§4.5 suffix table', () => {
 });
 
 describe('§4.5 registration matrix — a shell-only gated set (what the rated rungs wire)', () => {
-  // At `auto-safe`, `full-auto` and `bypass` the gated set is the shell alone, so the shell is the
+  // At `assisted`, `auto` and `bypass` the gated set is the shell alone, so the shell is the
   // only tool that can carry a sentence. A tool the gate does not gate cannot require approval.
   const gatedTools = [SHELL_TOOL_NAME];
 
   it.each([
-    ['read-only', SUFFIX['read-only']],
+    ['manual', SUFFIX['manual']],
     ['write', SUFFIX.write],
-    ['auto-safe', SUFFIX['auto-safe']],
-    ['full-auto', SUFFIX['full-auto']],
+    ['assisted', SUFFIX['assisted']],
+    ['auto', SUFFIX['auto']],
   ] as const)('at %s exactly the gated shell carries the sentence', (rung, expected) => {
     const tools = freshTools();
     applyRungAwareToolDescriptions(tools, { rung: rung as ApprovalRung, gatedTools });
@@ -162,7 +162,7 @@ describe('§4.5 registration matrix — a shell-only gated set (what the rated r
 
 describe('§4.5 registration matrix — with a wide gated set (what the deterministic rungs wire)', () => {
   // The rung's own access-class rule, made observable: with everything but the read tools gated,
-  // `read-only` and `write` differ in WHICH tools are granted.
+  // `manual` and `write` differ in WHICH tools are granted.
   const gatedTools = [
     SHELL_TOOL_NAME,
     'read_file',
@@ -176,24 +176,24 @@ describe('§4.5 registration matrix — with a wide gated set (what the determin
     'mcp__srv__query',
   ];
 
-  it('at read-only the read tools are granted and the write tools are not', () => {
+  it('at manual the read tools are granted and the write tools are not', () => {
     const tools = freshTools();
-    applyRungAwareToolDescriptions(tools, { rung: 'read-only', gatedTools });
+    applyRungAwareToolDescriptions(tools, { rung: 'manual', gatedTools });
     expect(suffixedNames(tools)).toEqual({
-      write_file: SUFFIX['read-only'],
-      edit_file: SUFFIX['read-only'],
-      delete_file: SUFFIX['read-only'],
-      gth_web_fetch: SUFFIX['read-only'],
-      run_tests: SUFFIX['read-only'],
-      mcp__srv__query: SUFFIX['read-only'],
-      [SHELL_TOOL_NAME]: SUFFIX['read-only'],
+      write_file: SUFFIX['manual'],
+      edit_file: SUFFIX['manual'],
+      delete_file: SUFFIX['manual'],
+      gth_web_fetch: SUFFIX['manual'],
+      run_tests: SUFFIX['manual'],
+      mcp__srv__query: SUFFIX['manual'],
+      [SHELL_TOOL_NAME]: SUFFIX['manual'],
     });
   });
 
   it.each([
     ['write', SUFFIX.write],
-    ['auto-safe', SUFFIX['auto-safe']],
-    ['full-auto', SUFFIX['full-auto']],
+    ['assisted', SUFFIX['assisted']],
+    ['auto', SUFFIX['auto']],
   ] as const)('at %s the read AND write tools are granted', (rung, expected) => {
     const tools = freshTools();
     applyRungAwareToolDescriptions(tools, { rung: rung as ApprovalRung, gatedTools });
@@ -215,12 +215,12 @@ describe('§4.5 registration matrix — with a wide gated set (what the determin
 describe('applyRungAwareToolDescriptions — mechanics', () => {
   it('is idempotent and re-appliable: a second pass replaces, never stacks', () => {
     const tools = freshTools();
-    applyRungAwareToolDescriptions(tools, { rung: 'read-only', gatedTools: [SHELL_TOOL_NAME] });
-    applyRungAwareToolDescriptions(tools, { rung: 'read-only', gatedTools: [SHELL_TOOL_NAME] });
-    expect(suffixedNames(tools)).toEqual({ [SHELL_TOOL_NAME]: SUFFIX['read-only'] });
+    applyRungAwareToolDescriptions(tools, { rung: 'manual', gatedTools: [SHELL_TOOL_NAME] });
+    applyRungAwareToolDescriptions(tools, { rung: 'manual', gatedTools: [SHELL_TOOL_NAME] });
+    expect(suffixedNames(tools)).toEqual({ [SHELL_TOOL_NAME]: SUFFIX['manual'] });
 
-    applyRungAwareToolDescriptions(tools, { rung: 'full-auto', gatedTools: [SHELL_TOOL_NAME] });
-    expect(suffixedNames(tools)).toEqual({ [SHELL_TOOL_NAME]: SUFFIX['full-auto'] });
+    applyRungAwareToolDescriptions(tools, { rung: 'auto', gatedTools: [SHELL_TOOL_NAME] });
+    expect(suffixedNames(tools)).toEqual({ [SHELL_TOOL_NAME]: SUFFIX['auto'] });
 
     // …and dropping to bypass restores the tool's own description exactly.
     applyRungAwareToolDescriptions(tools, { rung: 'bypass', gatedTools: [SHELL_TOOL_NAME] });
@@ -229,7 +229,7 @@ describe('applyRungAwareToolDescriptions — mechanics', () => {
 
   it('leaves nameless tools (provider-native ServerTools) alone', () => {
     const tools = [{ description: 'A provider-native tool with no name.' }];
-    applyRungAwareToolDescriptions(tools, { rung: 'read-only', gatedTools: [SHELL_TOOL_NAME] });
+    applyRungAwareToolDescriptions(tools, { rung: 'manual', gatedTools: [SHELL_TOOL_NAME] });
     expect(tools[0].description).toBe('A provider-native tool with no name.');
   });
 
@@ -240,10 +240,10 @@ describe('applyRungAwareToolDescriptions — mechanics', () => {
   });
 
   it('strips every known wording, including a doubled one from an older build', () => {
-    expect(stripRungToolDescriptionSuffix(`Run it. ${SUFFIX['auto-safe']}`)).toBe('Run it.');
-    expect(
-      stripRungToolDescriptionSuffix(`Run it. ${SUFFIX['read-only']} ${SUFFIX['full-auto']}`)
-    ).toBe('Run it.');
+    expect(stripRungToolDescriptionSuffix(`Run it. ${SUFFIX['assisted']}`)).toBe('Run it.');
+    expect(stripRungToolDescriptionSuffix(`Run it. ${SUFFIX['manual']} ${SUFFIX['auto']}`)).toBe(
+      'Run it.'
+    );
   });
 });
 
@@ -262,7 +262,7 @@ describe('isGrantedAtRung', () => {
   });
 
   it('never grants a gated tool with no access class outside bypass', () => {
-    for (const rung of ['read-only', 'write', 'auto-safe', 'full-auto'] as const) {
+    for (const rung of ['manual', 'write', 'assisted', 'auto'] as const) {
       expect(isGrantedAtRung(SHELL_TOOL_NAME, rung, [SHELL_TOOL_NAME])).toBe(false);
     }
   });
@@ -279,7 +279,7 @@ describe('§4.4 granted-built-in list', () => {
   ];
 
   it('offers only registered built-ins, never the shell, never MCP or custom tools', () => {
-    const granted = describeGrantedBuiltInTools(registered, 'auto-safe', [SHELL_TOOL_NAME]);
+    const granted = describeGrantedBuiltInTools(registered, 'assisted', [SHELL_TOOL_NAME]);
     expect(granted.map((t) => t.name)).toEqual(['read_file', 'write_file', 'gth_grep']);
     // Every description is locally authored text, never a tool's own (possibly hostile) blurb.
     for (const tool of granted) {
@@ -306,14 +306,14 @@ describe('§4.4 granted-built-in list', () => {
   });
 
   it('never offers a tool this session did not register', () => {
-    const granted = describeGrantedBuiltInTools(['read_file'], 'auto-safe', [SHELL_TOOL_NAME]);
+    const granted = describeGrantedBuiltInTools(['read_file'], 'assisted', [SHELL_TOOL_NAME]);
     expect(granted.map((t) => t.name)).toEqual(['read_file']);
   });
 
   it('drops a tool the rung does not grant', () => {
-    // With a widened gate, `write_file` is gated and `read-only` does not grant it — offering it
+    // With a widened gate, `write_file` is gated and `manual` does not grant it — offering it
     // would be offering a tool that would itself need approval.
-    const granted = describeGrantedBuiltInTools(registered, 'read-only', [
+    const granted = describeGrantedBuiltInTools(registered, 'manual', [
       SHELL_TOOL_NAME,
       'write_file',
     ]);
@@ -321,7 +321,7 @@ describe('§4.4 granted-built-in list', () => {
   });
 
   it('returns nothing when no tools are registered', () => {
-    expect(describeGrantedBuiltInTools([], 'auto-safe', [SHELL_TOOL_NAME])).toEqual([]);
+    expect(describeGrantedBuiltInTools([], 'assisted', [SHELL_TOOL_NAME])).toEqual([]);
   });
 });
 
@@ -395,11 +395,11 @@ describe('§4.5 wiring — the suffix follows the RESOLVED rung', () => {
     await agent.init('code', {
       ...baseConfig(),
       approvals: 'bypass',
-      commands: { code: { approvals: 'read-only' } },
+      commands: { code: { approvals: 'manual' } },
     } as unknown as GthConfig);
 
     expect(registeredDescriptions()[SHELL_TOOL_NAME]).toBe(
-      `Run a shell command. ${SUFFIX['read-only']}`
+      `Run a shell command. ${SUFFIX['manual']}`
     );
   });
 
@@ -407,19 +407,19 @@ describe('§4.5 wiring — the suffix follows the RESOLVED rung', () => {
     const agent = new GthLangChainAgent(statusUpdate, resolvers as never);
     await agent.init('code', {
       ...baseConfig(),
-      approvals: 'read-only',
+      approvals: 'manual',
       commands: { code: { approvals: 'bypass' } },
     } as unknown as GthConfig);
 
     expect(registeredDescriptions()[SHELL_TOOL_NAME]).toBe('Run a shell command.');
   });
 
-  it('uses the auto-safe wording at the default rung', async () => {
+  it('uses the assisted wording at the default rung', async () => {
     const agent = new GthLangChainAgent(statusUpdate, resolvers as never);
     await agent.init('code', baseConfig());
 
     expect(registeredDescriptions()[SHELL_TOOL_NAME]).toBe(
-      `Run a shell command. ${SUFFIX['auto-safe']}`
+      `Run a shell command. ${SUFFIX['assisted']}`
     );
   });
 
@@ -427,7 +427,7 @@ describe('§4.5 wiring — the suffix follows the RESOLVED rung', () => {
     // `chat` emits no dev tools, so the shell gate is off; at a rated rung the gated set is the
     // shell alone, so nothing is gated at all and no description may claim otherwise.
     const agent = new GthLangChainAgent(statusUpdate, resolvers as never);
-    await agent.init('chat', { ...baseConfig(), approvals: 'auto-safe' } as GthConfig);
+    await agent.init('chat', { ...baseConfig(), approvals: 'assisted' } as GthConfig);
 
     expect(registeredDescriptions()).toEqual({
       [SHELL_TOOL_NAME]: 'Run a shell command.',
@@ -435,16 +435,16 @@ describe('§4.5 wiring — the suffix follows the RESOLVED rung', () => {
     });
   });
 
-  it('still suffixes a bound tool with no access class at read-only with the shell gate off', async () => {
+  it('still suffixes a bound tool with no access class at manual with the shell gate off', async () => {
     // EXT-80: at a deterministic rung the gated set is derived from the BOUND toolset, not from
     // `gateShell`. A tool with no access class is gated there even on a command that wires no shell
-    // gate — which is what makes `read-only` true for a chat session's MCP and custom tools. The
+    // gate — which is what makes `manual` true for a chat session's MCP and custom tools. The
     // granted read built-in must still carry nothing.
     const agent = new GthLangChainAgent(statusUpdate, resolvers as never);
-    await agent.init('chat', { ...baseConfig(), approvals: 'read-only' } as GthConfig);
+    await agent.init('chat', { ...baseConfig(), approvals: 'manual' } as GthConfig);
 
     expect(registeredDescriptions()).toEqual({
-      [SHELL_TOOL_NAME]: `Run a shell command. ${SUFFIX['read-only']}`,
+      [SHELL_TOOL_NAME]: `Run a shell command. ${SUFFIX['manual']}`,
       read_file: 'Read one file.',
     });
   });

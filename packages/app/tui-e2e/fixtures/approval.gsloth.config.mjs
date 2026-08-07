@@ -77,7 +77,7 @@ export async function configure() {
     // CFG-27 — `write` is set EXPLICITLY, not inherited. This suite exercises the EXT-52 HUMAN
     // approval seam (interrupt → <ApprovalPrompt> → resume), and `write` is the rung that gates
     // the shell while consulting NO model: it always escalates to the human. The default rung
-    // (`auto-safe`) would rate first, and the scripted model above cannot produce a structured
+    // (`assisted`) would rate first, and the scripted model above cannot produce a structured
     // verdict, so it would fail-closed to `destructive` and escalate — the right prompt for the
     // wrong reason, and one that would stop testing the human seam the moment the rating path
     // changed. Rater behaviour belongs in its own coverage, not smuggled into this guard.

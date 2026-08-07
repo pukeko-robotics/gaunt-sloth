@@ -61,7 +61,7 @@ these before you upgrade.
 | Command configs must nest under `commands.*` | A top-level command key (e.g. `pr`) is a validation abort: `Top-level command config "pr" is no longer supported in 2.0. Move it under "commands.pr".` | Move it under `commands.<cmd>` |
 | Per-command `devTools` folded into `builtInTools` | `commands.<cmd>.devTools` is a validation abort: `Config property "devTools" in commands.code is no longer supported in 2.0. Configure tools under "builtInTools" instead.` | Move the dev/shell tools into the `builtInTools` registry (see section G) |
 | Approval knobs moved off `run_shell_command` | `yolo` / `judge` / `allowlist` / `persistAllowlist` on that entry are a validation abort: `Config property "yolo" in builtInTools.run_shell_command is no longer supported in 2.0. Use "approvals": "bypass" instead.` | Move them into the top-level `approvals` setting (see section I) |
-| Approvals became one ladder of five rungs | `approvals.strictness` / `.escalate` / `.allowlist` / `.persistAllowlist`, an object-form `rater`, and the `mode` values `auto` / `ask` are all validation aborts naming the rung that replaced them | Pick a rung: `read-only` · `write` · `auto-safe` · `full-auto` · `bypass` (see section I) |
+| Approvals became one ladder of five modes | `approvals.strictness` / `.escalate` / `.allowlist` / `.persistAllowlist`, an object-form `rater`, and the `mode` values `ask` / `read-only` / `auto-safe` / `full-auto` are all validation aborts naming the mode that replaced them | Pick a mode: `manual` · `write` · `assisted` · `auto` · `bypass` (see section I) |
 | `projectGuidelines` / `projectReviewInstructions` folded into `prompts` | Either key is a validation abort: `Config property "projectGuidelines" was renamed in 2.0. Use "prompts.guidelines" instead.` | `prompts.guidelines` / `prompts.review` (see section H) |
 | Deprecated `*Provider*` config keys | `contentProvider` / `requirementsProvider` (and the `*ProviderConfig` variants) are rejected: `Config property "contentProvider" was renamed in 2.0. Use "contentSource" instead.` | Rename to `contentSource` / `requirementSource` (and `*SourceConfig`) |
 | `--content-provider` / `--requirements-provider` CLI flags removed | Scripts passing those flags error out | `--content-source` / `--requirements-source` (`-p` still aliases `--requirements-source`) |
@@ -412,29 +412,35 @@ its replacement.
 `approvals` is **one ordered ladder of five rungs**. Each rung fully determines behaviour: there are
 no severity thresholds, no strictness levels, and no independent rater switch.
 
-| # | Rung | Rater |
+| # | Mode | Rater |
 | --- | --- | --- |
-| 1 | `read-only` | no |
+| 1 | `manual` | no |
 | 2 | `write` | no |
-| 3 | `auto-safe` (the default) | yes |
-| 4 | `full-auto` | yes |
+| 3 | `assisted` (the default) | yes |
+| 4 | `auto` | yes |
 | 5 | `bypass` | no |
+
+`write` is a variant of `manual` rather than a step of its own: the same posture, with edits inside
+your working folder granted as well as reads. The choice you are really making is
+`manual` → `assisted` → `auto`, plus `bypass`.
 
 ### Old → new
 
 | Old | New |
 | --- | --- |
 | `builtInTools.run_shell_command.yolo: true` | `"approvals": "bypass"` |
-| `builtInTools.run_shell_command.judge: true` | `"approvals": "auto-safe"` |
+| `builtInTools.run_shell_command.judge: true` | `"approvals": "assisted"` |
 | `judge.model` | `approvals.rater` — an **identity profile name**, not a raw model block |
 | `judge.autoApproveLow: false` / `judge.blockHigh` | gone — the rung decides; there are no per-tier knobs |
 | `builtInTools.run_shell_command.allowlist` | `approvals.allow` — a declared list of command prefixes |
 | `builtInTools.run_shell_command.persistAllowlist` | gone — persistence is a per-decision choice at the prompt (*approve* forgets, *always approve* persists) |
-| `approvals.mode: "auto"` | `approvals.mode: "auto-safe"` |
-| `approvals.mode: "ask"` | `approvals.mode: "write"` (the agent still edits files freely) or `"read-only"` (it asks before writing too) |
+| `approvals.mode: "read-only"` | `approvals.mode: "manual"` — the same mode, renamed |
+| `approvals.mode: "auto-safe"` | `approvals.mode: "assisted"` — the same mode, renamed |
+| `approvals.mode: "full-auto"` | `approvals.mode: "auto"` — the same mode, renamed |
+| `approvals.mode: "ask"` | `approvals.mode: "write"` (the agent still edits files freely) or `"manual"` (it asks before writing too) |
 | `approvals.rater: { profile: "x" }` | `approvals.rater: "x"` |
 | `approvals.rater.strictness` | gone — choose a rung instead |
-| `approvals.rater.escalate` | gone — `auto-safe` escalates everything not rated safe; `full-auto` does not stop to ask |
+| `approvals.rater.escalate` | gone — `assisted` escalates everything not rated safe; `auto` does not stop to ask |
 | `approvals.allowlist` / `approvals.persistAllowlist` | `approvals.allow` / gone (as above) |
 | `run_shell_command` keeps | `enabled`, `timeout`, `maxOutputBytes` |
 
@@ -473,7 +479,7 @@ Before:
 After:
 
 ```json
-{ "approvals": "auto-safe" }
+{ "approvals": "assisted" }
 ```
 
 Or, if you want to name the rater's model and declare what it may and may not run:
@@ -481,7 +487,7 @@ Or, if you want to name the rater's model and declare what it may and may not ru
 ```json
 {
   "approvals": {
-    "mode": "auto-safe",
+    "mode": "assisted",
     "rater": "safety-rater",
     "allow": [
       { "type": "shell", "matcher": "exact", "pattern": "npm test" },
@@ -502,7 +508,7 @@ object to write instead. The fields are listed in
 
 **Two behaviour changes to expect.**
 
-1. **The default is `auto-safe` everywhere**, interactive or not, and it does not vary with the
+1. **The default is `assisted` everywhere**, interactive or not, and it does not vary with the
    configured model. Clearly-safe commands run without a prompt, and each gated command costs one
    rater model call. To keep confirming every command yourself, set `"approvals": "write"`.
 2. **Where there is nobody to ask, an escalation exits non-zero** rather than handing the model a
@@ -528,7 +534,7 @@ share one command registry):
   rungs a flip has no unambiguous meaning, which is also why `/auto-approve off` could not survive:
   it had to mean one of two different rungs.
 - `/approvals` shows the current rung, the rater and the allow/deny counts, and switches with
-  `/approvals read-only|write|auto-safe|full-auto|bypass`.
+  `/approvals manual|write|assisted|auto|bypass`.
 
 ## Migration checklist
 
@@ -544,9 +550,12 @@ share one command registry):
 6. Move any `commands.<cmd>.devTools` into the `builtInTools` registry (`run_*` → `{ "command": … }`,
    `shell` → the `run_shell_command` entry) (G).
 7. Replace every approvals knob — `yolo` / `judge` / `allowlist` / `persistAllowlist` on
-   `run_shell_command`, and `strictness` / `escalate` / an object-form `rater` / the `auto` and
-   `ask` modes on `approvals` — with one of the five rungs, plus `approvals.allow` / `.deny` where
-   you need them. Decide whether you want the new `auto-safe` default or `"write"` (I).
+   `run_shell_command`, and `strictness` / `escalate` / an object-form `rater` on `approvals` —
+   with one of the five rungs, plus `approvals.allow` / `.deny` where you need them. Rename the
+   retired `mode` values: `read-only` → `manual`, `auto-safe` → `assisted`, `full-auto` → `auto`
+   (all three the same mode under a new name), and `ask` → `write` if you want file edits in your
+   working folder granted, or `manual` if you want to be asked about those too. Decide whether you
+   want the new `assisted` default or `"write"` (I).
 8. Rename `projectGuidelines` → `prompts.guidelines` and `projectReviewInstructions` →
    `prompts.review` (H).
 9. Run `gth config validate` (and optionally `gth config print`) to confirm the result.

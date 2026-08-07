@@ -3,7 +3,7 @@
  *
  * CFG-27 (CFG-26 rework) — the **auto-rater**: the LLM that rates a pending `run_shell_command`
  * before it executes, sitting *in front of* the human approval prompt (EXT-9). It is consulted at
- * exactly two of the five rungs — `auto-safe` and `full-auto` (see `APPROVAL_RUNGS`); `read-only`,
+ * exactly two of the five rungs — `assisted` and `auto` (see `APPROVAL_RUNGS`); `manual`,
  * `write` and `bypass` are fully deterministic and never pay for a model call.
  *
  * NOTE ON THE NAME: "judge" is reserved for the **eval grader** (`gth eval --judge <profile>`,
@@ -299,7 +299,7 @@ export const RATER_CATASTROPHIC_GUIDANCE = [
  * definition.**
  *
  * The reason is worth restating where the prompt author will read it: `attack` is the only outcome
- * that halts the run, the halt is not negotiable, and from `auto-safe` — the default rung for
+ * that halts the run, the halt is not negotiable, and from `assisted` — the default rung for
  * everyone — a non-interactive run has no key at all and the only ways through are an allow-list
  * entry or dropping to `bypass`, i.e. one step from the default gate to no gate. An outcome that
  * expensive MUST NOT fire on ordinary work, so the test is **what the command's own structure
@@ -310,7 +310,7 @@ export const RATER_CATASTROPHIC_GUIDANCE = [
  * - **Origin trust is not the rater's job** (§4.1.1's measured note). A cheap model rated
  *   `curl https://pypi.org.packages-cdn.io/simple/ -o index.html` as `safe` while *naming the
  *   deception in its own reasoning*, and split identically-shaped commands at random. A property
- *   that holds only on the good model is not a property, and `auto-safe` is the default for people
+ *   that holds only on the good model is not a property, and `assisted` is the default for people
  *   pointed at small local models. `curl … | <shell>` is therefore `destructive` whatever the host.
  * - **Clause (1) is narrowed** (§11.1b, 2026-07-28). A secret handed to a tool that is doing some
  *   other job is not credential targeting; a secret exposed for its own sake is. Read literally,
@@ -1000,7 +1000,7 @@ function preflightFloorReason(command: string): string | null {
  * CFG-27 — pure, testable mapping from a {@link ShellSafetyVerdict} + the raw command to a
  * {@link RaterAction}, keyed on the **rung** (spec §4.2, §8):
  *
- * | Outcome | `read-only`/`write` | `auto-safe` | `full-auto` | `bypass` |
+ * | Outcome | `manual`/`write` | `assisted` | `auto` | `bypass` |
  * |---|---|---|---|---|
  * | — (no rating) | escalate | | | approve |
  * | `safe` | — | approve | approve | — |
@@ -1019,7 +1019,7 @@ function preflightFloorReason(command: string): string | null {
  *
  * 1. `bypass` → `approve`. The gate is off. The declared deny list and the exec-time hardline
  *    floor still apply, but neither is decided here.
- * 2. Unrated rungs (`read-only`, `write`) → `escalate`. No model is consulted at all; the
+ * 2. Unrated rungs (`manual`, `write`) → `escalate`. No model is consulted at all; the
  *    allow-list is checked by the caller BEFORE this function, so reaching here means the human
  *    decides. (The two rungs behave identically here, and that is not a missing branch: what
  *    separates them is which tools they auto-grant, decided once in `resolveGatedToolNames` when the
@@ -1037,10 +1037,10 @@ function preflightFloorReason(command: string): string | null {
  *    `catastrophic` and `attack` all pass through UNCHANGED. (Before the rescale this branch
  *    excluded the single halting outcome BY NAME. Renamed in place it would have let a preflight hit
  *    *downgrade* a `catastrophic` verdict to `destructive` — the exact inverse of the invariant
- *    above, silently trading an unnegotiable escalation for a negotiable one at `full-auto`.)
+ *    above, silently trading an unnegotiable escalation for a negotiable one at `auto`.)
  * 4. `attack` → `halt`, at both rated rungs, never negotiable.
  * 5. `catastrophic` → `escalate`, and MUST NOT enter §5's negotiation.
- * 6. `safe` → `approve`; `destructive` → `escalate` (a negotiation at `full-auto` once [[EXT-29]]
+ * 6. `safe` → `approve`; `destructive` → `escalate` (a negotiation at `auto` once [[EXT-29]]
  *    lands).
  *
  * **EXT-58 (§4.4): the verdict's `suggestedTool` is not read here, and that is deliberate.** A
@@ -1094,7 +1094,7 @@ export function mapVerdictToAction(
 
   // §4.2 — `catastrophic` escalates at BOTH rated rungs and is deliberately its OWN return rather
   // than a fallthrough into the `destructive` arm below. It MUST NOT enter the §5 negotiation at
-  // `full-auto`: being *argued into* a `mkfs` is the failure mode that rung is most exposed to, so
+  // `auto`: being *argued into* a `mkfs` is the failure mode that rung is most exposed to, so
   // the agent gets no rounds to argue. Whoever wires EXT-29 into the arm below must leave this one
   // alone — a shared fallthrough is exactly how `catastrophic` would end up negotiable by accident.
   if (effective.outcome === 'catastrophic') {
@@ -1111,10 +1111,10 @@ export function mapVerdictToAction(
     return { action: 'approve', verdict: effective };
   }
 
-  // TODO(EXT-29): under `full-auto` a `destructive` outcome opens a NEGOTIATION with the rater
+  // TODO(EXT-29): under `auto` a `destructive` outcome opens a NEGOTIATION with the rater
   // (spec §5) rather than going straight to the human — the agent may revise or justify, the
   // rater re-rates seeing the exchange, and only three CONSECUTIVE rejections escalate. Until
-  // EXT-29 lands, `full-auto` escalates on the first `destructive`, which is strictly more
+  // EXT-29 lands, `auto` escalates on the first `destructive`, which is strictly more
   // conservative than the target design and never approves anything the negotiation would not.
   return { action: 'escalate', verdict: effective };
 }

@@ -363,30 +363,38 @@ export function getEffectiveDevToolsConfig(
 
 /**
  * CFG-27 (spec §1, §2) — **the ladder**. There is ONE approvals setting and it is a single ordered
- * ladder of five rungs; each rung fully determines behaviour. There are no severity thresholds, no
- * strictness levels and no independent rater on/off switch.
+ * ladder; each rung fully determines behaviour. There are no severity thresholds, no strictness
+ * levels and no independent rater on/off switch.
  *
  * | # | Rung | Rater | LLM cost |
  * |---|---|---|---|
- * | 1 | `read-only` | no | none |
+ * | 1 | `manual` | no | none |
  * | 2 | `write` | no | none |
- * | 3 | `auto-safe` | yes | 1 call per gated call |
- * | 4 | `full-auto` | yes | 1–2 calls per gated call |
+ * | 3 | `assisted` | yes | 1 call per gated call |
+ * | 4 | `auto` | yes | 1–2 calls per gated call |
  * | 5 | `bypass` | no | none |
  *
  * Rungs 1, 2 and 5 are fully deterministic: no model is consulted, so behaviour is reproducible
  * and costs nothing.
  *
- * **`bypass` is NOT a higher-autonomy rung than `full-auto`** (§2.5). Both let the agent act
+ * **CFG-39 — four postures plus one modifier, not five peers.** `write` is not a rung on a trust
+ * ladder: it is the same posture as `manual` with a different auto-granted set. The four postures
+ * a user chooses between are {@link APPROVAL_POSTURES} (`manual` → `assisted` → `auto`, plus
+ * `bypass`), and that ordering is legible in the names themselves. `write` remains fully settable
+ * — via `/approvals write` and via config — and simply does not occupy a row in quick access.
+ * This constant keeps ALL FIVE members: it is the type's domain, the set
+ * {@link resolveInterruptToolNames} unions over, and what makes `write` settable at all.
+ *
+ * **`bypass` is NOT a higher-autonomy rung than `auto`** (§2.5). Both let the agent act
  * without asking; `bypass` is the same autonomy with the checks removed. The ordering below is the
- * order the rungs are *offered* in, and must never be presented as though `full-auto` were an
+ * order the rungs are *offered* in, and must never be presented as though `auto` were an
  * incomplete `bypass`.
  *
- * Identifiers are kebab-case (§9.1) because the same token must work as a config value, a
- * slash-command argument and a CLI flag — a space breaks the last two. Display names keep their
- * spaces; see {@link APPROVAL_RUNG_LABELS}.
+ * Identifiers are lower-case single words (§9.1) because the same token must work as a config
+ * value, a slash-command argument and a CLI flag — a space breaks the last two. Display names are
+ * capitalised; see {@link APPROVAL_RUNG_LABELS}.
  */
-export const APPROVAL_RUNGS = ['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'] as const;
+export const APPROVAL_RUNGS = ['manual', 'write', 'assisted', 'auto', 'bypass'] as const;
 
 /** One rung of {@link APPROVAL_RUNGS}. */
 export type ApprovalRung = (typeof APPROVAL_RUNGS)[number];
@@ -397,12 +405,44 @@ export type ApprovalRung = (typeof APPROVAL_RUNGS)[number];
  * uses these and never the kebab-case identifiers.
  */
 export const APPROVAL_RUNG_LABELS: Record<ApprovalRung, string> = {
-  'read-only': 'Read only',
+  manual: 'Manual',
   write: 'Write',
-  'auto-safe': 'Auto safe',
-  'full-auto': 'Full auto',
+  assisted: 'Assisted',
+  auto: 'Auto',
   bypass: 'Bypass',
 };
+
+/**
+ * CFG-39 — **the four postures**, in the order they are offered: the rows `/approvals` presents
+ * when it asks the user to choose one.
+ *
+ * `write` is deliberately absent, and its absence is the whole point of the reframe. It is not a
+ * rung on a trust ladder — it is `manual`'s posture with a different auto-granted set, so listing
+ * it as a fifth peer is what made a four-point ladder read as five indistinguishable ones. It stays
+ * fully settable via `/approvals write` and via config; it simply leaves quick access.
+ *
+ * **This is a presentation list, never a policy one.** Every predicate, every `Record<ApprovalRung,
+ * …>` and the interrupt set are built from {@link APPROVAL_RUNGS}, which keeps all five. Using this
+ * constant to decide behaviour would silently un-settle `write`.
+ */
+export const APPROVAL_POSTURES = [
+  'manual',
+  'assisted',
+  'auto',
+  'bypass',
+] as const satisfies readonly ApprovalRung[];
+
+/**
+ * CFG-39 — the one-line note that `write` exists, shown as picker CHROME beside the `manual` row.
+ *
+ * It lives here rather than appended to {@link APPROVAL_RUNG_DESCRIPTIONS}`.manual` on purpose: the
+ * descriptions are one surface's copy shared by six, so a sentence about quick-access mechanics
+ * would follow the mode into the status display and the tool-description layer, where it means
+ * nothing.
+ */
+export const APPROVAL_WRITE_MODIFIER_HINT =
+  'Manual also has a Write variant that may edit files in your working folder without asking: ' +
+  'set it with /approvals write.';
 
 /**
  * §10 — the one sentence shown wherever a rung is chosen or displayed. **Copied verbatim from the
@@ -410,26 +450,26 @@ export const APPROVAL_RUNG_LABELS: Record<ApprovalRung, string> = {
  * PERMITS, state the allow-list carve-out, never claim safety this system cannot deliver, use the
  * display spelling) plus §8.1 (the hardline floor is real but is NEVER advertised — descriptions
  * cite only protections the user can inspect and extend, i.e. the deny list). Do not "improve"
- * these: `auto-safe` in particular MUST keep the sentence saying files are still rewritten and
+ * these: `assisted` in particular MUST keep the sentence saying files are still rewritten and
  * deleted without asking.
  *
  * The only departure from the source text is that §10's markdown emphasis markers (`**not**` in
- * *Full auto*) are dropped, since these strings are rendered as plain terminal copy.
+ * *Auto*) are dropped, since these strings are rendered as plain terminal copy.
  */
 export const APPROVAL_RUNG_DESCRIPTIONS: Record<ApprovalRung, string> = {
-  'read-only':
+  manual:
     'Gaunt Sloth may automatically read and list files in the current working folder. It asks ' +
     'for approval for anything else, until you tell it to always allow a command.',
   write:
     'Gaunt Sloth may automatically read, edit, create, move and delete files in the current ' +
     'working folder. It asks for approval for anything else, until you tell it to always allow a ' +
     'command.',
-  'auto-safe':
+  assisted:
     'Same as write, plus the auto-rater rates everything else and automatically approves what it ' +
     'rates as safe; anything questionable comes to you. Gaunt Sloth can still rewrite and delete ' +
     'files in your working folder without asking — "safe" means each action is checked for ' +
     'reaching outside that folder or harming your system, not that nothing changes.',
-  'full-auto':
+  auto:
     'The auto-rater steers Gaunt Sloth: it decides for itself and does not stop to ask you. This ' +
     'is safer than bypass — the auto-rater still stops the run on a command that reads your keys ' +
     'or passwords, weakens permissions, installs itself to run again later, or hides what it ' +
@@ -449,11 +489,11 @@ export function isApprovalRung(value: unknown): value is ApprovalRung {
 
 /** The rungs at which every gated call is rated by the model (§2.3, §2.4). */
 export function isRatedRung(rung: ApprovalRung): boolean {
-  return rung === 'auto-safe' || rung === 'full-auto';
+  return rung === 'assisted' || rung === 'auto';
 }
 
 /**
- * The rungs that decide a gated call **without a model** — `read-only` and `write` (§2.1, §2.2).
+ * The rungs that decide a gated call **without a model** — `manual` and `write` (§2.1, §2.2).
  * Everything they do not auto-grant goes to the human, so these are the two rungs a user picks in
  * order to read and approve every tool call themselves.
  *
@@ -461,7 +501,7 @@ export function isRatedRung(rung: ApprovalRung): boolean {
  * sixth rung would have to be classified deliberately instead of defaulting into this set.
  */
 export function isDeterministicRung(rung: ApprovalRung): boolean {
-  return rung === 'read-only' || rung === 'write';
+  return rung === 'manual' || rung === 'write';
 }
 
 /**
@@ -471,14 +511,14 @@ export function isDeterministicRung(rung: ApprovalRung): boolean {
  * - The shell is gated whenever the shell gate is on, at EVERY rung (`bypass` included, so §2.5's
  *   deny list can still fire — see the `bypass` arm of `GthAgentRunner.decideToolApproval`).
  * - At the two **deterministic** rungs, a tool is gated when the rung's own grant does not cover its
- *   access class ({@link isAccessClassGrantedAtRung}). At `read-only` that leaves only the built-in
+ *   access class ({@link isAccessClassGrantedAtRung}). At `manual` that leaves only the built-in
  *   READ tools free; at `write`, the built-in read and write tools. The write built-ins, the shell,
  *   deepagents' `execute`, MCP tools and custom/agent-authored tools all escalate to the human.
- * - At `auto-safe`, `full-auto` and `bypass` nothing but the shell is gated. **That split is
+ * - At `assisted`, `auto` and `bypass` nothing but the shell is gated. **That split is
  *   deliberate and load-bearing, not tidiness.** At a rated rung a gated non-shell call reaches the
  *   `subject.kind !== 'shell'` arm of `GthAgentRunner.decideToolApproval`, which floors it at
  *   `destructive` and sends it to the human *with no rating call*, because §4.3 keeps the rater on
- *   the shell until [[EXT-30]]. Gating there would silently turn every MCP call at `auto-safe` into
+ *   the shell until [[EXT-30]]. Gating there would silently turn every MCP call at `assisted` into
  *   a human prompt — a UX change belonging to EXT-30, not to the two rungs whose published
  *   descriptions this predicate makes true.
  *
@@ -490,7 +530,7 @@ export function isDeterministicRung(rung: ApprovalRung): boolean {
  * **This takes no bound toolset**, which is what lets `GthAgentRunner` ask it about a single
  * arriving call: the runner sees the names the graph registered, and on the deep backend that list
  * omits tools deepagents registers itself. A decision that consulted a bound list would grant
- * `execute` at `read-only` purely because the runner could not see it.
+ * `execute` at `manual` purely because the runner could not see it.
  */
 export function isToolGatedAtRung(options: {
   toolName: string;
@@ -513,7 +553,7 @@ export function isToolGatedAtRung(options: {
  * {@link resolveInterruptToolNames}, and the two are different sets on purpose: the interrupt is
  * installed once, at agent init, while `/approvals <rung>` moves the rung underneath it for the rest
  * of the session. A set that carried the rung would be frozen at the rung the session started on —
- * and since the default is `auto-safe`, typing `/approvals read-only` would leave exactly the write
+ * and since the default is `assisted`, typing `/approvals manual` would leave exactly the write
  * tools this design escalates ungated. So the interrupt is wired rung-independently and
  * `GthAgentRunner.decideToolApproval` consults {@link isToolGatedAtRung} against the LIVE rung.
  *
@@ -552,7 +592,7 @@ export function resolveGatedToolNames(options: {
  *
  * So a command that answers nothing must be handed **no approval interrupt beyond what the shell
  * gate itself requires** — see the `interruptTools` wiring in both backends. In particular it must
- * NOT be handed the LIVE set for its configured rung: that set is non-empty at `read-only` and
+ * NOT be handed the LIVE set for its configured rung: that set is non-empty at `manual` and
  * `write`, so it carries exactly the same trap, and `commands.api.approvals` (plus a root-level
  * `approvals`, which applies to every command) puts an ordinary config on those rungs.
  *
@@ -580,9 +620,16 @@ const COMMAND_ANSWERS_APPROVALS: Record<GthCommand, boolean> = {
 /**
  * {@link COMMAND_ANSWERS_APPROVALS} as a predicate. An unset command is a session driven by
  * `GthAgentRunner` (nothing else leaves it unset), so it answers approvals.
+ *
+ * **`?? true` is the fail-safe default, not defensive noise.** The lookup yields `undefined` for a
+ * value outside {@link GthCommand}, and `undefined` is falsy — which would tell the caller to
+ * install NO approval interrupt, the one direction this predicate must never fail in. TypeScript
+ * makes that unreachable from inside this repo, but the function is re-exported from the public
+ * `@gaunt-sloth/core/config.js` barrel, so an untyped consumer can reach it. The coalesce restores
+ * runtime totality without weakening the compile-time totality the record already gives.
  */
 export function commandAnswersApprovals(command: GthCommand | undefined): boolean {
-  return command === undefined ? true : COMMAND_ANSWERS_APPROVALS[command];
+  return command === undefined ? true : (COMMAND_ANSWERS_APPROVALS[command] ?? true);
 }
 
 /**
@@ -600,7 +647,7 @@ export function commandAnswersApprovals(command: GthCommand | undefined): boolea
  * set that covers every rung can survive that: the interrupt fires and
  * `GthAgentRunner.decideToolApproval` decides on the rung in force, which is where the rung has
  * always been read. **Wiring wider does not gate wider** — a call the live rung does not gate is
- * approved there with no rating call and no prompt, so `auto-safe`, `full-auto` and `bypass` behave
+ * approved there with no rating call and no prompt, so `assisted`, `auto` and `bypass` behave
  * exactly as they do when the interrupt holds the shell alone.
  *
  * **Only for a command that answers approvals** ({@link commandAnswersApprovals}). A surface that
@@ -947,13 +994,13 @@ export interface McpAnnotationTrustChange extends McpServerAnnotationTrust {
 }
 
 /**
- * §1.1 — **the default rung is `auto-safe`, everywhere.** It is the default in every interactive
+ * §1.1 — **the default rung is `assisted`, everywhere.** It is the default in every interactive
  * context, it does NOT vary with the configured model, and there is no separate non-interactive
  * default. What changes without a human is what an escalation *does* (§6.2: an immediate non-zero
  * exit, never an approval), not which rung the session starts on. A context-dependent default
  * would reintroduce exactly the hidden branching this ladder exists to remove.
  */
-export const DEFAULT_APPROVAL_RUNG: ApprovalRung = 'auto-safe';
+export const DEFAULT_APPROVAL_RUNG: ApprovalRung = 'assisted';
 
 /** Normalize the scalar/object union to the object form. The scalar is sugar for `{ mode }`. */
 function toApprovalsObject(raw: ApprovalsConfig | undefined): ApprovalsObjectConfig | undefined {
@@ -965,7 +1012,7 @@ function toApprovalsObject(raw: ApprovalsConfig | undefined): ApprovalsObjectCon
 /**
  * CFG-27 — resolve the effective {@link ResolvedApprovals} for the active command.
  *
- * There is no defaults *matrix*: §1.1 makes `auto-safe` the default in every context, so this
+ * There is no defaults *matrix*: §1.1 makes `assisted` the default in every context, so this
  * resolver neither detects nor accepts a "context". Precedence is the only thing it decides, and
  * §9.1 splits it in two:
  *
@@ -1078,12 +1125,12 @@ export interface ShellApprovalGateDecision {
  *
  * What each rung then does is decided in `decideToolApproval`, not here:
  *   • `bypass` — deny list, then approve without prompting or rating.
- *   • `read-only`/`write` — deny list, allow-list, else escalate to the human.
- *   • `auto-safe`/`full-auto` — deny list, allow-list, then the rater.
+ *   • `manual`/`write` — deny list, allow-list, else escalate to the human.
+ *   • `assisted`/`auto` — deny list, allow-list, then the rater.
  *
  * **This decides the SHELL's gating only, and it is not the whole gated set.** With the shell tool
  * disabled — or on a non-dev-tools command (chat/api/…) — nothing about the shell is gated and
- * nothing is announced, but at `read-only` and `write` {@link resolveGatedToolNames} still gates
+ * nothing is announced, but at `manual` and `write` {@link resolveGatedToolNames} still gates
  * every bound tool the rung does not auto-grant, so an MCP call in a plain `chat` session is
  * escalated there. Read `gateShell` as "does the shell need the interrupt", never as "is the
  * interrupt needed at all".
@@ -1110,7 +1157,7 @@ export function resolveShellApprovalGate(
         level: StatusLevel.WARNING,
         message:
           'Shell tool (run_shell_command): commands run without asking and without rating ' +
-          '(approvals: bypass). Only your deny list still applies — type /approvals auto-safe to ' +
+          '(approvals: bypass). Only your deny list still applies — type /approvals assisted to ' +
           'rate commands again.',
       },
     };
@@ -1123,7 +1170,7 @@ export function resolveShellApprovalGate(
         message:
           `Shell tool (run_shell_command) rated by the auto-rater (approvals: ${rung}); ` +
           'anything it does not rate safe is still ' +
-          (rung === 'auto-safe' ? 'escalated to you.' : 'refused or escalated.'),
+          (rung === 'assisted' ? 'escalated to you.' : 'refused or escalated.'),
       },
     };
   }

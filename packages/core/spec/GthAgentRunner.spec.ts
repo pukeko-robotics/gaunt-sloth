@@ -377,7 +377,7 @@ describe('GthAgentRunner', () => {
 
       // CFG-27: `write` is the rung that reproduces the pre-rater behaviour — the shell always
       // escalates and no model is consulted. Pinned explicitly so this EXT-52 seam test is not
-      // silently re-testing the rater (the default rung, `auto-safe`, rates).
+      // silently re-testing the rater (the default rung, `assisted`, rates).
       await runner.init(undefined, {
         ...mockConfig,
         streamOutput: true,
@@ -446,12 +446,12 @@ describe('GthAgentRunner', () => {
      * appear in a gated set. The matcher and the annotation path already model `tool` subjects and
      * `decideToolApproval` already has `subject.kind !== 'shell'` arms, but whether those pieces
      * connect is a thing to test rather than assume: an interrupt that is built and then dropped
-     * somewhere between the graph and the prompt would leave `read-only` exactly as false as it was.
+     * somewhere between the graph and the prompt would leave `manual` exactly as false as it was.
      */
     describe('EXT-80 — a newly gated non-shell tool reaches the human', () => {
-      const READ_ONLY_CONFIG = { streamOutput: true as const, approvals: 'read-only' as const };
+      const MANUAL_CONFIG = { streamOutput: true as const, approvals: 'manual' as const };
 
-      it('prompts the human for write_file at read-only and resumes with the decision', async () => {
+      it('prompts the human for write_file at manual and resumes with the decision', async () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         mockAgent.stream.mockResolvedValue(streamOf('working'));
         (mockAgent as any).getPendingToolInterrupts = vi
@@ -463,7 +463,7 @@ describe('GthAgentRunner', () => {
         const streamResume = vi.fn().mockResolvedValue(streamOf(' done'));
         (mockAgent as any).streamResume = streamResume;
 
-        await runner.init(undefined, { ...mockConfig, ...READ_ONLY_CONFIG } as any);
+        await runner.init(undefined, { ...mockConfig, ...MANUAL_CONFIG } as any);
         const human = vi.fn().mockResolvedValue({ type: 'approve' });
         runner.setToolApprovalCallback(human);
 
@@ -494,7 +494,7 @@ describe('GthAgentRunner', () => {
         const streamResume = vi.fn().mockResolvedValue(streamOf(' stopped'));
         (mockAgent as any).streamResume = streamResume;
 
-        await runner.init(undefined, { ...mockConfig, ...READ_ONLY_CONFIG } as any);
+        await runner.init(undefined, { ...mockConfig, ...MANUAL_CONFIG } as any);
         runner.setToolApprovalCallback(vi.fn().mockResolvedValue({ type: 'reject' }));
 
         await runner.processMessages([new HumanMessage('delete notes')]);
@@ -505,7 +505,7 @@ describe('GthAgentRunner', () => {
         );
       });
 
-      it('prompts for an MCP tool at read-only even when it declares readOnlyHint', async () => {
+      it('prompts for an MCP tool at manual even when it declares readOnlyHint', async () => {
         // The EXT-30 (iii) exemption is deliberately NOT carried into these two rungs: a server's
         // self-declared annotation is least earned where the ladder is strictest.
         const runner = new GthAgentRunner(statusUpdateCallback);
@@ -519,7 +519,7 @@ describe('GthAgentRunner', () => {
           .mockReturnValue(new Map([['mcp__docs__search', { readOnlyHint: true }]]));
         (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
 
-        await runner.init(undefined, { ...mockConfig, ...READ_ONLY_CONFIG } as any);
+        await runner.init(undefined, { ...mockConfig, ...MANUAL_CONFIG } as any);
         const human = vi.fn().mockResolvedValue({ type: 'approve' });
         runner.setToolApprovalCallback(human);
 
@@ -528,7 +528,7 @@ describe('GthAgentRunner', () => {
         expect(human).toHaveBeenCalledWith(expect.objectContaining({ name: 'mcp__docs__search' }));
       });
 
-      it('prompts for a custom tool at read-only', async () => {
+      it('prompts for a custom tool at manual', async () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         mockAgent.stream.mockResolvedValue(streamOf('working'));
         (mockAgent as any).getPendingToolInterrupts = vi
@@ -537,7 +537,7 @@ describe('GthAgentRunner', () => {
           .mockResolvedValueOnce([]);
         (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
 
-        await runner.init(undefined, { ...mockConfig, ...READ_ONLY_CONFIG } as any);
+        await runner.init(undefined, { ...mockConfig, ...MANUAL_CONFIG } as any);
         const human = vi.fn().mockResolvedValue({ type: 'approve' });
         runner.setToolApprovalCallback(human);
 
@@ -561,7 +561,7 @@ describe('GthAgentRunner', () => {
         const streamResume = vi.fn().mockResolvedValue(streamOf(''));
         (mockAgent as any).streamResume = streamResume;
 
-        await runner.init(undefined, { ...mockConfig, ...READ_ONLY_CONFIG } as any);
+        await runner.init(undefined, { ...mockConfig, ...MANUAL_CONFIG } as any);
         // No setToolApprovalCallback → the CI / one-shot / server case.
 
         const error = await runner
@@ -585,9 +585,9 @@ describe('GthAgentRunner', () => {
 
         await runner.init(undefined, {
           ...mockConfig,
-          ...READ_ONLY_CONFIG,
+          ...MANUAL_CONFIG,
           approvals: {
-            rung: 'read-only',
+            rung: 'manual',
             deny: [{ type: 'tool', matcher: 'exact', pattern: 'my_custom_tool' }],
           },
         } as any);
@@ -1025,15 +1025,15 @@ describe('GthAgentRunner', () => {
       expect(runner.setSessionApprovalRung('bypass')).toBe('bypass');
       expect(runner.setSessionApprovalRung('bypass')).toBe('bypass'); // idempotent
       expect(runner.getSessionApprovals().rung).toBe('bypass');
-      expect(runner.setSessionApprovalRung('read-only')).toBe('read-only');
-      expect(runner.getSessionApprovals().rung).toBe('read-only');
+      expect(runner.setSessionApprovalRung('manual')).toBe('manual');
+      expect(runner.getSessionApprovals().rung).toBe('manual');
     });
 
-    it('§1.1 — with no `approvals` key the session starts at auto-safe, on every command', async () => {
+    it('§1.1 — with no `approvals` key the session starts at assisted, on every command', async () => {
       for (const command of ['code', 'exec', 'api'] as const) {
         const runner = new GthAgentRunner(statusUpdateCallback);
         await runner.init(command, mockConfig);
-        expect(runner.getSessionApprovals().rung).toBe('auto-safe');
+        expect(runner.getSessionApprovals().rung).toBe('assisted');
       }
     });
 
@@ -1063,7 +1063,7 @@ describe('GthAgentRunner', () => {
      *
      * Both halves matter and neither is cosmetic. The budget had no config key at all, so a local
      * rater — measured at 6.0s–114.7s per call on `gemma4:12b` — was cut off by a 30s constant it
-     * could not reach, and `full-auto` drifted toward escalating everything, which is the failure
+     * could not reach, and `auto` drifted toward escalating everything, which is the failure
      * the rung exists to prevent. And because the timeout produced a verdict byte-identical to a
      * real `destructive` judgement, every layer reported success while it happened: the only
      * symptom was the gate becoming mysteriously more talkative.
@@ -1073,7 +1073,7 @@ describe('GthAgentRunner', () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       await runner.init('code', {
         ...mockConfig,
-        approvals: { mode: 'full-auto', rater: 'safety-rater', raterTimeoutMs: 120_000 },
+        approvals: { mode: 'auto', rater: 'safety-rater', raterTimeoutMs: 120_000 },
       } as unknown as typeof mockConfig);
       expect(runner.getSessionApprovals().raterTimeoutMs).toBe(120_000);
     });
@@ -1082,7 +1082,7 @@ describe('GthAgentRunner', () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       await runner.init('code', {
         ...mockConfig,
-        approvals: 'full-auto',
+        approvals: 'auto',
       } as unknown as typeof mockConfig);
       // Undefined, not 30000: the default belongs to the rater, so the effective-config snapshot
       // does not churn and an unset key stays visibly unset.
@@ -1124,9 +1124,9 @@ describe('GthAgentRunner', () => {
         streamOutput: true,
         // Root says a budget long enough to hang the test; the per-command value is the one that
         // must win, exactly as the rung does.
-        approvals: { mode: 'full-auto', rater: 'slow-rater', raterTimeoutMs: 900_000 },
+        approvals: { mode: 'auto', rater: 'slow-rater', raterTimeoutMs: 900_000 },
         commands: {
-          code: { approvals: { mode: 'full-auto', rater: 'slow-rater', raterTimeoutMs: 6 } },
+          code: { approvals: { mode: 'auto', rater: 'slow-rater', raterTimeoutMs: 6 } },
         },
       } as unknown as typeof mockConfig);
       runner.setToolApprovalCallback(vi.fn().mockResolvedValue({ type: 'approve' }));
@@ -1166,7 +1166,7 @@ describe('GthAgentRunner', () => {
       await runner.init('code', {
         ...mockConfig,
         streamOutput: true,
-        approvals: { mode: 'full-auto', rater: 'slow-rater', raterTimeoutMs: 5 },
+        approvals: { mode: 'auto', rater: 'slow-rater', raterTimeoutMs: 5 },
       } as unknown as typeof mockConfig);
       runner.setToolApprovalCallback(vi.fn().mockResolvedValue({ type: 'approve' }));
 
@@ -1213,7 +1213,7 @@ describe('GthAgentRunner', () => {
         ...mockConfig,
         streamOutput: true,
         approvals: {
-          mode: 'full-auto',
+          mode: 'auto',
           rater: 'slow-rater',
           raterTimeoutMs: 5,
           // A glob, so §3.2 keeps the rater involved — which is what makes the timeout reachable.
@@ -1241,7 +1241,7 @@ describe('GthAgentRunner', () => {
       await runner.init('code', {
         ...mockConfig,
         approvals: {
-          mode: 'full-auto',
+          mode: 'auto',
           rater: 'safety-rater',
           allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
           deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
@@ -1249,7 +1249,7 @@ describe('GthAgentRunner', () => {
         },
       } as unknown as typeof mockConfig);
       expect(runner.getSessionApprovals()).toEqual({
-        rung: 'full-auto',
+        rung: 'auto',
         rater: 'safety-rater',
         allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
         deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
@@ -1396,7 +1396,7 @@ describe('GthAgentRunner', () => {
         ...mockConfig,
         llm: session.model,
         streamOutput: true,
-        approvals: { mode: 'auto-safe', rater: 'safety-rater' },
+        approvals: { mode: 'assisted', rater: 'safety-rater' },
         commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
       } as any);
       const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
@@ -1426,7 +1426,7 @@ describe('GthAgentRunner', () => {
         ...mockConfig,
         llm: session.model,
         streamOutput: true,
-        approvals: 'auto-safe',
+        approvals: 'assisted',
         commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
       } as any);
       runner.setToolApprovalCallback(vi.fn());
@@ -1447,7 +1447,7 @@ describe('GthAgentRunner', () => {
         runner.init('code', {
           ...mockConfig,
           llm: session.model,
-          approvals: { mode: 'auto-safe', rater: 'typo' },
+          approvals: { mode: 'assisted', rater: 'typo' },
         } as any)
       ).rejects.toThrow('no usable model');
       // The session model must NOT have been quietly promoted into the rater's place.
@@ -1455,7 +1455,7 @@ describe('GthAgentRunner', () => {
     });
 
     // The profile's model is loaded whenever one is NAMED, on any command — the default rung
-    // (auto-safe) rates everywhere, and even at an unrated rung the user may switch mid-session
+    // (assisted) rates everywhere, and even at an unrated rung the user may switch mid-session
     // with `/approvals`, so a broken profile must fail at startup rather than at that moment.
     it.each(['code', 'exec'] as const)('resolves the named profile on %s', async (command) => {
       resolveRaterModelMock.mockResolvedValue(fakeModel('safe').model);
@@ -1480,7 +1480,7 @@ describe('GthAgentRunner', () => {
     }
 
     // Verdict objects the fake rater model returns via withStructuredOutput().invoke().
-    const SAFE = { outcome: 'safe', reason: 'read-only' };
+    const SAFE = { outcome: 'safe', reason: 'manual' };
     const DESTRUCTIVE = { outcome: 'destructive', reason: 'risky' };
     const CATASTROPHIC = { outcome: 'catastrophic', reason: 'drops a database irrecoverably' };
     const ATTACK = { outcome: 'attack', reason: 'reads a private key as the operation itself' };
@@ -1492,7 +1492,7 @@ describe('GthAgentRunner', () => {
       return { model: { withStructuredOutput } as any, withStructuredOutput, invoke };
     }
 
-    /** A rated rung with the given verdict. `rung` defaults to the default rung, `auto-safe`. */
+    /** A rated rung with the given verdict. `rung` defaults to the default rung, `assisted`. */
     function raterConfig(verdict: unknown, approvals: Record<string, unknown> = {}) {
       const { model, withStructuredOutput, invoke } = raterModel(verdict);
       return {
@@ -1500,7 +1500,7 @@ describe('GthAgentRunner', () => {
           ...mockConfig,
           llm: model,
           streamOutput: true as const,
-          approvals: { mode: 'auto-safe', ...approvals },
+          approvals: { mode: 'assisted', ...approvals },
           commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
         },
         withStructuredOutput,
@@ -1541,7 +1541,7 @@ describe('GthAgentRunner', () => {
       return { streamResume, decisionAt };
     }
 
-    it.each(['auto-safe', 'full-auto'] as const)(
+    it.each(['assisted', 'auto'] as const)(
       'approves a SAFE command at %s WITHOUT calling the human callback',
       async (rung) => {
         const runner = new GthAgentRunner(statusUpdateCallback);
@@ -1563,7 +1563,7 @@ describe('GthAgentRunner', () => {
       }
     );
 
-    it.each(['auto-safe', 'full-auto'] as const)(
+    it.each(['assisted', 'auto'] as const)(
       'escalates a DESTRUCTIVE command at %s to the human (with the verdict attached)',
       async (rung) => {
         const runner = new GthAgentRunner(statusUpdateCallback);
@@ -1588,7 +1588,7 @@ describe('GthAgentRunner', () => {
      * §4.2 — `attack` HALTS the run at both rated rungs. It is not a rejection the model can
      * respond to, so the graph is never resumed with a decision: the agent loop simply ends.
      */
-    it.each(['auto-safe', 'full-auto'] as const)(
+    it.each(['assisted', 'auto'] as const)(
       'HALTS the run on an ATTACK verdict at %s — no prompt, no decision to the model',
       async (rung) => {
         const runner = new GthAgentRunner(statusUpdateCallback);
@@ -1642,7 +1642,7 @@ describe('GthAgentRunner', () => {
      * an approval; the human is asked, and the verdict travels with the prompt so they are asked
      * about the right thing.
      */
-    it.each(['auto-safe', 'full-auto'] as const)(
+    it.each(['assisted', 'auto'] as const)(
       'escalates a CATASTROPHIC command at %s to the human, carrying the verdict',
       async (rung) => {
         const runner = new GthAgentRunner(statusUpdateCallback);
@@ -1760,7 +1760,7 @@ describe('GthAgentRunner', () => {
     /**
      * ── [[EXT-81]] — a command the gate's PARSER cannot read is rated, not refused ─────────────
      *
-     * The field issue: `pwd && ls` at `full-auto` interrupted a human, because `&&` composes and
+     * The field issue: `pwd && ls` at `auto` interrupted a human, because `&&` composes and
      * the gate cannot resolve the composition. Two frontier models, two days, the cheapest command
      * anyone could type. §6.1's rule is that a deterministic layer fires only where it is confident
      * something is a threat — and a parser reporting that it could not resolve a string has
@@ -1776,7 +1776,7 @@ describe('GthAgentRunner', () => {
        * that an abstaining command cost zero rating calls. The control is a resolvable command, so
        * "one call" is about this command rather than about the rater having started firing twice.
        */
-      it.each(['auto-safe', 'full-auto'] as const)(
+      it.each(['assisted', 'auto'] as const)(
         'at %s an UNRESOLVABLE command costs exactly one rating call, same as a resolvable one',
         async (rung) => {
           const composedRunner = new GthAgentRunner(statusUpdateCallback);
@@ -1799,10 +1799,10 @@ describe('GthAgentRunner', () => {
 
       /**
        * **The interruption this node removes**, measured where a user meets it: `pwd && ls` at
-       * `full-auto` no longer reaches a human, and is no longer refused back to the model either.
+       * `auto` no longer reaches a human, and is no longer refused back to the model either.
        * It runs.
        */
-      it.each(['auto-safe', 'full-auto'] as const)(
+      it.each(['assisted', 'auto'] as const)(
         'at %s a composed command the rater calls SAFE is approved, with no human and no rejection',
         async (rung) => {
           const runner = new GthAgentRunner(statusUpdateCallback);
@@ -1860,7 +1860,7 @@ describe('GthAgentRunner', () => {
       it('HALTS the run when the rater calls a composed command an attack', async () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         pendingOnce('pwd && rm -rf ~');
-        const { config } = raterConfig(ATTACK, { mode: 'full-auto' });
+        const { config } = raterConfig(ATTACK, { mode: 'auto' });
         await runner.init('code', config);
         runner.setToolApprovalCallback(vi.fn());
 
@@ -1893,11 +1893,11 @@ describe('GthAgentRunner', () => {
 
       /**
        * **The unrated rungs are untouched**, and this is pinned at the runner level because an AI
-       * reviewer once read the diff as moving that check outside the rung guard. At `read-only` and
+       * reviewer once read the diff as moving that check outside the rung guard. At `manual` and
        * `write` the human is asked with no verdict attached at all, and no model is consulted —
        * whether or not the parser could read the command.
        */
-      it.each(['read-only', 'write'] as const)(
+      it.each(['manual', 'write'] as const)(
         'at %s an unresolvable command reaches the human with NO verdict and NO rating call',
         async (rung) => {
           const runner = new GthAgentRunner(statusUpdateCallback);
@@ -1964,7 +1964,7 @@ describe('GthAgentRunner', () => {
       it('never persists a grant for a command it approved on the rater’s word', async () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         const { decisionAt } = pendingSequence('pwd && ls');
-        const { config } = raterConfig(SAFE, { mode: 'full-auto' });
+        const { config } = raterConfig(SAFE, { mode: 'auto' });
         await runner.init('code', config);
         runner.setToolApprovalCallback(vi.fn());
         await runner.processMessages([new HumanMessage('go')]);
@@ -2012,7 +2012,7 @@ describe('GthAgentRunner', () => {
         ...mockConfig,
         llm,
         streamOutput: true,
-        approvals: 'auto-safe',
+        approvals: 'assisted',
         commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
       } as any);
       const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
@@ -2038,7 +2038,7 @@ describe('GthAgentRunner', () => {
       expect(human.mock.calls[0][0].safetyVerdict.reason).toContain('Could not assess');
     });
 
-    it.each(['read-only', 'write'] as const)(
+    it.each(['manual', 'write'] as const)(
       'the unrated rung %s costs NO model call — the human prompts, exactly as EXT-9 did',
       async (rung) => {
         const runner = new GthAgentRunner(statusUpdateCallback);
@@ -2091,7 +2091,7 @@ describe('GthAgentRunner', () => {
         llm: model,
         streamOutput: true,
         approvals: {
-          mode: 'auto-safe',
+          mode: 'assisted',
           allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
         },
         commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
@@ -2125,7 +2125,7 @@ describe('GthAgentRunner', () => {
         llm: model,
         streamOutput: true,
         approvals: {
-          mode: 'auto-safe',
+          mode: 'assisted',
           allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
         },
         commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
@@ -2155,7 +2155,7 @@ describe('GthAgentRunner', () => {
         llm: model,
         streamOutput: true,
         approvals: {
-          mode: 'auto-safe',
+          mode: 'assisted',
           allow: [{ type: 'shell', matcher: 'glob', pattern: 'npm test*' }],
         },
         commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
@@ -2193,7 +2193,7 @@ describe('GthAgentRunner', () => {
         ...mockConfig,
         llm: model,
         streamOutput: true,
-        approvals: 'auto-safe',
+        approvals: 'assisted',
         commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
       } as any);
       // The human grants session on the first; the repeat should hit the grant, not the rater.
@@ -2249,7 +2249,7 @@ describe('GthAgentRunner', () => {
           ...mockConfig,
           llm: { withStructuredOutput } as any,
           streamOutput: true as const,
-          approvals: { mode: 'auto-safe' },
+          approvals: { mode: 'assisted' },
           commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
         },
         invoke,
@@ -2405,7 +2405,7 @@ describe('GthAgentRunner', () => {
       };
     }
 
-    it.each(['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'] as const)(
+    it.each(['manual', 'write', 'assisted', 'auto', 'bypass'] as const)(
       'refuses a denied command at %s — with no prompt and no rating call',
       async (rung) => {
         const runner = new GthAgentRunner(statusUpdateCallback);
@@ -2552,7 +2552,7 @@ describe('GthAgentRunner', () => {
       return streamResume;
     }
 
-    const SAFE = { outcome: 'safe', reason: 'read-only' };
+    const SAFE = { outcome: 'safe', reason: 'manual' };
     const DESTRUCTIVE = { outcome: 'destructive', reason: 'risky' };
     const CATASTROPHIC = { outcome: 'catastrophic', reason: 'drops a database irrecoverably' };
     const ATTACK = { outcome: 'attack', reason: 'reads a private key as the operation itself' };
@@ -2583,7 +2583,7 @@ describe('GthAgentRunner', () => {
     ] as unknown[];
 
     describe('escalate always asks the human, whatever the rung would have done', () => {
-      it.each(['read-only', 'write'] as const)(
+      it.each(['manual', 'write'] as const)(
         'asks at %s, naming the entry that fired',
         async (rung) => {
           const runner = new GthAgentRunner(statusUpdateCallback);
@@ -2604,7 +2604,7 @@ describe('GthAgentRunner', () => {
         }
       );
 
-      it.each(['auto-safe', 'full-auto'] as const)(
+      it.each(['assisted', 'auto'] as const)(
         'at %s it goes straight to the human with NO rating call',
         async (rung) => {
           const runner = new GthAgentRunner(statusUpdateCallback);
@@ -2629,7 +2629,7 @@ describe('GthAgentRunner', () => {
       it('CONTROL: without the escalate entry the same call is rated and auto-approved', async () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         const streamResume = pendingOnce('terraform apply');
-        const { config, withStructuredOutput } = gateConfig({ mode: 'auto-safe' }, SAFE);
+        const { config, withStructuredOutput } = gateConfig({ mode: 'assisted' }, SAFE);
         await runner.init('code', config);
         const human = vi.fn();
         runner.setToolApprovalCallback(human);
@@ -2858,14 +2858,14 @@ describe('GthAgentRunner', () => {
 
     /**
      * §3.2 — `rate` is honored at the rater rungs and **inert at every deterministic rung**: no
-     * entry may smuggle a model call into `read-only` or `write`.
+     * entry may smuggle a model call into `manual` or `write`.
      */
     describe('rate is inert at the deterministic rungs', () => {
       const RATED_ALLOW = [
         { type: 'shell', matcher: 'exact', pattern: 'npm test', rate: true },
       ] as unknown[];
 
-      it.each(['read-only', 'write'] as const)(
+      it.each(['manual', 'write'] as const)(
         'at %s an allow entry with rate:true approves with NO rating call',
         async (rung) => {
           const runner = new GthAgentRunner(statusUpdateCallback);
@@ -2884,11 +2884,11 @@ describe('GthAgentRunner', () => {
         }
       );
 
-      it('CONTROL: the SAME entry and command DO reach the rater at auto-safe', async () => {
+      it('CONTROL: the SAME entry and command DO reach the rater at assisted', async () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         pendingOnce('npm test');
         const { config, withStructuredOutput } = gateConfig({
-          mode: 'auto-safe',
+          mode: 'assisted',
           allow: RATED_ALLOW,
         });
         await runner.init('code', config);
@@ -2902,7 +2902,7 @@ describe('GthAgentRunner', () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         pendingOnce('npm test --watch');
         const { config, withStructuredOutput } = gateConfig({
-          mode: 'auto-safe',
+          mode: 'assisted',
           allow: [{ type: 'shell', matcher: 'glob', pattern: 'npm test*', rate: false }],
         });
         await runner.init('code', config);
@@ -2916,7 +2916,7 @@ describe('GthAgentRunner', () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         pendingOnce('npm test --watch');
         const { config, withStructuredOutput } = gateConfig({
-          mode: 'auto-safe',
+          mode: 'assisted',
           allow: [{ type: 'shell', matcher: 'glob', pattern: 'npm test*' }],
         });
         await runner.init('code', config);
@@ -2943,7 +2943,7 @@ describe('GthAgentRunner', () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         const streamResume = pendingOnce('terraform destroy');
         const { config, withStructuredOutput } = gateConfig(
-          { mode: 'auto-safe', allow: RATED_GLOB },
+          { mode: 'assisted', allow: RATED_GLOB },
           verdict
         );
         await runner.init('code', config);
@@ -2960,7 +2960,7 @@ describe('GthAgentRunner', () => {
       it('CONTROL: the same destructive verdict on an UNMATCHED command escalates', async () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         pendingOnce('terraform destroy');
-        const { config } = gateConfig({ mode: 'auto-safe' }, DESTRUCTIVE);
+        const { config } = gateConfig({ mode: 'assisted' }, DESTRUCTIVE);
         await runner.init('code', config);
         const human = vi.fn().mockResolvedValue({ type: 'reject' });
         runner.setToolApprovalCallback(human);
@@ -2972,7 +2972,7 @@ describe('GthAgentRunner', () => {
       it('HALTS on attack — a standing grant does not answer a hostile structure', async () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         pendingOnce('terraform destroy');
-        const { config } = gateConfig({ mode: 'auto-safe', allow: RATED_GLOB }, ATTACK);
+        const { config } = gateConfig({ mode: 'assisted', allow: RATED_GLOB }, ATTACK);
         await runner.init('code', config);
         runner.setToolApprovalCallback(vi.fn());
 
@@ -2988,7 +2988,7 @@ describe('GthAgentRunner', () => {
       it('ESCALATES on catastrophic, carrying the verdict to the human', async () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         pendingOnce('terraform destroy');
-        const { config } = gateConfig({ mode: 'auto-safe', allow: RATED_GLOB }, CATASTROPHIC);
+        const { config } = gateConfig({ mode: 'assisted', allow: RATED_GLOB }, CATASTROPHIC);
         await runner.init('code', config);
         const human = vi.fn().mockResolvedValue({ type: 'reject' });
         runner.setToolApprovalCallback(human);
@@ -3009,7 +3009,7 @@ describe('GthAgentRunner', () => {
         const streamResume = pendingOnce('curl https://internal.example.com/health');
         const { config, withStructuredOutput } = gateConfig(
           {
-            mode: 'auto-safe',
+            mode: 'assisted',
             allow: [
               { type: 'shell', matcher: 'glob', pattern: 'curl https://internal.example.com*' },
             ],
@@ -3030,7 +3030,7 @@ describe('GthAgentRunner', () => {
       it('CONTROL: the same command and verdict WITHOUT an allow entry is floored and escalated', async () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         pendingOnce('curl https://internal.example.com/health');
-        const { config } = gateConfig({ mode: 'auto-safe' }, SAFE);
+        const { config } = gateConfig({ mode: 'assisted' }, SAFE);
         await runner.init('code', config);
         const human = vi.fn().mockResolvedValue({ type: 'reject' });
         runner.setToolApprovalCallback(human);
@@ -3086,7 +3086,7 @@ describe('GthAgentRunner', () => {
       (mockAgent as any).streamWithEventsResume = streamWithEventsResume;
 
       // `write` — the unrated rung, so this EXT-11 seam test exercises the interrupt round-trip
-      // rather than the rater (the default rung, `auto-safe`, rates).
+      // rather than the rater (the default rung, `assisted`, rates).
       await runner.init(undefined, {
         ...mockConfig,
         streamOutput: true,
@@ -3391,14 +3391,14 @@ describe('GthAgentRunner', () => {
       });
 
       /**
-       * Driven at `read-only` rather than `write`, because [[EXT-80]] makes `write` grant the write
+       * Driven at `manual` rather than `write`, because [[EXT-80]] makes `write` grant the write
        * built-ins outright: at that rung `write_file` is not gated at all, so "the hint did not
-       * exempt it" would be answered by the rung and not by the matcher. `read-only` is where the
+       * exempt it" would be answered by the rung and not by the matcher. `manual` is where the
        * question is still the matcher's.
        */
       it('CONTROL: a built-in that WRITES is not exempted by that hint', async () => {
         const config = gateConfig({
-          mode: 'read-only',
+          mode: 'manual',
           allow: [{ type: 'tool', matcher: 'hint', pattern: { readOnlyHint: true } }],
         });
         expect(await askedTheHuman(config, 'write_file')).toBe(true);
@@ -3507,7 +3507,7 @@ describe('GthAgentRunner', () => {
       }
 
       const rated = (extra: Record<string, unknown> = {}) =>
-        gateConfig({ mode: 'auto-safe', ...extra });
+        gateConfig({ mode: 'assisted', ...extra });
 
       /**
        * The discriminating pair for §4.7.3, on OUR OWN tools so no trust question is in play.
@@ -3579,7 +3579,7 @@ describe('GthAgentRunner', () => {
       });
 
       /**
-       * Driven at `read-only`, where an MCP call is gated, because that is where "the human is
+       * Driven at `manual`, where an MCP call is gated, because that is where "the human is
        * still asked" is a claim about the gate rather than about a fabricated arrival. The floor
        * itself does not apply at a deterministic rung (there is no rating to floor), which is the
        * second half of what this asserts: `destructiveHint` is not the rule that floors.
@@ -3588,7 +3588,7 @@ describe('GthAgentRunner', () => {
         declaring({
           mcp__jira__wipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
         });
-        const config = gateConfig({ mode: 'read-only', mcp: trustingJira });
+        const config = gateConfig({ mode: 'manual', mcp: trustingJira });
         const pending = await shownToTheHuman(config, 'mcp__jira__wipe');
         expect(pending, 'the human is still asked').not.toBeNull();
         expect(pending?.safetyVerdict).toBeUndefined();
@@ -3601,7 +3601,7 @@ describe('GthAgentRunner', () => {
           mcp__jira__wipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
         });
         const config = gateConfig({
-          mode: 'read-only',
+          mode: 'manual',
           allow: [{ type: 'mcpTool', server: 'jira', matcher: 'exact', pattern: 'wipe' }],
           mcp: trustingJira,
         });
@@ -3620,7 +3620,7 @@ describe('GthAgentRunner', () => {
        */
       it('an allow entry approves an open-world tool without asking', async () => {
         const config = gateConfig({
-          mode: 'read-only',
+          mode: 'manual',
           allow: [{ type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch' }],
         });
         expect(await shownToTheHuman(config, 'gth_web_fetch')).toBeNull();
@@ -3628,20 +3628,20 @@ describe('GthAgentRunner', () => {
 
       it('and approves it just the same when the allow entry sets rate true', async () => {
         const config = gateConfig({
-          mode: 'read-only',
+          mode: 'manual',
           allow: [{ type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch', rate: true }],
         });
         expect(await shownToTheHuman(config, 'gth_web_fetch')).toBeNull();
       });
 
       /**
-       * CONTROL for both cells above, and it is not optional: they are driven at `read-only`, where
+       * CONTROL for both cells above, and it is not optional: they are driven at `manual`, where
        * the human is asked by default, so without this the pair would pass on a harness that never
        * asked anyone. It is the ENTRY that exempts, and nothing else.
        */
       it('CONTROL: the same tool with no allow entry IS asked about', async () => {
         expect(
-          await shownToTheHuman(gateConfig({ mode: 'read-only' }), 'gth_web_fetch')
+          await shownToTheHuman(gateConfig({ mode: 'manual' }), 'gth_web_fetch')
         ).not.toBeNull();
       });
 
@@ -3651,14 +3651,14 @@ describe('GthAgentRunner', () => {
        */
       /**
        * §6.2 — where no human can answer, a gated tool call ENDS the run non-zero rather than
-       * hanging. Driven at `read-only`, the rung at which such a call is gated; the floored VERDICT
+       * hanging. Driven at `manual`, the rung at which such a call is gated; the floored VERDICT
        * riding that exit is asserted on the one shape that still reaches the floor, in the
        * malformed-`run_shell_command` block below.
        */
       it('with no human, a gated tool call exits the run', async () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         pendingToolOnce('gth_web_fetch');
-        await runner.init('code', gateConfig({ mode: 'read-only' }));
+        await runner.init('code', gateConfig({ mode: 'manual' }));
         // No approval callback at all — CI, a one-shot run, a server.
 
         const error = (await runner
@@ -3676,7 +3676,7 @@ describe('GthAgentRunner', () => {
        * rungs before any preflight runs, because there is no rating there to floor. The call is
        * asked about at every one of these rungs either way, so nothing is less gated below.
        */
-      it.each(['auto-safe', 'full-auto'] as const)(
+      it.each(['assisted', 'auto'] as const)(
         'the floor itself is rung-independent — it produces the same verdict at %s',
         (mode) => {
           // The floor is a property of the ANNOTATIONS, not of the rung; which rungs can reach it
@@ -3688,7 +3688,7 @@ describe('GthAgentRunner', () => {
         }
       );
 
-      it.each(['read-only', 'write'] as const)(
+      it.each(['manual', 'write'] as const)(
         'at %s there is no rating to floor, and the human is asked regardless',
         async (mode) => {
           const pending = await shownToTheHuman(gateConfig({ mode }), 'gth_web_fetch');
@@ -3749,7 +3749,7 @@ describe('GthAgentRunner', () => {
         /** Drive one gated shell call; report what the human saw and whether the rater ran. */
         async function decideOn(
           args: Record<string, unknown>,
-          approvals: Record<string, unknown> = { mode: 'auto-safe' },
+          approvals: Record<string, unknown> = { mode: 'assisted' },
           outcome = 'safe'
         ) {
           const { config, withStructuredOutput } = shellGateConfig(approvals, outcome);
@@ -3795,7 +3795,7 @@ describe('GthAgentRunner', () => {
         it('CONTROL: a rated malformed call carries the FLOOR reason, never the rater’s', async () => {
           // The rater would have said `destructive` too, so outcome alone cannot tell the two
           // apart — the reason can, and it is the floor's.
-          const { pending } = await decideOn({}, { mode: 'auto-safe' }, 'destructive');
+          const { pending } = await decideOn({}, { mode: 'assisted' }, 'destructive');
           expect(pending?.safetyVerdict?.reason).not.toContain(RATER_SAID);
           expect(pending?.safetyVerdict?.reason).toBe(FLOOR_REASON);
         });
@@ -3874,7 +3874,7 @@ describe('GthAgentRunner', () => {
     }
 
     /**
-     * A rated rung (`auto-safe`) whose allow list holds the one entry a user could write for this
+     * A rated rung (`assisted`) whose allow list holds the one entry a user could write for this
      * call: its IDENTITY, which is all §3.1 lets a tool entry record. The rater model is a spy that
      * would answer `attack` — so "no rating call" below is a fact about the gate and not about a
      * model that had nothing to say.
@@ -3895,7 +3895,7 @@ describe('GthAgentRunner', () => {
         ...mockConfig,
         llm: { withStructuredOutput } as any,
         streamOutput: true as const,
-        approvals: { mode: 'auto-safe', allow: [entry] },
+        approvals: { mode: 'assisted', allow: [entry] },
         ...(corpusCase.server === undefined
           ? {}
           : { mcpServers: { [corpusCase.server]: { url: 'https://example.invalid/mcp' } } }),
@@ -3955,7 +3955,7 @@ describe('GthAgentRunner', () => {
         llm: { withStructuredOutput } as any,
         streamOutput: true as const,
         approvals: {
-          mode: 'auto-safe',
+          mode: 'assisted',
           allow: [{ type: 'shell', matcher: 'glob', pattern: 'curl *' }],
         },
         commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },

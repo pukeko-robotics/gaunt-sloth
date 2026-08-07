@@ -50,7 +50,11 @@ vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
 }));
 
 // ── @gaunt-sloth/core/config.js ───────────────────────────────────────────────
-vi.mock('@gaunt-sloth/core/config.js', () => ({
+// Partial mock (spread the real module): the shared slash-command registry reads the real
+// approvals vocabulary (APPROVAL_RUNGS) while building the `/approvals` entry, so a bare
+// stub of this barrel leaves that constant undefined and the session fails to start.
+vi.mock('@gaunt-sloth/core/config.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@gaunt-sloth/core/config.js')>()),
   initConfig: vi.fn().mockResolvedValue({ streamSessionInferenceLog: false }),
 }));
 

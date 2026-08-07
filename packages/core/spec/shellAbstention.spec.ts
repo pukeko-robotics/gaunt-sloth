@@ -315,14 +315,14 @@ describe('EXT-81 — the parser preflight note', () => {
   describe('the outcome is not capped', () => {
     const NOTED = 'pwd && rm -rf ~';
 
-    it.each(['auto-safe', 'full-auto'] as const)('`attack` still halts at %s', (rung) => {
+    it.each(['assisted', 'auto'] as const)('`attack` still halts at %s', (rung) => {
       expect(resolves(NOTED)).toBe(false);
       const decision = mapVerdictToAction(NOTED, { outcome: 'attack', reason: 'x' }, { rung });
       expect(decision.action).toBe('halt');
       expect(decision.verdict?.outcome).toBe('attack');
     });
 
-    it.each(['auto-safe', 'full-auto'] as const)(
+    it.each(['assisted', 'auto'] as const)(
       '`catastrophic` still escalates with its own verdict at %s',
       (rung) => {
         const decision = mapVerdictToAction(
@@ -393,7 +393,7 @@ describe('EXT-81 — the parser preflight note', () => {
         outcome: 'destructive',
         reason: 'Could not assess this command: the auto-rater call failed.',
       };
-      for (const rung of ['auto-safe', 'full-auto'] as const) {
+      for (const rung of ['assisted', 'auto'] as const) {
         const decision = mapVerdictToAction('pwd && ls', failClosed, { rung });
         expect(decision.action, rung).toBe('escalate');
         expect(decision.verdict?.reason, rung).toBe(failClosed.reason);

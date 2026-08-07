@@ -109,6 +109,8 @@ export function clampWindowStart(
  * order (⭐ preferred-first then alphabetical). Because letters now feed the filter, the old j/k
  * vim-nav shortcuts are gone — the arrow keys remain the movement keys.
  *
+ * A short list can turn filtering off with `filterable={false}` — see that prop for when to.
+ *
  * CFG-20 — **abort**: Ctrl+C (always) and Esc-on-empty-filter invoke `onCancel`, which the
  * `runInkSelect` host turns into a {@link SelectCancelledError} so the dialog can abort without
  * writing a config. Enter, Ctrl+C and Esc are handled as three DISTINCT keys (the previous
@@ -125,13 +127,15 @@ export function SelectList({
   onSelect,
   onCancel,
   viewportRows,
+  filterable = true,
 }: {
   title: string;
   items: SelectItem[];
   initialIndex?: number;
   onSelect: (index: number) => void;
   /**
-   * CFG-20 — called when the user aborts the selection (Ctrl+C, or Esc with an empty filter).
+   * CFG-20 — called when the user aborts the selection (Ctrl+C, or Esc with an empty filter —
+   * which is the FIRST Esc when `filterable` is false, since no filter can then be active).
    * Optional so a bare `<SelectList>` (e.g. in a render test) can omit it; `runInkSelect` always
    * supplies it.
    */
@@ -141,6 +145,17 @@ export function SelectList({
    * the live terminal height via {@link windowSize}.
    */
   viewportRows?: number;
+  /**
+   * Whether typing filters the list. Default `true` — the 200+-model catalog CFG-20 built this for
+   * is unusable without it.
+   *
+   * A list short enough to read at a glance should pass `false`. Filtering is not free there: one
+   * stray keystroke narrows a four-row list to nothing, leaving Enter inert with no row to pick,
+   * and it spends the first Esc on clearing the filter — so a caller whose footer promises that Esc
+   * cancels would be lying about its own list. With this off no filter can ever be active, so Esc
+   * cancels on the first press and printable keys are ignored.
+   */
+  filterable?: boolean;
 }): React.ReactElement {
   // CFG-20 — the active type-to-filter query. Empty = show everything.
   const [filter, setFilter] = useState('');
@@ -208,9 +223,11 @@ export function SelectList({
       if (filter) applyFilter(filter.slice(0, -1));
       return;
     }
-    // Any other printable, non-modified key extends the filter. Guard against control/meta combos
-    // and non-printable input (arrows/return/etc. are handled above and arrive with empty `input`).
-    if (input && !key.ctrl && !key.meta && !/[\x00-\x1f]/.test(input)) {
+    // Any other printable, non-modified key extends the filter — unless this list opted out of
+    // filtering, in which case it is swallowed rather than narrowing the list. Guard against
+    // control/meta combos and non-printable input (arrows/return/etc. are handled above and
+    // arrive with empty `input`).
+    if (filterable && input && !key.ctrl && !key.meta && !/[\x00-\x1f]/.test(input)) {
       applyFilter(filter + input);
     }
   });

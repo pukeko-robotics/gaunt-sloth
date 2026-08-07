@@ -318,6 +318,55 @@ describe('CFG-20 type-to-filter interaction', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onSelect).not.toHaveBeenCalled();
   });
+
+  /**
+   * `filterable={false}` — for a list short enough to read at a glance, where filtering can only
+   * cost (one stray key empties it, and the first Esc goes on clearing rather than cancelling).
+   * The tests above are the control: with the prop absent, the same keystrokes DO filter.
+   */
+  it('filterable={false} swallows typed characters, leaving the list whole and Enter live', async () => {
+    const onSelect = vi.fn();
+    const { lastFrame, stdin } = render(
+      <SelectList
+        title="Pick a model"
+        items={models}
+        initialIndex={0}
+        onSelect={onSelect}
+        filterable={false}
+      />
+    );
+    stdin.write('gpt');
+    await tick();
+    const frame = lastFrame() ?? '';
+    expect(frame).not.toContain('filter:');
+    // Every row survives, including the ones 'gpt' would have filtered out.
+    expect(frame).toContain('claude-sonnet-5');
+    expect(frame).toContain('grok-4.3');
+    stdin.write(ENTER);
+    await tick();
+    expect(onSelect).toHaveBeenCalledWith(0);
+  });
+
+  it('filterable={false} makes the FIRST Esc abort, since no filter can be active', async () => {
+    const onSelect = vi.fn();
+    const onCancel = vi.fn();
+    const { stdin } = render(
+      <SelectList
+        title="Pick a model"
+        items={models}
+        initialIndex={0}
+        onSelect={onSelect}
+        onCancel={onCancel}
+        filterable={false}
+      />
+    );
+    stdin.write('gpt'); // would have started a filter, were filtering on
+    await tick();
+    stdin.write(ESC);
+    await tick();
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
 });
 
 describe('CFG-20 runInkSelect abort wire (real Ink render, fake streams)', () => {

@@ -3,7 +3,7 @@
 In `gth code`, the agent can run shell commands so it can test its own work — run your suite, check
 `git status`, install a package — instead of only reading and writing files. **Approvals** decide
 which of those commands run on their own and which stop to ask you. There is one setting, and it is
-a ladder of five rungs.
+a ladder of five modes.
 
 ## The main use case: let the agent run your tests, on your terms
 
@@ -17,7 +17,7 @@ already have it — just start a session:
 gth code "add a retry to fetchOrders and make the tests pass"
 ```
 
-Every session starts at **`auto-safe`**, the default rung: the auto-rater rates each command before
+Every session starts at **`assisted`**, the default mode: the auto-rater rates each command before
 it runs. A command it rates safe (running your tests, `git status`) executes with no prompt.
 Anything else stops and asks you:
 
@@ -73,7 +73,7 @@ your command. If you see that one, the fix is a bigger budget (below), not a saf
 cannot work out what a command like that runs, because it composes (`&&`, `;`, `|`, a line break),
 substitutes (`$(…)`, backticks) or redirects (`>`, `<`). That is a fact about the parser, not a
 finding about the command: `pwd && ls` is ordinary shell, correctly written. So it is **not** an
-escalation and not a refusal. At `auto-safe` and `full-auto` the command is rated exactly as any
+escalation and not a refusal. At `assisted` and `auto` the command is rated exactly as any
 other is, and what the parser noticed is passed to the rater as a plain note beside the command —
 what the construct is and what the shell does with it, with no verdict attached. Rate it `safe` and
 it runs; the outcomes above are all still available, including the two severe ones.
@@ -126,7 +126,7 @@ judgement where a plain one does not.
 What the floor guarantees is the other direction — where it does fire, no model opinion can wave the
 command through.
 
-The rater is only as good as the model behind it. On a small or local model, prefer the `write` rung
+The rater is only as good as the model behind it. On a small or local model, prefer the `write` mode
 (below) or point the rater at a stronger model with `approvals.rater`.
 
 ### Give a local rater enough time
@@ -137,14 +137,14 @@ exactly the commands that most needed rating. Measured on a 12B over Ollama, the
 commands took anywhere from 6 seconds to nearly two minutes.
 
 When the rater runs out of time the command is escalated rather than approved, which is safe but is
-also the opposite of what `auto-safe` and `full-auto` are for: you end up being asked about
+also the opposite of what `assisted` and `auto` are for: you end up being asked about
 everything, and nothing tells you why. So gth says so, once per occurrence, and you can raise the
 budget:
 
 ```json
 {
   "approvals": {
-    "mode": "full-auto",
+    "mode": "auto",
     "rater": "local-rater",
     "raterTimeoutMs": 120000
   }
@@ -184,44 +184,51 @@ gone.
 
 ## The ladder: `approvals`
 
-There is one approvals setting, and it takes the rung name:
+There is one approvals setting, and it takes the mode name:
 
 ```json
-{ "approvals": "auto-safe" }
+{ "approvals": "assisted" }
 ```
 
-| Rung | What it grants | Rater |
+| Mode | What it grants | Rater |
 |---|---|---|
-| `read-only` | Gaunt Sloth may automatically read and list files in the current working folder. It asks for approval for anything else, until you tell it to always allow a command. | no |
+| `manual` | Gaunt Sloth may automatically read and list files in the current working folder. It asks for approval for anything else, until you tell it to always allow a command. | no |
 | `write` | Gaunt Sloth may automatically read, edit, create and delete files in the current working folder. It asks for approval for anything else, until you tell it to always allow a command. | no |
-| `auto-safe` | Same as write, plus the auto-rater rates everything else and automatically approves what it rates as safe; anything questionable comes to you. Gaunt Sloth can still rewrite and delete files in your working folder without asking — "safe" means each action is checked for reaching outside that folder or harming your system, not that nothing changes. | yes |
-| `full-auto` | The auto-rater steers Gaunt Sloth: it decides for itself and does not stop to ask you. This is safer than bypass — the auto-rater still stops the run on a command that reads your keys or passwords, weakens permissions, installs itself to run again later, or hides what it does; it brings anything it cannot undo to you rather than deciding alone; and your deny list still applies — but it is **not** safe. Gaunt Sloth will change and delete things. Use it where the consequences are recoverable, and put real gates (deployment approvals, two-factor, branch protection) on anything that is not. | yes |
+| `assisted` | Same as write, plus the auto-rater rates everything else and automatically approves what it rates as safe; anything questionable comes to you. Gaunt Sloth can still rewrite and delete files in your working folder without asking — "safe" means each action is checked for reaching outside that folder or harming your system, not that nothing changes. | yes |
+| `auto` | The auto-rater steers Gaunt Sloth: it decides for itself and does not stop to ask you. This is safer than bypass — the auto-rater still stops the run on a command that reads your keys or passwords, weakens permissions, installs itself to run again later, or hides what it does; it brings anything it cannot undo to you rather than deciding alone; and your deny list still applies — but it is **not** safe. Gaunt Sloth will change and delete things. Use it where the consequences are recoverable, and put real gates (deployment approvals, two-factor, branch protection) on anything that is not. | yes |
 | `bypass` | No gate. Gaunt Sloth runs whatever it decides to run, without asking and without rating. Only the refusals configured in the deny list in your config still apply. | no |
 
-`read-only`, `write` and `bypass` consult no model at all, so they are reproducible and cost
-nothing. `auto-safe` spends one rating call per gated command.
+The choice you are really making is **`manual` → `assisted` → `auto`, plus `bypass`** — those four
+are what `/approvals` offers you. `write` is not a further step along that line: it is `manual` with
+edits inside your working folder granted as well as reads, so it is a variant of `manual` rather
+than something between `manual` and `assisted`. Set it whenever you want it, with
+`/approvals write` or in config; it simply does not take up a row in
+[the picker](interactive-sessions.md#slash-commands).
 
-`bypass` is **not** a higher-autonomy rung than `full-auto` — both let the agent act without asking;
+`manual`, `write` and `bypass` consult no model at all, so they are reproducible and cost
+nothing. `assisted` spends one rating call per gated command.
+
+`bypass` is **not** a higher-autonomy mode than `auto` — both let the agent act without asking;
 `bypass` is the same autonomy with the checks removed.
 
-What any of these rungs does and does **not** protect you from, and what has to sit outside Gaunt
+What any of these modes does and does **not** protect you from, and what has to sit outside Gaunt
 Sloth to cover the rest, is
 [What approvals protect you from](what-approvals-protect-you-from.md).
 
-Switch rung for the current session with `/approvals read-only|write|auto-safe|full-auto|bypass`
+Switch mode for the current session with `/approvals manual|write|assisted|auto|bypass`
 (see [Interactive sessions](interactive-sessions.md#slash-commands)).
 
 ## The agent knows which of its tools cost you a prompt
 
 The cheapest approval is the one that never happens, so the agent is told the posture up front: at
-every rung except `bypass`, the description of each tool that needs approval gains a sentence
+every mode except `bypass`, the description of each tool that needs approval gains a sentence
 saying so, and the tools that run freely say nothing. The shell is the only gated tool today, so it
-is the only description that changes — at `read-only` and `write` it says the call *will* require
-your approval, at `auto-safe` that it *may*, and at `full-auto` that the auto-rater may refuse it.
+is the only description that changes — at `manual` and `write` it says the call *will* require
+your approval, at `assisted` that it *may*, and at `auto` that the auto-rater may refuse it.
 Each sentence also tells the agent to reach for the shell only when the other tools cannot do the
 job.
 
-The auto-rater backs that up at `auto-safe` and `full-auto`. When it does not rate a command safe
+The auto-rater backs that up at `assisted` and `auto`. When it does not rate a command safe
 and one of the tools the agent already has would do the same job, it names that tool in its
 explanation, so the tool shows up on the rater line of the approval prompt:
 
@@ -239,13 +246,13 @@ names nothing.
 
 ## The extras: rater, allow, deny, escalate
 
-When you need more than the rung, write the object form instead. The scalar above is exactly sugar
+When you need more than the mode, write the object form instead. The scalar above is exactly sugar
 for `{ "mode": <value> }`:
 
 ```json
 {
   "approvals": {
-    "mode": "auto-safe",
+    "mode": "assisted",
     "rater": "safety-rater",
     "allow": [
       { "type": "shell", "matcher": "exact", "pattern": "npm test" },
@@ -260,25 +267,25 @@ for `{ "mode": <value> }`:
     ]
   },
   "commands": {
-    "pr": { "approvals": "read-only" }
+    "pr": { "approvals": "manual" }
   }
 }
 ```
 
 - **`rater`** — the name of an identity profile whose model does the rating, instead of the session
   model. This is the fix for a weak main model: point it at a stronger one. A name that does not
-  resolve is a config error, never a silent fallback. It is only consulted at `auto-safe` and
-  `full-auto`.
-- **`allow`** — what you trust. Checked **before** the rater at every rung except `bypass`, so an
+  resolve is a config error, never a silent fallback. It is only consulted at `assisted` and
+  `auto`.
+- **`allow`** — what you trust. Checked **before** the rater at every mode except `bypass`, so an
   allow-listed call never prompts. This is the supported way to make a non-interactive pipeline
   pass.
 - **`deny`** — what never runs. Checked **before** `allow` and before the rater, and it is the one
   check `bypass` keeps: choosing `bypass` means *"stop asking me"*, not *"forget what I told you
   never to do"*.
-- **`escalate`** — what always asks you, whatever the rung would have done, and with no rating call.
+- **`escalate`** — what always asks you, whatever the mode would have done, and with no rating call.
   It outranks `allow`, including a grant you made at a prompt, so *this specific thing asks even
-  though its class would not*. It is **inert at `bypass`**: that rung means *stop asking me*, and
-  the rung you chose for the session wins. A stop that must survive `bypass` is a `deny` entry.
+  though its class would not*. It is **inert at `bypass`**: that mode means *stop asking me*, and
+  the mode you chose for the session wins. A stop that must survive `bypass` is a `deny` entry.
 
 Where entries from more than one list match the same call, **the most restrictive one wins — deny
 over escalate over allow** — so the order you write them in never matters.
@@ -287,15 +294,15 @@ All three are read-only input: Gaunt Sloth merges them with what you approve or 
 prompt, and never writes back to your config file.
 
 A per-command value overrides **only the fields it names**. `"commands": { "pr": { "approvals":
-"read-only" } }` above says the `pr` command has no business writing files, whatever the root
-setting is — and that is *all* it says: the rung changes, and `rater`, `raterTimeoutMs` and the
+"manual" } }` above says the `pr` command has no business writing files, whatever the root
+setting is — and that is *all* it says: the mode changes, and `rater`, `raterTimeoutMs` and the
 lists still come from the root.
 
 The lists do not all merge the same way, and the difference is deliberate:
 
 - **`deny` and `escalate` add up**, across every scope and both config layers. A command-specific
   `deny` entry joins the root's rather than standing in for it, and a global config's entries join
-  your project's. So a per-command rung can never quietly drop a prohibition you wrote at the root
+  your project's. So a per-command mode can never quietly drop a prohibition you wrote at the root
   — which matters most at `bypass`, where your deny list is nearly the last check left. The flip
   side: **removing an inherited `deny` or `escalate` entry for one command is not expressible.** If
   a command needs to be free of a rule, the rule does not belong at the root.
@@ -351,8 +358,8 @@ shell would run, because a prohibition that catches something unresolvable costs
 ### `rate`: keeping the auto-rater on a call you already allowed
 
 An `allow` match settles your part — there is no prompt. Whether the auto-rater still looks at the
-call is the entry's own `rate`, honoured at `auto-safe` and `full-auto` and **inert at every other
-rung**, so no entry can add a model call to `read-only` or `write`.
+call is the entry's own `rate`, honoured at `assisted` and `auto` and **inert at every other
+mode**, so no entry can add a model call to `manual` or `write`.
 
 The default follows from how much the entry recorded. A `shell` + `exact` entry recorded the whole
 command, so it defaults to `"rate": false` — the common case costs nothing. A `glob` or `regexp`
@@ -384,7 +391,7 @@ never times out into an approval. Declare what the pipeline is allowed to run:
 ```json
 {
   "approvals": {
-    "mode": "auto-safe",
+    "mode": "assisted",
     "allow": [
       { "type": "shell", "matcher": "exact", "pattern": "npm test" },
       { "type": "shell", "matcher": "exact", "pattern": "npm run build" },
@@ -402,10 +409,10 @@ never times out into an approval. Declare what the pipeline is allowed to run:
 { "approvals": "write" }
 
 // Rate with a stronger model than the session's
-{ "approvals": { "mode": "auto-safe", "rater": "safety-rater" } }
+{ "approvals": { "mode": "assisted", "rater": "safety-rater" } }
 
 // Let the agent work unattended, but never let it publish
-{ "approvals": { "mode": "full-auto", "deny": [
+{ "approvals": { "mode": "auto", "deny": [
   { "type": "shell", "matcher": "glob", "pattern": "npm publish*" },
   { "type": "shell", "matcher": "glob", "pattern": "git push --force*" }
 ] } }

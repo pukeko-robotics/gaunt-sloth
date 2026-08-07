@@ -228,7 +228,7 @@ export interface RaterClassifierOptions {
  * The suite's `target.rung` is its DECLARATION; a run whose config actually declares `approvals`
  * overrides it. That direction is deliberate and it is what makes the `rung × model` sweep possible
  * at all: a sweep cell can override `config:` and `model:`, but it cannot reach a `target` field, so
- * `config: { approvals: full-auto }` is the only way an axis can move the rung.
+ * `config: { approvals: auto }` is the only way an axis can move the rung.
  *
  * The cost of that direction is that a developer's own `approvals` setting also moves it — silently
  * re-rating the corpus at a rung the suite never claimed. So the override is ANNOUNCED. It is read
@@ -318,7 +318,7 @@ function buildRationale(
  * - the case declares `model_free` — the suite asserting that this command is decided by the
  *   deterministic layer alone, which is what makes 17-odd cases of an approvals corpus free to run
  *   and is the EXT-55 regression gate;
- * - the rung is not a RATED rung — `read-only`, `write` and `bypass` consult no model in production
+ * - the rung is not a RATED rung — `manual`, `write` and `bypass` consult no model in production
  *   either, so ringing one here would bill for a call the gate would never make.
  *
  * **A model-free decision reports NO label.** The action is real — `mapVerdictToAction` produces it

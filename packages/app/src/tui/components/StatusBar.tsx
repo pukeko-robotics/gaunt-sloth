@@ -43,7 +43,7 @@ export function StatusBar({
   // idle). Kept terse so it fits the one-line status bar.
   //
   // Only `bypass` is warn-styled: it is the one rung with NO gate at all. The rest are dim like
-  // the rest of the status line — `auto-safe` is the default and recommended posture, and
+  // the rest of the status line — `assisted` is the default and recommended posture, and
   // shouting at the user about the default trains them to ignore the colour that matters. The
   // two RATED rungs name the rater profile so it is visible at a glance. §10 rule 4: the badge
   // uses the display spelling, never the kebab-case identifier.

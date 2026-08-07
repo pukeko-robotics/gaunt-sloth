@@ -30,6 +30,8 @@ import {
   type DebugTab,
 } from '#src/tui/components/DebugPanel.js';
 import {
+  type ApprovalPostureChoice,
+  approvalPostureChoices,
   approvalsRungNotice,
   approvalsStatusNotice,
   approvalsTrustNotice,
@@ -39,6 +41,7 @@ import {
   parseSlashCommand,
   toolsToggleNotice,
 } from '@gaunt-sloth/agent/modules/slashCommands.js';
+import { ApprovalsPicker } from '#src/tui/components/ApprovalsPicker.js';
 import { TerminalSizeProvider, useTerminalSize } from '#src/tui/useTerminalSize.js';
 import { findMatches, scrollOffsetForLine, stepMatch } from '#src/tui/debugSearch.js';
 import { useTranscriptScroll } from '#src/tui/useTranscriptScroll.js';
@@ -114,6 +117,10 @@ export function App(props: TuiAppProps): React.ReactElement {
   // Mirror for the synchronous approval useInput handler, so `y` can read the current posture
   // without a stale closure.
   const approvalsRef = useRef(props.initialApprovals);
+  // CFG-39 — the open `/approvals` picker's rows, or null when no picker is showing. Transient
+  // chrome: unlike the status notice it is never committed to the transcript, and it owns the
+  // keyboard while mounted (the prompt is suspended below, as it is for a pending approval).
+  const [approvalsPicker, setApprovalsPicker] = useState<ApprovalPostureChoice[] | null>(null);
   // Whether to show the post-`/clear` "history cleared" banner. Hidden again the moment the next
   // user turn starts so it doesn't linger above a fresh conversation.
   const [clearedBanner, setClearedBanner] = useState(false);
@@ -351,8 +358,13 @@ export function App(props: TuiAppProps): React.ReactElement {
     [agent]
   );
 
-  // CFG-26 — `/approvals` with no argument: DISPLAY the posture. Read-only by construction; it
-  // never touches the runner's state.
+  // CFG-26/CFG-39 — `/approvals` with no argument: DISPLAY the posture, then OFFER the picker.
+  //
+  // Both halves, because they answer two different questions people ask at this moment: "what am I
+  // on right now" (the notice — with the rater profile, the grant counts and the deny count, none
+  // of which a picker row carries) and "what else could I be on" (the picker). The notice is
+  // committed to the transcript and stays; the picker is transient chrome that vanishes on Enter or
+  // Esc. Reading the posture never touches the runner's state — only a row selection does.
   const showApprovals = useCallback((): void => {
     if (!agent.getApprovals) {
       push({
@@ -365,8 +377,14 @@ export function App(props: TuiAppProps): React.ReactElement {
     const { approvals: current, allowlist, deny, grants, trust } = agent.getApprovals();
     approvalsRef.current = current;
     setApprovals(current);
-    const { title, lines, tone } = approvalsStatusNotice(current, allowlist, deny, grants, trust);
+    // `interactive` suppresses the notice's TEXT copy of the mode list, because the picker below is
+    // about to render the same four rows. Every non-TTY surface leaves it unset and gets the text.
+    const { title, lines, tone } = approvalsStatusNotice(current, allowlist, deny, grants, trust, {
+      interactive: true,
+    });
     push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
+    // Only offer to CHANGE the mode when this session can actually apply one.
+    if (agent.setApprovalRung) setApprovalsPicker(approvalPostureChoices(current.rung));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent]);
 
@@ -654,6 +672,12 @@ export function App(props: TuiAppProps): React.ReactElement {
       else resolveApproval('reject');
       return;
     }
+
+    // CFG-39 — while the `/approvals` picker is open it OWNS the keyboard, exactly as a pending
+    // approval does. <SelectList> is a useInput subscriber too and Ink runs every subscriber, so
+    // without this the arrow keys would also scroll the transcript and Esc would both cancel the
+    // picker and jump to the newest output. Returning here leaves the picker the only claimant.
+    if (approvalsPicker) return;
 
     if (key.escape && runningRef.current) {
       abortRef.current?.abort();
@@ -988,6 +1012,19 @@ export function App(props: TuiAppProps): React.ReactElement {
             {/* Tool-approval affordance (EXT-9 Phase B2): when an approval is pending it sits just above
           the input dock, owns the keyboard, and suspends the normal prompt below. */}
             {pendingApproval ? <ApprovalPrompt pending={pendingApproval.pending} /> : null}
+            {/* CFG-39 — the `/approvals` picker. Sits in the same dock slot as the approval prompt
+          and owns the keyboard the same way, but is never shown at the same time: a pending tool
+          approval is a question the run is blocked on, so it outranks a posture change. */}
+            {approvalsPicker && !pendingApproval ? (
+              <ApprovalsPicker
+                choices={approvalsPicker}
+                onSelect={(rung) => {
+                  setApprovalsPicker(null);
+                  applyApprovalRung(rung);
+                }}
+                onCancel={() => setApprovalsPicker(null)}
+              />
+            ) : null}
             <Rule />
             {/* TUI-C19 — persistent startup-advisory line. Lives here in the pinned dock, right by the
           status bar, so a config-validation warning stays on screen and survives transcript
@@ -1016,7 +1053,7 @@ export function App(props: TuiAppProps): React.ReactElement {
             {/* The prompt stays mounted while a turn streams (EXT-12), so the user can run mid-turn
           slash commands like /approvals; handleSubmit + dispatch gate what's allowed then. It
           is suspended only when the debug panel is focused or a tool approval owns the keyboard. */}
-            {!debugFocused && !pendingApproval ? (
+            {!debugFocused && !pendingApproval && !approvalsPicker ? (
               <PromptInput
                 onSubmit={handleSubmit}
                 commands={registry}

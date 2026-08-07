@@ -214,33 +214,33 @@ setting — not here.
 Approvals are a **top-level** key (settable per command as `commands.<cmd>.approvals`, which
 overrides only the fields it names: `mode`, `rater`, `raterTimeoutMs` and `allow` replace the
 root's, while `deny` and `escalate` add to it rather than replacing it — a command may narrow what
-runs unprompted, never widen what is prohibited). It takes one of five rung names — `read-only`, `write`,
-`auto-safe` (the default), `full-auto`, `bypass` — either on its own or as `mode` inside an object
+runs unprompted, never widen what is prohibited). It takes one of five mode names — `manual`, `write`,
+`assisted` (the default), `auto`, `bypass` — either on its own or as `mode` inside an object
 carrying the extras. See
 [Migration](../MIGRATION.md#i-approvals-and-the-ai-rater-hard) for the retired keys.
 
-- `mode` — the rung. Defaults to `auto-safe` in every context, interactive or not. What changes
+- `mode` — the approvals mode. Defaults to `assisted` in every context, interactive or not. What changes
   without a human is what an escalation *does* (it exits non-zero rather than prompting), not which
-  rung the session starts on.
+  mode the session starts on.
 - `rater` — the **name** of an identity profile whose model rates, instead of the session model. A
-  name that does not resolve is a config error. Only consulted at `auto-safe` and `full-auto`.
-- `allow` — what you trust. Checked before the rater at every rung except `bypass`.
+  name that does not resolve is a config error. Only consulted at `assisted` and `auto`.
+- `allow` — what you trust. Checked before the rater at every mode except `bypass`.
 - `deny` — what never runs. Checked before `allow` and before the rater, and it still applies under
   `bypass`.
-- `escalate` — what always asks you, whatever the rung would have done.
+- `escalate` — what always asks you, whatever the mode would have done.
 
 Entries in all three are explicit objects (`type`, `matcher` and `pattern` are always required);
 where more than one list matches, the most restrictive wins. The three are read-only input: they
 are merged with what you approve or reject at the prompt, and never written back to your config.
 
 ```json
-{ "approvals": "auto-safe" }
+{ "approvals": "assisted" }
 ```
 
 ```json
 {
   "approvals": {
-    "mode": "full-auto",
+    "mode": "auto",
     "rater": "safety-rater",
     "deny": [
       { "type": "shell", "matcher": "glob", "pattern": "npm publish*" },

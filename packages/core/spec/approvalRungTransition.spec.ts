@@ -2,9 +2,9 @@
  * [[EXT-80]] — **what is gated AFTER the rung moves, and what is still free at the rated rungs.**
  *
  * The approval interrupt is wired once, when the graph is built, while `/approvals <rung>` moves the
- * rung underneath it for the rest of the session. The default rung is `auto-safe`, so typing
- * `/approvals read-only` is the ORDINARY way to reach the strict mode — and a gate whose set carried
- * the rung would be frozen on `auto-safe` and would leave `write_file` ungated at the exact moment
+ * rung underneath it for the rest of the session. The default rung is `assisted`, so typing
+ * `/approvals manual` is the ORDINARY way to reach the strict mode — and a gate whose set carried
+ * the rung would be frozen on `assisted` and would leave `write_file` ungated at the exact moment
  * the session printed *"It asks for approval for anything else"*. So the interrupt is
  * rung-independent (`resolveInterruptToolNames`) and `GthAgentRunner.decideToolApproval` decides on
  * the live `sessionApprovals.rung`.
@@ -13,11 +13,11 @@
  * the REAL runner — the interrupt firing and the decision are two claims and only the pair is the
  * behaviour:
  *
- * 1. **The transition works in the dangerous direction.** Start at `auto-safe`, switch to
- *    `read-only`, call `write_file`: the human is reached and the file tool never runs unapproved.
- * 2. **The transition works in the harmless direction.** Start at `read-only`, switch to `write`:
+ * 1. **The transition works in the dangerous direction.** Start at `assisted`, switch to
+ *    `manual`, call `write_file`: the human is reached and the file tool never runs unapproved.
+ * 2. **The transition works in the harmless direction.** Start at `manual`, switch to `write`:
  *    `write_file` is granted silently.
- * 3. **Wiring wider did not gate wider.** At `auto-safe`, `full-auto` and `bypass` a gated non-shell
+ * 3. **Wiring wider did not gate wider.** At `assisted`, `auto` and `bypass` a gated non-shell
  *    tool is approved with NO rating call and NO human prompt — byte-for-byte the behaviour from
  *    when the interrupt held the shell alone. Widening there would turn every MCP call at the
  *    default rung into a human prompt with no rating, which belongs to [[EXT-30]].
@@ -210,16 +210,16 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
     }
   };
 
-  describe('the transition toward strictness — the ordinary route to read-only', () => {
+  describe('the transition toward strictness — the ordinary route to manual', () => {
     /**
      * **The defect this node exists to kill, on the documented in-session path.** The session starts
-     * on the DEFAULT rung, where `write_file` is free, and the user types `/approvals read-only`.
+     * on the DEFAULT rung, where `write_file` is free, and the user types `/approvals manual`.
      * Nothing rebuilds the graph, so if the interrupt carried the rung it would still hold the
-     * `auto-safe` set and the file would be written unprompted — under a notice that had just
+     * `assisted` set and the file would be written unprompted — under a notice that had just
      * promised approval for anything else.
      */
-    it('auto-safe then /approvals read-only: write_file reaches the human', async () => {
-      const runner = await makeRunner('auto-safe', [
+    it('assisted then /approvals manual: write_file reaches the human', async () => {
+      const runner = await makeRunner('assisted', [
         { name: 'write_file', args: { path: 'notes.md', content: 'hi' } },
       ]);
       const human = vi.fn(async (pending: PendingToolInterrupt): Promise<ToolApprovalDecision> => {
@@ -230,39 +230,39 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
       });
       runner.setToolApprovalCallback(human);
 
-      expect(runner.setSessionApprovalRung('read-only')).toBe('read-only');
+      expect(runner.setSessionApprovalRung('manual')).toBe('manual');
       await runTurn(runner, 'write the notes');
 
       expect(human).toHaveBeenCalledTimes(1);
       expect(ran).toEqual([]);
-      // No model call was spent deciding it: `read-only` is a deterministic rung.
+      // No model call was spent deciding it: `manual` is a deterministic rung.
       expect(rateShellCommandMock).not.toHaveBeenCalled();
     });
 
-    it('auto-safe then /approvals read-only: an MCP tool reaches the human too', async () => {
-      const runner = await makeRunner('auto-safe', [
+    it('assisted then /approvals manual: an MCP tool reaches the human too', async () => {
+      const runner = await makeRunner('assisted', [
         { name: 'mcp__docs__search', args: { query: 'gates' } },
       ]);
       const human = vi.fn().mockResolvedValue({ type: 'reject', message: 'No.' });
       runner.setToolApprovalCallback(human);
 
-      runner.setSessionApprovalRung('read-only');
+      runner.setSessionApprovalRung('manual');
       await runTurn(runner, 'search the docs');
 
       expect(human).toHaveBeenCalledTimes(1);
       expect(ran).toEqual([]);
     });
 
-    it('auto-safe then /approvals read-only: the read built-ins stay free', async () => {
-      // The other half of the promise: `read-only` says the agent MAY read, so a read tool must not
+    it('assisted then /approvals manual: the read built-ins stay free', async () => {
+      // The other half of the promise: `manual` says the agent MAY read, so a read tool must not
       // start prompting. A gate that simply escalated everything would pass the two cells above.
-      const runner = await makeRunner('auto-safe', [
+      const runner = await makeRunner('assisted', [
         { name: 'read_file', args: { path: 'notes.md' } },
       ]);
       const human = vi.fn().mockResolvedValue({ type: 'reject' });
       runner.setToolApprovalCallback(human);
 
-      runner.setSessionApprovalRung('read-only');
+      runner.setSessionApprovalRung('manual');
       await runTurn(runner, 'read the notes');
 
       expect(human).not.toHaveBeenCalled();
@@ -271,8 +271,8 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
   });
 
   describe('the transition away from strictness', () => {
-    it('read-only then /approvals write: write_file is granted with no prompt', async () => {
-      const runner = await makeRunner('read-only', [
+    it('manual then /approvals write: write_file is granted with no prompt', async () => {
+      const runner = await makeRunner('manual', [
         { name: 'write_file', args: { path: 'notes.md', content: 'hi' } },
       ]);
       const human = vi.fn().mockResolvedValue({ type: 'reject' });
@@ -285,10 +285,10 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
       expect(ran).toEqual(['write_file:notes.md']);
     });
 
-    it('read-only then /approvals write: an MCP tool still reaches the human', async () => {
+    it('manual then /approvals write: an MCP tool still reaches the human', async () => {
       // `write` frees the file built-ins and nothing else — the control that stops the cell above
       // passing on a gate that simply stopped gating at `write`.
-      const runner = await makeRunner('read-only', [
+      const runner = await makeRunner('manual', [
         { name: 'mcp__docs__search', args: { query: 'gates' } },
       ]);
       const human = vi.fn().mockResolvedValue({ type: 'reject' });
@@ -313,12 +313,12 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
    *
    * **Every rung, because the rung is where this hides.** `commands.api.approvals` is a first-class
    * schema field and a root-level `approvals` applies to `api` too, so an ordinary config puts this
-   * surface on `read-only` or `write`. Those are the two rungs where the LIVE gated set is
+   * surface on `manual` or `write`. Those are the two rungs where the LIVE gated set is
    * non-empty — a fallback to it parks the call just as a rung-independent set does. The default
    * rung cannot show that on its own: it is the one rung where every candidate set is empty.
    *
    * **Two scripted calls, because they are gated at different rungs.** `write_file` is granted by
-   * its access class at `write`, so it discriminates at `read-only` alone; `mcp__docs__search` has
+   * its access class at `write`, so it discriminates at `manual` alone; `mcp__docs__search` has
    * no access class and is gated at both deterministic rungs. Neither cell subsumes the other.
    */
   describe('a surface that drains no approvals is handed no approval interrupt', () => {
@@ -393,7 +393,7 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
    * pass on one that prompted.
    */
   describe('wiring wider did not gate wider — the rated rungs and bypass are unchanged', () => {
-    it.each(['auto-safe', 'full-auto', 'bypass'] as const)(
+    it.each(['assisted', 'auto', 'bypass'] as const)(
       'at %s write_file runs with no rating call and no prompt',
       async (rung) => {
         const runner = await makeRunner(rung, [
@@ -410,7 +410,7 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
       }
     );
 
-    it.each(['auto-safe', 'full-auto', 'bypass'] as const)(
+    it.each(['assisted', 'auto', 'bypass'] as const)(
       'at %s an MCP tool runs with no rating call and no prompt',
       async (rung) => {
         const runner = await makeRunner(rung, [
@@ -432,7 +432,7 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
      * no one to ask ran these tools before this change; an escalation here would break every
      * `gth exec` and CI run that writes a file.
      */
-    it.each(['auto-safe', 'full-auto', 'bypass'] as const)(
+    it.each(['assisted', 'auto', 'bypass'] as const)(
       'at %s write_file runs even with NO approval callback wired',
       async (rung) => {
         const runner = await makeRunner(rung, [

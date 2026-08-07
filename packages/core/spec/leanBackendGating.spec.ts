@@ -21,7 +21,7 @@
  */
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type { GthConfig } from '#src/config.js';
-import { RUNG_TOOL_DESCRIPTION_SUFFIXES, SHELL_TOOL_NAME } from '#src/config.js';
+import { APPROVAL_RUNGS, RUNG_TOOL_DESCRIPTION_SUFFIXES, SHELL_TOOL_NAME } from '#src/config.js';
 import type { StatusUpdateCallback } from '#src/core/types.js';
 
 vi.mock('#src/utils/consoleUtils.js', async (importOriginal) => {
@@ -155,8 +155,8 @@ describe('EXT-80 — the lean backend wires the interrupt on the whole gated set
     'write_file',
   ];
 
-  it('wires every tool any rung could gate at read-only', async () => {
-    await initAt('read-only');
+  it('wires every tool any rung could gate at manual', async () => {
+    await initAt('manual');
 
     expect(wiredInterruptNames()).toEqual(EVERY_GATEABLE_TOOL);
   });
@@ -164,7 +164,7 @@ describe('EXT-80 — the lean backend wires the interrupt on the whole gated set
   it('leaves the read built-ins out of the interrupt at every rung', async () => {
     // No rung gates a built-in READ tool, so nothing is bought by suspending on one — and a read
     // tool that suspended would pay a graph round trip on every `read_file` at the default rung.
-    for (const rung of ['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'] as const) {
+    for (const rung of APPROVAL_RUNGS) {
       await initAt(rung);
       expect(wiredInterruptNames()).not.toContain('read_file');
       expect(wiredInterruptNames()).not.toContain('list_directory');
@@ -172,42 +172,42 @@ describe('EXT-80 — the lean backend wires the interrupt on the whole gated set
   });
 
   /**
-   * **The property the mid-session switch rests on.** The graph is built once; `/approvals read-only`
+   * **The property the mid-session switch rests on.** The graph is built once; `/approvals manual`
    * does not rebuild it. So if this set differed by rung, a session that started on the default
-   * `auto-safe` would still hold the `auto-safe` set after the switch and `write_file` would be
+   * `assisted` would still hold the `assisted` set after the switch and `write_file` would be
    * written unprompted — the defect this node exists to kill, on its ordinary route.
    */
   it('wires the SAME set at every rung, so a mid-session switch cannot be starved', async () => {
     const perRung: Record<string, string[] | null> = {};
-    for (const rung of ['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'] as const) {
+    for (const rung of APPROVAL_RUNGS) {
       await initAt(rung);
       perRung[rung] = wiredInterruptNames();
     }
 
-    for (const rung of ['write', 'auto-safe', 'full-auto', 'bypass'] as const) {
+    for (const rung of ['write', 'assisted', 'auto', 'bypass'] as const) {
       expect(perRung[rung], `interrupt set at ${rung}`).toEqual(EVERY_GATEABLE_TOOL);
     }
-    expect(perRung['read-only']).toEqual(EVERY_GATEABLE_TOOL);
+    expect(perRung['manual']).toEqual(EVERY_GATEABLE_TOOL);
   });
 
   it('installs the middleware at a rated rung with no shell gate', async () => {
     // `chat` emits no dev tools, so the shell gate is off — and yet the MCP and custom tools must
-    // still be reachable by a `/approvals read-only` later in the session. Keying the install off
+    // still be reachable by a `/approvals manual` later in the session. Keying the install off
     // `gateShell` (as it once was) would leave that whole session ungated whatever the user typed.
-    await initAt('auto-safe', 'chat');
+    await initAt('assisted', 'chat');
 
     const wired = wiredInterruptNames();
     expect(wired).not.toBeNull();
     expect(wired).toContain('mcp__docs__search');
     expect(wired).toContain('write_file');
     expect(wired).toContain('my_custom_tool');
-    // Nothing is DESCRIBED as needing approval, because at `auto-safe` with no shell gate nothing
+    // Nothing is DESCRIBED as needing approval, because at `assisted` with no shell gate nothing
     // is gated — the boundary, from the model's side.
     expect(suffixedNames()).toEqual([]);
   });
 
-  it('installs the middleware at read-only on chat, where there is no shell gate to key off', async () => {
-    await initAt('read-only', 'chat');
+  it('installs the middleware at manual on chat, where there is no shell gate to key off', async () => {
+    await initAt('manual', 'chat');
 
     const wired = wiredInterruptNames();
     expect(wired).not.toBeNull();
@@ -217,7 +217,7 @@ describe('EXT-80 — the lean backend wires the interrupt on the whole gated set
   });
 
   it('wires approve/reject on every interrupted tool, not just the shell', async () => {
-    await initAt('read-only');
+    await initAt('manual');
 
     const options = hitlMock.mock.calls.at(-1)![0] as {
       interruptOn: Record<string, unknown>;
@@ -227,10 +227,10 @@ describe('EXT-80 — the lean backend wires the interrupt on the whole gated set
     }
   });
 
-  it('suffixes exactly the tools read-only gates, and no others', async () => {
-    // §4.5's non-drift property, asserted end to end on the real init. At `read-only` the live gated
-    // set and the interrupt set coincide, because `read-only` is the strictest rung.
-    await initAt('read-only');
+  it('suffixes exactly the tools manual gates, and no others', async () => {
+    // §4.5's non-drift property, asserted end to end on the real init. At `manual` the live gated
+    // set and the interrupt set coincide, because `manual` is the strictest rung.
+    await initAt('manual');
 
     expect(suffixedNames()).toEqual(wiredInterruptNames());
   });
@@ -255,7 +255,7 @@ describe('EXT-80 — the lean backend wires the interrupt on the whole gated set
     ]);
   });
 
-  it.each(['auto-safe', 'full-auto'] as const)(
+  it.each(['assisted', 'auto'] as const)(
     'suffixes the shell alone at %s, though the interrupt holds everything',
     async (rung) => {
       // The scope boundary as the MODEL sees it: at a rated rung nothing but the shell is described
@@ -285,7 +285,7 @@ describe('EXT-80 — the lean backend wires the interrupt on the whole gated set
    * an empty interrupt with suffixed descriptions is exactly the state this cell exists to catch.
    * Swept over every rung, since the live set is non-empty only at the two deterministic ones.
    */
-  it.each(['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'])(
+  it.each(APPROVAL_RUNGS)(
     'neither interrupts nor announces an approval on api at %s',
     async (rung) => {
       await initAt(rung, 'api');
@@ -297,7 +297,7 @@ describe('EXT-80 — the lean backend wires the interrupt on the whole gated set
 
   it('CONTROL: the same rung on code both interrupts and announces', async () => {
     // Without this, the sweep above would pass on a build that suffixed nothing anywhere.
-    await initAt('read-only', 'code');
+    await initAt('manual', 'code');
 
     expect(wiredInterruptNames()).toEqual(EVERY_GATEABLE_TOOL);
     expect(suffixedNames()).not.toEqual([]);

@@ -353,8 +353,8 @@ describe('config schema (GS2-1 B1)', () => {
             run_shell_command: { judge: { autoApproveLow: false, blockHigh: true } },
           },
         });
-        expect(issues[0].message).toContain('auto-safe');
-        expect(issues[0].message).toContain('full-auto');
+        expect(issues[0].message).toContain('assisted');
+        expect(issues[0].message).toContain('auto');
         expect(issues[0].message).toContain('safe/destructive/catastrophic/attack');
       });
 
@@ -399,7 +399,7 @@ describe('config schema (GS2-1 B1)', () => {
       const parse = (approvals: unknown) =>
         rawGthConfigSchema.safeParse({ llm: { type: 'openai' }, approvals });
 
-      const RUNGS = ['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'] as const;
+      const RUNGS = ['manual', 'write', 'assisted', 'auto', 'bypass'] as const;
 
       it.each(RUNGS)('accepts the bare rung name "%s" (§9.1 scalar sugar)', (rung) => {
         const result = parse(rung);
@@ -411,7 +411,7 @@ describe('config schema (GS2-1 B1)', () => {
 
       it('parses a full valid object and preserves every field', () => {
         const approvals = {
-          mode: 'auto-safe',
+          mode: 'assisted',
           rater: 'safety-rater',
           allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
           deny: [{ type: 'shell', matcher: 'glob', pattern: 'npm publish*' }],
@@ -430,21 +430,21 @@ describe('config schema (GS2-1 B1)', () => {
       });
 
       it('rejects a rater that is not a bare string (the object/boolean forms are retired)', () => {
-        expect(parse({ mode: 'auto-safe', rater: { profile: 'x' } }).success).toBe(false);
-        expect(parse({ mode: 'auto-safe', rater: true }).success).toBe(false);
+        expect(parse({ mode: 'assisted', rater: { profile: 'x' } }).success).toBe(false);
+        expect(parse({ mode: 'assisted', rater: true }).success).toBe(false);
       });
 
       it('parses per-command approvals on every command, scalar and object alike', () => {
         const result = rawGthConfigSchema.safeParse({
           llm: { type: 'openai' },
           commands: {
-            pr: { approvals: 'read-only' },
-            review: { approvals: 'read-only' },
+            pr: { approvals: 'manual' },
+            review: { approvals: 'manual' },
             ask: { approvals: { mode: 'write' } },
-            chat: { approvals: 'auto-safe' },
-            code: { approvals: { mode: 'auto-safe', rater: 'safety-rater' } },
+            chat: { approvals: 'assisted' },
+            code: { approvals: { mode: 'assisted', rater: 'safety-rater' } },
             exec: { approvals: 'bypass' },
-            api: { approvals: 'read-only' },
+            api: { approvals: 'manual' },
           },
         });
         expect(result.success).toBe(true);
@@ -454,7 +454,7 @@ describe('config schema (GS2-1 B1)', () => {
        * The CFG-26 migration UX, rescaled: a retired key or a retired `mode` VALUE is a hard
        * error naming the rung that replaced it. `approvalsSchema`'s object arm is a `z.object`,
        * which silently STRIPS unknown keys — so without the pre-parse reject an
-       * `approvals: { mode: "auto-safe", strictness: "strict" }` would run with its declared
+       * `approvals: { mode: "assisted", strictness: "strict" }` would run with its declared
        * posture quietly ignored, which is the worst possible failure for a safety gate.
        */
       describe('retired approvals keys and mode values (CFG-27)', () => {
@@ -466,20 +466,20 @@ describe('config schema (GS2-1 B1)', () => {
           it(`hard-errors on ${key} at the ROOT approvals value`, () => {
             const issues = findDeprecatedConfigIssues({
               llm: { type: 'openai' },
-              approvals: { mode: 'auto-safe', [key]: 'whatever' },
+              approvals: { mode: 'assisted', [key]: 'whatever' },
             });
             expect(issues).toHaveLength(1);
             expect(issues[0].path).toBe(`approvals.${key}`);
             expect(issues[0].message).toContain('no longer supported');
             // The message NAMES the ladder, so the user learns what replaced the knob.
-            expect(issues[0].message).toContain('read-only, write, auto-safe, full-auto, bypass');
+            expect(issues[0].message).toContain('manual, write, assisted, auto, bypass');
             expect(issues[0].message).toContain(MIGRATION_DOC_URL);
           });
 
           it(`hard-errors on ${key} at commands.<cmd>.approvals too`, () => {
             const issues = findDeprecatedConfigIssues({
               llm: { type: 'openai' },
-              commands: { code: { approvals: { mode: 'auto-safe', [key]: 'whatever' } } },
+              commands: { code: { approvals: { mode: 'assisted', [key]: 'whatever' } } },
             });
             expect(issues).toHaveLength(1);
             expect(issues[0].path).toBe(`commands.code.approvals.${key}`);
@@ -488,7 +488,7 @@ describe('config schema (GS2-1 B1)', () => {
           it(`validateRawGthConfig HARD-rejects ${key} (never a silent strip)`, () => {
             const result = validateRawGthConfig({
               llm: { type: 'openai' },
-              approvals: { mode: 'auto-safe', [key]: 'whatever' },
+              approvals: { mode: 'assisted', [key]: 'whatever' },
             });
             expect(result.ok).toBe(false);
             expect(result.errorMessage).toContain(`approvals.${key}`);
@@ -496,8 +496,20 @@ describe('config schema (GS2-1 B1)', () => {
           });
         }
 
+        /**
+         * CFG-39 — the retired `mode` spellings and the mode each one names now. The three renames
+         * map to the SAME mode under its new name; `ask` maps to the two modes that ask about
+         * everything. **Every mapping is equally- or less-permissive**, which is the property this
+         * table exists to keep: a retired name silently remapped to something more permissive
+         * would raise a user's autonomy setting on their behalf.
+         *
+         * `auto` is deliberately NOT here — it is now the canonical name of the most permissive
+         * rated mode, and the cell below pins that it validates rather than erroring.
+         */
         const RETIRED_MODES = {
-          auto: 'auto-safe',
+          'read-only': 'manual',
+          'auto-safe': 'assisted',
+          'full-auto': 'auto',
           ask: 'write',
         } as const;
 
@@ -536,16 +548,34 @@ describe('config schema (GS2-1 B1)', () => {
         it('hard-errors on the retired OBJECT rater form, pointing at the bare profile name', () => {
           const issues = findDeprecatedConfigIssues({
             llm: { type: 'openai' },
-            approvals: { mode: 'auto-safe', rater: { profile: 'safety-rater' } },
+            approvals: { mode: 'assisted', rater: { profile: 'safety-rater' } },
           });
           expect(issues).toHaveLength(1);
           expect(issues[0].path).toBe('approvals.rater');
           expect(issues[0].message).toContain('bare identity-profile name');
         });
 
+        /**
+         * CFG-39 — **`auto` is a valid mode and must not error.** It named a pre-2.0 mode and used
+         * to be rejected here, pointing at `auto-safe`; it is now the canonical name of the most
+         * permissive rated mode. The retired entry and the rename had to land together, because an
+         * `auto` left in the table makes the newly documented name a hard validation error on
+         * arrival. This is the cell that fails if that entry ever comes back.
+         */
+        it('CFG-39: "auto" VALIDATES — it is the canonical name, not a retired one', () => {
+          for (const approvals of ['auto', { mode: 'auto' }] as const) {
+            expect(
+              findDeprecatedConfigIssues({ llm: { type: 'openai' }, approvals }),
+              `approvals: ${JSON.stringify(approvals)} must not be a deprecated shape`
+            ).toEqual([]);
+          }
+          const result = validateRawGthConfig({ llm: { type: 'openai' }, approvals: 'auto' });
+          expect(result.ok, result.errorMessage).toBe(true);
+        });
+
         it('reports EVERY retired key present, not just the first', () => {
           const issues = findDeprecatedConfigIssues({
-            approvals: { mode: 'auto', strictness: 'strict', escalate: 'danger' },
+            approvals: { mode: 'auto-safe', strictness: 'strict', escalate: 'danger' },
           });
           expect(issues.map((i) => i.path).sort()).toEqual([
             'approvals.escalate',
@@ -564,7 +594,7 @@ describe('config schema (GS2-1 B1)', () => {
         it('hard-errors on the retired escalate THRESHOLD (a non-array), naming the new shape', () => {
           const issues = findDeprecatedConfigIssues({
             llm: { type: 'openai' },
-            approvals: { mode: 'auto-safe', escalate: 'danger' },
+            approvals: { mode: 'assisted', escalate: 'danger' },
           });
           expect(issues).toHaveLength(1);
           expect(issues[0].path).toBe('approvals.escalate');
@@ -576,7 +606,7 @@ describe('config schema (GS2-1 B1)', () => {
         it('hard-errors on the retired escalate threshold at commands.<cmd>.approvals too', () => {
           const issues = findDeprecatedConfigIssues({
             llm: { type: 'openai' },
-            commands: { code: { approvals: { mode: 'auto-safe', escalate: 'danger' } } },
+            commands: { code: { approvals: { mode: 'assisted', escalate: 'danger' } } },
           });
           expect(issues).toHaveLength(1);
           expect(issues[0].path).toBe('commands.code.approvals.escalate');
@@ -587,7 +617,7 @@ describe('config schema (GS2-1 B1)', () => {
             findDeprecatedConfigIssues({
               llm: { type: 'openai' },
               approvals: {
-                mode: 'auto-safe',
+                mode: 'assisted',
                 escalate: [{ type: 'shell', matcher: 'exact', pattern: 'terraform apply' }],
               },
             })
@@ -595,17 +625,17 @@ describe('config schema (GS2-1 B1)', () => {
           expect(
             findDeprecatedConfigIssues({
               llm: { type: 'openai' },
-              approvals: { mode: 'auto-safe', escalate: [] },
+              approvals: { mode: 'assisted', escalate: [] },
             })
           ).toEqual([]);
         });
 
         it('does not fire on a valid ladder config, scalar or object', () => {
-          expect(findDeprecatedConfigIssues({ approvals: 'auto-safe' })).toEqual([]);
+          expect(findDeprecatedConfigIssues({ approvals: 'assisted' })).toEqual([]);
           expect(
             findDeprecatedConfigIssues({
               approvals: {
-                mode: 'full-auto',
+                mode: 'auto',
                 rater: 'safety-rater',
                 allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
               },
@@ -675,7 +705,7 @@ describe('config schema (GS2-1 B1)', () => {
     describe('validateRawGthConfig + approvals.rater resolution (CFG-26, flattened by CFG-27)', () => {
       const config = {
         llm: { type: 'openai' },
-        approvals: { mode: 'auto-safe', rater: 'safety-rater' },
+        approvals: { mode: 'assisted', rater: 'safety-rater' },
       };
 
       it('rejects an unresolvable rater profile, naming the path and the profile', () => {
@@ -732,8 +762,8 @@ describe('config schema (GS2-1 B1)', () => {
       });
 
       it('ignores an absent / blank / non-string rater, and the scalar sugar form', () => {
-        expect(findApprovalsRaterProfiles({ approvals: { mode: 'auto-safe' } })).toEqual([]);
-        expect(findApprovalsRaterProfiles({ approvals: 'auto-safe' })).toEqual([]);
+        expect(findApprovalsRaterProfiles({ approvals: { mode: 'assisted' } })).toEqual([]);
+        expect(findApprovalsRaterProfiles({ approvals: 'assisted' })).toEqual([]);
         expect(findApprovalsRaterProfiles({ approvals: { rater: true } })).toEqual([]);
         expect(findApprovalsRaterProfiles({ approvals: { rater: '  ' } })).toEqual([]);
         expect(findApprovalsRaterProfiles({})).toEqual([]);

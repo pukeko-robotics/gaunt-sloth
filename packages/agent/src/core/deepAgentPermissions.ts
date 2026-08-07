@@ -32,7 +32,7 @@ export const FILESYSTEM_TOOL_NAMES = [
  * **It exists because the approval question is "what did the graph bind", not "what did we supply".**
  * `task` and `write_todos` have no entry in core's `BUILT_IN_TOOL_ACCESS`, so the two deterministic
  * rungs must escalate them — `task` most of all, since it delegates to a subagent. A set built from
- * `FILESYSTEM_TOOL_NAMES` alone left both bound and ungated at `read-only` and `write`, under a rung
+ * `FILESYSTEM_TOOL_NAMES` alone left both bound and ungated at `manual` and `write`, under a rung
  * description promising to ask about anything else. A subagent's OWN calls are gated too —
  * `createSubAgentMiddleware` inherits this set, and a nested interrupt does reach the parent state
  * the runner drains (measured in `deepAgentNestedInterrupt.spec.ts`) — so gating `task` is about the
