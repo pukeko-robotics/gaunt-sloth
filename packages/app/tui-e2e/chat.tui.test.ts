@@ -165,6 +165,42 @@ test.describe('gth chat TUI — greeting fixture', () => {
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
   });
 
+  // TUI-C48 — Ctrl+T at a real terminal, with a half-written message in the prompt.
+  //
+  // Both halves of this only exist end to end. `ink-text-input` claims one control chord and TYPES
+  // the letter of every other, and how a chord is decoded at all is a terminal-level fact — ConPTY
+  // reports keys differently from a POSIX pty, and a unit spec drives a fake stdin with exactly the
+  // bytes it wrote, so it cannot observe that difference. This is therefore the only place the
+  // "a control chord never reaches the buffer" guarantee is checked on Windows.
+  //
+  // The toggle is exercised IDLE, which is the state it was refused in until this node: it is now
+  // bound in every state, because paging back over the conversation to read an earlier turn's
+  // arguments and results is exactly when nothing is running.
+  test('Ctrl+T toggles tool detail while idle and never lands in the prompt', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    terminal.write('draft');
+    await expect(terminal.getByText('> draft')).toBeVisible();
+
+    terminal.write('\x14'); // Ctrl+T
+    await expect(terminal.getByText('Tool details: on')).toBeVisible();
+    // The letter did not join the message being written. `draftt` is what an unguarded text input
+    // produces, so it is the assertion that states the difference.
+    await expect(terminal.getByText('> draftt')).not.toBeVisible();
+    await expect(terminal.getByText('> draft')).toBeVisible();
+
+    // The same key folds it back, so this is a toggle rather than a one-way reveal.
+    terminal.write('\x14');
+    await expect(terminal.getByText('Tool details: off')).toBeVisible();
+    await expect(terminal.getByText('> draftt')).not.toBeVisible();
+
+    // …and the buffer is still submittable, unchanged.
+    terminal.submit();
+    await expect(terminal.getByText('You › draft')).toBeVisible();
+  });
+
   // Ink repaints on SIGWINCH and the frame stays addressable after a reflow, and streaming still
   // works at the new size. TUI-C48 added the half that matters now: the dock has to end up on the
   // NEW bottom row. Ink recalculates its layout on a resize but does not re-render React, so a
