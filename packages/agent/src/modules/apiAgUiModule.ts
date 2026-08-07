@@ -134,6 +134,16 @@ interface ConvertMessageOptions {
    * stays plain text — see EXT-43 and that function's doc.
    */
   allowTextCallPromotion?: boolean;
+  /**
+   * RC-32: the tool NAME to stamp on a `role:'tool'` message, resolved by
+   * {@link convertMessages} from the parenting assistant `tool_call`. The AG-UI wire format does
+   * not carry it, and a `ToolMessage` without a name is invisible to every result-inspecting
+   * middleware — `frontend-image-injection` keys on `msg.name === 'capture_image'`, so a replayed
+   * capture silently stopped producing a vision block on every turn after the capture itself.
+   * Absent on the standalone {@link convertMessage} path (a queued resume message has no history
+   * to resolve against), where the name is simply unknown.
+   */
+  toolName?: string;
 }
 
 /**
@@ -189,7 +199,11 @@ export function convertMessage(
     case 'developer':
       return new SystemMessage(content);
     case 'tool':
-      return new ToolMessage({ content, tool_call_id: msg.toolCallId || msg.id });
+      return new ToolMessage({
+        content,
+        tool_call_id: msg.toolCallId || msg.id,
+        ...(options?.toolName ? { name: options.toolName } : {}),
+      });
     default:
       return new HumanMessage(content);
   }
@@ -217,23 +231,34 @@ export function convertMessage(
  * fabricate a synthetic call — mirroring EXT-43's demote-don't-invent spirit). Ids are accumulated
  * in iteration order, so a result whose matching call appears only LATER is still an orphan.
  *
- * The live middleware path (`GthLangChainAgent`, fixing the CURRENT turn) is unaffected — both
- * guards are history-replay only.
+ * RC-32 (tool NAME restoration): the AG-UI wire message for a `tool` result carries `toolCallId`
+ * but no tool name, so a naively-converted `ToolMessage` has none — and every middleware that
+ * inspects results by name is blind to it. `frontend-image-injection` keys on
+ * `msg.name === 'capture_image'`, so a captured photo reached the model on the resume turn (where
+ * the graph builds the ToolMessage itself, with a name) and then vanished from every later turn,
+ * leaving the model to answer questions about a picture it could no longer see. The name is
+ * recoverable from the parenting assistant `tool_call`, which this function already walks for the
+ * RC-18 guard, so it is resolved there and stamped back on.
+ *
+ * The live middleware path (`GthLangChainAgent`, fixing the CURRENT turn) is unaffected — the two
+ * guards and the name restoration are history-replay only.
  */
 export function convertMessages(
   messages: AgUiWireMessage[],
   allowedToolNames?: Set<string>
 ): BaseMessage[] {
-  // Ids of tool calls emitted by PRECEDING assistant messages, accumulated as we iterate in order.
-  // A `tool` result whose tool_call_id is not yet in this set has no preceding assistant tool_call.
-  const seenToolCallIds = new Set<string>();
+  // tool_call id → tool NAME, for calls emitted by PRECEDING assistant messages, accumulated as we
+  // iterate in order. Membership is the RC-18 orphan test (a `tool` result whose tool_call_id is
+  // absent has no preceding assistant tool_call); the name is what RC-32 stamps back onto the
+  // replayed ToolMessage, since the AG-UI wire format carries the id but not the name.
+  const seenToolCalls = new Map<string, string>();
   const converted: BaseMessage[] = [];
 
   messages.forEach((msg, index) => {
     // RC-18 backward orphan-RESULT guard.
     if (msg.role === 'tool') {
       const toolCallId = msg.toolCallId || msg.id;
-      if (!seenToolCallIds.has(toolCallId)) {
+      if (!seenToolCalls.has(toolCallId)) {
         displayWarning(
           `Dropping orphan tool result (tool_call_id ${JSON.stringify(toolCallId)}) with no ` +
             'preceding assistant tool_call in the replayed history; converting it would 400 the ' +
@@ -241,7 +266,9 @@ export function convertMessages(
         );
         return; // drop — do not convert to a ToolMessage
       }
-      converted.push(convertMessage(msg, allowedToolNames));
+      converted.push(
+        convertMessage(msg, allowedToolNames, { toolName: seenToolCalls.get(toolCallId) })
+      );
       return;
     }
 
@@ -249,7 +276,7 @@ export function convertMessages(
     // a genuine call→result pair (id present on a preceding assistant) survives the guard above.
     if (msg.role === 'assistant' && msg.toolCalls) {
       for (const tc of msg.toolCalls) {
-        if (tc?.id) seenToolCallIds.add(tc.id);
+        if (tc?.id) seenToolCalls.set(tc.id, tc.function?.name);
       }
     }
 
@@ -325,6 +352,41 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
   // checkpointer, but the graph shape must match the suspended one. Built lazily
   // on first sighting of a given toolset.
   const toolAgentCache = new Map<string, GthAbstractAgent>();
+
+  // The client is the source of truth for history — it re-sends the full message list every turn.
+  // The checkpointer is NOT where that history lives; it exists so a graph suspended at an
+  // `interrupt()` survives between the run that suspends it and the POST that resumes it.
+  //
+  // Those two roles cannot share one thread. `add_messages` can only reconcile an incoming message
+  // with the checkpoint when the message carries an `id` the checkpoint already knows; a replayed
+  // client message has none, so the reducer mints a fresh id and APPENDS. Each turn therefore
+  // stacks the whole replayed history on top of the previous turn's checkpoint. For text that is
+  // invisible bloat, but once a tool result is in the history the thread is dead: two `tool_result`
+  // blocks under one `tool_use` id is the one duplication providers reject outright.
+  //
+  // So a fresh run gets a fresh checkpoint thread, making the replayed history the sole history —
+  // the same rotation `runConversation` performs for the CLI's multi-turn replay — while a resume
+  // stays on the thread whose graph is actually suspended. The client's own `threadId` remains the
+  // protocol-facing identity reported in RUN_STARTED / RUN_FINISHED; only the checkpoint key
+  // rotates.
+  const checkpointThreads = new Map<string, string>();
+
+  function rotateCheckpointThread(clientThreadId: string): string {
+    const retired = checkpointThreads.get(clientThreadId);
+    const fresh = randomUUID();
+    checkpointThreads.set(clientThreadId, fresh);
+    // Reclaim the superseded thread so a long-lived local server does not accumulate one dead
+    // checkpoint per turn. Housekeeping only — never a reason to fail a run.
+    const saver = checkpointSaver as { deleteThread?: (id: string) => Promise<void> };
+    if (retired && typeof saver.deleteThread === 'function') {
+      // Called from inside the `.then` so a SYNCHRONOUS throw is caught too — invoking it directly
+      // would evaluate it before `.catch` is attached and take the request handler down with it.
+      void Promise.resolve()
+        .then(() => saver.deleteThread?.(retired))
+        .catch(() => {});
+    }
+    return fresh;
+  }
 
   function toolSignature(tools: RunInputTool[]): string {
     return JSON.stringify(
@@ -420,11 +482,54 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
 
       const messageId = randomUUID();
 
+      // C-a (spike): detect CopilotKit's resume shape. CopilotKit fulfils a
+      // frontend tool client-side and then RE-RUNS the agent with the full
+      // message history, the tool result appended as a trailing `tool` message
+      // — it does NOT send `forwardedProps.command.resume`. When that lands on a
+      // thread whose graph is suspended at our interrupt() stub, translate the
+      // trailing tool result into a graph resume so the suspended run continues
+      // (instead of starting a fresh run that just re-calls the tool).
+      const lastMsg =
+        Array.isArray(messages) && messages.length > 0 ? messages[messages.length - 1] : undefined;
+      const isCopilotToolResume =
+        hasClientTools && forwardedProps?.command?.resume === undefined && lastMsg?.role === 'tool';
+      const isResume = isCopilotToolResume || forwardedProps?.command?.resume !== undefined;
+
+      // RC-33: the tool results this request's own history already carries. A `TOOL_CALL_RESULT`
+      // for one of these must NOT be echoed back — the client is where it came from.
+      //
+      // The echo is right for a server-side tool: streaming it is the client's only way to learn
+      // what the tool returned. It is wrong for a CLIENT-fulfilled (frontend) tool, whose result
+      // the client computed, appended to its own history, and posted to us. `@ag-ui/client` does
+      // not dedupe on the way back in: its TOOL_CALL_RESULT branch locates the parenting assistant
+      // message, walks PAST any tool messages already sitting after it, and splices the echo in
+      // unconditionally. The client's history then holds two `tool` messages under one
+      // `toolCallId`, it replays both on the next turn, and the provider rejects the pair
+      // ("each tool_use must have a single result") — killing every turn after a capture.
+      //
+      // Keyed on what the client sent us in THIS request rather than on the toolset, so it stays
+      // correct without carrying tool-call state between runs, and can never suppress a result the
+      // client does not already hold.
+      const clientHeldToolResultIds = new Set<string>(
+        (Array.isArray(messages) ? messages : [])
+          .filter((m: { role?: string }) => m?.role === 'tool')
+          .map((m: { toolCallId?: string; id?: string }) => m.toolCallId || m.id)
+          .filter((id: string | undefined): id is string => Boolean(id))
+      );
+
+      // A resume must reach the suspended graph, so it stays on the thread the interrupted run
+      // used; anything else is a fresh run and gets a fresh checkpoint thread (see
+      // `rotateCheckpointThread`). The fallback covers a resume for which we hold no mapping —
+      // a client resuming across a server restart — where the client's own id is the best guess.
+      const checkpointThreadId = isResume
+        ? (checkpointThreads.get(effectiveThreadId) ?? effectiveThreadId)
+        : rotateCheckpointThread(effectiveThreadId);
+
       // Get runnable config with thread_id for checkpointing. config.recursionLimit
       // (when set by the consumer) caps the agent's super-steps per run.
       const runConfig = {
         ...getNewRunnableConfig(config.recursionLimit),
-        configurable: { thread_id: effectiveThreadId },
+        configurable: { thread_id: checkpointThreadId },
       };
 
       // Stream the response with typed events. Text runs MUST be delimited
@@ -443,18 +548,6 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
           textRunId = null;
         }
       };
-
-      // C-a (spike): detect CopilotKit's resume shape. CopilotKit fulfils a
-      // frontend tool client-side and then RE-RUNS the agent with the full
-      // message history, the tool result appended as a trailing `tool` message
-      // — it does NOT send `forwardedProps.command.resume`. When that lands on a
-      // thread whose graph is suspended at our interrupt() stub, translate the
-      // trailing tool result into a graph resume so the suspended run continues
-      // (instead of starting a fresh run that just re-calls the tool).
-      const lastMsg =
-        Array.isArray(messages) && messages.length > 0 ? messages[messages.length - 1] : undefined;
-      const isCopilotToolResume =
-        hasClientTools && forwardedProps?.command?.resume === undefined && lastMsg?.role === 'tool';
 
       let eventStream;
       if (isCopilotToolResume) {
@@ -551,6 +644,8 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
             break;
           }
           case 'tool_result': {
+            // RC-33: never hand a result back to the client that the client itself supplied.
+            if (clientHeldToolResultIds.has(event.id)) break;
             res.write(
               encoder.encode({
                 type: EventType.TOOL_CALL_RESULT,

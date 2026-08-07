@@ -78,8 +78,29 @@ describe('imageBlockFor — per-provider vision block shape', () => {
     });
   });
 
-  it('anthropic / google-genai / vertexai use the standard base64 block', () => {
-    for (const provider of ['anthropic', 'google-genai', 'vertexai']) {
+  // RC-32: the standard block is double-emitted by @langchain/anthropic — its isDataContentBlock
+  // branch yields and then falls through to the `type === 'image'` branch, which re-yields the
+  // block with a hardcoded `image/jpeg` media_type. The native block is passed through once.
+  it('anthropic uses the PROVIDER-NATIVE block, never the standard one (RC-32)', () => {
+    const block = imageBlockFor('anthropic', IMG.mimeType, IMG.data);
+    expect(block).toEqual({
+      type: 'image',
+      source: { type: 'base64', media_type: IMG.mimeType, data: IMG.data },
+    });
+    // The standard-block keys are what trip the double-emit — none of them may be present.
+    expect(block).not.toHaveProperty('source_type');
+    expect(block).not.toHaveProperty('mime_type');
+  });
+
+  it('anthropic carries the caller mime type through, not a jpeg default (RC-32)', () => {
+    expect(imageBlockFor('anthropic', 'image/png', IMG.data)).toEqual({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: IMG.data },
+    });
+  });
+
+  it('google-genai / vertexai use the standard base64 block', () => {
+    for (const provider of ['google-genai', 'vertexai']) {
       expect(imageBlockFor(provider, IMG.mimeType, IMG.data)).toEqual({
         type: 'image',
         source_type: 'base64',

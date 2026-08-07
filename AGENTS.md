@@ -133,8 +133,13 @@ Request handling:
 - A request carrying `forwardedProps.command.resume` resumes a graph suspended
   by `interrupt()` (client-fulfilled tools); otherwise it starts a fresh run.
 - The client is the source of truth for history: it sends the full message list
-  every turn, and LangGraph's `add_messages` reducer dedupes by message id, so
-  re-sending prior messages does not duplicate state on the checkpointer.
+  every turn. Replayed client messages carry no id the checkpoint recognises, so
+  `add_messages` cannot reconcile them — it mints an id and appends. A fresh run
+  therefore rotates to a new checkpoint thread, making the replayed history the
+  sole history; only a resume stays on the suspended graph's thread. Never key
+  the checkpoint on the client's `threadId` directly: replaying a history that
+  contains a tool result onto its own previous checkpoint duplicates that result
+  under one `tool_use` id, which providers reject and which bricks the thread.
 
 **Be defensive when converting client messages.** A single malformed message
 must never abort a run — because it is part of the persisted history, it would

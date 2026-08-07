@@ -656,6 +656,114 @@ describe('apiAgUiModule', () => {
     });
   });
 
+  // ─── Checkpoint thread rotation ────────────────────────────────────────────
+  //
+  // The client replays its whole history every turn, and a replayed message carries no id the
+  // checkpoint recognises, so `add_messages` mints one and appends rather than reconciling.
+  // Sharing a single checkpoint thread across turns therefore stacks each turn's replay onto the
+  // previous turn's state; once that history contains a tool result the duplicate puts two
+  // `tool_result` blocks under one `tool_use` id, which the provider rejects and which kills the
+  // thread permanently. A fresh run must get a fresh checkpoint thread. A resume must NOT — it has
+  // to reach the graph that is actually suspended.
+
+  describe('checkpoint thread rotation', () => {
+    async function getHandler() {
+      const { startAgUiServer } = await import('#src/modules/apiAgUiModule.js');
+      await startAgUiServer(baseConfig, 3000);
+      return mockPostFn.mock.calls[0][1] as (_req: unknown, _res: unknown) => Promise<void>;
+    }
+
+    function configurableOf(call: unknown[]): { thread_id: string } {
+      return (call[1] as { configurable: { thread_id: string } }).configurable;
+    }
+
+    function runThreadIds(): string[] {
+      return gthLangChainAgentStreamWithEventsMock.mock.calls.map(
+        (c) => configurableOf(c).thread_id
+      );
+    }
+
+    it('gives two fresh runs on one client thread different checkpoint threads', async () => {
+      gthLangChainAgentStreamWithEventsMock.mockImplementation(() => emptyStream());
+      const handler = await getHandler();
+
+      await handler(makeRunReq({ threadId: 'chat-1', runId: 'r1' }), makeMockRes());
+      await handler(makeRunReq({ threadId: 'chat-1', runId: 'r2' }), makeMockRes());
+
+      const [first, second] = runThreadIds();
+      expect(first).toBeTruthy();
+      expect(second).toBeTruthy();
+      // Keying both turns on 'chat-1' is the defect: turn 2's replay lands on turn 1's state.
+      expect(second).not.toBe(first);
+      expect([first, second]).not.toContain('chat-1');
+    });
+
+    it('resumes onto the checkpoint thread its interrupted run used', async () => {
+      gthLangChainAgentStreamWithEventsMock.mockImplementation(() => emptyStream());
+      gthLangChainAgentStreamWithEventsResumeMock.mockImplementation(() => emptyStream());
+      const handler = await getHandler();
+
+      // The run that suspends at a client tool, then the client's resume carrying its result.
+      await handler(makeRunReq({ threadId: 'chat-2', runId: 'r1' }), makeMockRes());
+      await handler(
+        makeRunReq({
+          threadId: 'chat-2',
+          runId: 'r2',
+          forwardedProps: { command: { resume: '{"mimeType":"image/jpeg","data":"AAA"}' } },
+        }),
+        makeMockRes()
+      );
+
+      // Rotating on a resume would strand it on an empty thread with no suspended graph, so this
+      // is the constraint that stops the rotation being "simplified" to a per-request id.
+      const [resumeCall] = gthLangChainAgentStreamWithEventsResumeMock.mock.calls;
+      expect(configurableOf(resumeCall).thread_id).toBe(runThreadIds()[0]);
+    });
+
+    it('rotates again for the turn that follows a resume', async () => {
+      gthLangChainAgentStreamWithEventsMock.mockImplementation(() => emptyStream());
+      gthLangChainAgentStreamWithEventsResumeMock.mockImplementation(() => emptyStream());
+      const handler = await getHandler();
+
+      // The live sequence behind the bug: capture turn, its resume, then the next user message
+      // replaying a history that now contains the capture's tool result.
+      await handler(makeRunReq({ threadId: 'chat-3', runId: 'r1' }), makeMockRes());
+      await handler(
+        makeRunReq({
+          threadId: 'chat-3',
+          runId: 'r2',
+          forwardedProps: { command: { resume: 'ok' } },
+        }),
+        makeMockRes()
+      );
+      await handler(
+        makeRunReq({
+          threadId: 'chat-3',
+          runId: 'r3',
+          messages: [{ role: 'user', content: 'save it to the desktop', id: 'm1' }],
+        }),
+        makeMockRes()
+      );
+
+      const [capture, followUp] = runThreadIds();
+      expect(followUp).not.toBe(capture);
+    });
+
+    it('keeps the client threadId as the protocol identity the events report', async () => {
+      gthLangChainAgentStreamWithEventsMock.mockImplementation(() => emptyStream());
+      const handler = await getHandler();
+
+      await handler(makeRunReq({ threadId: 'chat-4', runId: 'r1' }), makeMockRes());
+
+      const events = mockEncoderInstance.encode.mock.calls.map((c) => c[0]) as Array<
+        Record<string, unknown>
+      >;
+      // Only the checkpoint key rotates; the client must still recognise its own thread.
+      expect(events.find((e) => e.type === 'RUN_STARTED')).toMatchObject({ threadId: 'chat-4' });
+      expect(events.find((e) => e.type === 'RUN_FINISHED')).toMatchObject({ threadId: 'chat-4' });
+    });
+  });
+
   // ─── Client-tool dedup (run-input tools are authoritative) ─────────────────
   //
   // A server config may declare the same (client-fulfilled) tools the browser
@@ -732,6 +840,250 @@ describe('apiAgUiModule', () => {
       const names = mergedToolsFromInit().map((t) => t.name);
       expect(names).toEqual(expect.arrayContaining(['read_status', 'capture_image']));
       expect(names).toHaveLength(2);
+    });
+  });
+
+  // ─── RC-33: never echo a tool result the client itself supplied ────────────
+  //
+  // `@ag-ui/client` splices a TOOL_CALL_RESULT into its history without checking whether a tool
+  // message for that toolCallId is already there, so echoing back a client-fulfilled tool's result
+  // leaves the client holding two results under one tool_use id — and the provider 400s on the
+  // next turn. A server-side tool's result must still be echoed: that is the client's only way to
+  // learn it.
+
+  describe('client-fulfilled tool result echo (RC-33)', () => {
+    const CLIENT_TOOLS = [
+      { name: 'capture_image', parameters: { type: 'object', properties: {} } },
+    ];
+
+    function toolResultStream(...ids: string[]) {
+      return (async function* () {
+        for (const id of ids) {
+          yield { type: 'tool_result' as const, id, content: `result of ${id}` };
+        }
+      })();
+    }
+
+    function resultIds() {
+      return mockEncoderInstance.encode.mock.calls
+        .map((c) => c[0])
+        .filter((e) => e.type === 'TOOL_CALL_RESULT')
+        .map((e) => e.toolCallId);
+    }
+
+    async function getRunHandler() {
+      const { startAgUiServer } = await import('#src/modules/apiAgUiModule.js');
+      await startAgUiServer(baseConfig, 3000);
+      return mockPostFn.mock.calls[0][1] as (_req: unknown, _res: unknown) => Promise<void>;
+    }
+
+    /** The CopilotKit implicit-resume shape: full history, trailing client-fulfilled tool result. */
+    function resumeReq(threadId: string) {
+      return makeRunReq({
+        threadId,
+        tools: CLIENT_TOOLS,
+        messages: [
+          { id: 'm1', role: 'user', content: 'Take a photo.' },
+          {
+            id: 'm2',
+            role: 'assistant',
+            content: '',
+            toolCalls: [
+              {
+                id: 'call-client',
+                type: 'function',
+                function: { name: 'capture_image', arguments: '{}' },
+              },
+            ],
+          },
+          {
+            id: 'm3',
+            role: 'tool',
+            toolCallId: 'call-client',
+            content: '{"mimeType":"image/png","data":"QUFBQg=="}',
+          },
+        ],
+      });
+    }
+
+    it('does not echo the result of the tool call the client fulfilled', async () => {
+      gthLangChainAgentStreamWithEventsResumeMock.mockReturnValue(toolResultStream('call-client'));
+
+      const handler = await getRunHandler();
+      await handler(resumeReq('rc33-suppress'), makeMockRes());
+
+      expect(resultIds()).not.toContain('call-client');
+    });
+
+    it('still echoes a server-side tool result in the same resumed run', async () => {
+      gthLangChainAgentStreamWithEventsResumeMock.mockReturnValue(
+        toolResultStream('call-client', 'call-server')
+      );
+
+      const handler = await getRunHandler();
+      await handler(resumeReq('rc33-mixed'), makeMockRes());
+
+      // Exactly the server-side one survives — the suppression is targeted, not a blanket mute.
+      expect(resultIds()).toEqual(['call-server']);
+    });
+
+    it('echoes every tool result on a fresh run, where the client holds none of them', async () => {
+      gthLangChainAgentStreamWithEventsMock.mockReturnValue(toolResultStream('call-a', 'call-b'));
+
+      const handler = await getRunHandler();
+      const req = makeRunReq({
+        threadId: 'rc33-fresh',
+        messages: [{ id: 'm1', role: 'user', content: 'List the files.' }],
+      });
+      await handler(req, makeMockRes());
+
+      expect(resultIds()).toEqual(['call-a', 'call-b']);
+    });
+
+    it('suppresses by the id the client sent, not by position in the history', async () => {
+      // A history whose client-held result sits mid-conversation rather than last: the guard is
+      // keyed on the ids present in the request, so it holds wherever they appear.
+      gthLangChainAgentStreamWithEventsMock.mockReturnValue(
+        toolResultStream('call-old', 'call-new')
+      );
+
+      const handler = await getRunHandler();
+      const req = makeRunReq({
+        threadId: 'rc33-midhistory',
+        tools: CLIENT_TOOLS,
+        messages: [
+          { id: 'm1', role: 'user', content: 'Take a photo.' },
+          {
+            id: 'm2',
+            role: 'assistant',
+            content: '',
+            toolCalls: [
+              {
+                id: 'call-old',
+                type: 'function',
+                function: { name: 'capture_image', arguments: '{}' },
+              },
+            ],
+          },
+          {
+            id: 'm3',
+            role: 'tool',
+            toolCallId: 'call-old',
+            content: '{"mimeType":"image/png","data":"QQ=="}',
+          },
+          { id: 'm4', role: 'assistant', content: 'Got the photo.' },
+          { id: 'm5', role: 'user', content: 'save to downloads' },
+        ],
+      });
+      await handler(req, makeMockRes());
+
+      expect(resultIds()).toEqual(['call-new']);
+    });
+
+    // The whole point of the defect is that it only shows up ACROSS turns, in a client that folds
+    // the returned events back into its own history. The three assertions above each look at one
+    // request; this one replays the field sequence — ask, fulfil the capture, follow up — through a
+    // stand-in for `@ag-ui/client`'s applier, and checks the history it is left holding.
+    it('leaves the client holding exactly one result per tool call across a three-turn capture', async () => {
+      /** `@ag-ui/client`'s applier, restricted to the events this sequence produces. */
+      const clientHistory: Array<Record<string, unknown>> = [];
+      const applyEvent = (ev: Record<string, string>) => {
+        if (ev.type === 'TEXT_MESSAGE_START') {
+          clientHistory.push({ id: ev.messageId, role: 'assistant', content: '' });
+        } else if (ev.type === 'TOOL_CALL_START') {
+          let parent = clientHistory.find((m) => m.id === ev.parentMessageId);
+          if (!parent) {
+            parent = { id: ev.parentMessageId, role: 'assistant', content: '', toolCalls: [] };
+            clientHistory.push(parent);
+          }
+          ((parent.toolCalls ??= []) as Array<Record<string, unknown>>).push({
+            id: ev.toolCallId,
+            type: 'function',
+            function: { name: ev.toolCallName, arguments: '{}' },
+          });
+        } else if (ev.type === 'TOOL_CALL_RESULT') {
+          // Verbatim: locate the parenting assistant message, skip PAST any tool messages already
+          // there, splice in — with no check for an existing result under this toolCallId.
+          const entry = {
+            id: ev.messageId,
+            role: 'tool',
+            toolCallId: ev.toolCallId,
+            content: ev.content,
+          };
+          const parentIdx = clientHistory.findIndex(
+            (m) =>
+              m.role === 'assistant' &&
+              (m.toolCalls as Array<{ id: string }> | undefined)?.some(
+                (t) => t.id === ev.toolCallId
+              )
+          );
+          if (parentIdx === -1) clientHistory.push(entry);
+          else {
+            let at = parentIdx + 1;
+            while (at < clientHistory.length && clientHistory[at].role === 'tool') at++;
+            clientHistory.splice(at, 0, entry);
+          }
+        }
+      };
+
+      const drive = async (handler: (_req: unknown, _res: unknown) => Promise<void>) => {
+        mockEncoderInstance.encode.mockClear();
+        await handler(
+          makeRunReq({
+            threadId: 'rc33-three-turn',
+            tools: CLIENT_TOOLS,
+            messages: structuredClone(clientHistory),
+          }),
+          makeMockRes()
+        );
+        for (const call of mockEncoderInstance.encode.mock.calls) applyEvent(call[0]);
+      };
+
+      const handler = await getRunHandler();
+
+      // Turn 1 — the user asks; the graph calls the client tool and suspends.
+      clientHistory.push({ id: 'u1', role: 'user', content: 'Take a photo.' });
+      gthLangChainAgentStreamWithEventsMock.mockReturnValue(
+        (async function* () {
+          yield { type: 'tool_start' as const, id: 'call-capture', name: 'capture_image' };
+          yield { type: 'tool_end' as const, id: 'call-capture' };
+        })()
+      );
+      await drive(handler);
+
+      // Turn 2 — the client fulfils the tool, appends ITS OWN result, and re-runs. The graph
+      // resumes and streams the same result back out as a `tool_result` event.
+      clientHistory.push({
+        id: 't1',
+        role: 'tool',
+        toolCallId: 'call-capture',
+        content: '{"mimeType":"image/png","data":"QUFBQg=="}',
+      });
+      gthLangChainAgentStreamWithEventsResumeMock.mockReturnValue(
+        (async function* () {
+          yield {
+            type: 'tool_result' as const,
+            id: 'call-capture',
+            content: '{"mimeType":"image/png","data":"QUFBQg=="}',
+          };
+          yield { type: 'text' as const, delta: 'Got the photo.' };
+        })()
+      );
+      await drive(handler);
+
+      // Turn 3 — an ordinary follow-up. This is the turn that 400s in the field.
+      clientHistory.push({ id: 'u2', role: 'user', content: 'save to downloads' });
+      gthLangChainAgentStreamWithEventsMock.mockReturnValue(textStream('No write tool.'));
+      await drive(handler);
+
+      const captureResults = clientHistory.filter(
+        (m) => m.role === 'tool' && m.toolCallId === 'call-capture'
+      );
+      expect(captureResults).toHaveLength(1);
+      // The history the client would replay is one the provider accepts: every tool call it
+      // carries has exactly one result.
+      const toolIds = clientHistory.filter((m) => m.role === 'tool').map((m) => m.toolCallId);
+      expect(new Set(toolIds).size).toBe(toolIds.length);
     });
   });
 

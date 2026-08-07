@@ -93,14 +93,15 @@ describe('binary-content-injection — per-provider IMAGE block (GS2-75)', () =>
     });
   });
 
-  it('anthropic → the standard base64 image block (non-OpenAI unchanged)', async () => {
+  // RC-32: a read binary image goes to Anthropic through the same converter as a captured camera
+  // frame, and the standard block is double-emitted there (the second copy stamped `image/jpeg`,
+  // which 400s a PNG outright). Both paths therefore share the provider-native block.
+  it('anthropic → the provider-native base64 image block (RC-32)', async () => {
     const mw = await mwFor('anthropic');
     const result = await runBeforeModel(mw, binaryRound('image', PNG_MIME, B64, IMG_PATH));
     expect(injectedBlock(result)).toEqual({
       type: 'image',
-      source_type: 'base64',
-      mime_type: PNG_MIME,
-      data: B64,
+      source: { type: 'base64', media_type: PNG_MIME, data: B64 },
     });
   });
 
