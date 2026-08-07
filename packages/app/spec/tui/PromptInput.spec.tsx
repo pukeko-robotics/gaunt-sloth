@@ -290,7 +290,7 @@ function cursorOffsetIn(frame: string): number | null {
  * `Ctrl+U`, `Ctrl+W`, `Ctrl+K` are what a terminal user's fingers do at any prompt — and not one
  * keybinding a reader chose to press.
  *
- * **Two shapes here are load-bearing, and a case that drops either stops discriminating.**
+ * **Three shapes here are load-bearing, and a case that drops any of them stops discriminating.**
  *
  * - **An ODD number of chords.** The text input commits its cursor offset before asking whether the
  *   value may change, so a refused chord leaves the offset one past the value. The next chord's own
@@ -299,6 +299,11 @@ function cursorOffsetIn(frame: string): number | null {
  * - **One input event per character afterwards.** A single write of `more` arrives as one event with
  *   `input.length === 4`, takes the clamp branch in one step and lands correctly. Typed as four
  *   events — which is what a person does — each one inserts at the stale offset.
+ * - **Characters typed after EVERY chord, not only the first.** The repair is a remount, and a
+ *   generation that changes only once still remounts on the first chord: every case that fires one
+ *   chord, and every case that types only before the second, holds just as well when the second
+ *   chord repairs nothing. Interleaving the two — chord, type, chord, type — is what requires the
+ *   repair to happen each time.
  */
 describe('tui <PromptInput> control chords (TUI-C48)', () => {
   // The cursor is an ANSI attribute, so it only exists in the frame while colour is on: at level 0
@@ -373,6 +378,35 @@ describe('tui <PromptInput> control chords (TUI-C48)', () => {
 
     await typeSlowly(stdin, 'mo');
     expect(cursorOffsetIn(lastFrame() ?? '')).toBe(7);
+  });
+
+  it('repairs the cursor on every chord, not only the first (chord, type, chord, type)', async () => {
+    // The repair has to be idempotent-per-chord, and only an interleaved sequence says so. A repair
+    // that fires once — a generation set to a constant rather than incremented — satisfies every
+    // single-chord case above and every case that types only before its second chord, while the
+    // second chord leaves the offset one past the value exactly as an unrepaired first one does.
+    // So the cursor read below and the submitted value are each taken AFTER a second chord that has
+    // characters following it.
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    await typeSlowly(stdin, 'ab');
+    stdin.write(CTRL_T);
+    await tick();
+    expect(cursorOffsetIn(lastFrame() ?? ''), 'the first chord erased the cursor').toBe(2);
+
+    await typeSlowly(stdin, 'cd');
+    stdin.write(CTRL_T);
+    await tick();
+    expect(cursorOffsetIn(lastFrame() ?? ''), 'the second chord erased the cursor').toBe(4);
+
+    await typeSlowly(stdin, 'ef');
+    stdin.write(ENTER);
+    await tick();
+    // Repaired only on the first chord this submits 'abcdfe': the stale offset absorbs the `e` on
+    // its own clamp and the `f` then lands one position early.
+    expect(onSubmit).toHaveBeenCalledWith('abcdef');
   });
 
   it('leaves an EMPTY buffer empty, and types the next characters in order', async () => {

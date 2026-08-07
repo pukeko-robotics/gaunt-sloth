@@ -143,11 +143,12 @@ export const LIVE_REASONING_PREVIEW_ROWS = 2;
  * dim-only region reads as the answer. Cyan carries the layer boundary as colour; the body stays
  * dim+italic underneath the coloured gutter.
  *
- * While a turn is STREAMING and collapsed it keeps its newest
- * {@link LIVE_REASONING_PREVIEW_ROWS} rows on screen, in the same gutter styling, so a thinking
- * model shows what it is thinking about instead of a bare header. The preview follows the stream:
- * it is always the newest lines, and a line longer than the terminal is truncated at its start, so
- * it reads as a window onto the tail rather than as a frozen opening.
+ * While a turn is STREAMING and collapsed it keeps up to
+ * {@link LIVE_REASONING_PREVIEW_ROWS} of its newest rows on screen, in the same gutter styling, so
+ * a thinking model shows what it is thinking about instead of a bare header. One row per trailing
+ * logical line, so a single streaming paragraph draws one. The preview follows the stream: it is
+ * always the newest lines, and a line longer than the terminal is truncated at its start, so it
+ * reads as a window onto the tail rather than as a frozen opening.
  */
 export function ReasoningPanel({
   reasoning,
