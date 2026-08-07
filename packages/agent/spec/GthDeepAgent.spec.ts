@@ -787,7 +787,7 @@ describe('GthDeepAgent', () => {
   describe('EXT-80 deterministic rungs', () => {
     const initAt = async (
       rung: string,
-      command: 'code' | 'chat',
+      command: 'code' | 'chat' | 'api',
       tools: unknown[] = []
     ): Promise<Record<string, unknown> | undefined> => {
       const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
@@ -883,6 +883,31 @@ describe('GthDeepAgent', () => {
         'write_todos',
       ]);
       expect(interruptOn).not.toHaveProperty('run_shell_command');
+    });
+
+    /**
+     * **A surface that answers no approval must not be handed an interrupt** — and the AG-UI server
+     * is THIS backend (`apiAgUiModule` constructs a `GthDeepAgent`), so the property has to be
+     * asserted here and not only on the lean one.
+     *
+     * That server drives the agent directly and never drains a suspended graph, so a wide
+     * rung-independent set there stops the tool running at all: measured on this branch as
+     * `write_file` silently never executing at the DEFAULT rung. It also cannot switch rung
+     * mid-session, so it takes the live set for its configured rung — at `auto-safe` with no shell
+     * gate, nothing. The sibling cell for the lean backend is in core's
+     * `approvalRungTransition.spec.ts`.
+     */
+    it('installs NO interrupt on api at the default rung, where nothing would answer it', async () => {
+      const interruptOn = await initAt('auto-safe', 'api', [fakeTool('my_custom_tool')]);
+
+      expect(interruptOn).toBeUndefined();
+    });
+
+    it('CONTROL: the same rung and tools on code DO get the interrupt', async () => {
+      // Without this, the cell above would pass on a build that installed no interrupt anywhere.
+      const interruptOn = await initAt('auto-safe', 'code', [fakeTool('my_custom_tool')]);
+
+      expect(Object.keys(interruptOn ?? {}).sort()).toEqual(EVERY_GATEABLE_TOOL);
     });
 
     it('carries the approve/reject decision shape onto every newly gated tool', async () => {
