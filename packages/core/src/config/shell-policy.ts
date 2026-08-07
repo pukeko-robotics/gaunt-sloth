@@ -538,6 +538,54 @@ export function resolveGatedToolNames(options: {
 }
 
 /**
+ * **Which commands have something that ANSWERS an approval interrupt.**
+ *
+ * `GthAgentRunner` is the one component that drains a suspended graph
+ * (`resolveToolInterrupts` → `decideToolApproval`) and the one that holds the session rung, so every
+ * command it drives answers approvals and can move the rung under a running session.
+ *
+ * **The AG-UI server (`api`) does not.** It drives the agent directly — `agent.init` +
+ * `streamWithEvents` — and its resume path serves its own frontend-tool `interrupt()` stubs, not
+ * approvals. An approval interrupt raised there suspends the graph with nobody to resume it: the
+ * tool never runs, the client is never asked, and the turn simply ends with that tool call
+ * unanswered. Measured, not inferred.
+ *
+ * So a command that answers nothing must be handed **no approval interrupt beyond what the shell
+ * gate itself requires** — see the `interruptTools` wiring in both backends. In particular it must
+ * NOT be handed the LIVE set for its configured rung: that set is non-empty at `read-only` and
+ * `write`, so it carries exactly the same trap, and `commands.api.approvals` (plus a root-level
+ * `approvals`, which applies to every command) puts an ordinary config on those rungs.
+ *
+ * **Total over {@link GthCommand} on purpose.** An eighth command has to be classified here before
+ * it compiles, rather than defaulting silently into "answers approvals". The property is really
+ * about the DRIVER and not about the command — a second server built under an existing command that
+ * drives the agent without `GthAgentRunner` would inherit the trap with this record fully populated
+ * — so the shape that cannot rot at all is for the constructing surface to declare it at its own
+ * call site.
+ *
+ * Approvals for the AG-UI surface are [[EXT-30]]'s to build; until then this keeps a rung the server
+ * cannot serve from silently swallowing the tool calls it was asked to make.
+ */
+const COMMAND_ANSWERS_APPROVALS: Record<GthCommand, boolean> = {
+  ask: true,
+  chat: true,
+  code: true,
+  exec: true,
+  pr: true,
+  review: true,
+  /** The AG-UI server: it drives the agent itself and drains nothing. */
+  api: false,
+};
+
+/**
+ * {@link COMMAND_ANSWERS_APPROVALS} as a predicate. An unset command is a session driven by
+ * `GthAgentRunner` (nothing else leaves it unset), so it answers approvals.
+ */
+export function commandAnswersApprovals(command: GthCommand | undefined): boolean {
+  return command === undefined ? true : COMMAND_ANSWERS_APPROVALS[command];
+}
+
+/**
  * **The interrupt set: which tool names the backends wire into the approval interrupt.** Every bound
  * tool that ANY rung could gate — the union of {@link resolveGatedToolNames} over
  * {@link APPROVAL_RUNGS}, which in practice is the shell plus every bound tool that is not a
@@ -553,30 +601,12 @@ export function resolveGatedToolNames(options: {
  * `GthAgentRunner.decideToolApproval` decides on the rung in force, which is where the rung has
  * always been read. **Wiring wider does not gate wider** — a call the live rung does not gate is
  * approved there with no rating call and no prompt, so `auto-safe`, `full-auto` and `bypass` behave
- * exactly as they did when the interrupt held the shell alone.
+ * exactly as they do when the interrupt holds the shell alone.
+ *
+ * **Only for a command that answers approvals** ({@link commandAnswersApprovals}). A surface that
+ * drains nothing gets the shell-gate set instead, because a rung-independent set there parks tool
+ * calls nobody can reach.
  */
-/**
- * **Does a session on this command have anything that ANSWERS an approval interrupt?**
- *
- * `GthAgentRunner` is the one component that drains a suspended graph
- * (`resolveToolInterrupts` → `decideToolApproval`) and the one that holds the session rung, so every
- * command it drives answers approvals and can move the rung under a running session.
- *
- * **The AG-UI server (`api`) does not.** It drives the agent directly — `agent.init` +
- * `streamWithEvents` — and its resume path serves its own frontend-tool `interrupt()` stubs, not
- * approvals. An approval interrupt raised there suspends the graph with nobody to resume it: the
- * tool never runs, the client is never asked, and the turn simply ends with that tool call
- * unanswered. Measured, not inferred. It also cannot switch rung mid-session, having no
- * `/approvals` surface — which is why the interrupt set it gets may safely be the LIVE one for its
- * configured rung, the narrower set that carries no such trap.
- *
- * Approvals for the AG-UI surface are [[EXT-30]]'s to build; until then this keeps a rung the server
- * cannot serve from silently swallowing the tool calls it was asked to make.
- */
-export function commandAnswersApprovals(command: GthCommand | undefined): boolean {
-  return command !== 'api';
-}
-
 export function resolveInterruptToolNames(options: {
   gateShell: boolean;
   boundToolNames: readonly string[];

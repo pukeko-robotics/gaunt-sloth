@@ -36,7 +36,7 @@ import { MemorySaver } from '@langchain/langgraph';
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import type { GthConfig } from '#src/config.js';
-import type { ApprovalRung } from '#src/config.js';
+import { APPROVAL_RUNGS, type ApprovalRung } from '#src/config.js';
 import { getNewRunnableConfig } from '#src/utils/llmUtils.js';
 import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
 import type { PendingToolInterrupt, ToolApprovalDecision } from '#src/core/types.js';
@@ -307,15 +307,25 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
    * (`api`) drives the agent directly — `init` + `streamWithEvents` — and never calls
    * `getPendingToolInterrupts`; its resume path serves its own frontend-tool stubs. A gated call
    * there suspends the graph with nobody to resume it, so the tool never runs, the client is never
-   * asked, and the turn ends with that tool call unanswered.
+   * asked, and the turn ends with that tool call unanswered. `commandAnswersApprovals` is what
+   * keeps that from shipping, and the cells below drive the agent exactly as the AG-UI module
+   * drives it, with no runner in the picture.
    *
-   * Measured while checking this branch: with the interrupt wired rung-independently at `api`,
-   * `write_file` stopped executing at the DEFAULT rung — a silent regression for every AG-UI
-   * session. `commandAnswersApprovals` is what keeps that from shipping; the cell below is driven
-   * through the agent exactly as the AG-UI module drives it, with no runner in the picture.
+   * **Every rung, because the rung is where this hides.** `commands.api.approvals` is a first-class
+   * schema field and a root-level `approvals` applies to `api` too, so an ordinary config puts this
+   * surface on `read-only` or `write`. Those are the two rungs where the LIVE gated set is
+   * non-empty — a fallback to it parks the call just as a rung-independent set does. The default
+   * rung cannot show that on its own: it is the one rung where every candidate set is empty.
+   *
+   * **Two scripted calls, because they are gated at different rungs.** `write_file` is granted by
+   * its access class at `write`, so it discriminates at `read-only` alone; `mcp__docs__search` has
+   * no access class and is gated at both deterministic rungs. Neither cell subsumes the other.
    */
-  describe('a surface that drains no approvals keeps the pre-EXT-80 wiring', () => {
-    const apiAgentWithWriteTool = async () => {
+  describe('a surface that drains no approvals is handed no approval interrupt', () => {
+    const apiAgentCalling = async (
+      rung: ApprovalRung,
+      call: { name: string; args: Record<string, unknown> }
+    ) => {
       const { GthLangChainAgent } = await import('#src/core/GthLangChainAgent.js');
       const agent = new GthLangChainAgent(vi.fn(), {
         resolveTools: async () => makeTools(),
@@ -323,27 +333,56 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
       } as never);
       const config = {
         ...BASE_CONFIG,
-        llm: new ScriptedToolCallingModel([
-          { name: 'write_file', args: { path: 'notes.md', content: 'hi' } },
-        ]),
+        llm: new ScriptedToolCallingModel([call]),
+        approvals: rung,
       } as unknown as GthConfig;
       await agent.init('api', config, new MemorySaver());
       return agent;
     };
 
-    it('runs write_file on an api session at the default rung, and parks no interrupt', async () => {
-      const agent = await apiAgentWithWriteTool();
-      const runConfig = { ...getNewRunnableConfig(50), configurable: { thread_id: 'api-default' } };
-
-      for await (const _ of agent.streamWithEvents([new HumanMessage('write it')], runConfig)) {
+    /** Drive one turn the way `apiAgUiModule` does, and report what the graph parked. */
+    const runApiTurn = async (
+      agent: Awaited<ReturnType<typeof apiAgentCalling>>,
+      threadId: string
+    ): Promise<PendingToolInterrupt[]> => {
+      const runConfig = { ...getNewRunnableConfig(50), configurable: { thread_id: threadId } };
+      for await (const _ of agent.streamWithEvents([new HumanMessage('do it')], runConfig)) {
         // drained for effect
       }
-
-      expect(ran).toEqual(['write_file:notes.md']);
       // The observable that made the regression silent: a suspended graph parks the call here, and
       // nothing on this surface ever reads it.
-      expect(await agent.getPendingToolInterrupts(runConfig)).toEqual([]);
-    });
+      return agent.getPendingToolInterrupts(runConfig);
+    };
+
+    it.each(APPROVAL_RUNGS)(
+      'runs write_file on an api session at %s, and parks nothing',
+      async (rung) => {
+        const agent = await apiAgentCalling(rung, {
+          name: 'write_file',
+          args: { path: 'notes.md', content: 'hi' },
+        });
+
+        const parked = await runApiTurn(agent, `api-write-file-${rung}`);
+
+        expect(ran).toEqual(['write_file:notes.md']);
+        expect(parked).toEqual([]);
+      }
+    );
+
+    it.each(APPROVAL_RUNGS)(
+      'runs an MCP tool on an api session at %s, and parks nothing',
+      async (rung) => {
+        const agent = await apiAgentCalling(rung, {
+          name: 'mcp__docs__search',
+          args: { query: 'gates' },
+        });
+
+        const parked = await runApiTurn(agent, `api-mcp-${rung}`);
+
+        expect(ran).toEqual(['mcp__docs__search:gates']);
+        expect(parked).toEqual([]);
+      }
+    );
   });
 
   /**

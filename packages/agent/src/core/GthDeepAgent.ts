@@ -1,5 +1,6 @@
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import {
+  SHELL_TOOL_NAME,
   commandAnswersApprovals,
   resolveApprovals,
   resolveGatedToolNames,
@@ -748,14 +749,24 @@ export class GthDeepAgent extends GthAbstractAgent {
         .filter((name): name is string => typeof name === 'string' && name.length > 0),
       ...DEEP_AGENT_BUILT_IN_TOOL_NAMES,
     ];
+    // **What a surface that answers no approval gets — for BOTH sets below.** An interrupt nobody
+    // can answer suspends the graph forever: the tool never runs and the client is never asked. So
+    // such a surface is wired with exactly what the shell gate itself requires and nothing more,
+    // and is not TOLD it will be asked either. This matters most here, because this backend IS the
+    // AG-UI server (`apiAgUiModule` constructs a `GthDeepAgent`): at `read-only` and `write` the
+    // live set is non-empty, so a write, an MCP call, `task` or deepagents' own `write_todos`
+    // bookkeeping would simply vanish — or be announced to the model as approvable when nothing
+    // will ever approve it.
+    const answersApprovals = commandAnswersApprovals(this.command);
+    const noDrainTools = gateShell ? [SHELL_TOOL_NAME] : [];
     // The LIVE gated set — what THIS rung gates — for the §4.5 tool descriptions below.
-    const gatedTools = resolveGatedToolNames({ rung, gateShell, boundToolNames });
-    // Rung-independent WHERE THE RUNG CAN MOVE. A command with no approval drain (`api`) both keeps
-    // its rung for the whole session and has nobody to answer an interrupt, so it gets the live set
-    // — which at the default rung is the shell alone, exactly as before this node.
-    const interruptTools = commandAnswersApprovals(this.command)
+    const gatedTools = answersApprovals
+      ? resolveGatedToolNames({ rung, gateShell, boundToolNames })
+      : noDrainTools;
+    // Rung-independent ONLY where something answers the interrupt.
+    const interruptTools = answersApprovals
       ? resolveInterruptToolNames({ gateShell, boundToolNames })
-      : gatedTools;
+      : noDrainTools;
     // Keyed off the interrupt SET, not `gateShell`: at a deterministic rung there is a gate to
     // install even when the shell tool is disabled, and deepagents installs no HITL middleware at
     // all when `interruptOn` is undefined.
@@ -769,9 +780,11 @@ export class GthDeepAgent extends GthAbstractAgent {
       this.statusUpdate(shellGateNotice.level, shellGateNotice.message);
     }
 
-    // EXT-58 (spec §4.5) — the same tool-registration hook the lean backend calls, with the same
-    // gated set that is wired into `interruptOn` directly above, so neither backend's descriptions
-    // can disagree with its own gate. deepagents registers its OWN filesystem tools (this backend
+    // EXT-58 (spec §4.5) — the same tool-registration hook the lean backend calls, on the same LIVE
+    // gated set, so neither backend's descriptions can disagree with its own rung. That set is
+    // narrower than the `interruptOn` set above, which covers every rung so the rung can still move
+    // mid-session; describing from the wider one would promise approvals this rung does not ask
+    // for. deepagents registers its OWN filesystem tools (this backend
     // resolves with `filesystem: 'none'`), so they never appear in `passThroughTools` and their
     // descriptions are deepagents' rather than ours, which is why they cannot be suffixed here even
     // though the gated set above does gate them. They are declared as additional registered names so

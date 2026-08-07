@@ -890,24 +890,55 @@ describe('GthDeepAgent', () => {
      * is THIS backend (`apiAgUiModule` constructs a `GthDeepAgent`), so the property has to be
      * asserted here and not only on the lean one.
      *
-     * That server drives the agent directly and never drains a suspended graph, so a wide
-     * rung-independent set there stops the tool running at all: measured on this branch as
-     * `write_file` silently never executing at the DEFAULT rung. It also cannot switch rung
-     * mid-session, so it takes the live set for its configured rung — at `auto-safe` with no shell
-     * gate, nothing. The sibling cell for the lean backend is in core's
-     * `approvalRungTransition.spec.ts`.
+     * That server drives the agent directly and never drains a suspended graph, so an interrupt it
+     * cannot answer stops the tool from running at all: the call is parked, the client is never
+     * asked, and the turn ends with it unanswered. The sibling cell for the lean backend is in
+     * core's `approvalRungTransition.spec.ts`, driven at runtime.
+     *
+     * **Swept over every rung, and the sweep is the assertion.** `commands.api.approvals` is a
+     * first-class schema field and a root-level `approvals` reaches `api` as well, so an ordinary
+     * config puts this surface on `read-only` or `write` — the two rungs where the LIVE gated set
+     * is non-empty and therefore carries exactly the same trap. Pinned to the default rung alone
+     * this property cannot fail, because the default is the one rung where every candidate set is
+     * already empty. The per-rung control is the `code` sweep above, which wires the full set at
+     * all five.
+     *
+     * **And it must not be TOLD it will be asked either.** The §4.5 description suffix is built
+     * from the live gated set, so leaving that set alone here would hand the model
+     * *"Calling this tool will require the user's approval"* with an empty interrupt behind it —
+     * nothing asked, the call succeeds, and the model cannot discover the sentence was false. §4.5
+     * rates that worse than carrying no description at all.
      */
-    it('installs NO interrupt on api at the default rung, where nothing would answer it', async () => {
-      const interruptOn = await initAt('auto-safe', 'api', [fakeTool('my_custom_tool')]);
+    it.each(['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'])(
+      'neither interrupts nor announces an approval on api at %s',
+      async (rung) => {
+        const custom = fakeTool('my_custom_tool');
 
-      expect(interruptOn).toBeUndefined();
-    });
+        const interruptOn = await initAt(rung, 'api', [custom]);
+
+        expect(interruptOn).toBeUndefined();
+        // `fakeTool` seeds the description with the tool NAME, so any §4.5 suffix shows up as a
+        // change to it.
+        expect(custom.description).toBe('my_custom_tool');
+      }
+    );
 
     it('CONTROL: the same rung and tools on code DO get the interrupt', async () => {
       // Without this, the cell above would pass on a build that installed no interrupt anywhere.
       const interruptOn = await initAt('auto-safe', 'code', [fakeTool('my_custom_tool')]);
 
       expect(Object.keys(interruptOn ?? {}).sort()).toEqual(EVERY_GATEABLE_TOOL);
+    });
+
+    it('CONTROL: on code at read-only the same tool IS interrupted AND IS announced', async () => {
+      // The description half needs its own control at a rung that actually gates the tool:
+      // `auto-safe` above grants an unclassed tool, so nothing is suffixed there on any command.
+      const custom = fakeTool('my_custom_tool');
+
+      const interruptOn = await initAt('read-only', 'code', [custom]);
+
+      expect(Object.keys(interruptOn ?? {}).sort()).toEqual(EVERY_GATEABLE_TOOL);
+      expect(custom.description).not.toBe('my_custom_tool');
     });
 
     it('carries the approve/reject decision shape onto every newly gated tool', async () => {

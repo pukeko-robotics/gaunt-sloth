@@ -107,7 +107,7 @@ describe('EXT-80 — the lean backend wires the interrupt on the whole gated set
     return Object.keys(options.interruptOn).sort();
   }
 
-  const initAt = async (rung: string, command: 'code' | 'chat' = 'code'): Promise<void> => {
+  const initAt = async (rung: string, command: 'code' | 'chat' | 'api' = 'code'): Promise<void> => {
     const agent = new GthLangChainAgent(statusUpdate, resolvers as never);
     await agent.init(command, { ...baseConfig(), approvals: rung } as unknown as GthConfig);
   };
@@ -271,5 +271,35 @@ describe('EXT-80 — the lean backend wires the interrupt on the whole gated set
     await initAt('bypass');
 
     expect(suffixedNames()).toEqual([]);
+  });
+
+  /**
+   * [[EXT-80]] — **a surface that answers no approval is not told it will be asked, either.** The
+   * AG-UI server (`api`) drives the agent itself and drains no interrupt, so it is wired with
+   * nothing beyond the shell gate's own set. The §4.5 descriptions have to follow: a sentence
+   * promising the user's approval, on a surface where no approval can ever be requested, is the
+   * drift §4.5 rates worse than carrying no description at all — and the model has no way to find
+   * out, because the call simply succeeds.
+   *
+   * Both halves in one assertion per rung, because either alone would pass on the wrong build:
+   * an empty interrupt with suffixed descriptions is exactly the state this cell exists to catch.
+   * Swept over every rung, since the live set is non-empty only at the two deterministic ones.
+   */
+  it.each(['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'])(
+    'neither interrupts nor announces an approval on api at %s',
+    async (rung) => {
+      await initAt(rung, 'api');
+
+      expect(wiredInterruptNames()).toBeNull();
+      expect(suffixedNames()).toEqual([]);
+    }
+  );
+
+  it('CONTROL: the same rung on code both interrupts and announces', async () => {
+    // Without this, the sweep above would pass on a build that suffixed nothing anywhere.
+    await initAt('read-only', 'code');
+
+    expect(wiredInterruptNames()).toEqual(EVERY_GATEABLE_TOOL);
+    expect(suffixedNames()).not.toEqual([]);
   });
 });

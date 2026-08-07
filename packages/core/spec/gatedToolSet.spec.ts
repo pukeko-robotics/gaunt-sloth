@@ -22,6 +22,7 @@ import { describe, expect, it } from 'vitest';
 import {
   APPROVAL_RUNGS,
   BUILT_IN_TOOL_ACCESS,
+  commandAnswersApprovals,
   describeGrantedBuiltInTools,
   isAccessClassGrantedAtRung,
   isDeterministicRung,
@@ -32,6 +33,7 @@ import {
   SHELL_TOOL_NAME,
   type ApprovalRung,
 } from '#src/config.js';
+import type { GthCommand } from '#src/core/types.js';
 
 /** gsloth's `GthFileSystemToolkit` read tools, plus deepagents' differently-named ones. */
 const READ_BUILT_INS = [
@@ -366,6 +368,42 @@ describe('EXT-80 — resolveInterruptToolNames: the rung-independent interrupt s
         boundToolNames: ['edit_file', SHELL_TOOL_NAME, 'read_file', 'my_custom_tool', 'edit_file'],
       })
     ).toEqual([SHELL_TOOL_NAME, 'edit_file', 'my_custom_tool']);
+  });
+});
+
+/**
+ * [[EXT-80]] — **which surfaces may be handed an approval interrupt at all.** A command that drains
+ * none must be wired with no interrupt beyond the shell gate's own: an interrupt nobody answers
+ * suspends the graph, so the tool never runs and the client is never asked. The wiring that consumes
+ * this is asserted per backend (`approvalRungTransition.spec.ts`, `GthDeepAgent.spec.ts`); what is
+ * asserted here is the classification itself, one command at a time.
+ */
+describe('EXT-80 — commandAnswersApprovals: which surfaces can be handed an interrupt', () => {
+  /**
+   * Written out by hand, never derived from the table under test — an expectation computed from the
+   * same record would assert nothing. Every command but `api` is driven by `GthAgentRunner`, the
+   * only caller of `getPendingToolInterrupts`; `api` is the AG-UI server, which drives the agent
+   * itself and drains nothing.
+   *
+   * Total over {@link GthCommand} on both sides, so an eighth command fails to compile here as well
+   * as in production, instead of defaulting silently into "answers approvals".
+   */
+  const EXPECTED: Record<GthCommand, boolean> = {
+    ask: true,
+    chat: true,
+    code: true,
+    exec: true,
+    pr: true,
+    review: true,
+    api: false,
+  };
+
+  it.each(Object.entries(EXPECTED))('%s answers approvals: %s', (command, answers) => {
+    expect(commandAnswersApprovals(command as GthCommand)).toBe(answers);
+  });
+
+  it('treats an unset command as runner-driven, since nothing else leaves it unset', () => {
+    expect(commandAnswersApprovals(undefined)).toBe(true);
   });
 });
 

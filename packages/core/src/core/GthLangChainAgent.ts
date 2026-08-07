@@ -1,5 +1,6 @@
 import {
   GthConfig,
+  SHELL_TOOL_NAME,
   commandAnswersApprovals,
   resolveApprovals,
   resolveGatedToolNames,
@@ -672,19 +673,25 @@ export class GthLangChainAgent extends GthAbstractAgent {
     const boundToolNames = tools
       .map((tool) => tool?.name)
       .filter((name): name is string => typeof name === 'string' && name.length > 0);
-    // Rung-independent WHERE THE RUNG CAN MOVE. A command with no approval drain (`api`) both keeps
-    // its rung for the whole session and has nobody to answer an interrupt, so it gets the live set
-    // — which at the default rung is the shell alone, exactly as before this node.
+    // **What a surface that answers no approval gets — for BOTH sets below.** An interrupt nobody
+    // can answer suspends the graph forever: the tool never runs and the client is never asked. So
+    // such a surface is wired with exactly what the shell gate itself requires and nothing more,
+    // and is not TOLD it will be asked either. Neither the live set nor the interrupt set is a safe
+    // fallback here — both are non-empty at `read-only` and `write`, which is precisely where an
+    // AG-UI server's writes and MCP calls would vanish, or be announced as approvable when nothing
+    // will ever approve them.
+    const answersApprovals = commandAnswersApprovals(this.command);
+    const noDrainTools = gateShell ? [SHELL_TOOL_NAME] : [];
     // The LIVE gated set — what THIS rung gates — for the §4.5 tool descriptions below. Narrower
     // than the interrupt set at the rated rungs, and it must stay so: a description promising an
     // approval the runner will not ask for is the drift §4.5 calls worse than no description.
-    const gatedTools = resolveGatedToolNames({ rung, gateShell, boundToolNames });
-    // Rung-independent WHERE THE RUNG CAN MOVE. A command with no approval drain (`api`) both keeps
-    // its rung for the whole session and has nobody to answer an interrupt, so it gets the live set
-    // — which at the default rung is the shell alone, exactly as before this node.
-    const interruptTools = commandAnswersApprovals(this.command)
+    const gatedTools = answersApprovals
+      ? resolveGatedToolNames({ rung, gateShell, boundToolNames })
+      : noDrainTools;
+    // Rung-independent ONLY where something answers the interrupt.
+    const interruptTools = answersApprovals
       ? resolveInterruptToolNames({ gateShell, boundToolNames })
-      : gatedTools;
+      : noDrainTools;
     // Installed on the interrupt SET, not on `gateShell`: at a deterministic rung there is a gate to
     // install even when the shell tool is disabled or the command emits no dev tools (a plain
     // `chat` session with MCP servers). Keying the install off `gateShell` there would leave every
@@ -709,10 +716,11 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // EXT-58 (spec §4.5) — state the approvals posture where the model reads it: on the tool
     // descriptions themselves. Every tool NOT auto-approved at the resolved rung gets the rung's
     // sentence appended; every granted tool keeps its description exactly as written, because the
-    // ABSENCE of the sentence is what marks it free. `gatedTools` is literally the set wired into
-    // the interrupt above, so a description can never promise an approval this gate will not ask
-    // for. Applied after the allowedTools filter and before createAgent, so the model only ever
-    // sees the final, suffixed set.
+    // ABSENCE of the sentence is what marks it free. `gatedTools` is the LIVE set for the rung in
+    // force — narrower than the interrupt set above, which covers every rung so the rung can still
+    // move — so a description can never promise an approval this rung will not ask for. Applied
+    // after the allowedTools filter and before createAgent, so the model only ever sees the final,
+    // suffixed set.
     this.registerApprovalsAwareTools(tools, { rung, gatedTools });
 
     // EXT-52 placement note: the HITL gate sits EARLY in the array — before user-configured
