@@ -496,6 +496,10 @@ describe('tui <App>', () => {
       const f = lastFrame() ?? '';
       expect(f).toContain('Tab: section');
       expect(f).not.toContain('Tab: focus debug panel');
+      // TUI-C63 — the search keys are named with Enter among them. Typing the query puts the pane in
+      // an input mode that every printable character extends, so a legend that jumps from `/` to
+      // `n`/`N` prints a sequence that types into the query instead of stepping matches.
+      expect(f).toContain('/, Enter: search');
     });
 
     unmount();

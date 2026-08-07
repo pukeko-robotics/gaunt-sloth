@@ -41,6 +41,25 @@ const help = (ctx: SlashCommandContext, registry = createCommandRegistry()): Sla
 /** Keys that exist only on the full-screen surface — none may reach readline's `/help`. */
 const TUI_ONLY_KEYS = ['PgUp', 'PgDn', 'Ctrl+Home', 'Ctrl+End', 'Ctrl+T', 'wheel'];
 
+/**
+ * The sections `/help` offers on this surface, and how many bindings each holds — written out as a
+ * LITERAL rather than derived from the table under test.
+ *
+ * Every other case here builds its expectation by iterating `TUI_KEY_BINDINGS`, so it can only prove
+ * the table came out in the order it went in: delete a whole group, or add a binding nothing binds,
+ * and they all stay green. Nothing can prove the table matches the handlers — only a reader can —
+ * but this stops it eroding unnoticed. Changing the advertised keyboard means changing this list on
+ * purpose, in the same commit.
+ */
+const EXPECTED_SECTIONS: readonly [title: string, bindings: number][] = [
+  ['Scrolling the conversation (this window has no scrollback of its own)', 5],
+  ['While the agent is working', 1],
+  ['At the prompt', 5],
+  ['Panels', 7],
+  ['When a tool call asks for approval (the prompt shows these too)', 1],
+  ['Always', 1],
+];
+
 describe('/help key bindings — one registry, two keyboards (TUI-C63)', () => {
   it('gives the two surfaces different help text from the SAME registry', () => {
     const registry = createCommandRegistry();
@@ -87,6 +106,37 @@ describe('/help key bindings — one registry, two keyboards (TUI-C63)', () => {
     }
   });
 
+  it('renders exactly the sections it is meant to: a lost or invented one fails here', () => {
+    const lines = help(tuiCtx).lines;
+
+    expect(TUI_KEY_BINDINGS.map((g) => [g.title, g.bindings.length])).toEqual(
+      EXPECTED_SECTIONS.map((section) => [...section])
+    );
+    // Pinned against the RENDERED notice too, not only the data: a section that reaches the table
+    // but not the reader is the same defect as one that was never there.
+    for (const [title, count] of EXPECTED_SECTIONS) {
+      expect(lines).toContain(title);
+      const from = lines.indexOf(title) + 1;
+      const rendered = lines.slice(from, from + count);
+      expect(rendered).toHaveLength(count);
+      expect(rendered.every((line) => line.startsWith('  '))).toBe(true);
+      expect(lines[from + count] ?? '').not.toMatch(/^ {2}\S/);
+    }
+  });
+
+  it('separates the commands from the keys with a row the screen actually draws', () => {
+    const registry = createCommandRegistry();
+    const lines = help(tuiCtx, registry).lines;
+
+    // A SPACE, not the empty string: a sibling <Text> holding '' collapses to nothing in Ink's
+    // column, so `''` here would be code claiming a gap the reader never sees. The formatter argues
+    // that at length; this is what makes a later "tidy the empty string" edit fail instead of
+    // silently deleting the blank row.
+    expect(lines[registry.length]).toBe(' ');
+    // Exactly one, and the keys begin immediately after it.
+    expect(lines[registry.length + 1]).toBe(TUI_KEY_BINDINGS[0].title);
+  });
+
   it('names the keys honestly: the Mac note is in /help, and Shift+wheel is qualified', () => {
     const lines = help(tuiCtx).lines;
 
@@ -102,6 +152,24 @@ describe('/help key bindings — one registry, two keyboards (TUI-C63)', () => {
     const shiftWheel = lines.find((line) => line.includes('Shift+wheel'));
     expect(shiftWheel).toBeDefined();
     expect(shiftWheel).toContain('terminals that forward Shift');
+
+    // The debug pane's search is a two-step loop and the listing has to say so: while the query is
+    // being typed the pane is in an input mode that only Enter leaves, so `n` pressed straight after
+    // the query extends the query rather than stepping a match. A line naming `/` and `n`/`N` with
+    // no Enter between them prints a sequence that does not work.
+    const paneSearch = lines.find((line) => line.includes('n / N'));
+    expect(paneSearch).toBeDefined();
+    expect(paneSearch).toContain('Enter');
+
+    // Esc in the scrolling group carries its condition for the same reason: the reader of that
+    // group is the one most likely to press it while a turn streams, where the first Esc aborts the
+    // turn and only the second scrolls. Read alone — which is how a scanned line is read — an
+    // unqualified entry invites exactly that keystroke.
+    const escToBottom = lines.find(
+      (line) => line.includes('Esc, or just start typing') && line.includes('newest output')
+    );
+    expect(escToBottom).toBeDefined();
+    expect(escToBottom).toMatch(/while a turn runs/);
   });
 
   it('keeps the hint fragment a fragment: it joins the shared row, and only mentions scrolling', () => {

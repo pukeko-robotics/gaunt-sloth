@@ -51,7 +51,13 @@ export const TUI_KEY_BINDINGS: readonly KeyBindingGroup[] = [
         keys: 'Shift+wheel',
         description: 'a page, in terminals that forward Shift with the wheel — some never do',
       },
-      { keys: 'Esc, or just start typing', description: 'back to the newest output' },
+      {
+        // Esc's meaning is decided by what owns the keyboard, and the reader of THIS group is the
+        // one most likely to press it mid-turn: there the first Esc aborts the turn and only the
+        // second scrolls. The condition travels with the line, because a line is read alone.
+        keys: 'Esc, or just start typing',
+        description: 'back to the newest output — while a turn runs, the first Esc stops the turn',
+      },
     ],
   },
   {
@@ -64,6 +70,12 @@ export const TUI_KEY_BINDINGS: readonly KeyBindingGroup[] = [
       { keys: '/', description: 'open the slash-command menu' },
       { keys: '↑ / ↓', description: 'move through the open menu' },
       { keys: 'Tab', description: 'complete the highlighted command' },
+      {
+        // Worth a line precisely because it is not what the buffer shows: with the menu open,
+        // Enter runs the HIGHLIGHTED command rather than the typed text (PromptInput's onSubmit).
+        keys: 'Enter',
+        description: 'send the line — or run the highlighted command, while the menu is open',
+      },
       { keys: 'Esc', description: 'dismiss the menu' },
     ],
   },
@@ -74,12 +86,19 @@ export const TUI_KEY_BINDINGS: readonly KeyBindingGroup[] = [
         keys: 'Ctrl+T',
         description: 'fold and unfold tool output and thinking (same as /verbose)',
       },
-      { keys: 'Tab', description: 'focus the debug panel while it is open (see /debug)' },
+      {
+        keys: 'Tab',
+        description:
+          'focus the open debug panel, unless a turn is running or the menu is open (see /debug)',
+      },
       { keys: 'Tab / Shift+Tab', description: 'in the focused panel: next / previous view' },
       { keys: '↑ / ↓, PgUp / PgDn', description: 'in the focused panel: a line, a page' },
       {
-        keys: '/, then n / N',
-        description: 'in the focused panel: search it, then next / previous match',
+        // The Enter step is the binding, not a nicety: while the query is being typed the pane is in
+        // an input mode where every printable character extends it, so an `n` typed straight after
+        // the query lands in the query rather than stepping a match (App.tsx's search-input branch).
+        keys: '/, then Enter, then n / N',
+        description: 'in the focused panel: search it, confirm, then next / previous match',
       },
       { keys: 'm', description: 'in the focused panel: maximise it, and back' },
       { keys: 'Esc', description: 'leave the focused panel (first Esc clears an active search)' },

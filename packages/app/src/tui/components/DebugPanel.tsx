@@ -189,7 +189,13 @@ export function DebugPanel({
       <Box>
         <Text dimColor>
           {focused
-            ? `[Tab: section · ↑/↓: scroll · /: search · n/N: next/prev · m: ${
+            ? // Both search keys are named, in the order they are pressed: typing the query puts the
+              // pane in an input mode that every printable character extends, so an `n` pressed
+              // before Enter grows the query instead of stepping a match. Naming Enter is what keeps
+              // the row from promising a sequence that does not work. The added clause is this short
+              // because the row must still fit one terminal row at 100 columns in its widest state
+              // (`Esc: clear search`).
+              `[Tab: section · ↑/↓: scroll · /, Enter: search · n/N: next/prev · m: ${
                 maximized ? 'restore' : 'maximise'
               } · Esc: ${searchQuery ? 'clear search' : 'unfocus'}]`
             : '[/debug to hide]'}
