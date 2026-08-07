@@ -13,6 +13,7 @@ import {
   type McpToolApprovalEntry,
   type ResolvedApprovals,
   resolveApprovals,
+  resolveGatedToolNames,
   resolveShellApprovalGate,
   SHELL_TOOL_NAME,
   TOOL_ANNOTATION_HINTS,
@@ -851,10 +852,9 @@ export class GthAgentRunner {
     //
     // The `bypass` term is deliberate and not redundant with the early return above. That return
     // only covers a SHELL call, so without this term a non-shell subject would still carry an
-    // escalate match into the prompt at `bypass` — unreachable while `run_shell_command` is the
-    // only gated tool, but §2.5's rule is about the rung, not about which tool asked. Make the
-    // invariant true rather than incidentally true, so [[EXT-30]] widening the gate cannot quietly
-    // break it.
+    // escalate match into the prompt at `bypass`, and §2.5's rule is about the rung, not about which
+    // tool asked. Non-shell subjects do reach this line — the deterministic rungs gate the write
+    // built-ins, MCP and custom tools — so the term is doing work rather than guarding a hypothesis.
     const escalatedBy =
       rule?.action === 'escalate' && approvals.rung !== 'bypass'
         ? describeApprovalEntry(rule.entry)
@@ -1074,8 +1074,18 @@ export class GthAgentRunner {
     if (registered.length === 0) return [];
     // The gated set is resolved from the SAME shared policy both backends wire their interrupt
     // from, so "granted" here means exactly what it means at tool-registration time (§4.5).
+    //
+    // EXT-80 makes this non-drift property load-bearing rather than incidental. At `read-only` the
+    // write built-ins are gated, so they are NOT granted, and a summary still offering `write_file`
+    // there would tell the model a tool is free while the gate stops and asks for it — the rater
+    // suggesting the one thing guaranteed to interrupt the user. `resolveGatedToolNames` reads the
+    // rung in force for the session, so this tracks a mid-session `/approvals` change too.
     const { gateShell } = resolveShellApprovalGate(this.config ?? undefined, this.command);
-    const gatedTools = gateShell ? [SHELL_TOOL_NAME] : [];
+    const gatedTools = resolveGatedToolNames({
+      rung: this.sessionApprovals.rung,
+      gateShell,
+      boundToolNames: registered,
+    });
     return describeGrantedBuiltInTools(registered, this.sessionApprovals.rung, gatedTools);
   }
 

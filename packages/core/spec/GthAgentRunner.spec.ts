@@ -428,6 +428,165 @@ describe('GthAgentRunner', () => {
       expect(streamResume).not.toHaveBeenCalled();
     });
 
+    /**
+     * [[EXT-80]] — **a gated NON-SHELL call has to survive the whole interrupt path**, not merely
+     * appear in a gated set. The matcher and the annotation path already model `tool` subjects and
+     * `decideToolApproval` already has `subject.kind !== 'shell'` arms, but whether those pieces
+     * connect is a thing to test rather than assume: an interrupt that is built and then dropped
+     * somewhere between the graph and the prompt would leave `read-only` exactly as false as it was.
+     */
+    describe('EXT-80 — a newly gated non-shell tool reaches the human', () => {
+      const READ_ONLY_CONFIG = { streamOutput: true as const, approvals: 'read-only' as const };
+
+      it('prompts the human for write_file at read-only and resumes with the decision', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        mockAgent.stream.mockResolvedValue(streamOf('working'));
+        (mockAgent as any).getPendingToolInterrupts = vi
+          .fn()
+          .mockResolvedValueOnce([
+            { name: 'write_file', args: { path: 'notes.md', content: 'hello' } },
+          ])
+          .mockResolvedValueOnce([]);
+        const streamResume = vi.fn().mockResolvedValue(streamOf(' done'));
+        (mockAgent as any).streamResume = streamResume;
+
+        await runner.init(undefined, { ...mockConfig, ...READ_ONLY_CONFIG } as any);
+        const human = vi.fn().mockResolvedValue({ type: 'approve' });
+        runner.setToolApprovalCallback(human);
+
+        const result = await runner.processMessages([new HumanMessage('write notes')]);
+
+        expect(human).toHaveBeenCalledWith(
+          expect.objectContaining({
+            name: 'write_file',
+            args: { path: 'notes.md', content: 'hello' },
+          })
+        );
+        expect(streamResume).toHaveBeenCalledWith(
+          { decisions: [{ type: 'approve' }] },
+          expect.anything()
+        );
+        expect(result).toBe('working done');
+        // §4.3 keeps the rater on the shell: a tool subject is escalated, never rated.
+        expect(resolveRaterModelMock).not.toHaveBeenCalled();
+      });
+
+      it('carries a REJECT decision back for a newly gated tool', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        mockAgent.stream.mockResolvedValue(streamOf('working'));
+        (mockAgent as any).getPendingToolInterrupts = vi
+          .fn()
+          .mockResolvedValueOnce([{ name: 'delete_file', args: { path: 'notes.md' } }])
+          .mockResolvedValueOnce([]);
+        const streamResume = vi.fn().mockResolvedValue(streamOf(' stopped'));
+        (mockAgent as any).streamResume = streamResume;
+
+        await runner.init(undefined, { ...mockConfig, ...READ_ONLY_CONFIG } as any);
+        runner.setToolApprovalCallback(vi.fn().mockResolvedValue({ type: 'reject' }));
+
+        await runner.processMessages([new HumanMessage('delete notes')]);
+
+        expect(streamResume).toHaveBeenCalledWith(
+          { decisions: [expect.objectContaining({ type: 'reject' })] },
+          expect.anything()
+        );
+      });
+
+      it('prompts for an MCP tool at read-only even when it declares readOnlyHint', async () => {
+        // The EXT-30 (iii) exemption is deliberately NOT carried into these two rungs: a server's
+        // self-declared annotation is least earned where the ladder is strictest.
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        mockAgent.stream.mockResolvedValue(streamOf('working'));
+        (mockAgent as any).getPendingToolInterrupts = vi
+          .fn()
+          .mockResolvedValueOnce([{ name: 'mcp__docs__search', args: { query: 'x' } }])
+          .mockResolvedValueOnce([]);
+        (mockAgent as any).getDeclaredMcpToolAnnotations = vi
+          .fn()
+          .mockReturnValue(new Map([['mcp__docs__search', { readOnlyHint: true }]]));
+        (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+        await runner.init(undefined, { ...mockConfig, ...READ_ONLY_CONFIG } as any);
+        const human = vi.fn().mockResolvedValue({ type: 'approve' });
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('search docs')]);
+
+        expect(human).toHaveBeenCalledWith(expect.objectContaining({ name: 'mcp__docs__search' }));
+      });
+
+      it('prompts for a custom tool at read-only', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        mockAgent.stream.mockResolvedValue(streamOf('working'));
+        (mockAgent as any).getPendingToolInterrupts = vi
+          .fn()
+          .mockResolvedValueOnce([{ name: 'my_custom_tool', args: { thing: 1 } }])
+          .mockResolvedValueOnce([]);
+        (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+        await runner.init(undefined, { ...mockConfig, ...READ_ONLY_CONFIG } as any);
+        const human = vi.fn().mockResolvedValue({ type: 'approve' });
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('do the thing')]);
+
+        expect(human).toHaveBeenCalledWith(expect.objectContaining({ name: 'my_custom_tool' }));
+      });
+
+      /**
+       * §6.2 for the widened set: a non-interactive run must EXIT non-zero rather than hang or hand
+       * the model a rejection it can work around. The message names the tool, since a non-shell
+       * subject has no command string to quote.
+       */
+      it('EXITS non-zero for a newly gated tool when no human can answer', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        mockAgent.stream.mockResolvedValue(streamOf('working'));
+        (mockAgent as any).getPendingToolInterrupts = vi
+          .fn()
+          .mockResolvedValueOnce([{ name: 'write_file', args: { path: 'out.txt' } }])
+          .mockResolvedValueOnce([]);
+        const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+        (mockAgent as any).streamResume = streamResume;
+
+        await runner.init(undefined, { ...mockConfig, ...READ_ONLY_CONFIG } as any);
+        // No setToolApprovalCallback → the CI / one-shot / server case.
+
+        const error = await runner
+          .processMessages([new HumanMessage('write out')])
+          .then(() => null)
+          .catch((e: unknown) => e as Error);
+
+        expect(error).toBeInstanceOf(NonInteractiveEscalationError);
+        expect(error?.message).toContain('write_file');
+        expect(streamResume).not.toHaveBeenCalled();
+      });
+
+      it('still lets the declared deny list refuse a newly gated tool before any prompt', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        mockAgent.stream.mockResolvedValue(streamOf('working'));
+        (mockAgent as any).getPendingToolInterrupts = vi
+          .fn()
+          .mockResolvedValueOnce([{ name: 'my_custom_tool', args: {} }])
+          .mockResolvedValueOnce([]);
+        (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+
+        await runner.init(undefined, {
+          ...mockConfig,
+          ...READ_ONLY_CONFIG,
+          approvals: {
+            rung: 'read-only',
+            deny: [{ type: 'tool', matcher: 'exact', pattern: 'my_custom_tool' }],
+          },
+        } as any);
+        const human = vi.fn();
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('do the thing')]);
+
+        expect(human).not.toHaveBeenCalled();
+      });
+    });
+
     // EXT-9 Tier-2 allow-list, at the `write` rung: it applies at every rung except `bypass`, and
     // `write` consults no model, so these tests exercise the allow-list alone.
     //

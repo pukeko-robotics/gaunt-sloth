@@ -765,6 +765,98 @@ describe('GthDeepAgent', () => {
     }
   );
 
+  /**
+   * [[EXT-80]] — at `read-only` and `write` the interrupt takes every bound tool the rung does not
+   * auto-grant, not just the shell.
+   *
+   * The load-bearing part on THIS backend: deepagents registers its own filesystem tools and
+   * `execute` itself, so they never appear in the array gsloth passes to `createDeepAgent`.
+   * Deriving the gated set from that array alone would leave `write_file`, `edit_file` and
+   * `execute` ungated here — the very defect at `read-only`. Gating them by NAME works because
+   * deepagents installs the same langchain `humanInTheLoopMiddleware`, which matches the model's
+   * tool calls by name in `afterModel` and does not care who registered the tool.
+   */
+  describe('EXT-80 deterministic rungs', () => {
+    const initAt = async (
+      rung: string,
+      command: 'code' | 'chat',
+      tools: unknown[] = []
+    ): Promise<Record<string, unknown> | undefined> => {
+      const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+      const agent = new GthDeepAgent(statusUpdate, {
+        resolveTools: vi.fn().mockResolvedValue(tools),
+      });
+      await agent.init(command, makeConfig({ approvals: rung } as any));
+      return createDeepAgentMock.mock.calls[0][0].interruptOn;
+    };
+
+    it("gates deepagents' OWN write tools and execute at read-only", async () => {
+      const interruptOn = await initAt('read-only', 'code', [fakeTool('my_custom_tool')]);
+
+      expect(Object.keys(interruptOn ?? {}).sort()).toEqual([
+        'edit_file',
+        'execute',
+        'my_custom_tool',
+        'run_shell_command',
+        'write_file',
+      ]);
+      // The read tools deepagents registers stay free — that is what `read-only` grants.
+      for (const granted of ['ls', 'read_file', 'glob', 'grep']) {
+        expect(interruptOn).not.toHaveProperty(granted);
+      }
+    });
+
+    it('frees the filesystem write tools at write but still gates execute and the shell', async () => {
+      const interruptOn = await initAt('write', 'code', [fakeTool('my_custom_tool')]);
+
+      expect(Object.keys(interruptOn ?? {}).sort()).toEqual([
+        'execute',
+        'my_custom_tool',
+        'run_shell_command',
+      ]);
+      for (const granted of ['ls', 'read_file', 'glob', 'grep', 'write_file', 'edit_file']) {
+        expect(interruptOn).not.toHaveProperty(granted);
+      }
+    });
+
+    it('gates an MCP tool at read-only whatever its readOnlyHint says', async () => {
+      const readOnlyMcp = fakeTool('mcp__docs__search', {
+        mcp: { serverName: 'docs', annotations: { readOnlyHint: true } },
+      });
+      const writingMcp = fakeTool('mcp__jira__create_issue', {
+        mcp: { serverName: 'jira', annotations: { readOnlyHint: false } },
+      });
+
+      const interruptOn = await initAt('read-only', 'code', [readOnlyMcp, writingMcp]);
+
+      expect(interruptOn).toHaveProperty('mcp__docs__search');
+      expect(interruptOn).toHaveProperty('mcp__jira__create_issue');
+    });
+
+    it('installs an interrupt at read-only on chat, where no shell gate exists', async () => {
+      // `chat` wires no shell gate, so keying the install off `gateShell` would leave a chat
+      // session's MCP and custom tools ungated while `read-only` promised they would be asked about.
+      const interruptOn = await initAt('read-only', 'chat', [fakeTool('mcp__docs__search')]);
+
+      expect(interruptOn).toBeDefined();
+      expect(Object.keys(interruptOn ?? {}).sort()).toEqual([
+        'edit_file',
+        'execute',
+        'mcp__docs__search',
+        'write_file',
+      ]);
+      expect(interruptOn).not.toHaveProperty('run_shell_command');
+    });
+
+    it('carries the approve/reject decision shape onto every newly gated tool', async () => {
+      const interruptOn = await initAt('read-only', 'code', [fakeTool('my_custom_tool')]);
+
+      for (const value of Object.values(interruptOn ?? {})) {
+        expect(value).toEqual({ allowedDecisions: ['approve', 'reject'] });
+      }
+    });
+  });
+
   it('reads the exec command devTools for the interrupt wiring', async () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });

@@ -15,6 +15,7 @@
  */
 import { type GthCommand, StatusLevel } from '#src/core/types.js';
 import type { GthConfig } from '#src/config/types.js';
+import { isAccessClassGrantedAtRung } from '#src/config/tool-descriptions.js';
 
 /**
  * CFG-18 — the per-tool config object carried as a value in the {@link GthConfig.builtInTools}
@@ -448,6 +449,76 @@ export function isApprovalRung(value: unknown): value is ApprovalRung {
 /** The rungs at which every gated call is rated by the model (§2.3, §2.4). */
 export function isRatedRung(rung: ApprovalRung): boolean {
   return rung === 'auto-safe' || rung === 'full-auto';
+}
+
+/**
+ * The rungs that decide a gated call **without a model** — `read-only` and `write` (§2.1, §2.2).
+ * Everything they do not auto-grant goes to the human, so these are the two rungs a user picks in
+ * order to read and approve every tool call themselves.
+ *
+ * The complement of {@link isRatedRung} plus `bypass`; written out rather than negated so that a
+ * sixth rung would have to be classified deliberately instead of defaulting into this set.
+ */
+export function isDeterministicRung(rung: ApprovalRung): boolean {
+  return rung === 'read-only' || rung === 'write';
+}
+
+/**
+ * **The gated set: which tool names the backends wire into the approval interrupt at `rung`.**
+ *
+ * One derivation for both backends, for the same reason {@link resolveShellApprovalGate} is one:
+ * the lean backend installs `humanInTheLoopMiddleware` directly and the deep backend installs the
+ * very same middleware through deepagents' `interruptOn`, and a set computed twice is a set that
+ * drifts. `GthAgentRunner` resolves it here too, so the rater's granted-tools summary cannot tell
+ * the model a tool is free while the gate escalates it.
+ *
+ * - **`read-only` and `write`** — the shell when `gateShell`, **plus every bound tool the rung's
+ *   access class does not auto-grant** ({@link isAccessClassGrantedAtRung}). At `read-only` that
+ *   leaves only the built-in READ tools free; at `write`, the built-in read and write tools. The
+ *   write built-ins, the shell, deepagents' `execute`, MCP tools and custom/agent-authored tools all
+ *   escalate to the human.
+ * - **`auto-safe`, `full-auto`, `bypass`** — the shell when `gateShell`, and nothing else.
+ *
+ * **The rung split is deliberate and load-bearing, not tidiness.** At a rated rung a gated non-shell
+ * call reaches the `subject.kind !== 'shell'` arm of `GthAgentRunner.decideToolApproval`, which
+ * floors it at `destructive` and sends it to the human *with no rating call*, because §4.3 keeps the
+ * rater on the shell until [[EXT-30]]. Widening there would silently turn every MCP call at
+ * `auto-safe` into a human prompt — a UX change belonging to EXT-30, not to the two rungs whose
+ * published descriptions this set makes true.
+ *
+ * **Derived from the bound toolset, never a hand-written list.** A static list of built-ins would
+ * leave MCP, custom and agent-authored tools ungated — the exact tools with no access class and so
+ * the exact tools the deterministic rungs must escalate. `boundToolNames` must therefore be the
+ * FINAL toolset the graph is handed, including tools the graph builder registers itself (deepagents'
+ * filesystem tools and `execute` never appear in the array gsloth passes it).
+ *
+ * `gateShell` only ever WIDENS the result. At a deterministic rung the shell is gated by its own
+ * (absent) access class if it is bound at all, so `gateShell: false` does not exempt it — an
+ * exemption keyed to one tool NAME is the defect class this function exists to remove. In practice
+ * a disabled shell tool is never bound, so the two agree.
+ *
+ * Order is stable: the shell first, then bound order. Duplicates are collapsed, so a caller may pass
+ * overlapping name sources without deduplicating first.
+ */
+export function resolveGatedToolNames(options: {
+  rung: ApprovalRung;
+  gateShell: boolean;
+  boundToolNames: readonly string[];
+}): readonly string[] {
+  const { rung, gateShell, boundToolNames } = options;
+  const gated: string[] = [];
+  const seen = new Set<string>();
+  const add = (name: string): void => {
+    if (typeof name !== 'string' || name.length === 0 || seen.has(name)) return;
+    seen.add(name);
+    gated.push(name);
+  };
+  if (gateShell) add(SHELL_TOOL_NAME);
+  if (!isDeterministicRung(rung)) return gated;
+  for (const name of boundToolNames) {
+    if (!isAccessClassGrantedAtRung(name, rung)) add(name);
+  }
+  return gated;
 }
 
 /**
@@ -890,8 +961,13 @@ export interface ShellApprovalGateDecision {
  *   • `bypass` — deny list, then approve without prompting or rating.
  *   • `read-only`/`write` — deny list, allow-list, else escalate to the human.
  *   • `auto-safe`/`full-auto` — deny list, allow-list, then the rater.
- *   • With the shell tool disabled — or on a non-dev-tools command (chat/api/…) — nothing is gated
- *     and nothing is announced.
+ *
+ * **This decides the SHELL's gating only, and it is not the whole gated set.** With the shell tool
+ * disabled — or on a non-dev-tools command (chat/api/…) — nothing about the shell is gated and
+ * nothing is announced, but at `read-only` and `write` {@link resolveGatedToolNames} still gates
+ * every bound tool the rung does not auto-grant, so an MCP call in a plain `chat` session is
+ * escalated there. Read `gateShell` as "does the shell need the interrupt", never as "is the
+ * interrupt needed at all".
  *
  * Shell enablement itself is resolved through {@link getEffectiveDevToolsConfig} +
  * {@link isShellToolEnabled}, so the gate stays in lockstep with where `GthDevToolkit` actually

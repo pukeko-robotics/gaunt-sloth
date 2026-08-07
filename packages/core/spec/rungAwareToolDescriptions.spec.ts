@@ -5,12 +5,15 @@
  * Two halves:
  *
  * 1. The pure policy (`config/tool-descriptions.ts`), matrixed over **five rungs × the built-in
- *    set** — twice. Once with the gated set the code actually wires today (`run_shell_command`
- *    alone, per §4.3's scope boundary: "every other tool is granted or escalated by the rung
- *    without a rating call until EXT-30 widens the gate"), and once with an INJECTED wider gated
- *    set of the shape EXT-30 will install. The second pass is what makes the rung's access-class
- *    rule observable — `read-only` grants read tools only, `write` and up also grant write tools —
- *    without shipping a sentence today that disagrees with today's gate.
+ *    set** — twice, with the gated set INJECTED both times, because the suffix is a function of the
+ *    set and not of any particular caller's. Once with the shell alone, which is what the rated
+ *    rungs and `bypass` wire; once with a wide set, which is what the deterministic rungs wire. The
+ *    second pass is what makes the rung's access-class rule observable — `read-only` grants read
+ *    tools only, `write` and up also grant write tools.
+ *
+ *    Which set each rung actually receives is `resolveGatedToolNames`' job and is pinned in
+ *    `gatedToolSet.spec.ts`; here the set is a parameter, so these assertions stay honest whatever
+ *    the resolver decides.
  * 2. The wiring, driven through the REAL `GthLangChainAgent.init` with `createAgent` mocked, so
  *    the assertions are about the descriptions the graph is actually handed — including that the
  *    suffix follows the RESOLVED rung, per-command override and all.
@@ -131,9 +134,9 @@ describe('§4.5 suffix table', () => {
   });
 });
 
-describe('§4.5 registration matrix — the gate as it is wired TODAY (shell only)', () => {
-  // §4.3: every tool other than the shell is granted by the rung without a rating call until
-  // EXT-30 widens the gate, so the shell is the only tool that can carry a sentence.
+describe('§4.5 registration matrix — a shell-only gated set (what the rated rungs wire)', () => {
+  // At `auto-safe`, `full-auto` and `bypass` the gated set is the shell alone, so the shell is the
+  // only tool that can carry a sentence. A tool the gate does not gate cannot require approval.
   const gatedTools = [SHELL_TOOL_NAME];
 
   it.each([
@@ -157,9 +160,9 @@ describe('§4.5 registration matrix — the gate as it is wired TODAY (shell onl
   });
 });
 
-describe('§4.5 registration matrix — with a widened gated set (the EXT-30 shape)', () => {
-  // The rung's own access-class rule, made observable: EXT-30 gates everything but the read
-  // tools, at which point `read-only` vs `write` differ in WHICH tools are granted.
+describe('§4.5 registration matrix — with a wide gated set (what the deterministic rungs wire)', () => {
+  // The rung's own access-class rule, made observable: with everything but the read tools gated,
+  // `read-only` and `write` differ in WHICH tools are granted.
   const gatedTools = [
     SHELL_TOOL_NAME,
     'read_file',
@@ -420,12 +423,30 @@ describe('§4.5 wiring — the suffix follows the RESOLVED rung', () => {
     );
   });
 
-  it('appends nothing when the shell tool is not gated (no shell in this command)', async () => {
-    // `chat` emits no dev tools, so nothing is gated and no description may claim otherwise.
+  it('appends nothing at a rated rung when the shell tool is not gated', async () => {
+    // `chat` emits no dev tools, so the shell gate is off; at a rated rung the gated set is the
+    // shell alone, so nothing is gated at all and no description may claim otherwise.
+    const agent = new GthLangChainAgent(statusUpdate, resolvers as never);
+    await agent.init('chat', { ...baseConfig(), approvals: 'auto-safe' } as GthConfig);
+
+    expect(registeredDescriptions()).toEqual({
+      [SHELL_TOOL_NAME]: 'Run a shell command.',
+      read_file: 'Read one file.',
+    });
+  });
+
+  it('still suffixes a bound tool with no access class at read-only with the shell gate off', async () => {
+    // EXT-80: at a deterministic rung the gated set is derived from the BOUND toolset, not from
+    // `gateShell`. A tool with no access class is gated there even on a command that wires no shell
+    // gate — which is what makes `read-only` true for a chat session's MCP and custom tools. The
+    // granted read built-in must still carry nothing.
     const agent = new GthLangChainAgent(statusUpdate, resolvers as never);
     await agent.init('chat', { ...baseConfig(), approvals: 'read-only' } as GthConfig);
 
-    expect(registeredDescriptions()[SHELL_TOOL_NAME]).toBe('Run a shell command.');
+    expect(registeredDescriptions()).toEqual({
+      [SHELL_TOOL_NAME]: `Run a shell command. ${SUFFIX['read-only']}`,
+      read_file: 'Read one file.',
+    });
   });
 
   it('records the registered tool names for the rater granted-list', async () => {

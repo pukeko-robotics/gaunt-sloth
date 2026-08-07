@@ -1,8 +1,8 @@
 import {
   GthConfig,
   resolveApprovals,
+  resolveGatedToolNames,
   resolveShellApprovalGate,
-  SHELL_TOOL_NAME,
 } from '#src/config.js';
 import { GthCommand, StatusLevel } from '#src/core/types.js';
 import { GthAbstractAgent } from '#src/core/GthAbstractAgent.js';
@@ -648,18 +648,39 @@ export class GthLangChainAgent extends GthAbstractAgent {
       this.config ?? undefined,
       this.command
     );
-    const gatedTools = gateShell ? [SHELL_TOOL_NAME] : [];
-    const shellApprovalMiddleware = gateShell
-      ? [
-          humanInTheLoopMiddleware({
-            interruptOn: {
-              [SHELL_TOOL_NAME]: {
-                allowedDecisions: ['approve', 'reject'],
-              } satisfies InterruptOnConfig,
-            },
-          }),
-        ]
-      : [];
+    //
+    // EXT-80: the shell is not the whole gated set. At `read-only` and `write` the interrupt also
+    // takes every bound tool the rung's access class does not auto-grant — the write built-ins, MCP
+    // tools, custom tools — because those two rungs promise the user that anything beyond reading
+    // (respectively, beyond reading and writing files here) comes to them. `resolveGatedToolNames`
+    // is the shared derivation the deep backend and the runner use, so no two of the three can
+    // disagree, and it reads the FINAL tool array below rather than any static list: a hand-written
+    // list cannot contain an MCP or custom tool, which is exactly what has to escalate.
+    const rung = resolveApprovals(this.config ?? undefined, this.command).rung;
+    const gatedTools = resolveGatedToolNames({
+      rung,
+      gateShell,
+      boundToolNames: tools
+        .map((tool) => tool?.name)
+        .filter((name): name is string => typeof name === 'string' && name.length > 0),
+    });
+    // Installed on the gated SET, not on `gateShell`: at a deterministic rung there is a gate to
+    // install even when the shell tool is disabled or the command emits no dev tools (a plain
+    // `chat` session with MCP servers). Keying the install off `gateShell` there would leave every
+    // one of those tools ungated while the rung's description promised otherwise.
+    const approvalMiddleware =
+      gatedTools.length > 0
+        ? [
+            humanInTheLoopMiddleware({
+              interruptOn: Object.fromEntries(
+                gatedTools.map((name) => [
+                  name,
+                  { allowedDecisions: ['approve', 'reject'] } satisfies InterruptOnConfig,
+                ])
+              ),
+            }),
+          ]
+        : [];
     if (shellGateNotice) {
       this.statusUpdate(shellGateNotice.level, shellGateNotice.message);
     }
@@ -671,10 +692,7 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // the interrupt above, so a description can never promise an approval this gate will not ask
     // for. Applied after the allowedTools filter and before createAgent, so the model only ever
     // sees the final, suffixed set.
-    this.registerApprovalsAwareTools(tools, {
-      rung: resolveApprovals(this.config ?? undefined, this.command).rung,
-      gatedTools,
-    });
+    this.registerApprovalsAwareTools(tools, { rung, gatedTools });
 
     // EXT-52 placement note: the HITL gate sits EARLY in the array — before user-configured
     // middleware and, crucially, before toolCallRepairMiddleware — because afterModel hooks run in
@@ -688,7 +706,7 @@ export class GthLangChainAgent extends GthAbstractAgent {
       mcpToolErrorSoftening,
       toolErrorBudget,
       toolLoopGuard,
-      ...shellApprovalMiddleware,
+      ...approvalMiddleware,
       ...configuredMiddleware,
       toolCallStatusMiddleware,
       toolCallRepairMiddleware,
