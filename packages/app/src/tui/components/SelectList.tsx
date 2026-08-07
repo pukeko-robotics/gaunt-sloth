@@ -157,6 +157,12 @@ export function SelectList({
   // `undefined` when the stream reports no height at all, which is what {@link windowSize} means by
   // "not attached to a TTY" — its fallback for that is deliberately smaller than a terminal-sized
   // window, so the two must not be conflated.
+  //
+  // The test is truthiness, which folds one further case in: a stream reporting **zero** rows is
+  // read as "no height" and gets the not-a-TTY fallback rather than a one-row window. That is the
+  // friendlier answer for a pathological terminal — a single visible option with the filter and
+  // both affordance lines around it is not a usable list — and it is the one place this read is
+  // not byte-for-byte what a raw `stdout.rows` would have given.
   const { stdout } = useStdout();
   const { rows: liveRows } = useTerminalSize();
   const rows = stdout?.rows ? liveRows : undefined;

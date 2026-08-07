@@ -217,6 +217,47 @@ describe('<App> full-screen frame', () => {
 
     unmount();
   });
+
+  it('reflows every rule to the new WIDTH, including the ones inside memoised rows', async () => {
+    // The height cases above resize only the height, and the width is carried by a different
+    // mechanism: a rule reads the width from React context, and the rules between committed turns
+    // live inside `React.memo`'d transcript rows. A context value that stopped propagating — or one
+    // whose identity churned into the memo's props — leaves those rules at the width they were
+    // first drawn at, which is a stale line across the screen and not an error. The dock's own
+    // rules sit outside the memo and would keep following, so asserting on the dock alone would
+    // pass while the conversation's rules were stranded: the count is asserted too, so a case that
+    // stopped seeing the separators cannot quietly become a test of the dock.
+    const { stdout, stdin, unmount } = renderAt(
+      120,
+      30,
+      <App {...baseProps} agent={replyingAgent} />
+    );
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+
+    // Four short exchanges: three separator rules between them, plus the dock's two.
+    for (let i = 0; i < 4; i++) {
+      stdin.write(`q${i}`);
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`q${i}`), { timeout: 10_000 });
+      stdin.write('\r');
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
+        timeout: 10_000,
+      });
+    }
+
+    const ruleWidths = () =>
+      frameRows(stdout)
+        .filter((row) => /^─+$/.test(row))
+        .map((row) => row.length);
+
+    expect(ruleWidths()).toEqual([120, 120, 120, 120, 120]);
+
+    for (const columns of [60, 160, 80]) {
+      stdout.resizeTo(columns, 30);
+      await vi.waitFor(() => expect(ruleWidths()).toEqual(Array(5).fill(columns)));
+    }
+
+    unmount();
+  }, 30_000);
 });
 
 /**

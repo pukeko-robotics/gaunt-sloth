@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useStdout } from 'ink';
 
 /**
@@ -31,6 +31,18 @@ const TerminalSizeContext = createContext<TerminalSize | null>(null);
 /**
  * Publish a measured size to the subtree. The publisher is whoever owns the frame — `<App>` — and
  * it is the only component that subscribes.
+ *
+ * **The published value's IDENTITY is load-bearing, and it is enforced here rather than asked of
+ * the caller.** A context consumer re-renders whenever the value's reference changes, whatever the
+ * numbers say — and the rules the transcript draws are consumers sitting inside `React.memo`'d
+ * transcript rows, whose whole purpose is to stay out of an unrelated frame. Publishing a fresh
+ * object per render therefore defeats the memo for every rule on screen: measured at 120x40 over
+ * twenty-five frames of a streaming turn, `<Rule>` renders went from 40 to 200 — the DL-10 cost
+ * axis, multiplied by the size of the mounted slice, with nothing on screen to show for it.
+ *
+ * Memoising on the two numbers means a caller cannot lose the invariant by constructing its
+ * argument inline, which is the natural way to write a call site and would otherwise be a silent
+ * five-fold cost with no visible symptom.
  */
 export function TerminalSizeProvider({
   size,
@@ -39,7 +51,11 @@ export function TerminalSizeProvider({
   size: TerminalSize;
   children?: React.ReactNode;
 }): React.ReactElement {
-  return <TerminalSizeContext.Provider value={size}>{children}</TerminalSizeContext.Provider>;
+  const published = useMemo(
+    () => ({ rows: size.rows, columns: size.columns }),
+    [size.rows, size.columns]
+  );
+  return <TerminalSizeContext.Provider value={published}>{children}</TerminalSizeContext.Provider>;
 }
 
 /**

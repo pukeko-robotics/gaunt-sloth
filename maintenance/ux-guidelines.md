@@ -136,6 +136,36 @@ them. Three rules hold it up:
   output as disposable, so a final summary or error written during unmount never reaches the
   restored screen.
 
+## Mouse modes and on-screen selection (DL-5 respect the host, TUI-C37, TUI-C48)
+
+The TUI requests exactly two terminal mouse modes: **`1000`** (normal button tracking) and
+**`1006`** (SGR extended encoding). `1006` is a correctness requirement rather than a feature — the
+legacy encoding cannot express a column past 223, so without it clicks on the right of a wide
+terminal report the wrong cell.
+
+**`1002` (button-event tracking) is deliberately not requested, and dropping it does not buy
+selection back.** Measured in a real terminal, with drags synthesised through XTEST and the
+selection read out of the X11 PRIMARY buffer:
+
+- With `1000 + 1006` and **no** `1002`, a plain drag produces **no selection**. `1000` alone is
+  already enough for the terminal to swallow the button press and refuse to start one.
+- **Shift+drag does select**, under both mode sets and in both the primary and the alternate screen
+  buffer.
+
+So the reason to leave `1002` out is cost, not selection: nothing in the codebase consumes a drag,
+and it would be a dozen decoded-and-discarded reports per gesture. And **the answer to "why can't I
+select text any more" is Shift+drag** (Option in some macOS terminals) — every place that tells a
+user about mouse reporting says so, because the moment someone reaches for `/mouse` is the moment
+they are trying to copy something.
+
+Two consequences worth stating rather than rediscovering:
+
+- **Selection is on-screen only.** The alternate screen has no scrollback, so conversation the
+  reader has scrolled past cannot be dragged over; it has to be scrolled back into view first.
+- **Wheel-to-scroll requires tracking to stay on for the whole session.** Any future scheme that
+  enabled reporting only while something clickable was on screen would take the wheel away from the
+  conversation, which is now a primary navigation gesture.
+
 ## Launch banner (DL-6 cross-surface consistency, DL-7 graceful degradation, TUI-C33)
 
 Interactive sessions (`chat`, `code`) open with an ASCII-art banner — a magenta sloth face beside the
@@ -194,15 +224,25 @@ rendering supplied by the **surface-agnostic tool-display registry** (TUI-C30,
 - **Collapsed panels preview the output inline (TUI-C30).** Up to the **canonical 10 lines** of
   the tool's output render as greyed/dim text directly below the call line, with a
   `… (+N more lines)` overflow marker — the head of the story is inspectable without expanding
-  (DL-2 with a transparent default; DL-10: a hard cap keeps long outputs cheap). The 10-line cap
-  is the ONLY preview length anywhere (both surfaces); it is a render-time cap, separate from the
-  model-facing EXT-9/OutputBuffer caps.
+  (DL-2 with a transparent default; DL-10: a hard cap keeps long outputs cheap). The 10-line cap is
+  the only preview length for **tool output**, on both surfaces; it is a render-time cap, separate
+  from the model-facing EXT-9/OutputBuffer caps.
+- **The streaming `💭 Thinking` panel previews its newest TWO lines, and that number is its own.**
+  It is deliberately not the tool-output cap above, and the two must not be harmonised: tool output
+  is a discrete artefact you go and inspect, so ten lines is how much of it is worth having in
+  front of you, while reasoning is ambient and continuous — it streams for as long as the model
+  thinks, it is superseded by the answer, and collapsed its whole job is to say "something is
+  happening, and it is about this". Ten would let thinking take over the screen the panel collapses
+  to stay out of. The preview follows the stream (always the newest lines) and is **live-only**: a
+  committed turn's collapsed panel is its header alone, unchanged.
 - **`write_file`/`edit_file` render as a diff, not a dump.** The change is derived from the tool's
   args — added lines green with a `+` prefix, removed lines red with `-` (DL-8 colour semantics);
   the prefixes keep the diff readable on monochrome terminals (DL-7).
 - **Expand on demand:** `/verbose` (GS2-8 rename of `/tools`, which is removed — no alias)
   toggles detail (it is `availableDuringRun`, so it works idle **and**
-  mid-turn); **`Ctrl+T`** is the mid-turn keyboard shortcut for the same toggle. Expanded panels show
+  mid-turn); **`Ctrl+T`** is the keyboard shortcut for the same toggle, and it is bound in every
+  state for the same reason `/verbose` is — a reader paging back over the conversation wants an
+  earlier turn's arguments and results, which is exactly when no turn is running. Expanded panels show
   the FULL body: the raw streamed `args`, the routed `🔧 Executing …` notice (expanded-only chrome,
   kept off the collapsed preview), and the uncapped output/result — **deduped** for shell-shaped
   calls whose result's `<COMMAND_OUTPUT>` body repeats the live output (the live output renders
@@ -318,7 +358,12 @@ their config has a problem.
   focused debug pane clears its search or unfocuses; otherwise the conversation returns to the
   newest output. The order is the specification, not an artefact of where the branches sit.
 - **`Ctrl+C`** — exit the app. (The bare `exit` keyword, `/exit` and `/quit` also quit.)
-- **`Ctrl+T`** — toggle tool-call detail mid-turn (mirrors `/verbose`).
+- **`Ctrl+T`** — toggle tool-call detail, running or idle (mirrors `/verbose`).
+- **A control chord never types its letter.** `ink-text-input` claims only `Ctrl+C` and inserts the
+  letter of every other chord, so the prompt keeps the whole class out of its buffer
+  (`PromptInput.tsx`). Without that, each keybinding the app adds also drops a stray character into
+  whatever the user was part-way through writing — and gating a binding on "a turn is running" does
+  not avoid it, because the prompt stays mounted while a turn streams.
 - **`o` / `s` / `a` / `y` / anything-else** at a pending shell approval — approve once / session /
   always / turn on auto-approve-all (then approve this one) / reject (fail-closed).
 - **slash commands mid-turn** — the prompt stays mounted while a turn streams, so run-safe commands
