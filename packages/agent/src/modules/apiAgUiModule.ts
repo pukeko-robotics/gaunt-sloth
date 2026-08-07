@@ -134,6 +134,16 @@ interface ConvertMessageOptions {
    * stays plain text — see EXT-43 and that function's doc.
    */
   allowTextCallPromotion?: boolean;
+  /**
+   * RC-32: the tool NAME to stamp on a `role:'tool'` message, resolved by
+   * {@link convertMessages} from the parenting assistant `tool_call`. The AG-UI wire format does
+   * not carry it, and a `ToolMessage` without a name is invisible to every result-inspecting
+   * middleware — `frontend-image-injection` keys on `msg.name === 'capture_image'`, so a replayed
+   * capture silently stopped producing a vision block on every turn after the capture itself.
+   * Absent on the standalone {@link convertMessage} path (a queued resume message has no history
+   * to resolve against), where the name is simply unknown.
+   */
+  toolName?: string;
 }
 
 /**
@@ -189,7 +199,11 @@ export function convertMessage(
     case 'developer':
       return new SystemMessage(content);
     case 'tool':
-      return new ToolMessage({ content, tool_call_id: msg.toolCallId || msg.id });
+      return new ToolMessage({
+        content,
+        tool_call_id: msg.toolCallId || msg.id,
+        ...(options?.toolName ? { name: options.toolName } : {}),
+      });
     default:
       return new HumanMessage(content);
   }
@@ -217,23 +231,34 @@ export function convertMessage(
  * fabricate a synthetic call — mirroring EXT-43's demote-don't-invent spirit). Ids are accumulated
  * in iteration order, so a result whose matching call appears only LATER is still an orphan.
  *
- * The live middleware path (`GthLangChainAgent`, fixing the CURRENT turn) is unaffected — both
- * guards are history-replay only.
+ * RC-32 (tool NAME restoration): the AG-UI wire message for a `tool` result carries `toolCallId`
+ * but no tool name, so a naively-converted `ToolMessage` has none — and every middleware that
+ * inspects results by name is blind to it. `frontend-image-injection` keys on
+ * `msg.name === 'capture_image'`, so a captured photo reached the model on the resume turn (where
+ * the graph builds the ToolMessage itself, with a name) and then vanished from every later turn,
+ * leaving the model to answer questions about a picture it could no longer see. The name is
+ * recoverable from the parenting assistant `tool_call`, which this function already walks for the
+ * RC-18 guard, so it is resolved there and stamped back on.
+ *
+ * The live middleware path (`GthLangChainAgent`, fixing the CURRENT turn) is unaffected — the two
+ * guards and the name restoration are history-replay only.
  */
 export function convertMessages(
   messages: AgUiWireMessage[],
   allowedToolNames?: Set<string>
 ): BaseMessage[] {
-  // Ids of tool calls emitted by PRECEDING assistant messages, accumulated as we iterate in order.
-  // A `tool` result whose tool_call_id is not yet in this set has no preceding assistant tool_call.
-  const seenToolCallIds = new Set<string>();
+  // tool_call id → tool NAME, for calls emitted by PRECEDING assistant messages, accumulated as we
+  // iterate in order. Membership is the RC-18 orphan test (a `tool` result whose tool_call_id is
+  // absent has no preceding assistant tool_call); the name is what RC-32 stamps back onto the
+  // replayed ToolMessage, since the AG-UI wire format carries the id but not the name.
+  const seenToolCalls = new Map<string, string>();
   const converted: BaseMessage[] = [];
 
   messages.forEach((msg, index) => {
     // RC-18 backward orphan-RESULT guard.
     if (msg.role === 'tool') {
       const toolCallId = msg.toolCallId || msg.id;
-      if (!seenToolCallIds.has(toolCallId)) {
+      if (!seenToolCalls.has(toolCallId)) {
         displayWarning(
           `Dropping orphan tool result (tool_call_id ${JSON.stringify(toolCallId)}) with no ` +
             'preceding assistant tool_call in the replayed history; converting it would 400 the ' +
@@ -241,7 +266,9 @@ export function convertMessages(
         );
         return; // drop — do not convert to a ToolMessage
       }
-      converted.push(convertMessage(msg, allowedToolNames));
+      converted.push(
+        convertMessage(msg, allowedToolNames, { toolName: seenToolCalls.get(toolCallId) })
+      );
       return;
     }
 
@@ -249,7 +276,7 @@ export function convertMessages(
     // a genuine call→result pair (id present on a preceding assistant) survives the guard above.
     if (msg.role === 'assistant' && msg.toolCalls) {
       for (const tc of msg.toolCalls) {
-        if (tc?.id) seenToolCallIds.add(tc.id);
+        if (tc?.id) seenToolCalls.set(tc.id, tc.function?.name);
       }
     }
 

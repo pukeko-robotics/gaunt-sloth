@@ -60,9 +60,21 @@ export interface FrontendImageInjectionOptions {
  *     flips reasoning-capable openai models to Responses). A raw `source_type` standard block
  *     serialises to an *invalid* image part on the Responses path, so we emit the provider-native
  *     shape rather than lean on `@langchain/core`'s (deprecated, internal) auto-conversion.
- *   - **anthropic / google-genai / vertexai** (and any unknown/default) → the LangChain standard
- *     base64 data content block `{ type:'image', source_type:'base64', mime_type, data }`, which
- *     those native converters decode directly and which is the most broadly decodable fallback.
+ *   - **anthropic** → the provider-native block `{ type:'image', source:{ type:'base64',
+ *     media_type, data } }`. The LangChain standard block is NOT usable here (RC-32): in
+ *     `@langchain/anthropic`'s `_formatContentBlocks`, the `isDataContentBlock` branch yields its
+ *     conversion and then FALLS THROUGH — no `continue` — into the chain below, where
+ *     `type === 'image'` matches the very same block and yields a SECOND one whose `media_type` is
+ *     read from camelCase `mimeType` (a key the snake_case standard block never has) and so
+ *     defaults to the literal `image/jpeg`. Every frame is therefore sent twice, and a non-JPEG
+ *     capture 400s outright on the mislabelled copy. The native block is recognised earlier by
+ *     `_isAnthropicImageBlockParam` and passed through untouched, exactly once.
+ *   - **google-genai / vertexai** (and any unknown/default) → the LangChain standard base64 data
+ *     content block `{ type:'image', source_type:'base64', mime_type, data }`, which those native
+ *     converters decode directly and which is the most broadly decodable fallback.
+ *
+ * The through-line: emit what the target provider's converter consumes natively rather than lean on
+ * a generic auto-conversion — the same lesson as GS2-75 on the OpenAI Responses path.
  *
  * Pure and exported so each provider branch can be unit-tested directly.
  */
@@ -78,6 +90,10 @@ export function imageBlockFor(provider: string, mimeType: string, data: string) 
     case 'groq':
       return { type: 'image_url' as const, image_url: { url: dataUrl } };
     case 'anthropic':
+      return {
+        type: 'image' as const,
+        source: { type: 'base64' as const, media_type: mimeType, data },
+      };
     case 'google-genai':
     case 'vertexai':
     default:
@@ -101,10 +117,14 @@ export function createFrontendImageInjectionMiddleware(
 ): AgentMiddleware {
   const toolName = opts.toolName ?? DEFAULT_CAPTURE_TOOL_NAME;
 
-  // thread_id → set of tool_call_ids whose image (or error note) has already been injected. Without
-  // this, a summarizer/replayed history that retains the capture ToolMessage would re-inject its
-  // frame on the next turn, appended after the newest turn's content and mispairing the assistant
-  // message with a stale frame (the RC-21 idempotency guard).
+  // thread_id → set of tool_call_ids whose image (or error note) has already been injected. It
+  // scopes injection to ONE frame per capture per graph thread: `beforeModel` runs before every
+  // model call, so a multi-step turn would otherwise stack a copy of the same frame at each step,
+  // each one appended after the newest content and mispairing the assistant message with a stale
+  // frame (the RC-21 idempotency guard). It is deliberately keyed on the GRAPH thread rather than
+  // the client session — the AG-UI server gives each fresh run its own checkpoint thread (RC-31),
+  // and that run replays the whole history into an empty graph, so it must re-inject the frame or
+  // the model would lose the photo the moment the capture turn ended.
   //
   // Closure-scoped (one Map per middleware instance), NOT a module global as the robot had it. The
   // AG-UI server caches one agent per client-toolset signature (getAgentForTools), so a thread's

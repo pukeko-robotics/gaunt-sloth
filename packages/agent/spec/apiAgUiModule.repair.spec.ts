@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import { convertMessage, convertMessages } from '#src/modules/apiAgUiModule.js';
+import { createFrontendImageInjectionMiddleware } from '#src/middleware/frontendImageInjectionMiddleware.js';
 
 // EXT-35 — the AG-UI convertMessage wire-in point. An INCOMING assistant message with no native
 // `toolCalls` whose content is a STANDALONE text-emitted call (a small/local model serialising a
@@ -293,5 +294,111 @@ describe('apiAgUiModule.convertMessages — RC-18 orphan tool-result guard', () 
     const tools = toolMessages(converted);
     expect(tools).toHaveLength(1);
     expect(tools[0].tool_call_id).toBe('ID1');
+  });
+});
+
+// RC-32 — the AG-UI wire message for a tool result carries `toolCallId` but no tool NAME, so a
+// replayed result used to convert to a nameless ToolMessage. Every middleware that inspects results
+// by name is then blind to it: frontend-image-injection keys on `msg.name === 'capture_image'`, so
+// a captured photo reached the model on the resume turn (where the graph builds the ToolMessage
+// itself) and vanished from every turn after it. convertMessages already walks the parenting
+// assistant tool_call for the RC-18 guard, so the name is resolved from there.
+describe('apiAgUiModule.convertMessages — RC-32 tool-name restoration', () => {
+  const ALLOW = new Set(['capture_image', 'finish_task']);
+
+  const toolMessages = (msgs: ReturnType<typeof convertMessages>) =>
+    msgs.filter((m): m is ToolMessage => ToolMessage.isInstance(m));
+
+  const captureHistory = () => [
+    { role: 'user' as const, content: 'take a photo', id: 'u1' },
+    {
+      role: 'assistant' as const,
+      content: '',
+      id: 'a1',
+      toolCalls: [
+        { id: 'CALL1', type: 'function', function: { name: 'capture_image', arguments: '{}' } },
+      ],
+    },
+    {
+      role: 'tool' as const,
+      content: JSON.stringify({ mimeType: 'image/jpeg', data: 'QUFBQg==' }),
+      id: 't1',
+      toolCallId: 'CALL1',
+    },
+  ];
+
+  it('stamps the replayed tool result with the name of its parenting tool_call', () => {
+    const tools = toolMessages(convertMessages(captureHistory(), ALLOW));
+    expect(tools).toHaveLength(1);
+    expect(tools[0].name).toBe('capture_image');
+  });
+
+  it('resolves each name independently when a history holds several different calls', () => {
+    const tools = toolMessages(
+      convertMessages(
+        [
+          ...captureHistory(),
+          {
+            role: 'assistant',
+            content: '',
+            id: 'a2',
+            toolCalls: [
+              { id: 'CALL2', type: 'function', function: { name: 'finish_task', arguments: '{}' } },
+            ],
+          },
+          { role: 'tool', content: 'done', id: 't2', toolCallId: 'CALL2' },
+        ],
+        ALLOW
+      )
+    );
+    expect(tools.map((t) => t.name)).toEqual(['capture_image', 'finish_task']);
+  });
+
+  it('resolves the name when the result matches via msg.id (no toolCallId)', () => {
+    const tools = toolMessages(
+      convertMessages(
+        [
+          {
+            role: 'assistant',
+            content: '',
+            id: 'a1',
+            toolCalls: [
+              { id: 'ID1', type: 'function', function: { name: 'capture_image', arguments: '{}' } },
+            ],
+          },
+          { role: 'tool', content: '{}', id: 'ID1' },
+        ],
+        ALLOW
+      )
+    );
+    expect(tools[0].name).toBe('capture_image');
+  });
+
+  it('leaves the name unset on the standalone convertMessage path (no history to resolve against)', () => {
+    const msg = convertMessage(
+      { role: 'tool', content: 'ok', id: 't1', toolCallId: 'CALL1' },
+      ALLOW
+    ) as ToolMessage;
+    expect(msg.tool_call_id).toBe('CALL1');
+    expect(msg.name).toBeUndefined();
+  });
+
+  // The point of the whole fix: with the name restored, the capture middleware actually fires on a
+  // REPLAYED history — which is what every turn after the capture is.
+  it('makes frontend-image-injection inject a vision block on a replayed history', async () => {
+    const mw = createFrontendImageInjectionMiddleware({ provider: 'anthropic' });
+    const hook = (
+      typeof mw.beforeModel === 'function' ? mw.beforeModel : (mw.beforeModel as any).hook
+    ) as (s: unknown, r: unknown) => Promise<{ messages?: unknown[] } | undefined>;
+
+    const replayed = convertMessages(captureHistory(), ALLOW);
+    const result = await hook({ messages: replayed }, { configurable: { thread_id: 'replay-1' } });
+
+    const injected = result?.messages?.[result.messages.length - 1] as { content?: unknown };
+    expect(Array.isArray(injected?.content)).toBe(true);
+    expect(injected.content).toContainEqual({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/jpeg', data: 'QUFBQg==' },
+    });
   });
 });
