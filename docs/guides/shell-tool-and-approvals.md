@@ -204,6 +204,10 @@ nothing. `auto-safe` spends one rating call per gated command.
 `bypass` is **not** a higher-autonomy rung than `full-auto` — both let the agent act without asking;
 `bypass` is the same autonomy with the checks removed.
 
+What any of these rungs does and does **not** protect you from, and what has to sit outside Gaunt
+Sloth to cover the rest, is
+[What approvals protect you from](what-approvals-protect-you-from.md).
+
 Switch rung for the current session with `/approvals read-only|write|auto-safe|full-auto|bypass`
 (see [Interactive sessions](interactive-sessions.md#slash-commands)).
 
