@@ -2,12 +2,14 @@ import React from 'react';
 import { CommandNotice } from '#src/tui/components/CommandNotice.js';
 
 /**
- * Visible feedback for `/clear`. Rendered in the live (non-`<Static>`) frame rather than as a
- * committed transcript line, which sidesteps the known quirk where `setTranscript([])` resets
- * `<Static>`'s internal index and swallows the next pushed item (TUI-C12). Built on the shared
- * {@link CommandNotice} so it matches every other command's feedback (TUI-C14): a title plus the
- * line that the model no longer sees the prior conversation, and a hint that the earlier messages
- * are still reachable by scrolling up in the terminal's scrollback.
+ * Visible feedback for `/clear`, built on the shared {@link CommandNotice} so it matches every
+ * other command's feedback (TUI-C14).
+ *
+ * It says what the clear actually did, and the second line is the part that changed with the
+ * full-screen dock: the transcript is a buffer this app owns rather than the terminal's own
+ * scrollback, so clearing it is a deletion. Telling the user to scroll up and revisit the earlier
+ * conversation would now be false, and a confirmation of something that did not happen is worse
+ * than saying nothing.
  */
 export function ClearBanner(): React.ReactElement {
   return (
@@ -15,7 +17,7 @@ export function ClearBanner(): React.ReactElement {
       title="History cleared"
       lines={[
         'The model no longer sees the prior conversation.',
-        'Scroll up to revisit the earlier conversation in your terminal.',
+        'The earlier messages are gone from this session too.',
       ]}
     />
   );

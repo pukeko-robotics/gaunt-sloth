@@ -55,8 +55,11 @@ import {
   renderResponse,
 } from '#src/tui/debugRender.js';
 import type { AgentResolvers } from '@gaunt-sloth/core/core/types.js';
-import { viewportBumpSequence } from '#src/tui/terminal.js';
-import { installMouseReporting, type MouseReportingHandle } from '#src/tui/mouseReporting.js';
+import {
+  installAlternateScrollSuppression,
+  installMouseReporting,
+  type MouseReportingHandle,
+} from '#src/tui/mouseReporting.js';
 import { createMouseStdin } from '#src/tui/mouseStdin.js';
 import type { MouseEvent } from '#src/tui/mouseParser.js';
 import type { MouseSubscribe } from '#src/tui/useMouse.js';
@@ -159,6 +162,13 @@ function createMouseSession(enabled: boolean): MouseSession {
   // Reporting, unlike the filter, IS conditional: it decides whether any escape bytes reach the
   // terminal, so a session starting with mouse off writes none.
   let reporting: MouseReportingHandle | undefined = enabled ? installMouseReporting() : undefined;
+  // TUI-C48 — the exact complement of `reporting`. In the alternate screen a terminal with no
+  // mouse mode set turns wheel notches into bare Up/Down arrows, which the slash-command menu
+  // claims; with tracking on the wheel arrives as an SGR report instead and alternate-scroll never
+  // applies. So exactly one of these two is installed at any moment, and `/mouse` swaps them.
+  let altScroll: MouseReportingHandle | undefined = enabled
+    ? undefined
+    : installAlternateScrollSuppression();
   return {
     subscribe: (listener) => {
       listeners.add(listener);
@@ -168,15 +178,21 @@ function createMouseSession(enabled: boolean): MouseSession {
     },
     stdin: mouseStdin.stdin,
     setEnabled: (enabled) => {
-      if (enabled && !reporting) reporting = installMouseReporting();
-      else if (!enabled && reporting) {
+      if (enabled && !reporting) {
+        altScroll?.dispose();
+        altScroll = undefined;
+        reporting = installMouseReporting();
+      } else if (!enabled && reporting) {
         reporting.dispose();
         reporting = undefined;
+        altScroll = installAlternateScrollSuppression();
       }
     },
     dispose: () => {
       reporting?.dispose();
       reporting = undefined;
+      altScroll?.dispose();
+      altScroll = undefined;
       mouseStdin.dispose();
       listeners.clear();
     },
@@ -332,9 +348,6 @@ export async function createTuiSession(
       stdinIsTTY: !!stdin.isTTY,
     });
     const fixtureMouse = createMouseSession(fixtureUseMouse);
-    // Holder so `onResetFrame` can reach the not-yet-created render instance (App writes the
-    // /clear scroll/clear escapes itself, then asks Ink to forget its last frame — TUI-C12).
-    let resetFrame: (() => void) | undefined;
     const instance = render(
       <App
         agent={createFixtureTuiAgent(fixturePath)}
@@ -355,11 +368,9 @@ export async function createTuiSession(
         // resolvedConfig is deliberately left unset here — DebugDumpInput.config is
         // optional/opaque and the command already handles it being undefined.
         dumpDebugSession={dumpDebugSession}
-        onResetFrame={() => resetFrame?.()}
       />,
-      { stdin: fixtureMouse.stdin }
+      { stdin: fixtureMouse.stdin, alternateScreen: true }
     );
-    resetFrame = () => instance.clear();
     try {
       await instance.waitUntilExit();
     } finally {
@@ -541,20 +552,6 @@ export async function createTuiSession(
       },
     };
 
-    // "Bump up" the screen on launch the clear/Ctrl+L way (TUI-C13): scroll whatever was on
-    // screen before `gth`/`gsloth` ran up and out of the visible viewport (it stays in
-    // scrollback — we never emit ESC[3J) so the session opens at a clean top. We write this
-    // BEFORE render() so Ink paints its first frame at the top with no frame accounting to
-    // reset. Guarded on isTTY so piped/redirected/non-TTY runs (and tests) are not polluted.
-    if (stdout.isTTY) {
-      stdout.write(viewportBumpSequence(stdout.rows));
-    }
-
-    // Holder so `onResetFrame` can reach the not-yet-created render instance: on /clear the App
-    // writes the scroll/viewport-clear escapes, then calls this to make Ink forget its last
-    // frame so the re-render lands cleanly at the top (TUI-C12).
-    let resetFrame: (() => void) | undefined;
-
     // TUI-C31 (d): from here on Ink owns the terminal frame. Mark the tool-output channel
     // suppressed so a straggler child that outlived a turn's kill grace and emits BETWEEN turns
     // (when no per-turn subscriber is attached) is dropped rather than written raw over the
@@ -595,7 +592,6 @@ export async function createTuiSession(
         subscribeDebug={debugBridge.subscribe}
         subscribeApproval={approvalBridge.subscribe}
         onTurnComplete={logTurn}
-        onResetFrame={() => resetFrame?.()}
         onExit={async () => {
           // Fail-closed: resolve any approval still awaiting a decision before tearing down,
           // so a suspended run can never hang on an unanswered prompt.
@@ -604,11 +600,23 @@ export async function createTuiSession(
           stopSessionLogging();
         }}
       />,
-      // TUI-C37 — Ink reads the FILTERED stdin so mouse reports never reach its keyboard path and
-      // get typed into the prompt. Absent when mouse is off, in which case Ink takes the real one.
-      { stdin: mouseSession.stdin }
+      {
+        // TUI-C37 — Ink reads the FILTERED stdin so mouse reports never reach its keyboard path
+        // and get typed into the prompt.
+        stdin: mouseSession.stdin,
+        // TUI-C48 — the whole session lives in the alternate screen, so the conversation is a
+        // viewport we own rather than the terminal's scrollback, and the user's screen comes back
+        // untouched on exit. The restore is ENTIRELY Ink's and covers unmount, a thrown error,
+        // `process.exit`, an uncaught exception, and SIGINT/SIGTERM/SIGHUP — measured, which is
+        // why there is no second teardown path here to drift out of step with it. Ink correctly
+        // no-ops the whole thing on a non-interactive or non-TTY stream.
+        //
+        // One consequence to design around rather than discover: Ink treats alternate-screen
+        // teardown output as disposable, so nothing written during unmount survives onto the
+        // restored screen. Anything the user must keep has to be written AFTER unmount.
+        alternateScreen: true,
+      }
     );
-    resetFrame = () => instance.clear();
 
     await instance.waitUntilExit();
     // TUI-C37 — restore the terminal the moment Ink is done with it. The process-level hooks

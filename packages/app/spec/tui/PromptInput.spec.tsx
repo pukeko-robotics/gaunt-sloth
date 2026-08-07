@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import React from 'react';
+import chalk from 'chalk';
+import stripAnsi from 'strip-ansi';
 import { render } from 'ink-testing-library';
 import { PromptInput } from '#src/tui/components/PromptInput.js';
 import { SlashCommandMenu } from '#src/tui/components/SlashCommandMenu.js';
@@ -257,5 +259,217 @@ describe('tui <PromptInput> multiline paste (TUI-C24)', () => {
     // The newline is whitespace, so this is not a bare-slash menu query.
     expect(lastFrame() ?? '').not.toMatch(/❯/);
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+});
+
+/** The `  > ` prompt the value is drawn after. */
+const PROMPT = '  > ';
+/** Reverse video on — how the prompt cursor is drawn (`ink-text-input` draws no hardware cursor). */
+const INVERSE_ON = '\x1b[7m';
+
+/**
+ * Where the prompt draws its cursor, as an offset into the typed value — `null` if it draws none.
+ *
+ * The text input renders the character under its internal offset in reverse video instead of moving
+ * a hardware cursor, so that run is the ONLY observable of an offset the component never exposes.
+ * An offset past the end of the value matches no character and produces no run at all, which is why
+ * `null` is a real answer here rather than a parse failure.
+ */
+function cursorOffsetIn(frame: string): number | null {
+  const start = frame.indexOf(INVERSE_ON);
+  if (start === -1) return null;
+  return stripAnsi(frame.slice(0, start)).length - PROMPT.length;
+}
+
+/**
+ * TUI-C48 — control chords belong to whoever bound them, not to the buffer, and the text input's
+ * cursor has to survive one.
+ *
+ * `ink-text-input` claims only Ctrl+C and **types** every other control chord: Ink reports Ctrl+T
+ * as the letter `t` with `key.ctrl`. So this is a whole class reached by reflex — `Ctrl+A`, `Ctrl+E`,
+ * `Ctrl+U`, `Ctrl+W`, `Ctrl+K` are what a terminal user's fingers do at any prompt — and not one
+ * keybinding a reader chose to press.
+ *
+ * **Three shapes here are load-bearing, and a case that drops any of them stops discriminating.**
+ *
+ * - **An ODD number of chords.** The text input commits its cursor offset before asking whether the
+ *   value may change, so a refused chord leaves the offset one past the value. The next chord's own
+ *   clamp (offset > value length → value length) repairs it, so an EVEN number of chords self-heals
+ *   and asserts nothing.
+ * - **One input event per character afterwards.** A single write of `more` arrives as one event with
+ *   `input.length === 4`, takes the clamp branch in one step and lands correctly. Typed as four
+ *   events — which is what a person does — each one inserts at the stale offset.
+ * - **Characters typed after EVERY chord, not only the first.** The repair is a remount, and a
+ *   generation that changes only once still remounts on the first chord: every case that fires one
+ *   chord, and every case that types only before the second, holds just as well when the second
+ *   chord repairs nothing. Interleaving the two — chord, type, chord, type — is what requires the
+ *   repair to happen each time.
+ */
+describe('tui <PromptInput> control chords (TUI-C48)', () => {
+  // The cursor is an ANSI attribute, so it only exists in the frame while colour is on: at level 0
+  // `chalk.inverse` is the identity function and there is nothing to read. Without this the cursor
+  // assertions below would pass on a prompt drawing no cursor at all.
+  // Captured inside the hook, not at module scope: at module scope it would record the level at
+  // IMPORT time and hand back a value the describes above this one never ran under.
+  let previousChalkLevel: typeof chalk.level;
+  beforeAll(() => {
+    previousChalkLevel = chalk.level;
+    chalk.level = 3;
+  });
+  afterAll(() => {
+    chalk.level = previousChalkLevel;
+  });
+
+  const CTRL_T = '\x14';
+
+  /** The readline chords a terminal user presses without thinking, plus the one the app binds. */
+  const REFLEX_CHORDS: ReadonlyArray<readonly [string, string]> = [
+    ['Ctrl+A', '\x01'],
+    ['Ctrl+E', '\x05'],
+    ['Ctrl+K', '\x0b'],
+    ['Ctrl+R', '\x12'],
+    ['Ctrl+T', CTRL_T],
+    ['Ctrl+U', '\x15'],
+    ['Ctrl+W', '\x17'],
+  ];
+
+  /** Type each character as its own input event, the way a person produces them. */
+  const typeSlowly = async (stdin: { write: (data: string) => void }, text: string) => {
+    for (const character of text) {
+      stdin.write(character);
+      await tick();
+    }
+  };
+
+  it.each(REFLEX_CHORDS)(
+    'keeps %s out of the buffer, and everything typed after it still lands in order',
+    async (_name, chord) => {
+      const onSubmit = vi.fn();
+      const { stdin } = render(
+        <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+      );
+      await typeSlowly(stdin, 'draft');
+      stdin.write(chord);
+      await tick();
+      await typeSlowly(stdin, 'more');
+      stdin.write(ENTER);
+      await tick();
+      // Unguarded this submits 'drafttmore'; guarded only at onChange it submits 'draftorem',
+      // because the four later characters each insert one position early.
+      expect(onSubmit).toHaveBeenCalledWith('draftmore');
+    }
+  );
+
+  it('still draws its cursor after a chord, and the cursor keeps up with what is typed', async () => {
+    // The cursor is the VISIBLE half of the same defect: it is drawn as the reverse-video cell at
+    // the input's internal offset, so an offset past the end of the value matches no character and
+    // the prompt loses its cursor entirely with nothing to say why. Asserting the submitted value
+    // alone would leave that symptom unpinned.
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    await typeSlowly(stdin, 'draft');
+    expect(cursorOffsetIn(lastFrame() ?? '')).toBe(5);
+
+    stdin.write(CTRL_T);
+    await tick();
+    expect(cursorOffsetIn(lastFrame() ?? ''), 'the chord erased the cursor').toBe(5);
+
+    await typeSlowly(stdin, 'mo');
+    expect(cursorOffsetIn(lastFrame() ?? '')).toBe(7);
+  });
+
+  it('repairs the cursor on every chord, not only the first (chord, type, chord, type)', async () => {
+    // The repair has to be idempotent-per-chord, and only an interleaved sequence says so. A repair
+    // that fires once — a generation set to a constant rather than incremented — satisfies every
+    // single-chord case above and every case that types only before its second chord, while the
+    // second chord leaves the offset one past the value exactly as an unrepaired first one does.
+    // So the cursor read below and the submitted value are each taken AFTER a second chord that has
+    // characters following it.
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    await typeSlowly(stdin, 'ab');
+    stdin.write(CTRL_T);
+    await tick();
+    expect(cursorOffsetIn(lastFrame() ?? ''), 'the first chord erased the cursor').toBe(2);
+
+    await typeSlowly(stdin, 'cd');
+    stdin.write(CTRL_T);
+    await tick();
+    expect(cursorOffsetIn(lastFrame() ?? ''), 'the second chord erased the cursor').toBe(4);
+
+    await typeSlowly(stdin, 'ef');
+    stdin.write(ENTER);
+    await tick();
+    // Repaired only on the first chord this submits 'abcdfe': the stale offset absorbs the `e` on
+    // its own clamp and the `f` then lands one position early.
+    expect(onSubmit).toHaveBeenCalledWith('abcdef');
+  });
+
+  it('leaves an EMPTY buffer empty, and types the next characters in order', async () => {
+    // The state a user is in most often, and a different code path: with nothing typed the input's
+    // own clamp fires on the very next character, which lands the stale offset at the START of the
+    // buffer rather than past its end.
+    const onSubmit = vi.fn();
+    const { stdin } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write(CTRL_T);
+    await tick();
+    await typeSlowly(stdin, 'hi');
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('hi');
+  });
+
+  it('still types the same letters when they arrive without the control modifier', async () => {
+    // The control for the cases above: a guard that swallowed the letter outright, rather than the
+    // chord, would satisfy them while making the keyboard useless.
+    const onSubmit = vi.fn();
+    const { stdin } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    await typeSlowly(stdin, 'draft');
+    await typeSlowly(stdin, 'tr');
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('drafttr');
+  });
+
+  /**
+   * The declared cost of the remount, pinned so it is a decision rather than a surprise.
+   *
+   * A chord pressed with the cursor part-way through the buffer returns it to the end. The buffer
+   * itself is intact and the move is on screen, so it is recoverable with the arrow keys — but it
+   * is a move the user did not ask for, and it is what a remount buys the value with.
+   *
+   * [[TUI-C25]] builds the real line editor and binds Ctrl+A/Ctrl+E to line start/end, so it owns
+   * the cursor and will make this case wrong. When it does, this failing is "update me", not a
+   * regression: the expectation to write then is `draXft`.
+   */
+  it('returns the cursor to the end of the buffer when a chord arrives mid-string', async () => {
+    const LEFT = '\x1b[D';
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    await typeSlowly(stdin, 'draft');
+    stdin.write(LEFT);
+    await tick();
+    stdin.write(LEFT);
+    await tick();
+    expect(cursorOffsetIn(lastFrame() ?? '')).toBe(3);
+
+    stdin.write(CTRL_T);
+    await tick();
+    expect(cursorOffsetIn(lastFrame() ?? '')).toBe(5);
+
+    await typeSlowly(stdin, 'X');
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('draftX');
   });
 });

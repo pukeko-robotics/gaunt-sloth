@@ -71,9 +71,7 @@ test.describe('gth code TUI — EXT-52 lean shell approval prompt (real agent, s
     ).toBeVisible();
     await expect(terminal.getByText('[o]nce', { strict: false })).toBeVisible();
     // ...and the graph is SUSPENDED: the command has not produced its output marker yet.
-    await expect(
-      terminal.getByText('approval-out-marker', { full: true, strict: false })
-    ).not.toBeVisible();
+    await expect(terminal.getByText('approval-out-marker', { strict: false })).not.toBeVisible();
 
     // Grant once.
     terminal.write('o');
@@ -86,9 +84,7 @@ test.describe('gth code TUI — EXT-52 lean shell approval prompt (real agent, s
     await expect(terminal.getByText('Approved this single invocation only.')).toBeVisible();
 
     // The resumed run executed the command (its OUTPUT marker appears) and concluded.
-    await expect(
-      terminal.getByText('approval-out-marker', { full: true, strict: false })
-    ).toBeVisible();
+    await expect(terminal.getByText('approval-out-marker', { strict: false })).toBeVisible();
     await expect(
       terminal.getByText('approval-final-answer-marker', { strict: false })
     ).toBeVisible();
@@ -133,9 +129,7 @@ test.describe('gth code TUI — EXT-52 reject keeps the command from running', (
       terminal.getByText('approval-final-answer-marker', { strict: false })
     ).toBeVisible();
     await expect(terminal.getByText('turns: 1  ·  ready', { strict: false })).toBeVisible();
-    await expect(
-      terminal.getByText('approval-out-marker', { full: true, strict: false })
-    ).not.toBeVisible();
+    await expect(terminal.getByText('approval-out-marker', { strict: false })).not.toBeVisible();
   });
 });
 
@@ -182,9 +176,7 @@ test.describe('gth code TUI — EXT-52/CFG-27 rung switching restores prompting 
     terminal.write('run it');
     await expect(terminal.getByText('> run it')).toBeVisible();
     terminal.submit();
-    await expect(
-      terminal.getByText('approval-out-marker', { full: true, strict: false })
-    ).toBeVisible();
+    await expect(terminal.getByText('approval-out-marker', { strict: false })).toBeVisible();
     await expect(terminal.getByText('turns: 1  ·  ready', { strict: false })).toBeVisible();
     await expect(
       terminal.getByText('The agent wants to run a shell command via run_shell_command')
@@ -343,7 +335,13 @@ test.describe('gth code TUI — EXT-70 §4.7.1 the trust affordance', () => {
   }) => {
     await expect(terminal.getByText('ready to code')).toBeVisible();
 
+    // Type, confirm the echo, THEN send the return as its own keystroke. A `write` immediately
+    // followed by `submit` lets Ink parse the text and the carriage return out of one stdin chunk
+    // and dispatch them as a single input event, so the command is left sitting in the prompt and
+    // never runs — the same note chat.tui.test.ts carries. It is a race, so it passes most of the
+    // time and then fails on a loaded CI box for reasons that look like anything but this.
     terminal.write('/approvals trust jira openWorldHint');
+    await expect(terminal.getByText('> /approvals trust jira openWorldHint')).toBeVisible();
     terminal.submit();
     await expect(terminal.getByText('MCP annotations believed: jira')).toBeVisible();
 
@@ -355,6 +353,7 @@ test.describe('gth code TUI — EXT-70 §4.7.1 the trust affordance', () => {
     ).toBeVisible();
 
     terminal.write('/approvals trust jira nope');
+    await expect(terminal.getByText('> /approvals trust jira nope')).toBeVisible();
     terminal.submit();
     await expect(terminal.getByText('Not an annotation hint: nope')).toBeVisible();
   });

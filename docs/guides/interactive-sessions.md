@@ -49,10 +49,10 @@ gth chat "Let's discuss the architecture of this project"
 Inside a session, a line starting with `/` is a command, not a prompt. Run `/help` to list all of
 them; in the TUI, typing `/` alone opens a searchable command menu. A few worth knowing:
 
-- `/clear` — wipe the transcript
+- `/clear` — wipe the transcript and the model's memory of it (it is gone, not scrolled away)
 - `/status` — mode, model, and turn count
 - `/model` — show the current model / provider
-- `/verbose` — expand or collapse tool-call detail (Ctrl+T does the same mid-response)
+- `/verbose` — expand or collapse tool-call detail (Ctrl+T does the same, at any time)
 - `/reasoning` — reprint a turn's thinking (`/reasoning 2` for turn 2)
 - `/approvals` — show the current rung, the rater, the allow/deny counts, what you have approved so
   far and which MCP annotation hints you believe;
@@ -110,13 +110,18 @@ interactive shell that happens to export `CI`.
 ## Mouse and text selection
 
 The TUI turns on terminal mouse reporting at launch, so clickable parts of the interface respond and
-the wheel scrolls a focused panel. While it is on, your terminal gives drag events to Gaunt Sloth
-rather than using them to select text, so **hold Shift (Option in some macOS terminals) while
-dragging** to select and copy as usual.
+the wheel scrolls the conversation (see [Reading back over the conversation](#reading-back-over-the-conversation)).
+While it is on, your terminal gives the button press to Gaunt Sloth rather than using it to start a
+selection, so **hold Shift (Option in some macOS terminals) while dragging** to select and copy as
+usual. Shift+drag is the answer whenever dragging stops selecting — the selection itself behaves
+exactly as your terminal's normally does.
+
+Only what is on screen can be selected: the session takes the whole terminal, so text you have
+scrolled past is not there to drag over. Scroll it back into view first.
 
 Click the sloth in the launch banner and it does something — a blink, a nod, a look around, or an
-eye-roll, picked at random. It only ever animates on a click, never on its own, and it stops being
-clickable once the first exchange scrolls it into the scrollback.
+eye-roll, picked at random. It only ever animates on a click, never on its own, and it goes away
+once the first exchange starts.
 
 If you would rather have unmodified selection back, turn reporting off mid-session — it takes effect
 immediately and the session carries on:
@@ -133,6 +138,38 @@ precedence order.
 
 The plain readline surface (`--no-tui`) has no mouse layer at all, so nothing changes there and
 `/mouse` reports itself unavailable.
+
+## Reading back over the conversation
+
+The session takes the whole terminal, so the conversation lives in the app rather than in your
+terminal's scrollback — your terminal's own scroll keys will not reach it. Scroll it with:
+
+| | |
+|---|---|
+| mouse wheel | three lines a notch |
+| **Shift** + wheel | one screen |
+| **PageUp** / **PageDown** | one screen (**Fn**+**↑**/**↓** on a keyboard without those keys) |
+| **Ctrl+Home** / **Ctrl+End** | the beginning / the end of the session |
+
+While you are reading back, new output does not drag you away from it — a reply that arrives keeps
+growing below and the lines you are reading stay where they are. Start typing, or press **Escape**,
+to jump back to the newest output.
+
+With mouse reporting off (`/mouse off`, `useMouse: false`, `GTH_NO_MOUSE=1`) the wheel does nothing
+and the keys above are the whole story; nothing becomes unreachable. The plain readline surface
+(`--no-tui`) has no viewport of its own — there you scroll your terminal, as ever.
+
+## Watching a response arrive
+
+While a model is thinking, the TUI shows a `💭 Thinking` line with the newest couple of lines of
+that thinking underneath it — enough to tell what it is working on without the thinking crowding out
+the answer. Tool calls appear as one summary line each, with the first few lines of their output
+below them.
+
+Press **Ctrl+T** (or run `/verbose`) to open all of that out into full detail: the raw arguments and
+the complete output of every tool call, and the whole of the thinking. It applies to the entire
+conversation on screen, not just the turn in flight, so it works just as well on a turn you have
+scrolled back to. The same key folds it away again.
 
 ## Interrupting a response
 

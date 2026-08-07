@@ -113,8 +113,8 @@ function subagentLines(tree: SubagentTreeViewModel): string[] {
 }
 
 /**
- * Full-width docked panel below the transcript / above the status bar (lives in the live,
- * non-static frame so it coexists with `<Static>` scrollback). Tabs select a section; the
+ * Full-width panel in the pinned dock, below the conversation region and above the status bar.
+ * Tabs select a section; the
  * body is a bounded viewport — `<Box height={n} overflow="hidden">` over a windowed slice of
  * the section's lines, with the window moved by `scrollOffset` (PageUp/PageDown while focused).
  * Pure presentational: all state (tab, offset, focus) is owned by `<App>`.

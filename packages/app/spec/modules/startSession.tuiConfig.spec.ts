@@ -166,6 +166,33 @@ describe('startSession reads the tui config key off disk (CFG-37 wiring)', () =>
     expect(interactiveSessionMock.createInteractiveSession).toHaveBeenCalledTimes(1);
   });
 
+  // TUI-C48 — what the dispatcher does with the session once the config has decided.
+  //
+  // Both session surfaces are mocked in this file, so what it can see is the dispatch: which
+  // surface was called and what it was handed. That is the right question here and the wrong one
+  // for the terminal — nothing at this level observes a buffer switch, and an assertion that a
+  // mock was not called must not be described as one. The terminal-level half of the seam is a
+  // pair of cases in `tui-e2e/chat.tui.test.ts`, which plant this same config on disk, launch the
+  // real binary in a real pty, and assert the opted-out session is still on the user's screen
+  // after it exits — with the control alongside showing a session that isn't.
+  //
+  // The two halves below are asserted together deliberately: a dispatcher that called BOTH
+  // surfaces would satisfy the readline half alone, and one that dropped the message would satisfy
+  // the "no TUI" half alone.
+  it('hands an opted-out session to readline with its config and message unchanged', async () => {
+    writeGlobalConfig({ llm: LLM_SPEC, tui: false });
+
+    const { startSession } = await import('#src/modules/startSession.js');
+    await startSession(sessionConfig, {}, 'do the thing');
+
+    expect(tuiSessionMock.createTuiSession).not.toHaveBeenCalled();
+    expect(interactiveSessionMock.createInteractiveSession).toHaveBeenCalledTimes(1);
+    const [passedSessionConfig, , passedMessage] =
+      interactiveSessionMock.createInteractiveSession.mock.calls[0];
+    expect(passedSessionConfig).toBe(sessionConfig);
+    expect(passedMessage).toBe('do the thing');
+  });
+
   it('auto-detects (TUI here) when a real config sets no tui key at all', async () => {
     writeProjectConfig({ llm: LLM_SPEC });
 

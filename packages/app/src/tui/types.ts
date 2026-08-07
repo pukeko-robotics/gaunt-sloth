@@ -100,7 +100,7 @@ export type TuiDebugCapture =
   | { kind: 'request'; text: string; system: string; tools: string; mcp: string }
   | { kind: 'response'; text: string };
 
-/** A committed line in the scrollback (rendered via Ink `<Static>`). */
+/** One committed line of the conversation, rendered by the transcript viewport we own. */
 export type TranscriptItem =
   | { kind: 'user'; id: number; text: string }
   | { kind: 'assistant'; id: number; turn: TurnViewModel }
@@ -195,7 +195,7 @@ export interface TuiAppProps {
   /**
    * TUI-C19 — non-fatal startup advisories to surface persistently (currently the load-time
    * config-validation warnings — unknown keys, deprecated names — captured around `initConfig`).
-   * When non-empty, the chrome shows a standing "config has problems" line OUTSIDE `<Static>` (so
+   * When non-empty, the chrome shows a standing "config has problems" line in the pinned dock (so
    * it never scrolls away) and `/config` renders the actual warning text. Kept a generic string
    * list so other non-fatal startup advisories can post here later without a schema change; the
    * fixture/AG-UI paths omit it. Absent/empty ⇒ no standing line and `/config` shows no warnings.
@@ -203,7 +203,7 @@ export interface TuiAppProps {
   advisories?: string[];
   /**
    * Per-server MCP connection failures captured during agent init (resolveTools). When non-empty,
-   * the chrome shows a standing line naming the unavailable server(s) OUTSIDE `<Static>` — a
+   * the chrome shows a standing line naming the unavailable server(s) in the pinned dock — a
    * connection failure is otherwise only a transient `displayWarning` that Ink paints over. Kept
    * separate from `advisories` because those are config-validation warnings pointing at `/config`;
    * an MCP failure is not a config problem and points at the `/debug` MCP tab instead. The
@@ -233,13 +233,6 @@ export interface TuiAppProps {
   subscribeApproval?: (cb: (record: PendingApproval) => void) => () => void;
   /** Called once a turn finishes, with the user input and the final assistant text. */
   onTurnComplete?: (userInput: string, assistantText: string) => void;
-  /**
-   * Reset Ink's frame accounting after `/clear` has scrolled the viewport (production wires this
-   * to the `render()` instance's `clear()`). The app writes the scroll/clear escapes itself, then
-   * calls this so Ink forgets its last-rendered output and re-renders cleanly at the top — without
-   * it Ink would diff against a now-stale frame and leave artifacts. Optional (tests / fixtures).
-   */
-  onResetFrame?: () => void;
   /** Called on `exit`/`/exit` (or quit) for cleanup before the app unmounts. */
   onExit?: () => void | Promise<void>;
 }

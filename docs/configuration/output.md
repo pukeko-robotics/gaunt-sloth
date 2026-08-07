@@ -189,9 +189,9 @@ GTH_NO_MOUSE=1 gth chat
 ```
 
 The TUI enables terminal mouse reporting on launch, which is what makes its clickable parts respond
-and lets the wheel scroll a focused panel. The trade is that while reporting is on, your terminal
-hands drag events to Gaunt Sloth instead of using them for its own selection — so selecting text to
-copy needs a modifier: **hold Shift (Option in some macOS terminals) while dragging**.
+and lets the wheel scroll the conversation. The trade is that while reporting is on, your terminal
+hands the button press to Gaunt Sloth instead of using it to start its own selection — so selecting
+text to copy needs a modifier: **hold Shift (Option in some macOS terminals) while dragging**.
 
 Four things decide whether mouse reporting is enabled, **highest first**:
 

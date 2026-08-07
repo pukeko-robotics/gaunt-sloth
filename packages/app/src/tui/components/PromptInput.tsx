@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Box, Text, useInput, usePaste } from 'ink';
 import TextInput from 'ink-text-input';
 import { SlashCommandMenu } from '#src/tui/components/SlashCommandMenu.js';
@@ -32,6 +32,28 @@ import { normalizePastedText } from '#src/tui/pasteParser.js';
  * continuation-line rendering is intentionally NOT handled here — that is node TUI-C25; a buffered
  * multi-line value may render imperfectly, but the submitted value is correct and intact.
  */
+/**
+ * Records whether the input event now being delivered is a control chord.
+ *
+ * `ink-text-input` claims only Ctrl+C among control chords and **types** the rest: Ink reports
+ * Ctrl+T as `input` `'t'` with `key.ctrl`, and the text input's handler falls through to its insert
+ * branch, so a keystroke the app binds elsewhere also drops a stray letter into whatever the user
+ * was writing. That is a whole class reached by reflex — Ctrl+A, Ctrl+E, Ctrl+U, Ctrl+W and Ctrl+K
+ * are what a terminal user's fingers do at any prompt — not one binding somebody chose to press.
+ * Ink fans one event out to every registered handler and offers no way to stop it, so the only
+ * place to catch this is *before* the text input sees it — which is what this is for.
+ *
+ * It renders nothing and exists only for its position: `useInput` subscribes from an effect, and
+ * effects fire in mount order, so a sibling rendered ahead of the text input is called ahead of it.
+ * That ordering is what the "leaves the buffer alone" case pins.
+ */
+function ControlChordSentinel({ onKey }: { onKey: (isControlChord: boolean) => void }): null {
+  useInput((input, key) => {
+    onKey(key.ctrl && input.length > 0);
+  });
+  return null;
+}
+
 export function PromptInput({
   onSubmit,
   commands = [],
@@ -51,6 +73,10 @@ export function PromptInput({
   // Esc dismisses the menu without clearing the input; typing anything re-opens it (onChange
   // clears this flag), matching how palette menus behave elsewhere.
   const [dismissed, setDismissed] = useState(false);
+  // Set by <ControlChordSentinel> for every keystroke, read by onChange below.
+  const controlChordRef = useRef(false);
+  // Bumped to remount <TextInput> after a refused chord — see the onChange handler.
+  const [textInputGeneration, setTextInputGeneration] = useState(0);
 
   const query = slashMenuQuery(value);
   const matches = query !== null && !dismissed ? filterSlashCommands(commands, query) : [];
@@ -104,11 +130,43 @@ export function PromptInput({
   return (
     <Box flexDirection="column">
       {menuActive ? <SlashCommandMenu commands={matches} selectedIndex={selectedIndex} /> : null}
+      {/* Ahead of the text input, and that is the whole point — see ControlChordSentinel. */}
+      <ControlChordSentinel
+        onKey={(isControlChord) => {
+          controlChordRef.current = isControlChord;
+        }}
+      />
       <Box>
         <Text color="cyan">{'  > '}</Text>
         <TextInput
+          key={textInputGeneration}
           value={value}
           onChange={(next) => {
+            // A control chord belongs to whoever bound it, never to the buffer.
+            //
+            // Refusing the value is only half of it. `ink-text-input` commits its internal cursor
+            // offset BEFORE it asks whether the value may change, and it repairs an out-of-range
+            // offset only from an effect keyed on the value — which a refusal, by definition, does
+            // not change. So a refused chord leaves the offset one past the value, the reverse-video
+            // cursor cell matches no character and disappears, and every later character inserts one
+            // position early: `draft` + one chord + `m,o,r,e` submits `draftorem`.
+            //
+            // Remounting is what puts the offset back, because the component derives it from the
+            // value at mount. The cost is that a cursor the user had moved into the middle of the
+            // buffer returns to the end — visible, recoverable with the arrow keys, and not the
+            // value. [[TUI-C25]] builds the real line editor, binds Ctrl+A/Ctrl+E to line start/end
+            // and will own the cursor outright; until then this is the cheap half of the trade.
+            //
+            // It also re-subscribes the text input's `useInput`, which moves that listener to the
+            // back of Ink's emitter. Harmless, and checked rather than assumed: the ONE ordering
+            // anything here depends on is the sentinel being ahead of the text input, and the
+            // sentinel never re-subscribes. App's handler ending up ahead of the text input's is
+            // independent — they act on disjoint state, and App returns early from every branch it
+            // claims.
+            if (controlChordRef.current) {
+              setTextInputGeneration((generation) => generation + 1);
+              return;
+            }
             setValue(next);
             setDismissed(false);
             setCursor(0);

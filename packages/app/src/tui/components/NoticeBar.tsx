@@ -5,9 +5,9 @@ import type { McpConnectionFailure } from '@gaunt-sloth/core/core/types.js';
 /**
  * TUI-C19 — a persistent, single-line advisory bar for non-fatal startup advisories.
  *
- * Rendered in the live (non-`<Static>`) chrome next to the status bar (see `App.tsx`), so — unlike
- * a transient `displayWarning` that scrolls away the moment Ink takes over — it stays pinned and
- * survives transcript growth (DL-1: no important thing is silent). It shows ONLY when there is at
+ * Rendered in the pinned dock next to the status bar (see `App.tsx`), so — unlike a transient
+ * `displayWarning` that scrolls away the moment Ink takes over — it stays on screen and survives
+ * transcript growth (DL-1: no important thing is silent). It shows ONLY when there is at
  * least one advisory; a clean startup renders nothing (returns `null`), so the chrome is unchanged
  * when there's nothing to say.
  *

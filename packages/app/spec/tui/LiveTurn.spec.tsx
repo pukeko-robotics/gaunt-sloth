@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import React from 'react';
 import { render } from 'ink-testing-library';
+import { Box, renderToString } from 'ink';
 import chalk from 'chalk';
 import stripAnsi from 'strip-ansi';
 import { LiveTurn, ReasoningPanel } from '#src/tui/components/LiveTurn.js';
@@ -387,6 +388,134 @@ describe('tui <LiveTurn>', () => {
       unmount();
     });
 
+    /**
+     * TUI-C48 — while a turn streams, the collapsed panel keeps its newest lines on screen, so a
+     * thinking model shows what it is thinking about rather than a bare header.
+     *
+     * The cap is its own number and not the ten-line tool-output preview: the cases below assert
+     * the count exactly rather than "some lines", because a preview that silently grew to ten
+     * would let thinking take over the screen the panel collapses to stay out of, and nothing on
+     * screen would look wrong.
+     */
+    describe('live preview while streaming (TUI-C48)', () => {
+      const thoughts = ['one.', 'two.', 'three.', 'four.', 'five.'];
+      const streamingTurn = turn({ reasoning: thoughts.join('\n'), text: '' });
+
+      /** The gutter rows of the reasoning region — one per previewed line. */
+      const gutterLines = (frame: string): string[] =>
+        stripAnsi(frame)
+          .split('\n')
+          .filter((row) => row.trimStart().startsWith('│'))
+          .map((row) => row.slice(row.indexOf('│') + 1).trim());
+
+      it('shows exactly the newest two lines, and not the ones before them', () => {
+        const { lastFrame, unmount } = render(<LiveTurn turn={streamingTurn} streaming />);
+        expect(gutterLines(lastFrame() ?? '')).toEqual(['four.', 'five.']);
+        unmount();
+      });
+
+      it('follows the stream: newer lines replace older ones', () => {
+        const { lastFrame, rerender, unmount } = render(
+          <LiveTurn turn={turn({ reasoning: 'one.\ntwo.', text: '' })} streaming />
+        );
+        expect(gutterLines(lastFrame() ?? '')).toEqual(['one.', 'two.']);
+
+        rerender(<LiveTurn turn={turn({ reasoning: 'one.\ntwo.\nthree.', text: '' })} streaming />);
+        expect(gutterLines(lastFrame() ?? '')).toEqual(['two.', 'three.']);
+        unmount();
+      });
+
+      it('does not spend a preview line on a trailing newline', () => {
+        const { lastFrame, unmount } = render(
+          <LiveTurn turn={turn({ reasoning: 'one.\ntwo.\n', text: '' })} streaming />
+        );
+        expect(gutterLines(lastFrame() ?? '')).toEqual(['one.', 'two.']);
+        unmount();
+      });
+
+      it('Ctrl+T still expands the streaming panel to the WHOLE thought', () => {
+        const { lastFrame, unmount } = render(
+          <LiveTurn turn={streamingTurn} streaming toolsExpanded />
+        );
+        expect(gutterLines(lastFrame() ?? '')).toEqual(thoughts);
+        unmount();
+      });
+
+      it('is live-only: a committed turn collapses to its header alone', () => {
+        // The transcript keeps what it always kept, which is also what makes the row estimator's
+        // committed-panel count of one still exact.
+        const { lastFrame, unmount } = render(<LiveTurn turn={streamingTurn} />);
+        expect(gutterLines(lastFrame() ?? '')).toEqual([]);
+        expect(stripAnsi(lastFrame() ?? '')).toContain('💭 Thinking');
+        unmount();
+      });
+
+      /**
+       * The cap is in SCREEN ROWS, and the cases above cannot tell the difference.
+       *
+       * A logical line is not a row. Reasoning streams as prose paragraphs and the newline arrives
+       * at the end of one, so the ordinary shape of a first thinking turn is one or two paragraphs
+       * with no newline in them yet — which wrapped to nine and seventeen rows at 80 columns, more
+       * of the screen than the ten-line tool preview this cap exists to be smaller than. Measure
+       * the drawn rows, at the width, or the number two means nothing.
+       */
+      describe('the cap is measured in drawn rows, not logical lines', () => {
+        const paragraph = (n: number) => 'x'.repeat(n);
+        /** Rows the collapsed streaming panel really draws, measured with Ink's own renderer. */
+        const drawnRows = (reasoning: string, columns: number): number =>
+          renderToString(
+            <Box flexDirection="column">
+              <ReasoningPanel reasoning={reasoning} expanded={false} live />
+            </Box>,
+            { columns }
+          ).split('\n').length;
+
+        it('draws the header plus one row per previewed line at 80 columns', () => {
+          // The measurement that motivated the cap: unwrapped, these were 9 and 17 rows.
+          expect(drawnRows('alpha\nbeta', 80)).toBe(3);
+          expect(drawnRows(paragraph(600), 80)).toBe(2);
+          expect(drawnRows(`${paragraph(600)}\n${paragraph(600)}`, 80)).toBe(3);
+        });
+
+        for (const columns of [80, 40, 24]) {
+          it(`is the same height whatever the model emits, at ${columns} columns`, () => {
+            // Stated against a two-short-line baseline rather than an absolute number, because the
+            // header itself wraps on a narrow terminal and that is not the preview's doing. What
+            // the cap promises is that the panel's height does not depend on the thought's length.
+            const baseline = drawnRows('alpha\nbeta', columns);
+            expect(drawnRows(`${paragraph(600)}\n${paragraph(600)}`, columns)).toBe(baseline);
+            expect(drawnRows(`${paragraph(4000)}\n${paragraph(4000)}`, columns)).toBe(baseline);
+          });
+        }
+
+        it('keeps the NEWEST text of an over-long line, not its opening', () => {
+          // Truncating at the end would freeze the preview on the first row of a paragraph and
+          // leave it there for as long as the model kept writing — the "frozen opening" the panel
+          // is documented not to be.
+          const frame = renderToString(
+            <Box flexDirection="column">
+              <ReasoningPanel reasoning={`${'a'.repeat(200)}NEWEST`} expanded={false} live />
+            </Box>,
+            { columns: 80 }
+          );
+          expect(stripAnsi(frame)).toContain('NEWEST');
+        });
+
+        it('leaves the EXPANDED thought wrapping in full', () => {
+          // Expanded is where the whole thought is read; the cap belongs to the collapsed preview
+          // alone, so a long line still wraps onto as many rows as it needs.
+          expect(
+            renderToString(
+              <Box flexDirection="column">
+                <ReasoningPanel reasoning={paragraph(600)} expanded live />
+              </Box>,
+              { columns: 80 }
+            ).split('\n').length
+          ).toBeGreaterThan(3);
+        });
+      });
+    });
+
     it('renders nothing for the reasoning region when there is no reasoning', () => {
       const { lastFrame, unmount } = render(<LiveTurn turn={turn({ text: 'hi' })} />);
       expect(stripAnsi(lastFrame() ?? '')).not.toContain('💭 Thinking');
@@ -405,9 +534,8 @@ describe('tui <LiveTurn>', () => {
   });
 
   // TUI-C18 — the `/reasoning` reprint renders the exported ReasoningPanel directly (expanded,
-  // non-live) with a turn-tagged label. Asserting the panel itself (not through <Transcript>/<Static>)
-  // because ink-testing-library's lastFrame() returns the last DYNAMIC frame — <Static> content is
-  // written once above it and would be absent here.
+  // non-live) with a turn-tagged label. Asserted on the panel itself so the styling contract is
+  // pinned where it is defined; the viewport that mounts it has its own spec.
   describe('reprinted reasoning block (ReasoningPanel export, TUI-C18)', () => {
     it('carries the recalled thinking text with the TUI-C15 💭 + gutter styling', () => {
       const { lastFrame, unmount } = render(

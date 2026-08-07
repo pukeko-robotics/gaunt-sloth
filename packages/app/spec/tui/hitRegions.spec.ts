@@ -1,11 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  HitRegionRegistry,
-  liveRegionOrigin,
-  regionContains,
-  type HitRegion,
-} from '#src/tui/hitRegions.js';
+import { HitRegionRegistry, regionContains, type HitRegion } from '#src/tui/hitRegions.js';
 import type { MouseEvent } from '#src/tui/mouseParser.js';
 
 const press = (row: number, column: number): MouseEvent => ({
@@ -27,56 +22,23 @@ const region = (over: Partial<HitRegion> = {}): HitRegion => ({
   ...over,
 });
 
-describe('liveRegionOrigin', () => {
-  it('places the live frame at the bottom once output has scrolled the screen', () => {
-    // A 24-row terminal showing a 6-row live frame, with plenty above it: it starts at row 18.
-    expect(liveRegionOrigin(24, 6, Number.MAX_SAFE_INTEGER)).toBe(18);
+describe('regionContains at the full-screen frame origin', () => {
+  // TUI-C48 — the frame is laid out to the whole terminal height, so it starts at screen row 0 and
+  // a region's offset within the frame IS its screen row. This block is what stops that constant
+  // being re-derived as an assumption: it pins the mapping at the origin the app actually uses.
+  const origin = 0;
+
+  it('maps a frame row straight onto the same screen row', () => {
+    expect(regionContains(region({ top: 7, height: 1, width: 20 }), 7, 2, origin)).toBe(true);
+    expect(regionContains(region({ top: 7, height: 1, width: 20 }), 6, 2, origin)).toBe(false);
+    expect(regionContains(region({ top: 7, height: 1, width: 20 }), 8, 2, origin)).toBe(false);
   });
 
-  describe('before anything has been committed', () => {
-    // The launch state, and the one the banner is clickable in. The viewport bump homes the cursor,
-    // so Ink paints the first frame at row 0 with the rest of the screen empty BELOW it. Assuming
-    // the bottom here put every hit region a dozen rows under where it was drawn — the banner click
-    // did nothing at all until this was fixed, and no render-only test could see it.
-    it('starts the frame at row 0, not at the bottom of the screen', () => {
-      expect(liveRegionOrigin(30, 14, 0)).toBe(0);
-    });
-
-    it('assumes it when rowsAbove is omitted', () => {
-      // Only this function defaults to the launch case. `MouseProvider` defaults the other way, to
-      // `bottom`, because a session spends almost all of its life there — the App opts into `top`
-      // for the window before anything is committed.
-      expect(liveRegionOrigin(30, 14)).toBe(0);
-    });
-  });
-
-  it('follows the committed output down as it accumulates', () => {
-    expect(liveRegionOrigin(30, 6, 4)).toBe(4);
-    expect(liveRegionOrigin(30, 6, 12)).toBe(12);
-  });
-
-  it('stops at the bottom once the content would overflow the screen', () => {
-    // 20 rows above a 6-row frame does not fit in 24 rows, so the terminal has scrolled.
-    expect(liveRegionOrigin(24, 6, 20)).toBe(18);
-  });
-
-  it('goes negative when the frame is taller than the window, rather than clamping', () => {
-    // The frame's top rows have scrolled off ABOVE the screen, so the frame genuinely starts at a
-    // row the viewport cannot show. Clamping to 0 here would shift every target down by the
-    // overflow — the exact case (a tall frame, many panels) where clicking matters most.
-    expect(liveRegionOrigin(24, 30)).toBe(-6);
-  });
-
-  it('puts a region on the right screen row when the frame overflows the window', () => {
-    // The regression the sign matters for: frame row 10 of a 30-row frame in a 24-row terminal is
-    // on screen row 4, not row 10.
-    const origin = liveRegionOrigin(24, 30);
-    expect(regionContains(region({ top: 10, height: 1, width: 20 }), 4, 2, origin)).toBe(true);
-    expect(regionContains(region({ top: 10, height: 1, width: 20 }), 10, 2, origin)).toBe(false);
-  });
-
-  it('is the whole screen when the frame fills it', () => {
-    expect(liveRegionOrigin(24, 24)).toBe(0);
+  it('puts the dock on the bottom rows of the terminal', () => {
+    // A 24-row frame whose dock occupies frame rows 19-23: those ARE screen rows 19-23.
+    const dock = region({ id: 'dock', top: 19, height: 5, width: 80 });
+    expect(regionContains(dock, 23, 0, origin)).toBe(true);
+    expect(regionContains(dock, 18, 0, origin)).toBe(false);
   });
 });
 
@@ -99,7 +61,7 @@ describe('regionContains', () => {
     expect(regionContains(r, 20, 6, origin)).toBe(false);
   });
 
-  it('does not match a click above the live frame — that is <Static> scrollback', () => {
+  it('does not match a click above the region', () => {
     expect(regionContains(region(), 3, 5, origin)).toBe(false);
   });
 });

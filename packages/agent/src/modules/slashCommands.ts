@@ -82,8 +82,8 @@ export interface SlashCommandContext {
   /**
    * TUI-C18 — the reasoning text of each committed assistant turn, in transcript order (index 0 =
    * turn 1). `''` for a turn that produced no thinking layer. Drives `/reasoning`, which reprints a
-   * committed turn's thinking (frozen in `<Static>`, so it can never re-expand in place). The App
-   * builds this from the transcript; omitted (empty) where there are no committed turns yet.
+   * committed turn's thinking. The App builds this from the transcript; omitted (empty) where there
+   * are no committed turns yet.
    */
   turnReasonings?: string[];
   /**
@@ -319,11 +319,11 @@ export interface SlashCommandResult {
   approvals?: { show: true } | { rung: ApprovalRung } | { trust: McpTrustRequest };
   /**
    * TUI-C18 — a committed turn's thinking to REPRINT into the transcript (the `/reasoning` command).
-   * Committed reasoning is frozen in Ink's `<Static>` and can never re-expand in place, so instead of
-   * mutating the old turn we emit a fresh block that reuses the TUI-C15 `💭`/gutter styling. The App
-   * turns this into a `reasoning` transcript item; the command stays pure (it resolves the target from
-   * `turnReasonings`). Absent when the command instead returns a friendly `notice` (no reasoning /
-   * out-of-range).
+   * Recall rather than retro-mutation: a fresh block reusing the TUI-C15 `💭`/gutter styling appears
+   * at the bottom of the conversation, where the user is looking, instead of changing a turn they
+   * have scrolled away from. The App turns this into a `reasoning` transcript item; the command stays
+   * pure (it resolves the target from `turnReasonings`). Absent when the command instead returns a
+   * friendly `notice` (no reasoning / out-of-range).
    */
   reprintReasoning?: { reasoning: string; turnNumber: number };
   /** When true, the component quits the app (runs `onExit`). */
@@ -420,14 +420,14 @@ export function toolsToggleNotice(expanded: boolean): SlashCommandNotice {
         title: 'Tool details: on',
         lines: [
           'Tool calls now show their full inputs and results in the chat history.',
-          'Applies to new turns — run /verbose again to collapse them to summaries.',
+          'Applies to the whole conversation on screen — run /verbose again to collapse them.',
         ],
       }
     : {
         title: 'Tool details: off',
         lines: [
           'Tool calls now show as a single summary line in the chat history.',
-          'Applies to new turns — run /verbose again to show full inputs and results.',
+          'Applies to the whole conversation on screen — run /verbose again to show the detail.',
         ],
       };
 }
@@ -480,7 +480,8 @@ export function mouseToggleNotice(enabled: boolean): SlashCommandNotice {
     title: enabled ? 'Mouse on' : 'Mouse off',
     lines: enabled
       ? [
-          'Clickable parts of the interface respond to the mouse, and the wheel scrolls a focused panel.',
+          'Clickable parts of the interface respond to the mouse, and the wheel scrolls the conversation.',
+          'Shift and the wheel together move a page at a time.',
           MOUSE_SELECTION_HINT,
           'Turn it off for this session with /mouse off, or always with useMouse false in your config.',
         ]
@@ -933,8 +934,8 @@ export function createCommandRegistry(): SlashCommand[] {
     {
       name: 'clear',
       description: 'Clear the transcript',
-      // The visible feedback is the live-frame <ClearBanner> (rendered outside <Static> so it
-      // survives the transcript wipe), so no committed notice here.
+      // The visible feedback is the <ClearBanner>, which survives the transcript wipe because it
+      // is not a transcript item, so no committed notice here.
       run: () => ({ clearTranscript: true }),
     },
     {
