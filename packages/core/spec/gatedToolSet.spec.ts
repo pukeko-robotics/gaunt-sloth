@@ -26,7 +26,9 @@ import {
   isAccessClassGrantedAtRung,
   isDeterministicRung,
   isGrantedAtRung,
+  isToolGatedAtRung,
   resolveGatedToolNames,
+  resolveInterruptToolNames,
   SHELL_TOOL_NAME,
   type ApprovalRung,
 } from '#src/config.js';
@@ -270,6 +272,100 @@ describe('EXT-80 — resolveGatedToolNames membership', () => {
       boundToolNames: ['', 'edit_file'],
     });
     expect(gated).toEqual(['edit_file']);
+  });
+});
+
+describe('EXT-80 — isToolGatedAtRung, asked about ONE call', () => {
+  /**
+   * **This is what `GthAgentRunner.decideToolApproval` consults, and it takes no bound toolset on
+   * purpose.** The runner sees the names the graph reported registering, and on the deep backend
+   * that list omits tools deepagents registers itself — `execute` above all. A decision that
+   * consulted a bound list would grant deepagents' shell at `read-only` purely because the runner
+   * could not see it.
+   */
+  it("gates deepagents' execute at the deterministic rungs with no bound set in play", () => {
+    expect(isToolGatedAtRung({ toolName: 'execute', rung: 'read-only', gateShell: false })).toBe(
+      true
+    );
+    expect(isToolGatedAtRung({ toolName: 'execute', rung: 'write', gateShell: false })).toBe(true);
+  });
+
+  it('gates the shell at EVERY rung when the shell gate is on', () => {
+    for (const rung of APPROVAL_RUNGS) {
+      expect(isToolGatedAtRung({ toolName: SHELL_TOOL_NAME, rung, gateShell: true })).toBe(true);
+    }
+  });
+
+  it('gates nothing but the shell at the rated rungs and bypass', () => {
+    for (const rung of ['auto-safe', 'full-auto', 'bypass'] as const) {
+      for (const name of [...WRITE_BUILT_INS, ...UNCLASSED.filter((n) => n !== SHELL_TOOL_NAME)]) {
+        expect(isToolGatedAtRung({ toolName: name, rung, gateShell: true })).toBe(false);
+      }
+    }
+  });
+
+  it('agrees name for name with the set resolver, at every rung', () => {
+    // The projection property: the resolver is this predicate applied over the bound names, so a
+    // second rule inlined into either one shows up here.
+    for (const rung of APPROVAL_RUNGS) {
+      const gated = gatedAt(rung);
+      for (const name of BOUND) {
+        expect(isToolGatedAtRung({ toolName: name, rung, gateShell: true })).toBe(
+          gated.includes(name)
+        );
+      }
+    }
+  });
+});
+
+describe('EXT-80 — resolveInterruptToolNames: the rung-independent interrupt set', () => {
+  const wired = (gateShell = true): readonly string[] =>
+    resolveInterruptToolNames({ gateShell, boundToolNames: BOUND });
+
+  /**
+   * **The property the mid-session `/approvals` switch rests on.** The interrupt is installed once,
+   * when the graph is built; the rung moves under it afterwards. Anything a rung could gate has to
+   * be in it already, or that rung cannot gate it however hard the runner tries.
+   */
+  it('is a superset of what every rung gates', () => {
+    for (const rung of APPROVAL_RUNGS) {
+      for (const name of gatedAt(rung)) {
+        expect(wired(), `${name} is gated at ${rung} but never interrupted`).toContain(name);
+      }
+    }
+  });
+
+  it('equals the read-only gated set, since read-only is the strictest rung', () => {
+    expect([...wired()].sort()).toEqual([...gatedAt('read-only')].sort());
+  });
+
+  it('leaves out the read built-ins, which no rung gates', () => {
+    for (const name of READ_BUILT_INS) {
+      expect(wired()).not.toContain(name);
+    }
+  });
+
+  it('holds the write built-ins, MCP, custom and bookkeeping tools whatever the rung in force is', () => {
+    for (const name of [...WRITE_BUILT_INS, ...UNCLASSED]) {
+      expect(wired()).toContain(name);
+    }
+  });
+
+  it('is non-empty for a chat session with no shell gate, so read-only stays reachable there', () => {
+    const chatTools = ['read_file', 'mcp__docs__search', 'my_custom_tool'];
+    expect(resolveInterruptToolNames({ gateShell: false, boundToolNames: chatTools })).toEqual([
+      'mcp__docs__search',
+      'my_custom_tool',
+    ]);
+  });
+
+  it('puts the shell first and otherwise keeps bound order, collapsing duplicates', () => {
+    expect(
+      resolveInterruptToolNames({
+        gateShell: true,
+        boundToolNames: ['edit_file', SHELL_TOOL_NAME, 'read_file', 'my_custom_tool', 'edit_file'],
+      })
+    ).toEqual([SHELL_TOOL_NAME, 'edit_file', 'my_custom_tool']);
   });
 });
 

@@ -2,6 +2,7 @@ import {
   GthConfig,
   resolveApprovals,
   resolveGatedToolNames,
+  resolveInterruptToolNames,
   resolveShellApprovalGate,
 } from '#src/config.js';
 import { GthCommand, StatusLevel } from '#src/core/types.js';
@@ -649,31 +650,42 @@ export class GthLangChainAgent extends GthAbstractAgent {
       this.command
     );
     //
-    // EXT-80: the shell is not the whole gated set. At `read-only` and `write` the interrupt also
-    // takes every bound tool the rung's access class does not auto-grant — the write built-ins, MCP
-    // tools, custom tools — because those two rungs promise the user that anything beyond reading
-    // (respectively, beyond reading and writing files here) comes to them. `resolveGatedToolNames`
-    // is the shared derivation the deep backend and the runner use, so no two of the three can
-    // disagree, and it reads the FINAL tool array below rather than any static list: a hand-written
-    // list cannot contain an MCP or custom tool, which is exactly what has to escalate.
+    // EXT-80: the shell is not the whole story. At `read-only` and `write` every bound tool the
+    // rung's access class does not auto-grant — the write built-ins, MCP tools, custom tools — must
+    // reach the human, because those two rungs promise the user that anything beyond reading
+    // (respectively, beyond reading and writing files here) comes to them.
+    //
+    // **The interrupt is wired rung-INDEPENDENTLY, over every tool any rung could gate.** It is
+    // installed once, here, while `/approvals <rung>` moves the rung for the rest of the session
+    // without rebuilding this graph; a set that carried the rung would be frozen at the rung the
+    // session started on, and since the default is `auto-safe`, typing `/approvals read-only` would
+    // leave exactly the write tools ungated. `GthAgentRunner.decideToolApproval` decides on the rung
+    // in force instead, which is where the rung has always been read — so wiring wider does not gate
+    // wider: at a rated rung a non-shell call is approved there with no rating call and no prompt.
+    //
+    // Both sets come from core's shared policy, which the deep backend and the runner also call, so
+    // no two of the three can disagree; and both read the FINAL tool array below rather than any
+    // static list, because a hand-written list cannot contain an MCP or custom tool, which is
+    // exactly what has to escalate.
     const rung = resolveApprovals(this.config ?? undefined, this.command).rung;
-    const gatedTools = resolveGatedToolNames({
-      rung,
-      gateShell,
-      boundToolNames: tools
-        .map((tool) => tool?.name)
-        .filter((name): name is string => typeof name === 'string' && name.length > 0),
-    });
-    // Installed on the gated SET, not on `gateShell`: at a deterministic rung there is a gate to
+    const boundToolNames = tools
+      .map((tool) => tool?.name)
+      .filter((name): name is string => typeof name === 'string' && name.length > 0);
+    const interruptTools = resolveInterruptToolNames({ gateShell, boundToolNames });
+    // The LIVE gated set — what THIS rung gates — for the §4.5 tool descriptions below. Narrower
+    // than the interrupt set at the rated rungs, and it must stay so: a description promising an
+    // approval the runner will not ask for is the drift §4.5 calls worse than no description.
+    const gatedTools = resolveGatedToolNames({ rung, gateShell, boundToolNames });
+    // Installed on the interrupt SET, not on `gateShell`: at a deterministic rung there is a gate to
     // install even when the shell tool is disabled or the command emits no dev tools (a plain
     // `chat` session with MCP servers). Keying the install off `gateShell` there would leave every
     // one of those tools ungated while the rung's description promised otherwise.
     const approvalMiddleware =
-      gatedTools.length > 0
+      interruptTools.length > 0
         ? [
             humanInTheLoopMiddleware({
               interruptOn: Object.fromEntries(
-                gatedTools.map((name) => [
+                interruptTools.map((name) => [
                   name,
                   { allowedDecisions: ['approve', 'reject'] } satisfies InterruptOnConfig,
                 ])

@@ -690,7 +690,13 @@ describe('GthDeepAgent', () => {
 
     await agent.init('chat', makeConfig());
 
-    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toBeUndefined();
+    // EXT-80 — asserted on the SHELL's membership rather than on the whole object: the interrupt is
+    // wired over every tool any rung could gate, and deepagents registers write_file/edit_file/
+    // execute/task/write_todos itself, so a `chat` session is never empty. What EXT-12 is about is
+    // whether the SHELL is there, and it is not.
+    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).not.toHaveProperty(
+      'run_shell_command'
+    );
   });
 
   it('EXT-12: sets gated interruptOn for code with NO shell config (shell ON by default)', async () => {
@@ -699,10 +705,10 @@ describe('GthDeepAgent', () => {
 
     await agent.init('code', makeConfig());
 
-    // Absent devTools.shell in `code` mode now resolves to enabled — and still GATED (interruptOn
-    // set), never bypass-by-default.
-    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toEqual({
-      run_shell_command: { allowedDecisions: ['approve', 'reject'] },
+    // Absent devTools.shell in `code` mode now resolves to enabled — and still GATED (in
+    // interruptOn), never bypass-by-default.
+    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toHaveProperty('run_shell_command', {
+      allowedDecisions: ['approve', 'reject'],
     });
   });
 
@@ -715,7 +721,9 @@ describe('GthDeepAgent', () => {
 
     await agent.init('code', config);
 
-    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toBeUndefined();
+    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).not.toHaveProperty(
+      'run_shell_command'
+    );
   });
 
   it('sets interruptOn for run_shell_command when shell is enabled and bypass is off', async () => {
@@ -727,8 +735,8 @@ describe('GthDeepAgent', () => {
 
     await agent.init('code', config);
 
-    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toEqual({
-      run_shell_command: { allowedDecisions: ['approve', 'reject'] },
+    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toHaveProperty('run_shell_command', {
+      allowedDecisions: ['approve', 'reject'],
     });
   });
 
@@ -754,8 +762,8 @@ describe('GthDeepAgent', () => {
 
       await agent.init(command, config);
 
-      expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toEqual({
-        run_shell_command: { allowedDecisions: ['approve', 'reject'] },
+      expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toHaveProperty('run_shell_command', {
+        allowedDecisions: ['approve', 'reject'],
       });
       // §8.1 — the warning cites the deny list, never the hardline floor.
       expect(statusUpdate).toHaveBeenCalledWith(
@@ -790,33 +798,60 @@ describe('GthDeepAgent', () => {
       return createDeepAgentMock.mock.calls[0][0].interruptOn;
     };
 
-    it("gates deepagents' OWN write tools and execute at read-only", async () => {
+    /**
+     * Every tool any rung could gate on this backend, written out by hand: deepagents' own write
+     * tools, its shell (`execute`), its `task` and `write_todos`, gsloth's shell, and the custom
+     * tool gsloth supplied.
+     */
+    const EVERY_GATEABLE_TOOL = [
+      'edit_file',
+      'execute',
+      'my_custom_tool',
+      'run_shell_command',
+      'task',
+      'write_file',
+      'write_todos',
+    ];
+
+    it("wires deepagents' OWN write tools, execute, task and write_todos", async () => {
       const interruptOn = await initAt('read-only', 'code', [fakeTool('my_custom_tool')]);
 
-      expect(Object.keys(interruptOn ?? {}).sort()).toEqual([
-        'edit_file',
-        'execute',
-        'my_custom_tool',
-        'run_shell_command',
-        'write_file',
-      ]);
-      // The read tools deepagents registers stay free — that is what `read-only` grants.
+      expect(Object.keys(interruptOn ?? {}).sort()).toEqual(EVERY_GATEABLE_TOOL);
+      // The read tools deepagents registers stay out — no rung gates them.
       for (const granted of ['ls', 'read_file', 'glob', 'grep']) {
         expect(interruptOn).not.toHaveProperty(granted);
       }
     });
 
-    it('frees the filesystem write tools at write but still gates execute and the shell', async () => {
-      const interruptOn = await initAt('write', 'code', [fakeTool('my_custom_tool')]);
+    /**
+     * **The property the mid-session switch rests on, on this backend.** deepagents builds the
+     * graph once with this `interruptOn`; `/approvals read-only` does not rebuild it. A set that
+     * differed by rung would be frozen on the rung the session started at — and the default is
+     * `auto-safe`, so the ordinary route to the strict mode is exactly the one that would stay
+     * ungated. What each rung then GRANTS is decided per call by `GthAgentRunner`, asserted on a
+     * real graph in core's `approvalRungTransition.spec.ts`.
+     */
+    it.each(['read-only', 'write', 'auto-safe', 'full-auto', 'bypass'])(
+      'wires the same rung-independent set at %s',
+      async (rung) => {
+        const interruptOn = await initAt(rung, 'code', [fakeTool('my_custom_tool')]);
 
-      expect(Object.keys(interruptOn ?? {}).sort()).toEqual([
-        'execute',
-        'my_custom_tool',
-        'run_shell_command',
-      ]);
-      for (const granted of ['ls', 'read_file', 'glob', 'grep', 'write_file', 'edit_file']) {
-        expect(interruptOn).not.toHaveProperty(granted);
+        expect(Object.keys(interruptOn ?? {}).sort()).toEqual(EVERY_GATEABLE_TOOL);
       }
+    );
+
+    /**
+     * [[EXT-80]] review finding — `task` and `write_todos` are registered by deepagents'
+     * `createSubAgentMiddleware` and `todoListMiddleware`, which `createDeepAgent` installs
+     * unconditionally. Neither has an entry in `BUILT_IN_TOOL_ACCESS`, so both must escalate at the
+     * deterministic rungs; a set built from the filesystem mirror alone left them bound and ungated.
+     * `task` is the one that matters: it delegates to a subagent.
+     */
+    it('gates task and write_todos, which no gsloth-supplied array ever contains', async () => {
+      const interruptOn = await initAt('read-only', 'code', []);
+
+      expect(interruptOn).toHaveProperty('task');
+      expect(interruptOn).toHaveProperty('write_todos');
     });
 
     it('gates an MCP tool at read-only whatever its readOnlyHint says', async () => {
@@ -843,7 +878,9 @@ describe('GthDeepAgent', () => {
         'edit_file',
         'execute',
         'mcp__docs__search',
+        'task',
         'write_file',
+        'write_todos',
       ]);
       expect(interruptOn).not.toHaveProperty('run_shell_command');
     });
@@ -866,8 +903,8 @@ describe('GthDeepAgent', () => {
 
     await agent.init('exec', config);
 
-    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toEqual({
-      run_shell_command: { allowedDecisions: ['approve', 'reject'] },
+    expect(createDeepAgentMock.mock.calls[0][0].interruptOn).toHaveProperty('run_shell_command', {
+      allowedDecisions: ['approve', 'reject'],
     });
   });
 

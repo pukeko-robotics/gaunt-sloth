@@ -421,8 +421,9 @@ export const APPROVAL_RUNG_DESCRIPTIONS: Record<ApprovalRung, string> = {
     'Gaunt Sloth may automatically read and list files in the current working folder. It asks ' +
     'for approval for anything else, until you tell it to always allow a command.',
   write:
-    'Gaunt Sloth may automatically read, edit, create and delete files in the current working ' +
-    'folder. It asks for approval for anything else, until you tell it to always allow a command.',
+    'Gaunt Sloth may automatically read, edit, create, move and delete files in the current ' +
+    'working folder. It asks for approval for anything else, until you tell it to always allow a ' +
+    'command.',
   'auto-safe':
     'Same as write, plus the auto-rater rates everything else and automatically approves what it ' +
     'rates as safe; anything questionable comes to you. Gaunt Sloth can still rewrite and delete ' +
@@ -464,38 +465,63 @@ export function isDeterministicRung(rung: ApprovalRung): boolean {
 }
 
 /**
- * **The gated set: which tool names the backends wire into the approval interrupt at `rung`.**
+ * **The one rule: does `rung` gate this tool — i.e. must this call be decided rather than simply
+ * run?** Everything else in this area is a projection of this predicate over a set of names.
  *
- * One derivation for both backends, for the same reason {@link resolveShellApprovalGate} is one:
- * the lean backend installs `humanInTheLoopMiddleware` directly and the deep backend installs the
- * very same middleware through deepagents' `interruptOn`, and a set computed twice is a set that
- * drifts. `GthAgentRunner` resolves it here too, so the rater's granted-tools summary cannot tell
- * the model a tool is free while the gate escalates it.
- *
- * - **`read-only` and `write`** — the shell when `gateShell`, **plus every bound tool the rung's
- *   access class does not auto-grant** ({@link isAccessClassGrantedAtRung}). At `read-only` that
- *   leaves only the built-in READ tools free; at `write`, the built-in read and write tools. The
- *   write built-ins, the shell, deepagents' `execute`, MCP tools and custom/agent-authored tools all
- *   escalate to the human.
- * - **`auto-safe`, `full-auto`, `bypass`** — the shell when `gateShell`, and nothing else.
- *
- * **The rung split is deliberate and load-bearing, not tidiness.** At a rated rung a gated non-shell
- * call reaches the `subject.kind !== 'shell'` arm of `GthAgentRunner.decideToolApproval`, which
- * floors it at `destructive` and sends it to the human *with no rating call*, because §4.3 keeps the
- * rater on the shell until [[EXT-30]]. Widening there would silently turn every MCP call at
- * `auto-safe` into a human prompt — a UX change belonging to EXT-30, not to the two rungs whose
- * published descriptions this set makes true.
- *
- * **Derived from the bound toolset, never a hand-written list.** A static list of built-ins would
- * leave MCP, custom and agent-authored tools ungated — the exact tools with no access class and so
- * the exact tools the deterministic rungs must escalate. `boundToolNames` must therefore be the
- * FINAL toolset the graph is handed, including tools the graph builder registers itself (deepagents'
- * filesystem tools and `execute` never appear in the array gsloth passes it).
+ * - The shell is gated whenever the shell gate is on, at EVERY rung (`bypass` included, so §2.5's
+ *   deny list can still fire — see the `bypass` arm of `GthAgentRunner.decideToolApproval`).
+ * - At the two **deterministic** rungs, a tool is gated when the rung's own grant does not cover its
+ *   access class ({@link isAccessClassGrantedAtRung}). At `read-only` that leaves only the built-in
+ *   READ tools free; at `write`, the built-in read and write tools. The write built-ins, the shell,
+ *   deepagents' `execute`, MCP tools and custom/agent-authored tools all escalate to the human.
+ * - At `auto-safe`, `full-auto` and `bypass` nothing but the shell is gated. **That split is
+ *   deliberate and load-bearing, not tidiness.** At a rated rung a gated non-shell call reaches the
+ *   `subject.kind !== 'shell'` arm of `GthAgentRunner.decideToolApproval`, which floors it at
+ *   `destructive` and sends it to the human *with no rating call*, because §4.3 keeps the rater on
+ *   the shell until [[EXT-30]]. Gating there would silently turn every MCP call at `auto-safe` into
+ *   a human prompt — a UX change belonging to EXT-30, not to the two rungs whose published
+ *   descriptions this predicate makes true.
  *
  * `gateShell` only ever WIDENS the result. At a deterministic rung the shell is gated by its own
  * (absent) access class if it is bound at all, so `gateShell: false` does not exempt it — an
- * exemption keyed to one tool NAME is the defect class this function exists to remove. In practice
+ * exemption keyed to one tool NAME is the defect class this predicate exists to remove. In practice
  * a disabled shell tool is never bound, so the two agree.
+ *
+ * **This takes no bound toolset**, which is what lets `GthAgentRunner` ask it about a single
+ * arriving call: the runner sees the names the graph registered, and on the deep backend that list
+ * omits tools deepagents registers itself. A decision that consulted a bound list would grant
+ * `execute` at `read-only` purely because the runner could not see it.
+ */
+export function isToolGatedAtRung(options: {
+  toolName: string;
+  rung: ApprovalRung;
+  gateShell: boolean;
+}): boolean {
+  const { toolName, rung, gateShell } = options;
+  if (gateShell && toolName === SHELL_TOOL_NAME) return true;
+  if (!isDeterministicRung(rung)) return false;
+  return !isAccessClassGrantedAtRung(toolName, rung);
+}
+
+/**
+ * **The LIVE gated set: which bound tools the rung in force actually gates.** What a decision is
+ * measured against — the tool descriptions the model reads (§4.5) and the rater's granted-tools
+ * summary (§4.4) are both built from this, so neither can tell the model a tool is free while the
+ * gate escalates it.
+ *
+ * **It is NOT what the backends wire into the interrupt.** That is
+ * {@link resolveInterruptToolNames}, and the two are different sets on purpose: the interrupt is
+ * installed once, at agent init, while `/approvals <rung>` moves the rung underneath it for the rest
+ * of the session. A set that carried the rung would be frozen at the rung the session started on —
+ * and since the default is `auto-safe`, typing `/approvals read-only` would leave exactly the write
+ * tools this design escalates ungated. So the interrupt is wired rung-independently and
+ * `GthAgentRunner.decideToolApproval` consults {@link isToolGatedAtRung} against the LIVE rung.
+ *
+ * **Derived from the bound toolset, never a hand-written list.** A static list of built-ins would
+ * leave MCP, custom and agent-authored tools out — the exact tools with no access class and so the
+ * exact tools the deterministic rungs must escalate. `boundToolNames` must therefore be the FINAL
+ * toolset the graph is handed, including tools the graph builder registers itself (deepagents'
+ * filesystem tools, `execute`, `task` and `write_todos` never appear in the array gsloth passes it).
  *
  * Order is stable: the shell first, then bound order. Duplicates are collapsed, so a caller may pass
  * overlapping name sources without deduplicating first.
@@ -506,19 +532,60 @@ export function resolveGatedToolNames(options: {
   boundToolNames: readonly string[];
 }): readonly string[] {
   const { rung, gateShell, boundToolNames } = options;
-  const gated: string[] = [];
+  return collectToolNames(gateShell, boundToolNames, (name) =>
+    isToolGatedAtRung({ toolName: name, rung, gateShell })
+  );
+}
+
+/**
+ * **The interrupt set: which tool names the backends wire into the approval interrupt.** Every bound
+ * tool that ANY rung could gate — the union of {@link resolveGatedToolNames} over
+ * {@link APPROVAL_RUNGS}, which in practice is the shell plus every bound tool that is not a
+ * built-in READ tool.
+ *
+ * One derivation for both backends, for the same reason {@link resolveShellApprovalGate} is one: the
+ * lean backend installs `humanInTheLoopMiddleware` directly and the deep backend installs the very
+ * same middleware through deepagents' `interruptOn`, and a set computed twice is a set that drifts.
+ *
+ * **Deliberately rung-independent.** The interrupt is installed once, when the agent is built, and
+ * `/approvals <rung>` then moves the rung for the rest of the session without rebuilding it. Only a
+ * set that covers every rung can survive that: the interrupt fires and
+ * `GthAgentRunner.decideToolApproval` decides on the rung in force, which is where the rung has
+ * always been read. **Wiring wider does not gate wider** — a call the live rung does not gate is
+ * approved there with no rating call and no prompt, so `auto-safe`, `full-auto` and `bypass` behave
+ * exactly as they did when the interrupt held the shell alone.
+ */
+export function resolveInterruptToolNames(options: {
+  gateShell: boolean;
+  boundToolNames: readonly string[];
+}): readonly string[] {
+  const { gateShell, boundToolNames } = options;
+  return collectToolNames(gateShell, boundToolNames, (name) =>
+    APPROVAL_RUNGS.some((rung) => isToolGatedAtRung({ toolName: name, rung, gateShell }))
+  );
+}
+
+/**
+ * Shared body of the two resolvers above: the shell first (when gated), then the bound names the
+ * caller's predicate selects, in bound order, deduplicated, with nameless entries dropped.
+ */
+function collectToolNames(
+  gateShell: boolean,
+  boundToolNames: readonly string[],
+  include: (name: string) => boolean
+): readonly string[] {
+  const names: string[] = [];
   const seen = new Set<string>();
   const add = (name: string): void => {
     if (typeof name !== 'string' || name.length === 0 || seen.has(name)) return;
     seen.add(name);
-    gated.push(name);
+    names.push(name);
   };
   if (gateShell) add(SHELL_TOOL_NAME);
-  if (!isDeterministicRung(rung)) return gated;
   for (const name of boundToolNames) {
-    if (!isAccessClassGrantedAtRung(name, rung)) add(name);
+    if (typeof name === 'string' && name.length > 0 && include(name)) add(name);
   }
-  return gated;
+  return names;
 }
 
 /**

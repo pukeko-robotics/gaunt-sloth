@@ -8,10 +8,23 @@ import { MemorySaver } from '@langchain/langgraph';
 import type { GthConfig } from '#src/config.js';
 import type { PendingToolInterrupt, StatusUpdateCallback } from '#src/core/types.js';
 import { AttackHaltError, NonInteractiveEscalationError } from '#src/core/shell/approvalStop.js';
-import { COULD_NOT_ASSESS_PREFIX, openWorldToolFloorReason } from '#src/core/shell/rater.js';
+import {
+  applyDestructiveFloor,
+  COULD_NOT_ASSESS_PREFIX,
+  openWorldToolFloorReason,
+} from '#src/core/shell/rater.js';
+import { createEffectiveToolAnnotationSource } from '#src/core/approvals/annotations.js';
+import {
+  builtInToolAnnotations,
+  mcpDeclaredAnnotationLookup,
+} from '#src/core/approvals/toolAnnotationSources.js';
+import { resolveApprovals } from '#src/config.js';
 import { MECHANISM_NOTES, PARSER_NOTE_PREAMBLE } from '#src/core/shell/abstention.js';
 import { describeApprovalEntry, MCP_FAIL_CLOSED_ANNOTATIONS } from '#src/core/approvals/matcher.js';
-import { mcpToolRegisteredName } from '#src/core/approvals/mcpSubjects.js';
+import {
+  approvalSubjectForToolName,
+  mcpToolRegisteredName,
+} from '#src/core/approvals/mcpSubjects.js';
 import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
 import { SHELL_ALLOWLIST_FILE } from '#src/constants.js';
 
@@ -2650,13 +2663,20 @@ describe('GthAgentRunner', () => {
        * today is the provenance rather than the prompt itself; pinning it now is what stops EXT-30
        * quietly inheriting the gap.
        */
+      /**
+       * §2.5 is now kept one step earlier and more completely: at `bypass` a non-shell tool is not
+       * gated at all ([[EXT-80]]), so the escalate entry cannot fire because nothing is decided.
+       * The assertion is stronger than the one it replaces — that one allowed the human to be
+       * asked as long as no provenance was attached, which at `bypass` was itself wrong.
+       */
       it('§2.5 — is inert at bypass for a NON-shell subject too, not just via the shell path', async () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         (mockAgent as any).getPendingToolInterrupts = vi
           .fn()
           .mockResolvedValueOnce([{ name: 'gth_web_fetch', args: { url: 'https://example.com' } }])
           .mockResolvedValueOnce([]);
-        (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
+        const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+        (mockAgent as any).streamResume = streamResume;
         mockAgent.stream.mockResolvedValue(streamOf('x'));
 
         const { config } = gateConfig({
@@ -2669,8 +2689,10 @@ describe('GthAgentRunner', () => {
 
         await runner.processMessages([new HumanMessage('go')]);
 
-        expect(human).toHaveBeenCalledTimes(1);
-        expect(human.mock.calls[0][0].escalatedBy).toBeUndefined();
+        // The call really did arrive at the gate and was decided — without that, "not asked" would
+        // pass on a run in which nothing happened.
+        expect(streamResume).toHaveBeenCalledTimes(1);
+        expect(human).not.toHaveBeenCalled();
       });
 
       it('CONTROL: the same tool entry DOES carry its provenance at write', async () => {
@@ -3368,9 +3390,15 @@ describe('GthAgentRunner', () => {
         expect(await askedTheHuman(config, 'gth_grep')).toBe(false);
       });
 
+      /**
+       * Driven at `read-only` rather than `write`, because [[EXT-80]] makes `write` grant the write
+       * built-ins outright: at that rung `write_file` is not gated at all, so "the hint did not
+       * exempt it" would be answered by the rung and not by the matcher. `read-only` is where the
+       * question is still the matcher's.
+       */
       it('CONTROL: a built-in that WRITES is not exempted by that hint', async () => {
         const config = gateConfig({
-          mode: 'write',
+          mode: 'read-only',
           allow: [{ type: 'tool', matcher: 'hint', pattern: { readOnlyHint: true } }],
         });
         expect(await askedTheHuman(config, 'write_file')).toBe(true);
@@ -3447,11 +3475,35 @@ describe('GthAgentRunner', () => {
           : null;
       }
 
-      /** The verdict a gated call carried to the human; `undefined` when it was not floored. */
-      async function verdictFor(config: GthConfig, toolName: string) {
-        const pending = await shownToTheHuman(config, toolName);
-        expect(pending, 'the human was asked at all').not.toBeNull();
-        return pending?.safetyVerdict;
+      /**
+       * The verdict the floor produces for a call on `toolName`, or `undefined` when it does not
+       * floor — **re-derived through the runner's own composition rather than through a run.**
+       *
+       * [[EXT-80]] is why this is not driven through `processMessages` any more. The floor lives in
+       * the `subject.kind !== 'shell'` arm, which is entered only at a RATED rung; and at a rated
+       * rung nothing but the shell is gated, so a non-shell call never reaches it — the runner now
+       * approves it on arrival, and gating it there would turn every MCP call at the default rung
+       * into a human prompt with no rating (which is [[EXT-30]]'s change to make, not this one's).
+       * The two sets are disjoint by construction, so an end-to-end drive of THIS arm is only
+       * possible for a malformed `run_shell_command`, asserted in its own block below.
+       *
+       * What is asserted here is unchanged: the same three functions the runner calls, in the same
+       * order, over the same declared/trust inputs — so every discriminating pair below still
+       * discriminates on exactly the values it names.
+       */
+      function floorVerdictFor(config: GthConfig, toolName: string) {
+        const source = createEffectiveToolAnnotationSource({
+          mcp: resolveApprovals(config, 'code').mcp,
+          declared: {
+            builtIn: builtInToolAnnotations,
+            mcp: mcpDeclaredAnnotationLookup((mockAgent as any).getDeclaredMcpToolAnnotations?.()),
+          },
+        });
+        const subject = approvalSubjectForToolName(
+          toolName,
+          Object.keys((config as { mcpServers?: object }).mcpServers ?? {})
+        );
+        return applyDestructiveFloor(undefined, openWorldToolFloorReason(source(subject)));
       }
 
       const rated = (extra: Record<string, unknown> = {}) =>
@@ -3462,8 +3514,8 @@ describe('GthAgentRunner', () => {
        * `readOnlyHint` is `true` on both sides — only `openWorldHint` differs — so a gate that
        * floored on `readOnlyHint`, or floored everything, or floored nothing, fails one half.
        */
-      it('gth_web_fetch is floored at destructive DESPITE being readOnlyHint true', async () => {
-        const verdict = await verdictFor(rated(), 'gth_web_fetch');
+      it('gth_web_fetch is floored at destructive DESPITE being readOnlyHint true', () => {
+        const verdict = floorVerdictFor(rated(), 'gth_web_fetch');
         expect(verdict?.outcome).toBe('destructive');
         // Compared against the floor's own reason builder, not against a copy of the sentence: a
         // second floor written inline at this call site would say something else and fail here.
@@ -3471,26 +3523,26 @@ describe('GthAgentRunner', () => {
         expect(verdict?.reason).not.toContain(COULD_NOT_ASSESS_PREFIX);
       });
 
-      it('CONTROL: gth_grep — the same readOnlyHint, no open world — is NOT floored', async () => {
-        expect(await verdictFor(rated(), 'gth_grep')).toBeUndefined();
+      it('CONTROL: gth_grep — the same readOnlyHint, no open world — is NOT floored', () => {
+        expect(floorVerdictFor(rated(), 'gth_grep')).toBeUndefined();
       });
 
       /**
        * The pair that proves the floor reads EFFECTIVE values and not declared ones. Both servers
        * declare `openWorldHint: false`; only the trusted one is believed.
        */
-      it('an UNTRUSTED server declaring openWorldHint false is still floored', async () => {
+      it('an UNTRUSTED server declaring openWorldHint false is still floored', () => {
         declaring({ mcp__jira__search: { readOnlyHint: true, openWorldHint: false } });
         const config = rated({ mcp: { servers: { jira: { trustAnnotations: [] } } } });
-        expect((await verdictFor(config, 'mcp__jira__search'))?.outcome).toBe('destructive');
+        expect(floorVerdictFor(config, 'mcp__jira__search')?.outcome).toBe('destructive');
       });
 
-      it('CONTROL: the very same declaration from a TRUSTED server is not floored', async () => {
+      it('CONTROL: the very same declaration from a TRUSTED server is not floored', () => {
         declaring({ mcp__jira__search: { readOnlyHint: true, openWorldHint: false } });
         const config = rated({
           mcp: { servers: { jira: { trustAnnotations: ['openWorldHint'] } } },
         });
-        expect(await verdictFor(config, 'mcp__jira__search')).toBeUndefined();
+        expect(floorVerdictFor(config, 'mcp__jira__search')).toBeUndefined();
       });
 
       /**
@@ -3499,9 +3551,9 @@ describe('GthAgentRunner', () => {
        * test: flipping a DIFFERENT hint in the very same declaration does move the outcome.
        */
       it('idempotentHint changes no outcome — CONTROL: openWorldHint does', async () => {
-        const decide = async (declaration: Record<string, unknown>) => {
+        const decide = (declaration: Record<string, unknown>) => {
           declaring({ mcp__jira__search: declaration });
-          return await verdictFor(rated({ mcp: trustingJira }), 'mcp__jira__search');
+          return floorVerdictFor(rated({ mcp: trustingJira }), 'mcp__jira__search');
         };
         const local = { readOnlyHint: true, openWorldHint: false };
         const idempotent = await decide({ ...local, idempotentHint: true });
@@ -3518,30 +3570,38 @@ describe('GthAgentRunner', () => {
        * §4.7.2 — `destructiveHint` may only ever RAISE: it can decide that a tool is rated or
        * floored, never that it is exempt.
        */
-      it('destructiveHint false does NOT lower a floor openWorldHint set', async () => {
+      it('destructiveHint false does NOT lower a floor openWorldHint set', () => {
         declaring({
           mcp__jira__search: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
         });
         const config = rated({ mcp: trustingJira });
-        expect((await verdictFor(config, 'mcp__jira__search'))?.outcome).toBe('destructive');
+        expect(floorVerdictFor(config, 'mcp__jira__search')?.outcome).toBe('destructive');
       });
 
+      /**
+       * Driven at `read-only`, where an MCP call is gated, because that is where "the human is
+       * still asked" is a claim about the gate rather than about a fabricated arrival. The floor
+       * itself does not apply at a deterministic rung (there is no rating to floor), which is the
+       * second half of what this asserts: `destructiveHint` is not the rule that floors.
+       */
       it('destructiveHint true never buys an exemption', async () => {
         declaring({
           mcp__jira__wipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
         });
-        const pending = await shownToTheHuman(rated({ mcp: trustingJira }), 'mcp__jira__wipe');
+        const config = gateConfig({ mode: 'read-only', mcp: trustingJira });
+        const pending = await shownToTheHuman(config, 'mcp__jira__wipe');
         expect(pending, 'the human is still asked').not.toBeNull();
-        // ...and it is not floored either: `destructiveHint` is not the rule that floors, which is
-        // what keeps the openWorld assertions above about `openWorldHint` and not about "a hint".
         expect(pending?.safetyVerdict).toBeUndefined();
+        // ...and the floor, asked directly, agrees it is not the hint that floors.
+        expect(floorVerdictFor(config, 'mcp__jira__wipe')).toBeUndefined();
       });
 
       it('CONTROL: the harness CAN exempt — an allow entry approves that very call', async () => {
         declaring({
           mcp__jira__wipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
         });
-        const config = rated({
+        const config = gateConfig({
+          mode: 'read-only',
           allow: [{ type: 'mcpTool', server: 'jira', matcher: 'exact', pattern: 'wipe' }],
           mcp: trustingJira,
         });
@@ -3558,28 +3618,47 @@ describe('GthAgentRunner', () => {
        * tripwire runs for a tool. That half does not exist while §4.3 keeps the rater on the shell;
        * [[EXT-30]] is what brings it, and asserting it here would be asserting a wish.
        */
-      it('an allow entry lifts the floor on an open-world tool', async () => {
-        const config = rated({
+      it('an allow entry approves an open-world tool without asking', async () => {
+        const config = gateConfig({
+          mode: 'read-only',
           allow: [{ type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch' }],
         });
         expect(await shownToTheHuman(config, 'gth_web_fetch')).toBeNull();
       });
 
-      it('and lifts it just the same when the allow entry sets rate true', async () => {
-        const config = rated({
+      it('and approves it just the same when the allow entry sets rate true', async () => {
+        const config = gateConfig({
+          mode: 'read-only',
           allow: [{ type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch', rate: true }],
         });
         expect(await shownToTheHuman(config, 'gth_web_fetch')).toBeNull();
       });
 
       /**
+       * CONTROL for both cells above, and it is not optional: they are driven at `read-only`, where
+       * the human is asked by default, so without this the pair would pass on a harness that never
+       * asked anyone. It is the ENTRY that exempts, and nothing else.
+       */
+      it('CONTROL: the same tool with no allow entry IS asked about', async () => {
+        expect(
+          await shownToTheHuman(gateConfig({ mode: 'read-only' }), 'gth_web_fetch')
+        ).not.toBeNull();
+      });
+
+      /**
        * §6.2 — where no human can answer, the floored verdict is what the process exits with. This
        * is the second of the two places the floor is observable today, and the one a CI run reads.
        */
-      it('with no human, the floored verdict is what the run exits with', async () => {
+      /**
+       * §6.2 — where no human can answer, a gated tool call ENDS the run non-zero rather than
+       * hanging. Driven at `read-only`, the rung at which such a call is gated; the floored VERDICT
+       * riding that exit is asserted on the one shape that still reaches the floor, in the
+       * malformed-`run_shell_command` block below.
+       */
+      it('with no human, a gated tool call exits the run', async () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
         pendingToolOnce('gth_web_fetch');
-        await runner.init('code', rated());
+        await runner.init('code', gateConfig({ mode: 'read-only' }));
         // No approval callback at all — CI, a one-shot run, a server.
 
         const error = (await runner
@@ -3588,8 +3667,7 @@ describe('GthAgentRunner', () => {
           .catch((e: unknown) => e as Error)) as NonInteractiveEscalationError | null;
 
         expect(error).toBeInstanceOf(NonInteractiveEscalationError);
-        expect(error?.outcome).toBe('destructive');
-        expect(error?.reason).toBe(FLOOR_REASON);
+        expect(error?.message).toContain('gth_web_fetch');
       });
 
       /**
@@ -3598,10 +3676,17 @@ describe('GthAgentRunner', () => {
        * rungs before any preflight runs, because there is no rating there to floor. The call is
        * asked about at every one of these rungs either way, so nothing is less gated below.
        */
-      it.each(['auto-safe', 'full-auto'] as const)('floors at %s', async (mode) => {
-        const verdict = await verdictFor(gateConfig({ mode }), 'gth_web_fetch');
-        expect(verdict?.outcome).toBe('destructive');
-      });
+      it.each(['auto-safe', 'full-auto'] as const)(
+        'the floor itself is rung-independent — it produces the same verdict at %s',
+        (mode) => {
+          // The floor is a property of the ANNOTATIONS, not of the rung; which rungs can reach it
+          // is the runner's business, asserted in `approvalRungTransition.spec.ts` and in the
+          // malformed-`run_shell_command` block below.
+          const verdict = floorVerdictFor(gateConfig({ mode }), 'gth_web_fetch');
+          expect(verdict?.outcome).toBe('destructive');
+          expect(verdict?.reason).toBe(FLOOR_REASON);
+        }
+      );
 
       it.each(['read-only', 'write'] as const)(
         'at %s there is no rating to floor, and the human is asked regardless',
@@ -4168,13 +4253,33 @@ describe('GthAgentRunner', () => {
       });
     });
 
-    it('at bypass nothing is remembered from a tool call', async () => {
+    /**
+     * §2.5 — at `bypass` there is nothing to remember because there is nothing to ask: [[EXT-80]]
+     * gates no non-shell tool there, so both calls run undecided. The old form of this cell asserted
+     * that the SECOND call still prompted, which was the pre-EXT-80 fall-through — a `bypass`
+     * session prompting on a tool call, which §2.5 says it must never do.
+     */
+    it('at bypass nothing is remembered from a tool call, because nothing is asked', async () => {
       const prompts = await driveCalls(toolConfig({ mode: 'bypass' }), [
         { name: 'gth_checklist', args: {} },
         { name: 'gth_checklist', args: {} },
       ]);
-      expect(prompts[0]?.grantPreview).toBeUndefined();
-      expect(prompts[1]).not.toBeNull();
+      expect(prompts[0]).toBeNull();
+      expect(prompts[1]).toBeNull();
+    });
+
+    /**
+     * CONTROL for the cell above: the very same sequence at `write` DOES prompt, so "nothing was
+     * asked" at `bypass` is a statement about the rung and not about a harness that never asks.
+     */
+    it('CONTROL: the same sequence at write does ask, and remembers', async () => {
+      const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
+        { name: 'gth_checklist', args: {} },
+        { name: 'gth_checklist', args: {} },
+      ]);
+      expect(prompts[0]).not.toBeNull();
+      expect(prompts[0]?.grantPreview).toContain('gth_checklist');
+      expect(prompts[1]).toBeNull();
     });
 
     /**

@@ -14,11 +14,14 @@
  *
  * 1. **A tool that is auto-approved gets NO suffix.** The absence of the sentence is what marks it
  *    free. Appending "this tool is already approved" would be the opposite of the design.
- * 2. **The suffix is derived from the rung in force AND from the set of tools the gate actually
+ * 2. **The suffix is derived from the rung in force AND from the set of tools that rung actually
  *    gates.** "A description that disagrees with what the gate will actually do is worse than no
- *    description at all" (§4.5), so {@link isGrantedAtRung} takes the gated set as a parameter and
- *    both backends pass the SAME set they wire into the approval interrupt. The two can therefore
- *    not drift: widening the gate ([[EXT-30]]) widens the descriptions in the same breath.
+ *    description at all" (§4.5), so {@link isGrantedAtRung} takes the LIVE gated set as a parameter
+ *    and both backends pass the SAME `resolveGatedToolNames` result. The two can therefore not
+ *    drift: widening what a rung gates ([[EXT-30]]) widens the descriptions in the same breath.
+ *    That set is narrower than the rung-independent one wired into the interrupt
+ *    (`resolveInterruptToolNames`), because a call the live rung does not gate is approved on
+ *    arrival and so is genuinely free.
  *
  * **Scope, per §4.3.** The *rater* covers the shell only: every other gated tool goes to the human
  * without a rating call until [[EXT-30]] widens the rater. The *gate* is wider than the rater. At
@@ -27,9 +30,9 @@
  * `readOnlyHint` says) and custom tools — so at those rungs a non-granted call always reaches the
  * human. At `auto-safe`, `full-auto` and `bypass` the gated set is the shell alone.
  *
- * {@link isAccessClassGrantedAtRung} is the single rule deciding which tools that leaves free, and
- * `config/shell-policy.ts`'s `resolveGatedToolNames` builds the gated set from that same rule. The
- * set wired into the interrupt and the grant reported here therefore cannot disagree.
+ * `config/shell-policy.ts`'s `isToolGatedAtRung` is the single rule for all of that, and both the
+ * live gated set and this module's grant are projections of it, so what a rung gates and the grant
+ * reported here cannot disagree.
  */
 import type { ApprovalRung } from '#src/config/shell-policy.js';
 
@@ -192,9 +195,10 @@ export function getRungToolDescriptionSuffix(rung: ApprovalRung): string | null 
  *   only by appearing in {@link BUILT_IN_TOOL_ACCESS}.
  *
  * **This is the one implementation of that rule.** {@link isGrantedAtRung} decides a grant with it,
- * and `config/shell-policy.ts`'s `resolveGatedToolNames` decides gated-set membership with it, so
- * the gate cannot escalate a call the descriptions and the rater's granted list call free — the
- * drift §4.5 names as worse than having no description at all. Two derivations of one rule is
+ * and `config/shell-policy.ts`'s `isToolGatedAtRung` decides gated-set membership with it — which
+ * is in turn what the backends' interrupt set and `GthAgentRunner`'s own live-rung check are built
+ * from. So the gate cannot escalate a call the descriptions and the rater's granted list call free
+ * — the drift §4.5 names as worse than having no description at all. Two derivations of one rule is
  * exactly what this function exists to prevent; do not inline it back into either caller.
  *
  * `bypass` is not special-cased: it grants everything for a reason unrelated to access class (the
@@ -212,14 +216,17 @@ export function isAccessClassGrantedAtRung(toolName: string, rung: ApprovalRung)
  *
  * @param toolName The registered tool name.
  * @param rung The rung in force for the session.
- * @param gatedTools The names the gate actually wires into the approval interrupt. **This is the
- *   parameter that keeps the descriptions honest**: a tool the gate does not gate cannot require
- *   approval, whatever a rung's table row says about tool classes, so it is granted. Both backends
- *   pass the same set they hand to `interruptOn` / `humanInTheLoopMiddleware`.
+ * @param gatedTools The LIVE gated set — what `rung` actually gates, i.e.
+ *   `resolveGatedToolNames` for the rung in force. **This is the parameter that keeps the
+ *   descriptions honest**: a tool the rung does not gate cannot require approval, whatever a rung's
+ *   table row says about tool classes, so it is granted. It is deliberately NOT the wider,
+ *   rung-independent set the backends wire into `interruptOn` (`resolveInterruptToolNames`): a call
+ *   the live rung does not gate is auto-approved the moment it arrives at the runner, so describing
+ *   it as needing approval would be a promise nothing keeps.
  *
  * Order:
  * 1. `bypass` grants everything (§2.5) — the gate is off.
- * 2. A tool the gate does not gate cannot require approval, so it is granted at every rung.
+ * 2. A tool the live rung does not gate cannot require approval, so it is granted at every rung.
  * 3. A gated tool is granted only where the rung's own grant covers its access class —
  *    {@link isAccessClassGrantedAtRung}, the same rule `resolveGatedToolNames` selects the gated set
  *    with. At the two deterministic rungs those two uses are complementary by construction: a tool

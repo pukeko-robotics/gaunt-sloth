@@ -2,6 +2,7 @@ import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import {
   resolveApprovals,
   resolveGatedToolNames,
+  resolveInterruptToolNames,
   resolveShellApprovalGate,
 } from '@gaunt-sloth/core/config.js';
 import { GthAbstractAgent } from '@gaunt-sloth/core/core/GthAbstractAgent.js';
@@ -50,6 +51,7 @@ import { createMiddleware, type InterruptOnConfig } from 'langchain';
 import { createDeepAgent, FilesystemBackend, type SubAgent } from 'deepagents';
 import {
   buildPermissions,
+  DEEP_AGENT_BUILT_IN_TOOL_NAMES,
   FILESYSTEM_TOOL_NAMES,
   guardFilesystemBackend,
   type FilesystemPermission,
@@ -714,40 +716,47 @@ export class GthDeepAgent extends GthAbstractAgent {
       this.command
     );
     //
-    // EXT-80: at `read-only` and `write` the interrupt also takes every bound tool the rung's access
-    // class does not auto-grant. `resolveGatedToolNames` is core's shared derivation — the same one
+    // EXT-80: at `read-only` and `write` every bound tool the rung's access class does not
+    // auto-grant must reach the human. Both sets below come from core's shared policy — the same one
     // the lean backend and `GthAgentRunner` call — so the three cannot disagree about what is gated.
     //
+    // **The interrupt is wired rung-INDEPENDENTLY, over every tool any rung could gate.** It is
+    // built once, here, while `/approvals <rung>` moves the rung for the rest of the session without
+    // rebuilding the graph; a set that carried the rung would be frozen at the rung the session
+    // started on, and since the default is `auto-safe`, typing `/approvals read-only` would leave
+    // exactly the write tools ungated. `GthAgentRunner.decideToolApproval` decides on the rung in
+    // force, so wiring wider does not gate wider.
+    //
     // **`boundToolNames` must include deepagents' OWN tools.** deepagents registers its filesystem
-    // tools and `execute` itself (this backend resolves with `filesystem: 'none'`), so they never
-    // appear in `passThroughTools`; deriving the set from that array alone would leave `write_file`,
-    // `edit_file` and `execute` ungated at `read-only` on this backend — precisely the defect this
-    // change exists to remove. Gating them by name works because deepagents installs the very same
-    // langchain `humanInTheLoopMiddleware`, which matches the model's tool CALLS by name in
-    // `afterModel` and so does not care which party registered the tool.
+    // tools, `execute`, `task` and `write_todos` itself (this backend resolves with
+    // `filesystem: 'none'`), so they never appear in `passThroughTools`; deriving the set from that
+    // array alone would leave `write_file`, `edit_file`, `execute`, `task` and `write_todos` ungated
+    // at `read-only` on this backend — precisely the defect this change exists to remove. Gating
+    // them by name works because deepagents installs the very same langchain
+    // `humanInTheLoopMiddleware`, which matches the model's tool CALLS by name in `afterModel` and so
+    // does not care which party registered the tool.
     //
     // Note this union keeps `execute`, unlike `additionalToolNames` below: that list answers "what
     // may the rater offer as a granted alternative", a different question from "what must the gate
     // stop". `execute` is deepagents' shell and has no access class, so it must be gated at both
     // deterministic rungs and offered as an alternative at none.
     const rung = resolveApprovals(this.config ?? undefined, this.command).rung;
-    const gatedTools = resolveGatedToolNames({
-      rung,
-      gateShell,
-      boundToolNames: [
-        ...(passThroughTools as StructuredToolInterface[])
-          .map((tool) => tool?.name)
-          .filter((name): name is string => typeof name === 'string' && name.length > 0),
-        ...FILESYSTEM_TOOL_NAMES,
-      ],
-    });
-    // Keyed off the gated SET, not `gateShell`: at a deterministic rung there is a gate to install
-    // even when the shell tool is disabled, and deepagents installs no HITL middleware at all when
-    // `interruptOn` is undefined.
+    const boundToolNames = [
+      ...(passThroughTools as StructuredToolInterface[])
+        .map((tool) => tool?.name)
+        .filter((name): name is string => typeof name === 'string' && name.length > 0),
+      ...DEEP_AGENT_BUILT_IN_TOOL_NAMES,
+    ];
+    const interruptTools = resolveInterruptToolNames({ gateShell, boundToolNames });
+    // The LIVE gated set — what THIS rung gates — for the §4.5 tool descriptions below.
+    const gatedTools = resolveGatedToolNames({ rung, gateShell, boundToolNames });
+    // Keyed off the interrupt SET, not `gateShell`: at a deterministic rung there is a gate to
+    // install even when the shell tool is disabled, and deepagents installs no HITL middleware at
+    // all when `interruptOn` is undefined.
     const interruptOn =
-      gatedTools.length > 0
+      interruptTools.length > 0
         ? (Object.fromEntries(
-            gatedTools.map((name) => [name, { allowedDecisions: ['approve', 'reject'] }])
+            interruptTools.map((name) => [name, { allowedDecisions: ['approve', 'reject'] }])
           ) as Record<string, boolean | InterruptOnConfig>)
         : undefined;
     if (shellGateNotice) {
