@@ -401,6 +401,30 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     }
   });
 
+  /**
+   * **The assertion that has to be on the RENDER, not on the constant.** Auto's honest clause —
+   * that [[EXT-29]]'s agent–rater negotiation is unbuilt, so `auto` stops exactly where `assisted`
+   * does — was twice written into sentence two, where the picker, the text fallback and the usage
+   * hint never print it. A whole-text `toContain` passes on that copy; only cutting the opener the
+   * way the surfaces cut it can fail on it. Core's own §10 block cannot host this: `firstSentence`
+   * lives in the agent package, which core does not depend on.
+   *
+   * Worded as "the opener must not sell a difference, and must say there is none", because the
+   * failure is not a missing phrase — it is a promise ("as few interruptions as possible", "judges
+   * each command instead of you") landing in the one clause a user reads while choosing.
+   */
+  it('the mode a user could most easily over-trust says so in the clause a picker RENDERS', async () => {
+    const { firstSentence } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    const { APPROVAL_RUNG_DESCRIPTIONS } = await import('@gaunt-sloth/core/config.js');
+    const opener = firstSentence(APPROVAL_RUNG_DESCRIPTIONS['auto']);
+    // The correction itself, in the rendered clause: auto stops where assisted stops.
+    expect(opener).toContain('still stops and asks you');
+    expect(opener).toMatch(/Assisted/);
+    // And no promise of the difference that is not there. Each of these shipped or nearly shipped.
+    expect(opener).not.toMatch(/few interruptions|instead of you|unattended|without stopping/i);
+    expect(opener).not.toMatch(/does not stop to ask/i);
+  });
+
   it('CFG-39: the text fallback shortens a single-sentence description without doubling the period', async () => {
     const { approvalPostureLines } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     for (const line of approvalPostureLines('assisted')) {

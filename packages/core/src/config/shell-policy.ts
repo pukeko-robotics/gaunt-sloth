@@ -474,6 +474,11 @@ export const APPROVAL_WRITE_MODIFIER_HINT =
  *    be false over the AG-UI and ACP servers, which never drain an approval interrupt ([[EXT-94]]).
  * 3. **`assisted` MUST keep the sentence saying files are still rewritten and deleted without
  *    asking** — it sounds safer than it is, and that clause is the correction.
+ * 4. **A qualification may not live in the second sentence alone.** The picker, the text fallback
+ *    and the usage hint all render `firstSentence` and nothing else, so the opener is the whole
+ *    message on the three surfaces a user reads while *choosing* a mode. An opener that sells a
+ *    behavioural difference the product does not have is not rescued by a sentence two those
+ *    surfaces never print — check a wording by rendering it, not by reading the constant.
  *
  * Everything these two sentences cannot hold lives at {@link APPROVAL_PROTECTION_DOCS_URL}, which
  * the surfaces print beside the copy rather than each description repeating it.
@@ -485,8 +490,8 @@ export const APPROVAL_RUNG_DESCRIPTIONS: Record<ApprovalRung, string> = {
     'else — shell, file changes, MCP and custom tools — comes to you, until you tell it to always ' +
     'allow a command.',
   write:
-    'Manual for work that is mostly editing, and like Manual a bounded stretch: the built-in file ' +
-    'tools run free inside your working folder. The shell is not confined that way, so shell ' +
+    'Manual, for work that is mostly editing, and like Manual a bounded stretch: the built-in ' +
+    'file tools run free inside your working folder. The shell is not confined that way, so shell ' +
     'commands, MCP calls and custom tools still come to you, until you tell it to always allow a ' +
     'command.',
   assisted:
@@ -495,11 +500,10 @@ export const APPROVAL_RUNG_DESCRIPTIONS: Record<ApprovalRung, string> = {
     'folder without asking — "safe" means each action is checked for reaching outside that folder ' +
     'or harming your system, not that nothing changes.',
   auto:
-    'For recoverable work where you want as few interruptions as possible: the auto-rater judges ' +
-    'each command instead of you. It is not safe — Gaunt Sloth will change and delete things, ' +
-    'your deny list still applies, and the negotiation that would let Auto settle a risky command ' +
-    'by itself is not built yet, so anything rated destructive still stops and asks you exactly ' +
-    'as Assisted does.',
+    'For recoverable work, but not a quieter mode yet: Auto still stops and asks you exactly ' +
+    'where Assisted does. It is not safe — Gaunt Sloth will change and delete things, your deny ' +
+    'list still applies, and the negotiation that would let Auto settle a risky command by ' +
+    'itself is not built yet.',
   bypass:
     'No gate, for a throwaway environment you would not mind losing. Whatever Gaunt Sloth decides ' +
     'to run, runs — nothing is rated and nothing is asked; only the refusals in your config’s ' +
@@ -1214,14 +1218,18 @@ export function resolveShellApprovalGate(
     };
   }
   if (isRatedRung(rung)) {
+    // **Both rated modes get the SAME tail, because they decide the same way.** The rater's
+    // mapping has no branch on `assisted` vs `auto`: an `attack` verdict halts and everything
+    // else short of `safe` escalates to the human, at both. A per-mode tail here would state a
+    // difference the gate does not have — and would state it in the startup notice, which a user
+    // meets while working out what their config does.
     return {
       gateShell,
       notice: {
         level: StatusLevel.INFO,
         message:
           `Shell tool (run_shell_command) rated by the auto-rater (approvals: ${rung}); ` +
-          'anything it does not rate safe is still ' +
-          (rung === 'assisted' ? 'escalated to you.' : 'refused or escalated.'),
+          'anything it does not rate safe is still refused or escalated to you.',
       },
     };
   }

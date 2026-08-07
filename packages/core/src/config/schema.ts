@@ -1079,8 +1079,8 @@ const RETIRED_APPROVALS_KEYS: ReadonlyArray<readonly [string, string]> = [
   [
     'strictness',
     'nothing — there are no strictness levels any more. Choose a mode instead: ' +
-      '"manual"/"write" never rate, "assisted" escalates anything not rated safe, ' +
-      '"auto" lets the auto-rater decide',
+      '"manual"/"write" never rate, "assisted" and "auto" escalate anything not rated safe, ' +
+      '"bypass" rates nothing',
   ],
   ['allowlist', '"approvals.allow" (a declared list of rule entries)'],
   [

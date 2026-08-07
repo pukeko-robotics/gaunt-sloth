@@ -49,7 +49,7 @@ describe('resolveShellApprovalGate (EXT-52 shared gate policy, CFG-27 ladder)', 
         gateShell: true,
         notice: {
           level: StatusLevel.INFO,
-          message: RATED_NOTICE('assisted', 'escalated to you.'),
+          message: RATED_NOTICE('assisted', 'refused or escalated to you.'),
         },
       };
       expect(resolveShellApprovalGate(config({}), 'code')).toEqual(expected);
@@ -57,15 +57,27 @@ describe('resolveShellApprovalGate (EXT-52 shared gate policy, CFG-27 ladder)', 
       expect(resolveShellApprovalGate(undefined, 'code')).toEqual(expected);
     });
 
-    it('auto says the rater REFUSES OR ESCALATES — it does not promise to ask you', () => {
-      expect(resolveShellApprovalGate(config({ approvals: 'auto' }), 'code')).toEqual({
-        gateShell: true,
-        notice: {
-          level: StatusLevel.INFO,
-          message: RATED_NOTICE('auto', 'refused or escalated.'),
-        },
-      });
-    });
+    /**
+     * **The two rated rungs get the SAME tail, and one shared assertion is what keeps it that way.**
+     * `mapVerdictToAction` has no branch on `assisted` vs `auto`: an `attack` verdict halts and
+     * everything else short of `safe` escalates to the human, at both. The notice used to say
+     * "escalated to you" at `assisted` and "refused or escalated" at `auto`, which read as a
+     * behavioural difference the gate does not have — in the startup line a user meets while
+     * working out what their config does. A per-rung expectation here is what let that drift in,
+     * so this asserts one tail across both.
+     */
+    it.each(['assisted', 'auto'] as const)(
+      'the rated rung %s announces the same outcome: refused or escalated to you',
+      (rung) => {
+        expect(resolveShellApprovalGate(config({ approvals: rung }), 'code')).toEqual({
+          gateShell: true,
+          notice: {
+            level: StatusLevel.INFO,
+            message: RATED_NOTICE(rung, 'refused or escalated to you.'),
+          },
+        });
+      }
+    );
 
     it.each(['manual', 'write'] as const)(
       'the unrated rung %s gates with the per-command prompt notice',

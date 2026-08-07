@@ -51,12 +51,20 @@ unambiguous meaning — and there is no per-prompt "turn the gate down from here
 
 - **One set of words, everywhere.** The mode's own description comes from
   `APPROVAL_RUNG_DESCRIPTIONS`, its display spelling from `APPROVAL_RUNG_LABELS`, and the picker,
-  the status notice, the text fallback and the tool-description suffixes all read those. A surface
-  that authors its own sentence about a mode becomes the one that contradicts the rest.
+  the status notice and the text fallback all read those. A surface that authors its own sentence
+  about a mode becomes the one that contradicts the rest. The one deliberate exception is
+  `RUNG_TOOL_DESCRIPTION_SUFFIXES`, which is addressed to the **model** rather than the user and so
+  carries its own wording — kept in step with the descriptions by hand, and worded per *outcome*,
+  never per mode, so two modes that decide identically cannot be described differently.
 - **Say what a mode is FOR, in at most two sentences, and let the first stand alone.** One-line
   forms render only `firstSentence`, so the opener carries the whole answer. The reasoning that does
   not fit goes to the docs page named by `APPROVAL_PROTECTION_DOCS_LINES`, printed beside the copy —
   label and bare URL as two separate lines, so a narrow pane never breaks the URL mid-path.
+- **A qualification may not live in the second sentence alone.** The picker, the text fallback and
+  the usage hint print the opener and nothing else, so a caveat parked in sentence two is invisible
+  at the moment a user is choosing. An opener that promises a behavioural difference is wrong wherever
+  the modes decide the same way — check a wording by rendering the surface, never by reading the
+  constant.
 - **Never advertise safety the gate cannot deliver.** No description may read as containment: the
   gate protects against accidents, not intent, and a working-folder claim is true of the built-in
   file *tools* and false of the agent as a whole. Copy cites only protections the user can inspect

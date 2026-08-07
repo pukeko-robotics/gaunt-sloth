@@ -440,7 +440,7 @@ your working folder granted as well as reads. The choice you are really making i
 | `approvals.mode: "ask"` | `approvals.mode: "write"` (the agent still edits files freely) or `"manual"` (it asks before writing too) |
 | `approvals.rater: { profile: "x" }` | `approvals.rater: "x"` |
 | `approvals.rater.strictness` | gone — choose a mode instead |
-| `approvals.rater.escalate` | gone — `assisted` escalates everything not rated safe; `auto` does not stop to ask |
+| `approvals.rater.escalate` | gone — both `assisted` and `auto` escalate everything not rated safe |
 | `approvals.allowlist` / `approvals.persistAllowlist` | `approvals.allow` / gone (as above) |
 | `run_shell_command` keeps | `enabled`, `timeout`, `maxOutputBytes` |
 

@@ -42,11 +42,13 @@ import type { ApprovalRung } from '#src/config/shell-policy.js';
  *
  * - `manual` and `write` share one sentence: at both rungs a non-granted call goes to the human,
  *   so the user's approval is a certainty, not a possibility.
- * - `assisted` softens `will` to `MAY`: the rater approves what it rates safe, so only some calls
- *   reach the user.
- * - `auto` gets its **own** wording because the consequence differs — the user is not asked
- *   there, so promising the user's approval would be false. What can happen is a refusal by the
- *   rater.
+ * - `assisted` and `auto` share one sentence, and `will` softens to `MAY`: the rater approves what
+ *   it rates safe, so only some calls reach the user. **The two rated modes may not be worded
+ *   apart.** The rater's mapping has no branch on `auto`, so a call it does not rate safe reaches
+ *   the human at `auto` exactly as it does at `assisted`; two wordings would encode a behavioural
+ *   difference that does not exist, in the model's own tool-selection input. If [[EXT-29]]'s
+ *   agent–rater negotiation lands and `auto` starts settling risky calls by itself, that is when
+ *   `auto` earns its own sentence — not before.
  * - `bypass` appends nothing to anything: no gate, so no sentence could be true.
  */
 export const RUNG_TOOL_DESCRIPTION_SUFFIXES: Readonly<Record<ApprovalRung, string | null>> = {
@@ -60,8 +62,8 @@ export const RUNG_TOOL_DESCRIPTION_SUFFIXES: Readonly<Record<ApprovalRung, strin
     "Calling this tool MAY require the user's approval if it does not look safe. Only use it when " +
     'it is impossible to achieve the result with the other provided tools.',
   auto:
-    'Calling this tool MAY be refused by the auto-rater if it does not look safe. Only use it ' +
-    'when it is impossible to achieve the result with the other provided tools.',
+    "Calling this tool MAY require the user's approval if it does not look safe. Only use it when " +
+    'it is impossible to achieve the result with the other provided tools.',
   bypass: null,
 };
 

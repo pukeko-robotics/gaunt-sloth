@@ -116,8 +116,10 @@ export interface GthDeepAgentParams {
    *
    * gsloth sets this for the opt-in `run_shell_command` tool whenever the shell tool is
    * enabled — including under `approvals.mode: "bypass"` in interactive `code` mode, where the tool
-   * stays gated so the runtime `/auto-approve` flag governs it (the runner seeds that flag ON
-   * from approvals.mode and approves silently). It is left `undefined` only for a non-interactive
+   * stays gated so the session's own approvals mode governs it (the runner seeds that mode from
+   * config and, at `bypass`, approves a gated shell call without prompting or rating; the deny
+   * list still runs first, and `/approvals <mode>` can switch a session back to a rated mode
+   * mid-run, which only works while the tool is still gated). It is left `undefined` only for a non-interactive
    * bypass run (exec / ask --write), whose single-shot path does not drain interrupts, so the tool
    * there runs inline without suspending. See `getAgentBuildParams`.
    */
