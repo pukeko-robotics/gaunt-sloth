@@ -497,6 +497,29 @@ describe('config schema (GS2-1 B1)', () => {
         }
 
         /**
+         * CFG-31 — `strictness` is the one retired key whose message DESCRIBES the ladder instead
+         * of naming a replacement key, so it goes stale whenever the modes change and nothing else
+         * catches it. It has been wrong once already: it put `auto` on a different footing from
+         * `assisted`, a divergence the rated modes do not have — `mapVerdictToAction` has no branch
+         * on `auto`, so anything not rated safe reaches the human at both. This cell pins the
+         * statement AND the absence of that false clause, so a message that splits the two rated
+         * modes fails here rather than shipping as migration advice.
+         */
+        it('the retired strictness message describes the ladder without splitting the rated modes', () => {
+          const issues = findDeprecatedConfigIssues({
+            llm: { type: 'openai' },
+            approvals: { mode: 'assisted', strictness: 'strict' },
+          });
+          expect(issues).toHaveLength(1);
+          const message = issues[0].message;
+          expect(message).toContain('there are no strictness levels any more');
+          expect(message).toContain('"manual"/"write" never rate');
+          expect(message).toContain('"assisted" and "auto" escalate anything not rated safe');
+          expect(message).toContain('"bypass" rates nothing');
+          expect(message).not.toContain('lets the auto-rater decide');
+        });
+
+        /**
          * CFG-39 — the retired `mode` spellings and the mode each one names now. The three renames
          * map to the SAME mode under its new name; `ask` maps to the two modes that ask about
          * everything. **Every mapping is equally- or less-permissive**, which is the property this

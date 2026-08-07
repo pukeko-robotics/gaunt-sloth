@@ -225,11 +225,13 @@ Switch mode for the current session with `/approvals manual|write|assisted|auto|
 
 The cheapest approval is the one that never happens, so the agent is told the posture up front: at
 every mode except `bypass`, the description of each tool that needs approval gains a sentence
-saying so, and the tools that run freely say nothing. The shell is the only gated tool today, so it
-is the only description that changes — at `manual` and `write` it says the call *will* require
-your approval, at `assisted` that it *may*, and at `auto` that the auto-rater may refuse it.
-Each sentence also tells the agent to reach for the shell only when the other tools cannot do the
-job.
+saying so, and the tools that run freely say nothing. Which descriptions those are follows the
+mode's row in the table above — at `assisted` and `auto` only the shell is gated, so only the
+shell's changes; at `manual` and `write` everything the mode does not run freely carries one.
+There are two wordings, not one per mode: at `manual` and `write` the sentence says the call
+*will* require your approval, at `assisted` and `auto` that it *may* — the two rated modes are
+worded the same because they behave the same. Each sentence also tells the agent to use that tool
+only when the result cannot be achieved with the other tools it has.
 
 The auto-rater backs that up at `assisted` and `auto`. When it does not rate a command safe
 and one of the tools the agent already has would do the same job, it names that tool in its
