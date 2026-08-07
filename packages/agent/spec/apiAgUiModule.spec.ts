@@ -979,6 +979,112 @@ describe('apiAgUiModule', () => {
 
       expect(resultIds()).toEqual(['call-new']);
     });
+
+    // The whole point of the defect is that it only shows up ACROSS turns, in a client that folds
+    // the returned events back into its own history. The three assertions above each look at one
+    // request; this one replays the field sequence — ask, fulfil the capture, follow up — through a
+    // stand-in for `@ag-ui/client`'s applier, and checks the history it is left holding.
+    it('leaves the client holding exactly one result per tool call across a three-turn capture', async () => {
+      /** `@ag-ui/client`'s applier, restricted to the events this sequence produces. */
+      const clientHistory: Array<Record<string, unknown>> = [];
+      const applyEvent = (ev: Record<string, string>) => {
+        if (ev.type === 'TEXT_MESSAGE_START') {
+          clientHistory.push({ id: ev.messageId, role: 'assistant', content: '' });
+        } else if (ev.type === 'TOOL_CALL_START') {
+          let parent = clientHistory.find((m) => m.id === ev.parentMessageId);
+          if (!parent) {
+            parent = { id: ev.parentMessageId, role: 'assistant', content: '', toolCalls: [] };
+            clientHistory.push(parent);
+          }
+          ((parent.toolCalls ??= []) as Array<Record<string, unknown>>).push({
+            id: ev.toolCallId,
+            type: 'function',
+            function: { name: ev.toolCallName, arguments: '{}' },
+          });
+        } else if (ev.type === 'TOOL_CALL_RESULT') {
+          // Verbatim: locate the parenting assistant message, skip PAST any tool messages already
+          // there, splice in — with no check for an existing result under this toolCallId.
+          const entry = {
+            id: ev.messageId,
+            role: 'tool',
+            toolCallId: ev.toolCallId,
+            content: ev.content,
+          };
+          const parentIdx = clientHistory.findIndex(
+            (m) =>
+              m.role === 'assistant' &&
+              (m.toolCalls as Array<{ id: string }> | undefined)?.some(
+                (t) => t.id === ev.toolCallId
+              )
+          );
+          if (parentIdx === -1) clientHistory.push(entry);
+          else {
+            let at = parentIdx + 1;
+            while (at < clientHistory.length && clientHistory[at].role === 'tool') at++;
+            clientHistory.splice(at, 0, entry);
+          }
+        }
+      };
+
+      const drive = async (handler: (_req: unknown, _res: unknown) => Promise<void>) => {
+        mockEncoderInstance.encode.mockClear();
+        await handler(
+          makeRunReq({
+            threadId: 'rc33-three-turn',
+            tools: CLIENT_TOOLS,
+            messages: structuredClone(clientHistory),
+          }),
+          makeMockRes()
+        );
+        for (const call of mockEncoderInstance.encode.mock.calls) applyEvent(call[0]);
+      };
+
+      const handler = await getRunHandler();
+
+      // Turn 1 — the user asks; the graph calls the client tool and suspends.
+      clientHistory.push({ id: 'u1', role: 'user', content: 'Take a photo.' });
+      gthLangChainAgentStreamWithEventsMock.mockReturnValue(
+        (async function* () {
+          yield { type: 'tool_start' as const, id: 'call-capture', name: 'capture_image' };
+          yield { type: 'tool_end' as const, id: 'call-capture' };
+        })()
+      );
+      await drive(handler);
+
+      // Turn 2 — the client fulfils the tool, appends ITS OWN result, and re-runs. The graph
+      // resumes and streams the same result back out as a `tool_result` event.
+      clientHistory.push({
+        id: 't1',
+        role: 'tool',
+        toolCallId: 'call-capture',
+        content: '{"mimeType":"image/png","data":"QUFBQg=="}',
+      });
+      gthLangChainAgentStreamWithEventsResumeMock.mockReturnValue(
+        (async function* () {
+          yield {
+            type: 'tool_result' as const,
+            id: 'call-capture',
+            content: '{"mimeType":"image/png","data":"QUFBQg=="}',
+          };
+          yield { type: 'text' as const, delta: 'Got the photo.' };
+        })()
+      );
+      await drive(handler);
+
+      // Turn 3 — an ordinary follow-up. This is the turn that 400s in the field.
+      clientHistory.push({ id: 'u2', role: 'user', content: 'save to downloads' });
+      gthLangChainAgentStreamWithEventsMock.mockReturnValue(textStream('No write tool.'));
+      await drive(handler);
+
+      const captureResults = clientHistory.filter(
+        (m) => m.role === 'tool' && m.toolCallId === 'call-capture'
+      );
+      expect(captureResults).toHaveLength(1);
+      // The history the client would replay is one the provider accepts: every tool call it
+      // carries has exactly one result.
+      const toolIds = clientHistory.filter((m) => m.role === 'tool').map((m) => m.toolCallId);
+      expect(new Set(toolIds).size).toBe(toolIds.length);
+    });
   });
 
   // ─── RC-22: config.middleware reaches the per-toolset (client-tool) agent ───
