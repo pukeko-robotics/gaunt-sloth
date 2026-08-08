@@ -124,11 +124,22 @@ export class ShellNegotiationState {
    * object and never `undefined`: a cleared transcript IS the round-1 case, with no `if` at the call
    * site — which is exactly what makes §5.6's *"a cleared transcript means a round-1 context"* fall
    * out of the reset rather than out of a second branch that could disagree with it.
+   *
+   * **The user messages are admitted from round 2, never at round 1**, and the transcript is what
+   * decides which round this is. §5.1 is unambiguous — *"Round 1 sees the command alone — nothing
+   * else"* — and §5.6 spells out the consequence for the round right after a reset: *"the command
+   * and nothing else — no transcript, no user messages, because that is what round 1 means"*.
+   *
+   * Keying them on the transcript rather than on a flag is what makes those two sentences the same
+   * fact. The messages themselves are NOT cleared by the reset (they are the conversation, not the
+   * argument), so §5.6's convergence still works: the reply *"just the last two"* is out of view for
+   * the round-1 rating after the reset and in view for the round-2 rating that follows it — which is
+   * exactly the row the spec's table shows it arriving on.
    */
   contextFor(justification?: string): RaterNegotiationContext {
     return {
       justification,
-      userMessages: [...this.userMessages],
+      userMessages: this.rounds.length === 0 ? [] : [...this.userMessages],
       priorRounds: [...this.rounds],
     };
   }
