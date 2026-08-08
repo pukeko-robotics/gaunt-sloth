@@ -112,7 +112,8 @@ export interface CommitCoAuthor {
  *
  * Gaunt Sloth has **no dedicated git-commit tool** — the agent commits by calling
  * `run_shell_command` with `git commit`, composing the message (including any trailer) itself. That
- * leaves two things it must be told, and both live here because both are about committing:
+ * leaves three things it must be told, and all three live here because all three are about
+ * committing:
  *
  * 1. **WHO the co-author is.** Left unguided, models emit their own model name from trained habit,
  *    which is factually wrong: the commit was produced by *Gaunt Sloth*, not by the model. The note
@@ -127,6 +128,24 @@ export interface CommitCoAuthor {
  *    than merely forbidding the construct — naming a construct without its mechanism has been
  *    measured not to work. A file path carries no shell metacharacters, so the file form removes the
  *    failure mode instead of asking the model to avoid it.
+ * 3. **HOW the change is staged.** Rule 2 leaves the message file sitting untracked in the working
+ *    tree at `git add` time, so an unscoped `git add -A` / `git add .` / `git commit -a` stages it —
+ *    along with every other untracked file — and it lands in the commit and on the pull request.
+ *    The note states that mechanism and steers staging to named paths, leaving an unscoped add as a
+ *    last resort taken only after looking at the working tree. It is phrased as a staging rule, not
+ *    as a "delete the file when you are done" step, because a rule that binds at `git add` time
+ *    fires in the MIDDLE of the flow, while the model is still acting; the rule at the end, after
+ *    the interesting work is finished, is the one that gets dropped. EXT-97 — this is an interim
+ *    mitigation. The mechanism that owns the file end to end (a scratchpad the message is written
+ *    to, and a commit flow that cleans up after itself) is EXT-93. The conditional scratchpad
+ *    sentence beside it names NO path on purpose: the built-in write tool refuses any path outside
+ *    the working folder at every approval mode, so a note naming one buys a refused call and a
+ *    wasted turn. It is conditional on the session having HANDED the model a location, so today it
+ *    is inert and when EXT-93 lands it becomes live with no further prompt edit.
+ *
+ * Rule 3 is UNIVERSAL and is composed outside the `filesystem` ternary below: an unscoped add
+ * sweeps the message file in however that file came to be written, so a rule placed inside the
+ * ternary would silently be missing from half the configurations.
  *
  * **The clause that names the writing tool is gated on `filesystem`** (EXT-84), through the one
  * shared derivation {@link isWriteFileToolRegistered} — the same interpretation that decides which
@@ -193,7 +212,18 @@ export function appendCommitCoAuthorNote(
     'commands, backticks and markup out of it.\n' +
     'Never pass a commit message inline with the -m option: inside double quotes a POSIX shell ' +
     'expands backtick and dollar-parenthesis constructs before git ever runs, so a message that ' +
-    `quotes code is executed as a command. ${messageFileRule}`;
+    `quotes code is executed as a command. ${messageFileRule}\n` +
+    // EXT-97 — universal, so composed OUTSIDE the `filesystem` ternary above: it is about WHERE the
+    // file goes and HOW the change is staged, not about which tool writes it.
+    'If this session has given you a scratchpad location, write that message file there instead ' +
+    'of into the project.\n' +
+    'Stage the files you changed by naming their paths, one git add per path or several paths in ' +
+    'one git add. Do not stage with git add -A, git add . or git commit -a: an unscoped add ' +
+    'stages every untracked file in the working tree, including the commit message file you just ' +
+    'wrote, so it lands in the commit and on the pull request. Never stage the commit message ' +
+    'file itself. Only when a change genuinely touches too many files to name is an unscoped add ' +
+    'acceptable, and then look at the working tree with git status first, so you see everything ' +
+    'it is about to sweep in.';
   return systemPrompt ? `${systemPrompt}\n\n${note}` : note;
 }
 
