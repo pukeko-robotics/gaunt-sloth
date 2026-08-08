@@ -6,6 +6,7 @@ import {
   describeGrantedBuiltInTools,
   type GrantedToolSummary,
   GthConfig,
+  isNegotiatingRung,
   isRatedRung,
   type McpAnnotationTrustChange,
   type McpAnnotationTrustView,
@@ -64,8 +65,13 @@ import {
   openWorldToolFloorReason,
   RATER_DEFAULT_TIMEOUT_MS,
   rateShellCommand,
+  type RaterNegotiationContext,
+  type RaterNegotiationRound,
   type ShellSafetyVerdict,
 } from '#src/core/shell/rater.js';
+import { buildHardlineRefusal, checkHardline } from '#src/core/shell/hardline.js';
+import { renderNegotiationTranscript, ShellNegotiationState } from '#src/core/shell/negotiation.js';
+import { buildRejectionMessage } from '#src/core/shell/rejection.js';
 import {
   type ApprovalRuleDecision,
   type ApprovalRuleLists,
@@ -119,6 +125,59 @@ const CRASH_TRANSCRIPT_TAIL_MESSAGES = 8;
 function copyApprovalEntry(entry: ApprovalEntry): ApprovalEntry {
   if (entry.type === 'shell' || typeof entry.pattern === 'string') return { ...entry };
   return { ...entry, pattern: { ...entry.pattern } };
+}
+
+/**
+ * [[EXT-29]] §5.1 — the `justification` argument of a `run_shell_command` call, when the model
+ * supplied a usable one.
+ *
+ * Read defensively for the same reason `command` is: these are model-authored arguments arriving
+ * through a schema the graph validated but that this method does not re-validate, so a non-string
+ * or a whitespace-only value is *absent* rather than a second spelling of empty. That matters at
+ * the far end: a blank justification would render an empty `<justification>` fence in the rating
+ * prompt and be recorded as a round in which the agent argued something, which it did not.
+ */
+function shellJustification(args: Record<string, unknown> | undefined): string | undefined {
+  const value = args?.justification;
+  if (typeof value !== 'string') return undefined;
+  return value.trim().length === 0 ? undefined : value;
+}
+
+/**
+ * [[EXT-29]] §5.1 — the text of the human messages in a turn's input, for the rater's last-5 window.
+ *
+ * Structural and fail-soft, like `runStats`'s accumulator: the runner is handed `BaseMessage`s from
+ * several surfaces (readline, TUI, ACP, AG-UI) and a multimodal turn's `content` is an array of
+ * blocks rather than a string. Only the text is taken — §4.3 admits no file contents, no tool
+ * output and no fetched pages, and an image block is none of the three.
+ */
+function humanMessageTexts(messages: readonly Message[]): string[] {
+  const texts: string[] = [];
+  for (const message of messages) {
+    try {
+      const type = message?.getType?.();
+      if (type !== 'human') continue;
+      const content: unknown = message.content;
+      if (typeof content === 'string') {
+        texts.push(content);
+        continue;
+      }
+      if (!Array.isArray(content)) continue;
+      const parts = content
+        .filter(
+          (block): block is { type: 'text'; text: string } =>
+            typeof block === 'object' &&
+            block !== null &&
+            (block as { type?: unknown }).type === 'text' &&
+            typeof (block as { text?: unknown }).text === 'string'
+        )
+        .map((block) => block.text);
+      if (parts.length > 0) texts.push(parts.join('\n'));
+    } catch {
+      /* fail-soft: an odd message shape just means that message contributes nothing */
+    }
+  }
+  return texts;
 }
 
 /**
@@ -207,6 +266,13 @@ export class GthAgentRunner {
    */
   private persistedGrants: PersistedApprovalGrants | null = null;
   private persistedGrantsLoaded = false;
+
+  /**
+   * [[EXT-29]] §5 — the state of the agent↔rater negotiation at `auto`: the transcript, §5.3's
+   * consecutive-rejection counter and the reachability bound. Instance-scoped for the same reason
+   * the grant stores are — a concurrent ACP / AG-UI session must not inherit another's argument.
+   */
+  private readonly negotiation = new ShellNegotiationState();
 
   /**
    * @param agentFactory Produces the {@link GthAgentInterface} the runner drives.
@@ -524,6 +590,12 @@ export class GthAgentRunner {
     this.resetRunStats();
     // GS2-48 — record this turn's transcript tail for the crash handler.
     updateCrashContext({ transcriptTail: messages.slice(-CRASH_TRANSCRIPT_TAIL_MESSAGES) });
+    // [[EXT-29]] §5 — a new user turn is the human being reached, so it ends any negotiation still
+    // standing from the previous one and clears BOTH bounds. The turn's own messages then enter
+    // §5.1's last-5 window, which is what makes "just the last two" reach the rater at all — the
+    // reply that narrows what the agent proposes is worthless to the gate if only the agent hears it.
+    this.negotiation.humanReached();
+    this.negotiation.noteUserMessages(humanMessageTexts(messages));
 
     debugLog('Processing messages...');
     debugLogObject('Input Messages', messages);
@@ -803,6 +875,23 @@ export class GthAgentRunner {
    * whenever the shell gate is on, so §2.5's rule that the deny list survives `bypass` is untouched.)
    */
   private async decideToolApproval(tool: PendingToolInterrupt): Promise<ToolApprovalDecision> {
+    const decision = await this.decideToolApprovalInner(tool);
+    // [[EXT-29]] §5.3 — **the reset, at the one site that sees every approval.** "A successful
+    // intervening tool call — the agent going away to gather information and returning better
+    // informed — resets [the count], because that is progress, not ping-pong." Every way a call can
+    // be let through arrives here: the rung not gating it, an allow entry, the §3.2 tripwire, a
+    // `safe` rating, the human saying yes. Wrapping is what makes that exhaustive — an approval
+    // added below cannot forget to reset, and the alternative (a call at each of the six `approve`
+    // returns) is a §5.3 hole that is invisible the day it opens.
+    //
+    // Nothing else resets: a `reject` (the negotiation's own rounds, and the §8 floor's refusal)
+    // must not, or the bound it is counted against could never be reached.
+    if (decision.type === 'approve') this.negotiation.noteProgress();
+    return decision;
+  }
+
+  /** The decision itself; {@link decideToolApproval} wraps it with §5.3's reset. */
+  private async decideToolApprovalInner(tool: PendingToolInterrupt): Promise<ToolApprovalDecision> {
     const command = typeof tool.args?.command === 'string' ? (tool.args.command as string) : null;
     const isShellCommand = tool.name === SHELL_TOOL_NAME && command !== null;
     const approvals = this.sessionApprovals;
@@ -870,6 +959,58 @@ export class GthAgentRunner {
       return { type: 'approve', scope: 'once' };
     }
 
+    // (2b) [[EXT-29]] §4.2/§8 — **the hardline floor, consulted BEFORE anything opens.** "If the
+    // deterministic floor matches, the command is refused at execution regardless of rating, rung,
+    // or approval — so it MUST NOT be negotiated and SHOULD NOT be escalated."
+    //
+    // **This is a second call site, not the exec-time one, and the promise is different.** The
+    // toolkit's check guarantees such a command never RUNS; it does nothing about what happens on
+    // the way there, so without this line `auto` spends three rating calls and a human dialog
+    // arguing about a fork bomb that was never going to run — and "asking a human to approve
+    // something that is then refused anyway teaches them their answer does not count, which is
+    // worse than a flat refusal". The exec-time check stays exactly where it is: it is the
+    // guarantee, this is the courtesy of not wasting a decision on it.
+    //
+    // **Scoped to the rated rungs, which is where §4.2 speaks.** `bypass` has already returned
+    // above, and at `manual`/`write` the human is the gate rather than a second opinion on a
+    // rating; neither is a path §5 or §4.2's table governs. It sits above the allow branch because
+    // the floor is unappealable — an allow entry cannot buy past it — and below the deny check
+    // because a deny match refuses the same call for the user's own reason.
+    //
+    // **`checkHardline` is asked, not `catastrophic`.** They are different predicates and the
+    // difference is measured: EXT-60 recorded `chown -R /` as missing from the floor, so "the floor
+    // matched" and "the rater said catastrophic" name overlapping, non-identical sets. A
+    // `catastrophic` rating still escalates (§4.2 settled that deliberately); only a floor match
+    // refuses here.
+    // **The floor covers the deterministic subset of BOTH severe outcomes (§8), and §4.2 gives them
+    // different consequences, so this branches on which one matched.** `catastrophic` is refused;
+    // `attack` ends the run, which is what §8's *"so §4.2 does not depend on a model being right"*
+    // asks for — the halt on a credential source piped to a network sink no longer waits for the
+    // rater to agree. Collapsing them would be wrong in both directions: refusing an exfiltration
+    // lets a session that has just evidenced compromise carry on, and halting on `rm -rf /` spends
+    // the one run-ending control on something the model can simply be told not to do.
+    if (isShellCommand && command !== null && isRatedRung(approvals.rung)) {
+      const floor = checkHardline(command);
+      if (floor?.subset === 'attack') {
+        // §4.2 — not a rejection the model can respond to, and no rounds either way.
+        this.negotiation.humanReached();
+        throw new AttackHaltError(command, floor.description);
+      }
+      if (floor) {
+        const refusal = buildHardlineRefusal(command, floor);
+        // Visible, because the exec-time refusal is: a refusal the user never sees reads as the
+        // agent quietly deciding not to do what it was asked.
+        this.statusUpdate(StatusLevel.WARNING, `\n⛔ ${refusal}`);
+        // §7's moves are deliberately absent — see `buildHardlineRefusal`. Neither bound moves
+        // either: this refusal opens no round, so counting it would walk an unappealable refusal
+        // toward the human escalation §4.2 says it must not reach. It follows that a model spamming
+        // a floor-matching command is bounded only by the tool-loop guard and `recursionLimit`,
+        // which is the right place for "the model did something unproductive" to end and the wrong
+        // place for a fork bomb to acquire an audience.
+        return { type: 'reject', message: refusal };
+      }
+    }
+
     // (3) Escalate — §3.2 sends it straight to the human with no rating call, outranking any allow
     // entry that also matched.
     //
@@ -934,7 +1075,18 @@ export class GthAgentRunner {
         // how to rewrite it, and the rewrite it named turned `cd src && ls` into a no-op plus a
         // listing of the wrong directory, both exit 0. The parser's finding is now a neutral note
         // in the rating prompt (`buildRaterPrompt`) and nothing else.
-        const verdict = await this.rateCommand(subject.command, { allowMatched: false });
+        // [[EXT-29]] §5.1 — the negotiation this rating is a round of. At `assisted` the context is
+        // empty and `negotiable` is false, so the whole call is byte-identical to what it was.
+        const negotiable = isNegotiatingRung(approvals.rung);
+        const justification = negotiable ? shellJustification(tool.args) : undefined;
+        const context: RaterNegotiationContext | undefined = negotiable
+          ? this.negotiation.contextFor(justification)
+          : undefined;
+        const verdict = await this.rateCommand(subject.command, {
+          allowMatched: false,
+          negotiation: context,
+          negotiable,
+        });
         const decision = mapVerdictToAction(subject.command, verdict, { rung: approvals.rung });
         if (decision.action === 'approve') {
           // Scope `once`: rater approvals are NEVER persisted to the allow-list.
@@ -942,7 +1094,39 @@ export class GthAgentRunner {
         }
         if (decision.action === 'halt') {
           // §4.2 — not a rejection the model can respond to. It ends the agent loop.
+          //
+          // **`neg-04b`: a negotiation already in flight ends here too**, mid-way and without a
+          // further round. `attack` is exempt from the whole mechanism (§5.1), so the counter, the
+          // transcript and the loop all stop together rather than the argument continuing around a
+          // halt that only ended one call.
+          this.negotiation.humanReached();
           throw new AttackHaltError(subject.command, decision.verdict?.reason ?? '');
+        }
+        if (decision.action === 'reject') {
+          // §5 — `destructive` at `auto`. The round is recorded first, so the attempt being ruled
+          // on is itself on the transcript the human sees (§5.6).
+          const outcome = this.negotiation.recordRejection({
+            command: subject.command,
+            ...(justification ? { justification } : {}),
+            outcome: decision.verdict?.outcome ?? 'destructive',
+            reason: decision.verdict?.reason ?? '',
+          });
+          if (outcome === 'reject') {
+            // §7 — the refusal PLUS the moves: re-call with a justification (the tool argument
+            // exists for this), call a different command, or ask the user. Rendered through the
+            // one builder the human's own "no" uses, differing only in who refused, so the model
+            // never meets two shapes of the same event.
+            return {
+              type: 'reject',
+              message: buildRejectionMessage({
+                source: 'rater',
+                toolName: tool.name,
+                verdict: decision.verdict,
+              }),
+            };
+          }
+          // A bound is spent — the agent and the rater cannot agree, and that is a human's call.
+          // Falls through to the escalation below, carrying this last round's verdict.
         }
         // Escalate: carry the verdict (the honest one — see mapVerdictToAction) to the human.
         safetyVerdict = decision.verdict;
@@ -970,14 +1154,28 @@ export class GthAgentRunner {
       }
     }
 
+    // [[EXT-29]] §6 — **the human is shown the whole negotiation, not the last attempt.** Snapshot
+    // it BEFORE the state is cleared, because "that the agent proposed the same command three times
+    // unchanged, against two rejections that each told it what to fix, is itself the most important
+    // thing on the screen". Empty for every escalation that had no negotiation — `catastrophic`
+    // (which §4.2 gives no rounds at all), a declared escalate entry, an unrated rung, a tool
+    // subject — so nothing renders a heading over an argument that never happened.
+    const negotiationRounds: readonly RaterNegotiationRound[] = this.negotiation.transcript();
+    // Reaching a person ends the negotiation (§5.3) and is the ONE thing that clears the
+    // reachability bound: an escalation the human is about to answer is exactly the event that
+    // bound exists to make happen, so it is spent here rather than accumulated across it.
+    this.negotiation.humanReached();
+
     if (!this.toolApprovalCallback) {
       // §6.2 — no one to ask. Exit non-zero with everything a person needs, rather than handing
-      // the model a rejection it would just work around.
+      // the model a rejection it would just work around. The transcript goes into the message
+      // because that message is the only thing anyone sees on this path.
       throw new NonInteractiveEscalationError(
         command ?? tool.name,
         safetyVerdict?.outcome,
         safetyVerdict?.reason,
-        escalatedBy
+        escalatedBy,
+        renderNegotiationTranscript(negotiationRounds) ?? undefined
       );
     }
 
@@ -1008,13 +1206,14 @@ export class GthAgentRunner {
     // sticky choice would store (§6) — without mutating the original interrupt object the caller
     // holds.
     const pending: PendingToolInterrupt =
-      safetyVerdict || escalatedBy || grantPreview
+      safetyVerdict || escalatedBy || grantPreview || negotiationRounds.length > 0
         ? {
             ...tool,
             ...(safetyVerdict ? { safetyVerdict } : {}),
             ...(escalatedBy ? { escalatedBy } : {}),
             ...(grantPreview ? { grantPreview } : {}),
             ...(grantSummary ? { grantSummary } : {}),
+            ...(negotiationRounds.length > 0 ? { negotiationRounds } : {}),
           }
         : tool;
     const decision = await this.toolApprovalCallback(pending);
@@ -1033,11 +1232,22 @@ export class GthAgentRunner {
    */
   private async rateCommand(
     command: string,
-    opts: { allowMatched: boolean }
+    opts: {
+      allowMatched: boolean;
+      /**
+       * [[EXT-29]] §5.1 — the exchange so far. `undefined` on the tripwire path and at `assisted`,
+       * where the rating is a round-1 rating by construction.
+       */
+      negotiation?: RaterNegotiationContext;
+      /** [[EXT-29]] §5.2 — whether the rejection will be handed back to the agent. */
+      negotiable?: boolean;
+    }
   ): Promise<ShellSafetyVerdict> {
     const approvals = this.sessionApprovals;
     const verdict = await rateShellCommand(command, this.config as GthConfig, {
       home: env?.HOME,
+      negotiation: opts.negotiation,
+      negotiable: opts.negotiable,
       // The profile's model when one is configured; undefined lets rateShellCommand use the
       // session model. `init` throws rather than leaving this undefined for a NAMED profile, so
       // a configured profile can never silently degrade to the session model here.
@@ -1350,6 +1560,12 @@ export class GthAgentRunner {
     this.resetRunStats();
     // GS2-48 — record this turn's transcript tail for the crash handler.
     updateCrashContext({ transcriptTail: messages.slice(-CRASH_TRANSCRIPT_TAIL_MESSAGES) });
+    // [[EXT-29]] §5 — a new user turn is the human being reached, so it ends any negotiation still
+    // standing from the previous one and clears BOTH bounds. The turn's own messages then enter
+    // §5.1's last-5 window, which is what makes "just the last two" reach the rater at all — the
+    // reply that narrows what the agent proposes is worthless to the gate if only the agent hears it.
+    this.negotiation.humanReached();
+    this.negotiation.noteUserMessages(humanMessageTexts(messages));
     debugLog('Processing messages (event stream)...');
     debugLogObject('Input Messages', messages);
     yield* this.agent.streamWithEvents(messages, this.runConfig, signal);
@@ -1450,6 +1666,10 @@ export class GthAgentRunner {
    * of any checkpointer-specific delete API, mirroring how `init()` mints the initial config.
    */
   public resetThread(): void {
+    // [[EXT-29]] §5.1 — the negotiation goes with the thread, user messages included. The rater's
+    // last-5 window is conversation context; leaving it behind a `/clear` would quote the user's
+    // previous conversation into a rating made after they asked for it to be forgotten.
+    this.negotiation.clear();
     this.runConfig = getNewRunnableConfig();
     debugLogObject('Reset Runnable Config', this.runConfig);
   }

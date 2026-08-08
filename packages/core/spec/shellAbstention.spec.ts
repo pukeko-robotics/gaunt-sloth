@@ -395,7 +395,10 @@ describe('EXT-81 — the parser preflight note', () => {
       };
       for (const rung of ['assisted', 'auto'] as const) {
         const decision = mapVerdictToAction('pwd && ls', failClosed, { rung });
-        expect(decision.action, rung).toBe('escalate');
+        // The claim is "never approves"; where a non-approval goes is the rung's business, and at
+        // `auto` a `destructive` is [[EXT-29]] §5's negotiation rather than a human.
+        expect(decision.action, rung).not.toBe('approve');
+        expect(decision.action, rung).toBe(rung === 'auto' ? 'reject' : 'escalate');
         expect(decision.verdict?.reason, rung).toBe(failClosed.reason);
       }
     });

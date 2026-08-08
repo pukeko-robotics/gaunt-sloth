@@ -1,6 +1,6 @@
 import type { GthConfig } from '#src/config.js';
 import type { DeclaredToolAnnotations } from '#src/core/approvals/annotations.js';
-import type { ShellSafetyVerdict } from '#src/core/shell/rater.js';
+import type { RaterNegotiationRound, ShellSafetyVerdict } from '#src/core/shell/rater.js';
 import type { BaseMessage } from '@langchain/core/messages';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import type { StructuredToolInterface } from '@langchain/core/tools';
@@ -202,6 +202,20 @@ export interface PendingToolInterrupt {
    * `recordApproval` would write.
    */
   grantSummary?: string;
+  /**
+   * [[EXT-29]] §6 — **every round of the §5 negotiation that preceded this escalation**, oldest
+   * first, when one did.
+   *
+   * The user is not asked to rule on the final command in isolation: *that the agent proposed
+   * `git reset --hard origin/main` three times unchanged, against two rejections that each told it
+   * what to fix, is itself the most important thing on the screen, and it is invisible if only the
+   * last attempt is shown.* `core/shell/negotiation.ts`'s `renderNegotiationTranscript` is the
+   * shared renderer, so two surfaces cannot describe one exchange two ways.
+   *
+   * Absent for every escalation that had no negotiation — `catastrophic` (§4.2 gives it no rounds
+   * at all), a declared `approvals.escalate` entry, an unrated rung, a tool subject.
+   */
+  negotiationRounds?: readonly RaterNegotiationRound[];
 }
 
 /**

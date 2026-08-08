@@ -24,6 +24,8 @@ import {
   NEVER_AUTO_APPROVED_CLAUSE,
   openWorldToolFloorReason,
   rateShellCommand,
+  RATER_NEGOTIABLE_REJECTION_GUIDANCE,
+  RATER_NEGOTIATION_CONTEXT_GUIDANCE,
   RATER_OUTCOMES,
   REACHES_OPEN_WORLD_PREFIX,
   ShellSafetyVerdictSchema,
@@ -816,12 +818,13 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
       catastrophic: 'escalate',
       attack: 'halt',
     },
-    // EXT-29 will turn `destructive` into a negotiation here; until then it escalates, which is
-    // strictly more conservative. `catastrophic` escalates at BOTH rated rungs and never enters
-    // that negotiation at all (§4.2), so this column must keep matching the one above it for it.
+    // [[EXT-29]] §5 — **`destructive` is the ONE cell where this column differs from `assisted`,
+    // and the whole node is that difference.** It opens the negotiation: the rejection goes back to
+    // the agent instead of to a person. `catastrophic` escalates at BOTH rated rungs and never
+    // enters that negotiation at all (§4.2), so this column still matches the one above it there.
     auto: {
       safe: 'approve',
-      destructive: 'escalate',
+      destructive: 'reject',
       catastrophic: 'escalate',
       attack: 'halt',
     },
@@ -855,7 +858,11 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
   it('a missing verdict at a RATED rung is treated as the fail-closed one, never approved', () => {
     for (const rung of RATED_RUNGS) {
       const decision = mapVerdictToAction(RESOLVABLE, undefined, { rung });
-      expect(decision.action).toBe('escalate');
+      // The fail-closed verdict is `destructive`, so the action is that rung's `destructive` action
+      // — a human at `assisted`, a round of §5's negotiation at `auto`. What both must never be is
+      // `approve`, which is the property this test exists for and the one asserted directly.
+      expect(decision.action).toBe(rung === 'auto' ? 'reject' : 'escalate');
+      expect(decision.action).not.toBe('approve');
       expect(decision.verdict?.reason).toContain(COULD_NOT_ASSESS_PREFIX);
     }
   });
@@ -894,11 +901,13 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
    * egress. What the live rater actually returns for these is QA-5's measurement; here we pin
    * that a `safe` verdict approves them and a `destructive` one asks, with no path to `halt`.
    */
-  it('a `git push origin main`-shaped command never halts (safe → approve, destructive → escalate)', () => {
+  it('a `git push origin main`-shaped command never halts (safe → approve, destructive → asks)', () => {
     const PUSH = 'git push origin main';
     for (const rung of RATED_RUNGS) {
       expect(mapVerdictToAction(PUSH, SAFE, { rung }).action).toBe('approve');
-      expect(mapVerdictToAction(PUSH, DESTRUCTIVE, { rung }).action).toBe('escalate');
+      expect(mapVerdictToAction(PUSH, DESTRUCTIVE, { rung }).action).toBe(
+        rung === 'auto' ? 'reject' : 'escalate'
+      );
     }
     for (const rung of APPROVAL_RUNGS) {
       expect(mapVerdictToAction(PUSH, SAFE, { rung }).action).not.toBe('halt');
@@ -955,11 +964,13 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
     });
 
     /** With no verdict at all it is the fail-closed `destructive`, exactly as any other command. */
-    it('fails closed to an escalating `destructive` when no rating arrives', () => {
+    it('fails closed to a non-approving `destructive` when no rating arrives', () => {
       for (const command of AMBIGUOUS) {
         for (const rung of RATED_RUNGS) {
           const decision = mapVerdictToAction(command, undefined, { rung });
-          expect(decision.action, `${command} @ ${rung}`).toBe('escalate');
+          expect(decision.action, `${command} @ ${rung}`).toBe(
+            rung === 'auto' ? 'reject' : 'escalate'
+          );
           expect(decision.verdict?.outcome, `${command} @ ${rung}`).toBe('destructive');
           expect(decision.verdict?.reason, `${command} @ ${rung}`).toContain(
             COULD_NOT_ASSESS_PREFIX
@@ -1190,7 +1201,7 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
    * forced arbitrarily into a halt.
    */
   describe('nothing falls outside the four (§4.1)', () => {
-    const ACTIONS = ['approve', 'escalate', 'halt'];
+    const ACTIONS = ['approve', 'escalate', 'halt', 'reject'];
     /**
      * Strings that are not one of the four. The last three are PROTOTYPE-CHAIN keys, and they are
      * the ones a plain-object lookup gets wrong — an ordinary unknown key misses cleanly, while
@@ -1370,9 +1381,17 @@ describe('rateShellCommand — the timeout is configurable, and a timeout says s
       const verdict = failClosedVerdict(cause, 1234);
       expect(verdict.outcome, `${cause} still fails closed`).toBe('destructive');
       expect(isFailClosed(verdict), `${cause} is recognisable as a gate failure`).toBe(true);
+      // The claim is "never approves and never halts", so it is asserted as those two — a gate that
+      // gave up is `destructive`, and at `auto` `destructive` opens §5's negotiation ([[EXT-29]]).
+      // Pinning the equality to `escalate` here would have made this test a statement about which
+      // rung was chosen for the probe rather than about failing closed.
+      const action = mapVerdictToAction('ls -la', verdict, { rung: 'auto' }).action;
+      expect(action, `${cause} never approves`).not.toBe('approve');
+      expect(action, `${cause} never halts`).not.toBe('halt');
+      expect(action, `${cause} is negotiable at auto, like any other destructive`).toBe('reject');
       expect(
-        mapVerdictToAction('ls -la', verdict, { rung: 'auto' }).action,
-        `${cause} never approves and never halts`
+        mapVerdictToAction('ls -la', verdict, { rung: 'assisted' }).action,
+        `${cause} reaches the human at assisted`
       ).toBe('escalate');
     }
     expect(isRaterTimeout(failClosedVerdict('timeout', 1234))).toBe(true);
@@ -1717,22 +1736,117 @@ describe('[[EXT-29]] §5.1 — the negotiation the rater sees from round 2', () 
         expect(system).not.toContain(tag);
       }
       expect(user).not.toContain('NEGOTIATION CONTEXT');
-      expect(system).not.toContain('THE NEGOTIATION (');
+      expect(system).not.toContain('THE NEGOTIATION SO FAR (');
       expect(buildNegotiationContextBlock(undefined)).toBeNull();
       expect(buildNegotiationContextBlock({})).toBeNull();
     });
 
-    it('is what a no-context block returns, so one value decides both halves', () => {
-      // The tie: `buildRaterPrompt` asks the block builder once and uses the answer for the user
-      // message AND for the system guidance, so the rules can never arrive without the context they
-      // govern, nor the context without its rules.
+    it('the §5.1 WEIGHING rules arrive with the context they govern, and never without it', () => {
+      // `buildRaterPrompt` asks the block builder once and uses the answer for the user message AND
+      // for §5.1's system guidance, so the rules about weighing a justification can never arrive
+      // without a justification to weigh, nor the context without its rules.
       const round1 = buildRaterPrompt('ls -la', { negotiation: { userMessages: ['  '] } });
-      expect(round1.system).not.toContain('THE NEGOTIATION (');
+      expect(round1.system).not.toContain('THE NEGOTIATION SO FAR (');
       expect(round1.user).not.toContain('NEGOTIATION CONTEXT');
 
       const round2 = buildRaterPrompt('ls -la', { negotiation: { justification: 'because' } });
-      expect(round2.system).toContain('THE NEGOTIATION (');
+      expect(round2.system).toContain('THE NEGOTIATION SO FAR (');
       expect(round2.user).toContain('NEGOTIATION CONTEXT');
+    });
+  });
+
+  /**
+   * **§0's correction, as the two guards it sharpens into.**
+   *
+   * §5.1 is about the *context admitted* — round 1 sees the command alone — and that is a USER-prompt
+   * property. §5.2 is about how a rejection is *worded*, and it is scoped by whether the rejection
+   * will be read by the agent at all, i.e. by the MODE. The two were briefly one flag, and the
+   * consequence was measurable: corpus case `neg-01-escalate` requires round 1's rejection to name
+   * the fix, and a round 1 carrying no §5.2 instruction cannot pass it.
+   *
+   * So the old single guard splits in two, and BOTH are literal-equality pins rather than
+   * `toContain`, because "differs only by X" is a claim about everything that did not change.
+   */
+  describe('§5.2 is scoped by MODE, §5.1 by CONTEXT — and they are independent', () => {
+    it('a NON-negotiating rating is byte-identical to a rating with no negotiation at all', () => {
+      for (const command of COMMANDS) {
+        for (const grantedTools of [undefined, GRANTED]) {
+          const baseline = buildRaterPrompt(command, { home: HOME, grantedTools });
+          // Everything an `assisted` call can spell: the flag absent, and the flag explicitly false.
+          for (const negotiable of [undefined, false]) {
+            expect(
+              buildRaterPrompt(command, { home: HOME, grantedTools, negotiable }),
+              `${command} + negotiable=${negotiable}`
+            ).toEqual(baseline);
+          }
+        }
+      }
+    });
+
+    it('round 1 of a NEGOTIATION differs only by §5.2, and its user prompt is byte-identical', () => {
+      for (const command of COMMANDS) {
+        for (const grantedTools of [undefined, GRANTED]) {
+          const plain = buildRaterPrompt(command, { home: HOME, grantedTools });
+          const round1 = buildRaterPrompt(command, {
+            home: HOME,
+            grantedTools,
+            negotiable: true,
+            // An EMPTY context — which is what a cleared transcript (§5.3) hands over.
+            negotiation: {},
+          });
+          // The half that must not move: §5.1's "round 1 sees the command alone" is a property of
+          // the user message, and `neg-02`'s post-reset round is exactly this prompt.
+          expect(round1.user, `${command} user`).toBe(plain.user);
+          // The half that must: §5.2's wording rules, appended and nothing else.
+          expect(round1.system, `${command} system`).toBe(
+            `${plain.system}\n\n${RATER_NEGOTIABLE_REJECTION_GUIDANCE}`
+          );
+        }
+      }
+    });
+
+    /**
+     * The independence itself, as the 2×2 it is. A flag that quietly read the other one would pass
+     * two of these four cells and fail the diagonal.
+     */
+    it('all four combinations of (context, negotiable) carry exactly the right blocks', () => {
+      const CONTEXT = { justification: 'the build output only' };
+      const cells = [
+        { negotiation: undefined, negotiable: false, weighing: false, wording: false },
+        { negotiation: undefined, negotiable: true, weighing: false, wording: true },
+        { negotiation: CONTEXT, negotiable: false, weighing: true, wording: false },
+        { negotiation: CONTEXT, negotiable: true, weighing: true, wording: true },
+      ] as const;
+      for (const cell of cells) {
+        const { system, user } = buildRaterPrompt('rm -rf ./dist', {
+          home: HOME,
+          negotiation: cell.negotiation,
+          negotiable: cell.negotiable,
+        });
+        const label = `context=${cell.negotiation !== undefined} negotiable=${cell.negotiable}`;
+        expect(system.includes(RATER_NEGOTIATION_CONTEXT_GUIDANCE), `${label} weighing`).toBe(
+          cell.weighing
+        );
+        expect(system.includes(RATER_NEGOTIABLE_REJECTION_GUIDANCE), `${label} wording`).toBe(
+          cell.wording
+        );
+        // The user message is a function of the command and the context ALONE — `negotiable` may
+        // never leak into it, or "round 1's user prompt is byte-identical" stops being true.
+        expect(user.includes('NEGOTIATION CONTEXT'), `${label} user block`).toBe(cell.weighing);
+      }
+    });
+
+    /**
+     * §5.6's escalation example depends on round 1 naming the fix, and this is the sentence that
+     * asks for it. Asserted on the round-1 prompt specifically — the one that carries no context —
+     * because that is the round the old scoping could not reach.
+     */
+    it('round 1 of a negotiation is told to name what would make the command acceptable', () => {
+      const { system } = buildRaterPrompt('git reset --hard origin/main', { negotiable: true });
+      expect(system).toContain('WHEN YOU REJECT, SAY WHAT WOULD MAKE THE COMMAND ACCEPTABLE');
+      expect(system).toMatch(/read by the agent, not by a person/i);
+      // …and it is NOT told how to weigh a justification, because there is none to weigh.
+      expect(system).not.toContain(RATER_NEGOTIATION_CONTEXT_GUIDANCE);
     });
   });
 
@@ -2238,11 +2352,14 @@ describe('[[EXT-29]] §5.1 — the negotiation the rater sees from round 2', () 
    * `RATER_*_GUIDANCE` blocks.
    */
   describe('the guidance states the asymmetry, its counterweight and the exemption', () => {
+    // A round-2 rating at `auto` — the one prompt that carries BOTH blocks, since it has a context
+    // to weigh (§5.1) and its rejection will be read by the agent (§5.2).
     const system = (): string =>
       buildRaterPrompt('git reset --hard origin/main', {
         home: HOME,
         grantedTools: GRANTED,
         negotiation: FULL,
+        negotiable: true,
       }).system;
 
     it('says a justification may only ever LOWER a rating, and spells out the direction', () => {
@@ -2292,11 +2409,17 @@ describe('[[EXT-29]] §5.1 — the negotiation the rater sees from round 2', () 
       expect(system()).toMatch(/invites another justification instead of a better command/);
     });
 
-    it('comes AFTER the granted-tool list it refers back to', () => {
+    it('comes AFTER the granted-tool list it refers back to, §5.2 last of all', () => {
       const text = system();
-      expect(text.indexOf('THE NEGOTIATION (')).toBeGreaterThan(
-        text.indexOf('ALREADY-GRANTED TOOLS')
-      );
+      const granted = text.indexOf('ALREADY-GRANTED TOOLS');
+      const weighing = text.indexOf(RATER_NEGOTIATION_CONTEXT_GUIDANCE);
+      const wording = text.indexOf(RATER_NEGOTIABLE_REJECTION_GUIDANCE);
+      expect(granted).toBeGreaterThan(-1);
+      expect(weighing).toBeGreaterThan(granted);
+      // §5.2 sits last because its list of things a rejection may name ends with a granted built-in,
+      // which reads as an instruction only once that list is on the page.
+      expect(wording).toBeGreaterThan(weighing);
+      expect(text.endsWith(RATER_NEGOTIABLE_REJECTION_GUIDANCE)).toBe(true);
     });
   });
 

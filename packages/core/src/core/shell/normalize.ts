@@ -2,11 +2,11 @@
  * @module core/shell/normalize
  *
  * Command-string normalization shared by the shell hardening layer. The hardline
- * blocklist (in `@gaunt-sloth/agent` `tools/shell/hardline`) and the EXT-9 Tier-2
+ * blocklist (`core/shell/hardline`) and the EXT-9 Tier-2
  * allow-list classifier ({@link ./arity.js}) both match against the *normalized* form so
  * trivial obfuscation (ANSI escapes, fullwidth glyphs, backslash splits, padded
- * whitespace) cannot smuggle a command past the guard. Canonical home is core so both the
- * core runner (allow-list) and the agent toolkit (hardline) import a single implementation.
+ * whitespace) cannot smuggle a command past the guard. Canonical home is core so every
+ * consumer — the allow-list, the hardline floor, the approvals gate — imports one implementation.
  *
  * Patterned after hermes-agent `tools/approval.py:_normalize_command_for_detection`.
  */
@@ -34,8 +34,8 @@ const LINE_BREAK_RUN = /\s*\n\s*/g;
  * every character at which the shell stops one command and starts the next: `;`, `&` (hence
  * `&&`), `|` (hence `||`), and a LINE BREAK. Both consumers of the normalized form build their
  * patterns from it — the allow-list classifier's fail-closed check
- * ({@link import('./arity.js').classifyCommand}) and the agent hardline blocklist's pattern
- * terminators (`@gaunt-sloth/agent` `tools/shell/hardline`) — so the two layers can never again
+ * ({@link import('./arity.js').classifyCommand}) and the hardline blocklist's pattern
+ * terminators (`core/shell/hardline`) — so the two layers can never again
  * disagree about what a separator is.
  *
  * The layers disagreed before EXT-55: `;`/`&&`/`|` made a command ambiguous (fail-closed) but a

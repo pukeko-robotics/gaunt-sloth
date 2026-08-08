@@ -554,6 +554,26 @@ export function isRatedRung(rung: ApprovalRung): boolean {
 }
 
 /**
+ * [[EXT-29]] (§5) — the rung at which a `destructive` rating opens a **negotiation** with the rater
+ * instead of going to the human: the agent may revise the command or justify it, the rater re-rates
+ * with the exchange in view, and only a spent bound reaches a person.
+ *
+ * **This is the one predicate that separates `auto` from `assisted`, and it is deliberately ONE.**
+ * Three places have to agree about it — the decision mapping
+ * ({@link import('../core/shell/rater.js').mapVerdictToAction}, which returns `reject` here and
+ * `escalate` at `assisted`), the rating prompt (§5.2's wording rules are addressed to the agent, so
+ * they are turned on by this and not by whether a transcript happens to exist yet), and the runner
+ * that counts the rounds. Two of them agreeing and the third not is exactly how the two rated rungs
+ * would drift back into being the same posture with different names.
+ *
+ * Written as a `=== 'auto'` test rather than as "rated but not assisted" so that a sixth rung has to
+ * be classified deliberately rather than inheriting a negotiation by omission.
+ */
+export function isNegotiatingRung(rung: ApprovalRung): boolean {
+  return rung === 'auto';
+}
+
+/**
  * The rungs that decide a gated call **without a model** — `manual` and `write` (§2.1, §2.2).
  * Everything they do not auto-grant goes to the human, so these are the two rungs a user picks in
  * order to read and approve every tool call themselves.
