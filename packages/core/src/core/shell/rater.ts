@@ -636,8 +636,7 @@ export function hasScriptEnvLeakRisk(normalizedCommand: string): boolean {
 export function foldHomePath(command: string, home: string | undefined): string {
   if (!home) return command;
   // Replace every occurrence of the home dir prefix with `~`. Escape regex metachars in home.
-  const escaped = home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return command.replace(new RegExp(escaped, 'g'), '~');
+  return command.replace(new RegExp(escapeForRegExp(home), 'g'), '~');
 }
 
 /**
@@ -757,17 +756,35 @@ function oneLine(text: string): string {
 }
 
 /**
- * Zero-width and byte-order-mark code points, which `String.trim()` and `\s` do NOT match.
+ * Every Unicode **format** character — the zero-width spaces and joiners, the soft hyphen, the word
+ * joiner, the BOM, and the bidi controls including the right-to-left override. `String.trim()` and
+ * `\s` match none of them: they render as nothing and match as something, which is the whole of
+ * their value to an attacker.
  *
- * Without this, a message of one U+200B is "not blank" to the emptiness gate below: it renders a
- * block, and with it the guidance — so an invisible character alone would turn a round-1 rating into
- * a round-2 one and break the byte-identity guarantee this module advertises.
+ * **One class, two uses, and they are the same property.** It decides {@link isBlank} — without it a
+ * message of one U+200B is "not blank", renders a block, and turns a round-1 rating into a round-2
+ * one on a character nobody can see — and it is stripped before {@link neutralizeClosingTag}
+ * matches, because a closing tag with an invisible spliced into it reads to a model exactly like one
+ * without. Those two were written as separate fixes; they are one rule.
+ *
+ * `\p{Cf}` rather than a hand-written range, because an enumeration of invisible characters is a
+ * list somebody has to remember to extend — and the enumeration this replaced had already missed
+ * U+00AD and U+202E.
  */
-const ZERO_WIDTH_CHARS = /[\u200B-\u200D\u2060\uFEFF]/g;
+const INVISIBLE_FORMAT_CHARS = /\p{Cf}/gu;
 
-/** Whether a value carries nothing a reader would see — whitespace and zero-width alike. */
+/** Whether a value carries nothing a reader would see — whitespace and invisibles alike. */
 function isBlank(text: string): boolean {
-  return text.replace(ZERO_WIDTH_CHARS, '').trim() === '';
+  return text.replace(INVISIBLE_FORMAT_CHARS, '').trim() === '';
+}
+
+/**
+ * Escape a string for literal use inside a `RegExp`. Two call sites build a pattern out of a value
+ * they did not author — a home directory and a fence tag — and an unescaped metacharacter in either
+ * silently changes what the pattern matches, or throws.
+ */
+function escapeForRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, (match) => `\\${match}`);
 }
 
 /**
@@ -784,26 +801,35 @@ function isBlank(text: string): boolean {
  * very sequence being removed) and says what happened, because a rater that can see text was
  * tampered with has been told something useful about the command it is rating.
  *
- * Matching is deliberately loose — case-insensitive, and tolerant of the whitespace an XML parser
- * would ignore (`</ justification >`) — since the reader is a language model, not a parser, and it
- * will read any of those as the fence ending.
+ * **Matching is deliberately loose, and the looseness is the mechanism.** The reader is a language
+ * model, not a parser, so anything it would READ as the fence ending has to be caught: case, the
+ * whitespace an XML parser would ignore (`</ justification >`), the compatibility glyphs NFKC folds
+ * (a fullwidth solidus is a solidus to a reader), and any invisible spliced into the tag
+ * ({@link INVISIBLE_FORMAT_CHARS}). A matcher that is stricter than the reader is not a filter — it
+ * is a list of spellings the attacker gets to choose from.
+ *
+ * Self-reconstruction is impossible by construction: the replacement contains no angle bracket and
+ * no slash, so no arrangement of neutralised text can rebuild a closing tag.
  *
  * Exported and parameterised by tag so the node that closes the same hole on
  * `<command_to_evaluate>` applies THIS function to it rather than inventing a second mechanism that
  * escapes differently.
  */
 export function neutralizeClosingTag(text: string, tag: string): string {
-  return text.replace(new RegExp(`<\\s*/\\s*${tag}\\s*>`, 'gi'), `[removed a closing ${tag} tag]`);
+  // NFKC folds the compatibility glyphs (a fullwidth solidus is a solidus to a reader) and the
+  // strip removes the invisibles; both run BEFORE the match, because a closing tag with a
+  // zero-width space spliced into it reads to a model exactly like one without.
+  const canonical = text.normalize('NFKC').replace(INVISIBLE_FORMAT_CHARS, '');
+  return canonical.replace(
+    new RegExp(`<\\s*/\\s*${escapeForRegExp(tag)}\\s*>`, 'gi'),
+    `[removed a closing ${tag} tag]`
+  );
 }
 
 /**
  * Prepare one untrusted value for a ONE-LINE slot inside `tag`: fold the home path (the same
  * less-identifying form the rated command gets), collapse it to a single line, then neutralise any
  * attempt to close the fence.
- *
- * The order is the order the transforms have to run in: folding can introduce nothing structural,
- * collapsing can bring a closing tag from a later line up onto this one, and neutralising last is
- * what makes it impossible for either earlier step to reintroduce an escape.
  */
 function fencedOneLine(text: string, tag: string, home: string | undefined): string {
   return neutralizeClosingTag(oneLine(foldHomePath(text, home)), tag);
