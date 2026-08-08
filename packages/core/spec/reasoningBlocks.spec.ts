@@ -33,6 +33,13 @@ describe('reasoningBlocks (CFG-33)', () => {
       ],
     },
     { label: 'a bare functionCall block', content: [{ type: 'functionCall', text: '' }] },
+    // `.text` maps a bare string in the array straight through, alongside typed blocks. Nothing in
+    // gsloth constructs this shape, but the equivalence claim is about what `.text` returns, not
+    // about the shapes we happen to build — so the table has to cover it or the claim is untested.
+    {
+      label: 'a bare string beside a text block',
+      content: ['bare string, ', { type: 'text', text: 'then a block' }],
+    },
     { label: 'an empty array', content: [] },
   ];
 

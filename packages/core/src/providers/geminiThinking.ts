@@ -22,7 +22,10 @@
  * `bindTools`, which returns a `RunnableBinding` around this same instance.
  *
  * Gemini returns a thought summary as a content BLOCK marked `thought: true`, not in
- * `additional_kwargs`; `#src/core/reasoningBlocks.js` is the half of this fix that reads it.
+ * `additional_kwargs`; `#src/core/reasoningBlocks.js` is the half of this fix that reads it. That
+ * block is typed `text`, exactly like an answer block, so a surface that does NOT route content
+ * through gsloth's own reasoning bridge cannot tell thinking from answer — which is what
+ * {@link disableGeminiThoughtSummaries} is for.
  */
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 
@@ -50,26 +53,62 @@ function producesThoughtSummaries(model: unknown): boolean {
  * that decision is left exactly as it stands. Returns the same model instance for chaining.
  */
 export function applyGeminiThoughtSummaries<T extends BaseChatModel>(model: T): T {
+  return overrideThinkingConfig(model, (thinkingConfig) =>
+    // `thinkingConfig` is always PRESENT as a key and may hold `undefined`; an explicit value means
+    // the user's budget/level was honoured and must win.
+    thinkingConfig === undefined ? { includeThoughts: true } : thinkingConfig
+  );
+}
+
+/**
+ * The inverse, for a surface that must not receive thought summaries at all: keep whatever thinking
+ * budget or level applies and force `includeThoughts: false`, so the model still thinks and only the
+ * summary is withheld. Never express this as a zero/minimal budget — that turns THINKING off, which
+ * is a different and much larger change, and the coercion differs between the 2.5 and 3.x presets.
+ *
+ * This exists because a consumer outside {@link GthAbstractAgent} routes content blocks by `type`,
+ * and Gemini's thought summary is typed `text` exactly like an answer block — so a third party has
+ * no way to tell them apart and prints the thinking as the assistant's answer. Not asking for the
+ * summary is the only thing that reliably stops that; nothing is stripped, so the message kept in
+ * graph state (and any `thoughtSignature` riding on it) is untouched. Returns the same instance.
+ */
+export function disableGeminiThoughtSummaries<T extends BaseChatModel>(model: T): T {
+  return overrideThinkingConfig(model, (thinkingConfig) => ({
+    ...(typeof thinkingConfig === 'object' && thinkingConfig !== null ? thinkingConfig : {}),
+    includeThoughts: false,
+  }));
+}
+
+/**
+ * Shared plumbing: re-derive `generationConfig.thinkingConfig` on every built request. Models that
+ * build no `generationConfig` (every non-Google provider) and model families that produce no thought
+ * summary are left completely alone, so this is a no-op wherever it does not apply. Overrides stack:
+ * the outermost one sees what the inner ones produced, which is what lets a surface-level decision
+ * override the construction-time default.
+ */
+function overrideThinkingConfig<T extends BaseChatModel>(
+  model: T,
+  next: (_thinkingConfig: unknown) => unknown
+): T {
   const holder = model as unknown as { model?: unknown; invocationParams?: InvocationParamsFn };
   const original = holder.invocationParams;
   if (typeof original !== 'function' || !producesThoughtSummaries(holder.model)) {
     return model;
   }
   const bound = original.bind(model) as InvocationParamsFn;
-  holder.invocationParams = function invocationParamsWithThoughtSummaries(
+  holder.invocationParams = function invocationParamsWithThinkingConfig(
     options?: unknown
   ): InvocationParams {
     const params = bound(options);
     const generationConfig = params?.generationConfig;
-    // `thinkingConfig` is always PRESENT as a key and may hold `undefined`; an explicit value means
-    // the user's budget/level was honoured and must win.
-    if (!generationConfig || generationConfig.thinkingConfig !== undefined) {
+    if (!generationConfig) {
       return params;
     }
-    return {
-      ...params,
-      generationConfig: { ...generationConfig, thinkingConfig: { includeThoughts: true } },
-    };
+    const thinkingConfig = next(generationConfig.thinkingConfig);
+    if (thinkingConfig === generationConfig.thinkingConfig) {
+      return params;
+    }
+    return { ...params, generationConfig: { ...generationConfig, thinkingConfig } };
   };
   return model;
 }
