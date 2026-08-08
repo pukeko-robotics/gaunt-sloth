@@ -738,8 +738,8 @@ function truncateUserMessage(message: string): string {
  * This is structural, not cosmetic. The transcript is line-structured (`Round N`, then indented
  * `key: value` lines) and the user messages are a `- ` list, so a newline inside any rendered value
  * forges a second entry: an extra round with an answer that was never given, or an extra user
- * message nobody sent. It therefore applies to all four untrusted values — a round's **command**,
- * its justification, its reason, and each user message.
+ * message nobody sent. It therefore applies to **every** untrusted value the block renders — a
+ * round's command, its justification, its reason, each user message, and the current justification.
  *
  * **The command is not exempt, and that is the fix rather than an oversight.** `normalizeCommand`
  * deliberately preserves newlines (EXT-55: a line break is a command separator, not padding), so a
@@ -747,8 +747,10 @@ function truncateUserMessage(message: string): string {
  * legitimate, and here it renders on one line — this block is a summary of what was argued, never
  * the rated unit, and the only command the rater rules on is the one in `<command_to_evaluate>`.
  *
- * The CURRENT justification is the one value NOT collapsed: it has a fence of its own, where line
- * structure carries nothing and a paragraph is the natural shape of an argument.
+ * A fence of its own is NOT an exemption. Text that mimics the transcript's shape inside
+ * `<justification>`, one blank line above the real transcript, is read by something that follows
+ * meaning rather than tags. (The same class remains open on `<command_to_evaluate>`, which is
+ * multi-line by necessity and belongs to the node that owns that fence.)
  */
 function oneLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
@@ -855,11 +857,15 @@ export function buildNegotiationContextBlock(
   home?: string
 ): string | null {
   const rawJustification = negotiation?.justification ?? '';
-  // Multi-line on purpose (its own fence carries no structure), so it is folded and un-escapable but
-  // NOT collapsed.
+  // One-lined like everything else here. Its own fence means it cannot forge a round INSIDE the
+  // transcript — but it sits one blank line above that transcript, and a multi-line justification
+  // whose lines read `Round 9` / `you answered: safe` mimics the shape of one closely enough that a
+  // reader tracking meaning rather than tags would carry it across. A justification is one or two
+  // sentences; the paragraph structure is worth less than the uniform invariant that NOTHING
+  // untrusted in this block spans a line.
   const justification = isBlank(rawJustification)
     ? ''
-    : neutralizeClosingTag(foldHomePath(rawJustification.trim(), home), 'justification');
+    : fencedOneLine(rawJustification, 'justification', home);
   const rounds = (negotiation?.priorRounds ?? []).filter((round) => !isBlank(round.command));
   const userMessages = (negotiation?.userMessages ?? [])
     .filter((message) => !isBlank(message))

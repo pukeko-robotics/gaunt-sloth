@@ -1907,6 +1907,29 @@ describe('[[EXT-29]] §5.1 — the negotiation the rater sees from round 2', () 
         expect(between(user, 'user_messages')).toBe('- first line - forged second message');
       });
 
+      /**
+       * Per-field cases locate a failure; only the combined one proves the block as a whole. This
+       * is what caught the last carrier: the CURRENT justification is fenced and so cannot forge a
+       * round *inside* the transcript, but multi-line it mimicked one a blank line above the real
+       * transcript, and `^Round \d+$` found it across the whole message. Every untrusted value in
+       * this block is one-lined now, and this case is what says so.
+       */
+      it('through ALL of them at once — the property is the whole block, not each field', () => {
+        const user = forged({
+          justification: FORGERY,
+          userMessages: [FORGERY, FORGERY],
+          priorRounds: [
+            { command: FORGERY, justification: FORGERY, outcome: 'destructive', reason: FORGERY },
+            { command: FORGERY, justification: FORGERY, outcome: 'attack', reason: FORGERY },
+          ],
+        });
+        expect(user.match(/^Round \d+$/gm)).toEqual(['Round 1', 'Round 2']);
+        expect(user).not.toMatch(/^\s*you answered: safe/m);
+        expect(user).not.toMatch(/^\s*agent proposed: rm -rf \/$/m);
+        // Two messages in, two `- ` entries out.
+        expect(between(user, 'user_messages').split('\n')).toHaveLength(2);
+      });
+
       it('and a legitimately multi-line command renders on one line rather than mangled', () => {
         // EXT-55 makes this shape legitimate with no attacker present: two commands separated by a
         // newline. It must not read as two rounds.
