@@ -17,6 +17,7 @@ import type { ChatGoogleParams } from '@langchain/google/node';
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 import { applyGeminiToolSchemaSanitizer } from '#src/providers/geminiSchemaSanitizer.js';
+import { applyGeminiThoughtSummaries } from '#src/providers/geminiThinking.js';
 
 export function init(configFileName: string, force = false, model?: string): void {
   // Determine which content to use based on file extension
@@ -44,5 +45,7 @@ export async function processJsonConfig(
   delete configFields.apiKeyEnvironmentVariable;
   // GS2-58: normalise every tool's JSON-Schema at the ChatGoogle boundary so Gemini's OpenAPI-3.0
   // subset accepts built-in, custom, and MCP tools alike (see geminiSchemaSanitizer).
-  return applyGeminiToolSchemaSanitizer(new ChatGoogle(configFields));
+  // CFG-33: Vertex serves the same Gemini models through the same ChatGoogle class, so it has the
+  // same silently-discarded thinking; ask for the summaries here too (see geminiThinking).
+  return applyGeminiThoughtSummaries(applyGeminiToolSchemaSanitizer(new ChatGoogle(configFields)));
 }
