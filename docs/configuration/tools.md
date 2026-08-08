@@ -229,7 +229,11 @@ carrying the extras. See
   still applies under `bypass`. An entry naming a tool is compared only where the mode gates that
   tool, so not at `assisted`, `auto` or `bypass` — see
   [Which entries a mode consults](../guides/shell-tool-and-approvals.md#which-entries-a-mode-consults).
-- `escalate` — what always asks you, whatever the mode would have done.
+- `escalate` — what asks you rather than running, whatever the mode would otherwise have done. A
+  `shell` entry asks at every mode except `bypass`, where only `deny` is still consulted. An entry
+  naming a tool is compared only where the mode gates that tool, so not at `assisted`, `auto` or
+  `bypass` — see
+  [Which entries a mode consults](../guides/shell-tool-and-approvals.md#which-entries-a-mode-consults).
 
 Entries in all three are explicit objects (`type`, `matcher` and `pattern` are always required);
 where more than one list matches, the most restrictive wins. The three are read-only input: they
