@@ -505,6 +505,32 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
     });
 
     /**
+     * …and it leaves the bounds where it found them, which "nobody was asked" above cannot show: a
+     * refusal that quietly incremented the reachability bound would still produce no prompt of its
+     * own, and would instead spend a REAL negotiation's budget. Here the floor refusals come first
+     * and a genuine rejection follows; that rejection must be round 1 of a full negotiation.
+     */
+    it('leaves the budget untouched — a real rejection after them is still round 1', async () => {
+      const FORK_BOMB = ':(){ :|:& };:';
+      const { results, prompts, ratings } = await drive({
+        calls: [
+          ...Array.from({ length: MAX_REJECTIONS_BEFORE_HUMAN }, () => ({ command: FORK_BOMB })),
+          { command: 'rm -rf ./build' },
+          { command: 'rm -rf ./build' },
+        ],
+        script: ['destructive', 'destructive'],
+        human: 'approve',
+      });
+      expect(prompts, 'the real rejections are rounds, not an escalation').toHaveLength(0);
+      expect(results.slice(-2)).toEqual(['reject', 'reject']);
+      // The first real rejection was rated as round 1: nothing the floor refused is on its
+      // transcript, because a refusal is not a round.
+      expect(ratings).toHaveLength(2);
+      expect(ratings[0].user).not.toContain('<negotiation_so_far>');
+      expect(ratings[1].user).not.toContain(FORK_BOMB);
+    });
+
+    /**
      * The floor covers the deterministic subset of BOTH severe outcomes (§8) and §4.2 gives them
      * different consequences. The exfiltration arm ends the run rather than being refused — which
      * is what *"so §4.2 does not depend on a model being right"* asks for.
@@ -674,18 +700,59 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       expect(results[results.length - 1], 'the rejection after it is a ROUND').toBe('reject');
     });
 
-    /** A new user turn is the human being reached too, so it clears both bounds. */
-    it('a new user turn clears the negotiation, transcript included', async () => {
-      const first = await drive({
-        calls: [{ command: 'rm -rf ./a' }, { command: 'rm -rf ./b' }],
-        script: ['destructive', 'destructive'],
-        human: 'reject',
+    /**
+     * **A new user turn is the human being reached too, so it ends the negotiation and clears both
+     * bounds.** This one is driven across TWO turns of ONE runner, because that is the only shape in
+     * which the claim can be false: a per-turn harness constructs a fresh runner and would report a
+     * clean round-1 context whether the code cleared anything or not.
+     */
+    it('a new user turn ends the negotiation — the next rating is a round-1 context again', async () => {
+      const ratings: { system: string; user: string }[] = [];
+      const invoke = vi.fn().mockImplementation((messages: { content: string }[]) => {
+        ratings.push({ system: messages[0].content, user: messages[1].content });
+        return Promise.resolve({ outcome: 'destructive', reason: 'scripted' });
       });
-      expect(first.results).toEqual(['reject', 'reject']);
-      // A second turn on the SAME runner would be ideal, but `drive` builds one runner per call;
-      // what the second turn must produce is a round-1 context, which is what the first call of a
-      // fresh negotiation looks like — asserted directly on the state machine below.
-      expect(first.ratings[1].user).toContain('<negotiation_so_far>');
+      const config = {
+        llm: { withStructuredOutput: vi.fn().mockReturnValue({ invoke }) },
+        streamOutput: true as const,
+        approvals: { mode: 'auto' },
+        commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+      } as unknown as GthConfig;
+
+      const turnOf = (...commands: string[]) => {
+        let pending = mockAgent.getPendingToolInterrupts.mockReset();
+        for (const command of commands) {
+          pending = pending.mockResolvedValueOnce([
+            { name: 'run_shell_command', args: { command } },
+          ]);
+        }
+        pending.mockResolvedValue([]);
+        mockAgent.streamResume.mockReset().mockResolvedValue(streamOf(''));
+        mockAgent.stream.mockReset().mockResolvedValue(streamOf('x'));
+      };
+
+      const runner = new GthAgentRunner(statusUpdate);
+      await runner.init('code', config);
+      runner.setToolApprovalCallback(() => ({ type: 'reject' }));
+
+      turnOf('rm -rf ./a', 'rm -rf ./b');
+      await runner.processMessages([new HumanMessage('clean the build')]);
+      expect(ratings).toHaveLength(2);
+      expect(ratings[1].user, 'within one turn the transcript accumulates').toContain(
+        '<negotiation_so_far>'
+      );
+
+      // …and the SAME runner, one user turn later, starts from nothing.
+      turnOf('rm -rf ./c');
+      await runner.processMessages([new HumanMessage('actually, do the other thing')]);
+      expect(ratings).toHaveLength(3);
+      expect(ratings[2].user, 'the new turn cleared the transcript').not.toContain(
+        '<negotiation_so_far>'
+      );
+      expect(ratings[2].user).not.toContain('rm -rf ./a');
+      expect(ratings[2].user, 'a round-1 context carries no user messages either').not.toContain(
+        '<user_messages>'
+      );
     });
   });
 
