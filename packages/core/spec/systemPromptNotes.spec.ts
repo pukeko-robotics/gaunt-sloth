@@ -71,6 +71,14 @@ describe('appendCommitCoAuthorNote (GS2-35/EXT-83)', () => {
     'an unscoped add stages every untracked file in the working tree, including the commit ' +
     'message file you just wrote, so it lands in the commit and on the pull request';
   const MESSAGE_FILE_NEVER_STAGED = 'Never stage the commit message file itself.';
+  /**
+   * EXT-97 — the last resort, and the step that stops it reintroducing the very defect the rule
+   * closes: an unscoped add stages the message file, so the file must leave the tree BEFORE the
+   * allowance is taken. The allowance itself stays (a change can genuinely touch too many files to
+   * name); it is the remedy that has to be mandatory.
+   */
+  const LAST_RESORT_REMOVES_MESSAGE_FILE =
+    'first move the commit message file out of the working tree or delete it';
 
   /** EXT-97 — the conditional scratchpad sentence, verbatim. */
   const SCRATCHPAD_SENTENCE =
@@ -349,9 +357,11 @@ describe('appendCommitCoAuthorNote (GS2-35/EXT-83)', () => {
     expect(note).toContain(UNSCOPED_ADD_MECHANISM);
     // Stated separately from the prohibition: even a correctly scoped add must not name this file.
     expect(note).toContain(MESSAGE_FILE_NEVER_STAGED);
-    // The last resort, and the look at the working tree that must precede it.
+    // The last resort survives — but only with the message file removed from the tree first, or the
+    // escape hatch would stage the very file the sentence above forbids staging.
     expect(note).toContain('is an unscoped add acceptable');
-    expect(note).toContain('look at the working tree with git status first');
+    expect(note).toContain(LAST_RESORT_REMOVES_MESSAGE_FILE);
+    expect(note).toContain('check with git status what else the add is about to sweep in');
   });
 
   // EXT-97 — the PLACEMENT property, and the reason this is asserted over the branch sweep rather
@@ -383,7 +393,6 @@ describe('appendCommitCoAuthorNote (GS2-35/EXT-83)', () => {
     // Conditional on the session having HANDED the model a location — not on the model going
     // looking for one. Nothing hands it one today, so a model told nothing proceeds as before; when
     // the mechanism lands the sentence becomes live with no further prompt edit.
-    expect(note).toContain('If this session has given you a scratchpad location');
     expect(note).toContain(SCRATCHPAD_SENTENCE);
     // …and it names no path. The built-in write tool refuses any path outside the working folder at
     // every approval mode, so a note that named one would buy a refused call and a wasted turn.
