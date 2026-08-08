@@ -1101,10 +1101,15 @@ export class GthAgentRunner {
         if (decision.action === 'halt') {
           // §4.2 — not a rejection the model can respond to. It ends the agent loop.
           //
-          // **`neg-04b`: a negotiation already in flight ends here too**, mid-way and without a
+          // **`neg-04d`: a negotiation already in flight ends here too**, mid-way and without a
           // further round. `attack` is exempt from the whole mechanism (§5.1), so the counter, the
           // transcript and the loop all stop together rather than the argument continuing around a
           // halt that only ended one call.
+          //
+          // The reset itself is defence in depth: the throw ends `processMessages`, and a later
+          // turn would clear the negotiation on its own first line anyway. Only its TRANSCRIPT half
+          // can be observed at all, and `neg-04d` asserts it — the two counters have no reader once
+          // the run has ended, so that half is stated here rather than pinned anywhere.
           this.negotiation.humanReached();
           throw new AttackHaltError(subject.command, decision.verdict?.reason ?? '');
         }

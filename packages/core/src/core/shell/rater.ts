@@ -825,6 +825,15 @@ function oneLine(text: string): string {
  * survivor can make a blank value count as non-blank (one extra rendered round), or splice a closing
  * tag that this does not neutralise. Widen the class when one is measured; do not narrow it to the
  * characters a test happens to name.
+ *
+ * **It cuts the other way too, and that direction is accepted deliberately.** This class is not only
+ * a test: {@link neutralizeClosingTag} returns the CANONICALISED text, so everything named here is
+ * removed from a justification or a user message before the rater reads it — the variation selectors
+ * (U+FE00–FE0F, U+E0100–E01EF) and the tag characters included. An emoji written with an explicit
+ * presentation selector therefore reaches the rater without it. The trade is taken on three grounds:
+ * the blast radius is the RATING PROMPT and never the command that runs, nothing here carries
+ * meaning a safety verdict turns on, and the tag characters are themselves a known prompt-injection
+ * vector — dropping those is a feature of the class rather than a price paid for it.
  */
 // U+2800 is escaped rather than written literally, for the same reason the specs build their cases
 // with `fromCharCode`: a rule about invisible characters must not depend on an invisible character

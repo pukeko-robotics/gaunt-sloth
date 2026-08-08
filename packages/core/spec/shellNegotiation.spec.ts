@@ -15,6 +15,7 @@ import {
   renderNegotiationTranscript,
   ShellNegotiationState,
 } from '#src/core/shell/negotiation.js';
+import type { RaterNegotiationRound } from '#src/core/shell/rater.js';
 import { REJECTION_MOVES } from '#src/core/shell/rejection.js';
 import { checkHardline } from '#src/core/shell/hardline.js';
 import { classifyCommand } from '#src/core/shell/arity.js';
@@ -122,6 +123,14 @@ interface DriveResult {
   error: unknown;
   /** WARNING-level status lines the gate emitted. */
   warnings: string[];
+  /**
+   * The rounds the runner is STILL holding once the run has ended.
+   *
+   * **The one thing no surface can observe.** A halt throws out of `processMessages` and nothing
+   * resumes the same runner, and the next `processMessages` would clear the negotiation on its own
+   * first line — so what a halt does to the state it leaves behind is visible here or nowhere.
+   */
+  transcriptAfterRun: readonly RaterNegotiationRound[];
 }
 
 describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', () => {
@@ -236,6 +245,11 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       warnings: statusUpdate.mock.calls
         .filter((c) => c[0] === StatusLevel.WARNING)
         .map((c) => c[1]),
+      // Read through a cast because the state is PRIVATE to the runner, and belongs there: this is
+      // a spec reading state, not an API widened for a test. Snapshotted, never the live object.
+      transcriptAfterRun: (
+        runner as unknown as { negotiation: ShellNegotiationState }
+      ).negotiation.transcript(),
     };
   }
 
@@ -282,6 +296,7 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
         'neg-04a-halt-opens-no-negotiation',
         'neg-04b-negotiation-reaches-attack',
         'neg-04c-rater-attack-opens-no-negotiation',
+        'neg-04d-attack-arrives-mid-negotiation',
         'neg-05-preflight-holds',
         'neg-06-legitimate-lowering',
       ]);
@@ -612,6 +627,69 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       expect(ratings, 'the halt is the MODEL’s answer, so it was asked').toHaveLength(1);
       expect(messages, 'the model was handed nothing at all').toHaveLength(0);
       expect(prompts, 'and no human was asked').toHaveLength(0);
+    });
+
+    /**
+     * `neg-04d` — **the `attack` arrives in a negotiation that is ALREADY IN FLIGHT.** Every other
+     * halt in this repo is decided on a FIRST call, with nothing on the transcript; this is the
+     * other state, and it is the one a regression can hide in.
+     *
+     * Round 1 is rated and rejected, so a round is recorded and a bound is spent by the time round
+     * 2 comes back `attack`. The branch is therefore entered with a **non-empty** transcript — and a
+     * guard that treated an empty transcript as part of what makes a halt a halt would pass every
+     * first-call halt test and fail only here.
+     *
+     * **The discriminator is the prompt count, not the round count**, because that guard does not
+     * cost the run a round: `halt` fails it, fails the `reject` test below it as well, and lands on
+     * the HUMAN escalation — the command the model has just called an attack put to a person as an
+     * ordinary approval prompt. The human here answers *approve* on purpose: that is what makes the
+     * regression an execution rather than a second refusal, and what makes **zero prompts** the
+     * assertion worth making. A third call is offered and must never be reached.
+     */
+    it('neg-04d: an ATTACK verdict MID-NEGOTIATION ends the run — no round 3, and nobody is asked', async () => {
+      const negCase = caseById('neg-04d-attack-arrives-mid-negotiation');
+      const [r1, r2] = negCase.rounds;
+      expect(r1.expect, 'round 1 is the rater’s own rejection').toBe('reject');
+      expect(r2.expect, 'round 2 is the rater’s own attack').toBe('halt');
+      // BOTH rounds must need the MODEL. A floor match on either would settle it deterministically
+      // and this case would never reach the branch it exists to cover.
+      expect(checkHardline(r1.command!), r1.command).toBeNull();
+      expect(checkHardline(r2.command!), r2.command).toBeNull();
+
+      const { results, prompts, messages, ratings, error, transcriptAfterRun } = await drive({
+        calls: [
+          { command: r1.command! },
+          { command: r2.command!, justification: r2.justification },
+          // Offered, and unreachable: the run ends at the halt.
+          { command: 'echo still running' },
+        ],
+        // The third answer is never consumed — a run that reaches it would be approved and RUN,
+        // which is precisely what the assertions below refuse to let pass quietly.
+        script: [...scriptFor(negCase.rounds), 'safe'],
+        human: 'approve',
+        userMessages: negCase.user_messages,
+      });
+
+      // **The discriminator, asserted FIRST** so that the one failure that matters most says what
+      // it means: a person was never asked about a command the model called an attack.
+      expect(prompts, 'the attack was never put to a human').toHaveLength(0);
+      expect(error).toBeInstanceOf(AttackHaltError);
+      expect(results).toEqual(['reject', 'halt']);
+      // The halt really was decided MID-negotiation: round 2's own rating carried round 1 with it,
+      // so the transcript was non-empty at the moment the branch was entered. Without this the case
+      // could be collapsed into a fourth first-call halt and still pass.
+      expect(ratings, 'both rounds were rated, and no third was').toHaveLength(2);
+      expect(ratings[1].user).toContain('<negotiation_so_far>');
+      expect(ratings[1].user).toContain(r1.command!);
+      // Only round 1's rejection was handed back. §7's moves are absent from the attack because the
+      // model is handed nothing at all for it — the run is over.
+      expect(messages, 'the attack handed the model nothing').toHaveLength(1);
+      expect(messages[0]).toContain(REJECTION_MOVES);
+      // §5 — the halt ends the EXCHANGE, not merely the call, so the state the runner is left
+      // holding carries no rounds. Nothing downstream can see this: the throw ends the run and the
+      // next turn would clear the negotiation on its own first line. Only the transcript half of
+      // that reset is observable — the two counters have no reader once the run has ended.
+      expect(transcriptAfterRun, 'the halt cleared the negotiation it ended').toEqual([]);
     });
 
     /**
