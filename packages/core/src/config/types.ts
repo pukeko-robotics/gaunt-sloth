@@ -117,7 +117,11 @@ export interface GthConfig {
    *   summarization, tool-result offload). Selecting it emits a warning. It can exhibit
    *   path-divergence and sporadic failures and carries extra internal workarounds; prefer `lean`.
    *
-   * Honored everywhere; the ACP server is still structurally deep-only and always runs deep.
+   * **Command-scoped.** `deep` is honored by `chat`/`code`, `ask`/`exec`, `batch` and `eval` cells,
+   * and the AG-UI (`api`) server. `review` and `pr` — including the `pr` change-requirements
+   * discovery agent — always run lean, because `@gaunt-sloth/review` cannot reach the deep backend;
+   * a run that asks for `deep` there says so rather than dropping the key silently. The ACP server
+   * is the mirror image: structurally deep-only, it always runs deep and rejects `lean` outright.
    */
   agent?: { backend?: 'deep' | 'lean' };
   /**

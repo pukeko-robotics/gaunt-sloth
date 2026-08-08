@@ -46,8 +46,9 @@ export interface SingleShotResult extends GthRunStats {
  * @param resolvers - Optional agent resolvers (tools/middleware)
  * @param command - The originating command (defaults to `ask`); selects the agent mode prompt
  * @param agentFactory - Optional backend factory (B5). When omitted the runner uses its built-in
- *   lean {@link GthLangChainAgent} default (unchanged behavior for existing callers). The app
- *   layer passes `resolveAgentFactory(config, 'lean')` so an explicit `agent.backend` is honored.
+ *   lean {@link GthLangChainAgent} default and warns if `agent.backend` asked for `deep`, since
+ *   omitting it opts the run out of that key. The app layer passes
+ *   `resolveAgentFactory(config, 'lean')` so an explicit `agent.backend` is honored.
  * @returns A {@link SingleShotResult}: `ok` is `true` when the run completed without error, `false`
  *   when it failed (so callers such as `exec` can set a non-zero exit code); `answer`/`tokensInput`/
  *   `tokensOutput`/`tools` carry the SUT's answer text and run stats for callers that need them

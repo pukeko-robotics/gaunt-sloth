@@ -209,10 +209,20 @@ export class GthAgentRunner {
   private persistedGrantsLoaded = false;
 
   /**
+   * GS2-81 — whether the caller supplied a backend factory. When it did NOT, this runner is
+   * hard-wired to the lean default below, so a config asking for `agent.backend: 'deep'` cannot be
+   * honored no matter what it says. Recorded here (rather than inferred later) because by then the
+   * fallback has already collapsed both cases into one function.
+   */
+  private readonly backendFactorySupplied: boolean;
+
+  /**
    * @param agentFactory Produces the {@link GthAgentInterface} the runner drives.
    *   Defaults to the lean {@link GthLangChainAgent} (core). `@gaunt-sloth/agent`
    *   passes a factory returning a deep `GthDeepAgent` so the same runner can drive a
    *   `createDeepAgent` graph without core depending on deepagents.
+   *   **Omitting it opts the caller out of `agent.backend`** — see {@link init}, which says so out
+   *   loud rather than letting the key be dropped in silence.
    */
   constructor(
     statusUpdate: StatusUpdateCallback,
@@ -221,6 +231,7 @@ export class GthAgentRunner {
   ) {
     this.statusUpdate = statusUpdate;
     this.resolvers = resolvers;
+    this.backendFactorySupplied = agentFactory !== undefined;
     this.agentFactory =
       agentFactory ?? ((status, agentResolvers) => new GthLangChainAgent(status, agentResolvers));
   }
@@ -503,6 +514,8 @@ export class GthAgentRunner {
 
     debugLogObject('Runnable Config', this.runConfig);
 
+    this.warnIfBackendCannotBeHonored(configIn, command);
+
     this.agent = this.agentFactory(this.statusUpdate, this.resolvers);
 
     // Initialize the agent
@@ -510,6 +523,34 @@ export class GthAgentRunner {
     await this.agent.init(command, configIn, checkpointSaver);
 
     debugLog('Agent initialization complete');
+  }
+
+  /**
+   * GS2-81 — `agent.backend` is a COMMAND-SCOPED key, and this is where a command opts out of it.
+   *
+   * A caller that hands the runner no factory gets the lean {@link GthLangChainAgent}, whatever the
+   * config asked for: `agent.backend: 'deep'` is then accepted by the schema, resolved into the
+   * config, and dropped on the floor. `gth review` and `gth pr` are in exactly that position — the
+   * review module builds its runner without one, and `@gaunt-sloth/review` does not depend on
+   * `@gaunt-sloth/agent`, so the deep backend is out of its reach — as is the `gth pr` change-
+   * requirements discovery agent.
+   *
+   * The check lives HERE, on the `agentFactory ?? lean` fallback itself, rather than in a list of
+   * verbs that cannot honor the key: a list is a second source of truth that goes stale the first
+   * time someone adds a command, whereas anything that reaches this fallback is by construction a
+   * run the key cannot reach. `lean` and the unset default need no warning — that IS what runs.
+   */
+  private warnIfBackendCannotBeHonored(config: GthConfig, command: GthCommand | undefined): void {
+    if (this.backendFactorySupplied || config.agent?.backend !== 'deep') {
+      return;
+    }
+    const scope = command ? `the ${command} command` : 'this run';
+    this.statusUpdate(
+      StatusLevel.WARNING,
+      `Config sets agent.backend: deep, but ${scope} always runs the lean backend, so the ` +
+        'setting has no effect here. The deep backend is honored by chat, code, ask, exec, ' +
+        'batch and eval cells, and the AG-UI (api) server.'
+    );
   }
 
   /**

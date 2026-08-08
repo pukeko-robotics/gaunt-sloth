@@ -106,6 +106,12 @@ export async function review(
     const effectiveResolvers: AgentResolvers = resolvers ?? {
       resolveMiddleware: async (middleware) => middleware ?? [],
     };
+    // GS2-81: no backend factory, so `review`/`pr` always run the lean agent — `@gaunt-sloth/review`
+    // is a leaf package that does not depend on `@gaunt-sloth/agent` and cannot reach the deep
+    // backend. `agent.backend` is therefore a command-scoped key, and the runner says so out loud
+    // when a config asks for `deep` here rather than dropping it in silence. Giving this package a
+    // dependency on the agent package to honour the key instead would invert the layering AND
+    // silently change what an existing review does.
     const runner = new GthAgentRunner(defaultStatusCallback, effectiveResolvers);
     try {
       await runner.init(command, config, new MemorySaver());
