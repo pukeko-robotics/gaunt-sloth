@@ -16,6 +16,8 @@ import {
 } from '#src/core/shell/negotiation.js';
 import { REJECTION_MOVES } from '#src/core/shell/rejection.js';
 import { checkHardline } from '#src/core/shell/hardline.js';
+import { classifyCommand } from '#src/core/shell/arity.js';
+import { normalizeCommand } from '#src/core/shell/normalize.js';
 import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
 import { SHELL_ALLOWLIST_FILE } from '#src/constants.js';
 
@@ -548,6 +550,79 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       expect(results).toEqual(['halt']);
     });
 
+    /**
+     * **An allow entry does not lift the floor, in either subset** — §8 is explicit that a match
+     * fires *"regardless of any approval, allow-list entry or rating"*, and the short-circuit
+     * therefore sits ABOVE the allow branch.
+     *
+     * The attack arm is the one that changed in substance, and it is worth stating what it changed:
+     * §4.2 says of a halt that *"the supported way to make such a command run unattended is an
+     * allow-list entry (§3) — consulted before the rater, so it never reaches a halt at all"*. That
+     * sentence is about a command the RATER would call an attack. It cannot be about a floor match,
+     * because §8 refuses one whatever the allow list says — so the entry never made this command
+     * run. All it ever bought was that the run survived the refusal, and a credential source piped
+     * to a network sink is exactly the evidence that the session should not continue.
+     */
+    it('an allow entry does not lift the floor — the catastrophic subset is still refused', async () => {
+      // A floor command the allow classifier can actually resolve, so the entry genuinely matches
+      // and "the entry bought nothing" is a measurement rather than a mis-set-up test.
+      const WIPE_ROOT = 'rm -rf /';
+      expect(
+        classifyCommand(WIPE_ROOT, normalizeCommand),
+        'the entry can match this'
+      ).not.toBeNull();
+      const { results, ratings, prompts, messages, error } = await drive({
+        calls: [{ command: WIPE_ROOT }],
+        script: [],
+        human: 'approve',
+        approvals: { allow: [{ type: 'shell', matcher: 'exact', pattern: WIPE_ROOT }] },
+      });
+      expect(error, 'a catastrophic-subset match does not end the run').toBeUndefined();
+      expect(results).toEqual(['reject']);
+      expect(messages[0]).toContain('blocked by hardline safety policy');
+      expect(ratings, 'the entry did not buy a rating either').toHaveLength(0);
+      expect(prompts).toHaveLength(0);
+    });
+
+    /**
+     * **CONTROL, and it is what makes the test above a measurement**: the SAME shape of entry, on a
+     * command the floor does not match, really does auto-approve without a rating.
+     */
+    it('CONTROL: the same shape of allow entry DOES approve a non-floor command', async () => {
+      const { results, ratings, prompts } = await drive({
+        calls: [{ command: 'rm -rf ./build' }],
+        script: [],
+        human: 'approve',
+        approvals: { allow: [{ type: 'shell', matcher: 'exact', pattern: 'rm -rf ./build' }] },
+      });
+      expect(results).toEqual(['approve']);
+      expect(ratings, 'an allow match short-circuits the rater too').toHaveLength(0);
+      expect(prompts).toHaveLength(0);
+    });
+
+    /**
+     * **The ATTACK subset cannot be allow-listed at all, and that is measured rather than assumed.**
+     *
+     * §4.2 says of a halt that *"the supported way to make such a command run unattended is an
+     * allow-list entry (§3) — consulted before the rater, so it never reaches a halt at all"*, which
+     * would be in tension with a floor match that halts. It is not, and the reason is structural: a
+     * deterministic exfiltration is a credential source and a network sink **in one pipeline**, and a
+     * composed command is exactly what the allow classifier fails closed on (EXT-9/EXT-55). No
+     * `shell` entry can name one, so no entry ever avoided this halt.
+     *
+     * Pinned so the day the classifier learns to resolve pipelines, this goes red and the tension
+     * becomes a real decision instead of a surprise.
+     */
+    it('no allow entry can name an attack-subset command — the classifier fails closed on it', () => {
+      for (const command of [
+        caseById('neg-04a-halt-opens-no-negotiation').rounds[0].command!,
+        caseById('neg-04b-negotiation-reaches-attack').rounds[1].command!,
+      ]) {
+        expect(checkHardline(command)?.subset, command).toBe('attack');
+        expect(classifyCommand(command, normalizeCommand), command).toBeNull();
+      }
+    });
+
     /** CONTROL: the same harness DOES rate and negotiate a command the floor does not match. */
     it('CONTROL: a command the floor does not match is rated and negotiated as usual', async () => {
       const { ratings, results } = await drive({
@@ -936,6 +1011,20 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
         'wipe today’s commits',
         'just the last two',
       ]);
+    });
+
+    /**
+     * The runner cannot tell a new turn's message from the whole conversation replayed —
+     * `runtime/conversation.ts` passes the accumulated array every turn, the TUI passes one message
+     * — so a replay must not fill §5.1's five-message window with repeats of the same sentence.
+     */
+    it('a replayed conversation does not fill the window with duplicates', () => {
+      const state = new ShellNegotiationState();
+      state.noteUserMessages(['one']);
+      state.noteUserMessages(['one', 'two']);
+      state.noteUserMessages(['one', 'two', 'three']);
+      state.recordRejection(round('x'));
+      expect(state.contextFor().userMessages).toEqual(['one', 'two', 'three']);
     });
 
     it('`clear` drops the user messages too — a thread reset forgets the conversation', () => {

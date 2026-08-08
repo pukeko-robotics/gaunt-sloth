@@ -194,10 +194,21 @@ export class ShellNegotiationState {
    * Blank messages are dropped here as well as by the builder: an empty turn carries nothing a rater
    * can weigh, and keeping it would spend a retention slot that the message carrying the mandate
    * needs.
+   *
+   * **A message already retained moves to the newest position rather than being stored twice**, and
+   * that is not tidiness. The runner cannot tell "this turn's new message" from "the whole
+   * conversation replayed", because both arrive as the same argument — `runtime/conversation.ts`
+   * replays the accumulated array on every turn, while the TUI and the readline session pass the one
+   * new message. Appending blindly would fill §5.1's five-message window with repeats of the same
+   * sentence for the replaying caller, starving the rater of the one context it is allowed. Keeping
+   * the newest position is also the right answer when a user genuinely repeats themselves: it is one
+   * thing they said, and it was said most recently.
    */
   noteUserMessages(messages: readonly string[]): void {
     for (const message of messages) {
       if (message.trim().length === 0) continue;
+      const seen = this.userMessages.indexOf(message);
+      if (seen !== -1) this.userMessages.splice(seen, 1);
       this.userMessages.push(message);
     }
     if (this.userMessages.length > NEGOTIATION_USER_MESSAGE_RETENTION) {
