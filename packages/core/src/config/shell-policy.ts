@@ -462,7 +462,7 @@ export const APPROVAL_WRITE_MODIFIER_HINT =
  * The wording is constrained by four normative rules (state what the mode PERMITS, state the
  * allow-list carve-out, never claim safety this system cannot deliver, use the display spelling)
  * plus §8.1 — the hardline floor is real but is NEVER advertised, so descriptions cite only
- * protections the user can inspect and extend, i.e. the deny list. Three further constraints bind
+ * protections the user can inspect and extend, i.e. the deny list. Five further constraints bind
  * every edit here:
  *
  * 1. **No description may imply containment.** The gate protects against accidents, not intent, and

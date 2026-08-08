@@ -1071,8 +1071,9 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
    * THE preflight property of CFG-28, and the one thing in the node that can silently break safety.
    * The pre-rescale branch excluded the single halting outcome BY NAME; renamed in place it would
    * have let an ambiguity or script-env-leak hit rewrite a `catastrophic` verdict down to
-   * `destructive` — trading an unnegotiable escalation for one EXT-29 will make negotiable, with no
-   * test failing and nothing on screen to show for it. The preflights FLOOR; they never lower.
+   * `destructive` — trading an unnegotiable escalation for one EXT-29 made negotiable at `auto`,
+   * with no test failing and nothing on screen to show for it. The preflights FLOOR; they never
+   * lower.
    */
   describe('the preflights are a FLOOR, never a downgrade', () => {
     const AMBIGUOUS = 'rm -rf foo; echo done';

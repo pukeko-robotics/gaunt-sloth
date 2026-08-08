@@ -251,8 +251,8 @@ the other tools it has.
 The auto-rater backs that up at `assisted` and `auto`. When it does not rate a command safe
 and one of the tools the agent already has would do the same job, it names that tool in its
 explanation. At Assisted that explanation reaches you, on the rater line of the approval prompt; at
-Auto it goes to the agent as the reason its command was refused, and reaches you only when the
-exchange has run out of rounds:
+Auto a **destructive** one goes to the agent as the reason its command was refused, and reaches you
+when the exchange has run out of rounds — a **catastrophic** one comes straight to you:
 
 ```
 ⚠ Auto-rater (destructive): rewrites a file in place; edit_file does this without a shell

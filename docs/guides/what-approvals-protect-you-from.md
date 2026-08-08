@@ -29,8 +29,9 @@ were last involved are capped, so the argument ends at a person rather than goin
 own description — the one `/approvals` prints, and the one
 [the ladder](shell-tool-and-approvals.md#the-ladder-approvals) lists — is the current word on what
 it does. So plan to come back to prompts either way: anything the rater will not clear is brought to
-a person once those rounds are spent, and a command whose structure is hostile ends the run
-outright. Whether that is a wait or a failure is decided by the surface rather than the mode —
+a person — at once when it cannot be undone, and once those rounds are spent when it can — while a
+command whose structure is hostile ends the run outright. Whether that is a wait or a failure is
+decided by the surface rather than the mode —
 a session you walked away from holds the prompt until you come back, while a run with nobody to ask
 at all (CI, a one-shot `gth exec`) exits non-zero rather than hanging. The one thing that makes a
 *particular* command stop asking is naming it in `approvals.allow`. The mode is one line in the same
@@ -127,7 +128,8 @@ The layers are deliberately conservative about opposite things.
 - A **deterministic check** comes to you only when it is sure a command is too bad. Anything short of
   that, it hands to the model.
 - The **auto-rater** approves only when it is sure a command is safe. Anything short of that, it
-  comes to you — at Auto, once the agent has spent its rounds answering the rater.
+  comes to you — at Auto, at once when what it asked for cannot be undone, and otherwise once the
+  agent has spent its rounds answering the rater.
 
 A pattern is trustworthy about the form of a command and knows nothing about its meaning, so its
 uncertainty is not evidence and must not spend your attention. The model is the only layer that

@@ -121,9 +121,11 @@ describe('§4.5 suffix table', () => {
     );
     // `auto` has its OWN sentence, and it names the consequence that differs: [[EXT-29]]'s
     // negotiation hands a call the rater will not clear back to the model rather than to the user,
-    // so the first thing that happens there is a refusal the model can answer. It stays `MAY`
-    // because the bounds still reach the user. Sharing `assisted`'s wording would hide a real
-    // difference in the model's own tool-selection input, which is what §4.5 exists to prevent.
+    // so the first thing that happens there is a refusal the model can answer. Its `MAY` qualifies
+    // the rater's refusal rather than the user's approval, so the sentence says nothing either way
+    // about whether a person can be asked — deliberately, since this is §4.5's row verbatim.
+    // Sharing `assisted`'s wording would hide a real difference in the model's own tool-selection
+    // input, which is what §4.5 exists to prevent.
     expect(SUFFIX['auto']).toBe(
       'Calling this tool MAY be refused by the auto-rater if it does not look safe. Only use it ' +
         'when it is impossible to achieve the result with the other provided tools.'
