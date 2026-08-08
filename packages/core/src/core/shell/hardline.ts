@@ -457,10 +457,12 @@ export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
  * deception and obfuscation are all in it, and none of them are here), so naming this function
  * `isDeterministicAttack` would claim a completeness it does not have.
  *
- * §4.2 makes `attack` the one outcome that halts the run, and §3 requires that the halt "MUST NOT
- * depend on the rater alone — its deterministic subset belongs in the hardline floor", because the
- * allow-list is consulted BEFORE the rater and would otherwise wave an allow-listed credential
- * upload straight through.
+ * §3 requires that the `attack` outcome "MUST NOT depend on the rater alone — its deterministic
+ * subset belongs in the hardline floor", because the allow-list is consulted BEFORE the rater and
+ * would otherwise wave an allow-listed credential upload straight through. What this section
+ * therefore guarantees without a model is that such a command is **refused** — at every rung, above
+ * the allow list, and again before spawn. §4.2's run-ending halt stays with the rater's `attack`
+ * verdict: a floor match is a model-free assertion, and the model-free consequence is a refusal.
  *
  * This is deliberately a SUBSET, not an attempt at the whole outcome. The floor is unconfigurable
  * and fires under `bypass`, so a false positive here is unrecoverable — the user cannot change rung
@@ -599,23 +601,6 @@ export function isDeterministicExfiltration(normalizedLowerCommand: string): boo
 export interface HardlineMatch {
   /** Human-readable reason the command was refused. */
   description: string;
-  /**
-   * §8 — **which of §4.2's two settled outcomes this match is the deterministic subset of.** The
-   * floor exists so *"§4.2 does not depend on a model being right"*, and §4.2 gives those two
-   * outcomes different consequences: `catastrophic` is refused (never negotiated, never escalated —
-   * an approval dialog whose answer is overridden at execution is worse than a flat refusal), while
-   * `attack` **ends the run**.
-   *
-   * Recording it is what lets one call site serve both. Without it the approvals gate would have to
-   * re-derive which arm fired — a second copy of the floor's own conditions — or collapse the two
-   * into one consequence, which in either direction is wrong: refusing an exfiltration lets a
-   * compromised session carry on, and halting on `rm -rf /` spends the run-ending control on a
-   * command the model can simply be told not to run.
-   *
-   * The exec-time refusal ignores this: at that point every match is the same event, a command that
-   * does not run.
-   */
-  subset: 'catastrophic' | 'attack';
 }
 
 /**
@@ -627,14 +612,14 @@ export function checkHardline(command: string): HardlineMatch | null {
   const normalized = normalizeCommand(command).toLowerCase();
   for (const [pattern, description] of HARDLINE_PATTERNS) {
     if (pattern.test(normalized)) {
-      return { description, subset: 'catastrophic' };
+      return { description };
     }
   }
-  // §3/§8 — the deterministic subset of the `attack` outcome, so the §4.2 halt does not depend on a
-  // model being right, and cannot be ridden through on an allow-list entry (consulted before the
-  // rater).
+  // §3/§8 — the deterministic subset of the `attack` outcome, so refusing a credential upload does
+  // not depend on a model being right, and cannot be ridden through on an allow-list entry
+  // (consulted before the rater).
   if (isDeterministicExfiltration(normalized)) {
-    return { description: 'sending credentials off the machine', subset: 'attack' };
+    return { description: 'sending credentials off the machine' };
   }
   return null;
 }

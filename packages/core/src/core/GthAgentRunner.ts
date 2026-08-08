@@ -133,9 +133,15 @@ function copyApprovalEntry(entry: ApprovalEntry): ApprovalEntry {
  *
  * Read defensively for the same reason `command` is: these are model-authored arguments arriving
  * through a schema the graph validated but that this method does not re-validate, so a non-string
- * or a whitespace-only value is *absent* rather than a second spelling of empty. That matters at
- * the far end: a blank justification would render an empty `<justification>` fence in the rating
- * prompt and be recorded as a round in which the agent argued something, which it did not.
+ * or a whitespace-only value is *absent* rather than a second spelling of empty.
+ *
+ * **What the trim buys is the RECORDED ROUND, not the prompt.** The rating prompt is already safe
+ * without it — `buildNegotiationContextBlock` drops a blank justification before it renders a fence,
+ * and `renderNegotiationTranscript` drops one before it renders a line. What only this can do is
+ * keep the round itself honest at the point it is written: a round carrying a whitespace-only
+ * justification asserts that the agent argued something it did not, to everything that later reads
+ * the transcript rather than a rendering of it. Both downstream guards then stay defence in depth
+ * instead of being the only thing between a blank string and that claim.
  */
 function shellJustification(args: Record<string, unknown> | undefined): string | undefined {
   const value = args?.justification;
@@ -982,20 +988,20 @@ export class GthAgentRunner {
     // matched" and "the rater said catastrophic" name overlapping, non-identical sets. A
     // `catastrophic` rating still escalates (§4.2 settled that deliberately); only a floor match
     // refuses here.
-    // **The floor covers the deterministic subset of BOTH severe outcomes (§8), and §4.2 gives them
-    // different consequences, so this branches on which one matched.** `catastrophic` is refused;
-    // `attack` ends the run, which is what §8's *"so §4.2 does not depend on a model being right"*
-    // asks for — the halt on a credential source piped to a network sink no longer waits for the
-    // rater to agree. Collapsing them would be wrong in both directions: refusing an exfiltration
-    // lets a session that has just evidenced compromise carry on, and halting on `rm -rf /` spends
-    // the one run-ending control on something the model can simply be told not to do.
+    //
+    // **A floor match refuses; it never halts, whichever of §8's two subsets matched.** The floor is
+    // a lexical test with no notion of direction or role, so it fires on ordinary work — the deploy
+    // authenticated by an identity file, the fetch that writes a credential INBOUND — and ending the
+    // session on one leaves a restart as the only recovery. The run-ending halt stays where a model
+    // has actually said the command is an attack (the rating path below): a floor match is a
+    // model-free assertion, and the model-free consequence is the floor's own refusal, reached
+    // earlier here than at exec and without spending a prompt on it.
+    //
+    // **Both rated rungs, deliberately.** `assisted` gets the refusal without a prompt for the same
+    // reason `auto` gets it without a round: §4.2 is a statement about the command, not about who
+    // was going to be asked about it.
     if (isShellCommand && command !== null && isRatedRung(approvals.rung)) {
       const floor = checkHardline(command);
-      if (floor?.subset === 'attack') {
-        // §4.2 — not a rejection the model can respond to, and no rounds either way.
-        this.negotiation.humanReached();
-        throw new AttackHaltError(command, floor.description);
-      }
       if (floor) {
         const refusal = buildHardlineRefusal(command, floor);
         // Visible, because the exec-time refusal is: a refusal the user never sees reads as the

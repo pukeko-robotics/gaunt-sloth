@@ -125,21 +125,32 @@ export class ShellNegotiationState {
    * site — which is exactly what makes §5.6's *"a cleared transcript means a round-1 context"* fall
    * out of the reset rather than out of a second branch that could disagree with it.
    *
-   * **The user messages are admitted from round 2, never at round 1**, and the transcript is what
-   * decides which round this is. §5.1 is unambiguous — *"Round 1 sees the command alone — nothing
-   * else"* — and §5.6 spells out the consequence for the round right after a reset: *"the command
-   * and nothing else — no transcript, no user messages, because that is what round 1 means"*.
+   * **Everything except the command is admitted from round 2, never at round 1**, and the transcript
+   * is what decides which round this is. §5.1 is unambiguous — *"Round 1 sees the command alone —
+   * nothing else"* — and §5.6 spells out the consequence for the round right after a reset: *"the
+   * command and nothing else — no transcript, no user messages, because that is what round 1 means"*.
    *
    * Keying them on the transcript rather than on a flag is what makes those two sentences the same
-   * fact. The messages themselves are NOT cleared by the reset (they are the conversation, not the
-   * argument), so §5.6's convergence still works: the reply *"just the last two"* is out of view for
-   * the round-1 rating after the reset and in view for the round-2 rating that follows it — which is
-   * exactly the row the spec's table shows it arriving on.
+   * fact, and it is why the justification is withheld by the same test rather than passed straight
+   * through. §5.1 lists the justification under what *"from round 2 the rater additionally sees"*,
+   * and it is the one channel the design allows to LOWER an outcome — so a justification volunteered
+   * before any rejection has happened would open that channel on the first attempt, pre-emptively,
+   * for the agent or for anything that has injected into the agent's context. Withholding it until
+   * round 2 is what the spec's ordering buys, and a round-1 context is byte-identical to a plain
+   * rating because of it.
+   *
+   * The messages and the volunteered justification are NOT destroyed by a reset (they are the
+   * conversation and the pending call's own argument, not the exchange), so §5.6's convergence still
+   * works: the reply *"just the last two"* is out of view for the round-1 rating after the reset and
+   * in view for the round-2 rating that follows it — which is exactly the row the spec's table shows
+   * it arriving on. A justification the agent supplies again with its next attempt is admitted then,
+   * because by then there is a rejection for it to answer.
    */
   contextFor(justification?: string): RaterNegotiationContext {
+    const roundOne = this.rounds.length === 0;
     return {
-      justification,
-      userMessages: this.rounds.length === 0 ? [] : [...this.userMessages],
+      justification: roundOne ? undefined : justification,
+      userMessages: roundOne ? [] : [...this.userMessages],
       priorRounds: [...this.rounds],
     };
   }

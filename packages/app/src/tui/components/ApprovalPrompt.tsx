@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { Rule } from '#src/tui/components/Rule.js';
+import { renderNegotiationTranscript } from '@gaunt-sloth/core/core/shell/negotiation.js';
 import type { PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
 
 /**
@@ -36,6 +37,16 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
   // did. It is the provenance that makes the question traceable to the line the user wrote; an
   // escalation they cannot trace reads as the gate malfunctioning rather than as their own rule.
   const escalatedBy = pending.escalatedBy;
+  // [[EXT-29]] §6 — when a §5 negotiation preceded this escalation, the human is shown ALL of it.
+  // The question is never "may this command run": that the agent proposed the same command three
+  // times unchanged, against two rejections that each told it what to fix, is the most important
+  // thing on the screen, and a prompt showing the final attempt alone asks the user to rule on a
+  // command when the decision they actually have is about an argument. Rendered through core's
+  // shared renderer — the same one the readline prompt and the §6.2 non-interactive message use —
+  // so no two surfaces describe one exchange differently. `null` whenever there were no rounds
+  // (`catastrophic`, a declared escalate entry, an unrated rung), so nothing draws a heading over
+  // an argument that never happened.
+  const negotiation = renderNegotiationTranscript(pending.negotiationRounds ?? []);
   // EXT-71/EXT-70 §6 — what a sticky choice will store, shown at the moment of the choice on every
   // surface. Under §3.1 a shell grant is the command itself as a fully-explicit exact entry, not a
   // pattern derived from it; for a tool call the stored thing is the TOOL, its server and the host
@@ -66,6 +77,7 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
       {escalatedBy ? (
         <Text color="yellow">{`⚠ Your approvals.escalate list matched this call: ${escalatedBy}`}</Text>
       ) : null}
+      {negotiation ? <Text color="yellow">{negotiation}</Text> : null}
       {grantPreview ? (
         <>
           <Text dimColor>{`[s]/[a] will remember ${grantSummary ?? grantPreview}`}</Text>

@@ -795,22 +795,41 @@ function oneLine(text: string): string {
 }
 
 /**
- * Every Unicode **format** character — the zero-width spaces and joiners, the soft hyphen, the word
- * joiner, the BOM, and the bidi controls including the right-to-left override. `String.trim()` and
- * `\s` match none of them: they render as nothing and match as something, which is the whole of
- * their value to an attacker.
+ * The characters that render as nothing and match as something — which is the whole of their value
+ * to an attacker, since `String.trim()` and `\s` match none of them.
  *
  * **One class, two uses, and they are the same property.** It decides {@link isBlank} — without it a
  * message of one U+200B is "not blank", renders a block, and turns a round-1 rating into a round-2
  * one on a character nobody can see — and it is stripped before {@link neutralizeClosingTag}
  * matches, because a closing tag with an invisible spliced into it reads to a model exactly like one
- * without. Those two were written as separate fixes; they are one rule.
+ * without. Those two are one rule.
  *
- * `\p{Cf}` rather than a hand-written range, because an enumeration of invisible characters is a
- * list somebody has to remember to extend — and the enumeration this replaced had already missed
- * U+00AD and U+202E.
+ * **Two Unicode properties, because neither one is the property we mean.**
+ *
+ * - `\p{Cf}` is the general CATEGORY *format*: the zero-width spaces and joiners, the soft hyphen,
+ *   the word joiner, the BOM, the bidi controls including the right-to-left override.
+ * - `\p{Default_Ignorable_Code_Point}` is the derived property for *"a renderer that does not
+ *   support this should show nothing"*. It adds the fillers a category enumeration cannot reach —
+ *   U+115F and U+1160 (the Hangul choseong/jungseong fillers), U+3164 and U+FFA0 (their compatibility
+ *   spellings, both of which NFKC folds into the first two), U+2065 and the other unassigned
+ *   ignorables — every one of which is a letter or unassigned to `\p{Cf}` and blank to a reader.
+ *
+ * U+2800 BRAILLE PATTERN BLANK is named by hand because it is in neither: it is a symbol
+ * (`\p{So}`), assigned, and it is the empty braille cell, so it renders as blank width.
+ *
+ * **The residual, stated rather than implied.** This is still an enumeration of properties, so it
+ * is a claim about what these classes cover and not about what a model would read as invisible. A
+ * character that renders as blank in a particular font, or one a future Unicode version assigns
+ * into a category none of these name, walks through — the same shape the hardline floor's
+ * command-position enumeration records for itself. What that costs is bounded and worth stating: a
+ * survivor can make a blank value count as non-blank (one extra rendered round), or splice a closing
+ * tag that this does not neutralise. Widen the class when one is measured; do not narrow it to the
+ * characters a test happens to name.
  */
-const INVISIBLE_FORMAT_CHARS = /\p{Cf}/gu;
+// U+2800 is escaped rather than written literally, for the same reason the specs build their cases
+// with `fromCharCode`: a rule about invisible characters must not depend on an invisible character
+// surviving an editor, a formatter or a diff, and a reader can see which code point this is.
+const INVISIBLE_FORMAT_CHARS = /[\p{Cf}\p{Default_Ignorable_Code_Point}\u2800]/gu;
 
 /** Whether a value carries nothing a reader would see — whitespace and invisibles alike. */
 function isBlank(text: string): boolean {
@@ -841,11 +860,16 @@ function escapeForRegExp(value: string): string {
  * tampered with has been told something useful about the command it is rating.
  *
  * **Matching is deliberately loose, and the looseness is the mechanism.** The reader is a language
- * model, not a parser, so anything it would READ as the fence ending has to be caught: case, the
+ * model, not a parser, so a matcher that is stricter than the reader is not a filter — it is a list
+ * of spellings the attacker gets to choose from. Four kinds of slack are closed: case, the
  * whitespace an XML parser would ignore (`</ justification >`), the compatibility glyphs NFKC folds
  * (a fullwidth solidus is a solidus to a reader), and any invisible spliced into the tag
- * ({@link INVISIBLE_FORMAT_CHARS}). A matcher that is stricter than the reader is not a filter — it
- * is a list of spellings the attacker gets to choose from.
+ * ({@link INVISIBLE_FORMAT_CHARS}).
+ *
+ * **That is four kinds of slack, not all of them**, and the difference is worth keeping in view: the
+ * invisibles are covered by an enumeration of Unicode properties, so this is as tolerant as those
+ * properties are and no more. {@link INVISIBLE_FORMAT_CHARS} states that residual; a character
+ * measured to render as blank and walk through belongs in that class, not in a second matcher here.
  *
  * Self-reconstruction is impossible by construction: the replacement contains no angle bracket and
  * no slash, so no arrangement of neutralised text can rebuild a closing tag.
@@ -907,8 +931,8 @@ function fencedOneLine(text: string, tag: string, home: string | undefined): str
  * {@link NEGOTIATION_MAX_USER_MESSAGES} messages (the LAST that many), each truncated to
  * {@link NEGOTIATION_USER_MESSAGE_MAX_CHARS}. Blank entries are dropped before the last-5 window is
  * taken, so a run of empty messages cannot spend the budget that carries the mandate — and "blank"
- * counts zero-width characters as nothing ({@link isBlank}), so an invisible character cannot turn a
- * round-1 rating into a round-2 one.
+ * counts the characters {@link INVISIBLE_FORMAT_CHARS} names as nothing ({@link isBlank}), so a
+ * value carrying only those cannot render a block that a plain rating would not have.
  *
  * @param negotiation The §5.1 context, or nothing.
  * @param home The home directory to fold — the caller's own `home`, so the block folds exactly as

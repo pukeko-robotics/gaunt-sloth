@@ -11,6 +11,7 @@ import { AttackHaltError, NonInteractiveEscalationError } from '#src/core/shell/
 import {
   MAX_CONSECUTIVE_REJECTIONS,
   MAX_REJECTIONS_BEFORE_HUMAN,
+  NEGOTIATION_USER_MESSAGE_RETENTION,
   renderNegotiationTranscript,
   ShellNegotiationState,
 } from '#src/core/shell/negotiation.js';
@@ -64,7 +65,14 @@ const projectDir = mkdtempSync(join(tmpdir(), 'gth-negotiation-spec-'));
 interface CorpusRound {
   command?: string;
   justification?: string;
-  expect?: 'reject' | 'approve' | 'escalate' | 'halt';
+  /**
+   * `refuse` is the §8 floor's own answer and the one expectation NO rating call produces — which
+   * is why it is a separate word from `reject`. Both arrive at the gate as a rejection handed to the
+   * model, so a test that reads only the decision type cannot tell the floor from the rater; every
+   * `refuse` case below asserts the three things that can: no rating call was consumed, the message
+   * is the floor's wording, and §7's moves are absent.
+   */
+  expect?: 'reject' | 'refuse' | 'approve' | 'escalate' | 'halt';
   reset?: string;
   clears_transcript?: boolean;
   round_1_context?: boolean;
@@ -232,16 +240,34 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
   }
 
   /**
-   * The scripted verdict that produces each corpus expectation. `escalate` is `destructive` on
-   * purpose: **the escalation is never something the rater returns** — it is what a spent bound
-   * does with a rejection, which is the whole of §5.3 and the thing this suite exists to check.
+   * The scripted verdict that produces each corpus expectation **the rater answers**. `escalate` is
+   * `destructive` on purpose: **the escalation is never something the rater returns** — it is what a
+   * spent bound does with a rejection, which is the whole of §5.3 and the thing this suite exists to
+   * check.
+   *
+   * `refuse` is deliberately absent, and {@link scriptFor} throws on it rather than defaulting: the
+   * §8 floor settles that round with no rating call at all, so a row here would hand the scripted
+   * rater an answer for a question it must never be asked.
    */
-  const SCRIPTED: Record<NonNullable<CorpusRound['expect']>, ScriptedOutcome> = {
+  const SCRIPTED: Record<Exclude<NonNullable<CorpusRound['expect']>, 'refuse'>, ScriptedOutcome> = {
     reject: 'destructive',
     approve: 'safe',
     escalate: 'destructive',
     halt: 'attack',
   };
+
+  /** The rater script for a case whose every round IS answered by a rating call. */
+  function scriptFor(rounds: CorpusRound[]): ScriptedOutcome[] {
+    return rounds.map((round) => {
+      const expectation = round.expect;
+      if (expectation === undefined || expectation === 'refuse') {
+        throw new Error(
+          `corpus round "${round.command}" expects ${expectation}, which no rating call produces`
+        );
+      }
+      return SCRIPTED[expectation];
+    });
+  }
 
   // ────────────────────────────────────────────────────────────────────────────────────────────
   // The corpus, case by case.
@@ -255,9 +281,34 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
         'neg-03-mismatch',
         'neg-04a-halt-opens-no-negotiation',
         'neg-04b-negotiation-reaches-attack',
+        'neg-04c-rater-attack-opens-no-negotiation',
         'neg-05-preflight-holds',
         'neg-06-legitimate-lowering',
       ]);
+    });
+
+    /**
+     * **The three severe cases are split by WHAT decides them, and the fixture says which is which.**
+     * `neg-04a` and `neg-04b` are floor commands, so what stops them is deterministic and their
+     * expectation is `refuse`; `neg-04c` is the rater's own `attack` verdict, on a command the floor
+     * must NOT catch. Pinning both halves here is what stops the split quietly collapsing — a
+     * pattern added to the floor that swallowed `neg-04c` would leave the `attack` → halt path
+     * asserted by nothing, and the suite would stay green.
+     */
+    it('the floor decides 04a and 04b, and does not decide 04c', () => {
+      for (const id of [
+        'neg-04a-halt-opens-no-negotiation',
+        'neg-04b-negotiation-reaches-attack',
+      ]) {
+        const floored = caseById(id).rounds.filter((r) => r.expect === 'refuse');
+        expect(floored.length, `${id} carries a refuse round`).toBeGreaterThan(0);
+        for (const round of floored) {
+          expect(checkHardline(round.command!), round.command).not.toBeNull();
+        }
+      }
+      const attack = caseById('neg-04c-rater-attack-opens-no-negotiation').rounds[0];
+      expect(attack.expect).toBe('halt');
+      expect(checkHardline(attack.command!), 'the halt case must need the MODEL').toBeNull();
     });
 
     /**
@@ -268,7 +319,7 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       const rounds = caseById('neg-01-escalate').rounds;
       const { results, prompts, messages } = await drive({
         calls: rounds.map((r) => ({ command: r.command!, justification: r.justification })),
-        script: rounds.map((r) => SCRIPTED[r.expect!]),
+        script: scriptFor(rounds),
         human: 'reject',
         userMessages: caseById('neg-01-escalate').user_messages,
       });
@@ -360,7 +411,7 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       const rounds = caseById('neg-06-legitimate-lowering').rounds;
       const { results, ratings } = await drive({
         calls: rounds.map((r) => ({ command: r.command!, justification: r.justification })),
-        script: rounds.map((r) => SCRIPTED[r.expect!]),
+        script: scriptFor(rounds),
         human: 'reject',
       });
       expect(results).toEqual(['reject', 'approve']);
@@ -379,7 +430,7 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       const rounds = caseById('neg-05-preflight-holds').rounds;
       const { results, ratings } = await drive({
         calls: rounds.map((r) => ({ command: r.command!, justification: r.justification })),
-        script: rounds.map((r) => SCRIPTED[r.expect!]),
+        script: scriptFor(rounds),
         human: 'reject',
       });
       expect(results).toEqual(['reject', 'reject', 'escalate']);
@@ -399,17 +450,158 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
   });
 
   // ────────────────────────────────────────────────────────────────────────────────────────────
+  // §5.1 — what a round-1 rating is allowed to see.
+  // ────────────────────────────────────────────────────────────────────────────────────────────
+
+  describe('§5.1 — round 1 sees the command alone, whatever the agent volunteers', () => {
+    /**
+     * **A justification the model supplies before any rejection does not enter the rating.** §5.1
+     * lists it under what *"from round 2 the rater additionally sees"*, and it is the one channel
+     * the design allows to LOWER an outcome — so admitting it at round 1 would let the agent, or
+     * anything that has injected into the agent's context, attach a lowering argument pre-emptively.
+     *
+     * Asserted as byte-identity against the same command rated with no justification at all, rather
+     * than as the absence of a tag: identity is the property §5.6's *"1, again — the command alone"*
+     * actually needs, and it cannot be satisfied by a block that renders under a different heading.
+     */
+    it('a volunteered justification does not reach a round-1 rating', async () => {
+      const command = 'rm -rf ./dist';
+      const withJustification = await drive({
+        calls: [{ command, justification: 'the build output only' }],
+        script: ['destructive'],
+        human: 'reject',
+        userMessages: ['tidy up the workspace'],
+      });
+      const plain = await drive({
+        calls: [{ command }],
+        script: ['destructive'],
+        human: 'reject',
+        userMessages: ['tidy up the workspace'],
+      });
+      expect(withJustification.ratings[0].user).toBe(plain.ratings[0].user);
+      expect(withJustification.ratings[0].user).not.toContain('NEGOTIATION CONTEXT');
+      expect(withJustification.ratings[0].user).not.toContain('the build output only');
+      // …and round 2 is where it arrives, so this is a delay and not a discard.
+      const secondRound = await drive({
+        calls: [{ command }, { command, justification: 'the build output only' }],
+        script: ['destructive', 'destructive'],
+        human: 'reject',
+      });
+      expect(secondRound.ratings[1].user).toContain('<justification>');
+      expect(secondRound.ratings[1].user).toContain('the build output only');
+    });
+
+    /**
+     * A whitespace-only `justification` argument is **absent**, not a second spelling of empty. The
+     * rating prompt would survive either way (its builder drops blank values), so the round recorded
+     * on the transcript is where this is decidable — and a round claiming the agent justified
+     * something it did not is what the human reads at an escalation.
+     */
+    it('a whitespace-only justification is not recorded as an argument the agent made', async () => {
+      const { prompts } = await drive({
+        calls: [
+          { command: 'rm -rf ./a' },
+          { command: 'rm -rf ./a', justification: '   \n\t ' },
+          { command: 'rm -rf ./a', justification: 'it is the build output' },
+        ],
+        script: ['destructive', 'destructive', 'destructive'],
+        human: 'reject',
+      });
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0].negotiationRounds?.map((r) => r.justification)).toEqual([
+        undefined,
+        undefined,
+        'it is the build output',
+      ]);
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────────────────────────────
   // §4.2 — `attack` and `catastrophic` fail DIFFERENTLY.
   // ────────────────────────────────────────────────────────────────────────────────────────────
 
-  describe('§4.2 — `attack` ends the loop, `catastrophic` does not', () => {
+  describe('§4.2 — a floor match refuses, the rater’s `attack` ends the loop, `catastrophic` does neither', () => {
     /**
-     * `neg-04a` — **the absence of a second round is the whole assertion.** An `attack` halts and
-     * the model is offered no moves (§7), so nothing is handed back and nothing is asked.
+     * `neg-04a` — **the absence of a round is the whole assertion**, and it survives the case's
+     * relabel from `halt` to `refuse` intact. The command matches the §8 floor, so it is settled
+     * before anything opens: no rating call, no round, no human, and the model is offered none of
+     * §7's moves, because a justification cannot win an unappealable refusal.
      */
-    it('neg-04a: an initial attack HALTS and opens no negotiation — no round 2', async () => {
+    it('neg-04a: an initial floor match REFUSES and opens no negotiation — no round 2', async () => {
       const round = caseById('neg-04a-halt-opens-no-negotiation').rounds[0];
-      const { results, prompts, messages, error } = await drive({
+      expect(round.expect, 'the fixture asks for the floor’s answer').toBe('refuse');
+      const { results, prompts, messages, ratings, error, warnings } = await drive({
+        // A second call is offered. If a round ever opened, the run would reach it — and under a
+        // refusal the run reaches it anyway, which is what makes the rating count the discriminator.
+        calls: [{ command: round.command! }, { command: 'echo still running' }],
+        script: ['safe'],
+        human: 'approve',
+      });
+      expect(error, 'a floor match does not end the run').toBeUndefined();
+      expect(results).toEqual(['reject', 'approve']);
+      // The three facts that separate the FLOOR's refusal from the rater's: one rating call was
+      // made, and it was for the SECOND command; the message is the floor's wording; §7's moves are
+      // absent.
+      expect(ratings, 'the floor command was never rated').toHaveLength(1);
+      expect(ratings[0].user).toContain('echo still running');
+      expect(messages[0]).toContain('blocked by hardline safety policy');
+      expect(messages[0]).not.toContain(REJECTION_MOVES);
+      expect(prompts, 'and no human was asked').toHaveLength(0);
+      expect(warnings.some((w) => w.includes('blocked by hardline safety policy'))).toBe(true);
+    });
+
+    /**
+     * `neg-04b` — a negotiation ALREADY IN FLIGHT proposes a revised command that the floor catches.
+     * The revision is refused without a rating call and **opens no round of its own**: the agent is
+     * offered no moves for it, and it never appears on the transcript.
+     *
+     * **What a floor refusal does NOT do is end the exchange around it**, and the difference is
+     * asserted rather than assumed. The refusal spends neither bound (counting an unappealable
+     * refusal would walk the agent toward a human escalation §4.2 says it must not reach) and clears
+     * neither, so round 1 is still on the transcript afterwards and the next genuine rejection is
+     * round 2. That is the same rule as `spends NEITHER bound` below, measured here in the one shape
+     * where the transcript is non-empty when the floor fires.
+     */
+    it('neg-04b: a floor match mid-negotiation opens no round, and the exchange around it survives', async () => {
+      const negCase = caseById('neg-04b-negotiation-reaches-attack');
+      const [r1, r2] = negCase.rounds;
+      expect(r2.expect).toBe('refuse');
+      const { results, messages, ratings, prompts, error } = await drive({
+        calls: [
+          { command: r1.command! },
+          { command: r2.command!, justification: r2.justification },
+          { command: 'git reset --hard origin/main' },
+        ],
+        script: ['destructive', 'destructive'],
+        human: 'approve',
+        userMessages: negCase.user_messages,
+      });
+      expect(error).toBeUndefined();
+      expect(results).toEqual(['reject', 'reject', 'reject']);
+      // Round 1 was rated; the floor command was not; the third call was.
+      expect(ratings).toHaveLength(2);
+      expect(messages[1]).toContain('blocked by hardline safety policy');
+      expect(messages[1]).not.toContain(REJECTION_MOVES);
+      // The refused command is on NOBODY's transcript — it was never a round.
+      expect(ratings[1].user).not.toContain(r2.command!);
+      // …while round 1 still is, so the third call is round 2 and not a fresh round 1.
+      expect(ratings[1].user).toContain('<negotiation_so_far>');
+      expect(ratings[1].user).toContain(r1.command!);
+      expect(prompts, 'two rejections and a refusal do not reach a person').toHaveLength(0);
+    });
+
+    /**
+     * `neg-04c` — **the rater's own `attack` verdict, on a command the floor does not catch.** This
+     * is the case that keeps §4.2's halt row and §7's *"the model is offered no moves"* honest now
+     * that 04a and 04b are settled by the floor: the halt is the one consequence that still needs a
+     * model to have said so.
+     */
+    it('neg-04c: an ATTACK verdict halts and opens no negotiation — no round 2', async () => {
+      const round = caseById('neg-04c-rater-attack-opens-no-negotiation').rounds[0];
+      // The setup can only take effect if the floor stays out of it — §4.1.1 privileges raised is
+      // not a shape the floor recognises, and this is what proves the rater is what answers here.
+      expect(checkHardline(round.command!)).toBeNull();
+      const { results, prompts, messages, ratings, error } = await drive({
         // A second call is offered. If a round ever opened, the run would reach it.
         calls: [{ command: round.command! }, { command: 'echo still running' }],
         script: ['attack', 'safe'],
@@ -417,30 +609,9 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       });
       expect(error).toBeInstanceOf(AttackHaltError);
       expect(results).toEqual(['halt']);
+      expect(ratings, 'the halt is the MODEL’s answer, so it was asked').toHaveLength(1);
       expect(messages, 'the model was handed nothing at all').toHaveLength(0);
       expect(prompts, 'and no human was asked').toHaveLength(0);
-    });
-
-    /**
-     * `neg-04b` — a negotiation ALREADY IN FLIGHT reaches `attack` on a revised command. The
-     * counter, the transcript and the loop all end together; there is no round 3.
-     */
-    it('neg-04b: a negotiation in flight halts mid-way and does not continue', async () => {
-      const negCase = caseById('neg-04b-negotiation-reaches-attack');
-      const [r1, r2] = negCase.rounds;
-      const { results, error } = await drive({
-        calls: [
-          { command: r1.command! },
-          { command: r2.command!, justification: r2.justification },
-          { command: 'echo round three' },
-        ],
-        script: ['destructive', 'attack', 'safe'],
-        human: 'approve',
-        userMessages: negCase.user_messages,
-      });
-      expect(error).toBeInstanceOf(AttackHaltError);
-      // Round 1 was a rejection; round 2 halted; round 3 never happened.
-      expect(results).toEqual(['reject', 'halt']);
     });
 
     /**
@@ -469,9 +640,7 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
   describe('§8 — a floor match is settled before any round or prompt exists', () => {
     it('refuses a floor-matching command with NO rating call, no round and no human', async () => {
       const FORK_BOMB = ':(){ :|:& };:';
-      expect(checkHardline(FORK_BOMB)?.subset, 'the fixture command really is on the floor').toBe(
-        'catastrophic'
-      );
+      expect(checkHardline(FORK_BOMB), 'the fixture command really is on the floor').not.toBeNull();
       const { results, prompts, messages, ratings, warnings } = await drive({
         calls: [{ command: FORK_BOMB }],
         script: ['safe'], // never consumed — and asserted so.
@@ -533,37 +702,83 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
     });
 
     /**
-     * The floor covers the deterministic subset of BOTH severe outcomes (§8) and §4.2 gives them
-     * different consequences. The exfiltration arm ends the run rather than being refused — which
-     * is what *"so §4.2 does not depend on a model being right"* asks for.
+     * **The floor's exfiltration arm refuses like every other match — it does not end the run**, and
+     * this is the assertion that says so in the direction that can fail.
+     *
+     * A floor match is a lexical test with no notion of direction or role: the same rule fires on
+     * the deploy authenticated by an identity file and on a fetch that writes a credential inbound.
+     * Ending a session on one leaves a restart as the only recovery, so the run-ending halt stays
+     * with a model that has actually said `attack` (`neg-04c`), and what the floor asserts without a
+     * model is the refusal.
      */
-    it('the ATTACK subset of the floor halts the run, without a rating call', async () => {
+    it('the exfiltration arm is REFUSED, not halted — the run continues', async () => {
       const EXFIL = caseById('neg-04a-halt-opens-no-negotiation').rounds[0].command!;
-      expect(checkHardline(EXFIL)?.subset).toBe('attack');
-      const { error, ratings, results } = await drive({
+      expect(checkHardline(EXFIL)).not.toBeNull();
+      const { error, ratings, results, messages } = await drive({
         calls: [{ command: EXFIL }, { command: 'echo after' }],
-        script: [],
+        script: ['safe'],
         human: 'approve',
       });
-      expect(error).toBeInstanceOf(AttackHaltError);
-      expect(ratings, 'the halt did not wait for a model to agree').toHaveLength(0);
-      expect(results).toEqual(['halt']);
+      expect(error, 'the session survives a floor match').toBeUndefined();
+      expect(results, 'and the call after it still runs').toEqual(['reject', 'approve']);
+      expect(messages[0]).toContain('blocked by hardline safety policy');
+      expect(ratings, 'the refusal did not wait for a model to agree').toHaveLength(1);
+      expect(ratings[0].user, 'the only rating was for the FOLLOWING call').toContain('echo after');
     });
 
     /**
-     * **An allow entry does not lift the floor, in either subset** — §8 is explicit that a match
-     * fires *"regardless of any approval, allow-list entry or rating"*, and the short-circuit
-     * therefore sits ABOVE the allow branch.
+     * **`assisted` gets the same refusal, and it must be pinned in both directions.** Scoping the
+     * short-circuit to `auto` alone restores this rung's old behaviour exactly — a rating call and a
+     * human prompt about a command that `executeCommand` then refuses anyway — and no counter or
+     * transcript assertion anywhere else can see the difference, because `assisted` has neither.
      *
-     * The attack arm is the one that changed in substance, and it is worth stating what it changed:
-     * §4.2 says of a halt that *"the supported way to make such a command run unattended is an
-     * allow-list entry (§3) — consulted before the rater, so it never reaches a halt at all"*. That
-     * sentence is about a command the RATER would call an attack. It cannot be about a floor match,
-     * because §8 refuses one whatever the allow list says — so the entry never made this command
-     * run. All it ever bought was that the run survived the refusal, and a credential source piped
-     * to a network sink is exactly the evidence that the session should not continue.
+     * §4.2 is a statement about the command rather than about who was going to be asked: *"asking a
+     * human to approve something that is then refused anyway teaches them their answer does not
+     * count"* is the same harm at either rated rung.
      */
-    it('an allow entry does not lift the floor — the catastrophic subset is still refused', async () => {
+    it('the same at `assisted` — refused at the gate, with no prompt and no rating call', async () => {
+      const FORK_BOMB = ':(){ :|:& };:';
+      const { results, prompts, ratings, messages, error, warnings } = await drive({
+        calls: [{ command: FORK_BOMB }, { command: 'echo after' }],
+        script: ['safe'],
+        mode: 'assisted',
+        human: 'approve',
+      });
+      expect(error).toBeUndefined();
+      expect(results).toEqual(['reject', 'approve']);
+      expect(ratings, 'the floor command was not rated').toHaveLength(1);
+      expect(ratings[0].user).toContain('echo after');
+      expect(prompts, 'and the human was not asked to answer for it').toHaveLength(0);
+      expect(messages[0]).toContain('blocked by hardline safety policy');
+      expect(messages[0]).not.toContain(REJECTION_MOVES);
+      expect(warnings.some((w) => w.includes('blocked by hardline safety policy'))).toBe(true);
+    });
+
+    /**
+     * The CONTROL for the case above: at `assisted` a command the floor does NOT match still reaches
+     * the human on a `destructive` rating, exactly as it always has. Without it, "no prompt" above
+     * would also be satisfied by an `assisted` rung that had stopped prompting altogether.
+     */
+    it('CONTROL: `assisted` still prompts for a destructive command the floor does not match', async () => {
+      const { results, prompts, ratings } = await drive({
+        calls: [{ command: 'rm -rf ./build' }],
+        script: ['destructive'],
+        mode: 'assisted',
+        human: 'approve',
+      });
+      expect(results).toEqual(['escalate']);
+      expect(prompts).toHaveLength(1);
+      expect(ratings).toHaveLength(1);
+    });
+
+    /**
+     * **An allow entry does not lift the floor** — §8 is explicit that a match fires *"regardless of
+     * any approval, allow-list entry or rating"*, and the short-circuit therefore sits ABOVE the
+     * allow branch. The entry never made this command run either way (the exec-time check refuses it
+     * whatever the allow list says); all it could ever buy was a different explanation, and §8's
+     * refusal is the one the user gets.
+     */
+    it('an allow entry does not lift the floor — the command is still refused', async () => {
       // A floor command the allow classifier can actually resolve, so the entry genuinely matches
       // and "the entry bought nothing" is a measurement rather than a mis-set-up test.
       const WIPE_ROOT = 'rm -rf /';
@@ -577,7 +792,7 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
         human: 'approve',
         approvals: { allow: [{ type: 'shell', matcher: 'exact', pattern: WIPE_ROOT }] },
       });
-      expect(error, 'a catastrophic-subset match does not end the run').toBeUndefined();
+      expect(error, 'a floor match does not end the run').toBeUndefined();
       expect(results).toEqual(['reject']);
       expect(messages[0]).toContain('blocked by hardline safety policy');
       expect(ratings, 'the entry did not buy a rating either').toHaveLength(0);
@@ -598,29 +813,6 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       expect(results).toEqual(['approve']);
       expect(ratings, 'an allow match short-circuits the rater too').toHaveLength(0);
       expect(prompts).toHaveLength(0);
-    });
-
-    /**
-     * **The ATTACK subset cannot be allow-listed at all, and that is measured rather than assumed.**
-     *
-     * §4.2 says of a halt that *"the supported way to make such a command run unattended is an
-     * allow-list entry (§3) — consulted before the rater, so it never reaches a halt at all"*, which
-     * would be in tension with a floor match that halts. It is not, and the reason is structural: a
-     * deterministic exfiltration is a credential source and a network sink **in one pipeline**, and a
-     * composed command is exactly what the allow classifier fails closed on (EXT-9/EXT-55). No
-     * `shell` entry can name one, so no entry ever avoided this halt.
-     *
-     * Pinned so the day the classifier learns to resolve pipelines, this goes red and the tension
-     * becomes a real decision instead of a surprise.
-     */
-    it('no allow entry can name an attack-subset command — the classifier fails closed on it', () => {
-      for (const command of [
-        caseById('neg-04a-halt-opens-no-negotiation').rounds[0].command!,
-        caseById('neg-04b-negotiation-reaches-attack').rounds[1].command!,
-      ]) {
-        expect(checkHardline(command)?.subset, command).toBe('attack');
-        expect(classifyCommand(command, normalizeCommand), command).toBeNull();
-      }
     });
 
     /** CONTROL: the same harness DOES rate and negotiate a command the floor does not match. */
@@ -829,6 +1021,66 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
         '<user_messages>'
       );
     });
+
+    /**
+     * §5.1 — **`/clear` rotates the thread, and the rater's last-5 window goes with it.** Leaving it
+     * behind would quote the user's previous conversation into a rating made after they asked for it
+     * to be forgotten.
+     *
+     * **The user messages are the only thing this can show**, and the test is built around that. A
+     * new user turn already ends the negotiation on its own (the test above), so the transcript and
+     * both counters are clear at the start of turn two whether `resetThread` cleared anything or not
+     * — an assertion about those passes with the `clear()` call deleted. Only the retained messages
+     * survive a turn boundary, so only they can distinguish the two. And they are invisible at round
+     * 1 by rule, which is why turn two rejects TWICE: the second rating is the round-2 context where
+     * a message that outlived the reset would appear.
+     */
+    it('`/clear` forgets the conversation — a later rating cannot quote it back', async () => {
+      const ratings: { system: string; user: string }[] = [];
+      const invoke = vi.fn().mockImplementation((messages: { content: string }[]) => {
+        ratings.push({ system: messages[0].content, user: messages[1].content });
+        return Promise.resolve({ outcome: 'destructive', reason: 'scripted' });
+      });
+      const config = {
+        llm: { withStructuredOutput: vi.fn().mockReturnValue({ invoke }) },
+        streamOutput: true as const,
+        approvals: { mode: 'auto' },
+        commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+      } as unknown as GthConfig;
+
+      const turnOf = (...commands: string[]) => {
+        let pending = mockAgent.getPendingToolInterrupts.mockReset();
+        for (const command of commands) {
+          pending = pending.mockResolvedValueOnce([
+            { name: 'run_shell_command', args: { command } },
+          ]);
+        }
+        pending.mockResolvedValue([]);
+        mockAgent.streamResume.mockReset().mockResolvedValue(streamOf(''));
+        mockAgent.stream.mockReset().mockResolvedValue(streamOf('x'));
+      };
+
+      const runner = new GthAgentRunner(statusUpdate);
+      await runner.init('code', config);
+      runner.setToolApprovalCallback(() => ({ type: 'reject' }));
+
+      turnOf('rm -rf ./a', 'rm -rf ./b');
+      await runner.processMessages([new HumanMessage('the passphrase is hunter2')]);
+      expect(ratings[1].user, 'the window carried it while the thread was live').toContain(
+        'hunter2'
+      );
+
+      runner.resetThread();
+
+      turnOf('rm -rf ./c', 'rm -rf ./d');
+      await runner.processMessages([new HumanMessage('clean the build directory')]);
+      expect(ratings).toHaveLength(4);
+      expect(ratings[3].user, 'the round-2 context is where a survivor would show').toContain(
+        '<user_messages>'
+      );
+      expect(ratings[3].user, 'and the forgotten turn is not in it').not.toContain('hunter2');
+      expect(ratings[3].user).toContain('clean the build directory');
+    });
   });
 
   // ────────────────────────────────────────────────────────────────────────────────────────────
@@ -893,10 +1145,17 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
   });
 
   // ────────────────────────────────────────────────────────────────────────────────────────────
-  // `assisted` did not move.
+  // `assisted` keeps its rated path.
   // ────────────────────────────────────────────────────────────────────────────────────────────
 
-  describe('`assisted` is untouched — half the claim is that the two rungs now DIFFER', () => {
+  /**
+   * Half the claim of this node is that the two rated rungs now DIFFER, so proving `assisted`'s own
+   * path did not move is the other half. **The one place it does move is the §8 floor** — a matching
+   * command is refused at the gate instead of being prompted and then refused at exec — and that is
+   * pinned in the floor block above, with its own control. Everything the rater decides is unchanged
+   * here.
+   */
+  describe('`assisted` keeps its rated path — half the claim is that the two rungs now DIFFER', () => {
     it('a destructive command reaches the human on the first rating, with no rounds', async () => {
       const { results, prompts, ratings, messages } = await drive({
         calls: [{ command: 'git reset --hard origin/main' }],
@@ -1027,11 +1286,51 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       expect(state.contextFor().userMessages).toEqual(['one', 'two', 'three']);
     });
 
+    /**
+     * **The round after the `clear` is what makes this an assertion.** A round-1 context carries no
+     * user messages whatever `clear` did, so reading one straight after `clear()` observes the
+     * round-1 rule and nothing else — it passes just as happily against a `clear` that kept every
+     * message. Recording a rejection first puts the context on the round-2 side of that rule, where
+     * the only thing that can empty the list is `clear` itself.
+     */
     it('`clear` drops the user messages too — a thread reset forgets the conversation', () => {
       const state = new ShellNegotiationState();
       state.noteUserMessages(['something private']);
       state.clear();
+      state.recordRejection(round('x'));
       expect(state.contextFor().userMessages).toEqual([]);
+    });
+
+    /**
+     * §5.1 — **the retention bound, observed through a round-2 context** for the same reason: at
+     * round 1 the list is empty by rule, so an uncapped store is invisible there. The assertion names
+     * the value the cap produces (the LAST ten, in order), not merely that something was dropped.
+     */
+    it('keeps only the last ten user messages, however many arrive', () => {
+      const state = new ShellNegotiationState();
+      const messages = Array.from({ length: 40 }, (_, i) => `message ${i}`);
+      state.noteUserMessages(messages);
+      state.recordRejection(round('x'));
+      expect(NEGOTIATION_USER_MESSAGE_RETENTION).toBe(10);
+      expect(state.contextFor().userMessages).toEqual(
+        messages.slice(-NEGOTIATION_USER_MESSAGE_RETENTION)
+      );
+    });
+
+    /**
+     * §5.1 — **a volunteered justification is round-2 context, exactly as the user messages are.**
+     * It is the one channel the design allows to LOWER an outcome, so admitting it at round 1 would
+     * open that channel before any rejection has happened, pre-emptively. Keying it on the transcript
+     * is what makes §5.1's *"round 1 sees the command alone"* and §5.6's post-reset rule one fact.
+     */
+    it('withholds a volunteered justification from a round-1 context, and admits it at round 2', () => {
+      const state = new ShellNegotiationState();
+      expect(state.contextFor('let me explain').justification).toBeUndefined();
+      state.recordRejection(round('a'));
+      expect(state.contextFor('let me explain').justification).toBe('let me explain');
+      // …and a reset puts it back out of view, because a cleared transcript IS a round-1 context.
+      state.noteProgress();
+      expect(state.contextFor('let me explain').justification).toBeUndefined();
     });
   });
 });
