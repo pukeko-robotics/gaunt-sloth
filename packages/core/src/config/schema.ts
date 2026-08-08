@@ -785,7 +785,8 @@ export const rawGthConfigSchema = z.looseObject({
   extends: z.string().optional(),
   // Selects the agent backend. `lean` (the default when omitted) uses the plain LangChain agent
   // with gsloth's full toolset (no `/large_tool_results` offload). `deep` is the EXPERIMENTAL,
-  // opt-in deepagents runtime and emits a warning when selected. The ACP server is deep-only.
+  // opt-in deepagents runtime and emits a warning when selected. The key is COMMAND-SCOPED:
+  // `review`/`pr` always run lean and warn when it asks for `deep`; the ACP server is deep-only.
   agent: z
     .object({
       backend: z.enum(['deep', 'lean']).optional(),

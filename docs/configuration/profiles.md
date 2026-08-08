@@ -178,7 +178,7 @@ Gaunt Sloth ships two agent backends. Select one with the top-level `agent.backe
 
 | Value | Backend | Notes |
 |-------|---------|-------|
-| `lean` (**default**) | Plain LangChain agent | Recommended. Gaunt Sloth's own toolset — filesystem, hardened dev/shell, and the `gth_checklist` planning tool. Used for the CLI (`code`/`chat`), single-shot (`ask`/`exec`), and the AG-UI/`api` server. |
+| `lean` (**default**) | Plain LangChain agent | Recommended. Gaunt Sloth's own toolset — filesystem, hardened dev/shell, and the `gth_checklist` planning tool. Used for the CLI (`code`/`chat`), single-shot (`ask`/`exec`), the AG-UI/`api` server, and always for `review`/`pr`. |
 | `deep` | deepagents runtime | **Experimental, opt-in.** Adds subagents, `write_todos`, summarization, and large-tool-result offload, but can exhibit path divergence and sporadic failures. Selecting it prints a warning. |
 
 ```json
@@ -190,5 +190,21 @@ Gaunt Sloth ships two agent backends. Select one with the top-level `agent.backe
 
 When `agent.backend` is omitted, the lean backend is used everywhere. Set `"backend": "deep"` only
 to opt into the experimental deepagents runtime (required for [subagents](#named-profile-subagents-subagents)).
-The ACP server is structurally deepagents-based and always runs the deep backend regardless of this
-setting.
+
+### Which commands honour it
+
+`agent.backend` is **command-scoped** — `"deep"` does not reach every verb:
+
+| Command | Honours `agent.backend` |
+|---------|-------------------------|
+| `chat`, `code` (readline and TUI) | Yes |
+| `ask`, `exec` | Yes |
+| `batch`, `eval` cells, `workflow` agent steps | Yes |
+| `api` (AG-UI server) | Yes |
+| `review`, `pr` | **No** — always lean, including the `pr` change-requirements discovery agent |
+| the ACP server (`--acp-agent`) | **No** — always deep; `"lean"` is rejected with an error |
+
+A `review` or `pr` run that finds `"backend": "deep"` in its config prints a warning saying the
+setting has no effect there, so the key is never dropped in silence. To review with the deep
+backend, drive the review through a command that honours it (for example `gth ask` or `gth code`
+over the diff), or leave the key off your review profile.

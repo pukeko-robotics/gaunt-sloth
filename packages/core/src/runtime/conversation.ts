@@ -72,7 +72,8 @@ export interface ConversationTurnResult extends GthRunStats {
  * @param config - The resolved config.
  * @param resolvers - Optional agent resolvers (tools/middleware); the caller owns their cleanup.
  * @param command - The originating command (defaults to `ask`); selects the agent mode prompt.
- * @param agentFactory - Optional backend factory (B5); omitted = the runner's lean default.
+ * @param agentFactory - Optional backend factory (B5); omitted = the runner's lean default, and a
+ *   config asking for `agent.backend: 'deep'` is warned about rather than silently dropped.
  * @returns One {@link ConversationTurnResult} per turn attempted, in turn order.
  */
 export async function runConversation(
