@@ -112,7 +112,8 @@ export interface CommitCoAuthor {
  *
  * Gaunt Sloth has **no dedicated git-commit tool** — the agent commits by calling
  * `run_shell_command` with `git commit`, composing the message (including any trailer) itself. That
- * leaves two things it must be told, and both live here because both are about committing:
+ * leaves three things it must be told, and all three live here because all three are about
+ * committing:
  *
  * 1. **WHO the co-author is.** Left unguided, models emit their own model name from trained habit,
  *    which is factually wrong: the commit was produced by *Gaunt Sloth*, not by the model. The note
@@ -127,6 +128,16 @@ export interface CommitCoAuthor {
  *    than merely forbidding the construct — naming a construct without its mechanism has been
  *    measured not to work. A file path carries no shell metacharacters, so the file form removes the
  *    failure mode instead of asking the model to avoid it.
+ * 3. **HOW the change is staged.** Rule 2 leaves the message file untracked in the working tree at
+ *    `git add` time, so an unscoped `git add -A` / `git add .` / `git commit -a` sweeps it into the
+ *    commit and onto the pull request. The note states that mechanism, steers staging to named
+ *    paths, and allows the last resort for a change too large to enumerate only once the message
+ *    file is out of the tree — an escape hatch that kept the file would reintroduce exactly the
+ *    defect the rule closes. It binds at `git add` time, MID-flow while the model is still acting,
+ *    because the tidy-up step at the end is the one that gets dropped. The scratchpad sentence
+ *    beside it names NO path: the write tool refuses any path outside the working folder at every
+ *    approval mode, so naming one buys a refused call. EXT-97 is the interim mitigation; the
+ *    mechanism that owns the file end to end is EXT-93.
  *
  * **The clause that names the writing tool is gated on `filesystem`** (EXT-84), through the one
  * shared derivation {@link isWriteFileToolRegistered} — the same interpretation that decides which
@@ -193,7 +204,18 @@ export function appendCommitCoAuthorNote(
     'commands, backticks and markup out of it.\n' +
     'Never pass a commit message inline with the -m option: inside double quotes a POSIX shell ' +
     'expands backtick and dollar-parenthesis constructs before git ever runs, so a message that ' +
-    `quotes code is executed as a command. ${messageFileRule}`;
+    `quotes code is executed as a command. ${messageFileRule}\n` +
+    // EXT-97 — universal, so composed OUTSIDE the `filesystem` ternary above: it is about WHERE the
+    // file goes and HOW the change is staged, not about which tool writes it.
+    'If this session has given you a scratchpad location, write that message file there instead ' +
+    'of into the project.\n' +
+    'Stage the files you changed by naming their paths, one git add per path or several paths in ' +
+    'one git add. Do not stage with git add -A, git add . or git commit -a: an unscoped add ' +
+    'stages every untracked file in the working tree, including the commit message file you just ' +
+    'wrote, so it lands in the commit and on the pull request. Never stage the commit message ' +
+    'file itself. Only when a change genuinely touches too many files to name is an unscoped add ' +
+    'acceptable, and then first move the commit message file out of the working tree or delete ' +
+    'it, and check with git status what else the add is about to sweep in.';
   return systemPrompt ? `${systemPrompt}\n\n${note}` : note;
 }
 

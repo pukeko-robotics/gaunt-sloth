@@ -355,3 +355,10 @@ registers `write_file`, the guidance names it. Where it does not — `"read"`, `
 allow-list without it — the guidance names no tool and tells the agent that if it cannot write the
 message file it must leave the commit to you. Naming a tool the session does not have would corner
 the model into the inline form the rule exists to prevent.
+
+The guidance also covers **staging**: the agent stages by naming the paths it changed, rather than
+reaching for `git add -A`, `git add .` or `git commit -a`. The message file it has just written is
+untracked at that moment, so an unscoped add would sweep it — along with anything else untracked in
+your tree — into the commit and on to the pull request. For a change that genuinely touches too many
+files to name, the unscoped form is still allowed, but only once the agent has moved that message
+file out of the tree or deleted it, and checked what else `git status` reports.

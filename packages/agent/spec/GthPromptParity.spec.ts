@@ -124,6 +124,12 @@ describe('deep/lean system-prompt parity (GS2-27)', () => {
       expect(prompt).toContain('Never pass a commit message inline with the -m option');
       expect(prompt).toContain('before git ever runs');
       expect(prompt).toContain('git commit -F');
+      // EXT-97 staging rule, likewise on BOTH backends: the message file is left untracked by the
+      // rule above, so an unscoped add sweeps it into the commit. Mechanism, not bare prohibition.
+      expect(prompt).toContain('Stage the files you changed by naming their paths');
+      expect(prompt).toContain('Do not stage with git add -A, git add . or git commit -a');
+      expect(prompt).toContain('Never stage the commit message file itself.');
+      expect(prompt).toContain('If this session has given you a scratchpad location');
     }
   });
 
@@ -234,6 +240,11 @@ describe('deep/lean system-prompt parity (GS2-27)', () => {
         expect(prompt).toContain(
           'If nothing in this session can write that file, do not create the commit yourself'
         );
+        // EXT-97 — the staging rule is UNIVERSAL, composed outside the tool-naming ternary, so it
+        // survives on the branch that names no tool. Relocating it into the registered branch
+        // fails here on both backends.
+        expect(prompt).toContain('Stage the files you changed by naming their paths');
+        expect(prompt).toContain('Do not stage with git add -A, git add . or git commit -a');
       }
     }
   });

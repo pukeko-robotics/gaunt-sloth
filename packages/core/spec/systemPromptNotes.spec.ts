@@ -61,6 +61,30 @@ describe('appendCommitCoAuthorNote (GS2-35/EXT-83)', () => {
     'which put the same text back into a shell argument), then commit it with git commit -F ' +
     'followed by that file path.';
 
+  /**
+   * EXT-97 — the staging rule's load-bearing clauses. Held as constants because each is asserted
+   * both on its own and across the EXT-84 branch sweep, and a substring typed twice drifts.
+   */
+  const STAGING_RULE = 'Stage the files you changed by naming their paths';
+  const UNSCOPED_ADD_PROHIBITION = 'Do not stage with git add -A, git add . or git commit -a';
+  const UNSCOPED_ADD_MECHANISM =
+    'an unscoped add stages every untracked file in the working tree, including the commit ' +
+    'message file you just wrote, so it lands in the commit and on the pull request';
+  const MESSAGE_FILE_NEVER_STAGED = 'Never stage the commit message file itself.';
+  /**
+   * EXT-97 — the last resort, and the step that stops it reintroducing the very defect the rule
+   * closes: an unscoped add stages the message file, so the file must leave the tree BEFORE the
+   * allowance is taken. The allowance itself stays (a change can genuinely touch too many files to
+   * name); it is the remedy that has to be mandatory.
+   */
+  const LAST_RESORT_REMOVES_MESSAGE_FILE =
+    'first move the commit message file out of the working tree or delete it';
+
+  /** EXT-97 — the conditional scratchpad sentence, verbatim. */
+  const SCRATCHPAD_SENTENCE =
+    'If this session has given you a scratchpad location, write that message file there instead ' +
+    'of into the project.';
+
   /** `filesystem` values under which the write tool IS registered. */
   const WRITE_TOOL_REGISTERED: (FilesystemToolsConfig | undefined)[] = [
     'all',
@@ -318,6 +342,66 @@ describe('appendCommitCoAuthorNote (GS2-35/EXT-83)', () => {
       expect(note).not.toContain('You have no');
       expect(note).not.toContain('no file-writing tool is available');
       expect(note).not.toContain('There is no tool');
+    }
+  });
+
+  // EXT-97 — the staging rule. Rule 2 leaves the message file untracked in the working tree, so an
+  // unscoped add sweeps it into the commit and onto the pull request. Like the -m prohibition
+  // beside it, the note must carry the MECHANISM and not merely the ban, and it must offer the
+  // compliant path (named paths) plus the last resort, or a model facing a hundred-file change has
+  // nowhere to go but the construct this rule forbids.
+  it('states the staging rule, the unscoped-add prohibition and the mechanism behind it', () => {
+    const note = appendCommitCoAuthorNote(undefined, undefined);
+    expect(note).toContain(STAGING_RULE);
+    expect(note).toContain(UNSCOPED_ADD_PROHIBITION);
+    expect(note).toContain(UNSCOPED_ADD_MECHANISM);
+    // Stated separately from the prohibition: even a correctly scoped add must not name this file.
+    expect(note).toContain(MESSAGE_FILE_NEVER_STAGED);
+    // The last resort survives — but only with the message file removed from the tree first, or the
+    // escape hatch would stage the very file the sentence above forbids staging.
+    expect(note).toContain('is an unscoped add acceptable');
+    expect(note).toContain(LAST_RESORT_REMOVES_MESSAGE_FILE);
+    expect(note).toContain('check with git status what else the add is about to sweep in');
+  });
+
+  // EXT-97 — the PLACEMENT property, and the reason this is asserted over the branch sweep rather
+  // than once: the staging rule is universal (an unscoped add sweeps the message file in however
+  // that file came to be written), so composing it inside the EXT-84 write-tool ternary would leave
+  // it silently missing from every configuration that does not register the write tool. Relocating
+  // the rule into either branch fails here.
+  it('carries the staging rule on BOTH branches of the write-tool gate', () => {
+    const branches: (FilesystemToolsConfig | undefined)[] = [
+      ...WRITE_TOOL_REGISTERED,
+      ...WRITE_TOOL_ABSENT_STRINGS,
+      ...WRITE_TOOL_ABSENT_ARRAYS,
+    ];
+    for (const filesystem of branches) {
+      const note = noteFor(filesystem);
+      expect(note).toContain(STAGING_RULE);
+      expect(note).toContain(UNSCOPED_ADD_PROHIBITION);
+      expect(note).toContain(UNSCOPED_ADD_MECHANISM);
+      expect(note).toContain(MESSAGE_FILE_NEVER_STAGED);
+      // The scratchpad sentence is universal for the same reason — it is about WHERE the file goes,
+      // not about which tool writes it.
+      expect(note).toContain(SCRATCHPAD_SENTENCE);
+    }
+  });
+
+  // EXT-97 — the scratchpad sentence, and the two constraints that give it its shape.
+  it('carries a conditional scratchpad sentence that names NO path', () => {
+    const note = appendCommitCoAuthorNote(undefined, undefined);
+    // Conditional on the session having HANDED the model a location — not on the model going
+    // looking for one. Nothing hands it one today, so a model told nothing proceeds as before; when
+    // the mechanism lands the sentence becomes live with no further prompt edit.
+    expect(note).toContain(SCRATCHPAD_SENTENCE);
+    // …and it names no path. The built-in write tool refuses any path outside the working folder at
+    // every approval mode, so a note that named one would buy a refused call and a wasted turn.
+    // Asserted over both EXT-84 branches so a path spliced into either one fails.
+    for (const filesystem of ['all', 'read'] as FilesystemToolsConfig[]) {
+      const branch = noteFor(filesystem);
+      for (const path of ['/tmp', '~/.gsloth', '.gsloth/scratchpad']) {
+        expect(branch).not.toContain(path);
+      }
     }
   });
 
