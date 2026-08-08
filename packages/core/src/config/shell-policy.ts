@@ -445,42 +445,103 @@ export const APPROVAL_WRITE_MODIFIER_HINT =
   'set it with /approvals write.';
 
 /**
- * §10 — the one sentence shown wherever a rung is chosen or displayed. **Copied verbatim from the
- * specification**; the wording is constrained by four normative rules there (state what the rung
- * PERMITS, state the allow-list carve-out, never claim safety this system cannot deliver, use the
- * display spelling) plus §8.1 (the hardline floor is real but is NEVER advertised — descriptions
- * cite only protections the user can inspect and extend, i.e. the deny list). Do not "improve"
- * these: `assisted` in particular MUST keep the sentence saying files are still rewritten and
- * deleted without asking.
+ * §10 — what each mode is **for**, in at most two sentences, shown wherever a mode is chosen or
+ * displayed.
  *
- * The only departure from the source text is that §10's markdown emphasis markers (`**not**` in
- * *Auto*) are dropped, since these strings are rendered as plain terminal copy.
+ * **The first sentence is load-bearing and must stand alone.** The `/approvals` picker, the text
+ * fallback and the usage hint all render one line per mode through `firstSentence`, so sentence
+ * one has to answer "what is this mode for" on its own and sentence two carries the qualification.
+ * Keep it short enough to read as a menu row.
+ *
+ * **Say what the mode is for, not only what it permits.** A description that lists permissions
+ * invites the category error these modes actually suffer: Manual reads as "the safe one", so it
+ * gets picked for a long unattended run — where the deciding is done by a human, and a human is the
+ * fastest-degrading decider in the system. Manual and Write are bounded-volume tools and their copy
+ * says so.
+ *
+ * The wording is constrained by four normative rules (state what the mode PERMITS, state the
+ * allow-list carve-out, never claim safety this system cannot deliver, use the display spelling)
+ * plus §8.1 — the hardline floor is real but is NEVER advertised, so descriptions cite only
+ * protections the user can inspect and extend, i.e. the deny list. Three further constraints bind
+ * every edit here:
+ *
+ * 1. **No description may imply containment.** The gate protects against accidents, not intent, and
+ *    a working-folder claim collapses the moment the agent has a shell — `write_file` refuses a
+ *    path that `touch` then writes. The narrow true form (the built-in file *tools* are confined)
+ *    is stated once, on `write`, alongside the fact that the shell is not confined that way.
+ * 2. **Claims are scoped to the session the user is in.** These strings render on terminal surfaces
+ *    only; a sentence whose subject is "Gaunt Sloth" and whose claim is that it always asks would
+ *    be false over the AG-UI and ACP servers, which never drain an approval interrupt ([[EXT-94]]).
+ * 3. **`assisted` MUST keep the sentence saying files are still rewritten and deleted without
+ *    asking** — it sounds safer than it is, and that clause is the correction.
+ * 4. **A qualification may not live in the second sentence alone.** The picker, the text fallback
+ *    and the usage hint all render `firstSentence` and nothing else, so the opener is the whole
+ *    message on the three surfaces a user reads while *choosing* a mode. An opener that sells a
+ *    behavioural difference the product does not have is not rescued by a sentence two those
+ *    surfaces never print — check a wording by rendering it, not by reading the constant.
+ *
+ * Everything these two sentences cannot hold lives at {@link APPROVAL_PROTECTION_DOCS_URL}, which
+ * the surfaces print beside the copy rather than each description repeating it.
  */
 export const APPROVAL_RUNG_DESCRIPTIONS: Record<ApprovalRung, string> = {
   manual:
-    'Gaunt Sloth may automatically read and list files in the current working folder. It asks ' +
-    'for approval for anything else, until you tell it to always allow a command.',
+    'For a handful of commands you want to read yourself — not a mode to leave running. In this ' +
+    'session Gaunt Sloth reads and lists files in your working folder on its own; everything ' +
+    'else — shell, file changes, MCP and custom tools — comes to you, until you tell it to always ' +
+    'allow a command.',
   write:
-    'Gaunt Sloth may automatically read, edit, create, move and delete files in the current ' +
-    'working folder. It asks for approval for anything else, until you tell it to always allow a ' +
+    'Manual, for work that is mostly editing, and like Manual a bounded stretch: the built-in ' +
+    'file tools run free inside your working folder. The shell is not confined that way, so shell ' +
+    'commands, MCP calls and custom tools still come to you, until you tell it to always allow a ' +
     'command.',
   assisted:
-    'Same as write, plus the auto-rater rates everything else and automatically approves what it ' +
-    'rates as safe; anything questionable comes to you. Gaunt Sloth can still rewrite and delete ' +
-    'files in your working folder without asking — "safe" means each action is checked for ' +
-    'reaching outside that folder or harming your system, not that nothing changes.',
+    'For everyday work: safe commands run, anything riskier comes to you — usually with a line ' +
+    'explaining what it does. Gaunt Sloth can still rewrite and delete files in your working ' +
+    'folder without asking — "safe" means each action is checked for reaching outside that folder ' +
+    'or harming your system, not that nothing changes.',
+  // TODO(EXT-29): this string says the negotiation "is not built yet", and three doc sites say the
+  // same thing in their own words — `docs/guides/shell-tool-and-approvals.md` (the `auto` table
+  // row, a byte-for-byte copy of this string, and the "worded the same because they behave the
+  // same" paragraph below it) and `docs/guides/what-approvals-protect-you-from.md` (step 3 of the
+  // unattended-run use case). Rewrite them in the same commit that lands the negotiation; each
+  // carries an `EXT-29` comment so `git grep EXT-29` reaches it.
   auto:
-    'The auto-rater steers Gaunt Sloth: it decides for itself and does not stop to ask you. This ' +
-    'is safer than bypass — the auto-rater still stops the run on a command that reads your keys ' +
-    'or passwords, weakens permissions, installs itself to run again later, or hides what it ' +
-    'does; it brings anything it cannot undo to you rather than deciding alone; and your deny ' +
-    'list still applies — but it is not safe. Gaunt Sloth will change and delete things. Use it ' +
-    'where the consequences are recoverable, and put real gates (deployment approvals, ' +
-    'two-factor, branch protection) on anything that is not.',
+    'For recoverable work, but not a quieter mode yet: Auto still stops and asks you exactly ' +
+    'where Assisted does. It is not safe — Gaunt Sloth will change and delete things, your deny ' +
+    'list still applies, and the negotiation that would let Auto settle a risky command by ' +
+    'itself is not built yet.',
   bypass:
-    'No gate. Gaunt Sloth runs whatever it decides to run, without asking and without rating. ' +
-    'Only the refusals configured in the deny list in your config still apply.',
+    'No gate, for a throwaway environment you would not mind losing. Whatever Gaunt Sloth decides ' +
+    'to run, runs — nothing is rated and nothing is asked; only the refusals in your config’s ' +
+    'deny list still apply.',
 };
+
+/**
+ * The page that carries what these modes do and do NOT protect you from — the reasoning the
+ * two-sentence descriptions deliberately do not hold.
+ *
+ * **A GitHub blob URL, matching the one other user-facing runtime doc link in this package** (the
+ * 2.0 migration pointer in `config/schema.ts`). The docs site publishes the same page at
+ * `https://gauntsloth.app/docs/guides/what-approvals-protect-you-from/`; move this constant there
+ * once that path serves the page, and nothing else changes.
+ */
+export const APPROVAL_PROTECTION_DOCS_URL =
+  'https://github.com/pukeko-robotics/gaunt-sloth/blob/main/docs/guides/what-approvals-protect-you-from.md';
+
+/**
+ * The docs pointer as the surfaces print it: **label and URL as two separate lines**, never one
+ * joined string. Every notice surface takes `lines: string[]` and renders one line each, so a bare
+ * URL on its own line is the only form that survives a narrow pane without the break landing
+ * mid-path — and it is what lets a terminal that linkifies URLs pick the whole thing up.
+ *
+ * It lives beside the descriptions rather than inside them for {@link APPROVAL_WRITE_MODIFIER_HINT}'s
+ * reason: one line about where to read more, repeated into all five descriptions, would follow each
+ * mode into the tool-description layer and the status display, where it is noise.
+ */
+export const APPROVAL_PROTECTION_DOCS_LINES: readonly string[] = [
+  'What these modes do and do not protect you from:',
+  APPROVAL_PROTECTION_DOCS_URL,
+];
 
 /** Narrowing type guard for a raw string that may name a rung. */
 export function isApprovalRung(value: unknown): value is ApprovalRung {
@@ -1163,14 +1224,18 @@ export function resolveShellApprovalGate(
     };
   }
   if (isRatedRung(rung)) {
+    // **Both rated modes get the SAME tail, because they decide the same way.** The rater's
+    // mapping has no branch on `assisted` vs `auto`: an `attack` verdict halts and everything
+    // else short of `safe` escalates to the human, at both. A per-mode tail here would state a
+    // difference the gate does not have — and would state it in the startup notice, which a user
+    // meets while working out what their config does.
     return {
       gateShell,
       notice: {
         level: StatusLevel.INFO,
         message:
           `Shell tool (run_shell_command) rated by the auto-rater (approvals: ${rung}); ` +
-          'anything it does not rate safe is still ' +
-          (rung === 'assisted' ? 'escalated to you.' : 'refused or escalated.'),
+          'anything it does not rate safe is still refused or escalated to you.',
       },
     };
   }

@@ -217,7 +217,7 @@ root's, while `deny` and `escalate` add to it rather than replacing it — a com
 runs unprompted, never widen what is prohibited). It takes one of five mode names — `manual`, `write`,
 `assisted` (the default), `auto`, `bypass` — either on its own or as `mode` inside an object
 carrying the extras. See
-[Migration](../MIGRATION.md#i-approvals-and-the-ai-rater-hard) for the retired keys.
+[Migration](../MIGRATION.md#i-approvals-and-the-auto-rater-hard) for the retired keys.
 
 - `mode` — the approvals mode. Defaults to `assisted` in every context, interactive or not. What changes
   without a human is what an escalation *does* (it exits non-zero rather than prompting), not which
@@ -225,9 +225,15 @@ carrying the extras. See
 - `rater` — the **name** of an identity profile whose model rates, instead of the session model. A
   name that does not resolve is a config error. Only consulted at `assisted` and `auto`.
 - `allow` — what you trust. Checked before the rater at every mode except `bypass`.
-- `deny` — what never runs. Checked before `allow` and before the rater, and it still applies under
-  `bypass`.
-- `escalate` — what always asks you, whatever the mode would have done.
+- `deny` — what never runs. A `shell` entry is checked before `allow` and before the rater, and it
+  still applies under `bypass`. An entry naming a tool is compared only where the mode gates that
+  tool, so not at `assisted`, `auto` or `bypass` — see
+  [Which entries a mode consults](../guides/shell-tool-and-approvals.md#which-entries-a-mode-consults).
+- `escalate` — what asks you rather than running, whatever the mode would otherwise have done. A
+  `shell` entry asks at every mode except `bypass`, where only `deny` is still consulted. An entry
+  naming a tool is compared only where the mode gates that tool, so not at `assisted`, `auto` or
+  `bypass` — see
+  [Which entries a mode consults](../guides/shell-tool-and-approvals.md#which-entries-a-mode-consults).
 
 Entries in all three are explicit objects (`type`, `matcher` and `pattern` are always required);
 where more than one list matches, the most restrictive wins. The three are read-only input: they

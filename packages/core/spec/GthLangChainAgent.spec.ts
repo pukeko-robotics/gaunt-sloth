@@ -589,7 +589,7 @@ describe('GthLangChainAgent', () => {
         expect(statusUpdateCallback).toHaveBeenCalledWith(
           StatusLevel.INFO,
           'Shell tool (run_shell_command) rated by the auto-rater (approvals: assisted); ' +
-            'anything it does not rate safe is still escalated to you.'
+            'anything it does not rate safe is still refused or escalated to you.'
         );
       });
 

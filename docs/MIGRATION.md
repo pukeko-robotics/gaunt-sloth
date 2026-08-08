@@ -409,7 +409,7 @@ Approvals used to hang off the `run_shell_command` entry of `builtInTools` — t
 now a single top-level `approvals` setting, and every retired key is a hard validation error naming
 its replacement.
 
-`approvals` is **one ordered ladder of five rungs**. Each rung fully determines behaviour: there are
+`approvals` is **one ordered ladder of five modes**. Each mode fully determines behaviour: there are
 no severity thresholds, no strictness levels, and no independent rater switch.
 
 | # | Mode | Rater |
@@ -431,7 +431,7 @@ your working folder granted as well as reads. The choice you are really making i
 | `builtInTools.run_shell_command.yolo: true` | `"approvals": "bypass"` |
 | `builtInTools.run_shell_command.judge: true` | `"approvals": "assisted"` |
 | `judge.model` | `approvals.rater` — an **identity profile name**, not a raw model block |
-| `judge.autoApproveLow: false` / `judge.blockHigh` | gone — the rung decides; there are no per-tier knobs |
+| `judge.autoApproveLow: false` / `judge.blockHigh` | gone — the mode decides; there are no per-tier knobs |
 | `builtInTools.run_shell_command.allowlist` | `approvals.allow` — a declared list of command prefixes |
 | `builtInTools.run_shell_command.persistAllowlist` | gone — persistence is a per-decision choice at the prompt (*approve* forgets, *always approve* persists) |
 | `approvals.mode: "read-only"` | `approvals.mode: "manual"` — the same mode, renamed |
@@ -439,8 +439,8 @@ your working folder granted as well as reads. The choice you are really making i
 | `approvals.mode: "full-auto"` | `approvals.mode: "auto"` — the same mode, renamed |
 | `approvals.mode: "ask"` | `approvals.mode: "write"` (the agent still edits files freely) or `"manual"` (it asks before writing too) |
 | `approvals.rater: { profile: "x" }` | `approvals.rater: "x"` |
-| `approvals.rater.strictness` | gone — choose a rung instead |
-| `approvals.rater.escalate` | gone — `assisted` escalates everything not rated safe; `auto` does not stop to ask |
+| `approvals.rater.strictness` | gone — choose a mode instead |
+| `approvals.rater.escalate` | gone — both `assisted` and `auto` escalate everything not rated safe |
 | `approvals.allowlist` / `approvals.persistAllowlist` | `approvals.allow` / gone (as above) |
 | `run_shell_command` keeps | `enabled`, `timeout`, `maxOutputBytes` |
 
@@ -528,13 +528,14 @@ share one command registry):
   is still in alpha).
 - `/mode` removed — its output is folded into `/status`.
 - `/quit` added as an alias of `/exit`.
-- `/yolo`, `/auto-approve` and `/bypass-approve` are **removed** (no aliases). `/approvals <rung>`
+- `/yolo`, `/auto-approve` and `/bypass-approve` are **removed** (no aliases). `/approvals <mode>`
   replaces all three: `/approvals bypass` for the first two's unconditional behaviour, and
   `/approvals write` to confirm every command yourself. There is no toggle — with five ordered
-  rungs a flip has no unambiguous meaning, which is also why `/auto-approve off` could not survive:
-  it had to mean one of two different rungs.
-- `/approvals` shows the current rung, the rater and the allow/deny counts, and switches with
-  `/approvals manual|write|assisted|auto|bypass`.
+  modes a flip has no unambiguous meaning, which is also why `/auto-approve off` could not survive:
+  it had to mean one of two different modes.
+- `/approvals` shows the current mode, the rater and the allow/deny counts, and switches with
+  `/approvals manual|write|assisted|auto|bypass`; with no argument on a terminal it also offers a
+  picker.
 
 ## Migration checklist
 
@@ -551,7 +552,7 @@ share one command registry):
    `shell` → the `run_shell_command` entry) (G).
 7. Replace every approvals knob — `yolo` / `judge` / `allowlist` / `persistAllowlist` on
    `run_shell_command`, and `strictness` / `escalate` / an object-form `rater` on `approvals` —
-   with one of the five rungs, plus `approvals.allow` / `.deny` where you need them. Rename the
+   with one of the five modes, plus `approvals.allow` / `.deny` where you need them. Rename the
    retired `mode` values: `read-only` → `manual`, `auto-safe` → `assisted`, `full-auto` → `auto`
    (all three the same mode under a new name), and `ask` → `write` if you want file edits in your
    working folder granted, or `manual` if you want to be asked about those too. Decide whether you

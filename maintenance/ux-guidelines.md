@@ -43,42 +43,47 @@ Rules:
   for caution — e.g. the **unknown-command** notice, which never forwards the text to the model and
   points the user at `/help`.
 
-## `/auto-approve` — session shell auto-approval (DL-4 transparency, EXT-12)
+## `/approvals` — the session's approvals mode (DL-4 transparency)
 
-`/auto-approve` controls, for the current session only, whether gated `run_shell_command` calls
-auto-approve without the per-command prompt. `/auto-approve on` and `/auto-approve off` set it
-explicitly; a bare `/auto-approve` **toggles**. `/yolo` remains a **back-compat alias** that
-toggles. The runtime flag lives at the approval-decision layer (`GthAgentRunner.setSessionYolo()` /
-`toggleSessionYolo()` / `isSessionYolo()`), so the tool stays gated and the flag is consulted at the
-top of `decideToolApproval`.
+`/approvals` shows the mode the session is in and switches it: `/approvals
+manual|write|assisted|auto|bypass`. There is no toggle — with five ordered modes a flip has no
+unambiguous meaning — and there is no per-prompt "turn the gate down from here" affordance.
 
-- **Config seeds it, but it stays toggleable (DL-4).** In interactive `code` mode the shell tool
-  stays gated even when `run_shell_command.yolo` pre-enables auto-approval: `GthAgentRunner.init` seeds
-  the session flag ON from `run_shell_command.yolo`, so the user sees no prompt by default **but can still restore
-  it** with `/auto-approve off`. (Only a non-interactive `exec` / `ask --write` yolo run keeps the
-  tool ungated, since its single-shot path never drains interrupts.)
-- **State-aware copy.** Like `/verbose` and `/debug`, the App owns the runner flag, so it applies the
-  requested action and commits the notice for the **resulting** state via the shared
-  `autoApproveNotice(on)` builder (`Auto-approve ON — shell commands run without asking` /
-  `Auto-approve OFF — approvals required`). The command's pure `run()` only returns
-  `{ autoApprove: 'on' | 'off' | 'toggle' }`.
-- **Tone = `warn` when ON.** Turning the approval gate off is a caution-worthy action, so the ON
-  notice is yellow; OFF returns to `info`.
-- **Persistent status indicator (DL-4).** While auto-approve is ON the status bar carries an
-  unmissable yellow **`⚡ auto-approve ON`** badge (both while running and idle), so the user can
-  never lose track of the fact that shell commands run unprompted. Seeded from
-  `initialAutoApprove` so a config-enabled session shows it from the first frame.
-- **Tell the truth about the floor (DL-4).** The ON notice states that the **hardline safety floor
-  still blocks catastrophic commands** — auto-approve only skips the approval *prompt*, it never
-  disables the unbypassable exec-time floor enforced in `GthDevToolkit.executeCommand`.
+- **One set of words, everywhere.** The mode's own description comes from
+  `APPROVAL_RUNG_DESCRIPTIONS`, its display spelling from `APPROVAL_RUNG_LABELS`, and the picker,
+  the status notice and the text fallback all read those. A surface that authors its own sentence
+  about a mode becomes the one that contradicts the rest. The one deliberate exception is
+  `RUNG_TOOL_DESCRIPTION_SUFFIXES`, which is addressed to the **model** rather than the user and so
+  carries its own wording — kept in step with the descriptions by hand, and worded per *outcome*,
+  never per mode, so two modes that decide identically cannot be described differently.
+- **Say what a mode is FOR, in at most two sentences, and let the first stand alone.** One-line
+  forms render only `firstSentence`, so the opener carries the whole answer. The reasoning that does
+  not fit goes to the docs page named by `APPROVAL_PROTECTION_DOCS_LINES`, printed beside the copy —
+  label and bare URL as two separate lines, so a narrow pane never breaks the URL mid-path.
+- **A qualification may not live in the second sentence alone.** The picker, the text fallback and
+  the usage hint print the opener and nothing else, so a caveat parked in sentence two is invisible
+  at the moment a user is choosing. An opener that promises a behavioural difference is wrong wherever
+  the modes decide the same way — check a wording by rendering the surface, never by reading the
+  constant.
+- **Never advertise safety the gate cannot deliver.** No description may read as containment: the
+  gate protects against accidents, not intent, and a working-folder claim is true of the built-in
+  file *tools* and false of the agent as a whole. Copy cites only protections the user can inspect
+  and extend — the deny list — never the hardline floor.
+- **Scope every claim to the session the user is in.** These strings render on terminal surfaces;
+  the AG-UI and ACP servers never drain an approval interrupt, so a universal "Gaunt Sloth always
+  asks" would be false.
+- **Tone = `warn` at `bypass`.** Running with no gate is caution-worthy, so its notice is yellow and
+  the status bar carries the unmissable **`⚡ Bypass`** badge; every other mode is `info`.
+- **Choosing is a picker on a TTY, a list everywhere else.** `/approvals` with no argument renders
+  `ApprovalsPicker` (four postures — Write is a modifier of Manual and stays settable by name);
+  every non-TTY surface prints the same choices as text from the same builder, so the two cannot
+  offer different modes.
 - **Invokable during inference (DL-9).** The prompt stays mounted while a turn streams, so
-  `/auto-approve` (and the other read-only / toggle commands marked `availableDuringRun`) can be run
-  mid-turn; idle-only commands (`/clear`, `/exit`) are refused with a friendly notice. At the
-  approval prompt itself, **`y`** turns auto-approve ON and approves the pending command in one
-  keystroke — the fastest "stop asking me" path.
-- **Session-scoped, reversible, never persisted** — nothing is written to config; toggling again
-  restores approvals. The readline interactive session mirrors the same `/auto-approve` (and `/yolo`)
-  commands via `displayWarning`/`displayInfo` (no `CommandNotice` there).
+  `/approvals` (and the other read-only / toggle commands marked `availableDuringRun`) can be run
+  mid-turn to change how the run's remaining tool calls are handled; idle-only commands (`/clear`,
+  `/exit`) are refused with a friendly notice.
+- **Session-scoped, reversible, never persisted** — nothing is written to config, and the notice
+  says so.
 
 ## Abstentions the agent resolves (DL-4 transparency, DL-1 nothing important is silent, EXT-65)
 
@@ -328,8 +333,9 @@ not chatter (DL-1 no important action is silent). Plain (non-TUI) CLI keeps all 
 - **Single-line, stable status bar** (`tui/components/StatusBar.tsx`). One dim line carrying
   session context — **mode · model · turn counter · ready** — when idle; a spinner +
   `Thinking… (Esc to interrupt)` while a turn runs. Keep it to one line and free of streaming
-  progress (that belongs to the live turn) so it never flickers. When session auto-approve is ON it
-  additionally carries the yellow **`⚡ auto-approve ON`** badge in both states (see `/auto-approve`).
+  progress (that belongs to the live turn) so it never flickers. It names the approvals mode in its
+  display spelling, and at `bypass` additionally carries the yellow **`⚡ Bypass`** badge in both
+  states (see `/approvals`).
 
 ## Persistent startup advisories (DL-1 nothing important is silent, TUI-C19)
 
@@ -347,7 +353,7 @@ their config has a problem.
   advisories can post here later without a schema change.
 - **A standing line in the pinned dock.** When there is at least one advisory, `NoticeBar` renders
   a single yellow line by the status bar: `⚠ Your config has problems · type /config to see
-  details`. It lives in the dock (like the status bar and the `⚡ auto-approve ON` badge), so it
+  details`. It lives in the dock (like the status bar and the `⚡ Bypass` badge), so it
   stays on screen and survives transcript growth rather than scrolling out of the conversation
   region. A clean config renders nothing (no advisories, no line), so the chrome is unchanged when
   there is nothing to say.
@@ -379,10 +385,12 @@ their config has a problem.
   remounts the input on a refused chord, which re-derives the offset from the value. The cost is
   that a cursor the user had moved into the middle of the buffer returns to the end — visible, and
   recoverable with the arrow keys; the line editor (TUI-C25) owns the cursor and settles it properly.
-- **`o` / `s` / `a` / `y` / anything-else** at a pending shell approval — approve once / session /
-  always / turn on auto-approve-all (then approve this one) / reject (fail-closed).
+- **`o` / `s` / `a` / anything-else** at a pending shell approval — approve once / session / always
+  / reject (fail-closed). `[s]` and `[a]` are offered only when there is something to remember.
+  Changing the approvals mode is not one of the choices: the ladder has no "turn the gate down from
+  here" action, so that decision is made deliberately with `/approvals`.
 - **slash commands mid-turn** — the prompt stays mounted while a turn streams, so run-safe commands
-  (`/auto-approve`, `/verbose`, `/debug`, `/help`, `/model`, …) work during inference; a plain message
+  (`/approvals`, `/verbose`, `/debug`, `/help`, `/model`, …) work during inference; a plain message
   or an idle-only command is refused with a hint until the turn finishes.
 - **`Tab`** — focus the docked debug panel when visible/idle; once focused, `Tab` cycles its views
   (`Shift+Tab` reverses), `↑`/`↓` scroll one line and `PageUp`/`PageDown` page-step (arrows are the

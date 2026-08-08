@@ -23,6 +23,7 @@ import type {
 } from '@gaunt-sloth/core/config.js';
 import {
   APPROVAL_POSTURES,
+  APPROVAL_PROTECTION_DOCS_LINES,
   APPROVAL_RUNG_DESCRIPTIONS,
   APPROVAL_RUNG_LABELS,
   APPROVAL_RUNGS,
@@ -562,6 +563,9 @@ export function approvalsRungNotice(approvals: ResolvedApprovals): SlashCommandN
     lines.push(`The auto-rater runs under the "${approvals.rater}" identity profile.`);
   }
   lines.push('Session-scoped only (not saved); run /approvals to see or change it.');
+  // The moment a user changes posture is the moment the reasoning behind the postures is worth
+  // reading, and two sentences cannot hold it.
+  lines.push(...APPROVAL_PROTECTION_DOCS_LINES);
   return {
     title: `Approvals: ${APPROVAL_RUNG_LABELS[approvals.rung]}`,
     lines,
@@ -570,18 +574,25 @@ export function approvalsRungNotice(approvals: ResolvedApprovals): SlashCommandN
 }
 
 /**
- * CFG-39 — the first sentence of a mode's description, for the one-line forms (the picker rows and
- * the usage hint). Split on the sentence boundary rather than truncated, so a row never ends
- * mid-clause; the terminating period is restored because the split consumes it.
+ * The first sentence of a mode's description, for the one-line forms (the picker rows and the usage
+ * hint). Cut at the sentence boundary rather than truncated, so a row never ends mid-clause.
  *
- * **A single-sentence description keeps its own period rather than gaining a second one.** The
- * split only consumes the separator when there IS one, so an unsplit description arrives already
- * terminated — appending unconditionally would render it as `No gate..`. Every surface that shows
- * one line of a mode's copy goes through here, so this is the only place that has to know it.
+ * **A sentence ends at `.`, `?` or `!`.** The copy this shortens is ordinary prose, and a helper
+ * that knows only the period renders a question as `Really?.` and hands back BOTH sentences of
+ * `Ready? Then go.` — the whole description in a row sized for one line.
+ *
+ * A terminator only ends the sentence when a space follows it and no dot precedes it, so an
+ * ellipsis reads as the pause it is instead of three sentence boundaries.
+ *
+ * **A description that is already one sentence keeps its own terminator rather than gaining a
+ * second.** Nothing was consumed, so it arrives already terminated and appending unconditionally
+ * would render `No gate..`. Every surface showing one line of a mode's copy goes through here, so
+ * this is the only place that has to know any of it.
  */
 export function firstSentence(description: string): string {
-  const head = description.split('. ')[0];
-  return head.endsWith('.') ? head : `${head}.`;
+  const boundary = /(?<!\.)[.?!](?=\s)/.exec(description);
+  const head = boundary ? description.slice(0, boundary.index + 1) : description;
+  return /[.?!]$/.test(head) ? head : `${head}.`;
 }
 
 /** CFG-39 — one selectable row of the `/approvals` picker. */
@@ -674,12 +685,19 @@ export function approvalsStatusNotice(
       `Allowed: ${allowlist.session} this session · ${allowlist.always ?? '—'} remembered · Denied: ${deny.length}`,
       ...describeGrants(grants),
       ...(trust ? [describeMcpTrust(trust)] : []),
+      // The docs pointer rides with the mode list, and is absent for the same reason the list is
+      // when a picker is coming: **it is not free to print a URL.** It cannot be shortened without
+      // breaking it, so it wraps, and here it would push the head of an already-long notice off a
+      // short pane — which costs the reader the mode they asked about. A surface that renders the
+      // picker prints this pointer a keystroke later instead, from `approvalsRungNotice`, where the
+      // user has actually chosen something.
       ...(options.interactive
         ? []
         : [
             'Choose a mode with /approvals <name>:',
             ...approvalPostureLines(approvals.rung),
             APPROVAL_WRITE_MODIFIER_HINT,
+            ...APPROVAL_PROTECTION_DOCS_LINES,
           ]),
       TRUST_USAGE_LINE,
     ],

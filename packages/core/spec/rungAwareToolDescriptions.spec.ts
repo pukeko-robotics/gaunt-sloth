@@ -119,13 +119,11 @@ describe('§4.5 suffix table', () => {
       "Calling this tool MAY require the user's approval if it does not look safe. Only use it " +
         'when it is impossible to achieve the result with the other provided tools.'
     );
-    // auto has its OWN wording: the user is not asked there, so promising the user's
-    // approval would be false — what can happen is a refusal by the rater.
-    expect(SUFFIX['auto']).toBe(
-      'Calling this tool MAY be refused by the auto-rater if it does not look safe. Only use it ' +
-        'when it is impossible to achieve the result with the other provided tools.'
-    );
-    expect(SUFFIX['auto']).not.toContain("user's approval");
+    // assisted and auto share one sentence, for the same reason manual and write do: they decide
+    // the same way. `mapVerdictToAction` has no branch on `auto`, so a call the rater does not
+    // rate safe reaches the human at `auto` exactly as at `assisted`. Two wordings would encode a
+    // behavioural difference the gate does not have, in the model's own tool-selection input.
+    expect(SUFFIX['auto']).toBe(SUFFIX['assisted']);
     expect(SUFFIX.bypass).toBeNull();
   });
 

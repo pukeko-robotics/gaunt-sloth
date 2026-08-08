@@ -218,8 +218,8 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
   });
 
   /**
-   * §10 — the notice body IS the spec's description, verbatim, and §8.1 forbids any of it leaning
-   * on the hardline floor. §10 rule 4 fixes the title's spelling: the display form with spaces.
+   * §10 — the notice body IS the mode's own description, and §8.1 forbids any of it leaning on the
+   * hardline floor. §10 rule 4 fixes the title's spelling: the display form with spaces.
    */
   it('approvalsRungNotice renders §10 copy, warn-tones bypass, and never names the floor', async () => {
     const { approvalsRungNotice } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
@@ -228,7 +228,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     const bypass = approvalsRungNotice(posture('bypass'));
     expect(bypass.title).toBe('Approvals: Bypass');
     expect(bypass.tone).toBe('warn');
-    expect(bypass.lines.join(' ')).toContain('without asking and without rating');
+    expect(bypass.lines.join(' ')).toContain('nothing is rated and nothing is asked');
     // §8.1 — the only protection cited is one the user can inspect and extend.
     expect(bypass.lines.join(' ')).toContain('deny list');
     expect(bypass.lines.join(' ')).not.toMatch(/hardline|floor/i);
@@ -241,11 +241,18 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
       'rewrite and delete files in your working folder without asking'
     );
 
-    // `auto` is described as safer than bypass and explicitly not safe.
+    // `auto` is explicitly not safe, and says the negotiation that would make it differ from
+    // Assisted on a destructive command is not built yet.
     const autoNotice = approvalsRungNotice(posture('auto'));
     expect(autoNotice.title).toBe('Approvals: Auto');
-    expect(autoNotice.lines.join(' ')).toContain('safer than bypass');
-    expect(autoNotice.lines.join(' ')).toContain('it is not safe');
+    expect(autoNotice.lines.join(' ')).toContain('It is not safe');
+    expect(autoNotice.lines.join(' ')).toContain('is not built yet');
+
+    // Every posture notice points at the page that carries what the two sentences cannot. Asserted
+    // through the constant, not a literal: the URL moves to the docs site once that page is
+    // deployed, and a hardcoded host would make that one-line swap a test failure.
+    const { APPROVAL_PROTECTION_DOCS_URL } = await import('@gaunt-sloth/core/config.js');
+    expect(autoNotice.lines).toContain(APPROVAL_PROTECTION_DOCS_URL);
 
     // A configured rater profile is named at the rated rungs (the spec's status requirement).
     expect(approvalsRungNotice(posture('assisted', 'safety-rater')).lines.join(' ')).toContain(
@@ -341,16 +348,81 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
 
   /**
    * The one-line forms (picker rows, the text fallback, the usage hint) all shorten through
-   * `firstSentence`. A description that is already ONE sentence keeps its own period rather than
-   * gaining a second — `split('. ')` only consumes the separator when there is one. No current
-   * description is a single sentence; CFG-31 rewrites exactly this prose next.
+   * `firstSentence`. A description that is already ONE sentence keeps its own terminator rather
+   * than gaining a second.
    */
-  it('CFG-39: firstSentence terminates a shortened description with exactly one period', async () => {
+  it('firstSentence terminates a shortened description with exactly one period', async () => {
     const { firstSentence } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     expect(firstSentence('No gate.')).toBe('No gate.');
     expect(firstSentence('It asks first. Then it acts.')).toBe('It asks first.');
     // An unterminated single sentence still gains its period.
     expect(firstSentence('No gate')).toBe('No gate.');
+  });
+
+  /**
+   * A sentence ends at `.`, `?` or `!` — all three, because the copy this shortens is ordinary
+   * prose and not every sentence in it is a statement. Splitting on the period alone renders a
+   * question as `Really?.` and returns BOTH sentences of `Ready? Then go.`, which is the whole
+   * description in a row sized for one line.
+   *
+   * These cases pin the terminator set rather than the current copy: the copy is what makes the
+   * defect reachable, so a test that only asserted today's descriptions would go quiet the moment
+   * someone rephrased one.
+   */
+  it('firstSentence ends the row at a question mark or an exclamation mark too', async () => {
+    const { firstSentence } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    expect(firstSentence('Really?')).toBe('Really?');
+    expect(firstSentence('Ready? Then go.')).toBe('Ready?');
+    expect(firstSentence('Stop! Then think.')).toBe('Stop!');
+    // A terminator inside the sentence does not end it: an ellipsis is not three sentences.
+    expect(firstSentence('Wait... then go. And then stop.')).toBe('Wait... then go.');
+  });
+
+  /**
+   * The picker, the text fallback and the usage hint all show ONE sentence per mode, so that
+   * sentence has to be the whole answer to "what is this mode for" and has to fit a row. Ink wraps
+   * rather than truncates, so an opener written as a paragraph costs three rendered lines per row
+   * and the four postures stop being scannable.
+   */
+  it('every mode opens with a sentence that stands alone in a picker row', async () => {
+    const { firstSentence } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    const { APPROVAL_RUNG_DESCRIPTIONS, APPROVAL_RUNGS } =
+      await import('@gaunt-sloth/core/config.js');
+    for (const rung of APPROVAL_RUNGS) {
+      const description = APPROVAL_RUNG_DESCRIPTIONS[rung];
+      const opener = firstSentence(description);
+      // A real cut, not the whole description handed back for want of a boundary.
+      expect(opener.length, `${rung} has no sentence boundary`).toBeLessThan(description.length);
+      expect(
+        opener.length,
+        `${rung}'s opener is too long for a row: "${opener}"`
+      ).toBeLessThanOrEqual(140);
+      expect(opener).not.toContain('..');
+    }
+  });
+
+  /**
+   * **The assertion that has to be on the RENDER, not on the constant.** Auto's honest clause —
+   * that [[EXT-29]]'s agent–rater negotiation is unbuilt, so `auto` stops exactly where `assisted`
+   * does — was twice written into sentence two, where the picker, the text fallback and the usage
+   * hint never print it. A whole-text `toContain` passes on that copy; only cutting the opener the
+   * way the surfaces cut it can fail on it. Core's own §10 block cannot host this: `firstSentence`
+   * lives in the agent package, which core does not depend on.
+   *
+   * Worded as "the opener must not sell a difference, and must say there is none", because the
+   * failure is not a missing phrase — it is a promise ("as few interruptions as possible", "judges
+   * each command instead of you") landing in the one clause a user reads while choosing.
+   */
+  it('the mode a user could most easily over-trust says so in the clause a picker RENDERS', async () => {
+    const { firstSentence } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    const { APPROVAL_RUNG_DESCRIPTIONS } = await import('@gaunt-sloth/core/config.js');
+    const opener = firstSentence(APPROVAL_RUNG_DESCRIPTIONS['auto']);
+    // The correction itself, in the rendered clause: auto stops where assisted stops.
+    expect(opener).toContain('still stops and asks you');
+    expect(opener).toMatch(/Assisted/);
+    // And no promise of the difference that is not there. Each of these shipped or nearly shipped.
+    expect(opener).not.toMatch(/few interruptions|instead of you|unattended|without stopping/i);
+    expect(opener).not.toMatch(/does not stop to ask/i);
   });
 
   it('CFG-39: the text fallback shortens a single-sentence description without doubling the period', async () => {

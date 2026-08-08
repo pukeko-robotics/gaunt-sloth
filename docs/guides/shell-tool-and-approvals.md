@@ -2,8 +2,8 @@
 
 In `gth code`, the agent can run shell commands so it can test its own work — run your suite, check
 `git status`, install a package — instead of only reading and writing files. **Approvals** decide
-which of those commands run on their own and which stop to ask you. There is one setting, and it is
-a ladder of five modes.
+which of those commands run on their own and which stop to ask you — and, at the strictest modes,
+which file edits and tool calls do too. There is one setting, and it is a ladder of five modes.
 
 ## The main use case: let the agent run your tests, on your terms
 
@@ -25,7 +25,8 @@ Anything else stops and asks you:
 The agent wants to run a shell command via run_shell_command
     rm -rf node_modules
 ⚠ Auto-rater (destructive): deletes a directory tree without confirmation
-[s]/[a] will remember exactly this command: { "type": "shell", "matcher": "exact", "pattern": "rm -rf node_modules" }
+[s]/[a] will remember rm -rf node_modules
+    stored as { "type": "shell", "matcher": "exact", "pattern": "rm -rf node_modules" }
 Approve?  [o]nce   [s]ession   [a]lways   [N]o
 ```
 
@@ -110,7 +111,8 @@ Saving a host counts too, not just fetching from one: `git config remote.origin.
 stored fetch target redirects every later fetch rather than one.
 
 If you fetch from the same host all day, put it in `approvals.allow` (below). That list is checked
-first, so it costs no prompt and no rating call.
+first, so the fetch stops asking you — and whether the rater still watches it is the entry's own
+`rate` (below).
 
 This check is a floor, not the whole of your safety, and it has two edges. It knows the common
 network tools, not every program that can open a socket, so something like `svn checkout https://…`
@@ -154,9 +156,11 @@ budget:
 It is a number you set rather than one gth guesses from the provider, because a guess about your
 hardware that turns out wrong fails quietly.
 
-To have the agent run tests *without* any of this, give it the fixed `run_tests` dev-command tool:
-you set the exact command, and because there is nothing for the model to choose, it runs with **no
-rating and no prompt**. Put this in `.gsloth.config.json` at your project root:
+To have the agent run tests *without* a rating call, give it the fixed `run_tests` dev-command tool:
+you set the exact command, so there is nothing for the model to compose and **nothing for the rater
+to judge**. What it does not escape is the mode: whether a call runs on its own or comes to you is
+the mode's row in [the table below](#the-ladder-approvals), for this tool as for every other. Put
+this in `.gsloth.config.json` at your project root:
 
 ```json
 {
@@ -175,7 +179,8 @@ rating and no prompt**. Put this in `.gsloth.config.json` at your project root:
 ```
 
 Now `run_tests` runs `npm test` on demand, while any *other* command the agent composes (a `git`
-commit, `npm install`, a one-off script) goes through the rater. The `timeout` bump gives a slow
+commit, `npm install`, a one-off script) is an ordinary shell command and gets whatever the mode in
+force does with one — the auto-rater at `assisted` and `auto`. The `timeout` bump gives a slow
 command up to 300000 ms (5 minutes) before it is killed; the default is 120000 ms.
 
 A per-command `builtInTools` object **replaces** the default set entirely, which is why
@@ -190,13 +195,20 @@ There is one approvals setting, and it takes the mode name:
 { "approvals": "assisted" }
 ```
 
-| Mode | What it grants | Rater |
+| Mode | What it is for | Rater |
 |---|---|---|
-| `manual` | Gaunt Sloth may automatically read and list files in the current working folder. It asks for approval for anything else, until you tell it to always allow a command. | no |
-| `write` | Gaunt Sloth may automatically read, edit, create and delete files in the current working folder. It asks for approval for anything else, until you tell it to always allow a command. | no |
-| `assisted` | Same as write, plus the auto-rater rates everything else and automatically approves what it rates as safe; anything questionable comes to you. Gaunt Sloth can still rewrite and delete files in your working folder without asking — "safe" means each action is checked for reaching outside that folder or harming your system, not that nothing changes. | yes |
-| `auto` | The auto-rater steers Gaunt Sloth: it decides for itself and does not stop to ask you. This is safer than bypass — the auto-rater still stops the run on a command that reads your keys or passwords, weakens permissions, installs itself to run again later, or hides what it does; it brings anything it cannot undo to you rather than deciding alone; and your deny list still applies — but it is **not** safe. Gaunt Sloth will change and delete things. Use it where the consequences are recoverable, and put real gates (deployment approvals, two-factor, branch protection) on anything that is not. | yes |
-| `bypass` | No gate. Gaunt Sloth runs whatever it decides to run, without asking and without rating. Only the refusals configured in the deny list in your config still apply. | no |
+| `manual` | For a handful of commands you want to read yourself — not a mode to leave running. In this session Gaunt Sloth reads and lists files in your working folder on its own; everything else — shell, file changes, MCP and custom tools — comes to you, until you tell it to always allow a command. | no |
+| `write` | Manual, for work that is mostly editing, and like Manual a bounded stretch: the built-in file tools run free inside your working folder. The shell is not confined that way, so shell commands, MCP calls and custom tools still come to you, until you tell it to always allow a command. | no |
+| `assisted` | For everyday work: safe commands run, anything riskier comes to you — usually with a line explaining what it does. Gaunt Sloth can still rewrite and delete files in your working folder without asking — "safe" means each action is checked for reaching outside that folder or harming your system, not that nothing changes. | yes |
+| `auto` | For recoverable work, but not a quieter mode yet: Auto still stops and asks you exactly where Assisted does. It is not safe — Gaunt Sloth will change and delete things, your deny list still applies, and the negotiation that would let Auto settle a risky command by itself is not built yet. | yes |
+| `bypass` | No gate, for a throwaway environment you would not mind losing. Whatever Gaunt Sloth decides to run, runs — nothing is rated and nothing is asked; only the refusals in your config’s deny list still apply. | no |
+
+<!-- EXT-29 — the `auto` row above is a byte-for-byte copy of `APPROVAL_RUNG_DESCRIPTIONS.auto` in
+     `packages/core/src/config/shell-policy.ts`. When the agent–rater negotiation lands, that
+     constant and this row have to change in the same commit or the two describe Auto differently. -->
+
+These are the same sentences `/approvals` shows in a session, so the guide and the picker cannot
+describe a mode differently.
 
 The choice you are really making is **`manual` → `assisted` → `auto`, plus `bypass`** — those four
 are what `/approvals` offers you. `write` is not a further step along that line: it is `manual` with
@@ -206,10 +218,12 @@ than something between `manual` and `assisted`. Set it whenever you want it, wit
 [the picker](interactive-sessions.md#slash-commands).
 
 `manual`, `write` and `bypass` consult no model at all, so they are reproducible and cost
-nothing. `assisted` spends one rating call per gated command.
+nothing. `assisted` and `auto` each spend one rating call per gated command.
 
-`bypass` is **not** a higher-autonomy mode than `auto` — both let the agent act without asking;
-`bypass` is the same autonomy with the checks removed.
+Choosing `bypass` is not choosing more trust in the rater: it switches the gate off. Nothing is
+rated, nothing is asked, and the only check left is the `shell` entries in your deny list — a `tool`
+entry is [not compared there](#which-entries-a-mode-consults) — so what runs under it is not what
+some check cleared, it is whatever the agent decided to do.
 
 What any of these modes does and does **not** protect you from, and what has to sit outside Gaunt
 Sloth to cover the rest, is
@@ -222,11 +236,18 @@ Switch mode for the current session with `/approvals manual|write|assisted|auto|
 
 The cheapest approval is the one that never happens, so the agent is told the posture up front: at
 every mode except `bypass`, the description of each tool that needs approval gains a sentence
-saying so, and the tools that run freely say nothing. The shell is the only gated tool today, so it
-is the only description that changes — at `manual` and `write` it says the call *will* require
-your approval, at `assisted` that it *may*, and at `auto` that the auto-rater may refuse it.
-Each sentence also tells the agent to reach for the shell only when the other tools cannot do the
-job.
+saying so, and the tools that run freely say nothing. Which descriptions those are follows the
+mode's row in the table above — at `assisted` and `auto` only the shell is gated, so only the
+shell's changes; at `manual` and `write` everything the mode does not run freely carries one.
+There are two wordings, not one per mode: at `manual` and `write` the sentence says the call
+*will* require your approval, at `assisted` and `auto` that it *may* — the two rated modes are
+worded the same because they behave the same. Each sentence also tells the agent to use that tool
+only when the result cannot be achieved with the other tools it has.
+
+<!-- EXT-29 — "worded the same because they behave the same" holds only while the agent–rater
+     negotiation is unbuilt (`RUNG_TOOL_DESCRIPTION_SUFFIXES` in
+     `packages/core/src/config/tool-descriptions.ts` gives `assisted` and `auto` one string). When
+     the negotiation lands and `auto` earns its own sentence, this paragraph has to say so. -->
 
 The auto-rater backs that up at `assisted` and `auto`. When it does not rate a command safe
 and one of the tools the agent already has would do the same job, it names that tool in its
@@ -277,15 +298,18 @@ for `{ "mode": <value> }`:
   resolve is a config error, never a silent fallback. It is only consulted at `assisted` and
   `auto`.
 - **`allow`** — what you trust. Checked **before** the rater at every mode except `bypass`, so an
-  allow-listed call never prompts. This is the supported way to make a non-interactive pipeline
-  pass.
-- **`deny`** — what never runs. Checked **before** `allow` and before the rater, and it is the one
-  check `bypass` keeps: choosing `bypass` means *"stop asking me"*, not *"forget what I told you
-  never to do"*.
+  allow-listed call does not stop to ask you — the one exception is the `rate` tripwire below. This
+  is the supported way to make a non-interactive pipeline pass.
+- **`deny`** — what never runs. A `shell` entry is checked **before** `allow` and before the rater,
+  and it is the one check `bypass` keeps: choosing `bypass` means *"stop asking me"*, not *"forget
+  what I told you never to do"*. An entry naming a **tool** reaches less far — see
+  [Which entries a mode consults](#which-entries-a-mode-consults).
 - **`escalate`** — what always asks you, whatever the mode would have done, and with no rating call.
   It outranks `allow`, including a grant you made at a prompt, so *this specific thing asks even
   though its class would not*. It is **inert at `bypass`**: that mode means *stop asking me*, and
-  the mode you chose for the session wins. A stop that must survive `bypass` is a `deny` entry.
+  the mode you chose for the session wins. A stop that must survive `bypass` is a `deny` entry
+  naming the command — and, like `deny`, an `escalate` entry naming a tool only reaches as far as
+  the mode gates that tool.
 
 Where entries from more than one list match the same call, **the most restrictive one wins — deny
 over escalate over allow** — so the order you write them in never matters.
@@ -311,9 +335,37 @@ The lists do not all merge the same way, and the difference is deliberate:
   list, and the root's no longer applies there.
 
 The reason they differ is what each mistake costs you. A missed `allow` entry means one extra
-prompt; a missed `deny` entry means the rater still looks at the call. Neither runs anything. A
-**too-broad `allow` entry runs, without asking and without rating** — so the restrictive lists
-grow across scopes, and the permissive one does not.
+prompt; a missed `deny` entry only leaves the call to whatever your mode would have done with it
+anyway. A **too-broad `allow` entry runs, and runs without asking you** — whether the rater still
+watches it is the entry's own `rate` (below), which a `glob` or `regexp` entry leaves on. So the
+restrictive lists grow across scopes, and the permissive one does not.
+
+### Which entries a mode consults
+
+An entry is compared against a call only where the mode in force **gates** that call. A call the
+mode does not gate is approved as it arrives, before any list is read — so how far your three lists
+reach is the mode's own row in [the table above](#the-ladder-approvals).
+
+- **A `shell` entry always applies.** The shell is gated at every mode, so a `shell` entry in
+  `deny`, `escalate` or `allow` is compared against every command the agent proposes — the `deny`
+  list under `bypass` included.
+- **A `tool` or `mcpTool` entry applies only where the mode gates that tool.** At `assisted`, `auto`
+  and `bypass` the shell is the only gated tool, so an entry naming a tool is compared against
+  nothing there — a `deny` entry included. At `manual` and `write` the built-in file tools the mode
+  grants also run free and are never compared: `manual` grants the read tools, `write` the read and
+  the write tools. So an entry naming a read tool such as `read_file` or `gth_grep` is compared at
+  no mode at all.
+- **`rate` on a tool entry does nothing at any mode.** The auto-rater reads shell commands only, so
+  a `tool` or `mcpTool` entry never produces a rating call, whatever its `rate` says.
+
+So a prohibition you need at `assisted`, `auto` or `bypass` has to name the **command** that would
+carry it out. Where it is the tool itself you do not want run, take it away rather than deny it:
+leave the server out of `mcpServers`, or the tool out of that command's `builtInTools`
+([Tools configuration](../configuration/tools.md)).
+
+`/approvals` reports the entries you declared, not the ones the mode in force can act on, so a
+`Denied:` count that includes a tool entry at `assisted` is counting your config rather than checks
+that can fire.
 
 ### Writing an entry
 
@@ -336,6 +388,10 @@ Every entry in all three lists is the same explicit object. `type`, `matcher` an
 { "type": "mcpTool", "server": "jira", "matcher": "hint",  "pattern": { "destructiveHint": true } }
 ```
 
+A `shell` entry is compared at every mode. A `tool` or `mcpTool` entry is compared only where the
+mode in force gates that tool, so at `assisted`, `auto` and `bypass` it is not compared at all —
+read [Which entries a mode consults](#which-entries-a-mode-consults) before you rely on one.
+
 `exact` and `glob` compare against the whole normalized command (or the whole tool name), not token
 by token. The consequence everyone hits first: `npm publish *` does **not** match a bare
 `npm publish`, because the space before the `*` is part of the pattern. `npm publish*` matches both,
@@ -345,9 +401,10 @@ and is almost always what was meant.
 cover `npm test -- --watch`, and an `exact` deny entry for `npm publish` does not stop
 `npm publish --access public`. Use a `glob` when you mean the family. This is the cost the design
 accepts, and it is worth what it buys: a missed `allow` entry only asks you, and a missed `deny`
-entry still reaches the rater and the prompt — neither is an execution — while a too-broad `allow`
-entry has no such backstop. Under `bypass` the `deny` list is one of only two checks left, so write
-globs there.
+entry leaves the call to whatever your mode would have done with it — while a too-broad `allow`
+entry runs, with nothing behind it but the `rate` tripwire, and that only at `assisted` and `auto`.
+Under `bypass` your mode would have run it: the `deny` list is one of only two checks left there, so
+write globs in it.
 
 **A pattern cannot span a command separator.** No `allow` entry of any matcher matches a command
 Gaunt Sloth cannot statically resolve — anything that composes, substitutes or redirects — so
@@ -405,13 +462,13 @@ never times out into an approval. Declare what the pipeline is allowed to run:
 ## Examples
 
 ```json
-// Confirm every shell command yourself, while the agent still edits files freely
+// Approve everything yourself except the agent's own edits inside your working folder
 { "approvals": "write" }
 
 // Rate with a stronger model than the session's
 { "approvals": { "mode": "assisted", "rater": "safety-rater" } }
 
-// Let the agent work unattended, but never let it publish
+// Rate every command, and put publishing beyond anything a rating can approve
 { "approvals": { "mode": "auto", "deny": [
   { "type": "shell", "matcher": "glob", "pattern": "npm publish*" },
   { "type": "shell", "matcher": "glob", "pattern": "git push --force*" }
@@ -437,6 +494,6 @@ never times out into an approval. Declare what the pipeline is allowed to run:
 - Every `builtInTools` key and its defaults: [Tools configuration](../configuration/tools.md).
 - The `/approvals` slash command: [Interactive sessions](interactive-sessions.md#slash-commands).
 - Migrating a pre-2.0 `yolo` / `judge` config, or a CFG-26 `mode`/`strictness`/`escalate` one:
-  [Migration](../MIGRATION.md#i-approvals-and-the-ai-rater-hard).
+  [Migration](../MIGRATION.md#i-approvals-and-the-auto-rater-hard).
 - The `code` / `exec` commands and their flags: [Commands](../COMMANDS.md#code).
 - Give the agent project rules while it codes: [Code with your rules](code-with-your-rules.md).
