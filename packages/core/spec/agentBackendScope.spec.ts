@@ -1,0 +1,301 @@
+/**
+ * GS2-81 — `agent.backend` is COMMAND-SCOPED, and a run that cannot honor it must say so.
+ *
+ * `GthAgentRunner`'s `agentFactory ?? lean` fallback is the exact point where a configured
+ * `agent.backend: 'deep'` stops existing: a caller that passes no factory gets the lean agent no
+ * matter what the config asked for. `gth review`, `gth pr` and the `gth pr` discovery agent are all
+ * in that position. This file drives that real fallback — a real `GthAgentRunner`, the real
+ * `GthLangChainAgent` behind it, the real config object — and asserts on the status stream the user
+ * actually reads. Nothing here injects the warning or stubs the decision.
+ *
+ * The only mock is `langchain`'s `createAgent`, the model-graph boundary: mocking it is also what
+ * lets the lean agent's own construction be the evidence that lean is what ran.
+ *
+ * The negative cells are the load-bearing half. Without them an implementation that warns on every
+ * run — or on `lean`, or when the deep factory WAS supplied — passes just as happily, and "no
+ * longer silent" would be unproven.
+ *
+ * The end-to-end counterpart, driving `review()` itself through to the terminal write, is
+ * `packages/review/spec/reviewBackendScope.spec.ts`.
+ */
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import type { GthConfig } from '#src/config.js';
+import type {
+  GthAgentInterface,
+  GthCommand,
+  PendingToolInterrupt,
+  StatusUpdateCallback,
+} from '#src/core/types.js';
+import { StatusLevel } from '#src/core/types.js';
+
+const createAgentMock = vi.fn();
+vi.mock('langchain', async () => {
+  const actual = await vi.importActual<typeof import('langchain')>('langchain');
+  return { ...actual, createAgent: createAgentMock };
+});
+
+/**
+ * Records what the runner asks the shell-approvals policy with, while keeping the real
+ * implementation. `this.command` is that second argument, and it decides whether the shell tool is
+ * gated at all and at which rung — so it is the field a label must never leak into.
+ */
+const resolveShellApprovalGateSpy = vi.fn();
+vi.mock('#src/config.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#src/config.js')>();
+  return {
+    ...actual,
+    resolveShellApprovalGate: (...args: Parameters<typeof actual.resolveShellApprovalGate>) => {
+      resolveShellApprovalGateSpy(...args);
+      return actual.resolveShellApprovalGate(...args);
+    },
+  };
+});
+
+vi.mock('#src/middleware/registry.js', () => ({ resolveMiddleware: vi.fn(async () => []) }));
+
+describe('GS2-81 — agent.backend is command-scoped and never silently dropped', () => {
+  let GthAgentRunner: typeof import('#src/core/GthAgentRunner.js').GthAgentRunner;
+  let AGENT_BACKEND_SCOPE_DOCS_URL: string;
+  let statusUpdate: Mock<StatusUpdateCallback>;
+
+  /** A config the lean agent can initialize from, with no prompt files read off this machine. */
+  const configWith = (backend?: 'deep' | 'lean'): GthConfig =>
+    ({
+      llm: { _llmType: () => 'test', bindTools: vi.fn() },
+      streamOutput: false,
+      contentSource: 'file',
+      requirementSource: 'file',
+      filesystem: 'none',
+      useColour: false,
+      writeOutputToFile: false,
+      writeBinaryOutputsToFile: false,
+      streamSessionInferenceLog: false,
+      canInterruptInferenceWithEsc: false,
+      includeCurrentDateAfterGuidelines: false,
+      noDefaultPrompts: true,
+      output: { header: false },
+      ...(backend ? { agent: { backend } } : {}),
+    }) as unknown as GthConfig;
+
+  const resolvers = { resolveTools: async () => [] };
+
+  /** A deep-backend stand-in: any factory at all means the caller CAN honor the key. */
+  const suppliedAgent = {
+    init: vi.fn(async () => {}),
+    invoke: vi.fn(),
+    stream: vi.fn(),
+    streamWithEvents: vi.fn(),
+    streamWithEventsResume: vi.fn(),
+    cleanup: vi.fn(async () => {}),
+  } as unknown as GthAgentInterface;
+
+  /** WARNING-level messages only — the level a user sees, not merely the text emitted. */
+  const backendWarnings = (): string[] =>
+    statusUpdate.mock.calls
+      .filter(([level]) => level === StatusLevel.WARNING)
+      .map(([, message]) => message)
+      .filter((message) => message.includes('agent.backend'));
+
+  beforeEach(async () => {
+    vi.resetAllMocks();
+    createAgentMock.mockReturnValue({ invoke: vi.fn(), stream: vi.fn() });
+    statusUpdate = vi.fn();
+    ({ GthAgentRunner, AGENT_BACKEND_SCOPE_DOCS_URL } =
+      await import('#src/core/GthAgentRunner.js'));
+  });
+
+  it('warns, naming the command, when review runs with agent.backend: deep and no backend factory', async () => {
+    const runner = new GthAgentRunner(statusUpdate, resolvers as never);
+    await runner.init('review', configWith('deep'));
+
+    const warnings = backendWarnings();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('agent.backend: deep');
+    expect(warnings[0]).toContain('the review command');
+    expect(warnings[0]).toContain('lean');
+
+    // …and the lean agent is what actually got built: only GthLangChainAgent calls createAgent.
+    expect(createAgentMock).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The notice must NOT carry its own copy of which commands honor the key. The first draft did,
+   * and it was wrong on the day it shipped (it omitted `workflow` agent steps while the docs table
+   * written in the same commit listed them) — a sentence is not a claim a test can check. It points
+   * at the docs instead, and these two cells check the half that IS checkable: the pointer is
+   * present, and it still resolves to a real heading.
+   */
+  it('points at the docs for the command list instead of enumerating commands', async () => {
+    const runner = new GthAgentRunner(statusUpdate, resolvers as never);
+    await runner.init('review', configWith('deep'));
+
+    expect(backendWarnings()[0]).toContain(AGENT_BACKEND_SCOPE_DOCS_URL);
+  });
+
+  it("the docs URL's anchor resolves to a real heading in the page it names", () => {
+    // The file to read is DERIVED FROM THE URL, never a second hardcoded path: otherwise the URL
+    // could be repointed at a different page and this cell would happily go on validating the
+    // fragment against the old one. Only the org/repo half is uncheckable offline.
+    const [href, fragment] = AGENT_BACKEND_SCOPE_DOCS_URL.split('#');
+    const repoRelativePath = href.split('/blob/main/')[1];
+    expect(repoRelativePath).toBeTruthy();
+
+    // Resolved from import.meta.url, not a path literal, so the Windows CI cell resolves it too.
+    const docPath = fileURLToPath(new URL(`../../../${repoRelativePath}`, import.meta.url));
+    const markdown = readFileSync(docPath, 'utf8');
+
+    const anchors = [...markdown.matchAll(/^#{1,6} +(.+?)\s*$/gm)].map(([, heading]) =>
+      heading
+        .toLowerCase()
+        .replace(/[^\w\- ]+/g, '')
+        .trim()
+        .replace(/ +/g, '-')
+    );
+
+    expect(fragment).toBeTruthy();
+    expect(anchors).toContain(fragment);
+    // The section the anchor names is only worth pointing at if it holds the list.
+    expect(markdown).toContain('Honours `agent.backend`');
+  });
+
+  /**
+   * The notice fires BEFORE the agent is built, not after it is initialized. That ordering is the
+   * difference between a user with a broken provider config learning their backend key was ignored
+   * and never hearing it at all — and moving the call below `await this.agent.init(...)` passes
+   * every other cell in this file.
+   */
+  it('warns even when the agent fails to initialize', async () => {
+    createAgentMock.mockImplementation(() => {
+      throw new Error('provider is not configured');
+    });
+    const runner = new GthAgentRunner(statusUpdate, resolvers as never);
+
+    await expect(runner.init('review', configWith('deep'))).rejects.toThrow(
+      'provider is not configured'
+    );
+    expect(backendWarnings()).toHaveLength(1);
+  });
+
+  it('warns before the agent is built, not after', async () => {
+    const order: string[] = [];
+    createAgentMock.mockImplementation(() => {
+      order.push('agent-built');
+      return { invoke: vi.fn(), stream: vi.fn() };
+    });
+    statusUpdate.mockImplementation((level, message) => {
+      if (level === StatusLevel.WARNING && message.includes('agent.backend')) order.push('warning');
+    });
+
+    const runner = new GthAgentRunner(statusUpdate, resolvers as never);
+    await runner.init('review', configWith('deep'));
+
+    expect(order).toEqual(['warning', 'agent-built']);
+  });
+
+  it('names the pr command when the pr review runs with agent.backend: deep', async () => {
+    const runner = new GthAgentRunner(statusUpdate, resolvers as never);
+    await runner.init('pr', configWith('deep'));
+
+    expect(backendWarnings()[0]).toContain('the pr command');
+  });
+
+  /**
+   * The `gth pr` discovery agent inits with `command: undefined` (it must run on the chat prompt),
+   * so without `owningCommand` a `gth pr` run printed two notices in two different voices — "this
+   * run…" then "the pr command…" — which reads as two problems rather than one repeated.
+   */
+  it('names the owning command for a commandless run (the pr discovery agent)', async () => {
+    const runner = new GthAgentRunner(statusUpdate, resolvers as never);
+    await runner.init(undefined, configWith('deep'), undefined, { owningCommand: 'pr' });
+
+    const warnings = backendWarnings();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('the pr command');
+    expect(warnings[0]).not.toContain('undefined');
+    expect(warnings[0]).not.toContain('this run');
+  });
+
+  it('falls back to a scope-free phrasing when neither a command nor an owning command is known', async () => {
+    const runner = new GthAgentRunner(statusUpdate, resolvers as never);
+    await runner.init(undefined, configWith('deep'));
+
+    const warnings = backendWarnings();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('this run');
+    expect(warnings[0]).not.toContain('undefined');
+  });
+
+  /**
+   * `owningCommand` is label-only, and "label-only" is three separate claims, one per consumer the
+   * option's own JSDoc names. These two cells cover the mode prompt and the approvals posture; the
+   * command-specific filesystem config rides on the same `command` argument as the mode prompt.
+   */
+  it("never lets owningCommand reach the agent's command argument (the mode prompt)", async () => {
+    const runner = new GthAgentRunner(statusUpdate, resolvers as never);
+    await runner.init(undefined, configWith('deep'), undefined, { owningCommand: 'pr' });
+
+    expect(createAgentMock).toHaveBeenCalledTimes(1);
+    const [[agentOptions]] = createAgentMock.mock.calls as [[{ systemPrompt?: string }]];
+    const withoutLabel = vi.fn();
+    createAgentMock.mockImplementation((options: unknown) => {
+      withoutLabel(options);
+      return { invoke: vi.fn(), stream: vi.fn() };
+    });
+    await new GthAgentRunner(statusUpdate, resolvers as never).init(undefined, configWith('deep'));
+    const [[baselineOptions]] = withoutLabel.mock.calls as [[{ systemPrompt?: string }]];
+    expect(agentOptions.systemPrompt).toEqual(baselineOptions.systemPrompt);
+  });
+
+  /**
+   * The safety-relevant half. The runner keeps its own `this.command`, and hands it to
+   * `resolveShellApprovalGate`, which decides whether the shell tool is gated at all and under which
+   * rung — including `bypass`. Rewriting that assignment to `command ?? options.owningCommand`
+   * reads as an obvious tidy-up, because the line that emits the notice does exactly that; it would
+   * make the `pr` discovery agent resolve its shell posture from `commands.pr`, so a user with
+   * `commands.pr` on a bypass rung would get a discovery agent that stops asking before it runs
+   * shell commands. Asserted at the policy call, not on the composed prompt, which cannot see it.
+   */
+  it('never lets owningCommand reach the shell-approvals posture', async () => {
+    const runner = new GthAgentRunner(statusUpdate, resolvers as never);
+    await runner.init(undefined, configWith('deep'), undefined, { owningCommand: 'pr' });
+
+    resolveShellApprovalGateSpy.mockClear();
+    const decide = (
+      runner as unknown as {
+        decideToolApproval(tool: PendingToolInterrupt): Promise<unknown>;
+      }
+    ).decideToolApproval.bind(runner);
+    await decide({ name: 'read_file', args: {} } as unknown as PendingToolInterrupt);
+
+    expect(resolveShellApprovalGateSpy).toHaveBeenCalled();
+    expect(resolveShellApprovalGateSpy.mock.calls[0][1]).toBeUndefined();
+    // The field the policy reads is the one that must not have picked the label up.
+    expect((runner as unknown as { command?: GthCommand }).command).toBeUndefined();
+  });
+
+  it('stays quiet when a backend factory IS supplied — that caller honors the key', async () => {
+    const runner = new GthAgentRunner(statusUpdate, resolvers as never, () => suppliedAgent);
+    await runner.init('code', configWith('deep'));
+
+    expect(backendWarnings()).toEqual([]);
+    // The supplied factory really was the one used, so the quiet is not a missed code path.
+    expect(suppliedAgent.init).toHaveBeenCalledTimes(1);
+    expect(createAgentMock).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet for agent.backend: lean without a factory — lean IS what runs', async () => {
+    const runner = new GthAgentRunner(statusUpdate, resolvers as never);
+    await runner.init('review', configWith('lean'));
+
+    expect(backendWarnings()).toEqual([]);
+  });
+
+  it('stays quiet when agent.backend is unset', async () => {
+    const runner = new GthAgentRunner(statusUpdate, resolvers as never);
+    await runner.init('review', configWith());
+
+    expect(backendWarnings()).toEqual([]);
+  });
+});

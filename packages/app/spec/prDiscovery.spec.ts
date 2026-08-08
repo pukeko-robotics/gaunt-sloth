@@ -380,6 +380,25 @@ No linked ticket here`;
       ]);
     });
 
+    /**
+     * GS2-81 — the discovery agent runs commandless ON PURPOSE (`command: undefined` keeps it on
+     * the chat prompt and off `commands.pr`'s posture), which left a notice about it unable to name
+     * the verb the user actually typed. `owningCommand` is the label-only companion that fixes the
+     * wording; both halves are pinned here, because passing `'pr'` as the COMMAND instead would
+     * silently change the discovery agent's prompt and approvals.
+     */
+    it('runs commandless but labels itself as the pr command for messages', async () => {
+      ghPrViewMock.mockResolvedValue(noLinkMetadata);
+      processMessagesMock.mockResolvedValue(undefined);
+
+      const { runPrDiscovery } = await import('#src/commands/prDiscovery.js');
+      await runPrDiscovery(withDiscoveryConfig({}));
+
+      const initArgs = initMock.mock.calls.at(-1)!;
+      expect(initArgs[0]).toBeUndefined();
+      expect(initArgs[3]).toEqual({ owningCommand: 'pr' });
+    });
+
     it('keeps only set_requirements for an empty auto allow-list', async () => {
       ghPrViewMock.mockResolvedValue(noLinkMetadata);
       processMessagesMock.mockResolvedValue(undefined);

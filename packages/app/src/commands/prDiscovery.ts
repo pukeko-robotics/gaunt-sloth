@@ -218,7 +218,12 @@ export async function runPrDiscovery(config: GthConfig): Promise<PrDiscoveryResu
     createPrDiscoveryResolvers(config, state)
   );
   try {
-    await runner.init(undefined, getPrDiscoveryAgentConfig(config, discoveryConfig), undefined);
+    // `command` stays undefined so the discovery agent runs on the chat prompt and does NOT pick up
+    // `commands.pr`'s posture; `owningCommand` is label-only, so a notice about this run says "the
+    // pr command" rather than something the user cannot connect to what they typed (GS2-81).
+    await runner.init(undefined, getPrDiscoveryAgentConfig(config, discoveryConfig), undefined, {
+      owningCommand: 'pr',
+    });
     await runner.processMessages([
       ...buildSystemMessages(config, readPrDiscoveryPrompt(config)),
       new HumanMessage(buildPrDiscoveryUserMessage(state)),

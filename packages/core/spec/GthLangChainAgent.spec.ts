@@ -1468,6 +1468,56 @@ describe('GthLangChainAgent', () => {
       );
     });
 
+    // CFG-33 — the non-streaming path renders the final message's content BLOCKS. Gemini's thought
+    // summary is a `thought: true` text block sitting beside the answer block, and
+    // renderAssistantContent maps every text block, so the model's thinking would be displayed and
+    // written to the output file as part of the answer. It must never reach the renderer.
+    async function invokeWithThoughtBlock(writeBinaryOutputsToFile: boolean): Promise<string> {
+      const agent = new GthLangChainAgent(statusUpdateCallback);
+
+      agentMock.invoke.mockResolvedValue({
+        messages: [
+          new AIMessage({
+            content: [
+              { thought: true, type: 'text', text: 'MY PRIVATE THINKING' },
+              { type: 'text', text: 'The answer.' },
+            ],
+          }),
+        ],
+      });
+
+      const fakeListChatModel = new FakeListChatModel({ responses: ['x'] });
+      fakeListChatModel.bindTools = vi.fn().mockReturnValue(fakeListChatModel);
+      await agent.init(undefined, {
+        ...mockConfig,
+        llm: fakeListChatModel,
+        writeBinaryOutputsToFile,
+      });
+
+      return agent.invoke([new HumanMessage('test message')], {
+        recursionLimit: 1000,
+        configurable: { thread_id: 'cfg33-invoke' },
+      });
+    }
+
+    it('does not render a Gemini thought-summary block as part of the answer', async () => {
+      const result = await invokeWithThoughtBlock(false);
+
+      expect(binaryOutputUtilsMock.renderAssistantContent.mock.calls[0][0]).toEqual([
+        { type: 'text', text: 'The answer.' },
+      ]);
+      expect(result).not.toContain('MY PRIVATE THINKING');
+    });
+
+    it('keeps the thought summary out of the binary-output rendering path too', async () => {
+      const result = await invokeWithThoughtBlock(true);
+
+      expect(binaryOutputUtilsMock.materializeBinaryOutputs.mock.calls[0][0]).toEqual([
+        { type: 'text', text: 'The answer.' },
+      ]);
+      expect(result).not.toContain('MY PRIVATE THINKING');
+    });
+
     it('should invoke agent in non-streaming mode', async () => {
       const agent = new GthLangChainAgent(statusUpdateCallback);
 
@@ -2158,6 +2208,49 @@ describe('GthLangChainAgent', () => {
       expect(chunks).toEqual(['chunk1', 'chunk2']);
     });
 
+    // CFG-33 — the plain console surface has never rendered reasoning: every other provider's
+    // arrives out-of-band in additional_kwargs, which this path does not read. Gemini's arrives
+    // INSIDE content as a `thought: true` text block, so `.text` would have printed the model's
+    // thinking as part of the answer here, and written it to the output file.
+    it('does not stream a Gemini thought-summary block as answer text', async () => {
+      const agent = new GthLangChainAgent(statusUpdateCallback);
+
+      async function* mockStreamGenerator() {
+        yield [
+          new AIMessageChunk({
+            content: [{ thought: true, type: 'text', text: 'MY PRIVATE THINKING' }],
+          }),
+          {},
+        ];
+        yield [new AIMessageChunk({ content: 'The answer.' }), {}];
+      }
+      agentMock.stream.mockResolvedValue(mockStreamGenerator());
+
+      const fakeStreamingChatModel = new FakeStreamingChatModel({ chunks: [] });
+      fakeStreamingChatModel.bindTools = vi.fn().mockReturnValue(fakeStreamingChatModel);
+      await agent.init(undefined, {
+        ...mockConfig,
+        llm: fakeStreamingChatModel,
+        streamOutput: true,
+      });
+
+      const stream = await agent.stream([new HumanMessage('test message')], {
+        recursionLimit: 1000,
+        configurable: { thread_id: 'cfg33-plain-stream' },
+      });
+      const chunks: unknown[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+
+      expect(chunks).toEqual(['The answer.']);
+      const streamed = statusUpdateCallback.mock.calls
+        .filter((call) => call[0] === StatusLevel.STREAM)
+        .map((call) => call[1])
+        .join('');
+      expect(streamed).toBe('The answer.');
+    });
+
     it('should unregister the Escape listener when stream creation fails', async () => {
       const agent = new GthLangChainAgent(statusUpdateCallback);
 
@@ -2739,6 +2832,131 @@ describe('GthLangChainAgent', () => {
         .map((e) => e.delta)
         .join('');
       expect(JSON.parse(toolArgs)).toEqual({ a: 1 });
+    });
+
+    // CFG-33 — the standing per-provider reasoning-shape table.
+    //
+    // Three providers in a row have shipped with an EMPTY /reasoning panel, and every one was found
+    // by a person noticing it, because no test anywhere failed when a provider surfaced nothing at
+    // all. This is that test: each row is one provider family's reasoning SHAPE, and each must reach
+    // the reasoning channel and stay out of the answer. A row that stops producing `reasoning_delta`
+    // is a provider whose thinking is being thrown away.
+    //
+    // What it can and cannot catch: it proves the BRIDGE reads every shape we know of. It cannot
+    // prove a provider still DELIVERS that shape — a library that changes what it emits (how the
+    // OpenRouter bridge broke) is only caught by a live call.
+    describe('provider reasoning shapes (CFG-33)', () => {
+      const shapes: Array<{ provider: string; chunk: () => AIMessageChunk }> = [
+        {
+          provider: 'ollama / DeepSeek / Anthropic — additional_kwargs.reasoning_content',
+          chunk: () =>
+            new AIMessageChunk({
+              content: 'answer',
+              additional_kwargs: { reasoning_content: 'THOUGHT' },
+            }),
+        },
+        {
+          provider: 'OpenRouter — additional_kwargs.reasoning',
+          chunk: () =>
+            new AIMessageChunk({ content: 'answer', additional_kwargs: { reasoning: 'THOUGHT' } }),
+        },
+        {
+          provider: 'OpenAI-compatible thinking models — inline <think> in content',
+          chunk: () => new AIMessageChunk({ content: '<think>THOUGHT</think>answer' }),
+        },
+        {
+          provider: 'google-genai / vertexai — a `thought: true` content block',
+          chunk: () =>
+            new AIMessageChunk({
+              content: [
+                { thought: true, type: 'text', text: 'THOUGHT' },
+                { type: 'text', text: 'answer' },
+              ],
+            }),
+        },
+      ];
+
+      for (const { provider, chunk } of shapes) {
+        it(`routes reasoning to the reasoning channel: ${provider}`, async () => {
+          const events = await runStream([[chunk(), {}]]);
+          expect(reasoningText(events)).toBe('THOUGHT');
+          expect(answerText(events)).toBe('answer');
+          expect(events.map((e) => e.type)).toContain('reasoning_start');
+          expect(events.map((e) => e.type)).toContain('reasoning_end');
+        });
+      }
+
+      // The Gemini row above is a reduction of a REAL response. This is the shape verbatim as
+      // `@langchain/google` delivered it from gemini-3.6-flash on the turn after a tool result —
+      // the position Andrew reported as showing no reasoning at all. Note `additional_kwargs` is
+      // EMPTY: nothing here is reachable through additional_kwargs, which is why the panel was bare.
+      it('reads the captured gemini-3.6-flash post-tool chunk', async () => {
+        const events = await runStream([
+          [
+            new AIMessageChunk({
+              content: [
+                {
+                  thought: true,
+                  type: 'text',
+                  text: "**Analyzing Wellington's Weather**\n\nI've taken note of the 12°C temperature and the rain in Wellington.",
+                },
+              ],
+              additional_kwargs: {},
+            }),
+            {},
+          ],
+          [new AIMessageChunk({ content: 'Since it is currently 12°C and raining' }), {}],
+        ]);
+
+        expect(reasoningText(events)).toContain("**Analyzing Wellington's Weather**");
+        // The thought summary must NOT leak into the answer — `.text` would have folded it in.
+        expect(answerText(events)).toBe('Since it is currently 12°C and raining');
+      });
+
+      // A `thought: true` block whose text is only part of the thinking still streams as a delta,
+      // and a chunk mixing thinking and answer keeps them in order.
+      it('keeps thought and answer blocks of one chunk in order', async () => {
+        const events = await runStream([
+          [
+            new AIMessageChunk({
+              content: [
+                { thought: true, type: 'text', text: 'first I think' },
+                { type: 'text', text: 'then I answer' },
+                { thought: true, type: 'text', text: ' and think again' },
+              ],
+            }),
+            {},
+          ],
+        ]);
+        expect(events.map((e) => e.type)).toEqual([
+          'reasoning_start',
+          'reasoning_delta',
+          'reasoning_end',
+          'text',
+          'reasoning_start',
+          'reasoning_delta',
+          'reasoning_end',
+        ]);
+        expect(reasoningText(events)).toBe('first I think and think again');
+        expect(answerText(events)).toBe('then I answer');
+      });
+
+      // A non-chunk AIMessage (resumed / replayed turn) must read the same shape.
+      it('reads a `thought: true` block on a non-chunk AIMessage', async () => {
+        const events = await runStream([
+          [
+            new AIMessage({
+              content: [
+                { thought: true, type: 'text', text: 'THOUGHT' },
+                { type: 'text', text: 'answer' },
+              ],
+            }),
+            {},
+          ],
+        ]);
+        expect(reasoningText(events)).toBe('THOUGHT');
+        expect(answerText(events)).toBe('answer');
+      });
     });
   });
 

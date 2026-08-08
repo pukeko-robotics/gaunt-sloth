@@ -19,6 +19,7 @@ import type { GthCommand, StatusUpdateCallback } from '@gaunt-sloth/core/core/ty
 import { StatusLevel } from '@gaunt-sloth/core/core/types.js';
 import { getProcessCwd, stderr } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
+import { disableGeminiThoughtSummaries } from '@gaunt-sloth/core/providers/geminiThinking.js';
 import { GthDeepAgent } from '#src/core/GthDeepAgent.js';
 import { startGthAcpServer } from '#src/core/gthAcpServer.js';
 import { createResolvers } from '#src/resolvers.js';
@@ -85,11 +86,19 @@ export async function startAcpServer(
   const workspaceRoot = getProcessCwd();
   debugLog(`Starting ACP server (command: ${command}, startup workspace: ${workspaceRoot})`);
 
+  // deepagents-acp renders assistant content itself: it sends a `thinking`-typed block to the ACP
+  // client's thought channel and EVERY `text`-typed block to the message channel. Gemini's thought
+  // summary is typed `text` (marked only by `thought: true`), so on this path the model's reasoning
+  // would arrive in the IDE as the assistant's answer. Nothing here goes through GthAbstractAgent,
+  // so gsloth's reasoning bridge cannot separate them — the only reliable fix is not to ask for the
+  // summary on this surface. Thinking itself stays on, and the budget is untouched.
+  const model = disableGeminiThoughtSummaries(params.model);
+
   await startGthAcpServer({
     agents: {
       name: options.name ?? 'gaunt-sloth',
       description: options.description ?? 'Gaunt Sloth deep coding agent',
-      model: params.model,
+      model,
       tools: params.tools,
       systemPrompt,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

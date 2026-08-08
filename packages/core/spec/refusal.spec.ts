@@ -110,6 +110,20 @@ describe('detectRefusal', () => {
     expect(detectRefusal(msg)?.explanation).toBe('This violates the policy.');
   });
 
+  // CFG-33 — the refusal notice quotes the model's explanation verbatim to the user. Gemini marks a
+  // thought summary `thought: true` and types it exactly like an answer part, so a naive fold over
+  // the text parts would quote the model's private thinking back as its "explanation".
+  it('does not quote a Gemini thought summary as the explanation', () => {
+    const msg = new AIMessage({
+      content: [
+        { thought: true, type: 'text', text: 'The user seems to want something I should refuse. ' },
+        { type: 'text', text: 'I cannot help with that.' },
+      ],
+      response_metadata: { stop_reason: 'refusal' },
+    });
+    expect(detectRefusal(msg)?.explanation).toBe('I cannot help with that.');
+  });
+
   it('falls back to reasoning_content when content is empty', () => {
     const msg = new AIMessage({
       content: '',

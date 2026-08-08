@@ -41,9 +41,12 @@ import {
   renderAssistantContent,
 } from '#src/utils/binaryOutputUtils.js';
 import { detectRefusal, buildRefusalMessage, type RefusalInfo } from '#src/core/refusal.js';
-
-/** TUI-C22 — one classified slice of streamed assistant text: answer prose vs. inline thinking. */
-type ThinkSegment = { kind: 'answer' | 'reasoning'; text: string };
+import {
+  answerTextOf,
+  segmentAssistantContent,
+  stripReasoningBlocks,
+  type ThinkSegment,
+} from '#src/core/reasoningBlocks.js';
 
 const THINK_OPEN = '<think>';
 const THINK_CLOSE = '</think>';
@@ -433,7 +436,12 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
           return this.surfaceRefusal(refusal);
         }
 
-        const finalContent = finalMessage?.content;
+        // CFG-33: Gemini's thought summaries ride inside `content` as `thought: true` text blocks,
+        // which renderAssistantContent would print as part of the answer (and write to the output
+        // file). The plain surface has never shown reasoning — every other provider's arrives
+        // out-of-band in additional_kwargs — so drop them for rendering only; graph state keeps the
+        // message whole so the thought parts still replay as history.
+        const finalContent = stripReasoningBlocks(finalMessage?.content);
         const processedContent = !this.config.writeBinaryOutputsToFile
           ? {
               renderedContent: renderAssistantContent(finalContent),
@@ -615,7 +623,9 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
             // completed call when its ToolMessage arrives; a no-op for plain text chunks).
             toolIndication.observe(chunk);
             if (AIMessage.isInstance(chunk)) {
-              const text = (chunk.text as string) ?? '';
+              // CFG-33: the ANSWER text only. `.text` folds Gemini's `thought: true` blocks into the
+              // answer, which would print the model's thinking inline here and in the output file.
+              const text = answerTextOf(chunk.content);
               totalChunks++;
 
               if (text.length > 0) {
@@ -877,6 +887,20 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
       }
     }
 
+    // CFG-33 — emit a message's content segments in order. A segment already classified as the
+    // model's thinking (a Gemini `thought: true` block) goes straight to the reasoning channel;
+    // answer text still passes through the TUI-C22 think splitter, so an inline `<think>` tag is
+    // peeled exactly as before. With no reasoning block this is the previous `.text` behaviour.
+    function* emitContentSegments(segments: ThinkSegment[]): Generator<AgentStreamEvent> {
+      for (const segment of segments) {
+        if (segment.kind === 'reasoning') {
+          yield* emitSegments([segment]);
+        } else {
+          yield* emitSegments(thinkSplitter.push(segment.text));
+        }
+      }
+    }
+
     function* flushAggregated(): Generator<AgentStreamEvent> {
       if (!aggregatedAIChunk) return;
       const toolCalls = aggregatedAIChunk.tool_calls ?? [];
@@ -928,9 +952,10 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
         // which is cumulative. TUI-C22 routes it through the think splitter so inline
         // <think>...</think> (buffered across chunks) is peeled into the reasoning channel and
         // stripped from the answer; text with no think tags passes straight through unchanged.
-        if (chunk.text) {
-          yield* emitSegments(thinkSplitter.push(chunk.text as string));
-        }
+        // CFG-33 classifies the chunk's content blocks first, in order, so Gemini's `thought: true`
+        // blocks reach the reasoning channel instead of the answer; answer text still goes through
+        // the think splitter, thought text does not (it is already classified).
+        yield* emitContentSegments(segmentAssistantContent(chunk.content));
       } else if (AIMessage.isInstance(chunk)) {
         // Reasoning on a non-chunk AIMessage — a non-streamed / resumed thinking message
         // (e.g. a checkpoint replay) still carries its thinking in
@@ -950,9 +975,7 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
           });
           aggregatedAIChunk = aggregatedAIChunk ? aggregatedAIChunk.concat(synthetic) : synthetic;
         }
-        if (chunk.text) {
-          yield* emitSegments(thinkSplitter.push(chunk.text as string));
-        }
+        yield* emitContentSegments(segmentAssistantContent(chunk.content));
         // A non-chunk AIMessage is a COMPLETE message, not a delta — drain any residual now
         // (an unterminated <think> becomes reasoning, a dangling partial becomes answer) so its
         // buffered state never leaks into a subsequent message (TUI-C22).
