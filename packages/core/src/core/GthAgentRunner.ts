@@ -122,6 +122,36 @@ function copyApprovalEntry(entry: ApprovalEntry): ApprovalEntry {
 }
 
 /**
+ * GS2-81 — the page carrying WHICH commands honor `agent.backend`, pointed at rather than
+ * enumerated in the notice itself.
+ *
+ * The list belongs in exactly one place. A copy of it inside a runtime string is a second source of
+ * truth with nothing pinning it: the first draft of this notice already disagreed with the docs
+ * table written in the same commit (it omitted `workflow` agent steps), and no test could tell,
+ * because a sentence is not a claim a test can check. The docs table is checkable, and
+ * `agentBackendScope.spec.ts` pins that this URL's anchor still resolves to a real heading in it.
+ *
+ * **A GitHub blob URL, matching the other user-facing runtime doc links in this repo** (the
+ * approvals-protection pointer in `config/shell-policy.ts` and the 2.0 migration pointer in
+ * `config/schema.ts`) — a running CLI's user has no checkout for a relative path to resolve in.
+ */
+export const AGENT_BACKEND_SCOPE_DOCS_URL =
+  'https://github.com/pukeko-robotics/gaunt-sloth/blob/main/docs/configuration/profiles.md#which-commands-honour-it';
+
+/** Options for {@link GthAgentRunner#init} that qualify the run without changing how it behaves. */
+export interface GthAgentRunnerInitOptions {
+  /**
+   * GS2-81 — the CLI verb this run belongs to, for messages only, when `command` is deliberately
+   * `undefined`. It is a SEPARATE input from `command` because `command` is not a label: it selects
+   * the mode prompt (`readModePrompt`), the per-command approvals posture (`resolveApprovals`) and
+   * the command-specific filesystem config, so a helper agent that must run on the chat prompt —
+   * the `gth pr` change-requirements discovery agent — cannot borrow it to say which verb it serves.
+   * Nothing but the wording of a notice reads this.
+   */
+  owningCommand?: GthCommand;
+}
+
+/**
  * Agent simplifies interaction with LLM and reduces it to calling a few methods
  * {@link GthAgentRunner#init} and {@link GthAgentRunner#processMessages}.
  */
@@ -463,7 +493,8 @@ export class GthAgentRunner {
   async init(
     command: GthCommand | undefined,
     configIn: GthConfig,
-    checkpointSaver?: BaseCheckpointSaver | undefined
+    checkpointSaver?: BaseCheckpointSaver | undefined,
+    options?: GthAgentRunnerInitOptions
   ): Promise<void> {
     this.config = configIn;
     this.command = command;
@@ -514,7 +545,7 @@ export class GthAgentRunner {
 
     debugLogObject('Runnable Config', this.runConfig);
 
-    this.warnIfBackendCannotBeHonored(configIn, command);
+    this.warnIfBackendCannotBeHonored(configIn, command ?? options?.owningCommand);
 
     this.agent = this.agentFactory(this.statusUpdate, this.resolvers);
 
@@ -548,8 +579,8 @@ export class GthAgentRunner {
     this.statusUpdate(
       StatusLevel.WARNING,
       `Config sets agent.backend: deep, but ${scope} always runs the lean backend, so the ` +
-        'setting has no effect here. The deep backend is honored by chat, code, ask, exec, ' +
-        'batch and eval cells, and the AG-UI (api) server.'
+        'setting has no effect here. Which commands honor it: ' +
+        AGENT_BACKEND_SCOPE_DOCS_URL
     );
   }
 
