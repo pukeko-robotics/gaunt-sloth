@@ -656,10 +656,14 @@ export function foldHomePath(command: string, home: string | undefined): string 
  *
  * `command` is the RAW command as the agent proposed it. The builder normalizes and home-folds it
  * with the same functions the live command goes through, so the transcript shows a past round in the
- * form that round was actually rated in — see {@link buildNegotiationContextBlock}.
+ * form that round was actually rated in, then renders it on one line — see
+ * {@link buildNegotiationContextBlock}.
  */
 export interface RaterNegotiationRound {
-  /** The command the agent proposed in that round, raw (normalized and folded by the builder). */
+  /**
+   * The command the agent proposed in that round, RAW. The builder normalizes, home-folds and
+   * one-lines it; a caller that pre-processes it is doing the work twice and differently.
+   */
   command: string;
   /** The justification the agent attached to it, if any. Omitted when it argued nothing. */
   justification?: string;
@@ -729,16 +733,78 @@ function truncateUserMessage(message: string): string {
 }
 
 /**
- * Collapse a run of whitespace to one space, for the fields rendered as ONE LINE of the transcript.
+ * Collapse a run of whitespace to one space, for **every** value rendered as ONE LINE of this block.
  *
- * This is structural, not cosmetic. A prior round's justification and a prior round's reason are
- * rendered as `key: value` lines under a `Round N` heading, and a newline inside either would let
- * agent-authored text forge a round heading and a rater answer that were never given — the one shape
- * of injection this block's own layout would otherwise create. The current command's justification
- * is NOT collapsed: it has a fence of its own where line structure carries nothing.
+ * This is structural, not cosmetic. The transcript is line-structured (`Round N`, then indented
+ * `key: value` lines) and the user messages are a `- ` list, so a newline inside any rendered value
+ * forges a second entry: an extra round with an answer that was never given, or an extra user
+ * message nobody sent. It therefore applies to all four untrusted values — a round's **command**,
+ * its justification, its reason, and each user message.
+ *
+ * **The command is not exempt, and that is the fix rather than an oversight.** `normalizeCommand`
+ * deliberately preserves newlines (EXT-55: a line break is a command separator, not padding), so a
+ * normalized command is exactly the value most likely to carry one. A multi-line command is
+ * legitimate, and here it renders on one line — this block is a summary of what was argued, never
+ * the rated unit, and the only command the rater rules on is the one in `<command_to_evaluate>`.
+ *
+ * The CURRENT justification is the one value NOT collapsed: it has a fence of its own, where line
+ * structure carries nothing and a paragraph is the natural shape of an argument.
  */
 function oneLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Zero-width and byte-order-mark code points, which `String.trim()` and `\s` do NOT match.
+ *
+ * Without this, a message of one U+200B is "not blank" to the emptiness gate below: it renders a
+ * block, and with it the guidance — so an invisible character alone would turn a round-1 rating into
+ * a round-2 one and break the byte-identity guarantee this module advertises.
+ */
+const ZERO_WIDTH_CHARS = /[\u200B-\u200D\u2060\uFEFF]/g;
+
+/** Whether a value carries nothing a reader would see — whitespace and zero-width alike. */
+function isBlank(text: string): boolean {
+  return text.replace(ZERO_WIDTH_CHARS, '').trim() === '';
+}
+
+/**
+ * Neutralise any sequence that would CLOSE the fence `tag`, so untrusted text cannot escape it.
+ *
+ * A fenced block is only a boundary if the fenced text cannot write the boundary itself. Untrusted
+ * content containing its own closing tag ends the fence early and everything after it reads as our
+ * own prose — and inside `<negotiation_so_far>` that is not merely confusing but *persuasive*: the
+ * block quotes the rater's own previous positions back to it, and {@link RATER_NEGOTIATION_GUIDANCE}
+ * tells it to reason from those positions. A forged prior `safe` therefore argues for approval in
+ * the rater's own voice.
+ *
+ * The replacement carries no angle brackets at all (a marker that spelled the tag out would be the
+ * very sequence being removed) and says what happened, because a rater that can see text was
+ * tampered with has been told something useful about the command it is rating.
+ *
+ * Matching is deliberately loose — case-insensitive, and tolerant of the whitespace an XML parser
+ * would ignore (`</ justification >`) — since the reader is a language model, not a parser, and it
+ * will read any of those as the fence ending.
+ *
+ * Exported and parameterised by tag so the node that closes the same hole on
+ * `<command_to_evaluate>` applies THIS function to it rather than inventing a second mechanism that
+ * escapes differently.
+ */
+export function neutralizeClosingTag(text: string, tag: string): string {
+  return text.replace(new RegExp(`<\\s*/\\s*${tag}\\s*>`, 'gi'), `[removed a closing ${tag} tag]`);
+}
+
+/**
+ * Prepare one untrusted value for a ONE-LINE slot inside `tag`: fold the home path (the same
+ * less-identifying form the rated command gets), collapse it to a single line, then neutralise any
+ * attempt to close the fence.
+ *
+ * The order is the order the transforms have to run in: folding can introduce nothing structural,
+ * collapsing can bring a closing tag from a later line up onto this one, and neutralising last is
+ * what makes it impossible for either earlier step to reintroduce an escape.
+ */
+function fencedOneLine(text: string, tag: string, home: string | undefined): string {
+  return neutralizeClosingTag(oneLine(foldHomePath(text, home)), tag);
 }
 
 /**
@@ -752,24 +818,34 @@ function oneLine(text: string): string {
  * and is emitted with this block for that reason. Only the rater's own past outcomes and our own
  * headings are ours, and they are the block's structure rather than its contents.
  *
+ * **The fences here are enforced, not merely drawn.** Two things could otherwise write the block's
+ * own structure from inside it, and both are neutralised at the point of rendering: a closing tag
+ * ({@link neutralizeClosingTag}) and a newline in any one-line slot ({@link oneLine}). The amplifier
+ * that makes this worth more than tidiness is what the block IS — it quotes the rater's previous
+ * outcomes back to it under guidance telling it to reason from them, so a forged prior `safe` argues
+ * for approval in the rater's own voice.
+ *
  * **The order inside the block narrows outward from the command being rated**: the justification is
  * about THIS command, the transcript is the exchange that produced it, and the user messages are the
  * mandate around the whole thing. It also keeps the agent's argument for the pending command out of
  * the final position, which is the one a model weighs hardest.
  *
- * **Prior commands are normalized and home-folded here**, by the same two functions the live command
- * goes through, so a past round appears in the form it was actually rated in — a transcript showing
- * `/home/andrew/…` beside a fenced `~/…` would be a different string from the one the rater ruled
- * on, and folding exists to keep the identifying form out of the prompt at all.
+ * **Prior commands are normalized here**, by the same function the live command goes through, so a
+ * past round appears in the form it was actually rated in. **Home-folding applies to every value the
+ * block renders** — the justification and the user messages as much as the commands — because
+ * {@link foldHomePath} exists to keep the identifying form out of the prompt, and a prose field is
+ * where an absolute home path is most likely to appear, not least.
  *
  * Bounds are applied here rather than trusted from the caller: at most
  * {@link NEGOTIATION_MAX_USER_MESSAGES} messages (the LAST that many), each truncated to
  * {@link NEGOTIATION_USER_MESSAGE_MAX_CHARS}. Blank entries are dropped before the last-5 window is
- * taken, so a run of empty messages cannot spend the budget that carries the mandate.
+ * taken, so a run of empty messages cannot spend the budget that carries the mandate — and "blank"
+ * counts zero-width characters as nothing ({@link isBlank}), so an invisible character cannot turn a
+ * round-1 rating into a round-2 one.
  *
  * @param negotiation The §5.1 context, or nothing.
- * @param home The home directory to fold in prior commands — the caller's own `home`, so the
- *   transcript folds exactly as the live command does.
+ * @param home The home directory to fold — the caller's own `home`, so the block folds exactly as
+ *   the live command does.
  * @returns The block, or `null` when nothing would be rendered. `null` is the single signal that
  *   this is a round-1 rating: {@link buildRaterPrompt} uses it for both halves of the prompt, so the
  *   guidance and the context can never appear without each other.
@@ -778,12 +854,19 @@ export function buildNegotiationContextBlock(
   negotiation: RaterNegotiationContext | undefined,
   home?: string
 ): string | null {
-  const justification = negotiation?.justification?.trim() ?? '';
-  const rounds = (negotiation?.priorRounds ?? []).filter((round) => round.command.trim() !== '');
+  const rawJustification = negotiation?.justification ?? '';
+  // Multi-line on purpose (its own fence carries no structure), so it is folded and un-escapable but
+  // NOT collapsed.
+  const justification = isBlank(rawJustification)
+    ? ''
+    : neutralizeClosingTag(foldHomePath(rawJustification.trim(), home), 'justification');
+  const rounds = (negotiation?.priorRounds ?? []).filter((round) => !isBlank(round.command));
   const userMessages = (negotiation?.userMessages ?? [])
-    .filter((message) => message.trim() !== '')
+    .filter((message) => !isBlank(message))
     .slice(-NEGOTIATION_MAX_USER_MESSAGES)
-    .map(truncateUserMessage);
+    // Truncation runs LAST, so the cap bounds the string that is actually rendered — after folding
+    // has shortened it and after neutralising a closing tag may have lengthened it.
+    .map((message) => truncateUserMessage(fencedOneLine(message, 'user_messages', home)));
 
   if (!justification && rounds.length === 0 && userMessages.length === 0) return null;
 
@@ -806,19 +889,37 @@ export function buildNegotiationContextBlock(
       '<negotiation_so_far>'
     );
     rounds.forEach((round, index) => {
+      // Every value below goes through the same one-line + un-escapable treatment, INCLUDING the
+      // command: it is agent-authored like the other two, and it is the one a normalizer hands over
+      // with its newlines intact.
+      const line = (text: string): string => fencedOneLine(text, 'negotiation_so_far', home);
       lines.push(`Round ${index + 1}`);
-      lines.push(`  agent proposed: ${foldHomePath(normalizeCommand(round.command), home)}`);
-      const roundJustification = round.justification?.trim();
-      if (roundJustification) lines.push(`  agent justified: ${oneLine(roundJustification)}`);
-      lines.push(`  you answered: ${round.outcome} — ${oneLine(round.reason)}`);
+      lines.push(`  agent proposed: ${line(normalizeCommand(round.command))}`);
+      const roundJustification = round.justification;
+      if (roundJustification && !isBlank(roundJustification)) {
+        lines.push(`  agent justified: ${line(roundJustification)}`);
+      }
+      // A blank reason renders the outcome alone rather than a dangling em dash: `reason` is
+      // required by the type but nothing stops a caller passing an empty one.
+      lines.push(
+        isBlank(round.reason)
+          ? `  you answered: ${round.outcome}`
+          : `  you answered: ${round.outcome} — ${line(round.reason)}`
+      );
     });
     lines.push('</negotiation_so_far>');
   }
   if (userMessages.length > 0) {
     lines.push(
       '',
-      `THE LAST ${NEGOTIATION_MAX_USER_MESSAGES} USER MESSAGES (oldest first, newest last; each ` +
-        `truncated to ${NEGOTIATION_USER_MESSAGE_MAX_CHARS} characters):`,
+      // The heading states the RULE, not a claim about these messages: "the last 5, each truncated"
+      // is false the moment two short messages are supplied and nothing was dropped or cut, and
+      // model-facing text that asserts something untrue about its own contents is worse than no
+      // heading. Both numbers are read from the constants that enforce them, so the sentence cannot
+      // drift from the bound it describes.
+      `THE USER’S MOST RECENT MESSAGES (oldest first, newest last; at most ` +
+        `${NEGOTIATION_MAX_USER_MESSAGES}, each capped at ${NEGOTIATION_USER_MESSAGE_MAX_CHARS} ` +
+        `characters):`,
       '<user_messages>',
       ...userMessages.map((message) => `- ${message}`),
       '</user_messages>'
