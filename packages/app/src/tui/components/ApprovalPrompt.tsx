@@ -1,7 +1,13 @@
 import React from 'react';
-import { Box, Text } from 'ink';
+import { Box, Text, useStdout } from 'ink';
 import { Rule } from '#src/tui/components/Rule.js';
+import { ruleWidth } from '#src/tui/ruleWidth.js';
 import { renderNegotiationTranscript } from '@gaunt-sloth/core/core/shell/negotiation.js';
+import {
+  frameUntrustedCommand,
+  frameUntrustedText,
+  type FramedUntrustedText,
+} from '@gaunt-sloth/core/core/shell/framing.js';
 import type { PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
 
 /**
@@ -22,12 +28,26 @@ import type { PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
  * here" action. [[TUI-C26]] owns building that five-choice menu (and the §6.1 attack banner, plus
  * withdrawing `always` for a `catastrophic` outcome); until it lands this stays the EXT-9 scoped
  * prompt, minus the choice the ladder no longer has.
+ *
+ * [[TUI-C26]] — **every model-authored string on this dialog is painted through
+ * `core/shell/framing`**, never raw: the command, the rater's reason, and what a sticky choice
+ * would store. That module owns the neutralisation, the line-number gutter, the extracted
+ * substitution/composition sites and the elision; this component owns only colour and order. The
+ * split is EXT-29's — one renderer, two surfaces — and here it is what stops the Ink prompt and the
+ * readline prompt disagreeing about how much of a command a human was actually shown.
  */
 export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): React.ReactElement {
   const commandText =
     typeof pending.args.command === 'string'
       ? (pending.args.command as string)
       : JSON.stringify(pending.args);
+  // The framing wraps to the terminal ITSELF, one gutter per physical row, so Ink never has to.
+  // A terminal's own wrap starts the continuation at column 0, which is exactly the flush-left
+  // forgery the gutter exists to prevent — so the width has to be known here rather than left to
+  // the renderer. One column is held back: a row that fills the last cell wraps on some terminals.
+  const { stdout } = useStdout();
+  const width = Math.max(MIN_FRAME_WIDTH, ruleWidth(stdout?.columns) - 1);
+  const framedCommand = frameUntrustedCommand(commandText, { width });
   // CFG-27: when the auto-rater escalated this command (rather than approving it), show its
   // outcome + reason so the human has the rater's read before deciding. §6 makes the explanation
   // mandatory whenever a rating exists; at the unrated rungs there is none and the prompt shows
@@ -70,9 +90,26 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
       <Text bold color="yellow">
         {`The agent wants to run a shell command via ${pending.name}`}
       </Text>
-      <Text dimColor>{`    ${commandText}`}</Text>
+      {/* Rule 3 — the flagged sites go ABOVE the body, in the warn tone, because their whole job is
+          to land the eye on the span the human is ruling on rather than on line one of a paragraph. */}
+      {framedCommand.notices.map((line, index) => (
+        <Text key={`command-notice-${index}`} color="yellow">
+          {line}
+        </Text>
+      ))}
+      {framedCommand.lines.map((line, index) => (
+        <Text key={`command-line-${index}`} dimColor>
+          {line}
+        </Text>
+      ))}
       {verdict ? (
-        <Text color="yellow">{`⚠ Auto-rater (${verdict.outcome}): ${verdict.reason}`}</Text>
+        <>
+          {/* The outcome is a schema enum and is renderer-owned; the reason is model-authored prose
+              and is framed exactly like the command. Protecting one and not the other would leave
+              the dialog forgeable through the string that is meant to explain it. */}
+          <Text color="yellow">{`⚠ Auto-rater (${verdict.outcome}):`}</Text>
+          <FramedLines framed={frameUntrustedText(verdict.reason, { width })} colour="yellow" />
+        </>
       ) : null}
       {escalatedBy ? (
         <Text color="yellow">{`⚠ Your approvals.escalate list matched this call: ${escalatedBy}`}</Text>
@@ -80,8 +117,14 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
       {negotiation ? <Text color="yellow">{negotiation}</Text> : null}
       {grantPreview ? (
         <>
-          <Text dimColor>{`[s]/[a] will remember ${grantSummary ?? grantPreview}`}</Text>
-          <Text dimColor>{`    stored as ${grantPreview}`}</Text>
+          {/* §6/EXT-70 — the sticky lines carry the command as typed, so they inherit the identical
+              problem in less space: a trailing `approved by rater` fits on one line untouched. They
+              are framed too, and the label is the renderer's own line so the untrusted half can
+              never be mistaken for it. */}
+          <Text dimColor>{'[s]/[a] will remember:'}</Text>
+          <FramedLines framed={frameUntrustedText(grantSummary ?? grantPreview, { width })} />
+          <Text dimColor>{'    stored as:'}</Text>
+          <FramedLines framed={frameUntrustedText(grantPreview, { width })} />
         </>
       ) : null}
       <Text dimColor>
@@ -90,5 +133,42 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
           : 'Approve?  [o]nce   [N]o'}
       </Text>
     </Box>
+  );
+}
+
+/**
+ * Never frame narrower than this, however small the terminal claims to be: below it the gutter eats
+ * the whole row and the command becomes unreadable, which is its own way of hiding a payload.
+ */
+const MIN_FRAME_WIDTH = 20;
+
+/**
+ * Paint an already-framed block, one Ink `<Text>` per physical row.
+ *
+ * **One row per element is the point, not a style.** A single `<Text>` holding the joined block
+ * would be re-wrapped by Ink at the box width, and a re-wrapped row starts at column 0 — undoing
+ * the gutter the framing exists to guarantee.
+ */
+function FramedLines({
+  framed,
+  colour,
+}: {
+  framed: FramedUntrustedText;
+  colour?: string;
+}): React.ReactElement {
+  return (
+    <>
+      {framed.lines.map((line, index) =>
+        colour ? (
+          <Text key={`framed-${index}`} color={colour}>
+            {line}
+          </Text>
+        ) : (
+          <Text key={`framed-${index}`} dimColor>
+            {line}
+          </Text>
+        )
+      )}
+    </>
   );
 }

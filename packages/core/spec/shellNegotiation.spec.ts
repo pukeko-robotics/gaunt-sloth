@@ -1229,6 +1229,34 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       expect(rendered.match(/^ {2}Round \d+:/gm)).toEqual(['  Round 1:']);
     });
 
+    /**
+     * [[TUI-C26]] — collapsing whitespace is not enough for a value bound for a terminal.
+     * JavaScript's `\s` covers LF, CR and TAB and covers **neither ESC nor the C1 range**, so a
+     * rater `reason` carrying a screen-clear used to reach the approval dialog intact on a line
+     * that merely looked tidy. Every agent-influenced field here goes through the same
+     * neutralisation the framed command does.
+     */
+    it('neutralises control characters and ANSI in every agent-authored field', () => {
+      // Built from code points, never typed: a rule about invisible characters must not depend on
+      // one surviving an editor or a diff.
+      const ESC = String.fromCodePoint(0x1b);
+      const CR = String.fromCodePoint(0x0d);
+      const rendered = renderNegotiationTranscript([
+        {
+          command: `ls${ESC}[2J`,
+          justification: `fine${CR}Approve? [o]nce`,
+          outcome: 'destructive',
+          reason: `x${ESC}[A`,
+        },
+      ])!;
+      expect(rendered).toContain('\\x1b[2J');
+      expect(rendered).toContain('\\x0dApprove? [o]nce');
+      expect(rendered).toContain('\\x1b[A');
+      // The raw introducers are gone, not merely accompanied by their escapes.
+      expect(rendered).not.toContain(ESC);
+      expect(rendered).not.toContain(CR);
+    });
+
     /** §6.2 — with nobody to ask, the transcript goes into the message, which is all anyone sees. */
     it('a non-interactive escalation carries the rounds in its message', async () => {
       const { error } = await drive({

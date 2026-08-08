@@ -15,6 +15,11 @@ import { GthAbstractAgent } from '@gaunt-sloth/core/core/GthAbstractAgent.js';
 import { launchBannerFields, launchBannerText } from '@gaunt-sloth/core/core/launchBanner.js';
 import { buildRejectionMessage } from '@gaunt-sloth/core/core/shell/rejection.js';
 import { renderNegotiationTranscript } from '@gaunt-sloth/core/core/shell/negotiation.js';
+import {
+  DEFAULT_FRAME_WIDTH,
+  frameUntrustedCommand,
+  frameUntrustedText,
+} from '@gaunt-sloth/core/core/shell/framing.js';
 import { writeDebugDump } from '@gaunt-sloth/core/utils/debugDump.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
 import {
@@ -145,15 +150,32 @@ export async function createInteractiveSession(
         typeof pending.args.command === 'string'
           ? (pending.args.command as string)
           : JSON.stringify(pending.args);
+      // [[TUI-C26]] §6 — the command is model-authored text going to a terminal, where it is not
+      // inert: a carriage return reaches column 0, an escape sequence clears the screen, and a
+      // newline alone lays down a line that looks exactly like this prompt's own chrome. It is
+      // painted through core's framing renderer — neutralised, inside a line-number gutter, with
+      // its command-substitution and composition sites listed above it — the SAME renderer the Ink
+      // prompt uses, so the two surfaces cannot differ about how much of a command a human saw.
+      // Nothing is clamped to one line: the command that motivated this hid its payload fifteen
+      // lines into a commit message, and a clamp discards exactly what the human must rule on.
+      const frameWidth = Math.max(20, (output.columns ?? DEFAULT_FRAME_WIDTH) - 1);
+      const framedCommand = frameUntrustedCommand(commandText, { width: frameWidth });
       displayWarning(`\nThe agent wants to run a shell command via ${pending.name}:`);
-      display(`\n    ${commandText}\n`);
+      for (const notice of framedCommand.notices) displayWarning(notice);
+      display('');
+      for (const line of framedCommand.lines) display(line);
+      display('');
       // CFG-27: when the auto-rater escalated this command (rather than approving it), show its
       // outcome + reason before the human decides. §6 makes that explanation mandatory whenever a
       // rating exists; at the unrated rungs there is none and the prompt shows the command alone.
+      // The outcome is a schema enum; the reason is model-authored prose and is framed exactly like
+      // the command, because a dialog forgeable through the string that explains it is not a gate.
       if (pending.safetyVerdict) {
-        displayWarning(
-          `⚠ Auto-rater (${pending.safetyVerdict.outcome}): ${pending.safetyVerdict.reason}`
-        );
+        displayWarning(`⚠ Auto-rater (${pending.safetyVerdict.outcome}):`);
+        for (const line of frameUntrustedText(pending.safetyVerdict.reason, { width: frameWidth })
+          .lines) {
+          displayWarning(line);
+        }
       }
       // EXT-71 §3.2 — when a declared `approvals.escalate` entry is what brought this call here,
       // the prompt shows THE ENTRY THAT FIRED. Without it the user is asked about a command their
@@ -179,8 +201,20 @@ export async function createInteractiveSession(
       // the user sees the thing they are agreeing to rather than a generalization of it.
       const sticky = pending.grantPreview !== undefined;
       if (sticky) {
-        displayInfo(`[s]/[a] will remember ${pending.grantSummary ?? pending.grantPreview}`);
-        displayInfo(`    stored as ${pending.grantPreview}`);
+        // [[TUI-C26]] — these two lines carry the command as typed (§3.1 stores it exactly, never a
+        // widened pattern), so they inherit the command's problem in less space: an in-line
+        // `approved by rater` fits on one line untouched. Framed like everything else, with the
+        // label kept as this surface's OWN line so the untrusted half can never be read as chrome.
+        displayInfo('[s]/[a] will remember:');
+        for (const line of frameUntrustedText(pending.grantSummary ?? pending.grantPreview!, {
+          width: frameWidth,
+        }).lines) {
+          displayInfo(line);
+        }
+        displayInfo('    stored as:');
+        for (const line of frameUntrustedText(pending.grantPreview!, { width: frameWidth }).lines) {
+          displayInfo(line);
+        }
       }
       setRawMode(false); // ensure typed input is echoed for this confirm
       // EXT-18: wrap the prompt in try/finally so the raw-mode/ref state is not left wedged if

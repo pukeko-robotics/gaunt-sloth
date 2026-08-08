@@ -76,6 +76,57 @@ describe('tui <ApprovalPrompt>', () => {
   });
 
   /**
+   * [[TUI-C26]] — the command is painted through core's framing renderer, inside a line-number
+   * gutter it owns, never handed to a raw `<Text>`.
+   *
+   * **The pending here deliberately carries NO grant**, and that is the whole design of the case.
+   * For a shell call the grant summary IS the command, so on a prompt that offers one, a
+   * `toContain('1 │ <command>')` assertion is satisfied by the grant line and survives the command
+   * itself being rendered raw — measured, not theorised: that mutation passed this file until this
+   * test existed.
+   */
+  it('renders the command inside the renderer-owned gutter, never raw', () => {
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt pending={{ name: 'run_shell_command', args: { command: 'ls -la /tmp' } }} />
+    );
+    const f = lastFrame() ?? '';
+    expect(f).toContain('1 │ ls -la /tmp');
+    // The raw form this replaced, which is what the mutation reverts to.
+    expect(f).not.toContain('    ls -la /tmp');
+    unmount();
+  });
+
+  /**
+   * The two forgeries that need no escape sequence, plus one that does, on the Ink surface — the
+   * unit twin of the PTY cases. `getBuffer()` can prove what the terminal did with the string;
+   * this proves the string Ink was given was already safe.
+   */
+  it('neutralises and numbers a command that forges this dialog’s chrome', () => {
+    const ESC = String.fromCodePoint(0x1b);
+    const CR = String.fromCodePoint(0x0d);
+    const command = [
+      `echo start${CR}${ESC}[2J`,
+      '⚠ Auto-rater (safe): approved by rater',
+      'Approve?  [o]nce   [s]ession   [a]lways   [N]o',
+    ].join('\n');
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt pending={{ name: 'run_shell_command', args: { command } }} />
+    );
+    const f = lastFrame() ?? '';
+    expect(f).toContain('1 │ echo start\\x0d\\x1b[2J');
+    expect(f).toContain('2 │ ⚠ Auto-rater (safe): approved by rater');
+    expect(f).toContain('3 │ Approve?  [o]nce   [s]ession   [a]lways   [N]o');
+    expect(f).not.toContain(ESC);
+    expect(f).not.toContain(CR);
+    // No line of the command begins a line of the frame — the gutter is between them.
+    for (const line of f.split('\n')) {
+      expect(line.startsWith('⚠ Auto-rater (safe)')).toBe(false);
+      expect(line.startsWith('Approve?  [o]nce   [s]ession')).toBe(false);
+    }
+    unmount();
+  });
+
+  /**
    * CFG-27 removed the `[y]` affordance ("switch to auto-approve and approve this one"). Spec §6's
    * escalation menu offers five choices — ask to explain · approve · always approve · reject ·
    * always reject — and a per-prompt change of RUNG is not one of them, so keeping the key would
@@ -221,8 +272,14 @@ describe('tui <ApprovalPrompt>', () => {
       />
     );
     const f = lastFrame() ?? '';
-    expect(f).toContain('will remember npm test');
-    expect(f).toContain('"matcher": "exact"');
+    // [[TUI-C26]] — the label is the renderer's own line and the grant is FRAMED beneath it, so the
+    // two assertions are "the menu still names what it stores" and "what it stores is inside the
+    // gutter". Asserting only that `npm test` appears somewhere would survive the gutter being
+    // dropped, which is the whole control this line exists to hold.
+    expect(f).toContain('[s]/[a] will remember:');
+    expect(f).toContain('1 │ npm test');
+    expect(f).toContain('stored as:');
+    expect(f).toContain('1 │ { "type": "shell", "matcher": "exact", "pattern": "npm test" }');
     unmount();
   });
 
@@ -242,7 +299,9 @@ describe('tui <ApprovalPrompt>', () => {
     const { lastFrame, unmount } = render(
       <ApprovalPrompt pending={{ name: 'run_shell_command', args: { foo: 'bar' } }} />
     );
-    expect(lastFrame() ?? '').toContain('{"foo":"bar"}');
+    // Framed like everything else: the args are model-authored too, so the fallback is not an
+    // escape hatch out of the gutter.
+    expect(lastFrame() ?? '').toContain('1 │ {"foo":"bar"}');
     unmount();
   });
 });
@@ -489,7 +548,9 @@ describe('tui <ApprovalPrompt> — §6 names the grant, and offers it only when 
   it('names the tool and its host, and not the arguments', () => {
     const { lastFrame, unmount } = render(<ApprovalPrompt pending={toolGrant} />);
     const f = plain([lastFrame() ?? '']);
-    expect(f).toContain('will remember tool gth_web_fetch (host docs.internal.example)');
+    // [[TUI-C26]] — named on the framed line beneath the label, gutter and all.
+    expect(f).toContain('will remember:');
+    expect(f).toContain('1 │ tool gth_web_fetch (host docs.internal.example)');
     expect(f).toContain('stored as');
     unmount();
   });

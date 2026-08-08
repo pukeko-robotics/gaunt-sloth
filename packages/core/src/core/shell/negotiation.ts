@@ -25,6 +25,7 @@
  * - **The reachability bound is monotonic and a reset does not refill it.** See
  *   {@link MAX_REJECTIONS_BEFORE_HUMAN}.
  */
+import { neutralizeToOneLine } from '#src/core/shell/framing.js';
 import type { RaterNegotiationContext, RaterNegotiationRound } from '#src/core/shell/rater.js';
 
 /**
@@ -283,7 +284,13 @@ export function renderNegotiationTranscript(
  * line structure: a newline inside a command or a justification would otherwise let it forge a
  * `Round N` heading and an answer that was never given. The rating prompt's own transcript builder
  * has the identical rule for the identical reason.
+ *
+ * [[TUI-C26]] — collapsing whitespace is **not** on its own enough for a value bound for a terminal.
+ * JavaScript's `\s` covers LF, CR and TAB and covers neither ESC nor the C1 range, so a rater
+ * `reason` carrying a screen-clear sequence used to reach the approval dialog intact on a line that
+ * merely looked tidy. Neutralisation runs first, and the collapse then only has ordinary spaces left
+ * to fold.
  */
 function oneLine(text: string): string {
-  return text.replace(/\s+/gu, ' ').trim();
+  return neutralizeToOneLine(text);
 }

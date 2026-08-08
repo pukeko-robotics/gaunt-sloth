@@ -256,8 +256,15 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
       grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "npm test" }',
       grantSummary: 'npm test',
     });
-    expect(printed()).toContain('will remember npm test');
-    expect(printed()).toContain('"matcher": "exact"');
+    // [[TUI-C26]] — the label is this surface's own line and the grant is FRAMED beneath it, inside
+    // the line-number gutter. Asserting only that `npm test` appears somewhere would still pass with
+    // the gutter dropped, which is exactly the control being kept here.
+    expect(printed()).toContain('[s]/[a] will remember:');
+    expect(printed()).toContain('1 │ npm test');
+    expect(printed()).toContain('stored as:');
+    expect(printed()).toContain(
+      '1 │ { "type": "shell", "matcher": "exact", "pattern": "npm test" }'
+    );
   });
 
   it('shows no such line when no sticky grant is on offer', async () => {
