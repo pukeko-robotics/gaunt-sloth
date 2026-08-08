@@ -241,12 +241,13 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
       'rewrite and delete files in your working folder without asking'
     );
 
-    // `auto` is explicitly not safe, and says the negotiation that would make it differ from
-    // Assisted on a destructive command is not built yet.
+    // `auto` states the negotiation that makes it differ from Assisted on a destructive command,
+    // and in the same breath that it is not safe and that the exchange still ends at the user.
     const autoNotice = approvalsRungNotice(posture('auto'));
     expect(autoNotice.title).toBe('Approvals: Auto');
     expect(autoNotice.lines.join(' ')).toContain('It is not safe');
-    expect(autoNotice.lines.join(' ')).toContain('is not built yet');
+    expect(autoNotice.lines.join(' ')).toContain('back to the agent');
+    expect(autoNotice.lines.join(' ')).toContain('stops and asks you');
 
     // Every posture notice points at the page that carries what the two sentences cannot. Asserted
     // through the constant, not a literal: the URL moves to the docs site once that page is
@@ -402,25 +403,28 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
   });
 
   /**
-   * **The assertion that has to be on the RENDER, not on the constant.** Auto's honest clause —
-   * that [[EXT-29]]'s agent–rater negotiation is unbuilt, so `auto` stops exactly where `assisted`
-   * does — was twice written into sentence two, where the picker, the text fallback and the usage
-   * hint never print it. A whole-text `toContain` passes on that copy; only cutting the opener the
-   * way the surfaces cut it can fail on it. Core's own §10 block cannot host this: `firstSentence`
-   * lives in the agent package, which core does not depend on.
+   * **The assertion that has to be on the RENDER, not on the constant.** Auto's honest clause — that
+   * the [[EXT-29]] negotiation is bounded and ends at the user — was twice written into sentence
+   * two, where the picker, the text fallback and the usage hint never print it. A whole-text
+   * `toContain` passes on that copy; only cutting the opener the way the surfaces cut it can fail on
+   * it. Core's own §10 block cannot host this: `firstSentence` lives in the agent package, which
+   * core does not depend on.
    *
-   * Worded as "the opener must not sell a difference, and must say there is none", because the
+   * Worded as "the opener must carry the terminus, and must sell nothing beyond it", because the
    * failure is not a missing phrase — it is a promise ("as few interruptions as possible", "judges
-   * each command instead of you") landing in the one clause a user reads while choosing.
+   * each command instead of you") landing in the one clause a user reads while choosing. Auto now
+   * genuinely differs from Assisted, which makes that clause easier to overwrite, not harder: the
+   * difference is a few rounds of argument, and the sentence that states it has to state where the
+   * argument ends in the same breath.
    */
-  it('the mode a user could most easily over-trust says so in the clause a picker RENDERS', async () => {
+  it('the mode a user could most easily over-trust says where it ends, in the clause a picker RENDERS', async () => {
     const { firstSentence } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const { APPROVAL_RUNG_DESCRIPTIONS } = await import('@gaunt-sloth/core/config.js');
     const opener = firstSentence(APPROVAL_RUNG_DESCRIPTIONS['auto']);
-    // The correction itself, in the rendered clause: auto stops where assisted stops.
-    expect(opener).toContain('still stops and asks you');
-    expect(opener).toMatch(/Assisted/);
-    // And no promise of the difference that is not there. Each of these shipped or nearly shipped.
+    // The correction itself, in the rendered clause: the argument is bounded and ends at the user.
+    expect(opener).toContain('stops and asks you');
+    expect(opener).toMatch(/a few times|a few rounds/);
+    // And no promise beyond it. Each of these shipped or nearly shipped.
     expect(opener).not.toMatch(/few interruptions|instead of you|unattended|without stopping/i);
     expect(opener).not.toMatch(/does not stop to ask/i);
   });

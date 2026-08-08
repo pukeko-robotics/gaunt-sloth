@@ -59,12 +59,16 @@ describe('resolveShellApprovalGate (EXT-52 shared gate policy, CFG-27 ladder)', 
 
     /**
      * **The two rated rungs get the SAME tail, and one shared assertion is what keeps it that way.**
-     * `mapVerdictToAction` has no branch on `assisted` vs `auto`: an `attack` verdict halts and
-     * everything else short of `safe` escalates to the human, at both. The notice used to say
-     * "escalated to you" at `assisted` and "refused or escalated" at `auto`, which read as a
-     * behavioural difference the gate does not have — in the startup line a user meets while
-     * working out what their config does. A per-rung expectation here is what let that drift in,
-     * so this asserts one tail across both.
+     * *"Refused or escalated to you"* is a true disjunction at both, and it is the whole of what
+     * this startup line promises: nothing the rater does not clear simply runs. The rungs reach it
+     * differently — at `assisted` a `destructive` outcome goes to the human, at `auto`
+     * ([[EXT-29]] §5) it is refused back to the agent first and reaches the human when a bound is
+     * spent — and the tail covers both without claiming either shape.
+     *
+     * The line a user meets while working out what their config does is the wrong place to draw
+     * that distinction: it has to hold for the whole session, and at `auto` both halves happen. A
+     * per-rung expectation here is what let an earlier split in, so this asserts one tail across
+     * both.
      */
     it.each(['assisted', 'auto'] as const)(
       'the rated rung %s announces the same outcome: refused or escalated to you',

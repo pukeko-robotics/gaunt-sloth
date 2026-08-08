@@ -1107,9 +1107,13 @@ export class GthAgentRunner {
           // halt that only ended one call.
           //
           // The reset itself is defence in depth: the throw ends `processMessages`, and a later
-          // turn would clear the negotiation on its own first line anyway. Only its TRANSCRIPT half
-          // can be observed at all, and `neg-04d` asserts it — the two counters have no reader once
-          // the run has ended, so that half is stated here rather than pinned anywhere.
+          // turn would clear the negotiation on its own first line anyway. **No PRODUCTION reader
+          // sees this state again — which is not the same as it being unobservable**, and the
+          // difference decides whether the line is pinned. `neg-04d` asserts both halves through
+          // the spec harness's private-state cast: the cleared transcript, and `sinceHuman` back at
+          // zero. That second one is what distinguishes this call from `noteProgress()`, which
+          // clears the transcript and the consecutive count and deliberately leaves the
+          // reachability bound standing.
           this.negotiation.humanReached();
           throw new AttackHaltError(subject.command, decision.verdict?.reason ?? '');
         }

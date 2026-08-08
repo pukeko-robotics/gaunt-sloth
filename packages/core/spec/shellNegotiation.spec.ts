@@ -126,11 +126,21 @@ interface DriveResult {
   /**
    * The rounds the runner is STILL holding once the run has ended.
    *
-   * **The one thing no surface can observe.** A halt throws out of `processMessages` and nothing
-   * resumes the same runner, and the next `processMessages` would clear the negotiation on its own
-   * first line — so what a halt does to the state it leaves behind is visible here or nowhere.
+   * **No PRODUCTION reader sees this again**, which is why it is read here: a halt throws out of
+   * `processMessages`, nothing resumes the same runner, and the next `processMessages` would clear
+   * the negotiation on its own first line. Unobserved by the product is not the same as
+   * unobservable — the state is private, not absent, and a spec may read it.
    */
   transcriptAfterRun: readonly RaterNegotiationRound[];
+  /**
+   * The reachability bound's count once the run has ended — the half of {@link
+   * ShellNegotiationState.humanReached} that `noteProgress()` does NOT touch.
+   *
+   * **It is the only field that tells those two apart**, which is exactly why it is read: both
+   * clear the transcript and the consecutive count, so a halt calling the wrong one is invisible in
+   * everything else this harness collects.
+   */
+  sinceHumanAfterRun: number;
 }
 
 describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', () => {
@@ -250,6 +260,11 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       transcriptAfterRun: (
         runner as unknown as { negotiation: ShellNegotiationState }
       ).negotiation.transcript(),
+      // The counter has no accessor at all — `private` is a compile-time claim, so the same cast
+      // reaches it with a shape that names the field. Widening the class for this would put a
+      // getter in production for a reader that only a spec has.
+      sinceHumanAfterRun: (runner as unknown as { negotiation: { sinceHuman: number } }).negotiation
+        .sinceHuman,
     };
   }
 
@@ -656,19 +671,20 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       expect(checkHardline(r1.command!), r1.command).toBeNull();
       expect(checkHardline(r2.command!), r2.command).toBeNull();
 
-      const { results, prompts, messages, ratings, error, transcriptAfterRun } = await drive({
-        calls: [
-          { command: r1.command! },
-          { command: r2.command!, justification: r2.justification },
-          // Offered, and unreachable: the run ends at the halt.
-          { command: 'echo still running' },
-        ],
-        // The third answer is never consumed — a run that reaches it would be approved and RUN,
-        // which is precisely what the assertions below refuse to let pass quietly.
-        script: [...scriptFor(negCase.rounds), 'safe'],
-        human: 'approve',
-        userMessages: negCase.user_messages,
-      });
+      const { results, prompts, messages, ratings, error, transcriptAfterRun, sinceHumanAfterRun } =
+        await drive({
+          calls: [
+            { command: r1.command! },
+            { command: r2.command!, justification: r2.justification },
+            // Offered, and unreachable: the run ends at the halt.
+            { command: 'echo still running' },
+          ],
+          // The third answer is never consumed — a run that reaches it would be approved and RUN,
+          // which is precisely what the assertions below refuse to let pass quietly.
+          script: [...scriptFor(negCase.rounds), 'safe'],
+          human: 'approve',
+          userMessages: negCase.user_messages,
+        });
 
       // **The discriminator, asserted FIRST** so that the one failure that matters most says what
       // it means: a person was never asked about a command the model called an attack.
@@ -686,10 +702,18 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       expect(messages, 'the attack handed the model nothing').toHaveLength(1);
       expect(messages[0]).toContain(REJECTION_MOVES);
       // §5 — the halt ends the EXCHANGE, not merely the call, so the state the runner is left
-      // holding carries no rounds. Nothing downstream can see this: the throw ends the run and the
-      // next turn would clear the negotiation on its own first line. Only the transcript half of
-      // that reset is observable — the two counters have no reader once the run has ended.
+      // holding carries no rounds and no reachability count. No PRODUCTION reader sees either
+      // again — the throw ends the run and the next turn would clear the negotiation on its own
+      // first line — but the state is private, not gone, so both halves are pinned here.
       expect(transcriptAfterRun, 'the halt cleared the negotiation it ended').toEqual([]);
+      // **The half that discriminates.** Round 1 was rejected, so the reachability bound stood at 1
+      // when the halt arrived. `humanReached()` spends it; `noteProgress()` — which clears the
+      // transcript and the consecutive count identically — leaves it standing, so this is the one
+      // assertion in the suite that can tell the two apart, and it is what stops the halt quietly
+      // accumulating a bound the run it ended can never reach.
+      expect(sinceHumanAfterRun, 'the halt spent the reachability bound, not just the round').toBe(
+        0
+      );
     });
 
     /**

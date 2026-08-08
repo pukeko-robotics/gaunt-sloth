@@ -883,7 +883,8 @@ describe('mapVerdictToAction (CFG-28: 4 outcomes × 5 rungs)', () => {
    * halting on `terraform destroy` would spend the one stop control we have on routine work), and
    * it is not an approval at either rung. At `auto` it MUST NOT enter §5: being *argued into*
    * a `mkfs` is the failure mode that rung is most exposed to, so it gets no rounds to argue —
-   * which is why `auto` has to keep matching `assisted` here once EXT-29 lands.
+   * which is why `auto` keeps matching `assisted` on this outcome even though §5 now separates
+   * them on `destructive`.
    */
   it('`catastrophic` escalates at BOTH rated rungs — never approved, never halted', () => {
     for (const rung of RATED_RUNGS) {

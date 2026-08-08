@@ -48,7 +48,8 @@ The word in brackets after `⚠ Auto-rater` is one of four outcomes:
 
 - **safe** — runs with no prompt.
 - **destructive** — harmful, but you could undo it from inside the session: `rm -rf node_modules`,
-  `git reset --hard`. Asks you, with all four choices above.
+  `git reset --hard`. Asks you, with all four choices above; at Auto the agent gets a few rounds to
+  narrow or justify it first, and you are asked when those run out.
 - **catastrophic** — cannot be undone from inside the session: `mkfs`, `DROP DATABASE`,
   `terraform destroy -auto-approve`, `kubectl delete namespace production`. Asks you *every* time —
   **session** and **always** do not stick for this outcome, so approving one `terraform destroy`
@@ -200,12 +201,13 @@ There is one approvals setting, and it takes the mode name:
 | `manual` | For a handful of commands you want to read yourself — not a mode to leave running. In this session Gaunt Sloth reads and lists files in your working folder on its own; everything else — shell, file changes, MCP and custom tools — comes to you, until you tell it to always allow a command. | no |
 | `write` | Manual, for work that is mostly editing, and like Manual a bounded stretch: the built-in file tools run free inside your working folder. The shell is not confined that way, so shell commands, MCP calls and custom tools still come to you, until you tell it to always allow a command. | no |
 | `assisted` | For everyday work: safe commands run, anything riskier comes to you — usually with a line explaining what it does. Gaunt Sloth can still rewrite and delete files in your working folder without asking — "safe" means each action is checked for reaching outside that folder or harming your system, not that nothing changes. | yes |
-| `auto` | For recoverable work, but not a quieter mode yet: Auto still stops and asks you exactly where Assisted does. It is not safe — Gaunt Sloth will change and delete things, your deny list still applies, and the negotiation that would let Auto settle a risky command by itself is not built yet. | yes |
+| `auto` | For work you want to keep moving: Auto sends a risky command back to the agent to fix or justify a few times, then stops and asks you. It is not safe — Gaunt Sloth will change and delete things, your deny list still applies, and when it does ask, you are shown the whole argument that led there. | yes |
 | `bypass` | No gate, for a throwaway environment you would not mind losing. Whatever Gaunt Sloth decides to run, runs — nothing is rated and nothing is asked; only the refusals in your config’s deny list still apply. | no |
 
-<!-- EXT-29 — the `auto` row above is a byte-for-byte copy of `APPROVAL_RUNG_DESCRIPTIONS.auto` in
-     `packages/core/src/config/shell-policy.ts`. When the agent–rater negotiation lands, that
-     constant and this row have to change in the same commit or the two describe Auto differently. -->
+<!-- Every row above is a byte-for-byte copy of `APPROVAL_RUNG_DESCRIPTIONS` in
+     `packages/core/src/config/shell-policy.ts`. A change to that constant and to the row it
+     belongs to has to land in the same commit, or the guide and the picker describe a mode
+     differently. -->
 
 These are the same sentences `/approvals` shows in a session, so the guide and the picker cannot
 describe a mode differently.
@@ -239,19 +241,18 @@ every mode except `bypass`, the description of each tool that needs approval gai
 saying so, and the tools that run freely say nothing. Which descriptions those are follows the
 mode's row in the table above — at `assisted` and `auto` only the shell is gated, so only the
 shell's changes; at `manual` and `write` everything the mode does not run freely carries one.
-There are two wordings, not one per mode: at `manual` and `write` the sentence says the call
-*will* require your approval, at `assisted` and `auto` that it *may* — the two rated modes are
-worded the same because they behave the same. Each sentence also tells the agent to use that tool
-only when the result cannot be achieved with the other tools it has.
-
-<!-- EXT-29 — "worded the same because they behave the same" holds only while the agent–rater
-     negotiation is unbuilt (`RUNG_TOOL_DESCRIPTION_SUFFIXES` in
-     `packages/core/src/config/tool-descriptions.ts` gives `assisted` and `auto` one string). When
-     the negotiation lands and `auto` earns its own sentence, this paragraph has to say so. -->
+There are three wordings, not one per mode: at `manual` and `write` the sentence says the call
+*will* require your approval; at `assisted`, that it *may*; at `auto`, that the auto-rater *may
+refuse* it. The last one is a different claim rather than a softer one — at Auto an unsafe-looking
+command comes back to the agent first, and the agent is the one who has to do something about it.
+Each sentence also tells the agent to use that tool only when the result cannot be achieved with
+the other tools it has.
 
 The auto-rater backs that up at `assisted` and `auto`. When it does not rate a command safe
 and one of the tools the agent already has would do the same job, it names that tool in its
-explanation, so the tool shows up on the rater line of the approval prompt:
+explanation. At Assisted that explanation reaches you, on the rater line of the approval prompt; at
+Auto it goes to the agent as the reason its command was refused, and reaches you only when the
+exchange has run out of rounds:
 
 ```
 ⚠ Auto-rater (destructive): rewrites a file in place; edit_file does this without a shell

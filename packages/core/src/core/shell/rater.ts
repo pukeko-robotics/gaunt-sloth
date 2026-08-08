@@ -1644,8 +1644,9 @@ export function mapVerdictToAction(
   // §4.2 — `catastrophic` escalates at BOTH rated rungs and is deliberately its OWN return rather
   // than a fallthrough into the `destructive` arm below. It MUST NOT enter the §5 negotiation at
   // `auto`: being *argued into* a `mkfs` is the failure mode that rung is most exposed to, so
-  // the agent gets no rounds to argue. Whoever wires EXT-29 into the arm below must leave this one
-  // alone — a shared fallthrough is exactly how `catastrophic` would end up negotiable by accident.
+  // the agent gets no rounds to argue. The arm below is where EXT-29's negotiation is opened, so
+  // this one stays separate: a shared fallthrough is exactly how `catastrophic` would end up
+  // negotiable by accident.
   if (effective.outcome === 'catastrophic') {
     return { action: 'escalate', verdict: effective };
   }

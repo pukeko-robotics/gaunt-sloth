@@ -479,6 +479,12 @@ export const APPROVAL_WRITE_MODIFIER_HINT =
  *    message on the three surfaces a user reads while *choosing* a mode. An opener that sells a
  *    behavioural difference the product does not have is not rescued by a sentence two those
  *    surfaces never print — check a wording by rendering it, not by reading the constant.
+ * 5. **`auto` is the mode a reader most wants to hear is quiet, and it is not.** It settles some
+ *    risky commands with the rater instead of interrupting — that difference is real and may be
+ *    stated — but the copy MUST also say that a bounded exchange ends at the user, and MUST NOT
+ *    promise the user watches it happen. The rounds reach a person at the escalation, all of them
+ *    at once, and nothing renders them before that ([[TUI-C26]]), so a sentence implying a live
+ *    commentary would be describing a screen that does not exist.
  *
  * Everything these two sentences cannot hold lives at {@link APPROVAL_PROTECTION_DOCS_URL}, which
  * the surfaces print beside the copy rather than each description repeating it.
@@ -499,17 +505,11 @@ export const APPROVAL_RUNG_DESCRIPTIONS: Record<ApprovalRung, string> = {
     'explaining what it does. Gaunt Sloth can still rewrite and delete files in your working ' +
     'folder without asking — "safe" means each action is checked for reaching outside that folder ' +
     'or harming your system, not that nothing changes.',
-  // TODO(EXT-29): this string says the negotiation "is not built yet", and three doc sites say the
-  // same thing in their own words — `docs/guides/shell-tool-and-approvals.md` (the `auto` table
-  // row, a byte-for-byte copy of this string, and the "worded the same because they behave the
-  // same" paragraph below it) and `docs/guides/what-approvals-protect-you-from.md` (step 3 of the
-  // unattended-run use case). Rewrite them in the same commit that lands the negotiation; each
-  // carries an `EXT-29` comment so `git grep EXT-29` reaches it.
   auto:
-    'For recoverable work, but not a quieter mode yet: Auto still stops and asks you exactly ' +
-    'where Assisted does. It is not safe — Gaunt Sloth will change and delete things, your deny ' +
-    'list still applies, and the negotiation that would let Auto settle a risky command by ' +
-    'itself is not built yet.',
+    'For work you want to keep moving: Auto sends a risky command back to the agent to fix or ' +
+    'justify a few times, then stops and asks you. It is not safe — Gaunt Sloth will change and ' +
+    'delete things, your deny list still applies, and when it does ask, you are shown the whole ' +
+    'argument that led there.',
   bypass:
     'No gate, for a throwaway environment you would not mind losing. Whatever Gaunt Sloth decides ' +
     'to run, runs — nothing is rated and nothing is asked; only the refusals in your config’s ' +
@@ -1244,11 +1244,13 @@ export function resolveShellApprovalGate(
     };
   }
   if (isRatedRung(rung)) {
-    // **Both rated modes get the SAME tail, because they decide the same way.** The rater's
-    // mapping has no branch on `assisted` vs `auto`: an `attack` verdict halts and everything
-    // else short of `safe` escalates to the human, at both. A per-mode tail here would state a
-    // difference the gate does not have — and would state it in the startup notice, which a user
-    // meets while working out what their config does.
+    // **Both rated modes get the SAME tail, because it is true of both and it is all this line
+    // promises**: nothing the rater does not clear simply runs. They reach it differently — at
+    // `assisted` an unsafe-looking command goes to the human, at `auto` ([[EXT-29]] §5) it is
+    // refused back to the agent first and reaches the human when a bound is spent — and at `auto`
+    // both halves happen within one session, so a per-mode tail could only pick one of them. This
+    // is the startup notice a user meets while working out what their config does; the mode's own
+    // description ({@link APPROVAL_RUNG_DESCRIPTIONS}) is where the difference is stated.
     return {
       gateShell,
       notice: {
