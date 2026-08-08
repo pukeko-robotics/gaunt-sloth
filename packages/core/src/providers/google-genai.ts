@@ -6,6 +6,7 @@ import type { ChatGoogleParams } from '@langchain/google/node';
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 import { applyGeminiToolSchemaSanitizer } from '#src/providers/geminiSchemaSanitizer.js';
+import { applyGeminiThoughtSummaries } from '#src/providers/geminiThinking.js';
 
 // Function to process JSON config and create Google GenAI LLM instance
 export async function processJsonConfig(
@@ -24,7 +25,9 @@ export async function processJsonConfig(
   delete configFields.apiKeyEnvironmentVariable;
   // GS2-58: normalise every tool's JSON-Schema at the ChatGoogle boundary so Gemini's OpenAPI-3.0
   // subset accepts built-in, custom, and MCP tools alike (see geminiSchemaSanitizer).
-  return applyGeminiToolSchemaSanitizer(new ChatGoogle(configFields));
+  // CFG-33: ask for the thought summaries of the thinking Gemini already does and already bills,
+  // so the reasoning channel is fed instead of discarded (see geminiThinking).
+  return applyGeminiThoughtSummaries(applyGeminiToolSchemaSanitizer(new ChatGoogle(configFields)));
 }
 
 export function init(configFileName: string, force = false, model?: string): void {

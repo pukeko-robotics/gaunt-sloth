@@ -17,6 +17,8 @@
  * sees the rendered string.
  */
 
+import { stripReasoningBlocks } from '#src/core/reasoningBlocks.js';
+
 /** One detected refusal, normalized across providers. */
 export interface RefusalInfo {
   /** Best-effort provider family the signal came from (for logging / the surfaced message). */
@@ -37,9 +39,12 @@ function readField(source: unknown, key: string): unknown {
 function extractRefusalText(message: unknown): string {
   const content = readField(message, 'content');
   if (typeof content === 'string' && content.trim().length > 0) return content.trim();
-  // Content-block arrays (Anthropic / Bedrock): concatenate any text parts.
+  // Content-block arrays (Anthropic / Bedrock): concatenate any text parts. CFG-33 — minus the
+  // model's own thinking: Gemini marks a thought summary `thought: true` and types it exactly like
+  // an answer part, so without this it would be pasted verbatim into the refusal notice as the
+  // model's "explanation".
   if (Array.isArray(content)) {
-    const text = content
+    const text = (stripReasoningBlocks(content) as unknown[])
       .map((part) => {
         if (typeof part === 'string') return part;
         const t = readField(part, 'text');

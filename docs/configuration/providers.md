@@ -421,6 +421,35 @@ It will give you 401 error if you have `GOOGLE_API_KEY` with AI Studio API key,
 you may need to remove `GOOGLE_API_KEY` from environment variables and authenticate with ADC `gcloud auth application-default login`
 or to use API key issued by Vertex AI.
 
+**Gemini thinking (both `google-genai` and `vertexai`)**
+
+Gemini thinks by default, and Gaunt Sloth asks for the summaries of that thinking, so it appears in
+the `/reasoning` panel of an interactive session. You are billed for those reasoning tokens either
+way, so there is no separate switch for displaying them — the knob is how much thinking to buy.
+
+Set `thinkingLevel` to `minimal`, `low`, `medium` or `high`, or give an explicit token budget with
+`thinkingBudget`. Both `"thinkingLevel": "minimal"` and `"thinkingBudget": 0` empty the `/reasoning`
+panel, but they only stop the model thinking on flash models — a pro model floors them instead
+(`gemini-2.5-pro` to a 128-token budget, `gemini-3-pro` to `low`), so on those you keep paying for
+thinking you can no longer see. An explicit `thinkingBudget` reaches the API verbatim on 2.5 models;
+3.x models take a level instead, so a budget is coarsened to one (8192 becomes `medium`, or `low` on
+`gemini-3-pro`, which is floored the same way it is above).
+
+The ACP server (`gaunt-sloth-acp`) does not ask for thought summaries: an ACP host renders them as
+ordinary assistant text, so Gaunt Sloth withholds them there. The exception is a model whose name
+marks it as an image or speech model — those are left exactly as the provider library configures
+them, on every surface. What the model thinks, and what that costs, is unchanged.
+
+```json
+{
+  "llm": {
+    "type": "google-genai",
+    "model": "gemini-3.6-flash",
+    "thinkingLevel": "low"
+  }
+}
+```
+
 **Example of .gsloth.config.json for Open Router**
 
 ```json
