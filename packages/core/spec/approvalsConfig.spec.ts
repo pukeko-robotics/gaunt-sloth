@@ -527,20 +527,34 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
     });
 
     /**
-     * Rule 3 on the mode with the most room to overclaim. What Auto may NOT say is that it runs
-     * without stopping: [[EXT-29]]'s agent–rater negotiation is unbuilt, so a `destructive` outcome
-     * escalates to the human exactly as it does at Assisted. Shipping copy that advertises a
-     * difference the product does not have is the one unacceptable outcome here, and a field tester
-     * hit precisely this on `git clone`.
+     * Rule 3 on the mode with the most room to overclaim. Auto now differs from Assisted — [[EXT-29]]'s
+     * negotiation hands a risky command back to the agent instead of interrupting — and the copy may
+     * say so, but three claims are what stop that difference reading as a quiet, hands-off mode:
+     *
+     * 1. **Still not safe**, in the same words the other modes use for it. A negotiation changes who
+     *    answers first; it does not stop Gaunt Sloth changing and deleting things, and the deny list
+     *    is still the protection a user can inspect and extend.
+     * 2. **It still ends at the user.** Both bounds exist so a person is reached, and a reader
+     *    deciding whether to leave Auto running has to be told that.
+     * 3. **No visibility that does not render.** The rounds reach a person at the escalation, all of
+     *    them at once; nothing shows them while they happen ([[TUI-C26]]).
+     *
+     * Shipping copy that advertises a difference the product does not have is the one unacceptable
+     * outcome here, and a field tester hit precisely that on `git clone`.
      */
-    it('rule 3: auto is explicitly not safe and says the negotiation is not yet active', () => {
+    it('rule 3: auto states the negotiation, and states that it is neither safe nor unattended', () => {
       const text = APPROVAL_RUNG_DESCRIPTIONS['auto'];
+      // (1) Not safe, in the mode's own words.
       expect(text).toContain('It is not safe');
       expect(text).toContain('will change and delete things');
-      expect(text).toContain('is not built yet');
-      expect(text).toContain('still stops and asks you');
-      // The promise the mode cannot keep while the negotiation is unbuilt.
-      expect(text).not.toMatch(/does not stop to ask/i);
+      // (2) The difference is stated, and so is its terminus.
+      expect(text).toContain('back to the agent');
+      expect(text).toContain('stops and asks you');
+      // (3) The argument reaches the user AT the escalation — never as a running commentary.
+      expect(text).toContain('when it does ask');
+      expect(text).not.toMatch(/as it happens|watch|live|on screen/i);
+      // The promise this mode does not keep: the bounds mean a person is always reachable.
+      expect(text).not.toMatch(/does not stop to ask|never interrupts|unattended|hands.off/i);
     });
 
     it('§8.1: no description advertises the hardline floor — only the deny list is cited', () => {

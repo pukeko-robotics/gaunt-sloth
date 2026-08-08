@@ -1234,7 +1234,12 @@ describe('mapVerdictToAction — §4.6 floors an open-world command even when th
       for (const rung of RATED_RUNGS) {
         const decision = mapVerdictToAction(command, RATER_SAYS_SAFE, { rung });
         expect(decision.verdict?.outcome, command).toBe('destructive');
-        expect(decision.action, command).toBe('escalate');
+        // §4.6's promise is that the model saying `safe` changes nothing — so what is asserted is
+        // that the command does NOT run. Where it goes after that is the rung's business ([[EXT-29]]
+        // sends `destructive` into §5's negotiation at `auto`), and pinning one rung's answer here
+        // would make a floor test fail on a change that never touched the floor.
+        expect(decision.action, command).not.toBe('approve');
+        expect(decision.action, command).toBe(rung === 'auto' ? 'reject' : 'escalate');
         expect(decision.verdict?.reason).not.toBe(RATER_SAYS_SAFE.reason);
       }
     }

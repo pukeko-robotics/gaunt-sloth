@@ -18,7 +18,7 @@ import {
 import type { GthCommand } from '@gaunt-sloth/core/core/types.js';
 import { emitToolOutput } from '@gaunt-sloth/core/core/toolOutputChannel.js';
 import { ShellCommandFailedError } from '@gaunt-sloth/core/core/shell/ShellCommandFailedError.js';
-import { checkHardline } from '#src/tools/shell/hardline.js';
+import { buildHardlineRefusal, checkHardline } from '@gaunt-sloth/core/core/shell/hardline.js';
 import { buildScrubbedEnv } from '#src/tools/shell/env.js';
 import { OutputBuffer } from '#src/tools/shell/outputBuffer.js';
 import { getShellWorkDir } from '#src/tools/shell/workDir.js';
@@ -121,6 +121,27 @@ const RunSingleTestArgsSchema = z.object({
 });
 const RunShellCommandArgsSchema = z.object({
   command: z.string().describe('The shell command to run'),
+  /**
+   * [[EXT-29]] (spec §5.1, §7) — **the move §7 already promises the model and it could not make.**
+   * The rejection message names *"call the same command with a justification"* among the moves
+   * available after a refusal; without an argument to carry one, the only way to act on that was to
+   * re-send the identical call, which is what makes an agent repeat itself and burn §5.3's cap
+   * without producing information.
+   *
+   * It reaches the rater as fenced, untrusted data, weighed asymmetrically (§5.1): a justification
+   * may only ever make an outcome LESS severe, and a stated intent that does not match what the
+   * command does is grounds for rejection rather than for a discount. Never sent for its own sake —
+   * an unprompted one is noise the rater still has to read.
+   */
+  justification: z
+    .string()
+    .optional()
+    .describe(
+      'Optional. Why this command is the right one, in a sentence or two — supply it when ' +
+        'RE-CALLING a command that was rejected, so the reviewer can weigh what you are trying ' +
+        'to do. Address the objection you were given rather than restating the request; a ' +
+        'justification that does not match what the command actually does is rejected outright.'
+    ),
 });
 
 const TEST_PATH_PLACEHOLDER = '${testPath}';
@@ -250,12 +271,12 @@ export default class GthDevToolkit extends BaseToolkit {
     });
 
     // (4) Hardline blocklist — checked here so it fires regardless of the approval mode,
-    // allow-lists, or any confirmation path. Refuse WITHOUT executing.
+    // allow-lists, or any confirmation path. Refuse WITHOUT executing. The approvals gate consults
+    // the SAME floor before it rates or prompts ([[EXT-29]] §4.2), so a matching command normally
+    // never reaches this line; this call is the guarantee that holds when nothing gated it at all.
     const hardline = checkHardline(command);
     if (hardline) {
-      const refusal =
-        `Refusing to execute '${command}': blocked by hardline safety policy ` +
-        `(${hardline.description}). This is blocked even when command confirmation is disabled.`;
+      const refusal = buildHardlineRefusal(command, hardline);
       // TUI-C31 (a): route through the tool-output channel so the refusal lands in the managed
       // frame under the TUI (headless still gets displayWarning via the default sink, verbatim).
       emitToolOutput({ toolCallId, toolName, kind: 'warning', text: `\n⛔ ${refusal}` });

@@ -1563,26 +1563,36 @@ describe('GthAgentRunner', () => {
       }
     );
 
-    it.each(['assisted', 'auto'] as const)(
-      'escalates a DESTRUCTIVE command at %s to the human (with the verdict attached)',
-      async (rung) => {
-        const runner = new GthAgentRunner(statusUpdateCallback);
-        pendingOnce('rm -rf build');
+    /**
+     * **`assisted` — pinned, because the whole of [[EXT-29]] is that the two rated rungs stopped
+     * being the same posture, and proving one of them did NOT move is half of that claim.**
+     * A `destructive` outcome here reaches the human on the FIRST rating, with the verdict attached
+     * and with no negotiation of any kind: no rejection handed to the model, and no transcript on
+     * the prompt.
+     */
+    it('escalates a DESTRUCTIVE command at assisted to the human on the FIRST rating', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      const streamResume = pendingOnce('rm -rf build');
 
-        const { config } = raterConfig(DESTRUCTIVE, { mode: rung });
-        await runner.init('code', config);
-        const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
-        runner.setToolApprovalCallback(human);
+      const { config, withStructuredOutput } = raterConfig(DESTRUCTIVE, { mode: 'assisted' });
+      await runner.init('code', config);
+      const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
+      runner.setToolApprovalCallback(human);
 
-        await runner.processMessages([new HumanMessage('go')]);
+      await runner.processMessages([new HumanMessage('go')]);
 
-        expect(human).toHaveBeenCalledTimes(1);
-        expect(human.mock.calls[0][0].safetyVerdict).toMatchObject({
-          outcome: 'destructive',
-          reason: 'risky',
-        });
-      }
-    );
+      expect(human).toHaveBeenCalledTimes(1);
+      expect(human.mock.calls[0][0].safetyVerdict).toMatchObject({
+        outcome: 'destructive',
+        reason: 'risky',
+      });
+      // One rating call, not a round of an argument…
+      expect(withStructuredOutput).toHaveBeenCalledTimes(1);
+      // …the model was never handed a rejection…
+      expect(streamResume.mock.calls[0][0].decisions[0].type).toBe('approve');
+      // …and the prompt carries no negotiation, because there was none.
+      expect(human.mock.calls[0][0].negotiationRounds).toBeUndefined();
+    });
 
     /**
      * §4.2 — `attack` HALTS the run at both rated rungs. It is not a rejection the model can
@@ -1857,9 +1867,12 @@ describe('GthAgentRunner', () => {
        * `attack` was unreachable for every composed command — `pwd && rm -rf ~` could be floored at
        * `destructive` and no layer was positioned to call it worse. It now halts the run.
        */
+      // The command is composed but does NOT match the §8 floor — `pwd && rm -rf ~` does, and since
+      // [[EXT-29]] a floor match is settled deterministically before any rating, which would make
+      // this a test of the floor rather than of the rater reaching `attack` on a composed command.
       it('HALTS the run when the rater calls a composed command an attack', async () => {
         const runner = new GthAgentRunner(statusUpdateCallback);
-        pendingOnce('pwd && rm -rf ~');
+        pendingOnce('pwd && rm -rf ~/projects');
         const { config } = raterConfig(ATTACK, { mode: 'auto' });
         await runner.init('code', config);
         runner.setToolApprovalCallback(vi.fn());

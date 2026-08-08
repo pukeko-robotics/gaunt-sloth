@@ -1,9 +1,20 @@
 /**
- * @module tools/shell/hardline
+ * @module core/shell/hardline
  *
  * The shell floor — spec §8. Refused inside `executeCommand` BEFORE spawn, so a match fires
  * regardless of `approvals: "bypass"`, any allow-list entry, or the confirmation path. `bypass`
  * bypasses the *confirmation*; it does not bypass this.
+ *
+ * **It is consulted twice, and the second call site is the one §4.2 asks for.** Exec time is the
+ * guarantee that a matching command never runs. The approvals gate consults it *before* any rating
+ * at the two rated rungs, because "refused at execution whatever you decide" still lets the gate
+ * open a §5 negotiation, or put an approval dialog in front of a person, about a command that was
+ * never going to run — and *"asking a human to approve something that is then refused anyway
+ * teaches them their answer does not count, which is worse than a flat refusal"*. Both sites share
+ * {@link buildHardlineRefusal}, so one policy speaks with one sentence.
+ *
+ * It lives in `@gaunt-sloth/core` rather than beside the toolkit that executes commands because the
+ * approvals gate (`GthAgentRunner`) is core's and core cannot import `@gaunt-sloth/agent`.
  *
  * **What it is:** a cheap, deterministic way to turn away a small set of commands we are
  * **absolutely sure** are catastrophic and that can be recognised **without numerous annoying false
@@ -40,10 +51,7 @@
  * The floor is deliberately INDEPENDENT of the allow-list classifier above it: it must block a
  * catastrophic command even if every layer above wrongly decided that command was safe.
  */
-import {
-  COMMAND_SEPARATOR_CLASS,
-  normalizeCommand,
-} from '@gaunt-sloth/core/core/shell/normalize.js';
+import { COMMAND_SEPARATOR_CLASS, normalizeCommand } from '#src/core/shell/normalize.js';
 
 /**
  * A run of flag tokens. Bounded per token by the required trailing whitespace, and unable to
@@ -449,10 +457,12 @@ export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
  * deception and obfuscation are all in it, and none of them are here), so naming this function
  * `isDeterministicAttack` would claim a completeness it does not have.
  *
- * §4.2 makes `attack` the one outcome that halts the run, and §3 requires that the halt "MUST NOT
- * depend on the rater alone — its deterministic subset belongs in the hardline floor", because the
- * allow-list is consulted BEFORE the rater and would otherwise wave an allow-listed credential
- * upload straight through.
+ * §3 requires that the `attack` outcome "MUST NOT depend on the rater alone — its deterministic
+ * subset belongs in the hardline floor", because the allow-list is consulted BEFORE the rater and
+ * would otherwise wave an allow-listed credential upload straight through. What this section
+ * therefore guarantees without a model is that such a command is **refused** — at every rung, above
+ * the allow list, and again before spawn. §4.2's run-ending halt stays with the rater's `attack`
+ * verdict: a floor match is a model-free assertion, and the model-free consequence is a refusal.
  *
  * This is deliberately a SUBSET, not an attempt at the whole outcome. The floor is unconfigurable
  * and fires under `bypass`, so a false positive here is unrecoverable — the user cannot change rung
@@ -605,11 +615,30 @@ export function checkHardline(command: string): HardlineMatch | null {
       return { description };
     }
   }
-  // §3/§8 — the deterministic subset of the `attack` outcome, so the §4.2 halt does not depend on a
-  // model being right, and cannot be ridden through on an allow-list entry (consulted before the
-  // rater).
+  // §3/§8 — the deterministic subset of the `attack` outcome, so refusing a credential upload does
+  // not depend on a model being right, and cannot be ridden through on an allow-list entry
+  // (consulted before the rater).
   if (isDeterministicExfiltration(normalized)) {
     return { description: 'sending credentials off the machine' };
   }
   return null;
+}
+
+/**
+ * The refusal a floor match produces, shared by both call sites (§8, §4.2).
+ *
+ * One wording, because they are one policy: the gate refuses the call before any rating or prompt,
+ * and the toolkit refuses it before spawn if anything ever reaches that far. A second sentence
+ * would let a user meet two different explanations of the same unappealable rule and conclude that
+ * two different rules exist.
+ *
+ * **It names no move.** §7's rejection moves — *"call the same command with a justification"* — are
+ * exactly what this refusal is not: the floor is unappealable at every rung, so inviting a
+ * justification would invite a round that cannot be won.
+ */
+export function buildHardlineRefusal(command: string, match: HardlineMatch): string {
+  return (
+    `Refusing to execute '${command}': blocked by hardline safety policy ` +
+    `(${match.description}). This is blocked even when command confirmation is disabled.`
+  );
 }

@@ -92,6 +92,73 @@ describe('tui <ApprovalPrompt>', () => {
     unmount();
   });
 
+  /**
+   * [[EXT-29]] §6 — **the human rules on the argument, not on the last command.** The TUI is the
+   * DEFAULT interactive surface (`shouldUseTui` is opt-out), so a §5 negotiation that reaches a
+   * person reaches it here: showing only the final attempt would hide the one fact §5.6 calls the
+   * most important thing on the screen — that the agent proposed the same command three times
+   * unchanged, against rejections that each told it what to fix.
+   *
+   * Asserted on the ROUNDS, not on a heading: every command, every justification and the rater's
+   * answer to each. A renderer that showed the count and the last attempt would satisfy a
+   * heading-only assertion and fail this one.
+   */
+  it('shows every round of a §5 negotiation, not only the final attempt', () => {
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt
+        pending={{
+          name: 'run_shell_command',
+          args: { command: 'git reset --hard origin/main' },
+          safetyVerdict: { outcome: 'destructive', reason: 'discards every unpushed commit' },
+          negotiationRounds: [
+            {
+              command: 'git reset --hard origin/main',
+              outcome: 'destructive',
+              reason: 'name the range, or use --soft',
+            },
+            {
+              command: 'git reset --hard origin/main',
+              justification: 'the user asked to wipe today’s commits',
+              outcome: 'destructive',
+              reason: 'that restates the request without narrowing it',
+            },
+          ],
+        }}
+      />
+    );
+    const f = plain([lastFrame() ?? '']);
+    expect(f).toContain('argued with the auto-rater 2 times');
+    expect(f).toContain('Round 1: git reset --hard origin/main');
+    expect(f).toContain('Round 2: git reset --hard origin/main');
+    expect(f).toContain('agent justified: the user asked to wipe today’s commits');
+    expect(f).toContain('rater answered: destructive — name the range, or use --soft');
+    expect(f).toContain(
+      'rater answered: destructive — that restates the request without narrowing it'
+    );
+    unmount();
+  });
+
+  /**
+   * The counterpart, and what keeps the block off every ordinary prompt: an escalation with no
+   * negotiation behind it (`catastrophic`, a declared escalate entry, an unrated rung) draws no
+   * heading over an argument that never happened.
+   */
+  it('renders no negotiation block when there was no negotiation', () => {
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt
+        pending={{
+          name: 'run_shell_command',
+          args: { command: 'terraform destroy' },
+          safetyVerdict: { outcome: 'catastrophic', reason: 'destroys the environment' },
+        }}
+      />
+    );
+    const f = plain([lastFrame() ?? '']);
+    expect(f).not.toContain('argued with the auto-rater');
+    expect(f).not.toContain('Round 1');
+    unmount();
+  });
+
   it('shows the auto-rater OUTCOME and reason when a rating escalated the command (§6)', () => {
     const { lastFrame, unmount } = render(
       <ApprovalPrompt

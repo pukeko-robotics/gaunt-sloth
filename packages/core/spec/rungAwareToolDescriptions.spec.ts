@@ -72,7 +72,7 @@ vi.mock('#src/utils/llmUtils.js', async (importOriginal) => {
   };
 });
 
-/** The four distinct sentences of §4.5's table, referenced by rung. */
+/** The distinct sentences of §4.5's table, referenced by rung. */
 const SUFFIX = RUNG_TOOL_DESCRIPTION_SUFFIXES;
 
 /** A representative slice of the built-in set, one per class the policy distinguishes. */
@@ -108,7 +108,7 @@ function suffixedNames(tools: { name: string; description: string }[]): Record<s
 }
 
 describe('§4.5 suffix table', () => {
-  it('carries the four wordings verbatim, with bypass appending nothing', () => {
+  it('carries the three wordings verbatim, with bypass appending nothing', () => {
     // manual and write share one sentence: at both rungs the user's approval is a certainty.
     expect(SUFFIX['manual']).toBe(
       "Calling this tool will require the user's approval. Only use it when the result cannot be " +
@@ -119,11 +119,18 @@ describe('§4.5 suffix table', () => {
       "Calling this tool MAY require the user's approval if it does not look safe. Only use it " +
         'when it is impossible to achieve the result with the other provided tools.'
     );
-    // assisted and auto share one sentence, for the same reason manual and write do: they decide
-    // the same way. `mapVerdictToAction` has no branch on `auto`, so a call the rater does not
-    // rate safe reaches the human at `auto` exactly as at `assisted`. Two wordings would encode a
-    // behavioural difference the gate does not have, in the model's own tool-selection input.
-    expect(SUFFIX['auto']).toBe(SUFFIX['assisted']);
+    // `auto` has its OWN sentence, and it names the consequence that differs: [[EXT-29]]'s
+    // negotiation hands a call the rater will not clear back to the model rather than to the user,
+    // so the first thing that happens there is a refusal the model can answer. Its `MAY` qualifies
+    // the rater's refusal rather than the user's approval, so the sentence says nothing either way
+    // about whether a person can be asked — deliberately, since this is §4.5's row verbatim.
+    // Sharing `assisted`'s wording would hide a real difference in the model's own tool-selection
+    // input, which is what §4.5 exists to prevent.
+    expect(SUFFIX['auto']).toBe(
+      'Calling this tool MAY be refused by the auto-rater if it does not look safe. Only use it ' +
+        'when it is impossible to achieve the result with the other provided tools.'
+    );
+    expect(SUFFIX['auto']).not.toBe(SUFFIX['assisted']);
     expect(SUFFIX.bypass).toBeNull();
   });
 

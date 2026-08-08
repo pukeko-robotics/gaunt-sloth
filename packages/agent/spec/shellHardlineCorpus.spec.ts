@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { checkHardline } from '#src/tools/shell/hardline.js';
+import { checkHardline } from '@gaunt-sloth/core/core/shell/hardline.js';
 
 /**
  * EXT-60 — the §8 floor, reconciled against the approvals corpus in BOTH directions.

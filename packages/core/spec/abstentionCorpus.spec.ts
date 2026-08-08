@@ -115,7 +115,8 @@ function streamOf(...chunks: string[]) {
 /** What one runner session did with `commands`: who was asked, who was told, what it cost. */
 async function measure(
   commands: readonly string[],
-  verdict: unknown = SAFE_VERDICT
+  verdict: unknown = SAFE_VERDICT,
+  mode: 'assisted' | 'auto' = 'auto'
 ): Promise<{ humanPrompts: number; rejections: number; ratingCalls: number }> {
   const { GthAgentRunner } = await import('#src/core/GthAgentRunner.js');
   const runner = new GthAgentRunner(vi.fn());
@@ -130,7 +131,7 @@ async function measure(
   mockAgent.stream.mockReset().mockResolvedValue(streamOf('x'));
   mockAgent.getRegisteredToolNames.mockReturnValue([]);
 
-  const { config, invoke } = raterConfig('auto', verdict);
+  const { config, invoke } = raterConfig(mode, verdict);
   await runner.init('code', config);
   const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
   runner.setToolApprovalCallback(human);
@@ -205,9 +206,32 @@ describe('EXT-81 measurement — what the gate does with legitimate work it cann
    * command reaches the human — so the zero is the rater's verdict, not the gate's silence.
    */
   it('CONTROL: the same corpus on a `destructive` rater interrupts on every command', async () => {
-    const { humanPrompts, rejections } = await measure(LEGITIMATE_WORK_CORPUS, DESTRUCTIVE_VERDICT);
+    // At `assisted`, where a `destructive` outcome goes straight to the human. This is the control
+    // in its original form and it is asserted at the rung whose mapping [[EXT-29]] did not touch.
+    const { humanPrompts, rejections } = await measure(
+      LEGITIMATE_WORK_CORPUS,
+      DESTRUCTIVE_VERDICT,
+      'assisted'
+    );
     expect(humanPrompts).toBe(LEGITIMATE_WORK_CORPUS.length);
     expect(rejections).toBe(0);
+  });
+
+  /**
+   * **The same control at `auto`, where [[EXT-29]] §5 changed the shape of the answer but not its
+   * substance.** A `destructive` verdict now opens a negotiation instead of interrupting, so the 19
+   * stops are split between rejections handed back to the agent and escalations that reached a
+   * person — but not one of the 19 ran, which is the property the control exists to establish.
+   *
+   * Both halves are asserted non-zero on purpose: "they add up to 19" would also hold if the
+   * negotiation had swallowed every one of them and never reached a human, which is precisely the
+   * reachability failure the second bound exists to prevent.
+   */
+  it('CONTROL at `auto`: all 19 are stopped, split between the agent and the human', async () => {
+    const { humanPrompts, rejections } = await measure(LEGITIMATE_WORK_CORPUS, DESTRUCTIVE_VERDICT);
+    expect(humanPrompts + rejections).toBe(LEGITIMATE_WORK_CORPUS.length);
+    expect(rejections).toBeGreaterThan(0);
+    expect(humanPrompts).toBeGreaterThan(0);
   });
 
   /**

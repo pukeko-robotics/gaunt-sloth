@@ -20,7 +20,7 @@
  * 2. **A model-free decision reports no label.** See {@link classifyOneRound}.
  */
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
-import { checkHardline } from '@gaunt-sloth/agent/tools/shell/hardline.js';
+import { checkHardline } from '@gaunt-sloth/core/core/shell/hardline.js';
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import {
   APPROVAL_RUNGS,

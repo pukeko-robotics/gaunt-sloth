@@ -95,12 +95,28 @@ export class NonInteractiveEscalationError extends ApprovalStopError {
    */
   readonly escalatedBy: string | undefined;
 
-  constructor(command: string, outcome?: string, reason?: string, escalatedBy?: string) {
+  /**
+   * [[EXT-29]] §6 — the §5 negotiation that preceded this escalation, rendered, when there was one.
+   *
+   * §6.2's message is the ONLY thing a person sees on this path — there is no prompt to attach a
+   * transcript to — so an unattended run that ended after three rejections would otherwise report
+   * the last command and give no hint that the agent had already been told twice what to fix.
+   */
+  readonly negotiation: string | undefined;
+
+  constructor(
+    command: string,
+    outcome?: string,
+    reason?: string,
+    escalatedBy?: string,
+    negotiation?: string
+  ) {
     super(
       `Approval required, but this session has no one to ask.\n` +
         `  Command: ${command}\n` +
         (outcome ? `  Rating: ${outcome}\n` : '') +
         (reason ? `  Reason: ${reason}\n` : '') +
+        (negotiation ? `${negotiation}\n` : '') +
         (escalatedBy
           ? `  Matched approvals.escalate: ${escalatedBy}\n` +
             `An escalate entry always asks a human, whatever the rung would have done, so no ` +
@@ -115,5 +131,6 @@ export class NonInteractiveEscalationError extends ApprovalStopError {
     this.outcome = outcome;
     this.reason = reason;
     this.escalatedBy = escalatedBy;
+    this.negotiation = negotiation;
   }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkHardline } from '#src/tools/shell/hardline.js';
+import { checkHardline } from '@gaunt-sloth/core/core/shell/hardline.js';
 
 describe('checkHardline', () => {
   const blocked = [

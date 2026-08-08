@@ -14,6 +14,7 @@ import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
 import { GthAbstractAgent } from '@gaunt-sloth/core/core/GthAbstractAgent.js';
 import { launchBannerFields, launchBannerText } from '@gaunt-sloth/core/core/launchBanner.js';
 import { buildRejectionMessage } from '@gaunt-sloth/core/core/shell/rejection.js';
+import { renderNegotiationTranscript } from '@gaunt-sloth/core/core/shell/negotiation.js';
 import { writeDebugDump } from '@gaunt-sloth/core/utils/debugDump.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
 import {
@@ -160,6 +161,16 @@ export async function createInteractiveSession(
       // — which reads as the gate malfunctioning rather than as their own rule working.
       if (pending.escalatedBy) {
         displayWarning(`⚠ Your approvals.escalate list matched this call: ${pending.escalatedBy}`);
+      }
+      // [[EXT-29]] §6 — when a §5 negotiation preceded this escalation, the human is shown ALL of
+      // it. The user is not asked to rule on the final command in isolation: that the agent
+      // proposed the same command three times unchanged, against two rejections that each told it
+      // what to fix, is the most important thing on the screen and is invisible if only the last
+      // attempt is shown. Rendered through core's shared renderer, so the surfaces cannot describe
+      // one exchange two ways.
+      const negotiation = renderNegotiationTranscript(pending.negotiationRounds ?? []);
+      if (negotiation) {
+        displayWarning(negotiation);
       }
       // EXT-71/EXT-70 §6 — the menu MUST show what a sticky choice will store, at the moment of
       // the choice, and it names it in the words the control is written in: the command itself for

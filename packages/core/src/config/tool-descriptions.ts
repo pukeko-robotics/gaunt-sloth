@@ -42,13 +42,22 @@ import type { ApprovalRung } from '#src/config/shell-policy.js';
  *
  * - `manual` and `write` share one sentence: at both rungs a non-granted call goes to the human,
  *   so the user's approval is a certainty, not a possibility.
- * - `assisted` and `auto` share one sentence, and `will` softens to `MAY`: the rater approves what
- *   it rates safe, so only some calls reach the user. **The two rated modes may not be worded
- *   apart.** The rater's mapping has no branch on `auto`, so a call it does not rate safe reaches
- *   the human at `auto` exactly as it does at `assisted`; two wordings would encode a behavioural
- *   difference that does not exist, in the model's own tool-selection input. If [[EXT-29]]'s
- *   agent–rater negotiation lands and `auto` starts settling risky calls by itself, that is when
- *   `auto` earns its own sentence — not before.
+ * - `assisted` softens `will` to `MAY`: the rater approves what it rates safe, so only some calls
+ *   reach the user.
+ * - `auto` has its own sentence, and the difference it states is real: [[EXT-29]]'s negotiation
+ *   hands a call the rater will not clear back to the **model**, with the reason, so the first
+ *   consequence of an unsafe-looking call there is a refusal it can answer rather than a person
+ *   being asked — what changes is who answers first, and that is the one thing a model choosing a
+ *   tool can act on. A shared wording would hide it in the model's own tool-selection input.
+ *
+ *   Its `MAY` therefore sits **outside** the contrast the three bullets above draw: it qualifies
+ *   *"be refused by the auto-rater"*, not *"require the user's approval"*, so this sentence says
+ *   nothing either way about whether a person can be asked. That silence is deliberate — the
+ *   string is §4.5's row verbatim — and its cost is recorded here rather than left to be
+ *   discovered: `catastrophic` escalates to a human on the FIRST hit with no rounds at all, so a
+ *   person *can* be reached at `auto` and this input does not say so. Silent is not false, which
+ *   is why the wording stands and why the premise quoted above still holds; a wording claiming the
+ *   user is never asked would be false.
  * - `bypass` appends nothing to anything: no gate, so no sentence could be true.
  */
 export const RUNG_TOOL_DESCRIPTION_SUFFIXES: Readonly<Record<ApprovalRung, string | null>> = {
@@ -62,7 +71,7 @@ export const RUNG_TOOL_DESCRIPTION_SUFFIXES: Readonly<Record<ApprovalRung, strin
     "Calling this tool MAY require the user's approval if it does not look safe. Only use it when " +
     'it is impossible to achieve the result with the other provided tools.',
   auto:
-    "Calling this tool MAY require the user's approval if it does not look safe. Only use it when " +
+    'Calling this tool MAY be refused by the auto-rater if it does not look safe. Only use it when ' +
     'it is impossible to achieve the result with the other provided tools.',
   bypass: null,
 };
