@@ -21,6 +21,12 @@ agent](#what-actually-contains-an-agent) for why it cannot.
 the remote's default branch is protected, and know when your last backup ran. What comes back after
 a bad hour is whatever a remote or a backup still holds.
 
+<!-- EXT-29 — the next paragraph's "that negotiation is not built, so today Auto stops wherever
+     Assisted stops" is bound to `APPROVAL_RUNG_DESCRIPTIONS.auto` in
+     `packages/core/src/config/shell-policy.ts` and to the rater mapping in
+     `packages/core/src/core/shell/rater.ts`. When the agent–rater negotiation lands, this paragraph
+     is one of the places that has to be rewritten with it. -->
+
 **3. Then pick the mode, and deny the handful of things you could not undo.** Auto is the mode named
 for an unattended run, and it is where a rater will one day settle a risky command by itself — but
 that negotiation is not built, so today Auto stops wherever Assisted stops. Each mode's own
@@ -53,10 +59,13 @@ Then start the session and leave:
 gth code "make the failing orders tests pass"
 ```
 
-A `deny` entry is checked before everything else and is the one check you write that survives every
-mode, so it is the strongest thing you can say about which commands may run — short of not granting
-the shell at all. It stops the mistake. It does not stop a way around it — which is the rest of
-this page.
+A `deny` entry naming a **command**, as all three above do, is checked before your allow list and
+before the rater, and it is the one check you write that survives every mode — so it is the
+strongest thing you can say about which commands may run, short of not granting the shell at all. An
+entry naming a *tool* instead is compared only where the mode gates that tool, which at Assisted,
+Auto and Bypass is nothing at all: see
+[Which entries a mode consults](shell-tool-and-approvals.md#which-entries-a-mode-consults). A deny
+list stops the mistake. It does not stop a way around it — which is the rest of this page.
 
 ## The ladder reads text, so it catches accidents and not intent
 

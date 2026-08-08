@@ -225,8 +225,10 @@ carrying the extras. See
 - `rater` — the **name** of an identity profile whose model rates, instead of the session model. A
   name that does not resolve is a config error. Only consulted at `assisted` and `auto`.
 - `allow` — what you trust. Checked before the rater at every mode except `bypass`.
-- `deny` — what never runs. Checked before `allow` and before the rater, and it still applies under
-  `bypass`.
+- `deny` — what never runs. A `shell` entry is checked before `allow` and before the rater, and it
+  still applies under `bypass`. An entry naming a tool is compared only where the mode gates that
+  tool, so not at `assisted`, `auto` or `bypass` — see
+  [Which entries a mode consults](../guides/shell-tool-and-approvals.md#which-entries-a-mode-consults).
 - `escalate` — what always asks you, whatever the mode would have done.
 
 Entries in all three are explicit objects (`type`, `matcher` and `pattern` are always required);

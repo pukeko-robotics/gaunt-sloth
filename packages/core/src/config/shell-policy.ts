@@ -499,6 +499,12 @@ export const APPROVAL_RUNG_DESCRIPTIONS: Record<ApprovalRung, string> = {
     'explaining what it does. Gaunt Sloth can still rewrite and delete files in your working ' +
     'folder without asking — "safe" means each action is checked for reaching outside that folder ' +
     'or harming your system, not that nothing changes.',
+  // TODO(EXT-29): this string says the negotiation "is not built yet", and three doc sites say the
+  // same thing in their own words — `docs/guides/shell-tool-and-approvals.md` (the `auto` table
+  // row, a byte-for-byte copy of this string, and the "worded the same because they behave the
+  // same" paragraph below it) and `docs/guides/what-approvals-protect-you-from.md` (step 3 of the
+  // unattended-run use case). Rewrite them in the same commit that lands the negotiation; each
+  // carries an `EXT-29` comment so `git grep EXT-29` reaches it.
   auto:
     'For recoverable work, but not a quieter mode yet: Auto still stops and asks you exactly ' +
     'where Assisted does. It is not safe — Gaunt Sloth will change and delete things, your deny ' +

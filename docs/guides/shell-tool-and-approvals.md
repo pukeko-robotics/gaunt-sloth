@@ -203,6 +203,10 @@ There is one approvals setting, and it takes the mode name:
 | `auto` | For recoverable work, but not a quieter mode yet: Auto still stops and asks you exactly where Assisted does. It is not safe — Gaunt Sloth will change and delete things, your deny list still applies, and the negotiation that would let Auto settle a risky command by itself is not built yet. | yes |
 | `bypass` | No gate, for a throwaway environment you would not mind losing. Whatever Gaunt Sloth decides to run, runs — nothing is rated and nothing is asked; only the refusals in your config’s deny list still apply. | no |
 
+<!-- EXT-29 — the `auto` row above is a byte-for-byte copy of `APPROVAL_RUNG_DESCRIPTIONS.auto` in
+     `packages/core/src/config/shell-policy.ts`. When the agent–rater negotiation lands, that
+     constant and this row have to change in the same commit or the two describe Auto differently. -->
+
 These are the same sentences `/approvals` shows in a session, so the guide and the picker cannot
 describe a mode differently.
 
@@ -217,7 +221,8 @@ than something between `manual` and `assisted`. Set it whenever you want it, wit
 nothing. `assisted` and `auto` each spend one rating call per gated command.
 
 Choosing `bypass` is not choosing more trust in the rater: it switches the gate off. Nothing is
-rated, nothing is asked, and only your deny list still applies — so what runs under it is not what
+rated, nothing is asked, and the only check left is the `shell` entries in your deny list — a `tool`
+entry is [not compared there](#which-entries-a-mode-consults) — so what runs under it is not what
 some check cleared, it is whatever the agent decided to do.
 
 What any of these modes does and does **not** protect you from, and what has to sit outside Gaunt
@@ -238,6 +243,11 @@ There are two wordings, not one per mode: at `manual` and `write` the sentence s
 *will* require your approval, at `assisted` and `auto` that it *may* — the two rated modes are
 worded the same because they behave the same. Each sentence also tells the agent to use that tool
 only when the result cannot be achieved with the other tools it has.
+
+<!-- EXT-29 — "worded the same because they behave the same" holds only while the agent–rater
+     negotiation is unbuilt (`RUNG_TOOL_DESCRIPTION_SUFFIXES` in
+     `packages/core/src/config/tool-descriptions.ts` gives `assisted` and `auto` one string). When
+     the negotiation lands and `auto` earns its own sentence, this paragraph has to say so. -->
 
 The auto-rater backs that up at `assisted` and `auto`. When it does not rate a command safe
 and one of the tools the agent already has would do the same job, it names that tool in its
@@ -290,13 +300,16 @@ for `{ "mode": <value> }`:
 - **`allow`** — what you trust. Checked **before** the rater at every mode except `bypass`, so an
   allow-listed call does not stop to ask you — the one exception is the `rate` tripwire below. This
   is the supported way to make a non-interactive pipeline pass.
-- **`deny`** — what never runs. Checked **before** `allow` and before the rater, and it is the one
-  check `bypass` keeps: choosing `bypass` means *"stop asking me"*, not *"forget what I told you
-  never to do"*.
+- **`deny`** — what never runs. A `shell` entry is checked **before** `allow` and before the rater,
+  and it is the one check `bypass` keeps: choosing `bypass` means *"stop asking me"*, not *"forget
+  what I told you never to do"*. An entry naming a **tool** reaches less far — see
+  [Which entries a mode consults](#which-entries-a-mode-consults).
 - **`escalate`** — what always asks you, whatever the mode would have done, and with no rating call.
   It outranks `allow`, including a grant you made at a prompt, so *this specific thing asks even
   though its class would not*. It is **inert at `bypass`**: that mode means *stop asking me*, and
-  the mode you chose for the session wins. A stop that must survive `bypass` is a `deny` entry.
+  the mode you chose for the session wins. A stop that must survive `bypass` is a `deny` entry
+  naming the command — and, like `deny`, an `escalate` entry naming a tool only reaches as far as
+  the mode gates that tool.
 
 Where entries from more than one list match the same call, **the most restrictive one wins — deny
 over escalate over allow** — so the order you write them in never matters.
@@ -323,8 +336,36 @@ The lists do not all merge the same way, and the difference is deliberate:
 
 The reason they differ is what each mistake costs you. A missed `allow` entry means one extra
 prompt; a missed `deny` entry only leaves the call to whatever your mode would have done with it
-anyway. A **too-broad `allow` entry runs, without asking and without rating** — so the restrictive
-lists grow across scopes, and the permissive one does not.
+anyway. A **too-broad `allow` entry runs, and runs without asking you** — whether the rater still
+watches it is the entry's own `rate` (below), which a `glob` or `regexp` entry leaves on. So the
+restrictive lists grow across scopes, and the permissive one does not.
+
+### Which entries a mode consults
+
+An entry is compared against a call only where the mode in force **gates** that call. A call the
+mode does not gate is approved as it arrives, before any list is read — so how far your three lists
+reach is the mode's own row in [the table above](#the-ladder-approvals).
+
+- **A `shell` entry always applies.** The shell is gated at every mode, so a `shell` entry in
+  `deny`, `escalate` or `allow` is compared against every command the agent proposes — the `deny`
+  list under `bypass` included.
+- **A `tool` or `mcpTool` entry applies only where the mode gates that tool.** At `assisted`, `auto`
+  and `bypass` the shell is the only gated tool, so an entry naming a tool is compared against
+  nothing there — a `deny` entry included. At `manual` and `write` the built-in file tools the mode
+  grants also run free and are never compared: `manual` grants the read tools, `write` the read and
+  the write tools. So an entry naming a read tool such as `read_file` or `gth_grep` is compared at
+  no mode at all.
+- **`rate` on a tool entry does nothing at any mode.** The auto-rater reads shell commands only, so
+  a `tool` or `mcpTool` entry never produces a rating call, whatever its `rate` says.
+
+So a prohibition you need at `assisted`, `auto` or `bypass` has to name the **command** that would
+carry it out. Where it is the tool itself you do not want run, take it away rather than deny it:
+leave the server out of `mcpServers`, or the tool out of that command's `builtInTools`
+([Tools configuration](../configuration/tools.md)).
+
+`/approvals` reports the entries you declared, not the ones the mode in force can act on, so a
+`Denied:` count that includes a tool entry at `assisted` is counting your config rather than checks
+that can fire.
 
 ### Writing an entry
 
@@ -347,6 +388,10 @@ Every entry in all three lists is the same explicit object. `type`, `matcher` an
 { "type": "mcpTool", "server": "jira", "matcher": "hint",  "pattern": { "destructiveHint": true } }
 ```
 
+A `shell` entry is compared at every mode. A `tool` or `mcpTool` entry is compared only where the
+mode in force gates that tool, so at `assisted`, `auto` and `bypass` it is not compared at all —
+read [Which entries a mode consults](#which-entries-a-mode-consults) before you rely on one.
+
 `exact` and `glob` compare against the whole normalized command (or the whole tool name), not token
 by token. The consequence everyone hits first: `npm publish *` does **not** match a bare
 `npm publish`, because the space before the `*` is part of the pattern. `npm publish*` matches both,
@@ -357,8 +402,9 @@ cover `npm test -- --watch`, and an `exact` deny entry for `npm publish` does no
 `npm publish --access public`. Use a `glob` when you mean the family. This is the cost the design
 accepts, and it is worth what it buys: a missed `allow` entry only asks you, and a missed `deny`
 entry leaves the call to whatever your mode would have done with it — while a too-broad `allow`
-entry has no such backstop. Under `bypass` your mode would have run it: the `deny` list is one of
-only two checks left there, so write globs in it.
+entry runs, with nothing behind it but the `rate` tripwire, and that only at `assisted` and `auto`.
+Under `bypass` your mode would have run it: the `deny` list is one of only two checks left there, so
+write globs in it.
 
 **A pattern cannot span a command separator.** No `allow` entry of any matcher matches a command
 Gaunt Sloth cannot statically resolve — anything that composes, substitutes or redirects — so
