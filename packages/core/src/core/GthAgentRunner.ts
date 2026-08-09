@@ -1021,11 +1021,24 @@ export class GthAgentRunner {
 
     // (1) Deny — before everything, including `bypass`.
     if (rule?.action === 'deny') {
+      // [[TUI-C26]] §6 — the message names the refusal the user actually made. A deny entry now has
+      // two possible authors: a line in `approvals.deny`, and the escalation menu's *always reject*
+      // choice earlier in this session. Telling the model (and, through it, the user) to edit a
+      // config file that the second kind was never written to is the same class of wrongness as
+      // confirming a persistence that did not happen. The declared list is checked FIRST so an
+      // entry a user wrote is described as theirs even when the menu recorded the identical one.
+      const declared = this.sessionApprovals.deny.some(
+        (entry) => renderApprovalEntryObject(entry) === renderApprovalEntryObject(rule.entry)
+      );
+      const described = describeApprovalEntry(rule.entry);
       return {
         type: 'reject',
-        message:
-          `Refused: your deny list forbids this call (matched "${describeApprovalEntry(rule.entry)}"). ` +
-          'Remove the entry from approvals.deny if you want it to run.',
+        message: declared
+          ? `Refused: your deny list forbids this call (matched "${described}"). ` +
+            'Remove the entry from approvals.deny if you want it to run.'
+          : `Refused: the user chose to always refuse this earlier in this session (matched ` +
+            `"${described}"). That refusal lasts until the session ends; ask the user if you ` +
+            'believe it should be lifted.',
       };
     }
 
@@ -1289,17 +1302,33 @@ export class GthAgentRunner {
     // becomes visible: it names the tool, its server and the host bound, and nothing else.
     const grantSummary = grant ? describeApprovalEntry(grant.entry) : undefined;
 
-    // Surface the rater's verdict, the escalate entry that fired as provenance (§3.2), and what a
-    // sticky choice would store (§6) — without mutating the original interrupt object the caller
-    // holds.
+    // [[TUI-C26]] §6 — the deny half, computed SEPARATELY rather than read off the grant. The two
+    // are available under different conditions and `grant === undefined` is the wrong test for
+    // both: a command that does not statically resolve, and every `catastrophic` verdict, have no
+    // grant on offer and a perfectly good deny entry.
+    const denyEntry = this.denyEntryFor(subject);
+    const denyPreview = denyEntry ? renderApprovalEntryObject(denyEntry) : undefined;
+    const denySummary = denyEntry ? describeApprovalEntry(denyEntry) : undefined;
+
+    // Surface the rater's verdict, the escalate entry that fired as provenance (§3.2), and what
+    // each sticky choice would store (§6) — without mutating the original interrupt object the
+    // caller holds.
+    //
+    // **`denyPreview` belongs in this condition, and leaving it out is a silent hole rather than a
+    // tidiness question.** The most ordinary prompt in the system — a deterministic rung, no
+    // rating, no escalate entry, no negotiation, a command that does not statically resolve — has
+    // none of the other four, so without this term the interrupt would pass through unchanged and
+    // the *always reject* control would vanish from exactly the case it exists for.
     const pending: PendingToolInterrupt =
-      safetyVerdict || escalatedBy || grantPreview || negotiationRounds.length > 0
+      safetyVerdict || escalatedBy || grantPreview || denyPreview || negotiationRounds.length > 0
         ? {
             ...tool,
             ...(safetyVerdict ? { safetyVerdict } : {}),
             ...(escalatedBy ? { escalatedBy } : {}),
             ...(grantPreview ? { grantPreview } : {}),
             ...(grantSummary ? { grantSummary } : {}),
+            ...(denyPreview ? { denyPreview } : {}),
+            ...(denySummary ? { denySummary } : {}),
             ...(negotiationRounds.length > 0 ? { negotiationRounds } : {}),
           }
         : tool;
@@ -1308,6 +1337,12 @@ export class GthAgentRunner {
     // Record the human's scoped grant so the same call stops re-prompting.
     if (decision.type === 'approve' && grant) {
       this.recordApproval(grant, decision.scope ?? 'once');
+    }
+    // §6 — and the mirror: *always reject* records the refusal, so the next identical call is
+    // refused by rule at step (1) without reaching a person. Scoped `session` and nothing else,
+    // because that is the only lifetime the store has (see {@link ToolRejectScope}).
+    if (decision.type === 'reject' && decision.scope === 'session' && denyEntry) {
+      this.recordDenial(denyEntry);
     }
     return decision;
   }
@@ -1525,6 +1560,64 @@ export class GthAgentRunner {
     // §4.7.4 — the effective set the human approved this tool AS. `annotationWeakenings` compares a
     // later one against it, and the store copies it so the record is private to this grant.
     return { entry, annotations: effective };
+  }
+
+  /**
+   * [[TUI-C26]] §6 — **the entry the escalation menu's *always reject* choice would record**, or
+   * `undefined` when the grammar cannot hold one. The deny mirror of {@link stickyGrantFor}, and a
+   * separate function rather than a flag on it, because the two answer different questions.
+   *
+   * **Nearly every reason an allow entry is withheld does not apply here.** §3 has one rule for
+   * this and it runs the other way — *undecidable is a non-match on the allow side and a match on
+   * the deny side* — so:
+   *
+   * - **A command that does not statically resolve gets an entry.** `stickyGrantFor` refuses one
+   *   because no allow entry of any matcher would ever match it, making the entry inert; a deny
+   *   entry for the same command is matched against the whole normalized command *and* every
+   *   segment a shell would run, so it is the opposite of inert.
+   * - **A `catastrophic` verdict changes nothing.** §4.2 withdraws the sticky grants there; it says
+   *   nothing about refusals, and refusing more is never the direction that needs withdrawing.
+   * - **`bypass` changes nothing either**, and that is a positive statement rather than a gap. Deny
+   *   is resolved at step (1) of {@link decideToolApprovalInner}, *before* the `bypass` return, so
+   *   a recorded refusal is in force at every rung — which is why this does not copy the allow
+   *   side's `bypass` guard.
+   * - **A call naming several hosts gets the host-less entry.** On the allow side that would show a
+   *   bound the grant does not have; here the entry covers every host of that tool, which is
+   *   broader than the call and safe in the direction breadth is safe. The menu shows exactly that
+   *   entry, so the breadth is on screen rather than inferred.
+   * - **`run_shell_command` arriving as a TOOL subject gets a tool entry** — a shell call whose
+   *   `command` argument cannot even be read. On the allow side that entry would auto-approve every
+   *   future unreadable shell call, which is why it is excluded there; as a refusal it stops the
+   *   shell tool for the session, and the dialog says so in the words the entry is written in.
+   *
+   * The one genuine exclusion is an **MCP call whose server could not be attributed**
+   * ({@link toolGrantEntry} returns `null`): the grammar's `server` cannot be the empty string, so
+   * the entry would be dropped by its own validator and the human would be told a refusal had been
+   * recorded when none was. A shell command that normalizes to nothing is excluded for the same
+   * reason — an empty `pattern` is not a legal entry.
+   */
+  private denyEntryFor(subject: ApprovalSubject): ApprovalEntry | undefined {
+    if (subject.kind === 'shell') {
+      const entry = shellGrantEntry(subject.command);
+      return entry.pattern.length > 0 ? entry : undefined;
+    }
+    return toolGrantEntry(subject) ?? undefined;
+  }
+
+  /**
+   * §6 — record the menu's *always reject* choice, for the life of this runner instance.
+   *
+   * It lands in the same store `approvals.deny` entries are matched from ({@link approvalRuleLists}
+   * concatenates the two), so a refusal the human made at the prompt and one they wrote in their
+   * config are one list to the matcher and one list to `/approvals`.
+   *
+   * **Session-lifetime, and there is nothing else to choose.** There is no persisted deny file;
+   * whether there should be is a question about a file users live with, not about this prompt. What
+   * the surfaces must not do is say otherwise — a confirmation promising a persistence that did not
+   * happen is §6's *offered and then refused* with the evidence hidden.
+   */
+  private recordDenial(entry: ApprovalEntry): void {
+    this.denyGrants.add({ entry, grantedAt: new Date().toISOString(), scope: 'session' });
   }
 
   /**

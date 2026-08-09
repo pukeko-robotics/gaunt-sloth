@@ -42,14 +42,29 @@
  * first, because there the two rulers disagree and a coloured string that MEASURES as fitting must
  * be handed back whole rather than cut short by the bytes of its own escapes.
  *
- * ## Why ambiguous-width characters stay NARROW
+ * ## Why ambiguous-width characters stay NARROW — and the one place they must not
  *
  * `string-width` defaults to treating East-Asian "Ambiguous" characters as one column, and that
  * default is load-bearing here rather than incidental: the sloth face is block elements, the
  * wordmark is box-drawing, and `…` is U+2026 — all Ambiguous. Counting them as two columns would
- * measure the 16-column face at 32 and shatter the layout it anchors. Do not pass
- * `ambiguousIsNarrow: false`; the specs pin the face at 16 and the wordmark at 19 so a change of
- * that policy fails loudly instead of quietly doubling the art.
+ * measure the 16-column face at 32 and shatter the layout it anchors. So {@link displayWidth} and
+ * {@link sliceToWidth} keep the default, and the specs pin the face at 16 and the wordmark at 19 so
+ * a change of that policy fails loudly instead of quietly doubling the art.
+ *
+ * That default is an **assumption about the reader's terminal**, and it is one this process cannot
+ * check: an Ambiguous character occupies one cell or two depending on how the terminal is
+ * configured, and several CJK locales — plus an option in xterm, urxvt and mlterm — choose two.
+ * For layout art that assumption is free, because being wrong only makes the art look wrong.
+ *
+ * It is **not** free where a budget is a security boundary. {@link maxDisplayWidth} and
+ * {@link sliceToMaxWidth} are the sanctioned exception: they measure Ambiguous as **two** columns,
+ * i.e. the widest a terminal can render the string, so text fitted with them fits under *either*
+ * policy. Use them wherever a row that overruns its budget would be wrapped by the terminal into a
+ * consequence rather than into an untidy screen — `core/shell/framing` frames untrusted text this
+ * way, because there a wrapped continuation line starts at column 0 and can forge a dialog's chrome.
+ * The cost is under-fill: on a terminal that does render Ambiguous narrow, such a row can stop short
+ * of its budget. Under-fill is cosmetic; overrun is not. True Wide characters (CJK ideographs,
+ * emoji, fullwidth forms) measure 2 under both, so the common CJK case is unaffected either way.
  */
 import stringWidth from 'string-width';
 
@@ -67,6 +82,30 @@ const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'graphem
  */
 export function displayWidth(text: string): number {
   return stringWidth(text);
+}
+
+/**
+ * Terminal columns `text` occupies **at most** — the same measurement as {@link displayWidth} but
+ * counting East-Asian Ambiguous characters as two columns rather than one, which is the widest any
+ * terminal will render them.
+ *
+ * For a budget that must hold on a terminal whose ambiguous-width policy is unknown, this is the
+ * only sound ruler: it is the supremum over the policies a terminal can be configured with, so a
+ * string that fits under it fits under all of them. See the module docblock for when to reach for
+ * this rather than {@link displayWidth}.
+ */
+export function maxDisplayWidth(text: string): number {
+  return stringWidth(text, { ambiguousIsNarrow: false });
+}
+
+/**
+ * The first grapheme cluster of `text`, or `''` when it is empty — i.e. the smallest piece a cut
+ * can leave behind, for a caller that has to make progress through a string one drawable glyph at
+ * a time.
+ */
+export function firstCluster(text: string): string {
+  for (const { segment } of GRAPHEME_SEGMENTER.segment(text)) return segment;
+  return '';
 }
 
 /** The clusters of `text`, in order — the only unit either slice is allowed to cut between. */
@@ -100,12 +139,35 @@ function needsWholeStringMeasure(text: string): boolean {
  * line, which is unbounded.
  */
 export function sliceToWidth(text: string, maxWidth: number): string {
+  return sliceHeadToWidth(text, maxWidth, displayWidth);
+}
+
+/**
+ * {@link sliceToWidth} measured by {@link maxDisplayWidth} — the head that fits the budget on any
+ * terminal, whatever it does with Ambiguous characters. The cut for a budget that must hold rather
+ * than merely look right.
+ */
+export function sliceToMaxWidth(text: string, maxWidth: number): string {
+  return sliceHeadToWidth(text, maxWidth, maxDisplayWidth);
+}
+
+/**
+ * The head-slice both public cuts are made of, given the ruler to measure with. The ruler is passed
+ * rather than chosen here so the whole-string shortcut and the cluster walk can never end up on
+ * different ones — measuring the shortcut narrow and the walk wide would hand back a string that
+ * overruns the very budget the caller asked to be held to.
+ */
+function sliceHeadToWidth(
+  text: string,
+  maxWidth: number,
+  measure: (text: string) => number
+): string {
   if (maxWidth <= 0) return '';
-  if (needsWholeStringMeasure(text) && displayWidth(text) <= maxWidth) return text;
+  if (needsWholeStringMeasure(text) && measure(text) <= maxWidth) return text;
   let width = 0;
   let kept = '';
   for (const { segment } of GRAPHEME_SEGMENTER.segment(text)) {
-    const clusterWidth = displayWidth(segment);
+    const clusterWidth = measure(segment);
     if (width + clusterWidth > maxWidth) break;
     width += clusterWidth;
     kept += segment;

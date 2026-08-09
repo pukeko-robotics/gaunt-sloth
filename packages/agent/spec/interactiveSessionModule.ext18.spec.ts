@@ -40,6 +40,7 @@ vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => ({
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
   defaultStatusCallback: vi.fn(),
   display: vi.fn(),
+  displayError: vi.fn(),
   displayInfo: vi.fn(),
   displayLaunchBanner: vi.fn(),
   displayWarning: vi.fn(),

@@ -11,6 +11,7 @@
  */
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
+import { framingCommand, FRAMING_TRIGGERS } from './framingCommands.mjs';
 
 class ScriptedShellCallingModel extends BaseChatModel {
   callCount = 0;
@@ -48,9 +49,14 @@ class ScriptedShellCallingModel extends BaseChatModel {
     // list rather than the newest message, so it still holds on the post-tool turn.
     // The trigger token is deliberately one no prompt, tool description or approvals copy contains,
     // so a wording change elsewhere cannot silently switch every case onto this branch.
-    const compound = messages.some(
-      (m) => typeof m.content === 'string' && m.content.includes('unresolvable-compound')
-    );
+    const said = (token) =>
+      messages.some((m) => typeof m.content === 'string' && m.content.includes(token));
+    const compound = said('unresolvable-compound');
+    // [[TUI-C26]] — the adversarial commands the framing e2e rules on. Same trigger-token
+    // convention: a token no prompt or approvals copy contains, so no wording change elsewhere can
+    // silently reroute an ordinary case onto one of these.
+    const framing = FRAMING_TRIGGERS.find((trigger) => said(trigger));
+    const command = framing ? framingCommand(framing) : this.#command(compound);
     const message = ToolMessage.isInstance(last)
       ? new AIMessage('approval-final-answer-marker')
       : new AIMessage({
@@ -58,7 +64,7 @@ class ScriptedShellCallingModel extends BaseChatModel {
           tool_calls: [
             {
               name: 'run_shell_command',
-              args: { command: this.#command(compound) },
+              args: { command },
               id: `call-${this.callCount}`,
             },
           ],

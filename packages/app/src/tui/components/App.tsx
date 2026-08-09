@@ -413,16 +413,24 @@ export function App(props: TuiAppProps): React.ReactElement {
   // Resolve the currently-shown approval (the queue head) and commit a brief notice so the
   // decision reads in the transcript (TUI-C14 notice conventions). Dequeues the head so the next
   // queued approval (if any) surfaces. Approve carries the chosen scope; reject is fail-closed.
-  const resolveApproval = (decision: 'once' | 'session' | 'always' | 'reject'): void => {
+  const resolveApproval = (
+    decision: 'once' | 'session' | 'always' | 'reject' | 'reject-always'
+  ): void => {
     const head = pendingApproval;
     if (!head) return;
-    if (decision === 'reject') {
+    if (decision === 'reject' || decision === 'reject-always') {
+      // [[TUI-C26]] §6 — *always reject* is a rejection that is also REMEMBERED: the runner records
+      // a deny entry for this call, and the matcher consults it before anything else, so the next
+      // identical call never reaches a person. `once` is the ordinary refusal and the fallthrough
+      // every unbound key lands on.
+      const sticky = decision === 'reject-always';
       // EXT-58 (§7): hand the model the moves it has (re-call with a justification, a different
       // command, or ask the user) plus — when the rater named an already-granted alternative
       // (§4.4) — that tool and the clause saying it will not interrupt the user. This is the
       // message the MODEL sees; the on-screen notice below is unchanged.
       head.resolve({
         type: 'reject',
+        ...(sticky ? { scope: 'session' as const } : {}),
         message: buildRejectionMessage({
           source: 'user',
           toolName: head.pending.name,
@@ -431,37 +439,33 @@ export function App(props: TuiAppProps): React.ReactElement {
       });
       push({
         kind: 'notice',
-        title: 'Command rejected',
-        lines: ['The shell command was not run; the agent was told you declined.'],
+        title: sticky ? 'Command refused for this session' : 'Command rejected',
+        lines: sticky
+          ? [
+              // Exactly what it does, and no more. There is no persisted deny store, so a line
+              // implying one would be §6's "offered and then refused" with the evidence hidden —
+              // and the refusal itself is real, which is what makes the honest wording affordable.
+              // The call is deliberately NOT quoted here: a transcript notice is painted raw, and
+              // the command is the untrusted string this whole dialog frames.
+              'This call will be refused for the rest of this session, without asking again.',
+              'Nothing was saved to the project, so a new session will ask about it again.',
+            ]
+          : ['The shell command was not run; the agent was told you declined.'],
         tone: 'warn',
       });
     } else {
       const scope: ToolApprovalScope = decision;
       head.resolve({ type: 'approve', scope });
-      // CFG-28 (§4.2) — a `catastrophic` approval is NEVER sticky: the runner clamps the
-      // allow-list write, so a `session`/`always` keypress grants exactly this one invocation and
-      // the next variant prompts again. The scope is still sent unchanged (the clamp is core's,
-      // and is the single chokepoint for every surface); the NOTICE is what has to be true, both
-      // in its detail line and in the scope it names. §6: a control offered and then refused reads
-      // as a bug, and a confirmation of a persistence that did not happen is the same failure with
-      // the evidence hidden. Withdrawing `[a]lways` from the menu is [[TUI-C26]]'s.
-      // EXT-70 §6 — the general form of the same rule. `grantPreview` is absent exactly where the
-      // runner would store nothing, and `catastrophic` is one of its cases (the runner discards the
-      // grant for that outcome), so the confirmation branches on WHAT WAS STORED rather than on the
-      // one outcome. Without that, a command that does not statically resolve — or a tool call
-      // nothing can attribute — was confirmed as remembered while the store stayed empty, which is
-      // the same failure the catastrophic clamp exists to prevent, one case further along.
-      const sticky = head.pending.grantPreview !== undefined;
-      const catastrophic = head.pending.safetyVerdict?.outcome === 'catastrophic';
-      const effectiveScope: ToolApprovalScope = sticky ? scope : 'once';
+      // CFG-28 (§4.2) / EXT-70 §6 — **a scope this dialog confirms is a scope the gate will
+      // honour.** A sticky approve is reachable only where `grantPreview` is present, which the
+      // runner attaches exactly where it would store something and withholds for a `catastrophic`
+      // verdict, a command it cannot statically resolve, and a call it cannot attribute. The keys
+      // are gated on the same value in `useInput`, so there is no keystroke that arrives here
+      // asking for a persistence the store will discard — which is why this says what the pressed
+      // scope means and needs no branch for a promise that could not be kept. **The gate is what
+      // carries that, not this text:** an honest confirmation does not make an approval the menu
+      // never offered safe, because the command runs either way.
       const describe = (): string => {
-        if (!sticky && scope !== 'once') {
-          return catastrophic
-            ? 'Approved this once — a command rated catastrophic is never remembered, so the next ' +
-                'one like it will ask again.'
-            : 'Approved this once — there is nothing about this call that can be remembered, so ' +
-                'the next one like it will ask again.';
-        }
         // EXT-71 §3.1 — a grant is exactly the command the human saw, so the confirmation says
         // that and not "this operation". A longer command that merely starts with it asks again.
         if (scope === 'session')
@@ -472,7 +476,7 @@ export function App(props: TuiAppProps): React.ReactElement {
       };
       push({
         kind: 'notice',
-        title: `Command approved (${effectiveScope})`,
+        title: `Command approved (${scope})`,
         lines: [describe()],
         tone: 'info',
       });
@@ -655,20 +659,53 @@ export function App(props: TuiAppProps): React.ReactElement {
   //     PageUp/PageDown page-step, m maximises, Esc unfocuses.
   useInput((input, key) => {
     // Highest priority: a pending tool approval OWNS the keyboard (EXT-9 Phase B2). While one is
-    // shown, o/s/a resolve approve with the matching scope; anything else (n, Esc, Enter, …)
-    // resolves reject — fail-closed, mirroring the readline path. We swallow the key either way
-    // so it can't fall through to abort/debug handling or get typed into the prompt.
+    // shown, `o` approves once, `s`/`a` approve with the matching scope and `d` refuses for the
+    // session — each where that control is on offer — and anything else (n, Esc, Enter, …)
+    // resolves reject, fail-closed, mirroring the readline path. We swallow the key either way so
+    // it can't fall through to abort/debug handling or get typed into the prompt.
     //
-    // CFG-27 removed the `y` key ("switch to auto-approve and approve this one"). Spec §6's
-    // escalation menu offers five choices — ask to explain · approve · always approve · reject ·
-    // always reject — and a per-prompt change of RUNG is not one of them: the ladder has no
-    // "turn the gate down from here" action, so keeping the key would have meant inventing one.
-    // [[TUI-C26]] builds the five-choice menu (and the §6.1 attack banner) on this seam.
+    // **The safe action is the FALLTHROUGH, and no key may erode it.** Doing nothing in
+    // particular — Enter, a stray keystroke, a cat on the keyboard — refuses this one call and
+    // writes nothing. §1.1's property is that everything the menu does not offer is a refusal, and
+    // it has two halves that are easy to do one of:
+    //
+    // - **Every key is bound only where its control was OFFERED.** `grantPreview`/`denyPreview` are
+    //   absent exactly where the runner would store nothing, and they are separate questions — so
+    //   `s`/`a` need `canGrant` and `d` needs `canDeny`. On a reduced menu (every `catastrophic`
+    //   verdict, a command that does not statically resolve, an unattributable tool call) an
+    //   ungated `a` would approve and RUN a command the dialog never offered to approve, which is
+    //   what the reduction exists to prevent; an ungated `d` would turn a mistyped grant into a
+    //   standing refusal. Off-menu keys take the one-shot path like any other.
+    // - **A chord is not the key it carries.** Ink reports Ctrl+D as the bare letter `d` with
+    //   `key.ctrl` set, so without this guard every control here has a hidden second spelling that
+    //   nothing advertises — Ctrl+A writing an allow-list entry, Ctrl+D a session refusal — reached
+    //   by the keystroke a user presses to mean *get me out of this*. Modified is unbound.
+    //
+    //   **The enumeration is complete against ink's five modifier flags**, and completeness is the
+    //   point: this is a disjunction, so a flag left out of it is a live approval path, not a
+    //   cosmetic omission. Ink sets `ctrl`, `meta`, `shift`, `super` and `hyper` (`use-input.js`);
+    //   `capsLock` and `numLock` sit on the same object and are deliberately NOT here — they are
+    //   lock states rather than modifiers, and refusing every key pressed with CapsLock on would be
+    //   a new bug rather than a guard. `shift` is the one modifier deliberately excluded: it is how
+    //   a capital `D` is typed, not a different key.
+    //
+    //   `super`/`hyper` reach `useInput` through the kitty keyboard protocol's CSI-u form, which
+    //   ink's `parse-keypress` decodes whether or not the protocol was ever enabled — enabling it
+    //   only makes a terminal SEND those bytes. Nothing here enables it, so the path is not
+    //   reachable from a real terminal today; it is one option away from being reachable, and the
+    //   spec drives it directly to prove each flag of this guard carries its own weight.
+    //
+    // There is no rung-switching key: §6's menu has no "turn the gate down from here" action, so
+    // binding one would have meant inventing it. §6's *ask to explain* is likewise unbound until it
+    // exists (EXT-104) — a key that does nothing is worse than an absent one.
     if (pendingApproval) {
-      const ch = input.toLowerCase();
+      const ch = key.ctrl || key.meta || key.super || key.hyper ? '' : input.toLowerCase();
+      const canGrant = pendingApproval.pending.grantPreview !== undefined;
+      const canDeny = pendingApproval.pending.denyPreview !== undefined;
       if (ch === 'o') resolveApproval('once');
-      else if (ch === 's') resolveApproval('session');
-      else if (ch === 'a') resolveApproval('always');
+      else if (ch === 's' && canGrant) resolveApproval('session');
+      else if (ch === 'a' && canGrant) resolveApproval('always');
+      else if (ch === 'd' && canDeny) resolveApproval('reject-always');
       else resolveApproval('reject');
       return;
     }

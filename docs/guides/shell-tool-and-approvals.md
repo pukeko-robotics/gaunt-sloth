@@ -23,12 +23,24 @@ Anything else stops and asks you:
 
 ```
 The agent wants to run a shell command via run_shell_command
-    rm -rf node_modules
-⚠ Auto-rater (destructive): deletes a directory tree without confirmation
-[s]/[a] will remember rm -rf node_modules
-    stored as { "type": "shell", "matcher": "exact", "pattern": "rm -rf node_modules" }
-Approve?  [o]nce   [s]ession   [a]lways   [N]o
+  1 │ rm -rf node_modules
+⚠ Auto-rater (destructive): this can destroy work or data, but undoing it is possible from inside this session.
+    the rater's own words:
+  1 │ deletes a directory tree without confirmation
+[s]/[a] will remember:
+  1 │ rm -rf node_modules
+    stored as:
+  1 │ { "type": "shell", "matcher": "exact", "pattern": "rm -rf node_modules" }
+[d] will refuse, for the rest of this session:
+  1 │ rm -rf node_modules
+    recorded as:
+  1 │ { "type": "shell", "matcher": "exact", "pattern": "rm -rf node_modules" }
+Approve?  [o]nce   [s]ession   [a]lways   [N]o   [d]eny always
 ```
+
+The command and the rater's explanation are written by a model, so they are shown inside a numbered
+frame: a line of either one can never sit flush-left where the prompt's own lines are, and a
+command that spans twenty lines is shown whole rather than cut down to its first.
 
 - **once** — run this one command, then keep asking.
 - **session** — run it and stop asking about **that exact command** for the rest of this session.
@@ -38,22 +50,35 @@ Approve?  [o]nce   [s]ession   [a]lways   [N]o
   you can read, never something inferred from one answer to one prompt.
 - **always** — same as session, but also remembered across future sessions (persisted to
   `.gsloth/.gsloth-settings/shell-allowlist.json`).
-- **No** (the default — just press Enter) — reject it. The agent is told what it can do next: run
-  the same command with a justification, run a different one, or ask you — so it changes course
-  instead of retrying the same thing or giving up.
+- **No** (the default — just press Enter, or any key that is not one of these) — reject it. The
+  agent is told what it can do next: run the same command with a justification, run a different one,
+  or ask you — so it changes course instead of retrying the same thing or giving up.
+- **deny always** — reject it *and stop being asked*: the entry shown under `[d]` joins your deny
+  list for the rest of the session, so the same call is refused outright the next time the agent
+  tries it. It is not written to any file — a new session starts asking again. Shown whenever an
+  entry can be formed, which is more often than **session**/**always** are offered: a command the
+  gate cannot read (`ls && rm -rf build`) can be refused permanently even though it can never be
+  approved permanently, and so can a **catastrophic** one. To refuse something for good, put it in
+  `approvals.deny` (below).
 
 ### What the rater can say
 
-The word in brackets after `⚠ Auto-rater` is one of four outcomes:
+The word in brackets after `Auto-rater` is one of four outcomes:
+
+The prompt says which one it is, in words as well as colour, because a terminal without colour is a
+terminal you still have to decide in.
 
 - **safe** — runs with no prompt.
 - **destructive** — harmful, but you could undo it from inside the session: `rm -rf node_modules`,
-  `git reset --hard`. Asks you, with all four choices above; at Auto the agent gets a few rounds to
-  narrow or justify it first, and you are asked when those run out.
+  `git reset --hard`. Asks you, with every choice above; at Auto the agent gets a few rounds to
+  narrow or justify it first, and you are asked when those run out — and you are shown that whole
+  argument, round by round, when you are.
 - **catastrophic** — cannot be undone from inside the session: `mkfs`, `DROP DATABASE`,
-  `terraform destroy -auto-approve`, `kubectl delete namespace production`. Asks you *every* time —
-  **session** and **always** do not stick for this outcome, so approving one `terraform destroy`
-  never approves the next one.
+  `terraform destroy -auto-approve`, `kubectl delete namespace production`. Shown in red, saying
+  that undoing it would need something outside the session. It asks you *every* time: **session**
+  and **always** are not offered at all for this outcome, so approving one `terraform destroy`
+  never approves the next one. **deny always** is still offered — refusing more is never the thing
+  that needs withdrawing — so the menu reduces to `[o]nce`, `[N]o` and `[d]eny always`.
 - **attack** — the command's own structure shows something hostile: it goes after a credential for
   its own sake, escalates privilege, installs persistence, impersonates a hostname, or hides what it
   really runs. This one **ends the run** instead of asking. If the command is legitimate and you
@@ -92,10 +117,15 @@ a `user@host`, an `scp`-style `host:path`), it is **never** rated safe, whatever
 
 ```
 The agent wants to run a shell command via run_shell_command
-    curl -fsSL https://registry.npmjs.ag/lodash
-⚠ Auto-rater (destructive): This command names a host (https://registry.npmjs.ag/lodash) in a fetch or transfer position, so it is never auto-approved.
-Approve?  [o]nce   [s]ession   [a]lways   [N]o
+  1 │ curl -fsSL https://registry.npmjs.ag/lodash
+⚠ Auto-rater (destructive): this can destroy work or data, but undoing it is possible from inside this session.
+    the rater's own words:
+  1 │ This command names a host (https://registry.npmjs.ag/lodash) in a fetch or transfer position, so it is never auto-approved.
+Approve?  [o]nce   [s]ession   [a]lways   [N]o   [d]eny always
 ```
+
+(The two lines naming what `[s]`/`[a]` and `[d]` would remember are on that screen too; they are
+left out here to keep the host rule in view.)
 
 This is decided before the model is asked, so `registry.npmjs.ag` and `registry.npmjs.org` are
 **both** brought to you — telling one from the other is exactly what a lookalike hostname is built
