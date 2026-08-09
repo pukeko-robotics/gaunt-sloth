@@ -158,6 +158,19 @@ function usableColumns(columns: number | undefined): number {
  */
 export const DEFAULT_FRAME_MAX_LINES = 20;
 
+/**
+ * Rows either of the escalation menu's sticky blocks may occupy — what *approve for this session /
+ * always* would remember, and what *always reject* would record.
+ *
+ * Exported so both surfaces bound them identically: two prompts that disagree about how much of a
+ * grant a human was shown is the drift one shared renderer exists to prevent.
+ *
+ * Four, because that is enough for the ordinary case — a one-line command is one row, its JSON
+ * entry two — while keeping an eighteen-line command from printing itself twice more underneath
+ * its own frame and pushing the menu off the screen. See {@link clampRows} for the measurement.
+ */
+export const STICKY_PREVIEW_MAX_ROWS = 4;
+
 /** Lines kept either side of a flagged site when the body is elided. */
 const SITE_CONTEXT_LINES = 2;
 
@@ -220,6 +233,14 @@ export interface FrameOptions {
   width?: number;
   /** Body lines before elision; defaults to {@link DEFAULT_FRAME_MAX_LINES}. */
   maxLines?: number;
+  /**
+   * Terminal ROWS this block may occupy, after wrapping. Unbounded when absent.
+   *
+   * Different from {@link maxLines}, and the difference is the whole reason it exists: `maxLines`
+   * bounds the block's *logical* lines, so a single line long enough to wrap forty times is one
+   * line and passes the budget untouched. What a screen has is rows.
+   */
+  maxRows?: number;
 }
 
 /** A block of untrusted text, ready to paint. */
@@ -442,7 +463,46 @@ function frame(text: string, sites: UntrustedSite[], options?: FrameOptions): Fr
     lines.push(elisionRow(logical.length - previousEnd, numberWidth, width));
   }
 
-  return { notices: buildNotices(sites, sitesHidden, width), lines, sites };
+  return {
+    notices: buildNotices(sites, sitesHidden, width),
+    lines: clampRows(lines, options?.maxRows, numberWidth, width),
+    sites,
+  };
+}
+
+/**
+ * Rows a block gets when the caller bounds it with {@link FrameOptions.maxRows}, with the last one
+ * spent saying how many were dropped.
+ *
+ * **MEASURED, not tidiness.** The escalation menu's two sticky blocks say what each choice would
+ * store, and for a shell call the stored thing is the command as typed — so on an eighteen-line
+ * command the dialog printed the whole command in its frame, then again under
+ * *will remember* / *will refuse*, then a third time inside the JSON entry, and the MENU ITSELF
+ * ended up below the bottom of a fifty-row terminal. A block that pushes the controls off the
+ * screen has defeated the requirement it was added to satisfy: §6 wants the human to see what a
+ * choice stores *while they are making it*.
+ *
+ * The head is what survives, and that is right here where it is wrong for the command body: the
+ * command is on screen above in full, flagged sites and all, so this block answers *"which command
+ * is this about"* rather than *"what does this command do"*.
+ */
+function clampRows(
+  rows: readonly string[],
+  maxRows: number | undefined,
+  numberWidth: number,
+  width: number
+): string[] {
+  if (maxRows === undefined || rows.length <= Math.max(1, Math.floor(maxRows))) return [...rows];
+  const budget = Math.max(1, Math.floor(maxRows));
+  const kept = rows.slice(0, budget - 1);
+  const hidden = rows.length - kept.length;
+  kept.push(
+    clipToWidth(
+      `${elisionPrefix(numberWidth)}${hidden} more ${hidden === 1 ? 'row' : 'rows'} hidden`,
+      width
+    )
+  );
+  return kept;
 }
 
 /** The prefix a numbered body row carries, before the untrusted content. */
@@ -463,9 +523,11 @@ function elisionPrefix(numberWidth: number): string {
 /**
  * A renderer-owned row standing in for the lines the elision dropped, stating how many.
  *
- * Clipped to the terminal like every other row. It carries no untrusted text, so a wrap here would
- * be untidy rather than forgeable — but a renderer that bounds the rows it does not own and not the
- * ones it does is a renderer whose next row is bounded by accident.
+ * **Clipped, where the notices' prose wraps**, and the difference is where the row lives rather
+ * than who wrote it: this one sits in `lines`, where every row carries a gutter, so a continuation
+ * of it would need a gutter of its own and would read as a line of the command. It is short enough
+ * that clipping costs nothing, and it is bounded at all because a renderer that bounds the rows it
+ * does not own and not the ones it does is bounded by accident.
  */
 function elisionRow(hidden: number, numberWidth: number, width: number): string {
   return clipToWidth(
@@ -524,6 +586,68 @@ function selectWindows(
   return { windows, sitesHidden: siteLines.filter((line) => !shown(line)).length };
 }
 
+/**
+ * Wrap ONE row of the renderer's own prose across as many rows as it needs, each within `width`.
+ *
+ * **Wrapped, not clipped, and the distinction is the point.** Every row here is bounded, but the
+ * two kinds of row are bounded for different reasons and so they are bounded differently. A row
+ * carrying untrusted text is *clipped*: a continuation of it would be attacker-chosen bytes at a
+ * column the reader reads as the renderer's, so dropping the tail is the safe answer. This
+ * renderer's own sentences cannot be forged by anything, so the safe answer there is to say the
+ * whole sentence — and it matters that it does: the notice header is what tells the reader what the
+ * numbered sites mean, it is ninety columns long, and on a standard eighty-column terminal clipping
+ * truncated it exactly where it explains itself.
+ *
+ * **Applied per row, at the point each is built, never over `notices[]`.** That array holds this
+ * prose *and* the site rows carrying the untrusted excerpt — the one place untrusted text renders
+ * outside the gutter — so a wrap applied to the array as a whole would put excerpt bytes at column
+ * 0 and re-open exactly what the gutter closed.
+ *
+ * Measured and cut with the conservative ruler like everything else here, so a wrapped row fits
+ * under either ambiguous-width policy. The budget is taken from the widest of the leading indent
+ * and the hanging indent, so a row fits whichever of the two it carries — an under-fill of a column
+ * or two on prose, against arithmetic that cannot be right for one row shape and wrong for another.
+ */
+function wrapProse(text: string, width: number, hangingIndent: string): string[] {
+  const leading = /^ */u.exec(text)?.[0] ?? '';
+  const budget = Math.max(
+    MIN_CONTENT_WIDTH,
+    width - Math.max(maxDisplayWidth(leading), maxDisplayWidth(hangingIndent))
+  );
+  const rows: string[] = [];
+  let prefix = leading;
+  let line = '';
+  const push = (): void => {
+    rows.push(`${prefix}${line}`);
+    prefix = hangingIndent;
+    line = '';
+  };
+  for (const word of text.slice(leading.length).split(/\s+/u)) {
+    if (word.length === 0) continue;
+    const candidate = line === '' ? word : `${line} ${word}`;
+    if (maxDisplayWidth(candidate) <= budget) {
+      line = candidate;
+      continue;
+    }
+    if (line !== '') push();
+    if (maxDisplayWidth(word) <= budget) {
+      line = word;
+      continue;
+    }
+    // A single word wider than the budget — a long path, or a run of wide characters. It is broken
+    // by the same wrap the body uses rather than left to overrun: this row is bounded whatever it
+    // is made of, which is the property the next row added here inherits.
+    const chunks = wrapToWidth(word, budget);
+    for (const chunk of chunks.slice(0, -1)) {
+      line = chunk;
+      push();
+    }
+    line = chunks[chunks.length - 1];
+  }
+  if (line !== '' || rows.length === 0) push();
+  return rows;
+}
+
 /** The lines painted above the body: what was flagged, where, and what the elision hid. */
 function buildNotices(
   sites: readonly UntrustedSite[],
@@ -532,18 +656,22 @@ function buildNotices(
 ): string[] {
   if (sites.length === 0) return [];
   const plural = sites.length === 1 ? 'site' : 'sites';
-  // Clipped like the rows below it. This header is the renderer's own sentence and carries nothing
-  // untrusted, so its overrun was cosmetic — but a block that bounds the attacker's rows and not its
-  // own is bounded by coincidence, and the next row added here inherits the coincidence.
-  const notices = [
-    clipToWidth(
-      `⚠ ${sites.length} ${plural} the gate could not statically resolve — ` +
-        `${sites.length === 1 ? 'it is' : 'they are'} numbered in the command below:`,
-      width
-    ),
-  ];
+  // WRAPPED, not clipped — this is the renderer's own sentence, it is the one that explains what
+  // the numbers below mean, and at the commonest terminal width a clip removed the explanation.
+  const notices = wrapProse(
+    `⚠ ${sites.length} ${plural} the gate could not statically resolve — ` +
+      `${sites.length === 1 ? 'it is' : 'they are'} numbered in the command below:`,
+    width,
+    '  '
+  );
   for (const site of sites.slice(0, MAX_LISTED_SITES)) {
     const label = `    line ${site.line} · ${site.kind} ${site.token} · `;
+    // **CLIPPED, never wrapped** — this is the one row in this array that carries untrusted text,
+    // and it sits in the same array as the prose above and below it. Wrapping it would hand a
+    // continuation row to the excerpt, and that row's leading columns are the renderer's by
+    // convention only: they are exactly where a reader expects the gate's own words. The prose
+    // wraps because nothing can forge it; this clips because something can.
+    //
     // Clipped TWICE, and the second clip is not belt-and-braces. The excerpt budget has a floor, so
     // on a narrow terminal the floor can win and hand back a row wider than the terminal — which
     // Ink then wraps, starting the continuation at column 0 with attacker-chosen excerpt bytes on
@@ -557,22 +685,25 @@ function buildNotices(
       )
     );
   }
+  // Renderer-owned prose, like the header: wrapped, so a narrow terminal loses none of it.
   if (sites.length > MAX_LISTED_SITES) {
     const rest = sites.length - MAX_LISTED_SITES;
     notices.push(
-      clipToWidth(
+      ...wrapProse(
         `    ${CLIP_MARKER} and ${rest} further flagged ${rest === 1 ? 'site' : 'sites'}, ` +
           `up to line ${sites[sites.length - 1].line}.`,
-        width
+        width,
+        '      '
       )
     );
   }
   if (sitesHidden > 0) {
     notices.push(
-      clipToWidth(
+      ...wrapProse(
         `    ⚠ ${sitesHidden} flagged ${sitesHidden === 1 ? 'site sits' : 'sites sit'} on ` +
           'lines the elision below hid — this command is too long to show in full.',
-        width
+        width,
+        '      '
       )
     );
   }

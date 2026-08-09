@@ -477,19 +477,125 @@ describe('shell/framing — a terminal too narrow to frame says so', () => {
  * not its own is bounded by coincidence, and the next row written here inherits the coincidence.
  */
 describe("shell/framing — the renderer's OWN rows are bounded too", () => {
-  it('clips its notice header to the terminal', () => {
+  /** The header rows of a framed command: everything above the per-site list. */
+  const headerRows = (notices: readonly string[]): string[] => {
+    const first = notices.findIndex((row) => row.trimStart().startsWith('line '));
+    return notices.slice(0, first === -1 ? notices.length : first);
+  };
+
+  /**
+   * [[TUI-C26]] task 2 §4 — **the renderer's own prose WRAPS; it does not clip.**
+   *
+   * The header is ninety columns long and a standard terminal is eighty, so clipping truncated it
+   * to `…numbered in the c…` — the sentence that explains what the numbers below mean, cut off
+   * exactly where it explains itself, at the commonest width there is. Nothing untrusted is on
+   * these rows, so a continuation of one cannot be forged and wrapping costs nothing.
+   */
+  it('wraps its notice header instead of truncating the sentence that explains the numbers', () => {
     const framed = frameUntrustedCommand('echo a && echo b ; echo c', { width: 30 });
-    const [header] = framed.notices;
-    expect(maxDisplayWidth(header)).toBeLessThanOrEqual(30);
-    // CONTROL: it is the header, and it was CLIPPED rather than happening to fit — the width
-    // assertion alone would pass on any short string, including one this renderer never wrote.
-    expect(header.startsWith('⚠ 2 sites the gate')).toBe(true);
-    expect(header.endsWith('…')).toBe(true);
-    // The same sentence unclipped is far wider than the terminal, which is what makes the clip the
-    // thing under test rather than a no-op the renderer would have satisfied anyway.
-    expect(
-      maxDisplayWidth(frameUntrustedCommand('echo a && echo b ; echo c').notices[0])
-    ).toBeGreaterThan(30);
+    const header = headerRows(framed.notices);
+    // More than one row: the sentence did not fit, and it was not thrown away to make it fit.
+    expect(header.length).toBeGreaterThan(1);
+    for (const row of header) {
+      expect(maxDisplayWidth(row)).toBeLessThanOrEqual(30);
+      expect(displayWidth(row)).toBeLessThanOrEqual(30);
+      // Nothing was dropped, so no row carries the clip marker.
+      expect(row.endsWith('…')).toBe(false);
+    }
+    // **The whole sentence survives, word for word.** Asserted against the unbounded rendering
+    // rather than against a copy of the sentence here, so this cannot pass by agreeing with a
+    // paraphrase of itself, and a future rewording does not need editing in two places.
+    const whole = frameUntrustedCommand('echo a && echo b ; echo c', { width: 400 }).notices[0];
+    expect(header.map((row) => row.trim()).join(' ')).toBe(whole);
+    // CONTROL: that sentence really is wider than this terminal, so the wrap is the thing under
+    // test rather than a no-op the renderer would have satisfied anyway.
+    expect(maxDisplayWidth(whole)).toBeGreaterThan(30);
+    // ...and it is the header, not some other row.
+    expect(header[0].startsWith('⚠ 2 sites the gate')).toBe(true);
+  });
+
+  /**
+   * The trap the reviewer named, asserted rather than trusted: `notices[]` holds the renderer's own
+   * prose **and** the site rows carrying the untrusted excerpt — the one place untrusted text is
+   * rendered outside the gutter. A wrap applied to the array as a whole would hand the excerpt a
+   * continuation row, putting attacker-chosen bytes at a column the reader reads as the gate's.
+   *
+   * So at a width where BOTH would overflow, the prose wraps and the excerpt clips.
+   */
+  it('clips the untrusted excerpt row while wrapping the prose around it', () => {
+    const marker = 'PAYLOAD-'.repeat(12);
+    const framed = frameUntrustedCommand(`echo one && echo ${marker}`, { width: 60 });
+    const siteRows = framed.notices.filter((row) => row.trimStart().startsWith('line '));
+    expect(siteRows.length).toBeGreaterThan(0);
+    for (const row of siteRows) {
+      expect(maxDisplayWidth(row)).toBeLessThanOrEqual(60);
+      // Every site row still begins with its own label — none of them is a continuation of the one
+      // above, which is what a wrap over the array would have produced.
+      expect(/^ {4}line \d+ · /u.test(row)).toBe(true);
+    }
+    // The excerpt was cut, not carried onto another row: the marker appears once, truncated.
+    const excerptRow = siteRows.find((row) => row.includes('PAYLOAD-'));
+    expect(excerptRow).toBeDefined();
+    expect(excerptRow!.endsWith('…')).toBe(true);
+    expect(framed.notices.filter((row) => row.includes('PAYLOAD-')).length).toBe(1);
+    // CONTROL: the prose on the same screen DID wrap, so this test is about the difference between
+    // the two kinds of row rather than about a renderer that wraps nothing.
+    expect(headerRows(framed.notices).length).toBeGreaterThan(1);
+  });
+
+  /**
+   * The other two renderer-owned prose rows, which live in the same array and take the same rule.
+   * Ten sites over the listing cap, and an elision that hides some of them, is what produces both
+   * at once.
+   */
+  /**
+   * [[TUI-C26]] task 2 — `maxRows` bounds what a screen actually has, which `maxLines` cannot.
+   *
+   * Measured on the PTY: the escalation menu's sticky blocks carry the command as typed, so an
+   * eighteen-line command printed itself in its own frame, again under the sticky label, and a
+   * third time inside the JSON entry — and the menu ended up below the bottom of a fifty-row
+   * terminal. `maxLines` did not help, because the JSON entry is ONE logical line however many rows
+   * it wraps to.
+   */
+  it('bounds a block by ROWS when asked, and says how many it dropped', () => {
+    const command = Array.from({ length: 18 }, (_, index) => `line ${index + 1}`).join(LF);
+    const framed = frameUntrustedText(command, { width: 80, maxRows: 4 });
+    expect(framed.lines).toHaveLength(4);
+    expect(framed.lines.slice(0, 3)).toEqual(['   1 │ line 1', '   2 │ line 2', '   3 │ line 3']);
+    expect(framed.lines[3]).toContain('15 more rows hidden');
+
+    // The case `maxLines` cannot reach: ONE logical line, wrapped over many rows.
+    const single = frameUntrustedText('x'.repeat(2000), { width: 40, maxRows: 3 });
+    expect(single.lines).toHaveLength(3);
+    expect(single.lines[2]).toMatch(/\d+ more rows hidden$/u);
+    // CONTROL: unbounded, the same input is far taller — so the bound is what shortened it.
+    expect(frameUntrustedText('x'.repeat(2000), { width: 40 }).lines.length).toBeGreaterThan(3);
+    // ...and the same input under a LINE budget is not shortened at all, which is the distinction.
+    expect(frameUntrustedText('x'.repeat(2000), { width: 40, maxLines: 3 }).lines.length).toBe(
+      frameUntrustedText('x'.repeat(2000), { width: 40 }).lines.length
+    );
+  });
+
+  it('leaves a block that already fits its row budget untouched', () => {
+    const framed = frameUntrustedText('npm test', { width: 80, maxRows: 4 });
+    expect(framed.lines).toEqual(['  1 │ npm test']);
+  });
+
+  it('wraps the further-sites and hidden-sites rows too', () => {
+    const command = Array.from({ length: 40 }, (_, index) => `echo ${index} ; echo tail`).join(LF);
+    const framed = frameUntrustedCommand(command, { width: 34, maxLines: 6 });
+    const further = framed.notices.filter((row) => row.includes('further flagged'));
+    const hidden = framed.notices.filter((row) => row.includes('the elision below hid'));
+    expect(further.length).toBeGreaterThan(0);
+    expect(hidden.length).toBeGreaterThan(0);
+    for (const row of framed.notices) {
+      expect(maxDisplayWidth(row)).toBeLessThanOrEqual(34);
+      expect(displayWidth(row)).toBeLessThanOrEqual(34);
+    }
+    // Both sentences are complete: each wrapped across rows rather than losing its tail.
+    const joined = framed.notices.map((row) => row.trim()).join(' ');
+    expect(joined).toContain('further flagged sites, up to line 40.');
+    expect(joined).toContain('this command is too long to show in full.');
   });
 
   it('clips its elision row to the terminal', () => {

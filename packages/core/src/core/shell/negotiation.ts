@@ -25,8 +25,9 @@
  * - **The reachability bound is monotonic and a reset does not refill it.** See
  *   {@link MAX_REJECTIONS_BEFORE_HUMAN}.
  */
-import { neutralizeToOneLine } from '#src/core/shell/framing.js';
+import { MIN_CONTENT_WIDTH, neutralizeToOneLine, wrapToWidth } from '#src/core/shell/framing.js';
 import type { RaterNegotiationContext, RaterNegotiationRound } from '#src/core/shell/rater.js';
+import { maxDisplayWidth } from '#src/utils/displayWidth.js';
 
 /**
  * §5.3 — **three CONSECUTIVE rejections end the negotiation** and escalate to the human: the agent
@@ -244,7 +245,38 @@ export class ShellNegotiationState {
 }
 
 /**
- * §6 — render a negotiation for the human being asked to rule on it.
+ * §5.4 — **who is speaking on one row of the transcript**, so a surface can colour the two voices
+ * apart. §5.4 requires the rater's turns to be yellow *precisely so the two are never confused*,
+ * and a renderer that hands back one joined string cannot express that: both surfaces painted the
+ * whole exchange in a single colour, which is the thing the spec forbids.
+ *
+ * - `chrome` — this renderer's own words (the heading).
+ * - `agent`  — what the agent proposed, and the justification it gave for it.
+ * - `rater`  — the rating that answered.
+ */
+export type NegotiationVoice = 'chrome' | 'agent' | 'rater';
+
+/** One terminal row of a rendered negotiation, tagged with whose turn it is. */
+export interface NegotiationRow {
+  voice: NegotiationVoice;
+  text: string;
+}
+
+/**
+ * The prefix a row too wide for the terminal is continued with.
+ *
+ * **A continuation is where this block could be forged, and an indent alone does not stop it.** The
+ * rows carry agent-authored text after this renderer's own `Round N:` / `agent justified:` /
+ * `rater answered:` labels, so a long command left to the terminal's own wrap continues at column 0
+ * — the flush-left forgery `core/shell/framing` exists to prevent, reached through the one block
+ * that was not framed. Wrapping here fixes the column, and a marker no label starts with fixes the
+ * rest: a continuation cannot be read as a turn that was never taken, whatever it contains.
+ */
+const CONTINUATION_PREFIX = '      ┊ ';
+
+/**
+ * §6/§5.4 — render a negotiation for the human being asked to rule on it, one terminal row per
+ * element, each tagged with the voice speaking it.
  *
  * **The whole exchange is shown, never only the last attempt.** *That the agent proposed
  * `git reset --hard origin/main` three times unchanged, against two rejections that each told it
@@ -252,29 +284,72 @@ export class ShellNegotiationState {
  * last attempt is shown.* A prompt that shows the final command alone asks the user to rule on a
  * command; this asks them to rule on an argument, which is the decision they actually have.
  *
- * Returns `null` when there is nothing to show — no rounds — so a surface renders no empty heading
- * for the escalations that had no negotiation at all (`catastrophic`, a declared escalate entry, an
- * unrated rung).
+ * Empty when there are no rounds, so a surface renders no heading over an argument that never
+ * happened (`catastrophic`, a declared escalate entry, an unrated rung).
  *
- * Line-structured and plain: the surfaces own their own colour and framing ([[TUI-C26]] renders the
- * rater's turns in yellow), and a shared renderer is what stops two of them describing one exchange
- * two ways.
+ * **`width` is optional and means "bind the rows to this terminal".** Given one, every row returned
+ * fits it under either ambiguous-width policy — measured with the same conservative ruler
+ * `core/shell/framing` budgets with, never `.length`, because a row measured as fitting that does
+ * not fit is a row the terminal wraps back to column 0. Omitted, rows are returned unwrapped, which
+ * is what the §6.2 non-interactive message wants: it is prose in an exception, not a screen.
+ *
+ * A wrapped row keeps the voice of the row it continues. A continuation painted as chrome would put
+ * the rater's words in the agent's colour at exactly the width where a long argument is hardest to
+ * read, which is the confusion §5.4 exists to remove.
+ */
+export function renderNegotiationRows(
+  rounds: readonly RaterNegotiationRound[],
+  options?: { width?: number }
+): NegotiationRow[] {
+  if (rounds.length === 0) return [];
+  const rows: NegotiationRow[] = [
+    {
+      voice: 'chrome',
+      text: `The agent argued with the auto-rater ${rounds.length} ${rounds.length === 1 ? 'time' : 'times'} before this:`,
+    },
+  ];
+  rounds.forEach((round, index) => {
+    rows.push({ voice: 'agent', text: `  Round ${index + 1}: ${oneLine(round.command)}` });
+    const justification = round.justification?.trim();
+    if (justification) {
+      rows.push({ voice: 'agent', text: `    agent justified: ${oneLine(justification)}` });
+    }
+    const reason = round.reason.trim();
+    rows.push({
+      voice: 'rater',
+      text: `    rater answered: ${round.outcome}${reason ? ` — ${oneLine(reason)}` : ''}`,
+    });
+  });
+  const width = options?.width;
+  if (width === undefined) return rows;
+  return rows.flatMap((row) => wrapRow(row, width));
+}
+
+/** One logical row as the terminal rows it needs, continuations marked and voice preserved. */
+function wrapRow(row: NegotiationRow, width: number): NegotiationRow[] {
+  const budget = Math.max(MIN_CONTENT_WIDTH, width - maxDisplayWidth(CONTINUATION_PREFIX));
+  const [head, ...rest] = wrapToWidth(row.text, budget);
+  return [
+    { voice: row.voice, text: head },
+    ...rest.map((text) => ({ voice: row.voice, text: `${CONTINUATION_PREFIX}${text}` })),
+  ];
+}
+
+/**
+ * The same transcript as one string, for a consumer with no screen to lay it out on: §6.2's
+ * non-interactive escalation message, where the exchange goes into an exception because that
+ * message is the only thing anyone sees on that path.
+ *
+ * Defined as {@link renderNegotiationRows} joined, so the string and the rows can never come to
+ * describe one exchange two ways — the whole reason there is one renderer and two surfaces.
+ * `null` when there is nothing to show.
  */
 export function renderNegotiationTranscript(
   rounds: readonly RaterNegotiationRound[]
 ): string | null {
-  if (rounds.length === 0) return null;
-  const lines: string[] = [
-    `The agent argued with the auto-rater ${rounds.length} ${rounds.length === 1 ? 'time' : 'times'} before this:`,
-  ];
-  rounds.forEach((round, index) => {
-    lines.push(`  Round ${index + 1}: ${oneLine(round.command)}`);
-    const justification = round.justification?.trim();
-    if (justification) lines.push(`    agent justified: ${oneLine(justification)}`);
-    const reason = round.reason.trim();
-    lines.push(`    rater answered: ${round.outcome}${reason ? ` — ${oneLine(reason)}` : ''}`);
-  });
-  return lines.join('\n');
+  const rows = renderNegotiationRows(rounds);
+  if (rows.length === 0) return null;
+  return rows.map((row) => row.text).join('\n');
 }
 
 /**

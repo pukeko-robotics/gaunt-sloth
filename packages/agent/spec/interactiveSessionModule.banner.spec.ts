@@ -37,6 +37,7 @@ const displayLaunchBannerMock = vi.fn();
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
   defaultStatusCallback: vi.fn(),
   display: displayMock,
+  displayError: vi.fn(),
   displayInfo: vi.fn(),
   displayLaunchBanner: displayLaunchBannerMock,
   displayWarning: vi.fn(),

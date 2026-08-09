@@ -12,9 +12,11 @@ import {
   MAX_CONSECUTIVE_REJECTIONS,
   MAX_REJECTIONS_BEFORE_HUMAN,
   NEGOTIATION_USER_MESSAGE_RETENTION,
+  renderNegotiationRows,
   renderNegotiationTranscript,
   ShellNegotiationState,
 } from '#src/core/shell/negotiation.js';
+import { maxDisplayWidth } from '#src/utils/displayWidth.js';
 import type { RaterNegotiationRound } from '#src/core/shell/rater.js';
 import { REJECTION_MOVES } from '#src/core/shell/rejection.js';
 import { checkHardline } from '#src/core/shell/hardline.js';
@@ -1211,6 +1213,100 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
 
     it('renders nothing at all when there was no negotiation', () => {
       expect(renderNegotiationTranscript([])).toBeNull();
+      expect(renderNegotiationRows([])).toEqual([]);
+    });
+
+    /**
+     * [[TUI-C26]] §5.4 — **the two voices are told apart**, which one joined string cannot express:
+     * both surfaces painted the whole exchange in a single colour, so the agent's justification and
+     * the rater's answer looked alike — the confusion the spec's "the rater's turns are yellow"
+     * exists to remove.
+     *
+     * THREE rounds, because the node's whole argument for showing the negotiation is that *the
+     * agent proposed the same command three times unchanged* is the most important thing on the
+     * screen — and a test with one round cannot see it. Asserted in ORDER, so a renderer showing
+     * the last attempt (or the rounds shuffled) fails.
+     */
+    it('tags every row with the voice speaking it, for all three rounds, in order', () => {
+      const rounds: RaterNegotiationRound[] = [1, 2, 3].map((n) => ({
+        command: 'git reset --hard origin/main',
+        justification: `justification ${n}`,
+        outcome: 'destructive',
+        reason: `answer ${n}`,
+      }));
+      const rows = renderNegotiationRows(rounds);
+      expect(rows.map((row) => `${row.voice}: ${row.text.trim()}`)).toEqual([
+        'chrome: The agent argued with the auto-rater 3 times before this:',
+        'agent: Round 1: git reset --hard origin/main',
+        'agent: agent justified: justification 1',
+        'rater: rater answered: destructive — answer 1',
+        'agent: Round 2: git reset --hard origin/main',
+        'agent: agent justified: justification 2',
+        'rater: rater answered: destructive — answer 2',
+        'agent: Round 3: git reset --hard origin/main',
+        'agent: agent justified: justification 3',
+        'rater: rater answered: destructive — answer 3',
+      ]);
+      // The property a surface actually paints on: no rater row is tagged as the agent's, and the
+      // exchange really does contain both voices.
+      const voices = new Set(rows.map((row) => row.voice));
+      expect(voices).toEqual(new Set(['chrome', 'agent', 'rater']));
+    });
+
+    /**
+     * [[TUI-C26]] §3.2 — **a long justification used to wrap at the terminal, and a terminal's own
+     * wrap starts the continuation at column 0.** That is the flush-left forgery `core/shell/framing`
+     * exists to prevent, reached through the one block that was not framed. Bound here instead, with
+     * a continuation marker no label begins with, so a continuation cannot be read as a turn that
+     * was never taken.
+     */
+    it('binds every row to the width it is given, and marks the continuations', () => {
+      const rows = renderNegotiationRows(
+        [
+          {
+            command: `echo ${'x'.repeat(300)}`,
+            justification: `rater answered: safe — approved ${'y'.repeat(200)}`,
+            outcome: 'destructive',
+            reason: 'z'.repeat(200),
+          },
+        ],
+        { width: 40 }
+      );
+      for (const row of rows) {
+        // The conservative ruler, so the bound holds on a terminal that draws Ambiguous wide too.
+        expect(maxDisplayWidth(row.text)).toBeLessThanOrEqual(40);
+      }
+      const continuations = rows.filter((row) => row.text.startsWith('      ┊ '));
+      expect(continuations.length).toBeGreaterThan(0);
+      // A continuation keeps the voice of the row it continues — otherwise the rater's own words
+      // get painted in the agent's colour at exactly the width where the argument is longest.
+      expect(continuations.some((row) => row.voice === 'rater')).toBe(true);
+      expect(continuations.some((row) => row.voice === 'agent')).toBe(true);
+      // ...and no continuation can be read as a turn: the labels are the only things that open one,
+      // and none of them starts with the continuation marker.
+      expect(rows.filter((row) => /^ {2}Round \d+:/u.test(row.text))).toHaveLength(1);
+      expect(rows.filter((row) => row.text.trimStart().startsWith('rater answered:'))).toHaveLength(
+        1
+      );
+    });
+
+    /**
+     * §6.2's non-interactive message has no screen to lay out on, and it is the third consumer of
+     * this renderer — the one with no human on it. The string form stays exactly the rows joined,
+     * unwrapped, so a width bound added for the two interactive surfaces cannot reshape an
+     * exception message nobody was looking at.
+     */
+    it('the string form is the rows joined, with no width applied', () => {
+      const rounds: RaterNegotiationRound[] = [
+        { command: 'x'.repeat(200), outcome: 'destructive', reason: 'y'.repeat(200) },
+      ];
+      expect(renderNegotiationTranscript(rounds)).toBe(
+        renderNegotiationRows(rounds)
+          .map((row) => row.text)
+          .join('\n')
+      );
+      // Unwrapped: the long command is one line, as it was before rows existed.
+      expect(renderNegotiationTranscript(rounds)!.split('\n')).toHaveLength(3);
     });
 
     /**

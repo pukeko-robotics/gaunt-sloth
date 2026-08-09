@@ -396,6 +396,11 @@ describe('GthAgentRunner', () => {
         // the words the menu's control is written in.
         grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "ls -la" }',
         grantSummary: 'ls -la',
+        // [[TUI-C26]] §6 — and the same for the *always reject* control. For a resolvable command
+        // the two entries coincide; they part company on the commands that do not resolve, which
+        // `GthAgentRunnerDenyMenu.spec.ts` is about.
+        denyPreview: '{ "type": "shell", "matcher": "exact", "pattern": "ls -la" }',
+        denySummary: 'ls -la',
       });
       // Resume sent the HITL decisions array shape humanInTheLoopMiddleware expects.
       expect(streamResume).toHaveBeenCalledWith(
@@ -3115,6 +3120,8 @@ describe('GthAgentRunner', () => {
         args: { command: 'ls -la' },
         grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "ls -la" }',
         grantSummary: 'ls -la',
+        denyPreview: '{ "type": "shell", "matcher": "exact", "pattern": "ls -la" }',
+        denySummary: 'ls -la',
       });
       // Resume sent the HITL `{ decisions }` shape humanInTheLoopMiddleware expects.
       expect(streamWithEventsResume).toHaveBeenCalledWith(

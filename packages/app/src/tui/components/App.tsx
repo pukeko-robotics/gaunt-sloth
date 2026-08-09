@@ -413,16 +413,24 @@ export function App(props: TuiAppProps): React.ReactElement {
   // Resolve the currently-shown approval (the queue head) and commit a brief notice so the
   // decision reads in the transcript (TUI-C14 notice conventions). Dequeues the head so the next
   // queued approval (if any) surfaces. Approve carries the chosen scope; reject is fail-closed.
-  const resolveApproval = (decision: 'once' | 'session' | 'always' | 'reject'): void => {
+  const resolveApproval = (
+    decision: 'once' | 'session' | 'always' | 'reject' | 'reject-always'
+  ): void => {
     const head = pendingApproval;
     if (!head) return;
-    if (decision === 'reject') {
+    if (decision === 'reject' || decision === 'reject-always') {
+      // [[TUI-C26]] §6 — *always reject* is a rejection that is also REMEMBERED: the runner records
+      // a deny entry for this call, and the matcher consults it before anything else, so the next
+      // identical call never reaches a person. `once` is the ordinary refusal and the fallthrough
+      // every unbound key lands on.
+      const sticky = decision === 'reject-always';
       // EXT-58 (§7): hand the model the moves it has (re-call with a justification, a different
       // command, or ask the user) plus — when the rater named an already-granted alternative
       // (§4.4) — that tool and the clause saying it will not interrupt the user. This is the
       // message the MODEL sees; the on-screen notice below is unchanged.
       head.resolve({
         type: 'reject',
+        ...(sticky ? { scope: 'session' as const } : {}),
         message: buildRejectionMessage({
           source: 'user',
           toolName: head.pending.name,
@@ -431,8 +439,18 @@ export function App(props: TuiAppProps): React.ReactElement {
       });
       push({
         kind: 'notice',
-        title: 'Command rejected',
-        lines: ['The shell command was not run; the agent was told you declined.'],
+        title: sticky ? 'Command refused for this session' : 'Command rejected',
+        lines: sticky
+          ? [
+              // Exactly what it does, and no more. There is no persisted deny store, so a line
+              // implying one would be §6's "offered and then refused" with the evidence hidden —
+              // and the refusal itself is real, which is what makes the honest wording affordable.
+              // The call is deliberately NOT quoted here: a transcript notice is painted raw, and
+              // the command is the untrusted string this whole dialog frames.
+              'This call will be refused for the rest of this session, without asking again.',
+              'Nothing was saved to the project, so a new session will ask about it again.',
+            ]
+          : ['The shell command was not run; the agent was told you declined.'],
         tone: 'warn',
       });
     } else {
@@ -655,20 +673,28 @@ export function App(props: TuiAppProps): React.ReactElement {
   //     PageUp/PageDown page-step, m maximises, Esc unfocuses.
   useInput((input, key) => {
     // Highest priority: a pending tool approval OWNS the keyboard (EXT-9 Phase B2). While one is
-    // shown, o/s/a resolve approve with the matching scope; anything else (n, Esc, Enter, …)
-    // resolves reject — fail-closed, mirroring the readline path. We swallow the key either way
-    // so it can't fall through to abort/debug handling or get typed into the prompt.
+    // shown, o/s/a resolve approve with the matching scope, `d` refuses permanently where that
+    // control is on offer, and anything else (n, Esc, Enter, …) resolves reject — fail-closed,
+    // mirroring the readline path. We swallow the key either way so it can't fall through to
+    // abort/debug handling or get typed into the prompt.
     //
-    // CFG-27 removed the `y` key ("switch to auto-approve and approve this one"). Spec §6's
-    // escalation menu offers five choices — ask to explain · approve · always approve · reject ·
-    // always reject — and a per-prompt change of RUNG is not one of them: the ladder has no
-    // "turn the gate down from here" action, so keeping the key would have meant inventing one.
-    // [[TUI-C26]] builds the five-choice menu (and the §6.1 attack banner) on this seam.
+    // **The safe action is the FALLTHROUGH, and `d` must not erode it.** Doing nothing in
+    // particular — Enter, a stray keystroke, a cat on the keyboard — refuses this one call and
+    // writes nothing. Adding a key that also rejects must not turn a mistyped grant into a
+    // permanent refusal either, so `d` is bound ONLY where the runner offered the control (it
+    // computes `denyPreview` exactly where an entry can be recorded); anywhere else `d` is an
+    // unbound key like any other and takes the one-shot path.
+    //
+    // There is no rung-switching key: §6's menu has no "turn the gate down from here" action, so
+    // binding one would have meant inventing it. §6's *ask to explain* is likewise unbound until it
+    // exists (EXT-104) — a key that does nothing is worse than an absent one.
     if (pendingApproval) {
       const ch = input.toLowerCase();
+      const canDeny = pendingApproval.pending.denyPreview !== undefined;
       if (ch === 'o') resolveApproval('once');
       else if (ch === 's') resolveApproval('session');
       else if (ch === 'a') resolveApproval('always');
+      else if (ch === 'd' && canDeny) resolveApproval('reject-always');
       else resolveApproval('reject');
       return;
     }

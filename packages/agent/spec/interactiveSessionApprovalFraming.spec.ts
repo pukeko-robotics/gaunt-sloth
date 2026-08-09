@@ -40,9 +40,11 @@ vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => ({
 const displayMock = vi.fn();
 const displayInfoMock = vi.fn();
 const displayWarningMock = vi.fn();
+const displayErrorMock = vi.fn();
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
   defaultStatusCallback: vi.fn(),
   display: displayMock,
+  displayError: displayErrorMock,
   displayInfo: displayInfoMock,
   displayLaunchBanner: vi.fn(),
   displayWarning: displayWarningMock,
@@ -101,7 +103,7 @@ const sessionConfig = {
 
 /** Every line this surface put on the terminal, in order. */
 const allLines = (): string[] =>
-  [displayMock, displayWarningMock, displayInfoMock]
+  [displayMock, displayWarningMock, displayInfoMock, displayErrorMock]
     .flatMap((mock) => mock.mock.calls.map((call: unknown[]) => String(call[0])))
     .flatMap((text) => text.split('\n'));
 
@@ -209,8 +211,10 @@ describe('interactiveSessionModule — the readline approval prompt frames untru
     });
 
     const out = allLines();
-    // The outcome is the surface's own line; the reason is framed beneath it.
-    expect(out).toContain('⚠ Auto-rater (destructive):');
+    // The outcome and what it MEANS are the surface's own line; the reason is framed beneath it,
+    // under a label that keeps the words attributed to the rater rather than to the gate.
+    expect(out.some((line) => line.startsWith('⚠ Auto-rater (destructive):'))).toBe(true);
+    expect(out).toContain("    the rater's own words:");
     expect(gutterRows()).toContainEqual([1, 'Routine.\\x0doverwrite\\x1b[2J']);
     expect(gutterRows()).toContainEqual([2, 'Approve?  [o]nce   [s]ession   [a]lways   [N]o']);
     // The forged menu line never reaches column 0, where the real one lives.

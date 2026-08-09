@@ -2,6 +2,7 @@ import { CommandLineConfigOverrides, GthConfig, initConfig } from '@gaunt-sloth/
 import {
   defaultStatusCallback,
   display,
+  displayError,
   displayInfo,
   displayLaunchBanner,
   displayWarning,
@@ -14,12 +15,18 @@ import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
 import { GthAbstractAgent } from '@gaunt-sloth/core/core/GthAbstractAgent.js';
 import { launchBannerFields, launchBannerText } from '@gaunt-sloth/core/core/launchBanner.js';
 import { buildRejectionMessage } from '@gaunt-sloth/core/core/shell/rejection.js';
-import { renderNegotiationTranscript } from '@gaunt-sloth/core/core/shell/negotiation.js';
+import { renderNegotiationRows } from '@gaunt-sloth/core/core/shell/negotiation.js';
+import {
+  describeRaterOutcome,
+  RATER_REASON_LABEL,
+  type EscalationTone,
+} from '@gaunt-sloth/core/core/shell/escalationSeverity.js';
 import {
   frameUntrustedCommand,
   frameUntrustedText,
   frameWidthFor,
   narrowTerminalNotice,
+  STICKY_PREVIEW_MAX_ROWS,
 } from '@gaunt-sloth/core/core/shell/framing.js';
 import { writeDebugDump } from '@gaunt-sloth/core/utils/debugDump.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
@@ -54,6 +61,20 @@ import {
   type DebugDumpInput,
   type SlashCommandNotice,
 } from '#src/modules/slashCommands.js';
+
+/**
+ * [[TUI-C26]] §6 — the `display*` channel an escalation's severity is written on.
+ *
+ * This surface has no colour of its own: `consoleUtils` owns it per channel, so choosing the
+ * channel IS choosing the colour (red for `displayError`, yellow for `displayWarning`, dim for
+ * `displayInfo`). All three write to stdout in call order, so the dialog reads top to bottom
+ * whichever one a line goes to.
+ *
+ * It is the observable an assertion can bite on, too: a change that made `catastrophic` look like
+ * `destructive` here would have to route both to the same function, which a test can see.
+ */
+const severityChannel = (tone: EscalationTone): ((message: string) => void) =>
+  tone === 'danger' ? displayError : tone === 'warn' ? displayWarning : displayInfo;
 
 export interface SessionConfig {
   mode: 'chat' | 'code';
@@ -139,10 +160,11 @@ export async function createInteractiveSession(
     // `run_shell_command`. When a run suspends on such a tool call, the runner calls this with
     // the pending command. EXT-9 Tier-2: instead of a bare y/N, offer a scoped choice so the
     // human can stop re-prompting for an operation they trust:
-    //   [o]nce    — approve this single invocation only (persists nothing),
-    //   [s]ession — auto-approve this command's classified prefix for the rest of the session,
-    //   [a]lways  — additionally persist it to the project allow-list,
-    //   anything else → reject (fail-closed).
+    //   [o]nce        — approve this single invocation only (persists nothing),
+    //   [s]ession     — auto-approve this exact command for the rest of the session,
+    //   [a]lways      — additionally persist it to the project allow-list,
+    //   [d]eny always — refuse it AND record a deny entry for the rest of the session,
+    //   anything else → reject this one call (fail-closed, and it stays the fallthrough).
     // The runner consults the allow-list BEFORE calling this, so trusted commands never reach
     // this prompt at all. (The Ink TUI surfaces the same scoped prompt via an approval bridge —
     // see tuiSessionModule's createApprovalBridge + the <ApprovalPrompt> component.)
@@ -176,19 +198,35 @@ export async function createInteractiveSession(
       // rating exists; at the unrated rungs there is none and the prompt shows the command alone.
       // The outcome is a schema enum; the reason is model-authored prose and is framed exactly like
       // the command, because a dialog forgeable through the string that explains it is not a gate.
+      // [[TUI-C26]] §6 — the severity is legible in three independent ways: a glyph, a sentence of
+      // the gate's own naming what the outcome MEANS, and the channel it is written on. The channel
+      // is this surface's colour: `catastrophic` goes to `displayError` (red) where `destructive`
+      // goes to `displayWarning` (yellow), so the two cannot look alike — and the sentence carries
+      // it anyway for a terminal with no colour at all, which is the one that must not be left out.
       if (pending.safetyVerdict) {
-        displayWarning(`⚠ Auto-rater (${pending.safetyVerdict.outcome}):`);
+        const severity = describeRaterOutcome(pending.safetyVerdict.outcome);
+        const say = severityChannel(severity.tone);
+        say(severity.heading);
+        // The reason is the RATER's, and now that the line above it is the gate's own sentence the
+        // attribution has to be said rather than implied.
+        displayInfo(RATER_REASON_LABEL);
         for (const line of frameUntrustedText(pending.safetyVerdict.reason, { width: frameWidth })
           .lines) {
-          displayWarning(line);
+          say(line);
         }
       }
       // EXT-71 §3.2 — when a declared `approvals.escalate` entry is what brought this call here,
       // the prompt shows THE ENTRY THAT FIRED. Without it the user is asked about a command their
       // rung would have approved, with nothing on screen tying the question to the line they wrote
       // — which reads as the gate malfunctioning rather than as their own rule working.
+      // [[TUI-C26]] — framed rather than interpolated. The entry is usually something the user
+      // wrote, but an MCP entry can carry server-supplied names, and this line sits one string away
+      // from the prompt's own chrome. The label stays this surface's own line.
       if (pending.escalatedBy) {
-        displayWarning(`⚠ Your approvals.escalate list matched this call: ${pending.escalatedBy}`);
+        displayWarning('⚠ Your approvals.escalate list matched this call:');
+        for (const line of frameUntrustedText(pending.escalatedBy, { width: frameWidth }).lines) {
+          displayWarning(line);
+        }
       }
       // [[EXT-29]] §6 — when a §5 negotiation preceded this escalation, the human is shown ALL of
       // it. The user is not asked to rule on the final command in isolation: that the agent
@@ -196,9 +234,18 @@ export async function createInteractiveSession(
       // what to fix, is the most important thing on the screen and is invisible if only the last
       // attempt is shown. Rendered through core's shared renderer, so the surfaces cannot describe
       // one exchange two ways.
-      const negotiation = renderNegotiationTranscript(pending.negotiationRounds ?? []);
-      if (negotiation) {
-        displayWarning(negotiation);
+      //
+      // [[TUI-C26]] §5.4 — rendered as ROWS, so the two voices are told apart: the rater's turns go
+      // to the warn channel (yellow) and the agent's to the plain one, which is what the spec asks
+      // for and what one joined string could not express — the whole exchange used to arrive in a
+      // single colour. The rows are bound to the terminal width for the same reason the command is:
+      // a long justification left to the terminal's own wrap continues at column 0.
+      for (const row of renderNegotiationRows(pending.negotiationRounds ?? [], {
+        width: frameWidth,
+      })) {
+        if (row.voice === 'rater') displayWarning(row.text);
+        else if (row.voice === 'agent') display(row.text);
+        else displayInfo(row.text);
       }
       // EXT-71/EXT-70 §6 — the menu MUST show what a sticky choice will store, at the moment of
       // the choice, and it names it in the words the control is written in: the command itself for
@@ -211,14 +258,46 @@ export async function createInteractiveSession(
         // widened pattern), so they inherit the command's problem in less space: an in-line
         // `approved by rater` fits on one line untouched. Framed like everything else, with the
         // label kept as this surface's OWN line so the untrusted half can never be read as chrome.
+        // Bounded to a few rows: for a shell call these carry the command as typed, which is
+        // already printed in full above — so an unbounded copy of a long command here (twice over,
+        // since the entry repeats it) scrolls the MENU off the screen, and a control the human
+        // cannot see is not one they were offered.
         displayInfo('[s]/[a] will remember:');
         for (const line of frameUntrustedText(pending.grantSummary ?? pending.grantPreview!, {
           width: frameWidth,
+          maxRows: STICKY_PREVIEW_MAX_ROWS,
         }).lines) {
           displayInfo(line);
         }
         displayInfo('    stored as:');
-        for (const line of frameUntrustedText(pending.grantPreview!, { width: frameWidth }).lines) {
+        for (const line of frameUntrustedText(pending.grantPreview!, {
+          width: frameWidth,
+          maxRows: STICKY_PREVIEW_MAX_ROWS,
+        }).lines) {
+          displayInfo(line);
+        }
+      }
+      // [[TUI-C26]] §6 — the same requirement for the OTHER sticky choice, and its availability is
+      // a different question: the runner offers a deny entry in cases where no grant exists at all
+      // (a command that does not statically resolve, every `catastrophic` verdict), because a
+      // refusal that cannot be decided still refuses. `recorded as:` rather than a second
+      // `stored as:` — one dialog, two labels that read alike, is how a reader loses track of which
+      // block they are looking at. The label states the lifetime because there is no persisted deny
+      // store and the control must not imply one.
+      const stickyDeny = pending.denyPreview !== undefined;
+      if (stickyDeny) {
+        displayInfo('[d] will refuse, for the rest of this session:');
+        for (const line of frameUntrustedText(pending.denySummary ?? pending.denyPreview!, {
+          width: frameWidth,
+          maxRows: STICKY_PREVIEW_MAX_ROWS,
+        }).lines) {
+          displayInfo(line);
+        }
+        displayInfo('    recorded as:');
+        for (const line of frameUntrustedText(pending.denyPreview!, {
+          width: frameWidth,
+          maxRows: STICKY_PREVIEW_MAX_ROWS,
+        }).lines) {
           displayInfo(line);
         }
       }
@@ -229,21 +308,23 @@ export async function createInteractiveSession(
       // suspended on the tool interrupt, whose stream-end unref'd stdin).
       let answer: string;
       try {
-        // §6 — a sticky control is SHOWN only where a sticky grant is actually on offer. Where
+        // §6 — a sticky control is SHOWN only where the gate would actually store something. Where
         // nothing would be remembered — a `catastrophic` outcome (§4.2), a command that does not
         // statically resolve, a tool call nothing can attribute — the menu simply does not offer
         // the choice, because "a control that is offered and then refused reads as a bug rather
         // than as a policy". Hiding it, never disabling it: a disabled control invites the user to
-        // hunt for why.
-        answer = (
-          await askLine(
-            formatInputPrompt(
-              sticky
-                ? 'Approve? [o]nce / [s]ession / [a]lways / [N]o: '
-                : 'Approve? [o]nce / [N]o: '
-            )
-          )
-        )
+        // hunt for why. The two sticky controls are judged SEPARATELY: the deny entry exists in
+        // cases where no grant does, which is the whole reason it is a second condition.
+        //
+        // Assembled from parts rather than by enumerating the four combinations, so a menu spelling
+        // nobody wrote down cannot reach a terminal.
+        const controls = [
+          '[o]nce',
+          ...(sticky ? ['[s]ession', '[a]lways'] : []),
+          '[N]o',
+          ...(stickyDeny ? ['[d]eny always'] : []),
+        ];
+        answer = (await askLine(formatInputPrompt(`Approve? ${controls.join(' / ')}: `)))
           .trim()
           .toLowerCase();
       } finally {
@@ -285,13 +366,27 @@ export async function createInteractiveSession(
         );
         return { type: 'approve', scope: 'always' };
       }
-      displayInfo('Command rejected.');
+      // [[TUI-C26]] §6 — *always reject*: a refusal that is also recorded, so the next identical
+      // call is refused by rule without reaching a person. Answered only where the control was
+      // OFFERED; typed anywhere else it is an unbound answer like any other and falls through to
+      // the one-shot refusal below, which is what keeps the safe action the fallthrough.
+      const stickyRejected = stickyDeny && (answer === 'd' || answer === 'deny');
+      // The confirmation says what actually happened and stops there. There is no persisted deny
+      // store, so a line implying one would be the same failure §6 names when it calls a control
+      // offered and then refused a bug — with the evidence hidden, which is worse.
+      displayInfo(
+        stickyRejected
+          ? 'Refused — this call will not run for the rest of this session, and will not ask ' +
+              'again. Nothing was saved to the project, so a new session will ask about it again.'
+          : 'Command rejected.'
+      );
       // EXT-58 (§7): the model is told the moves it has — re-call with a justification, call a
       // different command, or ask the user — and, when the rater named an already-granted
       // alternative (§4.4), that tool plus the clause saying it needs no approval. A bare "user
       // rejected" leaves the model to guess, which it does by repeating itself or giving up.
       return {
         type: 'reject',
+        ...(stickyRejected ? { scope: 'session' as const } : {}),
         message: buildRejectionMessage({
           source: 'user',
           toolName: pending.name,

@@ -41,9 +41,17 @@ vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => ({
 // ── @gaunt-sloth/core/utils/consoleUtils.js ───────────────────────────────────
 const displayInfoMock = vi.fn();
 const displayWarningMock = vi.fn();
+/**
+ * [[TUI-C26]] §6 — the CHANNEL is this surface's colour, so it is also the observable. A
+ * `catastrophic` escalation is written with `displayError` (red) where a `destructive` one is
+ * written with `displayWarning` (yellow); captured here so the two can be told apart by assertion
+ * rather than by reading.
+ */
+const displayErrorMock = vi.fn();
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
   defaultStatusCallback: vi.fn(),
   display: vi.fn(),
+  displayError: displayErrorMock,
   displayInfo: displayInfoMock,
   displayLaunchBanner: vi.fn(),
   displayWarning: displayWarningMock,

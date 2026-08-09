@@ -203,6 +203,30 @@ export interface PendingToolInterrupt {
    */
   grantSummary?: string;
   /**
+   * [[TUI-C26]] §6 — **what the menu's *always reject* choice will record**, in the object form the
+   * user would write in a config file. The deny mirror of {@link grantPreview}, shown at the moment
+   * of the choice for the same reason: a control that does not say what it stores is one the user
+   * has to guess at.
+   *
+   * **Its availability is NOT the grant's**, and reading one off the other is the mistake this
+   * field exists to prevent. The matcher's own rule is *undecidable → no match on the allow side, a
+   * match on the deny side*, so a command the gate cannot statically resolve **can** be refused
+   * permanently even though it can never be allowed permanently. `always reject` also stays offered
+   * on a `catastrophic` verdict, where §4.2 withdraws every sticky grant: sticky refusal is safe in
+   * every direction, and it is only the grant that is ever made harder.
+   *
+   * Absent only where the entry grammar cannot hold one at all — today, an MCP call whose server
+   * could not be attributed (the grammar's `server` cannot be empty). Absent means the control is
+   * **not offered**, never offered-and-disabled.
+   */
+  denyPreview?: string;
+  /**
+   * §6 — the same deny entry in the words the control is written in, through the one-liner every
+   * other provenance message uses. Present exactly when {@link denyPreview} is, since both are
+   * rendered from the one entry the runner would record.
+   */
+  denySummary?: string;
+  /**
    * [[EXT-29]] §6 — **every round of the §5 negotiation that preceded this escalation**, oldest
    * first, when one did.
    *
@@ -230,15 +254,35 @@ export interface PendingToolInterrupt {
 export type ToolApprovalScope = 'once' | 'session' | 'always';
 
 /**
+ * §6 — persistence scope for a `reject` decision, the *always reject* half of the escalation menu:
+ * - `once`    — refuse this single invocation; remember nothing (the default).
+ * - `session` — additionally record a **deny** entry for this call, in the one entry grammar, for
+ *   the life of this runner instance. The matcher consults it before anything else, so the next
+ *   identical call is refused without reaching a person at all.
+ *
+ * **There is deliberately no `always`.** An `approve` can persist because there is a project store
+ * to persist it to; there is no persisted deny store, and inventing one is a decision about a file
+ * users will have to live with rather than a rendering choice. So the scopes here are the ones the
+ * gate can actually honour, and a control that promised more would be §6's own failure mode — an
+ * affordance offered and then quietly refused.
+ */
+export type ToolRejectScope = 'once' | 'session';
+
+/**
  * A consumer-supplied decision on a {@link PendingToolInterrupt}: approve runs the tool,
  * reject feeds the model a tool-rejected message (with the optional reason).
  *
- * `approve` carries an optional {@link ToolApprovalScope}; when absent it means `once`
- * (backward compatible — a bare `{ type: 'approve' }` still type-checks and behaves as
- * a single-shot approval that persists nothing).
+ * Each arm carries an optional scope; when absent it means `once` (backward compatible — a bare
+ * `{ type: 'approve' }` or `{ type: 'reject' }` still type-checks and behaves as the single-shot
+ * decision that persists nothing).
+ *
+ * The two scopes are **different types on purpose**. Sharing {@link ToolApprovalScope} would let a
+ * surface send `{ type: 'reject', scope: 'always' }`, which type-checks, promises a persistence
+ * nothing implements, and degrades to a session refusal with no diagnostic.
  */
 export type ToolApprovalDecision =
-  { type: 'approve'; scope?: ToolApprovalScope } | { type: 'reject'; message?: string };
+  | { type: 'approve'; scope?: ToolApprovalScope }
+  | { type: 'reject'; message?: string; scope?: ToolRejectScope };
 
 /**
  * Callback the {@link GthAgentRunner} invokes when a run suspends on a tool-approval
