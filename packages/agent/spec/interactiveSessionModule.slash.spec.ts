@@ -66,6 +66,8 @@ const runnerInstanceMock = {
   getMcpAnnotationTrust: vi.fn(),
   setMcpAnnotationTrust: vi.fn(),
   getAgent: vi.fn(),
+  // [[TUI-C27]] — the approvals-capture log this surface threads into the dump.
+  getApprovalCaptures: vi.fn(() => []),
   cleanup: vi.fn(),
 };
 vi.mock('@gaunt-sloth/core/core/GthAgentRunner.js', () => ({
@@ -336,6 +338,9 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
       messages: [{ type: 'system', content: 'as-sent header' }],
     };
     runnerInstanceMock.getAgent.mockReturnValue(agent);
+    // [[TUI-C27]] — the approvals log this surface must also thread, read from the LIVE runner.
+    const captures = [{ tool: 'run_shell_command', at: 'then' }];
+    runnerInstanceMock.getApprovalCaptures.mockReturnValue(captures);
 
     await runSession('/debug-dump', 'exit');
 
@@ -343,8 +348,11 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
     expect(writeDebugDumpMock).toHaveBeenCalledTimes(1);
     const arg = writeDebugDumpMock.mock.calls[0][0] as {
       modelRequest?: { extras?: { systemPrompt?: string }; messages?: unknown };
+      approvals?: unknown;
       redact?: boolean;
     };
+    // [[TUI-C27]] — threaded through, unreshaped, exactly as the model-request snapshot is.
+    expect(arg.approvals).toBe(captures);
     // The always-on snapshot was threaded straight through from the live agent (no reshaping).
     expect(arg.modelRequest).toBe(agent.lastModelRequest);
     expect(arg.modelRequest!.extras!.systemPrompt).toBe('SYS');

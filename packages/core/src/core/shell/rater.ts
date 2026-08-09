@@ -46,6 +46,14 @@ import { isNegotiatingRung, isRatedRung, resolveApprovals } from '#src/config.js
 // created from the shell module to the approvals matcher.
 import type { EffectiveToolAnnotations } from '#src/core/approvals/matcher.js';
 import { buildParserPreflightNote } from '#src/core/shell/abstention.js';
+// [[TUI-C27]] — the diagnostic record of one rating. The edge is one-way: this module builds and
+// fills a capture, and `approvalCapture` imports nothing from here at run time (types only), so
+// there is no cycle to reason about.
+import {
+  describeRaterNegotiation,
+  type RaterCallCapture,
+  raterModelLabel,
+} from '#src/core/shell/approvalCapture.js';
 import { normalizeCommand } from '#src/core/shell/normalize.js';
 import {
   buildComposedOpenWorldNote,
@@ -1250,6 +1258,26 @@ export async function rateShellCommand(
      * of `negotiation`.
      */
     negotiable?: boolean;
+    /**
+     * [[TUI-C27]] — the sink for the diagnostic record of THIS call, handed over **at the send
+     * site**, carrying the prompt strings that are about to be sent.
+     *
+     * It is called once, BEFORE the model is invoked, with a record this function then fills in as
+     * the answer arrives. Two properties follow, and both are the point:
+     *
+     * - **The prompt is captured, never re-rendered.** The caller receives the very strings passed
+     *   to `invoke`, so nothing downstream can rebuild a prompt that disagrees with the one that
+     *   was actually sent — the one thing a diagnostic archive must never do.
+     * - **A rater that never answers still leaves a record of what it was asked.** The record is in
+     *   the caller's hands before the call is made, so a hang, a timeout or a throw cannot take the
+     *   question with it.
+     *
+     * Omitted (the eval target, and every caller that wants no diagnostics) costs nothing: no
+     * record is built.
+     */
+    onCapture?: (capture: RaterCallCapture) => void;
+    /** [[TUI-C27]] — `approvals.rater`, recorded on the capture so a dump names WHO rated. */
+    raterProfile?: string;
   }
 ): Promise<ShellSafetyVerdict> {
   const model = options?.model ?? config.llm;
@@ -1270,11 +1298,37 @@ export async function rateShellCommand(
     negotiable: options?.negotiable,
   });
 
+  // [[TUI-C27]] — the record is built from the strings that are about to be sent and handed over
+  // BEFORE the call, so what the archive shows is what the rater was shown. Every later assignment
+  // to `capture` mutates the object the caller already holds.
+  const started = Date.now();
+  const capture: RaterCallCapture | undefined = options?.onCapture
+    ? {
+        at: new Date(started).toISOString(),
+        ...(raterModelLabel(model) ? { model: raterModelLabel(model) } : {}),
+        ...(options.raterProfile ? { profile: options.raterProfile } : {}),
+        timeoutMs,
+        negotiable: options.negotiable === true,
+        prompt: { system, user },
+        negotiation: describeRaterNegotiation(options.negotiation),
+      }
+    : undefined;
+  if (capture) options?.onCapture?.(capture);
+  /** Close the record off with what came back, on every exit from the call. */
+  const settle = (verdict: ShellSafetyVerdict, cause?: FailClosedCause): ShellSafetyVerdict => {
+    if (capture) {
+      capture.durationMs = Date.now() - started;
+      capture.verdict = verdict;
+      if (cause) capture.failClosed = cause;
+    }
+    return verdict;
+  };
+
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     if (!model || typeof model.withStructuredOutput !== 'function') {
       debugLog('rateShellCommand: no usable model for the auto-rater; failing closed.');
-      return failClosedVerdict('no-model');
+      return settle(failClosedVerdict('no-model'), 'no-model');
     }
 
     // EXT-88 — the schema is sent and read back through the shared boundary, which is what makes a
@@ -1291,8 +1345,12 @@ export async function rateShellCommand(
     const raced = await Promise.race([raterPromise, timeoutPromise]);
     if (raced === TIMEOUT) {
       debugLog(`rateShellCommand: rater timed out after ${timeoutMs}ms; failing closed.`);
-      return failClosedVerdict('timeout', timeoutMs);
+      return settle(failClosedVerdict('timeout', timeoutMs), 'timeout');
     }
+    // [[TUI-C27]] — the answer as it arrived, BEFORE `safeParse` maps it to a verdict. A malformed
+    // or surprising response is then visible in the archive as itself rather than smoothed into the
+    // fail-closed `destructive` every unparseable answer becomes.
+    if (capture) capture.rawResponse = raced;
 
     // withStructuredOutput already coerces to the wire schema, but re-validate defensively: a fake
     // or misbehaving model could return a non-conforming object. This is also where a `null`
@@ -1300,12 +1358,12 @@ export async function rateShellCommand(
     const parsed = boundary.safeParse(raced);
     if (!parsed.success) {
       debugLog('rateShellCommand: rater returned unparseable output; failing closed.');
-      return failClosedVerdict('unparseable');
+      return settle(failClosedVerdict('unparseable'), 'unparseable');
     }
-    return validateSuggestedTool(parsed.data, options?.grantedTools);
+    return settle(validateSuggestedTool(parsed.data, options?.grantedTools));
   } catch (error) {
     debugLogError('rateShellCommand', error);
-    return failClosedVerdict('threw');
+    return settle(failClosedVerdict('threw'), 'threw');
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -1527,11 +1585,36 @@ export function openWorldToolFloorReason(
  * @returns The reason to floor at `destructive`, or `null` to leave the rater's verdict alone.
  */
 function preflightFloorReason(command: string): string | null {
+  return preflightFloorFinding(command)?.reason ?? null;
+}
+
+/** Which of the two deterministic preflights fired. See {@link preflightFloorFinding}. */
+export type PreflightFloorKind = 'script-env-leak' | 'open-world';
+
+/** A preflight finding: which arm fired, and the reason it floors the command with. */
+export interface PreflightFloorFinding {
+  kind: PreflightFloorKind;
+  reason: string;
+}
+
+/**
+ * [[TUI-C27]] — the same finding {@link preflightFloorReason} returns, with the ARM NAMED.
+ *
+ * The reason alone is what the decision needs; a diagnostic archive needs to say *which* stage
+ * decided, and "an environment variable was expanded into a script" and "a host literal sat in a
+ * fetch position" are two different findings a reader must be able to tell apart without matching
+ * prose prefixes. `preflightFloorReason` delegates here rather than the two existing side by side:
+ * a second copy of this ordering is how a gate and a dump come to disagree about what floored a
+ * command.
+ */
+export function preflightFloorFinding(command: string): PreflightFloorFinding | null {
   if (hasScriptEnvLeakRisk(normalizeCommand(command))) {
-    return (
-      `${COULD_NOT_ASSESS_PREFIX}: it expands an environment variable into a script, which ` +
-      'can leak secrets.'
-    );
+    return {
+      kind: 'script-env-leak',
+      reason:
+        `${COULD_NOT_ASSESS_PREFIX}: it expands an environment variable into a script, which ` +
+        'can leak secrets.',
+    };
   }
   const hosts = findOpenWorldHostLiterals(command);
   if (hosts.length > 0) {
@@ -1540,7 +1623,10 @@ function preflightFloorReason(command: string): string | null {
     // prose about egress — and [[BATCH-25]] Half B calibrates deterministic assertions against this
     // exact text. Several counterparties are listed inside the same parentheses rather than
     // pluralised into a second sentence shape, so the leading clause never varies.
-    return `${NAMES_A_HOST_PREFIX} (${hosts.join(', ')}) in a fetch or transfer position, ${NEVER_AUTO_APPROVED_CLAUSE}`;
+    return {
+      kind: 'open-world',
+      reason: `${NAMES_A_HOST_PREFIX} (${hosts.join(', ')}) in a fetch or transfer position, ${NEVER_AUTO_APPROVED_CLAUSE}`,
+    };
   }
   return null;
 }

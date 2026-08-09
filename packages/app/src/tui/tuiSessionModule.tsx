@@ -531,6 +531,9 @@ export async function createTuiSession(
         modelDisplayName: input.modelDisplayName,
         redact: input.redact,
         modelRequest: agent instanceof GthAbstractAgent ? agent.lastModelRequest : undefined,
+        // [[TUI-C27]] — the approvals gate's record of every gated decision, read from the live
+        // runner at CALL time for the same reason the model request is.
+        approvals: runner.getApprovalCaptures(),
       });
 
     // GS2-16: wall-clock start of the in-flight turn, stamped when runTurn begins and read by

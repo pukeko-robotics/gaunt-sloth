@@ -1,0 +1,346 @@
+import { afterEach, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { HumanMessage } from '@langchain/core/messages';
+import type { GthConfig } from '#src/config.js';
+import type { StatusUpdateCallback } from '#src/core/types.js';
+import type { ApprovalDecisionCapture } from '#src/core/shell/approvalCapture.js';
+import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
+import { SHELL_ALLOWLIST_FILE } from '#src/constants.js';
+
+/**
+ * [[TUI-C27]] — **what the rater was SHOWN and what it ANSWERED, in the `/debug-dump` archive.**
+ *
+ * Every assertion here reads the WRITTEN ARCHIVE, parsed, rather than the in-memory capture. The
+ * node's acceptance is about what a reader can state from a dump alone with no access to the
+ * source, so a test that stops at the runner's own field would be checking a different claim than
+ * the one that was made.
+ */
+
+const mockAgent = {
+  init: vi.fn(),
+  setVerbose: vi.fn(),
+  invoke: vi.fn(),
+  stream: vi.fn(),
+  streamWithEvents: vi.fn(),
+  cleanup: vi.fn(),
+  getPendingToolInterrupts: vi.fn(),
+  streamResume: vi.fn(),
+};
+
+vi.mock('#src/core/shell/raterModel.js', () => ({ resolveRaterModel: vi.fn() }));
+vi.mock('#src/core/GthLangChainAgent.js', () => ({
+  GthLangChainAgent: class {
+    constructor() {
+      return mockAgent;
+    }
+  },
+  StatusUpdateCallback: vi.fn(),
+}));
+
+// `writeDebugDump` writes under `~/.gsloth`; only `homedir()` is mocked, so the real path building
+// and the real fs writes are exercised without touching the developer's home (as debugDumpRedact
+// does). `systemUtils.env` is deliberately NOT mocked — the redaction test below sets a decoy
+// secret on `process.env` and relies on the real collector picking it up.
+const { homedirMock } = vi.hoisted(() => ({ homedirMock: vi.fn() }));
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, homedir: homedirMock };
+});
+
+/** EXT-71 — clamp the persisted-grant anchor, or this suite reads the real project's allow-list. */
+const projectDir = mkdtempSync(join(tmpdir(), 'gth-approval-capture-spec-'));
+
+/** A secret-named env var whose VALUE must not survive into the archive. */
+const ENV_SECRET_NAME = 'TUI_C27_CAPTURE_TEST_API_KEY';
+const ENV_SECRET_VALUE = 'env-secret-value-tuic27-abcdef1234567890';
+
+function streamOf(...chunks: string[]) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const c of chunks) yield c;
+    },
+  };
+}
+
+type ScriptedOutcome = 'safe' | 'destructive' | 'catastrophic' | 'attack';
+
+describe('[[TUI-C27]] — the approvals gate records what it was shown, and records approvals at all', () => {
+  let GthAgentRunner: typeof import('#src/core/GthAgentRunner.js').GthAgentRunner;
+  let statusUpdate: Mock<StatusUpdateCallback>;
+  let priorProjectDir: string | undefined;
+  let homeDir: string;
+  let notGitDir: string;
+
+  beforeEach(async () => {
+    vi.resetAllMocks();
+    priorProjectDir = peekProjectDir();
+    setProjectDir(projectDir);
+    rmSync(join(projectDir, SHELL_ALLOWLIST_FILE), { force: true });
+    homeDir = mkdtempSync(join(tmpdir(), 'gth-capture-home-'));
+    notGitDir = mkdtempSync(join(tmpdir(), 'gth-capture-notgit-'));
+    homedirMock.mockReturnValue(homeDir);
+    mockAgent.init.mockResolvedValue(undefined);
+    mockAgent.cleanup.mockResolvedValue(undefined);
+    statusUpdate = vi.fn();
+    ({ GthAgentRunner } = await import('#src/core/GthAgentRunner.js'));
+  });
+
+  afterEach(() => {
+    if (priorProjectDir !== undefined) setProjectDir(priorProjectDir);
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(notGitDir, { recursive: true, force: true });
+    delete process.env[ENV_SECRET_NAME];
+  });
+
+  /**
+   * Drive a run of gated shell calls through the real `GthAgentRunner` with a scripted rater, then
+   * write a real `/debug-dump` archive from that runner and return the parsed `approvals.json`.
+   *
+   * The script is consumed lazily, so a call the gate settles with NO rating call (a §8 floor
+   * match) consumes nothing — which is what makes "no rating happened" observable here.
+   */
+  async function driveAndDump(options: {
+    calls: { command: string; justification?: string }[];
+    script: ScriptedOutcome[];
+    mode?: 'manual' | 'write' | 'assisted' | 'auto';
+    /** What the human answers at an escalation. Absent → nobody to ask (§6.2). */
+    human?: 'approve' | 'reject';
+    userMessages?: string[];
+    config?: Record<string, unknown>;
+  }): Promise<{ archiveDir: string; records: ApprovalDecisionCapture[] }> {
+    const queue = [...options.script];
+    const invoke = vi.fn().mockImplementation(() => {
+      const outcome = queue.shift();
+      if (!outcome) throw new Error('the scripted rater ran out of answers');
+      return Promise.resolve({ outcome, reason: `${outcome} because the script says so` });
+    });
+    const config = {
+      llm: { withStructuredOutput: vi.fn().mockReturnValue({ invoke }) },
+      streamOutput: true as const,
+      approvals: { mode: options.mode ?? 'auto' },
+      commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+      ...options.config,
+    } as unknown as GthConfig;
+
+    let pending = mockAgent.getPendingToolInterrupts.mockReset();
+    for (const call of options.calls) {
+      pending = pending.mockResolvedValueOnce([
+        {
+          name: 'run_shell_command',
+          args: {
+            command: call.command,
+            ...(call.justification ? { justification: call.justification } : {}),
+          },
+        },
+      ]);
+    }
+    pending.mockResolvedValue([]);
+    mockAgent.streamResume.mockReset().mockResolvedValue(streamOf(''));
+    mockAgent.stream.mockReset().mockResolvedValue(streamOf('x'));
+
+    const runner = new GthAgentRunner(statusUpdate);
+    await runner.init('code', config);
+    if (options.human) {
+      const answer = options.human;
+      runner.setToolApprovalCallback(() =>
+        answer === 'approve' ? { type: 'approve', scope: 'once' } : { type: 'reject' }
+      );
+    }
+    const input = (options.userMessages ?? ['go']).map((text) => new HumanMessage(text));
+    await runner.processMessages(input).catch(() => undefined);
+
+    const { writeDebugDump } = await import('#src/utils/debugDump.js');
+    const { archiveDir } = writeDebugDump({
+      transcript: [],
+      config,
+      cwd: notGitDir,
+      approvals: runner.getApprovalCaptures(),
+    });
+    return {
+      archiveDir,
+      records: JSON.parse(
+        readFileSync(resolve(archiveDir, 'approvals.json'), 'utf8')
+      ) as ApprovalDecisionCapture[],
+    };
+  }
+
+  /**
+   * **THE acceptance test.** Round 1 with an empty user-messages window, round 2 with a populated
+   * one, and the round-2 APPROVAL recorded with its outcome and its reason.
+   *
+   * ## How this fixture defeats §5.3's `noteProgress()` reset
+   *
+   * Every APPROVED tool call runs `noteProgress()`, which clears the transcript — and a cleared
+   * transcript IS a round-1 context by construction, because `contextFor` keys the justification
+   * and the user-messages window on `rounds.length === 0`. So the two obvious fixtures cannot see
+   * what this node is about: consecutive rejections never produce an approval to assert, and an
+   * approved call placed BETWEEN the two ratings resets the very thing the second rating is
+   * supposed to show.
+   *
+   * The fixture here is therefore two gated calls and nothing between them:
+   *
+   * 1. `rm -rf ./dist` rated `destructive` ⇒ `reject` at `auto`. `recordRejection` appends the
+   *    round BEFORE anything else, so the transcript is now one round deep. No approval has
+   *    happened, so `noteProgress()` has not run.
+   * 2. `rm -rf ./dist --dry-run` rated `safe` ⇒ **approve**. `contextFor` sees a non-empty
+   *    transcript, so this is a round-2 context: the justification is admitted and the user
+   *    messages enter the window. The `noteProgress()` this approval triggers fires AFTERWARDS, and
+   *    cannot touch a record that was captured at the moment of the call.
+   *
+   * The second call carries a justification of its own, because `contextFor(justification)`
+   * withholds it at round 1 — without one, round 2's record would show `justification: undefined`
+   * and a reader would take a working design for a defect.
+   */
+  it('records round 1 with an EMPTY user-messages window, round 2 with a POPULATED one, and the round-2 APPROVAL with its outcome and reason', async () => {
+    const mandate = 'please clear out the dist folder for me, it is stale';
+    const { records } = await driveAndDump({
+      calls: [
+        { command: 'rm -rf ./dist' },
+        { command: 'rm -rf ./dist --dry-run', justification: 'narrowed to a dry run first' },
+      ],
+      script: ['destructive', 'safe'],
+      userMessages: [mandate],
+    });
+
+    expect(records).toHaveLength(2);
+    const [round1, round2] = records;
+
+    // ── Round 1: rejected, and its window is empty BY DESIGN (§5.1) ──────────────────────────
+    expect(round1.stage).toBe('rater');
+    expect(round1.action).toBe('reject');
+    expect(round1.rating?.negotiation.round).toBe(1);
+    expect(round1.rating?.negotiation.roundOne).toBe(true);
+    expect(round1.rating?.negotiation.userMessages).toEqual([]);
+    expect(round1.rating?.negotiation.userMessagesPopulated).toBe(false);
+    // Legibility: the archive says WHY it is empty, so a reader does not have to guess.
+    expect(round1.rating?.negotiation.userMessagesNote).toContain('BY DESIGN');
+    // …and the prompt that was actually sent agrees with the structured field.
+    expect(round1.rating?.prompt.user).not.toContain('<user_messages>');
+    expect(round1.rating?.prompt.user).not.toContain(mandate);
+
+    // ── Round 2: the user's own message WAS in the rater's view ──────────────────────────────
+    expect(round2.rating?.negotiation.round).toBe(2);
+    expect(round2.rating?.negotiation.roundOne).toBe(false);
+    // The mandate itself, not merely "a non-empty array" — the question the node asks is whether
+    // the USER's message was in view, and any array satisfies a truthiness check.
+    expect(round2.rating?.negotiation.userMessages).toEqual([mandate]);
+    expect(round2.rating?.negotiation.userMessagesPopulated).toBe(true);
+    expect(round2.rating?.negotiation.justification).toBe('narrowed to a dry run first');
+    expect(round2.rating?.negotiation.priorRounds).toHaveLength(1);
+    // The captured prompt is the one that was SENT, so it carries the same message inside the fence.
+    expect(round2.rating?.prompt.user).toContain('<user_messages>');
+    expect(round2.rating?.prompt.user).toContain(mandate);
+
+    // ── THE branch that used to write nothing: the APPROVAL, with its outcome and its reason ──
+    expect(round2.action).toBe('approve');
+    expect(round2.stage).toBe('rater');
+    expect(round2.rating?.verdict?.outcome).toBe('safe');
+    expect(round2.rating?.verdict?.reason).toBe('safe because the script says so');
+    // The raw answer, before it was mapped to an outcome.
+    expect(round2.rating?.rawResponse).toMatchObject({ outcome: 'safe' });
+    // §4.2 — a rater approval is NEVER sticky, and the archive says so: `once` is what makes the
+    // difference between "this command was approved" and "this command is now on the allow-list"
+    // legible to whoever reads the dump afterwards.
+    expect(round2.scope).toBe('once');
+  });
+
+  /**
+   * The rejecting round records its own outcome and reason too — asserted separately so a change
+   * that broke the approving branch alone cannot hide behind this one passing.
+   */
+  it('records the REJECTING round’s outcome and reason, and where it sat in the negotiation budget', async () => {
+    const { records } = await driveAndDump({
+      calls: [{ command: 'rm -rf ./dist' }],
+      script: ['destructive'],
+    });
+    expect(records[0].rating?.verdict).toEqual({
+      outcome: 'destructive',
+      reason: 'destructive because the script says so',
+    });
+    // Read on ARRIVAL, so the first call of a session is 0 of 3 rather than 1 of 3.
+    expect(records[0].budget).toEqual({
+      consecutiveRejections: 0,
+      rejectionsSinceHuman: 0,
+      maxConsecutive: 3,
+      maxBeforeHuman: 9,
+    });
+  });
+
+  /**
+   * The §8 floor: a stage that decides with NO rating call at all, and the one the archive is
+   * allowed to name the matched pattern for (§8.1 governs rung copy, not a diagnostic dump).
+   */
+  it('names the matched hardline pattern for a floored call, with no rating recorded', async () => {
+    const { records } = await driveAndDump({
+      calls: [{ command: 'rm -rf /' }],
+      script: [],
+    });
+    expect(records).toHaveLength(1);
+    expect(records[0].stage).toBe('hardline-floor');
+    expect(records[0].action).toBe('reject');
+    expect(records[0].hardline?.description).toBeTruthy();
+    // The PATTERN, not merely that a floor matched — the decision this node took.
+    expect(records[0].hardline?.pattern).toBeTruthy();
+    expect(records[0].hardline?.pattern).not.toBe(records[0].hardline?.description);
+    // Nothing rated it, so there is no rating to report and none is invented.
+    expect(records[0].rating).toBeUndefined();
+  });
+
+  /**
+   * [[GS2-47]]/[[GS2-54]] redaction reaches the captured prompt, through the SAME pass every other
+   * artifact goes through. The prompt carries the user's own messages verbatim, so this is the one
+   * artifact where a secret the user pasted into a message would otherwise land in a bug report.
+   */
+  it('redacts a secret carried into the captured rating prompt by a user message', async () => {
+    process.env[ENV_SECRET_NAME] = ENV_SECRET_VALUE;
+    const { archiveDir, records } = await driveAndDump({
+      calls: [
+        { command: 'rm -rf ./dist' },
+        { command: 'rm -rf ./dist --dry-run', justification: 'narrowed it' },
+      ],
+      script: ['destructive', 'safe'],
+      userMessages: [`clean up, my key is ${ENV_SECRET_VALUE}`],
+    });
+    const text = readFileSync(resolve(archiveDir, 'approvals.json'), 'utf8');
+    expect(text).not.toContain(ENV_SECRET_VALUE);
+    expect(text).toContain('<redacted>');
+    // The message is still THERE — redaction masks the secret, it does not drop the evidence that
+    // the user's message was in the rater's view, which is the whole point of the record.
+    expect(records[1].rating?.negotiation.userMessagesPopulated).toBe(true);
+    expect(records[1].rating?.negotiation.userMessages[0]).toContain('clean up, my key is');
+  });
+
+  /**
+   * A deterministic rung consults no model, so nothing but the rung decided to interrupt — and the
+   * archive says exactly that, rather than leaving the stage blank for a reader to read as a
+   * recorder that failed. The human's own answer is recorded beside it, not instead of it.
+   */
+  it('attributes an unrated rung’s interruption to the rung, and records the human’s answer separately', async () => {
+    const { records } = await driveAndDump({
+      calls: [{ command: 'rm -rf ./dist' }],
+      script: [],
+      mode: 'manual',
+      human: 'approve',
+    });
+    expect(records).toHaveLength(1);
+    expect(records[0].stage).toBe('unrated-rung');
+    expect(records[0].humanAnswer).toBe('approve');
+    expect(records[0].action).toBe('approve');
+    // No model was consulted at this rung, so there is no rating and none is invented.
+    expect(records[0].rating).toBeUndefined();
+  });
+
+  /** A session that gated nothing writes no `approvals.json` rather than an empty one. */
+  it('omits the artifact entirely when nothing was gated', async () => {
+    const { writeDebugDump } = await import('#src/utils/debugDump.js');
+    const { archiveDir } = writeDebugDump({
+      transcript: [],
+      config: {},
+      cwd: notGitDir,
+      approvals: [],
+    });
+    expect(() => readFileSync(resolve(archiveDir, 'approvals.json'), 'utf8')).toThrow();
+  });
+});

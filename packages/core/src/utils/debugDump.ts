@@ -12,6 +12,7 @@ import {
   redactValue,
 } from '#src/utils/redactSecrets.js';
 import type { LastModelRequest } from '#src/core/debugCapture.js';
+import type { ApprovalDecisionCapture } from '#src/core/shell/approvalCapture.js';
 
 /**
  * GS2-46/GS2-47 — `/debug-dump`: a live-session diagnostic archive. GS2-46 shipped it raw; GS2-47
@@ -53,6 +54,24 @@ export interface WriteDebugDumpInput {
    * files are simply omitted.
    */
   modelRequest?: LastModelRequest;
+  /**
+   * [[TUI-C27]] — the approvals gate's own record of every gated decision this session made:
+   * **what the rater was SHOWN and what it ANSWERED**, on the approving branch as much as the
+   * rejecting one, plus which stage of the gate decided.
+   *
+   * Threaded straight from `runner.getApprovalCaptures()` by the caller, exactly as
+   * {@link modelRequest} is threaded from the agent. ADDITIVE & optional: present and non-empty ⇒
+   * `approvals.json`; absent or empty ⇒ the file is simply omitted (a session that gated nothing
+   * has nothing to say about it).
+   *
+   * It goes through the same {@link renderStructured} pass as `transcript.json` and
+   * `model-messages.json` — the [[GS2-47]]/[[GS2-54]] literal + pattern redaction over the secret
+   * values {@link collectSecretValues} harvested from env and config. That is deliberate reuse
+   * rather than a policy of its own: the captured rating prompt carries the user's own last five
+   * messages verbatim plus the command, so it is at least as sensitive as the transcript, and a
+   * second redaction policy for one artifact is how two policies come to disagree.
+   */
+  approvals?: readonly ApprovalDecisionCapture[];
 }
 
 export interface WriteDebugDumpResult {
@@ -337,6 +356,22 @@ export function writeDebugDump(input: WriteDebugDumpInput): WriteDebugDumpResult
     writeFileSync(
       resolve(archiveDir, 'model-messages.json'),
       renderStructured(input.modelRequest.messages ?? [], redact, secrets),
+      'utf8'
+    );
+  }
+
+  // [[TUI-C27]] — approvals.json: the gate's own record of every gated decision, INCLUDING the
+  // approving branch, which previously left no trace anywhere in this archive. Each entry carries
+  // the exact prompt the rater was sent and its raw answer, so a reader can state what the rater was
+  // shown as well as what it said — specifically whether the user's own messages were in its view at
+  // round N, which is the first question anyone asks of a negotiation and the one no artifact here
+  // could answer. Same `renderStructured` pass as transcript.json (see `WriteDebugDumpInput`).
+  // Written only when there is something to write, so a session that gated nothing omits the file
+  // rather than shipping an empty array that reads as "the gate recorded nothing".
+  if (input.approvals && input.approvals.length > 0) {
+    writeFileSync(
+      resolve(archiveDir, 'approvals.json'),
+      renderStructured(input.approvals, redact, secrets),
       'utf8'
     );
   }

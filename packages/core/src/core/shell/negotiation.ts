@@ -80,6 +80,24 @@ export const MAX_REJECTIONS_BEFORE_HUMAN = 9;
 export type NegotiationVerdict = 'reject' | 'escalate';
 
 /**
+ * Where a negotiation stands against its two bounds, as a plain readable projection.
+ *
+ * The caps travel WITH the counts on purpose: "2 consecutive rejections" says nothing on its own,
+ * and a reader of a `/debug-dump` archive has no way to look {@link MAX_CONSECUTIVE_REJECTIONS} up.
+ * "2 of 3" is the same fact and is actionable.
+ */
+export interface NegotiationCounters {
+  /** §5.3's consecutive-rejection count. Cleared by an approved call and by reaching a human. */
+  consecutiveRejections: number;
+  /** The reachability bound's count: total rejections since a person was last involved. */
+  rejectionsSinceHuman: number;
+  /** {@link MAX_CONSECUTIVE_REJECTIONS}. */
+  maxConsecutive: number;
+  /** {@link MAX_REJECTIONS_BEFORE_HUMAN}. */
+  maxBeforeHuman: number;
+}
+
+/**
  * §5.1 — how many of the user's most recent messages the runner keeps for the rater. The prompt
  * builder takes the last 5 of whatever it is handed and truncates each; this is the runner's own
  * retention bound, so an unbounded conversation does not accumulate here.
@@ -235,6 +253,26 @@ export class ShellNegotiationState {
    */
   transcript(): readonly RaterNegotiationRound[] {
     return [...this.rounds];
+  }
+
+  /**
+   * [[TUI-C27]] — where this negotiation stands against both bounds, for the `/debug-dump` archive.
+   *
+   * **There is a real reader for this now, which is what changed.** `sinceHuman` had no accessor
+   * because the only thing that wanted it was a spec, and a getter in production for a spec-only
+   * reader is a widened class with nothing behind it (`shellNegotiation.spec.ts` reaches it through
+   * a cast for exactly that reason, and still does). The archive is a production reader: *"the call
+   * was rejected"* and *"the call was the third consecutive rejection, so the next one goes to a
+   * person"* are different facts, and a bug report carrying only the first invites the wrong
+   * conclusion about why a session started interrupting.
+   */
+  counters(): NegotiationCounters {
+    return {
+      consecutiveRejections: this.consecutive,
+      rejectionsSinceHuman: this.sinceHuman,
+      maxConsecutive: MAX_CONSECUTIVE_REJECTIONS,
+      maxBeforeHuman: MAX_REJECTIONS_BEFORE_HUMAN,
+    };
   }
 
   /** Drop everything, including the user messages — the TUI's `/clear` rotates the thread. */
