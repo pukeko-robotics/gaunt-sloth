@@ -50,11 +50,92 @@
  * the column it lands in, so a tab inside a budgeted line makes the width arithmetic — the thing the
  * column-0 guarantee rests on — unanswerable. Escaping it removes the whole class of error, and
  * costs only the appearance of an indent.
+ *
+ * ## What the column-0 guarantee promises, and what it assumes
+ *
+ * **Promise:** every row this module returns fits the `width` it was given, so a terminal of that
+ * width never wraps one — and therefore no byte of untrusted text is ever drawn at column 0, where
+ * the dialog's own chrome lives.
+ *
+ * It rests on exactly three things, and each is held here rather than hoped for:
+ *
+ * 1. **The surface must paint the rows verbatim, one row per line, and never re-wrap them.** A
+ *    second wrap re-creates the flush-left continuation this module exists to remove. Both surfaces
+ *    do this deliberately (one Ink `<Text>` per row; one `display()` call per row).
+ * 2. **The surface must pass the real terminal width.** Rows are budgeted against what it passes,
+ *    not against what the terminal turns out to be.
+ * 3. **The budget must not depend on how the terminal treats East-Asian *Ambiguous* characters.**
+ *    That policy is a terminal setting this process cannot read: the gutter separators are
+ *    Ambiguous, and so is much of what untrusted text can be made of. Every measurement and every
+ *    cut here therefore goes through {@link maxDisplayWidth} / {@link sliceToMaxWidth}, which count
+ *    Ambiguous as two columns — the widest any terminal renders them — so a row that fits fits under
+ *    *either* policy. Measuring with the repo's default narrow policy would fit a row to one
+ *    terminal and overrun another by up to its own length, and one column of overrun is a wrapped
+ *    continuation carrying attacker-chosen bytes at column 0. The cost is under-fill on a
+ *    narrow-rendering terminal, which is cosmetic.
+ *
+ * **Where it stops:** a terminal narrower than {@link MIN_FRAME_WIDTH} cannot carry the gutter and
+ * a readable command at once. The frame is still rendered at that minimum — dropping it would hide
+ * the text a human is being asked to rule on — so its rows are wider than the terminal and it
+ * wraps. The guarantee does not hold there, and the surfaces say so on screen rather than letting
+ * it lapse silently: see {@link narrowTerminalNotice}.
  */
-import { displayWidth, sliceToWidth } from '#src/utils/displayWidth.js';
+import {
+  displayWidth,
+  firstCluster,
+  maxDisplayWidth,
+  sliceToMaxWidth,
+} from '#src/utils/displayWidth.js';
 
 /** Column count assumed when the surface cannot report one (not a TTY, a test, a pipe). */
 export const DEFAULT_FRAME_WIDTH = 80;
+
+/**
+ * Narrowest frame the gutter will produce, however small the terminal claims to be.
+ *
+ * Below it the gutter eats the row and the command becomes unreadable, which is its own way of
+ * hiding a payload — so a terminal narrower than this gets a frame it cannot fit rather than no
+ * frame at all. That trade costs the column-0 guarantee, and {@link narrowTerminalNotice} is what
+ * stops it costing it silently.
+ */
+export const MIN_FRAME_WIDTH = 20;
+
+/**
+ * The width to frame at on a terminal reporting `columns`.
+ *
+ * One column is held back because a row that fills the last cell wraps on some terminals, and the
+ * result is floored at {@link MIN_FRAME_WIDTH}. Both surfaces resolve their width here so they
+ * cannot come to disagree about how much of a command a human was shown.
+ */
+export function frameWidthFor(columns: number | undefined): number {
+  return Math.max(MIN_FRAME_WIDTH, usableColumns(columns) - 1);
+}
+
+/**
+ * The line a surface must paint when the terminal is too narrow for the frame to fit in it, or
+ * `undefined` when it fits.
+ *
+ * A guarantee that quietly stops holding is worse than one that says it stopped: below the floor
+ * {@link frameWidthFor} keeps the frame readable at the cost of rows wider than the terminal, the
+ * terminal wraps them, and a wrapped row puts untrusted text at column 0 — exactly what the gutter
+ * exists to prevent. The human is told rather than shown a dialog that still looks like it is
+ * guarding them.
+ *
+ * **Deliberately one short line.** It is painted on a terminal of twenty columns or fewer, so every
+ * word costs a row above the command the reader is trying to reach; the reasoning belongs here,
+ * where it has room, and only the consequence belongs on that screen.
+ */
+export function narrowTerminalNotice(columns: number | undefined): string | undefined {
+  if (usableColumns(columns) - 1 >= MIN_FRAME_WIDTH) return undefined;
+  return '⚠ Terminal too narrow — text below can reach the left edge.';
+}
+
+/** What a surface reported, made usable: a positive whole number, or the default when unknown. */
+function usableColumns(columns: number | undefined): number {
+  return typeof columns === 'number' && Number.isFinite(columns)
+    ? Math.max(1, Math.floor(columns))
+    : DEFAULT_FRAME_WIDTH;
+}
 
 /**
  * Body lines shown before {@link frameUntrustedCommand} starts eliding.
@@ -80,7 +161,15 @@ const SITE_EXCERPT_WIDTH = 48;
 /** Indent the whole framed block sits at, before the gutter. */
 const FRAME_INDENT = '  ';
 
-/** Separator between the line number and the untrusted content. */
+/**
+ * Separator between the line number and the untrusted content.
+ *
+ * This and {@link CONTINUATION_SEPARATOR} are East-Asian **Ambiguous**: one cell on most terminals,
+ * two where the terminal is configured for a CJK locale. Nothing here depends on which — every row
+ * is budgeted with the conservative ruler, so the glyphs may stay box-drawing without the guarantee
+ * resting on a terminal setting. Measure the prefixes rather than assuming their width if you
+ * change them.
+ */
 const GUTTER_SEPARATOR = '│';
 
 /**
@@ -150,12 +239,24 @@ export interface FramedUntrustedText {
  * {@link findUnresolvableSites} would report.
  */
 export function neutralizeUntrustedText(text: string): string {
-  return text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (character) => {
-    const codePoint = character.codePointAt(0) ?? 0;
-    if (codePoint <= 0xff) return `\\x${codePoint.toString(16).padStart(2, '0')}`;
-    if (codePoint <= 0xffff) return `\\u${codePoint.toString(16).padStart(4, '0')}`;
-    return `\\u{${codePoint.toString(16)}}`;
-  });
+  return text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, escapeCodePoint);
+}
+
+/** One code point as the printable escape this module renders unprintable things with. */
+function escapeCodePoint(character: string): string {
+  const codePoint = character.codePointAt(0) ?? 0;
+  if (codePoint <= 0xff) return `\\x${codePoint.toString(16).padStart(2, '0')}`;
+  if (codePoint <= 0xffff) return `\\u${codePoint.toString(16).padStart(4, '0')}`;
+  return `\\u{${codePoint.toString(16)}}`;
+}
+
+/**
+ * Every code point of `text` as {@link escapeCodePoint} renders it — the same escape alphabet the
+ * neutraliser uses, so what comes out is ASCII, one column per character under any width policy,
+ * and still incapable of forming a substitution or composition token.
+ */
+function escapeCodePoints(text: string): string {
+  return [...text].map(escapeCodePoint).join('');
 }
 
 /**
@@ -214,6 +315,9 @@ export function findUnresolvableSites(command: string): UntrustedSite[] {
       }
       sites.push({
         line: index + 1,
+        // A position for a human to count to, not a budget — so it is measured with the repo's
+        // ordinary ruler rather than the conservative one. No row's width depends on it, and
+        // reporting a column the reader cannot find would be the only thing over-counting bought.
         column: displayWidth(line.slice(0, cursor)) + 1,
         kind: token === '$(' || token === '`' ? 'command substitution' : 'composition',
         token,
@@ -237,10 +341,21 @@ function tokenAt(line: string, cursor: number): string | undefined {
   return undefined;
 }
 
-/** `text` clipped to `width` columns, with an ellipsis when anything was dropped. */
+/** Marks a clip, and is itself Ambiguous — so its own column count has to be reserved, not assumed. */
+const CLIP_MARKER = '…';
+
+/**
+ * `text` clipped to `width` columns, with {@link CLIP_MARKER} when anything was dropped.
+ *
+ * The marker's width is reserved from the budget rather than counted as one column: it is Ambiguous
+ * like the separators, so a budget of `width - 1` would produce a row of `width + 1` on a terminal
+ * that renders it wide — a clip that overruns the very width it was asked to fit.
+ */
 function clipToWidth(text: string, width: number): string {
-  if (displayWidth(text) <= width) return text;
-  return `${sliceToWidth(text, Math.max(1, width - 1))}…`;
+  if (maxDisplayWidth(text) <= width) return text;
+  const markerWidth = maxDisplayWidth(CLIP_MARKER);
+  if (width < markerWidth) return sliceToMaxWidth(text, width);
+  return `${sliceToMaxWidth(text, width - markerWidth)}${CLIP_MARKER}`;
 }
 
 /**
@@ -273,7 +388,16 @@ function frame(text: string, sites: UntrustedSite[], options?: FrameOptions): Fr
   const logical = splitLogicalLines(text).map(neutralizeUntrustedText);
 
   const numberWidth = String(logical.length).length;
-  const gutterWidth = FRAME_INDENT.length + numberWidth + 3;
+  // MEASURED, never counted. The separators are Ambiguous, so their column count is a terminal
+  // setting rather than a constant, and a hardcoded arithmetic gutter is right on one terminal and
+  // one column short on another — which is a wrapped row, which is untrusted text at column 0. The
+  // widest of the three prefixes is used for all of them so the budget is right for every row shape
+  // this renderer can emit, and so changing a glyph cannot silently re-open the gap.
+  const gutterWidth = Math.max(
+    maxDisplayWidth(bodyPrefix('9'.repeat(numberWidth), numberWidth)),
+    maxDisplayWidth(continuationPrefix(numberWidth)),
+    maxDisplayWidth(elisionPrefix(numberWidth))
+  );
   const contentWidth = Math.max(MIN_CONTENT_WIDTH, width - gutterWidth);
 
   const { windows, sitesHidden } = selectWindows(
@@ -286,32 +410,53 @@ function frame(text: string, sites: UntrustedSite[], options?: FrameOptions): Fr
   let previousEnd = 0;
   for (const window of windows) {
     if (window.start > previousEnd + 1) {
-      lines.push(elisionRow(window.start - previousEnd - 1, numberWidth));
+      lines.push(elisionRow(window.start - previousEnd - 1, numberWidth, width));
     }
     for (let number = window.start; number <= window.end; number++) {
       const rows = wrapToWidth(logical[number - 1], contentWidth);
       rows.forEach((row, rowIndex) => {
         lines.push(
           rowIndex === 0
-            ? `${FRAME_INDENT}${String(number).padStart(numberWidth)} ${GUTTER_SEPARATOR} ${row}`
-            : `${FRAME_INDENT}${' '.repeat(numberWidth)} ${CONTINUATION_SEPARATOR} ${row}`
+            ? `${bodyPrefix(String(number), numberWidth)}${row}`
+            : `${continuationPrefix(numberWidth)}${row}`
         );
       });
     }
     previousEnd = window.end;
   }
   if (previousEnd < logical.length) {
-    lines.push(elisionRow(logical.length - previousEnd, numberWidth));
+    lines.push(elisionRow(logical.length - previousEnd, numberWidth, width));
   }
 
   return { notices: buildNotices(sites, sitesHidden, width), lines, sites };
 }
 
-/** A renderer-owned row standing in for the lines the elision dropped, stating how many. */
-function elisionRow(hidden: number, numberWidth: number): string {
-  return (
-    `${FRAME_INDENT}${' '.repeat(numberWidth)} ${ELISION_SEPARATOR} ` +
-    `${hidden} ${hidden === 1 ? 'line' : 'lines'} hidden`
+/** The prefix a numbered body row carries, before the untrusted content. */
+function bodyPrefix(number: string, numberWidth: number): string {
+  return `${FRAME_INDENT}${number.padStart(numberWidth)} ${GUTTER_SEPARATOR} `;
+}
+
+/** The prefix on the continuation rows of a line this renderer wrapped. */
+function continuationPrefix(numberWidth: number): string {
+  return `${FRAME_INDENT}${' '.repeat(numberWidth)} ${CONTINUATION_SEPARATOR} `;
+}
+
+/** The prefix on the renderer's own "lines hidden" rows. */
+function elisionPrefix(numberWidth: number): string {
+  return `${FRAME_INDENT}${' '.repeat(numberWidth)} ${ELISION_SEPARATOR} `;
+}
+
+/**
+ * A renderer-owned row standing in for the lines the elision dropped, stating how many.
+ *
+ * Clipped to the terminal like every other row. It carries no untrusted text, so a wrap here would
+ * be untidy rather than forgeable — but a renderer that bounds the rows it does not own and not the
+ * ones it does is a renderer whose next row is bounded by accident.
+ */
+function elisionRow(hidden: number, numberWidth: number, width: number): string {
+  return clipToWidth(
+    `${elisionPrefix(numberWidth)}${hidden} ${hidden === 1 ? 'line' : 'lines'} hidden`,
+    width
   );
 }
 
@@ -373,9 +518,15 @@ function buildNotices(
 ): string[] {
   if (sites.length === 0) return [];
   const plural = sites.length === 1 ? 'site' : 'sites';
+  // Clipped like the rows below it. This header is the renderer's own sentence and carries nothing
+  // untrusted, so its overrun was cosmetic — but a block that bounds the attacker's rows and not its
+  // own is bounded by coincidence, and the next row added here inherits the coincidence.
   const notices = [
-    `⚠ ${sites.length} ${plural} the gate could not statically resolve — ` +
-      `${sites.length === 1 ? 'it is' : 'they are'} numbered in the command below:`,
+    clipToWidth(
+      `⚠ ${sites.length} ${plural} the gate could not statically resolve — ` +
+        `${sites.length === 1 ? 'it is' : 'they are'} numbered in the command below:`,
+      width
+    ),
   ];
   for (const site of sites.slice(0, MAX_LISTED_SITES)) {
     const label = `    line ${site.line} · ${site.kind} ${site.token} · `;
@@ -387,7 +538,7 @@ function buildNotices(
     // that carries untrusted text outside the gutter. The whole row is bounded by the terminal.
     notices.push(
       clipToWidth(
-        `${label}${clipToWidth(site.excerpt, Math.max(8, width - displayWidth(label)))}`,
+        `${label}${clipToWidth(site.excerpt, Math.max(8, width - maxDisplayWidth(label)))}`,
         width
       )
     );
@@ -395,14 +546,20 @@ function buildNotices(
   if (sites.length > MAX_LISTED_SITES) {
     const rest = sites.length - MAX_LISTED_SITES;
     notices.push(
-      `    … and ${rest} further flagged ${rest === 1 ? 'site' : 'sites'}, ` +
-        `up to line ${sites[sites.length - 1].line}.`
+      clipToWidth(
+        `    ${CLIP_MARKER} and ${rest} further flagged ${rest === 1 ? 'site' : 'sites'}, ` +
+          `up to line ${sites[sites.length - 1].line}.`,
+        width
+      )
     );
   }
   if (sitesHidden > 0) {
     notices.push(
-      `    ⚠ ${sitesHidden} flagged ${sitesHidden === 1 ? 'site sits' : 'sites sit'} on ` +
-        'lines the elision below hid — this command is too long to show in full.'
+      clipToWidth(
+        `    ⚠ ${sitesHidden} flagged ${sitesHidden === 1 ? 'site sits' : 'sites sit'} on ` +
+          'lines the elision below hid — this command is too long to show in full.',
+        width
+      )
     );
   }
   return notices;
@@ -417,18 +574,29 @@ function buildNotices(
  *
  * Measured and cut with the display-width helpers, never `.length` — a CJK ideograph or an emoji is
  * one code point in two columns, and a row measured as fitting that does not fit is a row the
- * terminal wraps back to column 0.
+ * terminal wraps back to column 0. Conservatively, so the same holds on a terminal that renders
+ * Ambiguous characters wide.
  */
 function wrapToWidth(text: string, width: number): string[] {
-  if (displayWidth(text) <= width) return [text];
+  if (maxDisplayWidth(text) <= width) return [text];
   const rows: string[] = [];
   let rest = text;
   while (rest.length > 0) {
-    const head = sliceToWidth(rest, width);
-    // A single cluster wider than the whole budget cannot be cut; emit it rather than loop forever.
+    const head = sliceToMaxWidth(rest, width);
     if (head.length === 0) {
-      rows.push(rest);
-      break;
+      // A grapheme cluster wider than the entire content budget cannot be drawn inside the gutter
+      // at all, so it is shown the way this module shows anything else it cannot render safely:
+      // as the printable escapes of its code points. Emitting the cluster raw would leave one row
+      // unbounded — the terminal would wrap it, and the continuation would carry untrusted bytes at
+      // column 0, which is the single thing this function exists to prevent.
+      //
+      // A guard rather than a live path: no cluster is known to measure more than
+      // MIN_CONTENT_WIDTH columns. It terminates regardless — the escapes are ASCII, one column
+      // each under every policy, and the budget here is at least MIN_CONTENT_WIDTH, so the next
+      // pass slices a non-empty head and the loop strictly advances.
+      const cluster = firstCluster(rest);
+      rest = `${escapeCodePoints(cluster)}${rest.slice(cluster.length)}`;
+      continue;
     }
     rows.push(head);
     rest = rest.slice(head.length);

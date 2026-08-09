@@ -16,9 +16,10 @@ import { launchBannerFields, launchBannerText } from '@gaunt-sloth/core/core/lau
 import { buildRejectionMessage } from '@gaunt-sloth/core/core/shell/rejection.js';
 import { renderNegotiationTranscript } from '@gaunt-sloth/core/core/shell/negotiation.js';
 import {
-  DEFAULT_FRAME_WIDTH,
   frameUntrustedCommand,
   frameUntrustedText,
+  frameWidthFor,
+  narrowTerminalNotice,
 } from '@gaunt-sloth/core/core/shell/framing.js';
 import { writeDebugDump } from '@gaunt-sloth/core/utils/debugDump.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
@@ -158,9 +159,14 @@ export async function createInteractiveSession(
       // prompt uses, so the two surfaces cannot differ about how much of a command a human saw.
       // Nothing is clamped to one line: the command that motivated this hid its payload fifteen
       // lines into a commit message, and a clamp discards exactly what the human must rule on.
-      const frameWidth = Math.max(20, (output.columns ?? DEFAULT_FRAME_WIDTH) - 1);
+      const frameWidth = frameWidthFor(output.columns);
       const framedCommand = frameUntrustedCommand(commandText, { width: frameWidth });
       displayWarning(`\nThe agent wants to run a shell command via ${pending.name}:`);
+      // Below core's floor the frame is wider than the terminal, which wraps it and puts untrusted
+      // text at the left edge. The frame is still shown — hiding what the human must rule on would
+      // be worse — but the guarantee has lapsed, and it says so instead of lapsing silently.
+      const tooNarrow = narrowTerminalNotice(output.columns);
+      if (tooNarrow) displayWarning(tooNarrow);
       for (const notice of framedCommand.notices) displayWarning(notice);
       display('');
       for (const line of framedCommand.lines) display(line);

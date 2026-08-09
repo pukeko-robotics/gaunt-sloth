@@ -5,9 +5,13 @@ import {
   findUnresolvableSites,
   frameUntrustedCommand,
   frameUntrustedText,
+  frameWidthFor,
+  MIN_FRAME_WIDTH,
+  narrowTerminalNotice,
   neutralizeToOneLine,
   neutralizeUntrustedText,
 } from '#src/core/shell/framing.js';
+import { displayWidth, maxDisplayWidth } from '#src/utils/displayWidth.js';
 
 /**
  * [[TUI-C26]] task 1 — the framed render of untrusted text.
@@ -249,9 +253,12 @@ describe('shell/framing — rule 4: elide AROUND the flagged sites, and say how 
   });
 
   it('says when the elision itself hid a flagged site', () => {
+    // Wide enough for the whole sentence: every row is now bounded by the width it was given, so a
+    // width that cannot hold this sentence would clip it and the assertion below would be about
+    // where the clip landed rather than about what the renderer says.
     const framed = frameUntrustedCommand(
       Array.from({ length: 60 }, (_, i) => `step ${i + 1} ; next`).join(LF),
-      { width: 100, maxLines: 20 }
+      { width: 120, maxLines: 20 }
     );
     expect(framed.notices.join('\n')).toContain('40 flagged sites sit on');
     expect(framed.notices.join('\n')).toContain('too long to show in full');
@@ -265,5 +272,146 @@ describe('shell/framing — rule 4: elide AROUND the flagged sites, and say how 
     // The number column is as wide as the largest line number, so a 30-line block right-aligns to 2.
     expect(framed.lines[0]).toBe('   1 │ reason line 1');
     expect(framed.lines[framed.lines.length - 1]).toContain('10 lines hidden');
+  });
+});
+
+/**
+ * The column-0 guarantee rests on every emitted row fitting the width it was given — and "fitting"
+ * is not one number. An East-Asian **Ambiguous** character is one cell on most terminals and two on
+ * a terminal configured for a CJK locale, and that is a setting this process cannot read. The
+ * gutter separators are Ambiguous, and so is a great deal of what untrusted text can be built from.
+ *
+ * So each row is measured with BOTH rulers here. A suite that measured only the repo's default
+ * narrow policy would be green on a renderer that overruns every row by one column on the other
+ * kind of terminal — which is a wrapped row, and a wrapped row is attacker-chosen bytes at column 0.
+ */
+describe('shell/framing — every row fits under EITHER ambiguous-width policy', () => {
+  /** A hostile command built from `filler`: flagged sites, lines long enough to wrap, and elision. */
+  const hostile = (filler: string): string =>
+    Array.from({ length: 60 }, (_, index) =>
+      index === 44
+        ? `so \`echo ${filler.repeat(20)}\` runs`
+        : `${filler.repeat(30)} ; line ${index + 1}`
+    ).join(LF);
+
+  const rowsOf = (filler: string, width: number): string[] => {
+    const framed = frameUntrustedCommand(hostile(filler), { width });
+    // The notices are rows on the same screen as the body and are asserted with it: they carry the
+    // untrusted excerpts, which is the one place untrusted text is rendered outside the gutter.
+    return [...framed.notices, ...framed.lines];
+  };
+
+  it.each([
+    ['plain ASCII', 'x', false],
+    ['East-Asian AMBIGUOUS characters, which a CJK-configured terminal draws WIDE', 'α', true],
+    ['Cyrillic, also Ambiguous', 'я', true],
+    ['box-drawing, the class the gutter itself is made of', '■', true],
+    ['genuinely WIDE CJK, which both policies already measure at two columns', '漢', false],
+    ['an emoji cluster, the widest thing a single grapheme can be', '👍🏽', false],
+  ])('holds for content made of %s', (_name, filler, isAmbiguous) => {
+    for (const width of [79, 40, MIN_FRAME_WIDTH]) {
+      const rows = rowsOf(filler, width);
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        // The repo's own policy...
+        expect(displayWidth(row)).toBeLessThanOrEqual(width);
+        // ...and the terminal that disagrees with it. This is the assertion the finding lives in.
+        expect(maxDisplayWidth(row)).toBeLessThanOrEqual(width);
+      }
+      // CONTROL: each fixture is the width class its name claims. The Ambiguous ones are the cases
+      // the finding lives in — content whose own column count changes with the terminal's setting —
+      // and without this pin a fixture could quietly stop being Ambiguous and leave the block green
+      // while testing nothing but ASCII. Measured on the CONTENT, not on a row: every row carries
+      // the Ambiguous gutter separator, so a row-level comparison is true whatever the content is.
+      expect(maxDisplayWidth(filler) > displayWidth(filler)).toBe(isAmbiguous);
+    }
+  });
+
+  /**
+   * The gutter's own separator is Ambiguous, so a body row's prefix is five columns on one terminal
+   * and six on another. Budgeting it as a constant is what made every row overrun by one; this pins
+   * that the budget is taken from the widest reading of the prefix rather than from its narrowest.
+   */
+  it('budgets the gutter at its WIDEST reading, so an all-ASCII row is short rather than over', () => {
+    const [row] = frameUntrustedCommand('x'.repeat(400), { width: 40 }).lines;
+    expect(row).toMatch(GUTTER);
+    expect(maxDisplayWidth(row)).toBeLessThanOrEqual(40);
+    // Under-fill is the price and it is bounded: exactly the one column the Ambiguous separator
+    // might take. Anything more would mean the budget had drifted away from the real prefix.
+    expect(displayWidth(row)).toBeGreaterThanOrEqual(39);
+  });
+});
+
+/**
+ * Below {@link MIN_FRAME_WIDTH} the frame is deliberately wider than the terminal — the gutter would
+ * otherwise eat the row and hide the payload — so the terminal wraps it and untrusted text reaches
+ * column 0. The trade is defensible; taking it silently is not, because a dialog that has stopped
+ * guaranteeing anything still looks exactly like one that has not.
+ */
+describe('shell/framing — a terminal too narrow to frame says so', () => {
+  it('resolves the same width for both surfaces, holding one column back', () => {
+    expect(frameWidthFor(80)).toBe(79);
+    expect(frameWidthFor(120)).toBe(119);
+    // Unknown columns (a pipe, a test, no TTY) is the documented default, not a narrow terminal.
+    expect(frameWidthFor(undefined)).toBe(79);
+  });
+
+  it('floors the width, so the frame stays readable on a terminal that cannot hold it', () => {
+    expect(frameWidthFor(15)).toBe(MIN_FRAME_WIDTH);
+    expect(frameWidthFor(1)).toBe(MIN_FRAME_WIDTH);
+  });
+
+  it('says so on screen exactly when the frame no longer fits the terminal', () => {
+    const notice = narrowTerminalNotice(15);
+    expect(notice).toBeDefined();
+    // It names the CONSEQUENCE — that text below can reach the left edge — rather than the number,
+    // because the number is not what the reader has to decide about.
+    expect(notice).toContain('left edge');
+    // One line: it is painted on a terminal of twenty columns or fewer, where every word it does
+    // not need is a row of chrome between the reader and the command they are ruling on.
+    expect(notice).not.toContain('\n');
+  });
+
+  it('stays silent on a terminal that fits, and on one that never reported a width', () => {
+    expect(narrowTerminalNotice(80)).toBeUndefined();
+    expect(narrowTerminalNotice(21)).toBeUndefined();
+    // The unknown-columns path frames at the default and must not cry narrow: every non-TTY caller
+    // would otherwise carry a warning about a terminal that does not exist.
+    expect(narrowTerminalNotice(undefined)).toBeUndefined();
+    // CONTROL: the boundary really is where it is claimed to be, so the assertions above are about
+    // the threshold and not about the notice being unreachable.
+    expect(narrowTerminalNotice(20)).toBeDefined();
+  });
+});
+
+/**
+ * The renderer's own rows carry no untrusted text, so their overrun wraps into an untidy screen
+ * rather than a forgeable one. They are bounded anyway: a block that bounds the attacker's rows and
+ * not its own is bounded by coincidence, and the next row written here inherits the coincidence.
+ */
+describe("shell/framing — the renderer's OWN rows are bounded too", () => {
+  it('clips its notice header to the terminal', () => {
+    const framed = frameUntrustedCommand('echo a && echo b ; echo c', { width: 30 });
+    const [header] = framed.notices;
+    expect(maxDisplayWidth(header)).toBeLessThanOrEqual(30);
+    // CONTROL: it is the header, and it was CLIPPED rather than happening to fit — the width
+    // assertion alone would pass on any short string, including one this renderer never wrote.
+    expect(header.startsWith('⚠ 2 sites the gate')).toBe(true);
+    expect(header.endsWith('…')).toBe(true);
+    // The same sentence unclipped is far wider than the terminal, which is what makes the clip the
+    // thing under test rather than a no-op the renderer would have satisfied anyway.
+    expect(
+      maxDisplayWidth(frameUntrustedCommand('echo a && echo b ; echo c').notices[0])
+    ).toBeGreaterThan(30);
+  });
+
+  it('clips its elision row to the terminal', () => {
+    const framed = frameUntrustedText(
+      Array.from({ length: 1200 }, (_, index) => `reason line ${index + 1}`).join(LF),
+      { width: MIN_FRAME_WIDTH, maxLines: 5 }
+    );
+    const elisions = framed.lines.filter((line) => line.includes('hidden') || line.includes('⋯'));
+    expect(elisions.length).toBeGreaterThan(0);
+    for (const row of elisions) expect(maxDisplayWidth(row)).toBeLessThanOrEqual(MIN_FRAME_WIDTH);
   });
 });

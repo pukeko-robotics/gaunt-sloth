@@ -39,6 +39,21 @@ const ESC = String.fromCharCode(27);
  */
 const plain = (frames: string[]): string => stripAnsi(frames.join('\n')).replace(/\s+/g, ' ');
 
+/**
+ * The frame as its own rows, ANSI stripped and the line structure INTACT.
+ *
+ * {@link plain} collapses whitespace, which is right for asking whether a string is on the screen
+ * and useless for asking WHICH ROW it is on. For the sticky-grant lines that is the only question
+ * worth asking: for a shell call the grant summary is the command byte for byte, so an assertion
+ * that merely finds `1 │ npm test` somewhere on the dialog is satisfied by the COMMAND's frame and
+ * would still pass with the grant painted raw. Anchoring on the row below the label is what makes
+ * the assertion about the string it names.
+ */
+const frameLines = (frame: string): string[] =>
+  stripAnsi(frame)
+    .split('\n')
+    .map((line) => line.replace(/\s+$/u, ''));
+
 /** A subscribeApproval the test can fire on demand, capturing the resolved decision. */
 function makeApprovalHarness() {
   let emit: ((record: PendingApproval) => void) | undefined;
@@ -271,15 +286,20 @@ describe('tui <ApprovalPrompt>', () => {
         }}
       />
     );
-    const f = lastFrame() ?? '';
     // [[TUI-C26]] — the label is the renderer's own line and the grant is FRAMED beneath it, so the
-    // two assertions are "the menu still names what it stores" and "what it stores is inside the
-    // gutter". Asserting only that `npm test` appears somewhere would survive the gutter being
-    // dropped, which is the whole control this line exists to hold.
-    expect(f).toContain('[s]/[a] will remember:');
-    expect(f).toContain('1 │ npm test');
-    expect(f).toContain('stored as:');
-    expect(f).toContain('1 │ { "type": "shell", "matcher": "exact", "pattern": "npm test" }');
+    // assertions are "the menu still names what it stores" and "what it stores is inside the
+    // gutter". Both are anchored POSITIONALLY, on the row directly under each label, because a
+    // shell grant summary is the command byte for byte: `toContain('1 │ npm test')` is satisfied by
+    // the command's own frame higher up the dialog and stays green with the grant painted raw.
+    const lines = frameLines(lastFrame() ?? '');
+    const remembers = lines.indexOf('[s]/[a] will remember:');
+    expect(remembers).toBeGreaterThanOrEqual(0);
+    expect(lines[remembers + 1]).toBe('  1 │ npm test');
+    const storedAs = lines.indexOf('    stored as:');
+    expect(storedAs).toBeGreaterThanOrEqual(0);
+    expect(lines[storedAs + 1]).toBe(
+      '  1 │ { "type": "shell", "matcher": "exact", "pattern": "npm test" }'
+    );
     unmount();
   });
 

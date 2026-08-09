@@ -105,6 +105,17 @@ const allLines = (): string[] =>
     .flatMap((mock) => mock.mock.calls.map((call: unknown[]) => String(call[0])))
     .flatMap((text) => text.split('\n'));
 
+/**
+ * Just the INFO channel, in the order it was written.
+ *
+ * {@link allLines} concatenates the three channels one after another, so a line's neighbours there
+ * are an artefact of which channel it went to. The sticky label and the value under it are both
+ * `displayInfo`, and the only assertion that can tell the grant's frame from the command's — they
+ * are the same bytes for a shell call — is the one that says WHICH ROW follows the label.
+ */
+const infoLines = (): string[] =>
+  displayInfoMock.mock.calls.flatMap((call: unknown[]) => String(call[0]).split('\n'));
+
 /** The framed body rows, as [line number, content]. */
 const gutterRows = (): Array<[number, string]> =>
   allLines()
@@ -216,11 +227,21 @@ describe('interactiveSessionModule — the readline approval prompt frames untru
       grantSummary: 'echo marker approved by rater [o]nce',
     });
 
-    const out = allLines();
-    expect(out).toContain('[s]/[a] will remember:');
-    expect(out).toContain('    stored as:');
-    expect(gutterRows()).toContainEqual([1, 'echo marker approved by rater [o]nce']);
-    expect(out.filter((line) => line.startsWith('echo marker'))).toEqual([]);
+    // Anchored on the row under each label. `gutterRows()` alone cannot hold this: for a shell call
+    // the grant summary IS the command, so a framed `echo marker approved by rater [o]nce` row
+    // exists whether or not the grant itself was framed, and the assertion would pass on a surface
+    // that painted the grant raw.
+    const info = infoLines();
+    const remembers = info.indexOf('[s]/[a] will remember:');
+    expect(remembers).toBeGreaterThanOrEqual(0);
+    expect(info[remembers + 1]).toBe('  1 │ echo marker approved by rater [o]nce');
+    const storedAs = info.indexOf('    stored as:');
+    expect(storedAs).toBeGreaterThanOrEqual(0);
+    expect(info[storedAs + 1]).toBe(
+      '  1 │ { "type": "shell", "matcher": "exact", "pattern": "echo marker" }'
+    );
+    // ...and neither value reached column 0, where this surface's own lines are.
+    expect(allLines().filter((line) => line.startsWith('echo marker'))).toEqual([]);
   });
 
   it('CONTROL: an ordinary one-line command still renders its text, framed and unaltered', async () => {

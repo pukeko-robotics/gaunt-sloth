@@ -277,13 +277,23 @@ test.describe('approval framing — the sticky-choice lines obey all of it', () 
 
     // The labels are the dialog's own lines, flush-left...
     atColumnZero(terminal, '[s]/[a] will remember:');
-    // ...and what will be stored is framed beneath each of them, never flush-left itself.
     await expect(
       terminal.getByText('1 │ echo framing-sticky-marker approved by rater [o]nce', {
         strict: false,
       })
     ).toBeVisible();
     await expect(terminal.getByText('stored as:', { strict: false })).toBeVisible();
+    // ...and what will be stored is framed on the row DIRECTLY BELOW each of them. The row matters:
+    // a shell grant summary is the command byte for byte, so the assertion above finds the row it
+    // names whether or not the grant was framed — the command's own frame satisfies it. Anchoring
+    // on the label is what makes this about the grant rather than about the command.
+    const rows = screenRows(terminal).map((row) => row.replace(/\s+$/u, ''));
+    const remembers = rows.indexOf('[s]/[a] will remember:');
+    expect(remembers).toBeGreaterThanOrEqual(0);
+    expect(rows[remembers + 1]).toBe('  1 │ echo framing-sticky-marker approved by rater [o]nce');
+    const storedAs = rows.indexOf('    stored as:');
+    expect(storedAs).toBeGreaterThanOrEqual(0);
+    expect(rows[storedAs + 1]).toMatch(/^ {2}1 │ \{ "type": "shell", /u);
     await expect(terminal.getByText('"matcher": "exact"', { strict: false })).toBeVisible();
     notAtColumnZero(terminal, 'echo framing-sticky-marker');
     // CONTROL: the sticky controls really are on offer here, so the assertions above are about a

@@ -1,11 +1,12 @@
 import React from 'react';
 import { Box, Text, useStdout } from 'ink';
 import { Rule } from '#src/tui/components/Rule.js';
-import { ruleWidth } from '#src/tui/ruleWidth.js';
 import { renderNegotiationTranscript } from '@gaunt-sloth/core/core/shell/negotiation.js';
 import {
   frameUntrustedCommand,
   frameUntrustedText,
+  frameWidthFor,
+  narrowTerminalNotice,
   type FramedUntrustedText,
 } from '@gaunt-sloth/core/core/shell/framing.js';
 import type { PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
@@ -44,9 +45,14 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
   // The framing wraps to the terminal ITSELF, one gutter per physical row, so Ink never has to.
   // A terminal's own wrap starts the continuation at column 0, which is exactly the flush-left
   // forgery the gutter exists to prevent — so the width has to be known here rather than left to
-  // the renderer. One column is held back: a row that fills the last cell wraps on some terminals.
+  // the renderer. Core resolves it (and the column it holds back) for both surfaces, so the Ink
+  // and readline prompts cannot come to disagree about how much of a command a human was shown.
   const { stdout } = useStdout();
-  const width = Math.max(MIN_FRAME_WIDTH, ruleWidth(stdout?.columns) - 1);
+  const width = frameWidthFor(stdout?.columns);
+  // Below core's floor the frame is wider than the terminal, so the terminal wraps it and untrusted
+  // text reaches the left edge. The frame is still rendered — dropping it would hide the text the
+  // human is ruling on — but the guarantee has lapsed, and a lapsed guarantee is said out loud.
+  const tooNarrow = narrowTerminalNotice(stdout?.columns);
   const framedCommand = frameUntrustedCommand(commandText, { width });
   // CFG-27: when the auto-rater escalated this command (rather than approving it), show its
   // outcome + reason so the human has the rater's read before deciding. §6 makes the explanation
@@ -90,6 +96,7 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
       <Text bold color="yellow">
         {`The agent wants to run a shell command via ${pending.name}`}
       </Text>
+      {tooNarrow ? <Text color="yellow">{tooNarrow}</Text> : null}
       {/* Rule 3 — the flagged sites go ABOVE the body, in the warn tone, because their whole job is
           to land the eye on the span the human is ruling on rather than on line one of a paragraph. */}
       {framedCommand.notices.map((line, index) => (
@@ -135,12 +142,6 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
     </Box>
   );
 }
-
-/**
- * Never frame narrower than this, however small the terminal claims to be: below it the gutter eats
- * the whole row and the command becomes unreadable, which is its own way of hiding a payload.
- */
-const MIN_FRAME_WIDTH = 20;
 
 /**
  * Paint an already-framed block, one Ink `<Text>` per physical row.
