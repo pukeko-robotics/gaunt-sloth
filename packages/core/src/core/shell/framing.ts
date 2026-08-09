@@ -53,9 +53,9 @@
  *
  * ## What the column-0 guarantee promises, and what it assumes
  *
- * **Promise:** every row this module returns fits the `width` it was given, so a terminal of that
- * width never wraps one — and therefore no byte of untrusted text is ever drawn at column 0, where
- * the dialog's own chrome lives.
+ * **Promise:** for any `width` of at least {@link MIN_FRAME_WIDTH}, every row this module returns
+ * fits the `width` it was given, so a terminal of that width never wraps one — and therefore no
+ * byte of untrusted text is ever drawn at column 0, where the dialog's own chrome lives.
  *
  * It rests on exactly three things, and each is held here rather than hoped for:
  *
@@ -74,11 +74,18 @@
  *    continuation carrying attacker-chosen bytes at column 0. The cost is under-fill on a
  *    narrow-rendering terminal, which is cosmetic.
  *
- * **Where it stops:** a terminal narrower than {@link MIN_FRAME_WIDTH} cannot carry the gutter and
- * a readable command at once. The frame is still rendered at that minimum — dropping it would hide
- * the text a human is being asked to rule on — so its rows are wider than the terminal and it
- * wraps. The guarantee does not hold there, and the surfaces say so on screen rather than letting
- * it lapse silently: see {@link narrowTerminalNotice}.
+ * **Where it stops, and why the promise names a width:** a frame narrower than
+ * {@link MIN_FRAME_WIDTH} cannot carry the gutter and a readable command at once, so below that the
+ * renderer stops honouring the number it was given and keeps {@link MIN_CONTENT_WIDTH} columns of
+ * content instead — shrinking the command to nothing would be its own way of hiding a payload. Two
+ * consequences, and they are different things. A `width` argument smaller than the gutter plus that
+ * floor gets rows wider than the argument, because the floor wins — which is why the promise above
+ * is stated over arguments at or above {@link MIN_FRAME_WIDTH} rather than over every number. A
+ * *terminal* narrower than {@link MIN_FRAME_WIDTH} gets rows wider than itself and wraps them, and
+ * there the column-0 guarantee genuinely lapses. Both surfaces resolve their width through
+ * {@link frameWidthFor}, which never returns less than {@link MIN_FRAME_WIDTH}, so only the second
+ * case is reachable in production — and it is announced on screen rather than left to lapse
+ * silently: see {@link narrowTerminalNotice}.
  */
 import {
   displayWidth,
@@ -121,9 +128,11 @@ export function frameWidthFor(columns: number | undefined): number {
  * exists to prevent. The human is told rather than shown a dialog that still looks like it is
  * guarding them.
  *
- * **Deliberately one short line.** It is painted on a terminal of twenty columns or fewer, so every
- * word costs a row above the command the reader is trying to reach; the reasoning belongs here,
- * where it has room, and only the consequence belongs on that screen.
+ * **Deliberately short, and only the consequence.** It is painted on a terminal of twenty columns
+ * or fewer, so it wraps to a few rows however it is worded and every word it does not need is
+ * another row of chrome between the reader and the command they are ruling on. It names what goes
+ * wrong rather than the width that caused it, because the width is not what the reader has to
+ * decide about; the reasoning belongs here, where it has room.
  */
 export function narrowTerminalNotice(columns: number | undefined): string | undefined {
   if (usableColumns(columns) - 1 >= MIN_FRAME_WIDTH) return undefined;
@@ -182,8 +191,13 @@ const CONTINUATION_SEPARATOR = '┊';
 /** Separator on the renderer's own "lines hidden" rows. */
 const ELISION_SEPARATOR = '⋯';
 
-/** Smallest content width the gutter will leave, whatever the terminal claims. */
-const MIN_CONTENT_WIDTH = 4;
+/**
+ * Smallest content width the gutter will leave, whatever the terminal claims.
+ *
+ * Exported alongside {@link wrapToWidth}, so the tests that pin the wrap's floor can state this
+ * term rather than repeat the number and quietly drift from it.
+ */
+export const MIN_CONTENT_WIDTH = 4;
 
 /** What made the gate unable to resolve a command statically, at one position in it. */
 export type UntrustedSiteKind = 'command substitution' | 'composition';
@@ -576,13 +590,24 @@ function buildNotices(
  * one code point in two columns, and a row measured as fitting that does not fit is a row the
  * terminal wraps back to column 0. Conservatively, so the same holds on a terminal that renders
  * Ambiguous characters wide.
+ *
+ * The budget is floored at {@link MIN_CONTENT_WIDTH} here rather than taken on trust. The
+ * over-wide-cluster branch below escapes a cluster it cannot draw and re-measures it, which
+ * advances only if the budget can hold at least one escape character; at a budget of zero it
+ * re-escapes its own backslashes forever and the row never terminates. {@link frame} does pass a
+ * floored width, but a loop that terminates because of what its only caller happens to do is one
+ * the next caller silently breaks.
+ *
+ * Exported for tests, which pin that termination at a degenerate width — the one width the public
+ * entry points cannot produce.
  */
-function wrapToWidth(text: string, width: number): string[] {
-  if (maxDisplayWidth(text) <= width) return [text];
+export function wrapToWidth(text: string, width: number): string[] {
+  const budget = Math.max(MIN_CONTENT_WIDTH, width);
+  if (maxDisplayWidth(text) <= budget) return [text];
   const rows: string[] = [];
   let rest = text;
   while (rest.length > 0) {
-    const head = sliceToMaxWidth(rest, width);
+    const head = sliceToMaxWidth(rest, budget);
     if (head.length === 0) {
       // A grapheme cluster wider than the entire content budget cannot be drawn inside the gutter
       // at all, so it is shown the way this module shows anything else it cannot render safely:
@@ -590,10 +615,17 @@ function wrapToWidth(text: string, width: number): string[] {
       // unbounded — the terminal would wrap it, and the continuation would carry untrusted bytes at
       // column 0, which is the single thing this function exists to prevent.
       //
-      // A guard rather than a live path: no cluster is known to measure more than
-      // MIN_CONTENT_WIDTH columns. It terminates regardless — the escapes are ASCII, one column
-      // each under every policy, and the budget here is at least MIN_CONTENT_WIDTH, so the next
-      // pass slices a non-empty head and the loop strictly advances.
+      // A LIVE path, not a dead guard. A grapheme cluster has no bounded column count: display
+      // width sums additively across a run of Hangul leading jamo, and across the trailing spacing
+      // marks of an Indic or halfwidth-kana cluster, so one cluster can measure arbitrarily many
+      // columns. None of those code points is a control or format character, so the neutraliser
+      // does not touch them and they arrive here whole — forty leading jamo are a single
+      // eighty-column cluster, which overruns the content budget of a default eighty-column
+      // terminal. Deleting this branch does not remove a dead case; it restores the unbounded row.
+      //
+      // It terminates: the escapes are ASCII, one column each under every policy, and the budget
+      // is floored at MIN_CONTENT_WIDTH above, so the next pass slices a non-empty head and the
+      // loop strictly advances.
       const cluster = firstCluster(rest);
       rest = `${escapeCodePoints(cluster)}${rest.slice(cluster.length)}`;
       continue;

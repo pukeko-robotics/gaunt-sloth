@@ -6,10 +6,12 @@ import {
   frameUntrustedCommand,
   frameUntrustedText,
   frameWidthFor,
+  MIN_CONTENT_WIDTH,
   MIN_FRAME_WIDTH,
   narrowTerminalNotice,
   neutralizeToOneLine,
   neutralizeUntrustedText,
+  wrapToWidth,
 } from '#src/core/shell/framing.js';
 import { displayWidth, maxDisplayWidth } from '#src/utils/displayWidth.js';
 
@@ -343,6 +345,90 @@ describe('shell/framing — every row fits under EITHER ambiguous-width policy',
 });
 
 /**
+ * A grapheme cluster is not bounded to two columns. Display width sums **additively** across a run
+ * of Hangul leading jamo, and across the trailing spacing marks of an Indic or halfwidth-kana
+ * cluster, so a single cluster can measure arbitrarily many columns — and none of those code points
+ * is a control or format character, so the neutraliser leaves them exactly as written.
+ *
+ * A cluster wider than the entire content budget cannot be cut to fit, so the wrap either escapes it
+ * or emits it raw on one unbounded row that the terminal wraps back to column 0. This is not a
+ * contrived width: forty leading jamo are one eighty-column cluster, and an ordinary eighty-column
+ * terminal leaves a budget of seventy-two.
+ */
+describe('shell/framing — a grapheme cluster wider than the whole content budget', () => {
+  /** Forty U+1100 HANGUL CHOSEONG KIYEOK — ONE cluster, eighty columns. */
+  const OVER_WIDE_CLUSTER = cp(0x1100).repeat(40);
+  const segmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
+
+  it('escapes it, rather than emitting a row the terminal would wrap to column 0', () => {
+    const width = frameWidthFor(80);
+    const framed = frameUntrustedCommand(`echo ${OVER_WIDE_CLUSTER} ; rm -rf /`, { width });
+    const rows = [...framed.notices, ...framed.lines];
+
+    // CONTROLS, and the reason this case reaches the branch at all. Both are properties of
+    // `Intl.Segmenter` and `string-width` rather than of this module, so a dependency bump could
+    // quietly stop the payload being over-wide and leave every assertion below green while testing
+    // nothing. Pinned here so that goes red instead of silent.
+    expect([...segmenter.segment(OVER_WIDE_CLUSTER)]).toHaveLength(1);
+    expect(maxDisplayWidth(OVER_WIDE_CLUSTER)).toBeGreaterThan(width);
+    // And it is not the neutraliser that makes this safe: the payload reaches the wrap untouched.
+    expect(neutralizeUntrustedText(OVER_WIDE_CLUSTER)).toBe(OVER_WIDE_CLUSTER);
+
+    // The property the branch exists for. Emitted raw, this input renders a ninety-seven-column
+    // row into a seventy-nine-column frame — which the terminal wraps, putting attacker-chosen
+    // bytes flush left. Asserted under both policies, like every other row this module returns.
+    for (const row of rows) {
+      expect(displayWidth(row)).toBeLessThanOrEqual(width);
+      expect(maxDisplayWidth(row)).toBeLessThanOrEqual(width);
+    }
+    // Every body row still carries a renderer-owned prefix: the escapes are shown INSIDE the
+    // gutter, which is the whole point of escaping them rather than letting the row run long.
+    const prefixed = new RegExp(`${GUTTER.source}|${CONTINUATION.source}|${ELISION.source}`, 'u');
+    for (const line of framed.lines) expect(line).toMatch(prefixed);
+
+    // Shown, not discarded: the cluster comes back as the printable escapes of its code points, and
+    // the rest of the command is still on screen for the human to rule on.
+    expect(framed.lines.some((line) => line.includes('\\u1100'))).toBe(true);
+    expect(framed.lines.some((line) => line.includes(cp(0x1100)))).toBe(false);
+    expect(framed.lines.some((line) => line.includes('; rm -rf /'))).toBe(true);
+  });
+
+  /**
+   * The escape branch advances only while the budget can hold at least one escape character. At a
+   * budget of zero it re-escapes the backslashes it just wrote and the row grows without bound, so
+   * the wrap floors its own budget instead of trusting the caller for it. `frame` floors the
+   * content width too, which is exactly why this width is unreachable through the public entry
+   * points — and why the guarantee has to be pinned on the function that states it.
+   */
+  it('floors its own budget, so a degenerate width terminates instead of escaping forever', () => {
+    // FIRST, and deliberately so. A budget of one still terminates unclamped, so this assertion
+    // catches a removed floor in milliseconds and names it — the rows come back at the content
+    // floor's width rather than at the one column that was asked for. It has to run before the
+    // width-zero call below, because a termination property cannot be pinned without calling the
+    // function, an unclamped call at width zero never returns, and a synchronous loop is the one
+    // failure a test timeout cannot interrupt: it would hang the suite instead of failing it.
+    const narrow = wrapToWidth(OVER_WIDE_CLUSTER, 1);
+    expect(Math.max(...narrow.map(maxDisplayWidth))).toBe(MIN_CONTENT_WIDTH);
+
+    // The degenerate widths themselves. Unclamped, `sliceToMaxWidth` can return nothing at all, so
+    // the escape branch re-escapes the backslashes it has just written and `rest` grows without
+    // bound.
+    const rows = wrapToWidth(OVER_WIDE_CLUSTER, 0);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.length).toBeLessThan(1000);
+    for (const row of rows) {
+      expect(row.length).toBeGreaterThan(0);
+      expect(maxDisplayWidth(row)).toBeLessThanOrEqual(MIN_CONTENT_WIDTH);
+    }
+    // A floor, not a special case for zero.
+    expect(wrapToWidth(OVER_WIDE_CLUSTER, -10)).toEqual(rows);
+    // CONTROL: the floor does not reach up and change a budget the caller legitimately asked for,
+    // so this pins the clamp rather than merely pinning that some width was used.
+    expect(wrapToWidth('x'.repeat(20), 10)).toEqual(['x'.repeat(10), 'x'.repeat(10)]);
+  });
+});
+
+/**
  * Below {@link MIN_FRAME_WIDTH} the frame is deliberately wider than the terminal — the gutter would
  * otherwise eat the row and hide the payload — so the terminal wraps it and untrusted text reaches
  * column 0. The trade is defensible; taking it silently is not, because a dialog that has stopped
@@ -367,8 +453,9 @@ describe('shell/framing — a terminal too narrow to frame says so', () => {
     // It names the CONSEQUENCE — that text below can reach the left edge — rather than the number,
     // because the number is not what the reader has to decide about.
     expect(notice).toContain('left edge');
-    // One line: it is painted on a terminal of twenty columns or fewer, where every word it does
-    // not need is a row of chrome between the reader and the command they are ruling on.
+    // It carries no line break of its own: the surfaces paint it as one row and let the terminal
+    // wrap it. On a terminal this narrow it costs a few rows however it is worded, which is why
+    // every word it does not need is another row of chrome between the reader and the command.
     expect(notice).not.toContain('\n');
   });
 
