@@ -1,5 +1,7 @@
 import type {
   AgentStreamEvent,
+  AttackHaltAnswer,
+  PendingAttackHalt,
   PendingToolInterrupt,
   ToolApprovalDecision,
   McpConnectionFailure,
@@ -27,6 +29,21 @@ import type { MouseSubscribe } from '#src/tui/useMouse.js';
 export interface PendingApproval {
   pending: PendingToolInterrupt;
   resolve: (decision: ToolApprovalDecision) => void;
+}
+
+/**
+ * [[TUI-C68]] §6.1 — one in-flight **attack halt** bridged from the runner into the mounted
+ * `<App>`: the {@link PendingAttackHalt} the rater produced, plus a `resolve` that hands the
+ * human's {@link AttackHaltAnswer} back to the awaiting runner callback. Idempotent, like
+ * {@link PendingApproval} — the first answer wins.
+ *
+ * Deliberately NOT a {@link PendingApproval} with a special decision. The banner is a different
+ * kind of object from the approval dialog and must not be able to grow the dialog's controls: there
+ * is no scope to return here, so no surface can accidentally make an attack grant sticky.
+ */
+export interface PendingAttackBanner {
+  halt: PendingAttackHalt;
+  resolve: (answer: AttackHaltAnswer) => void;
 }
 
 /**
@@ -231,6 +248,14 @@ export interface TuiAppProps {
    * never surface approvals) simply omit it.
    */
   subscribeApproval?: (cb: (record: PendingApproval) => void) => () => void;
+  /**
+   * [[TUI-C68]] §6.1 — subscribe to attack halts bridged from the runner: each
+   * {@link PendingAttackBanner} carries the halted command plus a `resolve` the app calls with the
+   * human's answer. **Optional, and absent is what a surface with no banner means** — the runner
+   * then halts the run itself, which is the behaviour every surface had before this existed. So the
+   * fixture and AG-UI paths simply omit it and keep the halt.
+   */
+  subscribeAttackHalt?: (cb: (record: PendingAttackBanner) => void) => () => void;
   /** Called once a turn finishes, with the user input and the final assistant text. */
   onTurnComplete?: (userInput: string, assistantText: string) => void;
   /** Called on `exit`/`/exit` (or quit) for cleanup before the app unmounts. */

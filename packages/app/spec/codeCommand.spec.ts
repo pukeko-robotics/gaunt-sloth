@@ -101,6 +101,7 @@ const gthAgentRunnerInstanceMock = {
   init: vi.fn(),
   processMessages: vi.fn(),
   setToolApprovalCallback: vi.fn(),
+  setAttackHaltCallback: vi.fn(),
   cleanup: vi.fn(),
 };
 vi.mock('#src/core/GthAgentRunner.js', () => ({

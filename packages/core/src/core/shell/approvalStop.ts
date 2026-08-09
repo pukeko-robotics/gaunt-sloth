@@ -27,9 +27,8 @@
 
 /**
  * Base class for the two run-ending approvals outcomes, so a caller that wants to present them as
- * an ending rather than a crash can catch both with one `instanceof`. Nothing does that today —
- * every surface currently shows the message as-is, which is already the whole explanation — and
- * [[TUI-C26]] is the node that will catch it to render the §6.1 banner.
+ * an ending rather than a crash can catch both with one `instanceof`. Every surface shows the
+ * message as-is, which is already the whole explanation.
  */
 export abstract class ApprovalStopError extends Error {
   /** The command that ended the run. */
@@ -49,9 +48,11 @@ export abstract class ApprovalStopError extends Error {
  * credential targeting, privilege escalation, persistence, deception, obfuscation). Ends the agent
  * loop; the model is told nothing and offered nothing.
  *
- * [[TUI-C26]] will present this interactively as the §6.1 red banner — any key stops, typing
- * `run anyway` runs this one command — BEFORE the throw; until then the run simply ends with this
- * message, which is what a non-interactive session gets either way (§6.2).
+ * **This is what reaches a surface that cannot ask.** An interactive surface is offered §6.1's red
+ * banner first — `GthAgentRunner.setAttackHaltCallback`, where typing `run anyway` runs this one
+ * command and everything else stops the run — and this error is thrown when no banner is wired, or
+ * when the banner is answered with anything but that phrase. A non-interactive session wires
+ * nothing and so gets this message directly (§6.2).
  *
  * The recovery this message names is deliberately the **allow-list**, not `bypass`. §4.2 makes
  * `approvals.allow` the supported way to run such a command unattended (it is consulted before the

@@ -25,6 +25,7 @@ import { BaseCheckpointSaver } from '@langchain/langgraph';
 import {
   AgentResolvers,
   AgentStreamEvent,
+  type AttackHaltCallback,
   GthAgentFactory,
   GthAgentInterface,
   GthCommand,
@@ -235,6 +236,15 @@ export class GthAgentRunner {
    */
   private toolApprovalCallback: ToolApprovalCallback | null = null;
 
+  /**
+   * [[TUI-C68]] §6.1 — consumer hook invoked when the rater rates a command an `attack`, so an
+   * interactive surface can show the red banner before the run ends. Set via
+   * {@link setAttackHaltCallback}; **when unset the runner halts immediately**, which is the
+   * behaviour every surface had before a banner existed. A surface that forgets to wire it
+   * therefore keeps the halt rather than losing it.
+   */
+  private attackHaltCallback: AttackHaltCallback | null = null;
+
   /** The command the runner was initialized for; selects which `devTools` config applies. */
   private command: GthCommand | undefined = undefined;
 
@@ -345,6 +355,47 @@ export class GthAgentRunner {
    */
   public setToolApprovalCallback(callback: ToolApprovalCallback | null): void {
     this.toolApprovalCallback = callback;
+  }
+
+  /**
+   * [[TUI-C68]] §6.1 — register the handler that shows the **attack banner**, the one way a human
+   * gets past an `attack` verdict. Pass `null` to clear.
+   *
+   * Separate from {@link setToolApprovalCallback} because it is a separate question with an
+   * inverted default: an absent approval callback means *this session has nobody to ask*, and an
+   * absent one here means *end the run*. Wiring it is what an interactive surface opts into; every
+   * other surface keeps the halt (see {@link attackHaltCallback}).
+   */
+  public setAttackHaltCallback(callback: AttackHaltCallback | null): void {
+    this.attackHaltCallback = callback;
+  }
+
+  /**
+   * §6.1 — **the single seam between an `attack` verdict and the end of the run.** Both rating
+   * paths — the §3.2 allow-match tripwire and the ordinary rater decision — go through here, so the
+   * banner cannot be present on one and missing on the other, which is the shape of bug that leaves
+   * a halt answerable in some sessions and not others with nothing on screen to tell them apart.
+   *
+   * It returns a decision for the one answer that grants and throws for everything else:
+   *
+   * - **no callback → throw**, immediately and unchanged. §6.2's rule is that a run with nobody to
+   *   ask never blocks and never times out into a grant; the way that is guaranteed is that waiting
+   *   is something only a wired surface can cause.
+   * - **`run-anyway` → approve, scope `once`.** Exactly one command runs. `once` is not a default
+   *   restated: it is what keeps §6.1's three "never"s true. Returning here is also returning from
+   *   *before* the block that records a sticky grant, so no allow-list entry and no session grant
+   *   can be written on this path — the next identical call is rated again and reaches this banner
+   *   again. Nothing here touches the rung, and nothing disables the rater, the escalation or the
+   *   halt for anything else.
+   * - **anything else → throw.** `stop`, and equally a value a surface invents or forgets to
+   *   return: the grant is one exact answer and everything else is a refusal.
+   */
+  private async haltOrRunAnyway(command: string, reason: string): Promise<ToolApprovalDecision> {
+    if (this.attackHaltCallback) {
+      const answer = await this.attackHaltCallback({ command, reason });
+      if (answer === 'run-anyway') return { type: 'approve', scope: 'once' };
+    }
+    throw new AttackHaltError(command, reason);
   }
 
   /**
@@ -1132,7 +1183,12 @@ export class GthAgentRunner {
       if (tripwire.action === 'halt') {
         // §3.2/§4.2 — `attack` halts exactly as it would have without the match. A standing human
         // grant answers "may this run"; it does not answer "is this command's structure hostile".
-        throw new AttackHaltError(command, tripwire.verdict?.reason ?? '');
+        //
+        // §6.1 — and it halts through the SAME seam as the rater's own path below, so an allow
+        // entry does not decide whether the banner appears. The entry has already been overruled by
+        // the time this line is reached; letting it also silence the one way out would make the
+        // recovery depend on a match the human cannot see from the banner.
+        return await this.haltOrRunAnyway(command, tripwire.verdict?.reason ?? '');
       }
       // `catastrophic` — the one outcome the tripwire escalates. Fall through to the human.
       safetyVerdict = tripwire.verdict;
@@ -1200,7 +1256,11 @@ export class GthAgentRunner {
           // clears the transcript and the consecutive count and deliberately leaves the
           // reachability bound standing.
           this.negotiation.humanReached();
-          throw new AttackHaltError(subject.command, decision.verdict?.reason ?? '');
+          // §6.1 — the banner, when an interactive surface wired one, and the halt otherwise. It
+          // sits AFTER the reset above on purpose: a human is reached either way (that is what the
+          // banner is), so the negotiation ends here whichever answer comes back, and neither
+          // answer leaves a transcript behind for a later turn to argue from.
+          return await this.haltOrRunAnyway(subject.command, decision.verdict?.reason ?? '');
         }
         if (decision.action === 'reject') {
           // §5 — `destructive` at `auto`. The round is recorded first, so the attempt being ruled

@@ -9,7 +9,12 @@ import {
   setToolOutputSuppressed,
 } from '@gaunt-sloth/core/core/toolOutputChannel.js';
 import { StatusLevel } from '@gaunt-sloth/core/core/types.js';
-import type { PendingToolInterrupt, ToolApprovalDecision } from '@gaunt-sloth/core/core/types.js';
+import type {
+  AttackHaltAnswer,
+  PendingAttackHalt,
+  PendingToolInterrupt,
+  ToolApprovalDecision,
+} from '@gaunt-sloth/core/core/types.js';
 import {
   beginWarningCapture,
   endWarningCapture,
@@ -45,7 +50,12 @@ import {
   formatConfigSummary,
   type DebugDumpInput,
 } from '@gaunt-sloth/agent/modules/slashCommands.js';
-import type { PendingApproval, TuiAgent, TuiDebugCapture } from '#src/tui/types.js';
+import type {
+  PendingApproval,
+  PendingAttackBanner,
+  TuiAgent,
+  TuiDebugCapture,
+} from '#src/tui/types.js';
 import {
   collectMcpOverview,
   renderHistory,
@@ -305,6 +315,51 @@ function createApprovalBridge() {
 }
 
 /**
+ * [[TUI-C68]] §6.1 — the same fan-out for **attack halts**, so the runner's halt seam can reach the
+ * mounted React app and a human can type their way past one.
+ *
+ * A second bridge rather than a widened approval one: the answers are different types, and keeping
+ * them apart is what stops a surface returning an approval `scope` for a halt that must never carry
+ * one.
+ *
+ * Fail-closed the same way, and here that word means `stop`: if the session ends while a banner is
+ * still up, {@link abortPending} answers it so the suspended run cannot hang — and it answers with
+ * the one value that does not run the command.
+ */
+function createAttackHaltBridge() {
+  const listeners = new Set<(record: PendingAttackBanner) => void>();
+  const outstanding = new Set<PendingAttackBanner>();
+  return {
+    /** Wired to `runner.setAttackHaltCallback`: returns a Promise the runner awaits. */
+    request: (halt: PendingAttackHalt): Promise<AttackHaltAnswer> =>
+      new Promise<AttackHaltAnswer>((resolve) => {
+        let settled = false;
+        const record: PendingAttackBanner = {
+          halt,
+          resolve: (answer) => {
+            if (settled) return;
+            settled = true;
+            outstanding.delete(record);
+            resolve(answer);
+          },
+        };
+        outstanding.add(record);
+        for (const l of listeners) l(record);
+      }),
+    subscribe: (cb: (record: PendingAttackBanner) => void) => {
+      listeners.add(cb);
+      return () => {
+        listeners.delete(cb);
+      };
+    },
+    /** Answer every still-open banner with `stop` on teardown. */
+    abortPending: () => {
+      for (const record of [...outstanding]) record.resolve('stop');
+    },
+  };
+}
+
+/**
  * Ink TUI counterpart to `createInteractiveSession` (the readline path). Same lifecycle —
  * init config, session logging, a `GthAgentRunner` driving the deep agent — but it renders
  * over the typed {@link import('@gaunt-sloth/core/core/types.js').AgentStreamEvent} stream
@@ -417,6 +472,7 @@ export async function createTuiSession(
   const resolvers = createResolvers();
   const debugBridge = createDebugBridge(config, resolvers);
   const approvalBridge = createApprovalBridge();
+  const attackHaltBridge = createAttackHaltBridge();
   // B5: TUI code/chat default to the LEAN backend; an explicit config.agent.backend overrides it
   // (deep is now opt-in / experimental). Mirrors the readline path in createInteractiveSession,
   // askCommand, and execCommand — the TUI is the default interactive surface, so it must match.
@@ -448,6 +504,11 @@ export async function createTuiSession(
     // command in the mounted <App> and awaits the human's scoped decision (o/s/a → approve,
     // anything else → reject, fail-closed).
     runner.setToolApprovalCallback((pending) => approvalBridge.request(pending));
+
+    // [[TUI-C68]] §6.1 — the attack banner. An `attack` verdict ends the run, and wiring this is
+    // what opts this session into being asked first; a surface that never wires it keeps the halt,
+    // so forgetting fails safe. The readline counterpart is in createInteractiveSession.
+    runner.setAttackHaltCallback((halt) => attackHaltBridge.request(halt));
 
     // Attach the debug sink to the live agent (opt-in; each backend's wrapModelCall middleware
     // reads it lazily, so this only enables capture for the TUI's /debug panel — the AG-UI
@@ -591,11 +652,15 @@ export async function createTuiSession(
         subscribeStatus={bridge.subscribe}
         subscribeDebug={debugBridge.subscribe}
         subscribeApproval={approvalBridge.subscribe}
+        subscribeAttackHalt={attackHaltBridge.subscribe}
         onTurnComplete={logTurn}
         onExit={async () => {
           // Fail-closed: resolve any approval still awaiting a decision before tearing down,
-          // so a suspended run can never hang on an unanswered prompt.
+          // so a suspended run can never hang on an unanswered prompt. The attack banner gets the
+          // same treatment, answered `stop` — which is also what Ctrl+C reaches, since Ink claims
+          // that key before any handler and unmounts straight into here.
           approvalBridge.abortPending();
+          attackHaltBridge.abortPending();
           await runner.cleanup();
           stopSessionLogging();
         }}
