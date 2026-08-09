@@ -34,6 +34,17 @@ const envFor = (fixtureName: string): Record<string, string | undefined> => {
 const SIGNALS_REACH_THE_PROGRAM = os.platform() !== 'win32';
 
 /**
+ * Windows ConPTY parses and re-encodes input escape sequences rather than passing raw bytes to the
+ * application, so a test cannot hand it half a sequence and have the other half arrive: the
+ * incomplete first write is swallowed and the remainder is delivered as literal text. A case that
+ * writes a split key measures the platform there rather than our code. Same gating shape, and the
+ * same reason, as `mouse.tui.test.ts` — and the behaviour is not untested on Windows, because the
+ * chunk-boundary cases are asserted deterministically in `spec/tui/mouseStdin.spec.ts`, which runs
+ * on both Windows cells of the unit matrix.
+ */
+const PTY_PASSES_RAW_BYTES = os.platform() !== 'win32';
+
+/**
  * The pid of the program tui-test spawned in the pty.
  *
  * The harness spawns the program directly (no shell in between), so this is the `gth` process
@@ -554,6 +565,37 @@ test.describe('gth chat TUI — slow fixture (interrupt)', () => {
     // ...and the app recovers to the ready prompt rather than crashing.
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
   });
+
+  /**
+   * TUI-C62 — the same key, arriving as the two halves of a meta-prefixed one.
+   *
+   * `Option+↑` is `ESC` then `ESC[A`, and on the terminal that ships with every Mac the two halves
+   * usually arrive as separate reads. Read on its own, that leading `ESC` is the interrupt key and
+   * the turn the user is watching cancels itself, with nothing on screen to explain why. This is the
+   * terminal-level statement of the fix: real bytes, a real pty, a real streaming turn.
+   */
+  test.when(
+    PTY_PASSES_RAW_BYTES,
+    'a meta-prefixed key split across two writes does NOT interrupt a turn',
+    async ({ terminal }) => {
+      await expect(terminal.getByText('ready to chat')).toBeVisible();
+      terminal.write('go');
+      await expect(terminal.getByText('> go')).toBeVisible();
+      terminal.submit();
+      await expect(terminal.getByText('streaming')).toBeVisible();
+
+      terminal.write('\x1b');
+      terminal.write('\x1b[A');
+
+      // The turn runs to completion instead of being cancelled, and the notice the abort path
+      // writes never appears. Waiting on the ready line first makes the absence a statement about a
+      // finished turn rather than about a screen that had not caught up yet.
+      await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+      await expect(terminal.getByText('Interrupted')).not.toBeVisible();
+      // Neither half was typed into the prompt on its way through.
+      expect(terminal.serialize().view).not.toContain('[A');
+    }
+  );
 });
 
 test.describe('gth chat TUI — debug pane `/` search (search fixture, TUI-C21)', () => {
