@@ -8,12 +8,22 @@ import {
   type SubagentTreeViewModel,
   type TurnViewModel,
 } from '#src/tui/viewModel.js';
-import type { PendingApproval, TranscriptItem, TuiAppProps } from '#src/tui/types.js';
-import type { ToolApprovalScope } from '@gaunt-sloth/core/core/types.js';
+import type {
+  PendingApproval,
+  PendingAttackBanner,
+  TranscriptItem,
+  TuiAppProps,
+} from '#src/tui/types.js';
+import type { AttackHaltAnswer, ToolApprovalScope } from '@gaunt-sloth/core/core/types.js';
 import type { ApprovalRung } from '@gaunt-sloth/core/config.js';
 import { buildRejectionMessage } from '@gaunt-sloth/core/core/shell/rejection.js';
+import {
+  attackBannerCopy,
+  grantsRunAnyway,
+} from '@gaunt-sloth/core/core/shell/escalationSeverity.js';
 import { TranscriptViewport } from '#src/tui/components/TranscriptViewport.js';
 import { ApprovalPrompt } from '#src/tui/components/ApprovalPrompt.js';
+import { AttackBanner } from '#src/tui/components/AttackBanner.js';
 import { LiveTurn, ChecklistPanel } from '#src/tui/components/LiveTurn.js';
 import { extractActiveChecklist } from '#src/tui/viewModel.js';
 import { StatusBar } from '#src/tui/components/StatusBar.js';
@@ -132,6 +142,16 @@ export function App(props: TuiAppProps): React.ReactElement {
   // The head is the approval on screen AND the one that owns the keyboard. Deriving both from this
   // single expression is what keeps those two facts from drifting apart.
   const pendingApproval = approvalQueue[0] ?? null;
+  // [[TUI-C68]] §6.1 — attack halts, queued exactly as approvals are, and for the same reason: the
+  // head is what is on screen AND what owns the keyboard, from one expression.
+  const [attackQueue, setAttackQueue] = useState<PendingAttackBanner[]>([]);
+  const pendingAttack = attackQueue[0] ?? null;
+  // What the human has typed into the banner. Held in a ref BESIDE the state because Ink dispatches
+  // every keypress parsed out of one stdin chunk in a synchronous loop: typing `run` can run the
+  // handler three times before a single re-render, and reading the state would give all three the
+  // pre-`r` value, leaving the buffer as `n`. Every write below sets both.
+  const [attackTyped, setAttackTyped] = useState('');
+  const attackTypedRef = useRef('');
   // Mirror of toolsExpanded for the slash-command handler (memoized without it in deps), so
   // /verbose can compute the next state without a stale closure or a side effect in the updater.
   const toolsExpandedRef = useRef(false);
@@ -410,6 +430,28 @@ export function App(props: TuiAppProps): React.ReactElement {
     [agent]
   );
 
+  // [[TUI-C68]] §6.1 — answer the attack banner and dequeue it. `run-anyway` runs exactly one
+  // command, so it is the only answer that gets a notice: what a user cannot otherwise observe is
+  // the SCOPE of what they granted (the command running is visible; only this one running is not),
+  // and the wording is core's so neither surface can promise a persistence the runner never
+  // performs. `stop` gets none — the runner throws the halt, whose message is the whole
+  // explanation and already reaches the transcript through runTurn's catch.
+  const resolveAttack = (answer: AttackHaltAnswer): void => {
+    const head = pendingAttack;
+    if (!head) return;
+    head.resolve(answer);
+    attackTypedRef.current = '';
+    setAttackTyped('');
+    setAttackQueue((q) => q.slice(1));
+    if (answer !== 'run-anyway') return;
+    push({
+      kind: 'notice',
+      title: 'Running a command the rater called an attack',
+      lines: [attackBannerCopy().granted],
+      tone: 'warn',
+    });
+  };
+
   // Resolve the currently-shown approval (the queue head) and commit a brief notice so the
   // decision reads in the transcript (TUI-C14 notice conventions). Dequeues the head so the next
   // queued approval (if any) surfaces. Approve carries the chosen scope; reject is fail-closed.
@@ -658,6 +700,58 @@ export function App(props: TuiAppProps): React.ReactElement {
   //  3. While the panel is focused → Tab/Shift+Tab cycle sections, ↑/↓ scroll one line,
   //     PageUp/PageDown page-step, m maximises, Esc unfocuses.
   useInput((input, key) => {
+    // [[TUI-C68]] §6.1 — the ATTACK BANNER owns the keyboard ahead of everything, including a
+    // pending approval. The two are separate questions and the run is blocked on both, but this one
+    // is the irreversible one, so it is answered first and the approval prompt stands down (it is
+    // not even rendered while a banner is up).
+    //
+    // **The safe action is the FALLTHROUGH, and a buffer is what threatens it.** The approval menu
+    // grants only on an offered key and rejects every other keystroke; a buffer inverts that by
+    // accumulating keystrokes instead of rejecting them. It is restored structurally, not by
+    // hoping:
+    //
+    // - **Enter is the only commit, and it grants only on `grantsRunAnyway`** — core's matcher,
+    //   the same one the readline surface answers with, so what the banner says is answerable and
+    //   what this handler accepts cannot drift. A prefix, a near miss, a bare Enter and whatever a
+    //   cat leaves in the buffer all take the one `stop` path.
+    // - **One shot.** Enter on anything else resolves the halt; it never re-asks. A re-prompt turns
+    //   a typo into another chance at an irreversible action.
+    // - **`q` and `Esc` abort with text already typed**, so someone who starts typing and thinks
+    //   better of it is not trapped. `q` costs nothing to bind — the phrase contains no `q`.
+    //   Ctrl+C aborts too, but never arrives here: Ink claims it before any `useInput` subscriber
+    //   and unmounts the app, which ends the session and is a blunter abort than these two.
+    //
+    // **A chord is declined, not blanked.** The approval branch below maps a modified key to the
+    // empty string so a chord cannot stand in for an approval key; here the equivalent is refusing
+    // to BUFFER it, because blanking would silently type nothing while the user believes they
+    // pressed something. `shift` is excluded from the test for the same reason it is there: it is
+    // how a capital is typed, not a different key.
+    if (pendingAttack) {
+      const chord = key.ctrl || key.meta || key.super || key.hyper;
+      if (key.return) {
+        resolveAttack(grantsRunAnyway(attackTypedRef.current) ? 'run-anyway' : 'stop');
+        return;
+      }
+      if (key.escape || (!chord && input.toLowerCase() === 'q')) {
+        resolveAttack('stop');
+        return;
+      }
+      if (key.backspace || key.delete) {
+        attackTypedRef.current = attackTypedRef.current.slice(0, -1);
+        setAttackTyped(attackTypedRef.current);
+        return;
+      }
+      // Only plain, printable text is buffered. `input` is empty for the navigation keys ink
+      // reports as names, and control characters are refused outright rather than escaped: this
+      // buffer is compared against one exact phrase, so anything it cannot match is better dropped
+      // than repaired — and neutralising is the framing renderer's job, not a text field's.
+      if (!chord && input.length > 0 && !/[\p{Cc}]/u.test(input)) {
+        attackTypedRef.current += input;
+        setAttackTyped(attackTypedRef.current);
+      }
+      return;
+    }
+
     // Highest priority: a pending tool approval OWNS the keyboard (EXT-9 Phase B2). While one is
     // shown, `o` approves once, `s`/`a` approve with the matching scope and `d` refuses for the
     // session — each where that control is on offer — and anything else (n, Esc, Enter, …)
@@ -968,6 +1062,18 @@ export function App(props: TuiAppProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // [[TUI-C68]] §6.1 — attack halts bridged from the runner. Each one mounts the <AttackBanner>,
+  // which owns the keyboard until it is answered. Absent on the fixture path, where the runner
+  // halts on its own — an unsubscribed surface keeps the halt, which is what makes forgetting to
+  // wire this the safe failure.
+  useEffect(() => {
+    if (!props.subscribeAttackHalt) return;
+    return props.subscribeAttackHalt((record) => {
+      setAttackQueue((q) => [...q, record]);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // The greeting is an intro, not a permanent fixture: show it only before the first
   // exchange, so it stops padding the bottom dock once the conversation is underway.
   const showIntro = !initialMessage && transcript.length === 0 && !live;
@@ -1048,11 +1154,18 @@ export function App(props: TuiAppProps): React.ReactElement {
             {activeChecklist ? <ChecklistPanel items={activeChecklist} /> : null}
             {/* Tool-approval affordance (EXT-9 Phase B2): when an approval is pending it sits just above
           the input dock, owns the keyboard, and suspends the normal prompt below. */}
-            {pendingApproval ? <ApprovalPrompt pending={pendingApproval.pending} /> : null}
+            {/* [[TUI-C68]] §6.1 — the attack banner. Same dock slot as the approval prompt and it
+          owns the keyboard the same way, but it is never shown beside one: an attack halt is the
+          irreversible question, so it outranks a routine approval and that prompt stands down until
+          this is answered. */}
+            {pendingAttack ? <AttackBanner halt={pendingAttack.halt} typed={attackTyped} /> : null}
+            {pendingApproval && !pendingAttack ? (
+              <ApprovalPrompt pending={pendingApproval.pending} />
+            ) : null}
             {/* CFG-39 — the `/approvals` picker. Sits in the same dock slot as the approval prompt
           and owns the keyboard the same way, but is never shown at the same time: a pending tool
           approval is a question the run is blocked on, so it outranks a posture change. */}
-            {approvalsPicker && !pendingApproval ? (
+            {approvalsPicker && !pendingApproval && !pendingAttack ? (
               <ApprovalsPicker
                 choices={approvalsPicker}
                 onSelect={(rung) => {
@@ -1090,7 +1203,7 @@ export function App(props: TuiAppProps): React.ReactElement {
             {/* The prompt stays mounted while a turn streams (EXT-12), so the user can run mid-turn
           slash commands like /approvals; handleSubmit + dispatch gate what's allowed then. It
           is suspended only when the debug panel is focused or a tool approval owns the keyboard. */}
-            {!debugFocused && !pendingApproval && !approvalsPicker ? (
+            {!debugFocused && !pendingApproval && !pendingAttack && !approvalsPicker ? (
               <PromptInput
                 onSubmit={handleSubmit}
                 commands={registry}

@@ -80,6 +80,7 @@ const runnerInstanceMock = {
   setToolApprovalCallback: vi.fn((cb) => {
     capturedApprovalCallback = cb;
   }),
+  setAttackHaltCallback: vi.fn(),
   cleanup: vi.fn().mockResolvedValue(undefined),
 };
 vi.mock('@gaunt-sloth/core/core/GthAgentRunner.js', () => ({

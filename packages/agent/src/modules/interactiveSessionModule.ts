@@ -17,7 +17,9 @@ import { launchBannerFields, launchBannerText } from '@gaunt-sloth/core/core/lau
 import { buildRejectionMessage } from '@gaunt-sloth/core/core/shell/rejection.js';
 import { renderNegotiationRows } from '@gaunt-sloth/core/core/shell/negotiation.js';
 import {
+  attackBannerCopy,
   describeRaterOutcome,
+  grantsRunAnyway,
   RATER_REASON_LABEL,
   type EscalationTone,
 } from '@gaunt-sloth/core/core/shell/escalationSeverity.js';
@@ -406,6 +408,62 @@ export async function createInteractiveSession(
           verdict: pending.safetyVerdict,
         }),
       };
+    });
+
+    // [[TUI-C68]] §6.1 — the ATTACK BANNER on the plain surface. An `attack` verdict says the
+    // command's own structure evidenced compromise, and it ends the run; without this the only
+    // recovery is a restart, which §12 forbids. Wiring the callback is what opts this session into
+    // being asked — every surface that does not wire it keeps the halt (§6.2), so forgetting fails
+    // safe rather than opening a hole.
+    //
+    // **It is not the approval prompt and must not read like one.** No menu, no scope, no key: one
+    // typed phrase runs one command, and everything else stops the run — including a bare Enter and
+    // any near miss. There is no second attempt on purpose: a re-prompt turns a typo into another
+    // chance at an irreversible action.
+    //
+    // On this surface `rl.question` reads a whole LINE in cooked mode, so `q` and `Esc` are not
+    // keystrokes it can intercept — they are simply text that is not the phrase, and stop the run
+    // like any other. That is why the shared copy carries no keyboard line: the Ink TUI adds its own
+    // keys beside these, and a line here naming keys this surface cannot honour would be false.
+    runner.setAttackHaltCallback(async (halt) => {
+      const copy = attackBannerCopy();
+      const frameWidth = frameWidthFor(output.columns);
+      displayError(`\n${copy.title}`);
+      const tooNarrow = narrowTerminalNotice(output.columns);
+      if (tooNarrow) displayWarning(tooNarrow);
+      // The command and the rater's reason are model-authored text on the last screen between a
+      // human and the action. They go through the SAME framing renderer as the approval dialog —
+      // neutralised, gutter-numbered, substitution and composition sites listed above — because a
+      // banner whose own chrome can be forged by the string it is warning about is worse than none.
+      const framedCommand = frameUntrustedCommand(halt.command, { width: frameWidth });
+      for (const notice of framedCommand.notices) displayWarning(notice);
+      display('');
+      for (const line of framedCommand.lines) display(line);
+      display('');
+      displayError(copy.heading);
+      displayInfo(RATER_REASON_LABEL);
+      for (const line of frameUntrustedText(halt.reason, { width: frameWidth }).lines) {
+        displayError(line);
+      }
+      // UNCONDITIONAL, on every attack banner whatever the rating said. The banner is rare by
+      // construction, so the line cannot become noise, and a static string cannot fail the way a
+      // model's explanation can.
+      displayError(copy.irreversible);
+      for (const line of copy.controls) displayInfo(line);
+      setRawMode(false); // ensure the typed phrase is echoed
+      let answer: string;
+      try {
+        answer = await askLine(formatInputPrompt(copy.prompt));
+      } finally {
+        refStdin();
+      }
+      // One shot. The matcher is core's, so what the banner SAYS is answerable and what this
+      // surface ACCEPTS cannot drift, and every value of the line that is not the phrase is a
+      // refusal — which is what keeps the safe answer the fallthrough on a control that otherwise
+      // accumulates keystrokes instead of rejecting them.
+      if (!grantsRunAnyway(answer)) return 'stop';
+      displayWarning(copy.granted);
+      return 'run-anyway';
     });
 
     if (logFileName) {

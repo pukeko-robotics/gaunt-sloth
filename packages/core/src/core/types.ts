@@ -294,6 +294,47 @@ export type ToolApprovalCallback = (
   pending: PendingToolInterrupt
 ) => Promise<ToolApprovalDecision> | ToolApprovalDecision;
 
+/**
+ * [[TUI-C68]] §6.1 — what the **attack banner** is about: the command whose own structure the
+ * rater called hostile, and the rater's explanation of what it saw. Both are untrusted text and a
+ * surface must paint them through `core/shell/framing`.
+ *
+ * A separate shape from {@link PendingToolInterrupt} because it is a separate question. An approval
+ * prompt asks *may this run*, and every control on its menu is a legitimate answer carrying a
+ * scope; this asks *do you believe the rating is wrong*, has exactly one way through, and offers no
+ * scope at all — so a surface cannot reach for a menu control that does not exist here.
+ */
+export interface PendingAttackHalt {
+  /** The command the rater rated an attack, as the model wrote it. Untrusted text. */
+  command: string;
+  /** The rater's own explanation of what the command's structure showed. Untrusted text. */
+  reason: string;
+}
+
+/**
+ * §6.1 — the human's answer at the attack banner.
+ *
+ * **A string union rather than a boolean, and the polarity is deliberate.** `run-anyway` is the
+ * only value that runs anything; every other value — one a future surface invents, or `undefined`
+ * from a surface that forgot to return — stops the run. A boolean would put the irreversible answer
+ * one inverted comparison away, and there is nothing here worth being one typo from.
+ */
+export type AttackHaltAnswer = 'run-anyway' | 'stop';
+
+/**
+ * §6.1 — callback the {@link GthAgentRunner} invokes when the rater rates a command an `attack`, so
+ * an interactive surface can show the red banner and let a human type their way past it.
+ *
+ * **Absent means halt**, exactly as an absent {@link ToolApprovalCallback} means the §6.2
+ * non-interactive exit. A surface that never wires this — a CI run, an AG-UI server, a surface
+ * nobody has written yet — keeps the halt, so forgetting fails safe. It may never block a
+ * non-interactive run, and no timeout turns waiting into a grant: waiting is something only a wired
+ * surface can cause.
+ */
+export type AttackHaltCallback = (
+  halt: PendingAttackHalt
+) => Promise<AttackHaltAnswer> | AttackHaltAnswer;
+
 export interface GthAgentInterface {
   init(
     command: GthCommand | undefined,

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text, useStdout } from 'ink';
 import { Rule } from '#src/tui/components/Rule.js';
+import { FramedLines } from '#src/tui/components/FramedLines.js';
 import {
   renderNegotiationRows,
   type NegotiationVoice,
@@ -16,7 +17,6 @@ import {
   frameWidthFor,
   narrowTerminalNotice,
   STICKY_PREVIEW_MAX_ROWS,
-  type FramedUntrustedText,
 } from '@gaunt-sloth/core/core/shell/framing.js';
 import type { PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
 
@@ -257,36 +257,5 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
       ) : null}
       <Text dimColor>{`Approve?  ${menu}`}</Text>
     </Box>
-  );
-}
-
-/**
- * Paint an already-framed block, one Ink `<Text>` per physical row.
- *
- * **One row per element is the point, not a style.** A single `<Text>` holding the joined block
- * would be re-wrapped by Ink at the box width, and a re-wrapped row starts at column 0 — undoing
- * the gutter the framing exists to guarantee.
- */
-function FramedLines({
-  framed,
-  colour,
-}: {
-  framed: FramedUntrustedText;
-  colour?: string;
-}): React.ReactElement {
-  return (
-    <>
-      {framed.lines.map((line, index) =>
-        colour ? (
-          <Text key={`framed-${index}`} color={colour}>
-            {line}
-          </Text>
-        ) : (
-          <Text key={`framed-${index}`} dimColor>
-            {line}
-          </Text>
-        )
-      )}
-    </>
   );
 }
