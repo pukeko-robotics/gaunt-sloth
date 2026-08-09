@@ -23,9 +23,24 @@
  * that arrive in the SAME read cannot be separated by any timer: the timing evidence is gone before
  * the bytes reach us. Releasing a held `ESC` also hands Ink a lone escape byte, which Ink holds
  * briefly on its own account before deciding, so a key pressed within roughly that much of a genuine
- * Escape still merges with it into a meta-chord and the Escape is lost. The whole window stays under
- * the ~160 ms floor of two deliberate human keypresses, which is what makes it a rarity rather than
- * a defect — but it is real, and it is the same ambiguity every terminal program has.
+ * Escape still merges with it into a meta-chord and the Escape is lost. That is the same ambiguity
+ * every terminal program has.
+ *
+ * **What is NOT covered by that paragraph, and must not be read as covered by it — [[TUI-C77]].**
+ * An earlier version of this comment argued the merge window is safe because it stays under the
+ * ~160 ms floor of two deliberate human keypresses. **That argument does not hold.** The 160 ms
+ * figure is the measured floor for repeating the SAME key; the case at issue is `ESC` followed by a
+ * DIFFERENT key, and the capture behind [[TUI-C61]] records **83 ms between two distinct
+ * keypresses** — inside this window.
+ *
+ * The consequence is measured, not hypothetical: `PARTIAL_SEQUENCE` does not match `ESC` + `0x03`,
+ * so an interrupt arriving inside the hold is released **together with** the Escape and Ink reads
+ * `ESC ^C` rather than a bare interrupt. **Ctrl+C within ~120 ms of an Escape therefore does not
+ * exit the TUI** (measured at the seam at 10/50/99 ms, and at `<App>`: alone exits, pre-fix at 50 ms
+ * exits, post-fix at 50 ms does not, post-fix at 150 ms does). Escape-then-`a` at 50 ms likewise
+ * leaves a running turn un-aborted. Merged knowingly on Andrew's call; [[TUI-C77]] owns the fix, and
+ * the likely shape is releasing the held `ESC` as soon as the next byte cannot form a meta chord we
+ * bind.
  */
 
 import { PassThrough } from 'node:stream';
