@@ -102,9 +102,20 @@ describe('[[TUI-C27]] — the approvals gate records what it was shown, and reco
    * match) consumes nothing — which is what makes "no rating happened" observable here.
    */
   async function driveAndDump(options: {
-    calls: { command: string; justification?: string }[];
+    calls: { command?: string; tool?: string; justification?: string }[];
     script: ScriptedOutcome[];
     mode?: 'manual' | 'write' | 'assisted' | 'auto';
+    /**
+     * §3's declared rule lists, MERGED into the `approvals` block rather than replacing it.
+     *
+     * Merged deliberately: `config` below replaces `approvals` wholesale, so an override written
+     * there drops `mode` and `resolveApprovals` silently falls back to the DEFAULT rung. A
+     * list-matched case would still pass at the wrong rung while testing a different path — §3.2's
+     * `rate` is inert at the deterministic rungs — which is exactly the kind of green that means
+     * nothing. Every case below also asserts `rung`, so the rung it ran at is pinned rather than
+     * assumed.
+     */
+    approvals?: Record<string, unknown>;
     /** What the human answers at an escalation. Absent → nobody to ask (§6.2). */
     human?: 'approve' | 'reject';
     /** [[TUI-C68]] §6.1 — what the human answers at the attack banner. Absent → no banner wired. */
@@ -121,7 +132,7 @@ describe('[[TUI-C27]] — the approvals gate records what it was shown, and reco
     const config = {
       llm: { withStructuredOutput: vi.fn().mockReturnValue({ invoke }) },
       streamOutput: true as const,
-      approvals: { mode: options.mode ?? 'auto' },
+      approvals: { mode: options.mode ?? 'auto', ...options.approvals },
       commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
       ...options.config,
     } as unknown as GthConfig;
@@ -130,9 +141,9 @@ describe('[[TUI-C27]] — the approvals gate records what it was shown, and reco
     for (const call of options.calls) {
       pending = pending.mockResolvedValueOnce([
         {
-          name: 'run_shell_command',
+          name: call.tool ?? 'run_shell_command',
           args: {
-            command: call.command,
+            ...(call.command !== undefined ? { command: call.command } : {}),
             ...(call.justification ? { justification: call.justification } : {}),
           },
         },
@@ -336,6 +347,126 @@ describe('[[TUI-C27]] — the approvals gate records what it was shown, and reco
     expect(records[0].action).toBe('approve');
     // No model was consulted at this rung, so there is no rating and none is invented.
     expect(records[0].rating).toBeUndefined();
+  });
+
+  /**
+   * **The node's fourth enumerated acceptance case: a LIST-MATCHED call.**
+   *
+   * `ruleMatch` is the field that answers *"did my own config decide this?"* — the question the node
+   * names as needing a different fix from a rater verdict, because a deny entry is repaired by
+   * editing a config file and a rater verdict is not. A dump that says `reject` without naming the
+   * entry sends the reader to argue with the model about a line they wrote themselves.
+   *
+   * `script: []` is a negative control rather than a convenience: the scripted rater THROWS when it
+   * is called and has no answer left, so a rule that stopped settling the call and fell through to a
+   * rating would fail here rather than quietly re-routing.
+   */
+  it('names the deny entry that refused the call, and makes no rating call for a call a rule settled', async () => {
+    const { records } = await driveAndDump({
+      calls: [{ command: 'rm -rf ./dist' }],
+      script: [],
+      approvals: { deny: [{ type: 'shell', matcher: 'exact', pattern: 'rm -rf ./dist' }] },
+    });
+    expect(records).toHaveLength(1);
+    // The rung is asserted, not assumed — a list case passes at the wrong rung while testing a
+    // different path, so the harness's merge of the `approvals` block is pinned here too.
+    expect(records[0].rung).toBe('auto');
+    expect(records[0].stage).toBe('deny-list');
+    expect(records[0].action).toBe('reject');
+    // The WHOLE block, by value: which list it came from AND which entry, because "a rule refused
+    // it" without the entry is the answer the archive already gave before this node.
+    expect(records[0].ruleMatch).toEqual({ action: 'deny', entry: 'rm -rf ./dist' });
+    // Nothing rated it, so there is no rating to report and none is invented.
+    expect(records[0].rating).toBeUndefined();
+  });
+
+  /**
+   * **`allow-list` vs `allow-tripwire`, as the discriminating PAIR.** The same allow entry, differing
+   * only in §3.2's `rate`, and the two stages are the two answers.
+   *
+   * Asserted as a pair for the reason the preflight test above is: either half alone passes against
+   * an implementation that hardcodes one stage for every allow match, and the two labels sit on
+   * adjacent lines of the same branch. The pair also pins `ruleMatch.rate`, which is the ONLY field
+   * distinguishing "my allow entry waved this through unrated" from "my allow entry kept the rater
+   * watching" — two very different things for a reader deciding whether a model saw the command.
+   */
+  it('distinguishes an allow entry that settled the call from one that kept the rater as a tripwire', async () => {
+    const pattern = 'rm -rf ./dist';
+    const entry = { type: 'shell', matcher: 'exact', pattern } as const;
+
+    // `rate` absent — the entry settles it outright. `script: []`, so a rating call would throw.
+    const settled = await driveAndDump({
+      calls: [{ command: pattern }],
+      script: [],
+      approvals: { allow: [entry] },
+    });
+    expect(settled.records[0].rung).toBe('auto');
+    expect(settled.records[0].stage).toBe('allow-list');
+    expect(settled.records[0].action).toBe('approve');
+    // §3 — an allow entry's approval IS sticky, which is the difference from the rater's `once`.
+    expect(settled.records[0].scope).toBe('session');
+    expect(settled.records[0].ruleMatch).toEqual({ action: 'allow', entry: pattern, rate: false });
+    expect(settled.records[0].rating).toBeUndefined();
+
+    // §3.2 `rate: true` — the same entry, still matched, but the rater stayed involved.
+    const tripwire = await driveAndDump({
+      calls: [{ command: pattern }],
+      script: ['safe'],
+      approvals: { allow: [{ ...entry, rate: true }] },
+    });
+    expect(tripwire.records[0].rung).toBe('auto');
+    expect(tripwire.records[0].stage).toBe('allow-tripwire');
+    expect(tripwire.records[0].action).toBe('approve');
+    expect(tripwire.records[0].scope).toBe('session');
+    expect(tripwire.records[0].ruleMatch).toEqual({ action: 'allow', entry: pattern, rate: true });
+    // The tripwire really did rate — the half of the pair the `allow-list` case denies.
+    expect(tripwire.records[0].rating?.verdict?.outcome).toBe('safe');
+  });
+
+  /**
+   * §3.2's escalate entry: the user pre-decided that a **person** answers, so no rating is made and
+   * the record must say the entry sent it there rather than leaving the human's answer to stand
+   * alone. Without `ruleMatch` a reader sees a prompt with no cause — indistinguishable from the
+   * rung having required one.
+   */
+  it('names the escalate entry that sent the call to a person, with no rating made', async () => {
+    const { records } = await driveAndDump({
+      calls: [{ command: 'rm -rf ./dist' }],
+      script: [],
+      approvals: { escalate: [{ type: 'shell', matcher: 'exact', pattern: 'rm -rf ./dist' }] },
+      human: 'approve',
+    });
+    expect(records[0].rung).toBe('auto');
+    expect(records[0].stage).toBe('escalate-entry');
+    expect(records[0].ruleMatch).toEqual({ action: 'escalate', entry: 'rm -rf ./dist' });
+    // The entry decided the ROUTE; the person decided the answer. Both recorded, neither instead
+    // of the other.
+    expect(records[0].humanAnswer).toBe('approve');
+    expect(records[0].action).toBe('approve');
+    expect(records[0].rating).toBeUndefined();
+  });
+
+  /**
+   * Step (0): the rung in force does not gate this tool at all, so nothing was consulted — no rule,
+   * no rating, no person. `not-gated` is its own stage rather than a blank one for the same reason
+   * `unrated-rung` is: "nothing needed to decide" is an answer, and an empty field reads as a
+   * recorder that failed.
+   */
+  it('records a call the rung does not gate as not-gated, with nothing consulted', async () => {
+    const { records } = await driveAndDump({
+      calls: [{ tool: 'some_mcp_tool' }],
+      script: [],
+    });
+    expect(records).toHaveLength(1);
+    expect(records[0].tool).toBe('some_mcp_tool');
+    expect(records[0].rung).toBe('auto');
+    expect(records[0].stage).toBe('not-gated');
+    expect(records[0].action).toBe('approve');
+    // §3 — this is the ABSENCE of a gate, not a grant, so nothing is written to any allow list.
+    expect(records[0].scope).toBe('once');
+    expect(records[0].ruleMatch).toBeUndefined();
+    expect(records[0].rating).toBeUndefined();
+    expect(records[0].humanAnswer).toBeUndefined();
   });
 
   /**
