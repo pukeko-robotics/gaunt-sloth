@@ -154,6 +154,9 @@ export async function createInteractiveSession(
         modelDisplayName: dumpInput.modelDisplayName,
         redact: dumpInput.redact,
         modelRequest: agent instanceof GthAbstractAgent ? agent.lastModelRequest : undefined,
+        // [[TUI-C27]] — the approvals gate's record of every gated decision, read from the live
+        // runner at CALL time for the same reason the model request is.
+        approvals: runner.getApprovalCaptures(),
       });
     };
 

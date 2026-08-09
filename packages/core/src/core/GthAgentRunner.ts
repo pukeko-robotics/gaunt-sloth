@@ -52,6 +52,7 @@ import {
 } from '#src/core/approvals/grants.js';
 import { renderApprovalEntryObject } from '#src/config/schema.js';
 import { classifyCommand } from '#src/core/shell/arity.js';
+import { describeAbstention } from '#src/core/shell/abstention.js';
 import { normalizeCommand } from '#src/core/shell/normalize.js';
 import {
   ApprovalStopError,
@@ -60,16 +61,23 @@ import {
 } from '#src/core/shell/approvalStop.js';
 import {
   applyDestructiveFloor,
+  isBelowDestructiveFloor,
   isRaterTimeout,
   mapAllowMatchedVerdictToAction,
   mapVerdictToAction,
   openWorldToolFloorReason,
+  preflightFloorFinding,
   RATER_DEFAULT_TIMEOUT_MS,
   rateShellCommand,
   type RaterNegotiationContext,
   type RaterNegotiationRound,
   type ShellSafetyVerdict,
 } from '#src/core/shell/rater.js';
+import {
+  type ApprovalDecisionCapture,
+  ApprovalCaptureLog,
+  type ApprovalDecidingStage,
+} from '#src/core/shell/approvalCapture.js';
 import { buildHardlineRefusal, checkHardline } from '#src/core/shell/hardline.js';
 import { renderNegotiationTranscript, ShellNegotiationState } from '#src/core/shell/negotiation.js';
 import { buildRejectionMessage } from '#src/core/shell/rejection.js';
@@ -321,6 +329,14 @@ export class GthAgentRunner {
   private readonly negotiation = new ShellNegotiationState();
 
   /**
+   * [[TUI-C27]] — the diagnostic record of every gated decision this session made, for
+   * `/debug-dump`. Instance-scoped for the same reason the negotiation and the grant stores are: a
+   * concurrent ACP / AG-UI session must not inherit another's approvals history, and a dump taken
+   * in one must not describe the other.
+   */
+  private readonly approvalCaptures = new ApprovalCaptureLog();
+
+  /**
    * GS2-81 — whether the caller supplied a backend factory. When it did NOT, this runner is
    * hard-wired to the lean default below, so a config asking for `agent.backend: 'deep'` cannot be
    * honored no matter what it says. Recorded here (rather than inferred later) because by then the
@@ -390,10 +406,24 @@ export class GthAgentRunner {
    * - **anything else → throw.** `stop`, and equally a value a surface invents or forgets to
    *   return: the grant is one exact answer and everything else is a refusal.
    */
-  private async haltOrRunAnyway(command: string, reason: string): Promise<ToolApprovalDecision> {
+  private async haltOrRunAnyway(
+    command: string,
+    reason: string,
+    /** [[TUI-C27]] — this decision's record; the banner's answer is a HUMAN's answer. */
+    record: ApprovalDecisionCapture
+  ): Promise<ToolApprovalDecision> {
     if (this.attackHaltCallback) {
       const answer = await this.attackHaltCallback({ command, reason });
+      // [[TUI-C27]] — **recorded here, or a run-anyway is indistinguishable from a `safe`
+      // rating.** The banner returns an ordinary approval, so without this line the archive would
+      // show `approve` at the `rater` stage with nobody named — i.e. the rater appearing to have
+      // approved a command it called an attack. That is precisely the misattribution this node
+      // exists to remove, on the branch where it costs the most.
+      record.humanAnswer = answer === 'run-anyway' ? 'approve' : 'reject';
       if (answer === 'run-anyway') return { type: 'approve', scope: 'once' };
+    } else {
+      // §6.2 — no surface wired the banner, so nobody was asked and the run ends.
+      record.humanAnswer = 'no-human';
     }
     throw new AttackHaltError(command, reason);
   }
@@ -411,6 +441,18 @@ export class GthAgentRunner {
   /** CFG-27 — the session's current approvals posture (rung + rater profile + declared lists). */
   public getSessionApprovals(): ResolvedApprovals {
     return this.sessionApprovals;
+  }
+
+  /**
+   * [[TUI-C27]] — every gated decision this session made, oldest first, for the `/debug-dump`
+   * archive.
+   *
+   * Threaded by each surface into `writeDebugDump`, exactly as `agent.lastModelRequest` is: the
+   * writer redacts it with the same pass it applies to every other artifact, and a surface that
+   * does not thread it simply omits the file.
+   */
+  public getApprovalCaptures(): ApprovalDecisionCapture[] {
+    return this.approvalCaptures.snapshot();
   }
 
   /**
@@ -1004,7 +1046,19 @@ export class GthAgentRunner {
    * whenever the shell gate is on, so §2.5's rule that the deny list survives `bypass` is untouched.)
    */
   private async decideToolApproval(tool: PendingToolInterrupt): Promise<ToolApprovalDecision> {
-    const decision = await this.decideToolApprovalInner(tool);
+    // [[TUI-C27]] — the record is opened (and already in the log) BEFORE the decision runs, and
+    // filled in as it goes. Assembling it at the end would lose the calls most worth keeping: an
+    // `attack` verdict throws `AttackHaltError` out of the decision, so a halted run would carry no
+    // record of the rating that halted it — and an approval, which relays nothing to anyone, is
+    // exactly the branch that used to leave no trace at all.
+    const record = this.approvalCaptures.begin({
+      at: new Date().toISOString(),
+      tool: tool.name,
+      ...(typeof tool.args?.command === 'string' ? { command: tool.args.command } : {}),
+      rung: this.sessionApprovals.rung,
+      budget: this.negotiation.counters(),
+    });
+    const decision = await this.recordedDecision(tool, record);
     // [[EXT-29]] §5.3 — **the reset, at the one site that sees every approval.** "A successful
     // intervening tool call — the agent going away to gather information and returning better
     // informed — resets [the count], because that is progress, not ping-pong." Every way a call can
@@ -1019,8 +1073,43 @@ export class GthAgentRunner {
     return decision;
   }
 
+  /**
+   * [[TUI-C27]] — {@link decideToolApprovalInner} with the record closed off on EVERY exit.
+   *
+   * The final action is written here rather than at each of the decision's many returns, because
+   * "what became of the call" is one fact with one source: what this method returns or throws. A
+   * per-return assignment is a list that a new branch joins without noticing, and the branch that
+   * would be forgotten is the one that ends the run.
+   */
+  private async recordedDecision(
+    tool: PendingToolInterrupt,
+    record: ApprovalDecisionCapture
+  ): Promise<ToolApprovalDecision> {
+    try {
+      const decision = await this.decideToolApprovalInner(tool, record);
+      record.action = decision.type === 'approve' ? 'approve' : 'reject';
+      if (decision.type === 'approve' && decision.scope) record.scope = decision.scope;
+      return decision;
+    } catch (error) {
+      if (error instanceof AttackHaltError) {
+        record.action = 'halt';
+      } else if (error instanceof NonInteractiveEscalationError) {
+        // §6.2 — there was nobody to ask, so the escalation ended the run instead of reaching one.
+        record.action = 'escalate';
+        record.humanAnswer = 'no-human';
+      } else {
+        record.action = 'error';
+      }
+      record.error = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      throw error;
+    }
+  }
+
   /** The decision itself; {@link decideToolApproval} wraps it with §5.3's reset. */
-  private async decideToolApprovalInner(tool: PendingToolInterrupt): Promise<ToolApprovalDecision> {
+  private async decideToolApprovalInner(
+    tool: PendingToolInterrupt,
+    record: ApprovalDecisionCapture
+  ): Promise<ToolApprovalDecision> {
     const command = typeof tool.args?.command === 'string' ? (tool.args.command as string) : null;
     const isShellCommand = tool.name === SHELL_TOOL_NAME && command !== null;
     const approvals = this.sessionApprovals;
@@ -1031,7 +1120,15 @@ export class GthAgentRunner {
     // of a gate.
     const { gateShell } = resolveShellApprovalGate(this.config ?? undefined, this.command);
     if (!isToolGatedAtRung({ toolName: tool.name, rung: approvals.rung, gateShell })) {
-      return { type: 'approve', scope: 'once' };
+      return this.stage(record, 'not-gated', { type: 'approve', scope: 'once' });
+    }
+    // [[TUI-C27]] — [[EXT-81]]'s surviving observable: what the gate's own parser made of the
+    // command, recorded whether or not a rating follows. Computed once here rather than at the
+    // rating site, so a call the floor or a list settles still says whether the command was one the
+    // parser could resolve.
+    if (isShellCommand && command !== null) {
+      const defect = describeAbstention(command);
+      if (defect) record.parserUnresolved = defect;
     }
 
     // ONE subject and ONE annotation source per decision, shared by the rule matcher and the
@@ -1082,7 +1179,8 @@ export class GthAgentRunner {
         (entry) => renderApprovalEntryObject(entry) === renderApprovalEntryObject(rule.entry)
       );
       const described = describeApprovalEntry(rule.entry);
-      return {
+      record.ruleMatch = { action: 'deny', entry: described };
+      return this.stage(record, 'deny-list', {
         type: 'reject',
         message: declared
           ? `Refused: your deny list forbids this call (matched "${described}"). ` +
@@ -1090,7 +1188,7 @@ export class GthAgentRunner {
           : `Refused: the user chose to always refuse this earlier in this session (matched ` +
             `"${described}"). That refusal lasts until the session ends; ask the user if you ` +
             'believe it should be lifted.',
-      };
+      });
     }
 
     // (2) `bypass` (config or `/approvals bypass`): approve a gated shell command WITHOUT
@@ -1098,7 +1196,7 @@ export class GthAgentRunner {
     // intentionally ephemeral and reversible). The hardline floor is NOT bypassed here — it is
     // enforced at exec time in GthDevToolkit.executeCommand regardless of this decision.
     if (isShellCommand && approvals.rung === 'bypass') {
-      return { type: 'approve', scope: 'once' };
+      return this.stage(record, 'bypass', { type: 'approve', scope: 'once' });
     }
 
     // (2b) [[EXT-29]] §4.2/§8 — **the hardline floor, consulted BEFORE anything opens.** "If the
@@ -1139,6 +1237,13 @@ export class GthAgentRunner {
     if (isShellCommand && command !== null && isRatedRung(approvals.rung)) {
       const floor = checkHardline(command);
       if (floor) {
+        // [[TUI-C27]] — **the archive names the matched pattern; the refusal below does not.**
+        // §8.1 ("the floor is never advertised") and [[CFG-31]] bind USER-FACING rung copy —
+        // text inviting someone to feel safe — and the resolution taken here is that a diagnostic
+        // archive a user opens about their own session is not that surface: "a floor matched"
+        // without saying which rule leaves nobody able to act on it. `buildHardlineRefusal` is
+        // untouched and still carries only the description.
+        record.hardline = { description: floor.description, pattern: floor.pattern };
         const refusal = buildHardlineRefusal(command, floor);
         // Visible, because the exec-time refusal is: a refusal the user never sees reads as the
         // agent quietly deciding not to do what it was asked.
@@ -1149,7 +1254,7 @@ export class GthAgentRunner {
         // a floor-matching command is bounded only by the tool-loop guard and `recursionLimit`,
         // which is the right place for "the model did something unproductive" to end and the wrong
         // place for a fork bomb to acquire an audience.
-        return { type: 'reject', message: refusal };
+        return this.stage(record, 'hardline-floor', { type: 'reject', message: refusal });
       }
     }
 
@@ -1165,21 +1270,35 @@ export class GthAgentRunner {
       rule?.action === 'escalate' && approvals.rung !== 'bypass'
         ? describeApprovalEntry(rule.entry)
         : undefined;
+    if (escalatedBy) {
+      record.ruleMatch = { action: 'escalate', entry: escalatedBy };
+      record.stage = 'escalate-entry';
+    }
 
     // (4) Approve from the allow list without prompting. It ALWAYS wins over the rater — a
     // human-trusted call shouldn't pay for an LLM call on every variant — but never over escalate.
     const allowlistApplies = approvals.rung !== 'bypass' && escalatedBy === undefined;
     let safetyVerdict: ShellSafetyVerdict | undefined;
     if (allowlistApplies && rule?.action === 'allow') {
+      record.ruleMatch = {
+        action: 'allow',
+        entry: describeApprovalEntry(rule.entry),
+        rate: rule.rate === true,
+      };
       // §3.2 — `rate` is honored at the rater rungs and INERT at the deterministic ones, so an
       // entry can never smuggle a model call into `manual` or `write`. A tool subject is not
       // rated either: the rater's first implementation covers the shell only (§4.3, [[EXT-30]]).
       if (!rule.rate || !isRatedRung(approvals.rung) || !isShellCommand || command === null) {
+        return this.stage(record, 'allow-list', { type: 'approve', scope: 'session' });
+      }
+      // Attributed once, before the call, for the reason the rater path below is: the tripwire's
+      // own `attack` arm throws, and a second writer on the return would make this one unfalsifiable.
+      record.stage = 'allow-tripwire';
+      const verdict = await this.rateCommand(command, { allowMatched: true }, record);
+      const tripwire = mapAllowMatchedVerdictToAction(verdict);
+      if (tripwire.action === 'approve') {
         return { type: 'approve', scope: 'session' };
       }
-      const verdict = await this.rateCommand(command, { allowMatched: true });
-      const tripwire = mapAllowMatchedVerdictToAction(verdict);
-      if (tripwire.action === 'approve') return { type: 'approve', scope: 'session' };
       if (tripwire.action === 'halt') {
         // §3.2/§4.2 — `attack` halts exactly as it would have without the match. A standing human
         // grant answers "may this run"; it does not answer "is this command's structure hostile".
@@ -1188,7 +1307,7 @@ export class GthAgentRunner {
         // entry does not decide whether the banner appears. The entry has already been overruled by
         // the time this line is reached; letting it also silence the one way out would make the
         // recovery depend on a match the human cannot see from the banner.
-        return await this.haltOrRunAnyway(command, tripwire.verdict?.reason ?? '');
+        return await this.haltOrRunAnyway(command, tripwire.verdict?.reason ?? '', record);
       }
       // `catastrophic` — the one outcome the tripwire escalates. Fall through to the human.
       safetyVerdict = tripwire.verdict;
@@ -1229,12 +1348,35 @@ export class GthAgentRunner {
         const context: RaterNegotiationContext | undefined = negotiable
           ? this.negotiation.contextFor(justification)
           : undefined;
-        const verdict = await this.rateCommand(subject.command, {
-          allowMatched: false,
-          negotiation: context,
-          negotiable,
-        });
+        // [[TUI-C27]] — attributed BEFORE the call, and ONCE. Before, because `attack` throws out
+        // of the decision below and a record left unattributed would say a halt came from nowhere.
+        // Once, because a second assignment on each `return` would make the first unfalsifiable:
+        // deleting either would leave the other still writing 'rater', and a fact with two writers
+        // is one no test can pin.
+        record.stage = 'rater';
+        const verdict = await this.rateCommand(
+          subject.command,
+          {
+            allowMatched: false,
+            negotiation: context,
+            negotiable,
+          },
+          record
+        );
         const decision = mapVerdictToAction(subject.command, verdict, { rung: approvals.rung });
+        // [[TUI-C27]] — WHICH deterministic preflight fired, and whether it actually rewrote the
+        // rating. The two are separate facts: a preflight only ever RAISES, and only `safe` sits
+        // below the floor, so a finding on a `destructive` verdict is the floor AGREEING with the
+        // rater rather than overriding it — and attributing the decision to the floor in that case
+        // would be wrong. Recomputed from the same raw command `mapVerdictToAction` recomputes it
+        // from, through the same one function, so the two cannot disagree.
+        const preflight = preflightFloorFinding(subject.command);
+        if (preflight) {
+          record.preflight = {
+            ...preflight,
+            rewroteRating: isBelowDestructiveFloor(verdict.outcome),
+          };
+        }
         if (decision.action === 'approve') {
           // Scope `once`: rater approvals are NEVER persisted to the allow-list.
           return { type: 'approve', scope: 'once' };
@@ -1260,7 +1402,11 @@ export class GthAgentRunner {
           // sits AFTER the reset above on purpose: a human is reached either way (that is what the
           // banner is), so the negotiation ends here whichever answer comes back, and neither
           // answer leaves a transcript behind for a later turn to argue from.
-          return await this.haltOrRunAnyway(subject.command, decision.verdict?.reason ?? '');
+          return await this.haltOrRunAnyway(
+            subject.command,
+            decision.verdict?.reason ?? '',
+            record
+          );
         }
         if (decision.action === 'reject') {
           // §5 — `destructive` at `auto`. The round is recorded first, so the attempt being ruled
@@ -1310,7 +1456,9 @@ export class GthAgentRunner {
         //
         // Reached only when no allow entry claimed the call: §4.6's fourth bullet makes an allow
         // match lift this floor, and step (4) above has already returned in that case.
-        safetyVerdict = applyDestructiveFloor(safetyVerdict, openWorldToolFloorReason(effective));
+        const toolFloor = openWorldToolFloorReason(effective);
+        if (toolFloor !== null) record.stage = 'tool-open-world-floor';
+        safetyVerdict = applyDestructiveFloor(safetyVerdict, toolFloor);
       }
     }
 
@@ -1320,6 +1468,11 @@ export class GthAgentRunner {
     // thing on the screen". Empty for every escalation that had no negotiation — `catastrophic`
     // (which §4.2 gives no rounds at all), a declared escalate entry, an unrated rung, a tool
     // subject — so nothing renders a heading over an argument that never happened.
+    // [[TUI-C27]] — everything that reaches a person has an attribution by now EXCEPT the plainest
+    // case of all: a deterministic rung, no rule matched, no rating made. That is a decision the
+    // rung itself made, so it is named rather than left blank — a record with no stage reads as the
+    // recorder having failed, which is the opposite of what happened.
+    record.stage ??= 'unrated-rung';
     const negotiationRounds: readonly RaterNegotiationRound[] = this.negotiation.transcript();
     // Reaching a person ends the negotiation (§5.3) and is the ONE thing that clears the
     // reachability bound: an escalation the human is about to answer is exactly the event that
@@ -1393,6 +1546,11 @@ export class GthAgentRunner {
           }
         : tool;
     const decision = await this.toolApprovalCallback(pending);
+    // [[TUI-C27]] — a person was reached and answered. The STAGE stays whatever decided to ask
+    // them (a rating, an escalate entry, an unrated rung): "who decided to interrupt" and "what
+    // they said" are two different questions, and collapsing them into one field is what makes a
+    // dump unable to tell a rater escalation from a declared one.
+    record.humanAnswer = decision.type === 'approve' ? 'approve' : 'reject';
 
     // Record the human's scoped grant so the same call stops re-prompting.
     if (decision.type === 'approve' && grant) {
@@ -1404,6 +1562,22 @@ export class GthAgentRunner {
     if (decision.type === 'reject' && decision.scope === 'session' && denyEntry) {
       this.recordDenial(denyEntry);
     }
+    return decision;
+  }
+
+  /**
+   * [[TUI-C27]] — attribute the deciding stage and hand the decision straight back.
+   *
+   * A one-liner so a stage can be recorded ON the `return` that carries it rather than on the line
+   * above: two statements let an early return be added between them, and the record would then name
+   * a stage that did not decide.
+   */
+  private stage(
+    record: ApprovalDecisionCapture,
+    stage: ApprovalDecidingStage,
+    decision: ToolApprovalDecision
+  ): ToolApprovalDecision {
+    record.stage = stage;
     return decision;
   }
 
@@ -1423,13 +1597,23 @@ export class GthAgentRunner {
       negotiation?: RaterNegotiationContext;
       /** [[EXT-29]] §5.2 — whether the rejection will be handed back to the agent. */
       negotiable?: boolean;
-    }
+    },
+    /** [[TUI-C27]] — the decision's record; the rating attaches itself to it at the send site. */
+    record: ApprovalDecisionCapture
   ): Promise<ShellSafetyVerdict> {
     const approvals = this.sessionApprovals;
     const verdict = await rateShellCommand(command, this.config as GthConfig, {
       home: env?.HOME,
       negotiation: opts.negotiation,
       negotiable: opts.negotiable,
+      // [[TUI-C27]] — the sink fires BEFORE the model is invoked, with the prompt that is about to
+      // be sent, so the record carries what the rater was SHOWN rather than a later re-render of
+      // it. Assigning it here (rather than pushing a finished record afterwards) is what makes a
+      // hung, timed-out or halting call still leave the question behind.
+      onCapture: (capture) => {
+        record.rating = capture;
+      },
+      raterProfile: approvals.rater,
       // The profile's model when one is configured; undefined lets rateShellCommand use the
       // session model. `init` throws rather than leaving this undefined for a NAMED profile, so
       // a configured profile can never silently degrade to the session model here.

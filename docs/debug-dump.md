@@ -46,6 +46,9 @@ Each run creates one new, timestamped directory under the **global** `~/.gsloth/
 |------|----------|
 | `transcript.json` | The full session transcript so far — every turn, tool call, and tool result. |
 | `config.json` | The resolved effective configuration (the live `GthConfig`) for the session. |
+| `model-request.json` | What shaped the last model call besides the messages: the composed system prompt, the tool definitions with their schemas, the model params, and the tool choice. Omitted before the first model call. |
+| `model-messages.json` | The exact messages sent to the model on that last call, after summarization and middleware — what the model actually saw, which is not the same array as `transcript.json`. Omitted before the first model call. |
+| `approvals.json` | One entry per gated tool call: which stage of the approvals gate decided it (a deny entry, the deterministic floor, an allow entry, the auto-rater), what the rater was **sent** and what it **answered**, and what became of the call — approvals included. Omitted when the session gated nothing. See [What `approvals.json` answers](#what-approvalsjson-answers). |
 | `env.json` | `gthVersion`, `nodeVersion`, `platform`, and the model display name. |
 | `debug-log.txt` | The in-memory debug-log ring buffer for this session. |
 | `git-state.json` | `branch`, `remote`, and `dirty` — only written when the session's working directory is inside a git repository; omitted entirely otherwise. |
@@ -54,6 +57,28 @@ Values that aren't directly JSON-safe (functions, `bigint`s, circular references
 LLM client object embedded in the resolved config) are stringified or broken rather than causing
 the dump to fail partway through; source: `packages/core/src/utils/debugDump.ts`, verified by
 `packages/core/spec/debugDump.spec.ts`.
+
+## What `approvals.json` answers
+
+If you are filing a bug about a command that was blocked — or one that ran when you did not expect
+it to — this is the file to read. Each entry covers one gated tool call:
+
+- **Which layer stopped (or allowed) it.** `stage` names it: `deny-list`, `hardline-floor`,
+  `escalate-entry`, `allow-list`, `allow-tripwire`, `rater`, `bypass` or `not-gated`. "Blocked" and
+  "escalated" cover several different mechanisms, and they need different fixes — a deny entry you
+  wrote is edited in your config, whereas a rater verdict is a model's judgement.
+- **What the rater was shown.** `rating.prompt` holds the exact system and user strings that were
+  sent, captured as they were sent rather than rebuilt afterwards.
+- **What it answered.** `rating.rawResponse` is the model's untouched reply and `rating.verdict` is
+  the outcome and reason it was read as. Both are recorded whether the call was approved or refused.
+- **Whether your own messages were in view.** `rating.negotiation.userMessagesPopulated` — with a
+  sentence in `userMessagesNote` saying what an empty window means for that round. The first round of
+  a negotiation deliberately sees the command alone, so an empty window there is expected, not a
+  fault.
+- **Where the exchange stood.** `budget` reports the rejections so far against the two limits that
+  end an argument at a human.
+
+Redaction (below) applies to this file exactly as it does to the transcript.
 
 ## Redaction
 
@@ -105,8 +130,8 @@ contain secrets" warning in place of the redacted-by-default notice.
 
 `/debug-dump` is one entry in the shared slash-command registry
 (`packages/agent/src/modules/slashCommands.ts`, re-exported for the TUI as
-`packages/app/src/tui/slashCommands.ts`), but its archive writer is only wired inside the `<App>`
-component that the Ink TUI renders. Tracing where that renders:
+`packages/app/src/tui/slashCommands.ts`), and both interactive surfaces wire an archive writer to
+it. Tracing where each renders:
 
 - `gth chat` and `gth code` (`packages/app/src/commands/chatCommand.ts` /
   `codeCommand.ts`) both call `startSession()`
@@ -116,16 +141,16 @@ component that the Ink TUI renders. Tracing where that renders:
   `--tui` is passed explicitly — `CI` must not be set.
 - Outside those conditions, `chat`/`code` fall back to the plain readline session
   (`packages/agent/src/modules/interactiveSessionModule.ts`). It shares the same slash-command
-  registry (so `/debug-dump` parses and is listed by `/help`), but no session archive writer is
-  wired there, so the command reports itself unavailable instead of writing anything.
+  registry and forwards to the same writer, so `/debug-dump` writes a real archive there too. That
+  session keeps no on-screen transcript, so `transcript.json` is thinner than the TUI's; every other
+  file is the same.
 - `ask`, `exec`, `review`, and `pr` run one-shot through `runSingleShot()` / `review()`
   (`packages/app/src/commands/askCommand.ts`, `execCommand.ts`, `reviewCommand.ts`,
   `prCommand.ts`) — there is no rendered session and no slash-command dispatch at all, so there is
   nowhere to type `/debug-dump` into.
 
-So: **`/debug-dump` is available in interactive `gth chat` / `gth code` sessions running the Ink
-TUI on a real terminal, and only there.** It is not available in `ask`, `exec`, `review`, `pr`, or
-in a `chat`/`code` run that has fallen back to the readline session.
+So: **`/debug-dump` is available in interactive `gth chat` / `gth code` sessions — the Ink TUI and
+the readline fallback alike.** It is not available in `ask`, `exec`, `review` or `pr`.
 
 If a `dumpDebugSession` writer isn't wired into the session at all (only happens in the
 fixture/demo agent used for internal testing, never a real `chat`/`code` run), the command reports

@@ -601,7 +601,30 @@ export function isDeterministicExfiltration(normalizedLowerCommand: string): boo
 export interface HardlineMatch {
   /** Human-readable reason the command was refused. */
   description: string;
+  /**
+   * [[TUI-C27]] — **which rule matched**, as the matched pattern's own source, for the
+   * `/debug-dump` archive.
+   *
+   * REQUIRED rather than optional, deliberately: an optional field is one a future arm forgets to
+   * set, and the dump would then say nothing while looking complete — the same
+   * enumeration-with-a-hole shape {@link CMD_POS} records about itself. The exfiltration arm has no
+   * single pattern (it is a per-pipeline source/sink test), so it carries the stable token
+   * {@link EXFILTRATION_ARM} instead; the prose lives in `description`, so anyone grepping this
+   * field for a pattern source never gets a sentence.
+   *
+   * **It is read by the diagnostic archive and by nothing user-facing.** §8.1's rule that the floor
+   * is never advertised governs rung descriptions and promotional copy — text inviting a user to
+   * feel safe — not a dump a user opens about their own session. {@link buildHardlineRefusal},
+   * which is the user-facing surface, does not read this field.
+   */
+  pattern: string;
 }
+
+/**
+ * The {@link HardlineMatch.pattern} token for the arm that is not a pattern: §3/§8's deterministic
+ * exfiltration test, which decides per pipeline rather than by one regex.
+ */
+export const EXFILTRATION_ARM = 'deterministic-exfiltration';
 
 /**
  * Check a raw command against the hardline blocklist. Normalizes first so
@@ -612,14 +635,14 @@ export function checkHardline(command: string): HardlineMatch | null {
   const normalized = normalizeCommand(command).toLowerCase();
   for (const [pattern, description] of HARDLINE_PATTERNS) {
     if (pattern.test(normalized)) {
-      return { description };
+      return { description, pattern: pattern.source };
     }
   }
   // §3/§8 — the deterministic subset of the `attack` outcome, so refusing a credential upload does
   // not depend on a model being right, and cannot be ridden through on an allow-list entry
   // (consulted before the rater).
   if (isDeterministicExfiltration(normalized)) {
-    return { description: 'sending credentials off the machine' };
+    return { description: 'sending credentials off the machine', pattern: EXFILTRATION_ARM };
   }
   return null;
 }
