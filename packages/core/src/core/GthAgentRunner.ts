@@ -406,10 +406,24 @@ export class GthAgentRunner {
    * - **anything else → throw.** `stop`, and equally a value a surface invents or forgets to
    *   return: the grant is one exact answer and everything else is a refusal.
    */
-  private async haltOrRunAnyway(command: string, reason: string): Promise<ToolApprovalDecision> {
+  private async haltOrRunAnyway(
+    command: string,
+    reason: string,
+    /** [[TUI-C27]] — this decision's record; the banner's answer is a HUMAN's answer. */
+    record: ApprovalDecisionCapture
+  ): Promise<ToolApprovalDecision> {
     if (this.attackHaltCallback) {
       const answer = await this.attackHaltCallback({ command, reason });
+      // [[TUI-C27]] — **recorded here, or a run-anyway is indistinguishable from a `safe`
+      // rating.** The banner returns an ordinary approval, so without this line the archive would
+      // show `approve` at the `rater` stage with nobody named — i.e. the rater appearing to have
+      // approved a command it called an attack. That is precisely the misattribution this node
+      // exists to remove, on the branch where it costs the most.
+      record.humanAnswer = answer === 'run-anyway' ? 'approve' : 'reject';
       if (answer === 'run-anyway') return { type: 'approve', scope: 'once' };
+    } else {
+      // §6.2 — no surface wired the banner, so nobody was asked and the run ends.
+      record.humanAnswer = 'no-human';
     }
     throw new AttackHaltError(command, reason);
   }
@@ -1293,7 +1307,7 @@ export class GthAgentRunner {
         // entry does not decide whether the banner appears. The entry has already been overruled by
         // the time this line is reached; letting it also silence the one way out would make the
         // recovery depend on a match the human cannot see from the banner.
-        return await this.haltOrRunAnyway(command, tripwire.verdict?.reason ?? '');
+        return await this.haltOrRunAnyway(command, tripwire.verdict?.reason ?? '', record);
       }
       // `catastrophic` — the one outcome the tripwire escalates. Fall through to the human.
       safetyVerdict = tripwire.verdict;
@@ -1388,7 +1402,11 @@ export class GthAgentRunner {
           // sits AFTER the reset above on purpose: a human is reached either way (that is what the
           // banner is), so the negotiation ends here whichever answer comes back, and neither
           // answer leaves a transcript behind for a later turn to argue from.
-          return await this.haltOrRunAnyway(subject.command, decision.verdict?.reason ?? '');
+          return await this.haltOrRunAnyway(
+            subject.command,
+            decision.verdict?.reason ?? '',
+            record
+          );
         }
         if (decision.action === 'reject') {
           // §5 — `destructive` at `auto`. The round is recorded first, so the attempt being ruled
