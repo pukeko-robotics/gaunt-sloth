@@ -74,6 +74,22 @@ const HALT: PendingAttackHalt = {
 /** `<PromptInput>`'s chevron as it lands in a frame — the marker that the chat box is mounted. */
 const PROMPT_CARET = '  >';
 
+/**
+ * The ECHO line as it lands in a frame: the banner's own label with the buffer after it.
+ *
+ * Every "the buffer is echoed" assertion goes through this rather than looking for the typed text
+ * anywhere on screen, because the CONTROLS line names the phrase too — `To run this ONE command:
+ * type   run anyway   and press Enter.` — so a bare `toContain('run anyway')` (or `'run any'`, or
+ * `'run'`) is satisfied by copy that is on the banner before a key is pressed, and stays green with
+ * the echo deleted outright.
+ *
+ * The label is a literal this spec OWNS, not `attackBannerCopy().prompt`: an assertion built from
+ * the very string that produced the line passes for any value of it, and for the empty value it
+ * collapses straight back into the substring match this exists to replace. The PTY suite spells it
+ * the same way for the same reason.
+ */
+const buffer = (typed: string): string => `Your answer: ${typed}`;
+
 const CR = String.fromCodePoint(0x0d);
 const ESC = String.fromCodePoint(0x1b);
 const BACKSPACE = String.fromCodePoint(0x7f);
@@ -122,7 +138,7 @@ describe('[[TUI-C68]] §6.1 the attack banner in <App>', () => {
     const banner = await raise();
     banner.type('run anyway');
     // The buffer is ECHOED — without it the human commits blind.
-    await vi.waitFor(() => expect(banner.lastFrame() ?? '').toContain('run anyway'));
+    await vi.waitFor(() => expect(banner.lastFrame() ?? '').toContain(buffer('run anyway')));
     banner.enter();
     await expect(banner.pending).resolves.toBe('run-anyway');
   });
@@ -168,7 +184,7 @@ describe('[[TUI-C68]] §6.1 the attack banner in <App>', () => {
   ])('aborts on %s after text has been typed', async (_name, abort) => {
     const banner = await raise();
     banner.type('run any');
-    await vi.waitFor(() => expect(banner.lastFrame() ?? '').toContain('run any'));
+    await vi.waitFor(() => expect(banner.lastFrame() ?? '').toContain(buffer('run any')));
     banner.type(abort);
     await expect(banner.pending).resolves.toBe('stop');
   });
@@ -176,7 +192,7 @@ describe('[[TUI-C68]] §6.1 the attack banner in <App>', () => {
   it('does not resolve on an ordinary keystroke — the buffer is still waiting', async () => {
     const banner = await raise();
     banner.type('run');
-    await vi.waitFor(() => expect(banner.lastFrame() ?? '').toContain('run'));
+    await vi.waitFor(() => expect(banner.lastFrame() ?? '').toContain(buffer('run')));
     expect(banner.settled()).toBeUndefined();
   });
 
@@ -203,6 +219,30 @@ describe('[[TUI-C68]] §6.1 the attack banner in <App>', () => {
     banner.type(String.fromCodePoint(0x19)); // Ctrl+Y — reported as `y` with key.ctrl
     banner.enter();
     // Had the chord been buffered the phrase would be complete and this would run the command.
+    await expect(banner.pending).resolves.toBe('stop');
+  });
+
+  /**
+   * §1 — **a paste is not a keystroke, and the buffer refuses control characters for that reason.**
+   *
+   * A terminal delivers a pasted line as ONE chunk, so `input` arrives carrying the whole string
+   * including its trailing carriage return. That chunk is not the Enter key and `key.return` does
+   * not name it, so it reaches the buffering branch intact — and the matcher trims before it
+   * compares, so a chunk taken whole would leave exactly `run anyway` in the buffer. One subsequent
+   * Enter, from any source, then runs a command the human never typed the phrase for: a paste is
+   * the one input a user can be talked into producing without reading it.
+   *
+   * Driven as a single write because the delivery is the point — typing the same characters one at
+   * a time is a different path and does not exercise this at all.
+   *
+   * The assertion is the RESOLVED ANSWER and nothing else. "The banner looks unchanged" has no
+   * prior positive state to fall from here, so it would pass on the first tick, before any render.
+   */
+  it('buffers nothing from a pasted chunk carrying a control character', async () => {
+    const banner = await raise();
+    banner.type(`run anyway${CR}`);
+    // Had the chunk been buffered, the matcher's trim would see the exact phrase and grant here.
+    banner.enter();
     await expect(banner.pending).resolves.toBe('stop');
   });
 

@@ -82,9 +82,9 @@ terminal you still have to decide in.
 - **attack** — the command's own structure shows something hostile: it goes after a credential for
   its own sake, escalates privilege, installs persistence, impersonates a hostname, or hides what it
   really runs. This one **ends the run** instead of asking. In an interactive session you first get
-  a red banner (below); anywhere else — CI, a piped run, a server — the run simply ends. If the
-  command is legitimate and you need it regularly, put it in `approvals.allow` (below) — that list
-  is checked before the rater.
+  a red banner (below); where there is nobody to ask — CI, a one-shot `gth exec`, a server — the run
+  simply ends. If the command is legitimate and you need it regularly, put it in `approvals.allow`
+  (below) — that list is checked before the rater.
 
 #### The red banner: getting past an `attack` verdict
 
@@ -95,8 +95,9 @@ says that the consequences may be irreversible, and offers exactly one way throu
 
 It is not the approval dialog and it does not behave like one. There is no key, no menu and no
 scope. Anything else stops the run — any other text, Enter on its own, a near miss like `run` or
-`run anyway please` — and it stops on the first answer rather than asking again. In the TUI, `q`,
-`Esc` and `Ctrl+C` also stop, with text already typed.
+`run anyway please` — and it stops on the first answer rather than asking again. In the TUI you can
+stop with text already typed too, and the two ways out cost different things: `q` or `Esc` return
+you to the session, while `Ctrl+C` stops by exiting `gth`.
 
 `run anyway` runs **that one command and nothing else**. Your approvals mode does not change,
 nothing is written to the allow-list, and the next identical command is rated — and halted — all
@@ -477,9 +478,9 @@ A rated `allow` match is a **tripwire, not a second opinion**: `safe` and `destr
 because you already authorized the call and the rater does not overrule you by disliking it. Only a
 structural attack still halts the run — on the same red banner, since an entry you wrote answers
 "may this run" and not "is this command's structure hostile" — and only an irreversible action
-still comes to you. An
-`allow` match also lifts the rule that floors any command naming a host — which is how a team that
-fetches from one internal host all day declares it once and stops being asked.
+still comes to you. An `allow` match also lifts the rule that floors any command naming a host —
+which is how a team that fetches from one internal host all day declares it once and stops being
+asked.
 
 A `hint` pattern names one or more of `readOnlyHint`, `destructiveHint`, `idempotentHint` and
 `openWorldHint`, each mapped to the value it must hold. All of them must match; hints you do not

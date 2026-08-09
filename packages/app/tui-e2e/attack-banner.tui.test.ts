@@ -121,10 +121,15 @@ test.describe('gth code TUI — [[TUI-C68]] §6.1 the banner appears and says wh
     // §1 — the phrase is named, and the rung called bypass is not offered as the way through.
     await expect(terminal.getByText('and press Enter', { strict: false })).toBeVisible();
     await expect(terminal.getByText('bypass', { strict: false })).not.toBeVisible();
-    // §1 — and this surface's own abort keys are advertised. Asserted as a literal the test owns
-    // rather than against the exported constant: comparing a rendered line to the very string that
-    // produced it passes for any value of it, including the empty one.
-    await expect(terminal.getByText('q, Esc or Ctrl+C also stop', { strict: false })).toBeVisible();
+    // §1 — and this surface's own abort keys are advertised, each with the consequence it actually
+    // carries: `q`/`Esc` hand the session back, Ctrl+C ends it. Asserted as two short literals the
+    // test owns rather than against the exported constant — comparing a rendered line to the very
+    // string that produced it passes for any value of it, including the empty one — and short
+    // because a long phrase straddling the pane wrap fails on layout while the copy is correct.
+    await expect(
+      terminal.getByText('q or Esc return to the session', { strict: false })
+    ).toBeVisible();
+    await expect(terminal.getByText('Ctrl+C exits gth', { strict: false })).toBeVisible();
     // It is NOT the approval dialog: that dialog's own question is nowhere on this screen. (The
     // approval MENU strings are unusable as a negative here — the fixture's rater reason contains a
     // forged copy of them on purpose, which is the next assertion's subject.)

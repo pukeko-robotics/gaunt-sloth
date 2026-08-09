@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text, useStdout } from 'ink';
 import { Rule } from '#src/tui/components/Rule.js';
+import { FramedLines } from '#src/tui/components/FramedLines.js';
 import {
   attackBannerCopy,
   RATER_REASON_LABEL,
@@ -10,7 +11,6 @@ import {
   frameUntrustedText,
   frameWidthFor,
   narrowTerminalNotice,
-  type FramedUntrustedText,
 } from '@gaunt-sloth/core/core/shell/framing.js';
 import type { PendingAttackHalt } from '@gaunt-sloth/core/core/types.js';
 
@@ -93,48 +93,23 @@ export function AttackBanner({
  * §6.1 — the abort keys, and they are the Ink TUI's alone.
  *
  * `q` costs nothing to bind because the phrase contains no `q`. `Esc` is this banner's own here
- * (the App's other `Esc` meanings sit after the banner's early return). **Ctrl+C ends the whole
- * session** — Ink claims it before any `useInput` subscriber and unmounts — which is a blunter
- * abort than the other two and still an abort: the command does not run. The line says all three
- * stop rather than distinguishing them, because at this moment the distinction the reader needs is
- * *this does not run it*.
+ * (the App's other `Esc` meanings sit after the banner's early return). **Ctrl+C is deliberately
+ * left alone**: ending the program is the terminal's own contract, and a program that swallows the
+ * one byte every user knows is not one they can trust to let go — so Ink claims it before any
+ * `useInput` subscriber and unmounts.
  *
- * Exported so the spec can assert the rendered line against the string the component paints rather
- * than against a copy of it.
- */
-export const ABORT_KEYS_HINT = 'q, Esc or Ctrl+C also stop, even with text already typed.';
-
-/**
- * Paint an already-framed block, one Ink `<Text>` per physical row.
+ * All three stop the command, and **they do not cost the same** — which is why the line names the
+ * difference instead of listing them together. `q` and `Esc` hand the session back; Ctrl+C ends it,
+ * costing exactly the restart §12 forbids and this banner exists to remove. Grouped as equivalents
+ * they read as three spellings of one key, so a reader who is alarmed — the reader this screen is
+ * written for — pays the expensive one for the cheap one's outcome, having been told they were the
+ * same.
  *
- * One row per element is the point, not a style: a single `<Text>` holding the joined block would
- * be re-wrapped by Ink at the box width, and a re-wrapped row starts at column 0 — undoing the
- * gutter the framing exists to guarantee.
+ * Exported so the unit spec can check that this line reaches the rendered banner at all without
+ * transcribing it. That is PLUMBING and nothing more: an assertion made against the very constant
+ * that painted the line passes for any value of it, the empty one included. Whether the wording is
+ * right — and whether it still names the two different costs — is owned by the PTY suite's own
+ * literals, which is why that suite spells them out instead of importing this.
  */
-function FramedLines({
-  framed,
-  colour,
-  notices,
-}: {
-  framed: FramedUntrustedText;
-  colour: string;
-  /** Paint the renderer's flagged-site notices above the body (a command has them; prose does not). */
-  notices?: boolean;
-}): React.ReactElement {
-  return (
-    <>
-      {notices
-        ? framed.notices.map((line, index) => (
-            <Text key={`framed-notice-${index}`} color="yellow">
-              {line}
-            </Text>
-          ))
-        : null}
-      {framed.lines.map((line, index) => (
-        <Text key={`framed-${index}`} color={colour}>
-          {line}
-        </Text>
-      ))}
-    </>
-  );
-}
+export const ABORT_KEYS_HINT =
+  'To stop, even mid-phrase: q or Esc return to the session, Ctrl+C exits gth.';
