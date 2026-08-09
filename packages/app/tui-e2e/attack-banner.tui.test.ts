@@ -348,14 +348,31 @@ test.describe('gth chat readline — [[TUI-C68]] §5 the banner on the plain sur
   /**
    * The other surface, driven the way a person drives it. `rl.question` reads a whole LINE in
    * cooked mode, so there is no keystroke to intercept: a near miss is text that is not the phrase
-   * and stops the run like anything else. Both halves are in one test because asserting only that a
-   * near miss stops would pass on a surface where the banner never appeared at all.
+   * and stops the run like anything else.
    *
    * Each write waits for its own echo before the next is sent. This surface interleaves the halt's
    * message, its own retry question and the next prompt on one scrolling screen, and a write that
    * arrives while the previous one is still being echoed lands split across two prompts.
+   *
+   * **ONE TURN PER TEST, and that is load-bearing rather than tidiness.** This surface SCROLLS
+   * rather than repainting, so a previous turn's banner is still on the screen — and a wait for the
+   * banner title is then satisfied by the OLD one, letting the next write land before the new
+   * banner exists at all. The write goes to whatever is reading at that moment and the phrase never
+   * reaches the buffer. That is measured, not hypothetical: these two turns in one test passed on
+   * Linux and failed 3 of 3 retries on BOTH macOS and Windows, and the terminal dump showed the
+   * phrase echoed above a banner that had not yet been painted. The Ink surface has no such hazard
+   * because it repaints, which is why the two-turn cell above can stay one test — and that cell is
+   * also where *"the same command is halted again next turn"* is proven, since the runner re-rates
+   * every turn and that is surface-independent.
+   *
+   * A wait that can be satisfied by an EARLIER turn's output is the same defect class as an
+   * assertion that cannot fail: it does not check what it names, and it fails as a race somewhere
+   * slower rather than where it was written.
+   *
+   * Both tests assert the banner is up BEFORE asserting an outcome — otherwise "a near miss stops
+   * the run" would pass on a surface where the banner never appeared at all.
    */
-  test('shows the banner, stops on a near miss, and runs on the phrase', async ({ terminal }) => {
+  test('shows the banner, stops on a near miss, and offers the retry', async ({ terminal }) => {
     await expect(terminal.getByText('ready to code')).toBeVisible();
 
     terminal.write('run it');
@@ -380,12 +397,17 @@ test.describe('gth chat readline — [[TUI-C68]] §5 the banner on the plain sur
     terminal.write('n');
     terminal.submit();
     await expect(terminal.getByText('Skipping to next prompt', { strict: false })).toBeVisible();
+  });
 
-    // The next turn asks again — nothing was remembered — and the phrase runs one command.
-    terminal.write('run it again');
-    await expect(terminal.getByText('> run it again')).toBeVisible();
+  test('runs the command when the phrase is typed exactly', async ({ terminal }) => {
+    await expect(terminal.getByText('ready to code')).toBeVisible();
+
+    terminal.write('run it');
+    await expect(terminal.getByText('> run it')).toBeVisible();
     terminal.submit();
     await expect(terminal.getByText(BANNER_TITLE, { strict: false })).toBeVisible();
+    await expect(terminal.getByText('attack-out-marker', { strict: false })).not.toBeVisible();
+
     terminal.write('run anyway');
     await expect(terminal.getByText(buffer('run anyway'), { strict: false })).toBeVisible();
     terminal.submit();
