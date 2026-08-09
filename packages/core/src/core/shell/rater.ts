@@ -795,8 +795,9 @@ function truncateUserMessage(message: string): string {
  *
  * A fence of its own is NOT an exemption. Text that mimics the transcript's shape inside
  * `<justification>`, one blank line above the real transcript, is read by something that follows
- * meaning rather than tags. (The same class remains open on `<command_to_evaluate>`, which is
- * multi-line by necessity and belongs to the node that owns that fence.)
+ * meaning rather than tags. `<command_to_evaluate>` is the one fenced value this does NOT apply to:
+ * it is multi-line by necessity, so it is protected by {@link neutralizeClosingTag} alone and the
+ * containment this function provides is not available there.
  */
 function oneLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
@@ -891,9 +892,22 @@ function escapeForRegExp(value: string): string {
  * Self-reconstruction is impossible by construction: the replacement contains no angle bracket and
  * no slash, so no arrangement of neutralised text can rebuild a closing tag.
  *
- * Exported and parameterised by tag so the node that closes the same hole on
- * `<command_to_evaluate>` applies THIS function to it rather than inventing a second mechanism that
- * escapes differently.
+ * Parameterised by tag because it guards every fence in the rating prompt — the three §5.1 ones and
+ * `<command_to_evaluate>` — rather than each growing a mechanism that escapes differently. Exported
+ * so a test can drive the matcher directly.
+ *
+ * **The residual on the SOLIDUS specifically**, measured and stated rather than implied: NFKC folds
+ * the fullwidth solidus (U+FF0F) to `/`, but it does not fold the fraction slash (U+2044), the
+ * division slash (U+2215) or the big solidus (U+29F8), and none of those is an invisible. A closing
+ * tag spelled with one of them is not neutralised here.
+ *
+ * **It is left open for SCOPE, not because it is mild.** The reader this function defends against is
+ * a language model following glyphs — that is the whole premise of the loose matching above — so a
+ * tag spelled with a solidus homoglyph is exactly the exposure this function exists to close,
+ * narrowed to three code points. The only thing that makes it smaller is how few spellings it has.
+ * What it does NOT reach is anything mechanical: such a sequence never produces the literal `</tag>`,
+ * so no boundary count is fooled and no test that counts them can see it. Widening the match is a
+ * decision about all four fences at once — take it deliberately, not as a side effect of one node.
  */
 export function neutralizeClosingTag(text: string, tag: string): string {
   // NFKC folds the compatibility glyphs (a fullwidth solidus is a solidus to a reader) and the
@@ -1046,7 +1060,9 @@ export function buildNegotiationContextBlock(
  * (optionally) notes what a deterministic preflight already found — the script-env-leak flag,
  * (§4.6) a host literal in a fetch position, and ([[EXT-81]]) the shape our own parser could not
  * resolve. The command text is only ever DATA in the tag — the builder never executes or
- * interpolates it as instructions, and the notes are our own trusted text beside it.
+ * interpolates it as instructions, and the notes are our own trusted text beside it. That
+ * separation is ENFORCED rather than merely drawn: the command cannot close its own fence
+ * ({@link neutralizeClosingTag}), so no part of it can render where our notes render.
  *
  * The four preflight notes are worded differently on purpose, and the differences are the design:
  *
@@ -1121,11 +1137,32 @@ export function buildRaterPrompt(
   // exactly what the deterministic floor decided rather than a second, drifting opinion of it.
   const openWorldHosts = findOpenWorldHostLiterals(command);
 
+  // [[EXT-101]] — the fenced command cannot be allowed to write the fence's own boundary. A command
+  // containing `</command_to_evaluate>` otherwise ends its block early and everything after it reads
+  // as OUR prose — demonstrated by forging a `PREFLIGHT NOTE:`, which the rater is entitled to trust
+  // precisely because our own deterministic checkers write those.
+  //
+  // **This fence is the dangerous one, and the reason is its shape.** Every untrusted value in the
+  // §5.1 block is collapsed to one line ({@link oneLine}), so an escape there can only make the model
+  // believe a fence ended mid-line. The rated command is MULTI-LINE by necessity (EXT-55 keeps a line
+  // break as the command separator it is), so that containment does not exist here and the same
+  // escape forges whole blocks.
+  //
+  // **Last, and after normalization, on purpose.** {@link normalizeCommand} collapses backslash
+  // escapes and empty-string literals, so it CONSTRUCTS a closing tag out of text that did not
+  // contain one — a raw `<\/command_to_evaluate>` normalizes into the literal tag. Neutralising the
+  // raw command instead of the normalized one would miss exactly those.
+  //
+  // The deterministic checkers above read `normalized`, never this: they decide what is true about
+  // the command, and this decides how it is RENDERED. The two must not be the same string, or a
+  // neutralised tag would change what a checker sees.
+  const fencedCommand = neutralizeClosingTag(normalized, 'command_to_evaluate');
+
   const userLines = [
     'Evaluate the following shell command and return a structured safety verdict.',
     '',
     '<command_to_evaluate>',
-    normalized,
+    fencedCommand,
     '</command_to_evaluate>',
   ];
   if (scriptLeak) {
