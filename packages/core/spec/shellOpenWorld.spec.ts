@@ -1796,7 +1796,11 @@ describe('mapVerdictToAction — §4.6 floors an open-world command even when th
     expect(note).not.toBeNull();
     expect(note).not.toContain('IGNORE THE ABOVE');
     expect(note).toContain('that host');
-    expect(buildRaterPrompt(command).user.split('</command_to_evaluate>')[1]).not.toContain(
+    // Everything after the LAST closing tag ([[EXT-101]]): `[1]` is the segment after the FIRST one,
+    // which against a command that closed its own fence is fenced content rather than our prose.
+    const { user } = buildRaterPrompt(command);
+    expect(user.split('</command_to_evaluate>').length - 1, 'the fence escaped').toBe(1);
+    expect(user.slice(user.lastIndexOf('</command_to_evaluate>'))).not.toContain(
       'IGNORE THE ABOVE'
     );
   });

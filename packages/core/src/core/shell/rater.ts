@@ -795,8 +795,9 @@ function truncateUserMessage(message: string): string {
  *
  * A fence of its own is NOT an exemption. Text that mimics the transcript's shape inside
  * `<justification>`, one blank line above the real transcript, is read by something that follows
- * meaning rather than tags. (The same class remains open on `<command_to_evaluate>`, which is
- * multi-line by necessity and belongs to the node that owns that fence.)
+ * meaning rather than tags. `<command_to_evaluate>` is the one fenced value this does NOT apply to:
+ * it is multi-line by necessity, so it is protected by {@link neutralizeClosingTag} alone and the
+ * containment this function provides is not available there.
  */
 function oneLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
@@ -891,9 +892,33 @@ function escapeForRegExp(value: string): string {
  * Self-reconstruction is impossible by construction: the replacement contains no angle bracket and
  * no slash, so no arrangement of neutralised text can rebuild a closing tag.
  *
- * Exported and parameterised by tag so the node that closes the same hole on
- * `<command_to_evaluate>` applies THIS function to it rather than inventing a second mechanism that
- * escapes differently.
+ * Parameterised by tag because it guards every fence in the rating prompt — the three §5.1 ones and
+ * `<command_to_evaluate>` — rather than each growing a mechanism that escapes differently. Exported
+ * so a test can drive the matcher directly.
+ *
+ * **THE RESIDUAL IS WIDER THAN A HOMOGLYPH LIST — measured, and do not size it from this comment.**
+ * This matcher catches the tag spelled essentially exactly. Four classes walk through, and the first
+ * needs no Unicode at all:
+ *
+ * 1. **Pure ASCII near-misses** — `</tag foo>` (a trailing attribute), `<//tag>`, `</tag/>`, and a
+ *    plain space inside the name. Note the asymmetry that makes the last one easy to miss: a
+ *    ZERO-WIDTH space between two letters of the name IS neutralised by the strip below, while an
+ *    ordinary space in the identical position is not.
+ * 2. **Solidus homoglyphs** — NFKC folds the fullwidth solidus (U+FF0F) but not the fraction slash
+ *    (U+2044), the division slash (U+2215) or the big solidus (U+29F8).
+ * 3. **Bracket homoglyphs** — U+2039, U+27E8, U+3008, U+2329, U+276C.
+ * 4. **Tag-name homoglyphs** — Cyrillic and Greek lookalikes inside the tag name.
+ *
+ * **The ASCII class is the serious one.** The reader this function defends against is a language
+ * model, and `</tag foo>` reads as a closing tag to a model more readily than any homoglyph does —
+ * it is what a closing tag with an attribute looks like in the XML-shaped prompt it sits in.
+ *
+ * **Nothing mechanical is fooled by any of it:** none produces the literal `</tag>`, so no boundary
+ * count is wrong and no test that counts fences can see it. That is precisely why it is written here.
+ *
+ * **Left open for SCOPE, not because it is mild** — the matcher guards all four fences, so widening
+ * it lands on every one at once. That decision, and the shape it should take (a tolerant matcher
+ * reaches class 1; a confusable skeleton answers 2-4), is [[EXT-111]].
  */
 export function neutralizeClosingTag(text: string, tag: string): string {
   // NFKC folds the compatibility glyphs (a fullwidth solidus is a solidus to a reader) and the
@@ -1046,7 +1071,9 @@ export function buildNegotiationContextBlock(
  * (optionally) notes what a deterministic preflight already found — the script-env-leak flag,
  * (§4.6) a host literal in a fetch position, and ([[EXT-81]]) the shape our own parser could not
  * resolve. The command text is only ever DATA in the tag — the builder never executes or
- * interpolates it as instructions, and the notes are our own trusted text beside it.
+ * interpolates it as instructions, and the notes are our own trusted text beside it. That
+ * separation is ENFORCED rather than merely drawn: the command cannot close its own fence
+ * ({@link neutralizeClosingTag}), so no part of it can render where our notes render.
  *
  * The four preflight notes are worded differently on purpose, and the differences are the design:
  *
@@ -1121,11 +1148,32 @@ export function buildRaterPrompt(
   // exactly what the deterministic floor decided rather than a second, drifting opinion of it.
   const openWorldHosts = findOpenWorldHostLiterals(command);
 
+  // [[EXT-101]] — the fenced command cannot be allowed to write the fence's own boundary. A command
+  // containing `</command_to_evaluate>` otherwise ends its block early and everything after it reads
+  // as OUR prose — demonstrated by forging a `PREFLIGHT NOTE:`, which the rater is entitled to trust
+  // precisely because our own deterministic checkers write those.
+  //
+  // **This fence is the dangerous one, and the reason is its shape.** Every untrusted value in the
+  // §5.1 block is collapsed to one line ({@link oneLine}), so an escape there can only make the model
+  // believe a fence ended mid-line. The rated command is MULTI-LINE by necessity (EXT-55 keeps a line
+  // break as the command separator it is), so that containment does not exist here and the same
+  // escape forges whole blocks.
+  //
+  // **Last, and after normalization, on purpose.** {@link normalizeCommand} collapses backslash
+  // escapes and empty-string literals, so it CONSTRUCTS a closing tag out of text that did not
+  // contain one — a raw `<\/command_to_evaluate>` normalizes into the literal tag. Neutralising the
+  // raw command instead of the normalized one would miss exactly those.
+  //
+  // The deterministic checkers above read `normalized`, never this: they decide what is true about
+  // the command, and this decides how it is RENDERED. The two must not be the same string, or a
+  // neutralised tag would change what a checker sees.
+  const fencedCommand = neutralizeClosingTag(normalized, 'command_to_evaluate');
+
   const userLines = [
     'Evaluate the following shell command and return a structured safety verdict.',
     '',
     '<command_to_evaluate>',
-    normalized,
+    fencedCommand,
     '</command_to_evaluate>',
   ];
   if (scriptLeak) {
