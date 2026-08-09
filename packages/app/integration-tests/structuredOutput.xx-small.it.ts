@@ -6,7 +6,10 @@ import * as z from 'zod';
 import { initConfig } from '@gaunt-sloth/core/config.js';
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import { isFailClosed, rateShellCommand } from '@gaunt-sloth/core/core/shell/rater.js';
-import { askStructured } from '@gaunt-sloth/core/runtime/askStructured.js';
+import {
+  askStructured,
+  classifyStructuredFailure,
+} from '@gaunt-sloth/core/runtime/askStructured.js';
 import {
   findApiKeyEnvVar,
   PROVIDER_DESCRIPTORS,
@@ -85,6 +88,50 @@ const WORKDIR_CONFIG = path.join(IT_DIR, 'workdir', '.gsloth.config.json');
  * budget is raised to keep the signal specific.
  */
 const CALL_TIMEOUT_MS = 120_000;
+
+/**
+ * Say WHICH failure a red is, in the test output itself.
+ *
+ * The two things a red here can mean want opposite responses — a provider that never answered is
+ * the provider's problem and is re-run, a provider that refused the request is ours and must be
+ * investigated — and from the outside they look identical: one line, one budget, no verdict. Naming
+ * the class is what stops a real rejection being shrugged off as flakiness, which is exactly how a
+ * guard stops guarding without anyone deciding to remove it.
+ *
+ * The three sentences are selected by `classifyStructuredFailure`, which reads `askStructured`'s own
+ * error texts, so each one is reachable only from the code path it describes; this file never
+ * re-types those texts and so cannot drift into misreporting one as another.
+ */
+function describeStructuredFailure(error: string): string {
+  const kind = classifyStructuredFailure(error, CALL_TIMEOUT_MS);
+  switch (kind) {
+    case 'timeout':
+      return (
+        `STALLED: the provider returned no response within the ${CALL_TIMEOUT_MS}ms call budget. ` +
+        'Nothing was rejected and nothing was parsed, so this is NOT the schema guard firing — it ' +
+        'is the provider failing to answer. ' +
+        `askStructured said: ${error}`
+      );
+    case 'unparseable':
+      return (
+        "REJECTED BY OUR OWN SCHEMA: the provider answered, and the answer failed this case's " +
+        'schema. This IS the guard firing — the null-vs-absent half. ' +
+        `askStructured said: ${error}`
+      );
+    case 'call-failed':
+      return (
+        'REJECTED BEFORE ANY ANSWER: the call failed outright. A 400 naming `required` IS the ' +
+        'guard firing — the strict-schema half; anything else is auth, transport or configuration. ' +
+        `askStructured said: ${error}`
+      );
+    default:
+      // Nothing type-checks this file — `packages/app/tsconfig.json` includes only `src/**`, so the
+      // compiler never sees the switch and cannot enforce that it covers every kind. Without this
+      // arm a newly added `StructuredFailureKind` would fall through, the message would read
+      // `undefined`, and the one thing this function exists for would be silently gone.
+      return `UNCLASSIFIED FAILURE (${String(kind)}) — askStructured said: ${error}`;
+  }
+}
 
 interface AmbientProvider {
   /** Provider `type` from the config's `llm` block, e.g. `xai` for the `xai-build` config. */
@@ -243,10 +290,11 @@ describe.skipIf(!ambient.runnable)(
         timeoutMs: CALL_TIMEOUT_MS,
       });
 
-      // Pre-fix on a hoisting provider this is `{ ok: false, error: 'Model returned unparseable
-      // output.' }` — the model answers `null` for the optional and the caller's `.optional()`
-      // rejects it. The error text is surfaced so a red run says which failure happened.
-      expect(result.ok, result.ok ? '' : `askStructured failed: ${result.error}`).toBe(true);
+      // Pre-fix this reds two different ways depending on the provider — a hoisting provider
+      // (groq) answers `null` and the caller's `.optional()` rejects it, openai rejects the request
+      // itself with a 400 — and a stalled provider reds a third way that is not the guard at all.
+      // `describeStructuredFailure` names which of the three happened, in the output.
+      expect(result.ok, result.ok ? '' : describeStructuredFailure(result.error)).toBe(true);
       if (!result.ok) return;
 
       expect(result.value.picks.length).toBeGreaterThan(0);
