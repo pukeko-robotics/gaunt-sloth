@@ -177,20 +177,27 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
     });
   };
 
+  /**
+   * [[TUI-C26]] §1.1 — on a `catastrophic` verdict the runner sends no grant preview, the menu
+   * drops `[s]`/`[a]`, and **the answers go with them**: typed anyway they are unbound answers and
+   * take the one-shot refusal. Confirming the keypress honestly was the smaller half — the command
+   * still ran, off a control the dialog had withdrawn, and nothing downstream re-reads the verdict.
+   */
   it.each([['s'], ['a']])(
-    'on a catastrophic verdict, "%s" promises NO stickiness — it says the next one asks again',
+    'on a catastrophic verdict, "%s" approves nothing — the answer went with the control',
     async (key) => {
       await startSession();
-      await answer(key, CATASTROPHIC);
+      const decision = await answer(key, CATASTROPHIC);
+      expect(decision.type).toBe('reject');
+      // The absent scope, not the type: a one-shot refusal and a standing one are both rejections.
+      expect(decision.scope).toBeUndefined();
 
       const out = printed();
-      // The falsehoods the clamp created. Neither may be printed.
+      expect(out).toContain('Command rejected.');
+      // None of the approval sentences, honest or otherwise.
+      expect(out).not.toContain('Approved');
       expect(out).not.toContain('will not ask again this session');
       expect(out).not.toContain('saved to the project allow-list');
-      expect(out).not.toContain('Approved and remembered');
-      // And the honest sentence in their place.
-      expect(out).toContain('Approved this once');
-      expect(out).toContain('will ask again');
     }
   );
 
@@ -215,12 +222,13 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
   /**
    * The clamp stays in core: this surface must NOT start deciding persistence for itself, or the
    * policy becomes a per-surface accident (and an ACP/AG-UI client that never got the memo would
-   * disagree with the CLI). The scope it sends is the key the human pressed, unchanged.
+   * disagree with the CLI). Where the control IS offered, the scope it sends is the key the human
+   * pressed, unchanged — the surface withdraws a control, it never quietly downgrades one.
    */
   it('still sends the pressed scope to the runner — core owns the clamp, not the surface', async () => {
     await startSession();
-    expect(await answer('s', CATASTROPHIC)).toEqual({ type: 'approve', scope: 'session' });
-    expect(await answer('a', CATASTROPHIC)).toEqual({ type: 'approve', scope: 'always' });
+    expect(await answer('s', DESTRUCTIVE)).toEqual({ type: 'approve', scope: 'session' });
+    expect(await answer('a', DESTRUCTIVE)).toEqual({ type: 'approve', scope: 'always' });
   });
 
   /**

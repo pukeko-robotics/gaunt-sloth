@@ -48,9 +48,9 @@ const voiceColour = (voice: NegotiationVoice): string | undefined =>
  * suspends the normal prompt, so the command can't be typed into the chat box.
  *
  * Pure/presentational: it only renders the pending command + the choices. The key handling
- * (`o`/`s`/`a` → approve, `d` → refuse for the session, anything else → refuse once) lives in
- * `<App>`'s `useInput`, mirroring the way the debug panel's scroll keys are owned by the root
- * component.
+ * (`o` → approve once, `s`/`a` → approve with that scope, `d` → refuse for the session, anything
+ * else → refuse once) lives in `<App>`'s `useInput`, mirroring the way the debug panel's scroll
+ * keys are owned by the root component.
  *
  * The menu is `[o]nce`, `[s]ession`, `[a]lways`, `[N]o` and `[d]eny always`. There is no
  * rung-switching key — the ladder has no "turn the gate down from here" action, so binding one
@@ -58,9 +58,11 @@ const voiceColour = (voice: NegotiationVoice): string | undefined =>
  * has no decision type, no explanation field and no path for a suspended run to ask its own model
  * anything; it is filed as EXT-104). A menu control that does nothing is worse than an absent one.
  *
- * **The safe action is the FALLTHROUGH, and adding a key must not erode that.** `o`/`s`/`a` grant,
- * `d` refuses permanently *when that control is on offer*, and everything else — Enter, Esc, a
- * stray keystroke — refuses once and records nothing. Doing nothing in particular stays safe.
+ * **The safe action is the FALLTHROUGH, and adding a key must not erode that.** `o` grants once;
+ * `s`/`a` grant and `d` refuses for the session, each *only where that control is on offer*; and
+ * everything else — Enter, Esc, a stray keystroke, any letter with Ctrl held — refuses once and
+ * records nothing. Withdrawing a control from this menu withdraws its key with it, or the
+ * withdrawal is cosmetic and the command runs anyway. Doing nothing in particular stays safe.
  *
  * **Each sticky control is SHOWN only where the gate would actually store something**, and the two
  * are not the same condition: a command the gate cannot statically resolve can be refused for the

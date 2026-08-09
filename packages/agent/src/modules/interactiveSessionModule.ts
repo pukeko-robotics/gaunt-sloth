@@ -67,11 +67,21 @@ import {
  *
  * This surface has no colour of its own: `consoleUtils` owns it per channel, so choosing the
  * channel IS choosing the colour (red for `displayError`, yellow for `displayWarning`, dim for
- * `displayInfo`). All three write to stdout in call order, so the dialog reads top to bottom
- * whichever one a line goes to.
+ * `displayInfo`).
  *
- * It is the observable an assertion can bite on, too: a change that made `catastrophic` look like
- * `destructive` here would have to route both to the same function, which a test can see.
+ * **The channel is also a STREAM, and they are not all the same one.** `displayError`,
+ * `displayInfo` and `display` go to **stdout**; `displayWarning` goes to **stderr**. So a dialog
+ * that mixes them — a `destructive` heading, the rater's label beneath it, the framed reason under
+ * that — is written across both. On a terminal both are unbuffered and synchronous, so the lines
+ * land in call order and the dialog reads top to bottom. That stops holding the moment stdout is
+ * not a terminal: redirected to a pipe or a file it is block-buffered while stderr is not, so a
+ * captured log can carry these lines interleaved differently from the screen. The dialog is a
+ * question a human answers on the terminal, and every line of it says what it is, so the order is
+ * cosmetic there rather than load-bearing — but a reader diffing a captured log against a session
+ * should know why the two do not match.
+ *
+ * The channel is the observable an assertion can bite on, too: a change that made `catastrophic`
+ * look like `destructive` here would have to route both to the same function, which a test can see.
  */
 const severityChannel = (tone: EscalationTone): ((message: string) => void) =>
   tone === 'danger' ? displayError : tone === 'warn' ? displayWarning : displayInfo;
@@ -333,44 +343,38 @@ export async function createInteractiveSession(
       if (answer === 'o' || answer === 'once') {
         return { type: 'approve', scope: 'once' };
       }
-      // CFG-28 (§4.2) — a `catastrophic` approval is NEVER sticky. The runner clamps the
-      // allow-list write, so `[s]` and `[a]` grant exactly this one invocation and the next
-      // variant prompts again. The decision is still returned unchanged: that clamp is the single
-      // chokepoint, in core, so the policy does not depend on which surface asked. What must change
-      // HERE is only the confirmation — §6 rejects "a control that is offered and then refused",
-      // and a confirmation that promises a persistence the gate has already discarded is that same
-      // failure with the evidence hidden. Withdrawing the key itself is [[TUI-C26]]'s.
-      // The confirmation must name what actually happened, and the condition for that is the SAME
-      // one that decides whether the control was shown: no grant on offer means no grant written,
-      // whatever key was typed. `catastrophic` keeps its own wording because the reason matters to
-      // the reader, but it is one case of the general one rather than the only one — the other
-      // cases (a command that does not statically resolve, an unattributable tool call) used to be
-      // confirmed as remembered while the runner stored nothing.
-      const notRemembered =
-        pending.safetyVerdict?.outcome === 'catastrophic'
-          ? 'Approved this once — a command rated catastrophic is never remembered, so the next ' +
-            'one like it will ask again.'
-          : 'Approved this once — there is nothing about this call that can be remembered, so the ' +
-            'next one like it will ask again.';
-      if (answer === 's' || answer === 'session') {
-        displayInfo(
-          sticky ? 'Approved — this exact command will not ask again this session.' : notRemembered
-        );
+      // CFG-28 (§4.2) / [[TUI-C26]] §1.1 — **a sticky approve is answerable only where the control
+      // was OFFERED**, on the same condition that decides whether it was shown. `catastrophic` is
+      // one case of it: the runner clamps the allow-list write for that outcome, so a grant is
+      // never stored and no grant is on offer — and the others are a command that does not
+      // statically resolve and a call nothing can attribute. Typed on a menu that does not carry
+      // them, `s` and `a` are unbound answers like any other and fall through to the one-shot
+      // refusal below.
+      //
+      // **The gate has to be on the key, not only on the confirmation.** Bound anywhere else, `a`
+      // at a `catastrophic` prompt approves and RUNS the command — nothing between this callback
+      // and execution re-reads the verdict — off a menu that has already withdrawn the choice,
+      // which is §6's "a control that is offered and then refused" with the withdrawal made
+      // cosmetic. The scope is still returned exactly as typed: the clamp on what gets STORED is
+      // core's, the single chokepoint for every surface, and this must not start deciding
+      // persistence for itself.
+      if (sticky && (answer === 's' || answer === 'session')) {
+        displayInfo('Approved — this exact command will not ask again this session.');
         return { type: 'approve', scope: 'session' };
       }
-      if (answer === 'a' || answer === 'always') {
+      if (sticky && (answer === 'a' || answer === 'always')) {
         displayInfo(
-          sticky
-            ? 'Approved and remembered — this exact command is saved to the project allow-list.'
-            : notRemembered
+          'Approved and remembered — this exact command is saved to the project allow-list.'
         );
         return { type: 'approve', scope: 'always' };
       }
       // [[TUI-C26]] §6 — *always reject*: a refusal that is also recorded, so the next identical
       // call is refused by rule without reaching a person. Answered only where the control was
       // OFFERED; typed anywhere else it is an unbound answer like any other and falls through to
-      // the one-shot refusal below, which is what keeps the safe action the fallthrough.
-      const stickyRejected = stickyDeny && (answer === 'd' || answer === 'deny');
+      // the one-shot refusal below, which is what keeps the safe action the fallthrough. One
+      // spelling, the one the menu prints: a second the menu never advertises is how this surface
+      // starts drifting from the Ink one, which has no such alias.
+      const stickyRejected = stickyDeny && answer === 'd';
       // The confirmation says what actually happened and stops there. There is no persisted deny
       // store, so a line implying one would be the same failure §6 names when it calls a control
       // offered and then refused a bug — with the evidence hidden, which is worse.

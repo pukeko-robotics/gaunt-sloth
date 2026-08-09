@@ -63,7 +63,7 @@ command that spans twenty lines is shown whole rather than cut down to its first
 
 ### What the rater can say
 
-The word in brackets after `⚠ Auto-rater` is one of four outcomes:
+The word in brackets after `Auto-rater` is one of four outcomes:
 
 The prompt says which one it is, in words as well as colour, because a terminal without colour is a
 terminal you still have to decide in.

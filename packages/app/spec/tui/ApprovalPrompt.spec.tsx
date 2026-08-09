@@ -8,6 +8,8 @@ import type {
   PendingToolInterrupt,
   ToolApprovalDecision,
 } from '@gaunt-sloth/core/core/types.js';
+import { frameWidthFor } from '@gaunt-sloth/core/core/shell/framing.js';
+import { maxDisplayWidth } from '@gaunt-sloth/core/utils/displayWidth.js';
 import type { PendingApproval, TuiAgent } from '#src/tui/types.js';
 import { App } from '#src/tui/components/App.js';
 import { ApprovalPrompt } from '#src/tui/components/ApprovalPrompt.js';
@@ -31,6 +33,10 @@ const baseProps = {
 };
 
 const ESC = String.fromCharCode(27);
+
+/** The control character a terminal sends for Ctrl+`letter` — `ctrl('d')` is what Ctrl+D puts on stdin. */
+const ctrl = (letter: string): string =>
+  String.fromCharCode(letter.toUpperCase().charCodeAt(0) - 64);
 
 /**
  * Rendered frames as comparable text: ANSI removed and whitespace collapsed. Ink wraps a long line
@@ -383,19 +389,18 @@ describe('tui approval flow through <App>', () => {
   });
 
   /**
-   * CFG-28 (§4.2, §6) — a `catastrophic` approval is NEVER sticky: `GthAgentRunner` clamps the
-   * allow-list write, so `[s]`/`[a]` here grant exactly this one invocation. The notice used to
-   * name the pressed scope and promise the persistence anyway, which §6 calls the wrong failure
-   * mode — *"a control that is offered and then refused reads as a bug rather than as a policy"* —
-   * and this is its louder half: not merely offering the key, but confirming an outcome that did
-   * not happen. The keypress still SENDS its scope (core owns the clamp); only the notice changes.
+   * CFG-28 (§4.2, §6) + §1.1 — a `catastrophic` approval is NEVER sticky: `GthAgentRunner` clamps
+   * the allow-list write and sends no grant preview, so the menu reduces to `[o]nce`, `[N]o` and
+   * `[d]eny always`. **The keys reduce with it.** Confirming the keypress honestly ("approved this
+   * once") was the smaller half of the problem: the command still RAN, on a keystroke the dialog
+   * had already withdrawn, and nothing between this callback and execution re-reads the verdict —
+   * which is §6's *"a control that is offered and then refused"* with the withdrawal made
+   * cosmetic. So the answer to `[s]`/`[a]` at a catastrophic prompt is the fallthrough: refuse
+   * once, record nothing.
    */
-  it.each([
-    ['s', 'session'],
-    ['a', 'always'],
-  ] as const)(
-    'a catastrophic verdict: pressing %s confirms one invocation, never a persistence',
-    async (keyChar, scope) => {
+  it.each([['s'], ['a']])(
+    'a catastrophic verdict: pressing %j approves nothing — the key went with the control',
+    async (keyChar) => {
       const harness = makeApprovalHarness();
       const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
       const { stdin, lastFrame, frames, unmount } = render(
@@ -414,15 +419,17 @@ describe('tui approval flow through <App>', () => {
       await vi.waitFor(() => expect(lastFrame()).toContain('terraform destroy'));
 
       stdin.write(keyChar);
-      expect(await decisionP).toEqual({ type: 'approve', scope });
+      const decision = await decisionP;
+      expect(decision.type).toBe('reject');
+      // On the ABSENT scope, not on the type: the type alone cannot tell this from a standing
+      // refusal, and a mistyped grant must not become one.
+      expect((decision as { scope?: string }).scope).toBeUndefined();
 
       // Frames wrap mid-sentence and re-open the style run at the break, so compare on text with
       // ANSI stripped and whitespace collapsed.
       const flat = () => plain(frames);
-      await vi.waitFor(() => expect(flat()).toContain('Command approved (once)'));
-      expect(flat()).toContain('never remembered');
-      expect(flat()).toContain('will ask again');
-      expect(flat()).not.toContain(`Command approved (${scope})`);
+      await vi.waitFor(() => expect(flat()).toContain('Command rejected'));
+      expect(flat()).not.toContain('Command approved');
       expect(flat()).not.toContain('will not ask again this session');
       expect(flat()).not.toContain('saved to the project allow-list');
       unmount();
@@ -902,6 +909,43 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
   });
 
   /**
+   * §3.2/§5.4 — **this component binds the transcript to the frame width**, and that is a property
+   * of the SURFACE, not of the renderer: the renderer's own spec proves it wraps when handed a
+   * width, and cannot see whether its caller hands it one. Unbound, a long justification is one
+   * enormous line and Ink wraps it itself — the continuation landing at column 0, which is the
+   * flush-left forgery every other block on this dialog is framed to prevent, reached through the
+   * one block that is not framed.
+   *
+   * The continuation gutter is the discriminator: Ink's own wrap produces no such prefix.
+   */
+  it('binds a long justification to the frame width, gutter and all', () => {
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt
+        pending={{
+          name: 'run_shell_command',
+          args: { command: 'git reset --hard origin/main' },
+          negotiationRounds: [
+            {
+              command: 'git reset --hard origin/main',
+              justification: 'x'.repeat(300),
+              outcome: 'destructive' as const,
+              reason: 'discards uncommitted work',
+            },
+          ],
+        }}
+      />
+    );
+    const rows = frameLines(lastFrame() ?? '').filter((row) => row.includes('xxx'));
+    expect(rows.length).toBeGreaterThan(1);
+    // `      ┊ ` — the renderer's continuation gutter, which Ink's own wrap never produces.
+    expect(rows.slice(1).every((row) => row.startsWith('      ┊ '))).toBe(true);
+    // ink-testing-library reports 100 columns; core resolves the frame width from that.
+    const width = frameWidthFor(100);
+    for (const row of rows) expect(maxDisplayWidth(row)).toBeLessThanOrEqual(width);
+    unmount();
+  });
+
+  /**
    * The escalate entry is user-authored in the ordinary case, but an MCP entry can carry
    * server-supplied names — and it is one string away from the dialog's own chrome. Framed like
    * everything else model- or server-authored, with the label kept as the component's own line.
@@ -972,8 +1016,17 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
    * §1.1 — **the safe action stays the fallthrough.** Every unbound key refuses ONCE and records
    * nothing: asserted on the scope being absent, not merely on `type === 'reject'`, because the
    * type alone cannot tell a one-shot refusal from a permanent one.
+   *
+   * "Unbound" is a property of THIS PROMPT, not of the alphabet, and the fixture is what makes the
+   * list say so: it carries a deny entry and no grant, so its menu is the reduced one and `s`/`a`
+   * are as unbound here as `x` is. A key that grants on a menu which does not offer to grant is
+   * §1.1's own failure — the command runs, off a control the dialog withdrew.
+   *
+   * Ctrl+D is on the list for the other half: Ink reports a chord as its bare letter, so an
+   * unguarded dispatch would read it as `d` — the one key this fixture DOES offer — and record a
+   * standing refusal from the keystroke that means *get me out of this*.
    */
-  it.each([['n'], ['x'], [ESC], ['\r']])(
+  it.each([['n'], ['x'], [ESC], ['\r'], ['s'], ['a'], [ctrl('d')]])(
     'an unbound key (%j) refuses once and records nothing',
     async (keyChar) => {
       const harness = makeApprovalHarness();
@@ -1023,36 +1076,115 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
     await vi.waitFor(() => expect(plain(frames)).toContain('Command rejected'));
     unmount();
   });
+
+  /**
+   * §1.1 — **a chord is not the key it carries**, on the prompt that offers every control.
+   *
+   * Ink hands `useInput` the bare letter for a Ctrl-chord (`input = keypress.name` when
+   * `keypress.ctrl`), so on a menu carrying both sticky choices an unguarded dispatch gives every
+   * control a hidden second spelling: Ctrl+A writes the command to the project allow-list, Ctrl+S
+   * grants it for the session, Ctrl+D records a session refusal. None is on the menu, and Ctrl+D
+   * is what a user presses to mean *get me out of this*.
+   *
+   * The fixture is what makes this an assertion about the CHORD: it carries both previews, so each
+   * plain key here really does resolve — which the control case below pins, so unbinding the keys
+   * outright could not pass this pair.
+   */
+  const bothControls = {
+    name: 'run_shell_command',
+    args: { command: 'rm -rf build' },
+    grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "rm -rf build" }',
+    grantSummary: 'rm -rf build',
+    denyPreview: '{ "type": "shell", "matcher": "exact", "pattern": "rm -rf build" }',
+    denySummary: 'rm -rf build',
+  };
+
+  it.each([[ctrl('a')], [ctrl('s')], [ctrl('d')], [ctrl('o')]])(
+    'a key with Ctrl held (%j) refuses once, though the plain key is bound here',
+    async (keyChar) => {
+      const harness = makeApprovalHarness();
+      const { stdin, lastFrame, frames, unmount } = render(
+        <App
+          {...baseProps}
+          agent={scriptedAgent([{ type: 'text', delta: 'hi' }])}
+          subscribeApproval={harness.subscribeApproval}
+        />
+      );
+      await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+      const decisionP = harness.request(bothControls);
+      await vi.waitFor(() => expect(lastFrame()).toContain('rm -rf build'));
+
+      stdin.write(keyChar);
+      const decision = await decisionP;
+      expect(decision.type).toBe('reject');
+      expect((decision as { scope?: string }).scope).toBeUndefined();
+      await vi.waitFor(() => expect(plain(frames)).toContain('Command rejected'));
+      expect(plain(frames)).not.toContain('Command approved');
+      expect(plain(frames)).not.toContain('Command refused for this session');
+      unmount();
+    }
+  );
+
+  /** The control: the same letters, unmodified, on the same fixture — every one of them resolves. */
+  it.each([
+    ['o', { type: 'approve', scope: 'once' }],
+    ['s', { type: 'approve', scope: 'session' }],
+    ['a', { type: 'approve', scope: 'always' }],
+    ['d', { type: 'reject', scope: 'session' }],
+  ] as const)('CONTROL: the unmodified key (%j) still resolves', async (keyChar, expected) => {
+    const harness = makeApprovalHarness();
+    const { stdin, lastFrame, unmount } = render(
+      <App
+        {...baseProps}
+        agent={scriptedAgent([{ type: 'text', delta: 'hi' }])}
+        subscribeApproval={harness.subscribeApproval}
+      />
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    const decisionP = harness.request(bothControls);
+    await vi.waitFor(() => expect(lastFrame()).toContain('rm -rf build'));
+
+    stdin.write(keyChar);
+    expect(await decisionP).toMatchObject(expected);
+    unmount();
+  });
 });
 
 describe('tui approvals — the confirmation names what was actually stored (§6)', () => {
   const baseAgent = () => scriptedAgent([{ type: 'text', delta: 'hi' }]);
 
   /**
-   * The general form of the CFG-28 clamp. `grantPreview` is absent exactly where the runner stores
-   * nothing, and `catastrophic` is one of its cases — so a call that simply cannot be remembered
-   * (a compound command, an unattributable tool call) must not be confirmed as remembered either.
+   * The general form of the CFG-28 clamp, and §1.1 is what closes it: `grantPreview` is absent
+   * exactly where the runner stores nothing — a `catastrophic` outcome, a command that does not
+   * statically resolve, a tool call nothing can attribute — the menu drops `[s]`/`[a]` there, and
+   * **so does the keyboard**. A call that cannot be remembered is therefore never approved by a
+   * sticky key rather than approved-and-confirmed-as-one-shot: the confirmation was honest, and the
+   * command ran anyway off a control the dialog had withdrawn.
    */
-  it('a call with no grant on offer confirms one invocation, whatever key was pressed', async () => {
-    const harness = makeApprovalHarness();
-    const { stdin, lastFrame, frames, unmount } = render(
-      <App {...baseProps} agent={baseAgent()} subscribeApproval={harness.subscribeApproval} />
-    );
-    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
-    const decisionP = harness.request({
-      name: 'run_shell_command',
-      args: { command: 'ls && rm -rf build' },
-    });
-    await vi.waitFor(() => expect(lastFrame()).toContain('rm -rf build'));
+  it.each([['s'], ['a']])(
+    'a call with no grant on offer is not approved by %j — the key is withdrawn with the control',
+    async (keyChar) => {
+      const harness = makeApprovalHarness();
+      const { stdin, lastFrame, frames, unmount } = render(
+        <App {...baseProps} agent={baseAgent()} subscribeApproval={harness.subscribeApproval} />
+      );
+      await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+      const decisionP = harness.request({
+        name: 'run_shell_command',
+        args: { command: 'ls && rm -rf build' },
+      });
+      await vi.waitFor(() => expect(lastFrame()).toContain('rm -rf build'));
 
-    stdin.write('s');
-    expect(await decisionP).toEqual({ type: 'approve', scope: 'session' });
-    const flat = () => plain(frames);
-    await vi.waitFor(() => expect(flat()).toContain('Command approved (once)'));
-    expect(flat()).toContain('nothing about this call that can be remembered');
-    expect(flat()).not.toContain('will not ask again this session');
-    unmount();
-  });
+      stdin.write(keyChar);
+      const decision = await decisionP;
+      expect(decision.type).toBe('reject');
+      expect((decision as { scope?: string }).scope).toBeUndefined();
+      const flat = () => plain(frames);
+      await vi.waitFor(() => expect(flat()).toContain('Command rejected'));
+      expect(flat()).not.toContain('Command approved');
+      unmount();
+    }
+  );
 
   it('CONTROL: the same key on a call that DOES carry a grant confirms the session grant', async () => {
     const harness = makeApprovalHarness();

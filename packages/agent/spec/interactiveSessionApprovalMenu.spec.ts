@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { frameWidthFor, STICKY_PREVIEW_MAX_ROWS } from '@gaunt-sloth/core/core/shell/framing.js';
+import { maxDisplayWidth } from '@gaunt-sloth/core/utils/displayWidth.js';
 import type { SessionConfig } from '#src/modules/interactiveSessionModule.js';
 
 /**
@@ -212,8 +214,13 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
    * §1.1 — the safe action stays the FALLTHROUGH. Every unbound answer refuses ONCE, asserted on
    * the absent scope rather than on the type, which cannot tell a one-shot refusal from a standing
    * one. The empty answer is the one a human produces by pressing Enter.
+   *
+   * "Unbound" is a property of THIS PROMPT, not of the alphabet, and the fixture is what makes the
+   * list say so: `DENYABLE` carries a deny entry and no grant, so its menu is the reduced one and
+   * `s`/`a` are as unbound on it as `x` is. An answer that grants on a menu offering no grant is
+   * §1.1's own failure — the command runs, off a control the dialog withdrew.
    */
-  it.each([['n'], ['x'], ['']])(
+  it.each([['n'], ['x'], [''], ['s'], ['a']])(
     'an unbound answer (%j) refuses once, with no scope',
     async (key) => {
       await startSession();
@@ -223,6 +230,24 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
       expect(allLines().join(LF)).toContain('Command rejected.');
     }
   );
+
+  /**
+   * The control for the pair above: on a call that DOES carry a grant, the same two answers
+   * resolve. Without it, unbinding `[s]`/`[a]` outright would satisfy the fallthrough test.
+   */
+  it.each([
+    ['s', 'session'],
+    ['a', 'always'],
+  ])('%j still approves at scope %j where the grant IS on offer', async (key, scope) => {
+    await startSession();
+    const decision = await ask(key, {
+      name: 'run_shell_command',
+      args: { command: 'npm test' },
+      grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "npm test" }',
+      grantSummary: 'npm test',
+    });
+    expect(decision).toMatchObject({ type: 'approve', scope });
+  });
 
   /** And `d` is unbound like any other answer where the control was never offered. */
   it('d is an ordinary unbound answer when the control was not shown', async () => {
@@ -317,5 +342,93 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
     ]);
     // ...and the voices really are on different channels: no rater turn arrives on the agent's.
     expect(agentRows.some((row) => row.includes('rater answered'))).toBe(false);
+  });
+
+  /**
+   * §5.4/§3.2 — **this surface binds the transcript to the frame width**, and that is a property of
+   * the SURFACE, not of the renderer. The renderer's own spec proves it can wrap when handed a
+   * width; only a test here can see whether the caller hands it one. Unbound, a long justification
+   * is one enormous line, the terminal wraps it itself, and the continuation lands at column 0 —
+   * the flush-left forgery every other block on this dialog is framed to prevent, reached through
+   * the one block that is not framed.
+   *
+   * The continuation gutter is the discriminator: the terminal's own wrap produces no such prefix.
+   */
+  it('binds the negotiation transcript to the frame width, gutter and all', async () => {
+    await startSession();
+    const justification = 'x'.repeat(300);
+    await ask('n', {
+      name: 'run_shell_command',
+      args: { command: 'git reset --hard origin/main' },
+      negotiationRounds: [
+        {
+          command: 'git reset --hard origin/main',
+          justification,
+          outcome: 'destructive',
+          reason: 'discards uncommitted work',
+        },
+      ],
+    });
+    // The justification is an AGENT turn, so its rows — continuations included — are on the plain
+    // channel. Selecting them by content keeps this about the row that had to wrap.
+    const rows = linesOf(displayMock).filter((row) => row.includes('xxx'));
+    expect(rows.length).toBeGreaterThan(1);
+    // `      ┊ ` — the renderer's continuation gutter, which a terminal's own wrap never produces.
+    expect(rows.slice(1).every((row) => row.startsWith('      ┊ '))).toBe(true);
+    const width = frameWidthFor(100); // the columns this suite's stdout reports
+    for (const row of rows) expect(maxDisplayWidth(row)).toBeLessThanOrEqual(width);
+  });
+
+  /**
+   * §6 — **the sticky blocks are bounded on this surface too**, and it is the surface where an
+   * unbounded one is worse: `--no-tui` has no managed frame, so a block that overruns does not
+   * merely push the menu off a fifty-row terminal, it scrolls it out of the scrollback the user is
+   * reading. All four blocks are checked separately, because each is its own call and a bound
+   * dropped from one is invisible in the others.
+   */
+  it('bounds all four sticky blocks, and says how many rows it dropped', async () => {
+    await startSession();
+    // Eighteen lines, each long enough that the entry repeating them overflows too — so all four
+    // blocks are over budget and a bound missing from any one of them shows up here.
+    const command = Array.from(
+      { length: 18 },
+      (_, index) => `line ${index + 1} ${'y'.repeat(50)}`
+    ).join(LF);
+    await ask('n', {
+      name: 'run_shell_command',
+      args: { command },
+      grantPreview: `{ "type": "shell", "matcher": "exact", "pattern": "${command.replace(/\n/gu, '\\n')}" }`,
+      grantSummary: command,
+      denyPreview: `{ "type": "shell", "matcher": "exact", "pattern": "${command.replace(/\n/gu, '\\n')}" }`,
+      denySummary: command,
+    });
+    const info = linesOf(displayInfoMock);
+    const at = (needle: string): number => {
+      const index = info.indexOf(needle);
+      expect(index).toBeGreaterThanOrEqual(0);
+      return index;
+    };
+    // The four labels, in the order this surface prints them, and the line that follows the last
+    // block — so every block is measured between two anchors rather than to the end of the output.
+    const bounds = [
+      at('[s]/[a] will remember:'),
+      at('    stored as:'),
+      at('[d] will refuse, for the rest of this session:'),
+      at('    recorded as:'),
+      at('Command rejected.'),
+    ];
+    for (let index = 0; index < 4; index++) {
+      const block = info.slice(bounds[index] + 1, bounds[index + 1]);
+      // Three rows of command plus the row that says what was dropped — never eighteen.
+      expect(block.length).toBeLessThanOrEqual(STICKY_PREVIEW_MAX_ROWS);
+      expect(block.some((row) => row.includes('more rows hidden'))).toBe(true);
+    }
+    // The command itself is NOT bounded that way: it is the thing being ruled on, and every one of
+    // its lines is numbered in the frame above. Counted on the plain channel, where the command
+    // frame goes — the bounded blocks above are on the info channel and are made of rows of the
+    // same shape, so an unscoped count would be satisfied by their kept heads.
+    expect(linesOf(displayMock).filter((row) => /^ +\d+ │ line \d+ y+$/u.test(row)).length).toBe(
+      18
+    );
   });
 });

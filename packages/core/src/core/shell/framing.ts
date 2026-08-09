@@ -239,6 +239,12 @@ export interface FrameOptions {
    * Different from {@link maxLines}, and the difference is the whole reason it exists: `maxLines`
    * bounds the block's *logical* lines, so a single line long enough to wrap forty times is one
    * line and passes the budget untouched. What a screen has is rows.
+   *
+   * **It bounds `lines` only — `notices` are outside it**, so a block with extracted sites occupies
+   * this many rows plus its notices. That is not a gap today: `maxRows` is reached through
+   * {@link frameUntrustedText}, which extracts no sites, so those blocks have no notices to bound.
+   * A caller passing it to {@link frameUntrustedCommand} instead would get a bound that does not
+   * bound the whole block, and needs to widen this rather than assume the name.
    */
   maxRows?: number;
 }
