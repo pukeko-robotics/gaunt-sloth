@@ -1,7 +1,8 @@
 {
   "llm": {
     "type": "openai",
-    "model": "gpt-5-mini"
+    "model": "gpt-5-mini",
+    "reasoning": { "effort": "minimal" }
   },
   "commands": {
     "api": {

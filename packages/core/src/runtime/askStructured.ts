@@ -31,6 +31,56 @@ import { structuredOutputBoundary } from '#src/runtime/structuredOutput.js';
  */
 export const ASK_STRUCTURED_DEFAULT_TIMEOUT_MS = 30_000;
 
+/**
+ * The exact `error` text {@link askStructured} returns when its wall-clock budget fires — i.e. the
+ * provider produced **no answer at all** within the budget.
+ *
+ * Exported as a builder rather than left as an inline literal because the three failure classes here
+ * (no response · an answer that does not fit the schema · a call that failed outright) are the
+ * question a reader of a red run has to answer first, and they are only distinguishable by this text.
+ * A caller that re-types the sentence to recognise it stops recognising it the day the wording moves,
+ * and silently re-files a stall as a rejection — which is precisely the confusion this exists to end.
+ */
+export function structuredCallTimedOutError(timeoutMs: number): string {
+  return `Structured call timed out after ${timeoutMs}ms with no response from the provider.`;
+}
+
+/**
+ * The exact `error` text {@link askStructured} returns when the provider **did** answer and the
+ * answer failed the caller's own schema. The counterpart of {@link structuredCallTimedOutError};
+ * see that doc for why both are exported rather than written inline.
+ */
+export const STRUCTURED_CALL_UNPARSEABLE_ERROR = 'Model returned unparseable output.';
+
+/**
+ * Which of {@link askStructured}'s three failure paths a result came from.
+ *
+ * - `timeout` — the budget fired and the provider had returned nothing at all.
+ * - `unparseable` — the provider answered, and the answer failed the caller's schema.
+ * - `call-failed` — the call threw before any answer arrived: a provider rejection (OpenAI's 400 on
+ *   a strict `json_schema` is the canonical one), an auth failure, a transport failure.
+ */
+export type StructuredFailureKind = 'timeout' | 'unparseable' | 'call-failed';
+
+/**
+ * Name which failure happened, given the `error` string and the budget the call was made with.
+ *
+ * The single place the three classes are told apart. A stall and a rejection are the two failures a
+ * reader has to distinguish first and the two that look most alike from the outside — a red that
+ * cannot say which happened sends the reader to re-run a real defect, or to investigate a provider
+ * hiccup. Every caller that wants to say which one it was calls this rather than matching the prose
+ * itself, so the wording can only be got wrong in one place, and that place has a test.
+ *
+ * @param error The `error` from a `{ ok: false }` {@link AskStructuredResult}.
+ * @param timeoutMs The budget passed to that same {@link askStructured} call — the timeout text
+ *   carries it, so a different value here reports a genuine timeout as `call-failed`.
+ */
+export function classifyStructuredFailure(error: string, timeoutMs: number): StructuredFailureKind {
+  if (error === structuredCallTimedOutError(timeoutMs)) return 'timeout';
+  if (error === STRUCTURED_CALL_UNPARSEABLE_ERROR) return 'unparseable';
+  return 'call-failed';
+}
+
 /** Inputs to {@link askStructured}. The caller supplies the model (via config), the two message
  * texts, and an optional timeout — the Zod schema is a separate positional argument so `<T>` can
  * be inferred from it. */
@@ -54,9 +104,11 @@ export type AskStructuredResult<T> = { ok: true; value: T } | { ok: false; error
  *
  * - No usable model (`config.llm` missing or lacking `withStructuredOutput`) →
  *   `{ ok: false, error: 'No usable model configured.' }`.
- * - Timeout → `{ ok: false, error: 'Structured call timed out after <ms>ms.' }`.
- * - Output that fails `schema.safeParse` → `{ ok: false, error: 'Model returned unparseable output.' }`.
- * - Any thrown error → `{ ok: false, error: <message> }`.
+ * - Timeout → `ok: false` with the error {@link structuredCallTimedOutError} builds for that budget.
+ * - Output that fails `schema.safeParse` → `{ ok: false, error: {@link STRUCTURED_CALL_UNPARSEABLE_ERROR} }`.
+ * - Any thrown error → `{ ok: false, error: <message> }` — a provider rejection (e.g. OpenAI's 400 on
+ *   a strict `json_schema`), an auth or transport failure. Distinct from the two above BY CODE PATH,
+ *   so a caller can classify a failure by comparing against those two exported texts.
  * - Success → `{ ok: true, value }` with the parsed data.
  *
  * @param schema The Zod schema the model output must satisfy; `<T>` is inferred from it.
@@ -90,12 +142,12 @@ export async function askStructured<T>(
 
     const raced = await Promise.race([invokePromise, timeoutPromise]);
     if (raced === TIMEOUT) {
-      return { ok: false, error: `Structured call timed out after ${timeoutMs}ms.` };
+      return { ok: false, error: structuredCallTimedOutError(timeoutMs) };
     }
 
     const parsed = boundary.safeParse(raced);
     if (!parsed.success) {
-      return { ok: false, error: 'Model returned unparseable output.' };
+      return { ok: false, error: STRUCTURED_CALL_UNPARSEABLE_ERROR };
     }
     return { ok: true, value: parsed.data };
   } catch (error) {

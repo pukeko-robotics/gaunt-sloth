@@ -60,6 +60,20 @@ entries pinning different models — `xai` and `xai-build`, `google-genai` and
 `google-genai-flash-lite`. Any new name must be added to `setup-config.js`'s `validConfigs`, which
 exits 1 on an unknown name before vitest starts.
 
+### The `openai` config pins minimal reasoning effort
+
+`configs/openai.gsloth.config.json` sets `llm.reasoning.effort` to `minimal`, and it must keep it.
+On `gpt-5-mini` a strict `json_schema` request whose schema has a nullable inside an array item can
+enter an unterminated constrained decode: the model emits closing punctuation for ever, no HTTP
+response is ever produced, and the call dies at whatever budget the caller set. It is probabilistic
+— roughly four attempts in five on that shape at default effort — so it reads as provider flakiness
+rather than as anything reproducible. `minimal` is the only setting measured to remove it.
+
+Reasoning effort is a generation setting: it cannot change the schema that is sent, so it does not
+weaken what `structuredOutput.xx-small.it.ts` guards on this provider (a request the API rejects for
+leaving an optional key out of `required`). It does apply to **every** openai case, because a config
+here is per provider and the openai leg runs unfiltered as `BIG_TEST_PROVIDER`.
+
 ### Two kinds of test live here
 
 Most tests **spawn the real CLI** through `support/commandRunner.ts` and assert on its output and
