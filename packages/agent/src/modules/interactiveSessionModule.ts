@@ -371,9 +371,18 @@ export async function createInteractiveSession(
       // [[TUI-C26]] §6 — *always reject*: a refusal that is also recorded, so the next identical
       // call is refused by rule without reaching a person. Answered only where the control was
       // OFFERED; typed anywhere else it is an unbound answer like any other and falls through to
-      // the one-shot refusal below, which is what keeps the safe action the fallthrough. One
-      // spelling, the one the menu prints: a second the menu never advertises is how this surface
-      // starts drifting from the Ink one, which has no such alias.
+      // the one-shot refusal below, which is what keeps the safe action the fallthrough.
+      //
+      // **One spelling for the control this work adds** — `d`, the one the menu prints. A second
+      // that the menu never advertises is how this surface starts drifting from the Ink one, which
+      // has no aliases at all.
+      //
+      // That rule governs what is ADDED here, and the long forms `once`, `session` and `always`
+      // accepted above are not exceptions to it: they predate this work and they stay. Each is
+      // gated by exactly the condition that gates its own letter — `session`/`always` inside the
+      // same `sticky` test as `s`/`a`, `once` on a control that is always offered — so none of them
+      // widens what is answerable at any prompt. Read this as the reason not to add a fourth alias,
+      // never as licence to delete the three that are here.
       const stickyRejected = stickyDeny && answer === 'd';
       // The confirmation says what actually happened and stops there. There is no persisted deny
       // store, so a line implying one would be the same failure §6 names when it calls a control

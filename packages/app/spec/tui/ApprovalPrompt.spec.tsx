@@ -8,7 +8,7 @@ import type {
   PendingToolInterrupt,
   ToolApprovalDecision,
 } from '@gaunt-sloth/core/core/types.js';
-import { frameWidthFor } from '@gaunt-sloth/core/core/shell/framing.js';
+import { frameWidthFor, STICKY_PREVIEW_MAX_ROWS } from '@gaunt-sloth/core/core/shell/framing.js';
 import { maxDisplayWidth } from '@gaunt-sloth/core/utils/displayWidth.js';
 import type { PendingApproval, TuiAgent } from '#src/tui/types.js';
 import { App } from '#src/tui/components/App.js';
@@ -37,6 +37,28 @@ const ESC = String.fromCharCode(27);
 /** The control character a terminal sends for Ctrl+`letter` — `ctrl('d')` is what Ctrl+D puts on stdin. */
 const ctrl = (letter: string): string =>
   String.fromCharCode(letter.toUpperCase().charCodeAt(0) - 64);
+
+/**
+ * What every xterm-family terminal sends for Alt+`letter`: ESC, then the bare letter. Ink's
+ * `parse-keypress` sets `meta` for that pair and `use-input` then strips the escape prefix, so the
+ * handler is handed the plain letter with `key.meta` set — the Ctrl chord's problem in a second
+ * spelling, and not an exotic one.
+ */
+const alt = (letter: string): string => ESC + letter;
+
+/**
+ * The kitty keyboard protocol's CSI-u encoding of `modifier` + `letter`: `ESC [ codepoint ; 1+bits u`
+ * (bits per ink's `kittyModifiers` — super 8, hyper 16).
+ *
+ * **Ink parses this whether or not the protocol was enabled.** `parseKeypress` tries the CSI-u
+ * parsers before anything else, so these bytes reach `useInput` as the printable letter with
+ * `key.super`/`key.hyper` set and `ctrl`/`meta` clear. Enabling the protocol is what makes a
+ * *terminal* send them (`ink.js` returns unless `options.kittyKeyboard` is set, and nothing here
+ * passes it) — it is not what makes ink understand them, which is why this is testable today and
+ * why the guard has to enumerate the flags rather than the two that happen to be reachable now.
+ */
+const kittyChord = (letter: string, modifier: 'super' | 'hyper'): string =>
+  `${ESC}[${letter.charCodeAt(0)};${(modifier === 'super' ? 8 : 16) + 1}u`;
 
 /**
  * Rendered frames as comparable text: ANSI removed and whitespace collapsed. Ink wraps a long line
@@ -759,6 +781,65 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
   });
 
   /**
+   * The same bound, on the GRANT blocks — which the deny test above cannot reach, because its
+   * fixture carries `denyPreview` only.
+   *
+   * **Measured per block, not per dialog.** `[s]/[a] will remember:` and `stored as:` are two
+   * separate `frameUntrustedText` calls with two separate `maxRows`, so an assertion that merely
+   * bounded the distance from the first label to the menu would be satisfied by either one of them
+   * holding — and the one that is easy to lose is the second, since it is the call written on a
+   * single line. Each is measured between its own two anchors and asserted on its own.
+   *
+   * The command is padded so that the ENTRY overflows too: `stored as:` renders the JSON preview,
+   * one logical line that only exceeds the budget once wrapping makes it long enough. With a short
+   * eighteen-line command the summary block overflows and the entry does not, so the bound on the
+   * entry would be unasserted while the test still passed — which is the exact shape of the gap
+   * this test exists to close.
+   */
+  it('keeps both grant blocks short enough to leave the menu on screen', () => {
+    const command = Array.from(
+      { length: 18 },
+      (_, index) => `line ${index + 1} ${'y'.repeat(50)}`
+    ).join('\n');
+    const entry = `{ "type": "shell", "matcher": "exact", "pattern": "${command.replace(/\n/gu, '\\n')}" }`;
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt
+        pending={{
+          name: 'run_shell_command',
+          args: { command },
+          grantPreview: entry,
+          grantSummary: command,
+          denyPreview: entry,
+          denySummary: command,
+        }}
+      />
+    );
+    const lines = frameLines(lastFrame() ?? '');
+    const at = (needle: string): number => {
+      const index = lines.indexOf(needle);
+      expect(index).toBeGreaterThanOrEqual(0);
+      return index;
+    };
+    // Each grant block is measured between its own label and the next label, so neither can stand
+    // in for the other. The deny label closes the second block.
+    const bounds = [
+      at('[s]/[a] will remember:'),
+      at('    stored as:'),
+      at('[d] will refuse, for the rest of this session:'),
+    ];
+    for (let index = 0; index < 2; index++) {
+      const block = lines.slice(bounds[index] + 1, bounds[index + 1]);
+      // A few rows of command plus the row that says what was dropped — never eighteen, and never
+      // the thirteen the wrapped entry would take.
+      expect(block.length).toBeLessThanOrEqual(STICKY_PREVIEW_MAX_ROWS);
+      expect(block.some((row) => row.includes('more rows hidden'))).toBe(true);
+    }
+    // And the menu is still on the screen below them, which is the point of the bound.
+    expect(lines.findIndex((line) => line.startsWith('Approve?'))).toBeGreaterThan(bounds[2]);
+    unmount();
+  });
+
+  /**
    * §1.3 — the reduced menu on `catastrophic`. §4.2 withdraws `always approve` and the
    * session-scoped approve (the runner clamps `grant` to undefined, so no preview arrives), and it
    * says nothing about refusals — so the refusal stays, which is the whole point of the reduction.
@@ -1080,11 +1161,21 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
   /**
    * §1.1 — **a chord is not the key it carries**, on the prompt that offers every control.
    *
-   * Ink hands `useInput` the bare letter for a Ctrl-chord (`input = keypress.name` when
-   * `keypress.ctrl`), so on a menu carrying both sticky choices an unguarded dispatch gives every
-   * control a hidden second spelling: Ctrl+A writes the command to the project allow-list, Ctrl+S
-   * grants it for the session, Ctrl+D records a session refusal. None is on the menu, and Ctrl+D
-   * is what a user presses to mean *get me out of this*.
+   * Ink hands `useInput` the bare letter for a modified key, so on a menu carrying both sticky
+   * choices an unguarded dispatch gives every control a hidden second spelling: Ctrl+A writes the
+   * command to the project allow-list, Ctrl+S grants it for the session, Ctrl+D records a session
+   * refusal. None is on the menu, and Ctrl+D is what a user presses to mean *get me out of this*.
+   *
+   * **One case per modifier flag the guard names**, because the guard is a disjunction and a case
+   * only pins the disjunct it actually sets — the three spellings ink hands over as a bare letter
+   * are the Ctrl control character, ESC + letter (meta), and the CSI-u form (super/hyper):
+   *
+   * - `ctrl` — the control character, `input = keypress.name`;
+   * - `meta` — Alt+letter arrives as ESC + letter and `use-input` strips the prefix;
+   * - `super` / `hyper` — the kitty CSI-u form, which ink parses unconditionally.
+   *
+   * `shift` is deliberately absent from the guard AND from this list: it is how a capital letter is
+   * typed, so a case asserting Shift+A refuses would be asserting a bug.
    *
    * The fixture is what makes this an assertion about the CHORD: it carries both previews, so each
    * plain key here really does resolve — which the control case below pins, so unbinding the keys
@@ -1099,9 +1190,18 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
     denySummary: 'rm -rf build',
   };
 
-  it.each([[ctrl('a')], [ctrl('s')], [ctrl('d')], [ctrl('o')]])(
-    'a key with Ctrl held (%j) refuses once, though the plain key is bound here',
-    async (keyChar) => {
+  it.each([
+    ['Ctrl+A', ctrl('a')],
+    ['Ctrl+S', ctrl('s')],
+    ['Ctrl+D', ctrl('d')],
+    ['Ctrl+O', ctrl('o')],
+    ['Alt+A', alt('a')],
+    ['Alt+S', alt('s')],
+    ['Super+A', kittyChord('a', 'super')],
+    ['Hyper+A', kittyChord('a', 'hyper')],
+  ])(
+    'a modified key (%s) refuses once, though the plain key is bound here',
+    async (_label, keyChar) => {
       const harness = makeApprovalHarness();
       const { stdin, lastFrame, frames, unmount } = render(
         <App

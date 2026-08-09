@@ -219,8 +219,13 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
    * list say so: `DENYABLE` carries a deny entry and no grant, so its menu is the reduced one and
    * `s`/`a` are as unbound on it as `x` is. An answer that grants on a menu offering no grant is
    * §1.1's own failure — the command runs, off a control the dialog withdrew.
+   *
+   * **The long forms are listed as well as the letters, because they are separate spellings of the
+   * same two branches.** This surface accepts `session` and `always` beside `s` and `a`; a gate
+   * lost from one spelling is invisible in the other's case, so the letter alone would leave the
+   * long form free to grant on a menu that offers no grant.
    */
-  it.each([['n'], ['x'], [''], ['s'], ['a']])(
+  it.each([['n'], ['x'], [''], ['s'], ['a'], ['session'], ['always']])(
     'an unbound answer (%j) refuses once, with no scope',
     async (key) => {
       await startSession();

@@ -679,14 +679,27 @@ export function App(props: TuiAppProps): React.ReactElement {
     // - **A chord is not the key it carries.** Ink reports Ctrl+D as the bare letter `d` with
     //   `key.ctrl` set, so without this guard every control here has a hidden second spelling that
     //   nothing advertises — Ctrl+A writing an allow-list entry, Ctrl+D a session refusal — reached
-    //   by the keystroke a user presses to mean *get me out of this*. Modified is unbound. Shift is
-    //   deliberately not in the guard: it is how a capital `D` is typed, not a different key.
+    //   by the keystroke a user presses to mean *get me out of this*. Modified is unbound.
+    //
+    //   **The enumeration is complete against ink's five modifier flags**, and completeness is the
+    //   point: this is a disjunction, so a flag left out of it is a live approval path, not a
+    //   cosmetic omission. Ink sets `ctrl`, `meta`, `shift`, `super` and `hyper` (`use-input.js`);
+    //   `capsLock` and `numLock` sit on the same object and are deliberately NOT here — they are
+    //   lock states rather than modifiers, and refusing every key pressed with CapsLock on would be
+    //   a new bug rather than a guard. `shift` is the one modifier deliberately excluded: it is how
+    //   a capital `D` is typed, not a different key.
+    //
+    //   `super`/`hyper` reach `useInput` through the kitty keyboard protocol's CSI-u form, which
+    //   ink's `parse-keypress` decodes whether or not the protocol was ever enabled — enabling it
+    //   only makes a terminal SEND those bytes. Nothing here enables it, so the path is not
+    //   reachable from a real terminal today; it is one option away from being reachable, and the
+    //   spec drives it directly to prove each flag of this guard carries its own weight.
     //
     // There is no rung-switching key: §6's menu has no "turn the gate down from here" action, so
     // binding one would have meant inventing it. §6's *ask to explain* is likewise unbound until it
     // exists (EXT-104) — a key that does nothing is worse than an absent one.
     if (pendingApproval) {
-      const ch = key.ctrl || key.meta ? '' : input.toLowerCase();
+      const ch = key.ctrl || key.meta || key.super || key.hyper ? '' : input.toLowerCase();
       const canGrant = pendingApproval.pending.grantPreview !== undefined;
       const canDeny = pendingApproval.pending.denyPreview !== undefined;
       if (ch === 'o') resolveApproval('once');
