@@ -896,18 +896,29 @@ function escapeForRegExp(value: string): string {
  * `<command_to_evaluate>` — rather than each growing a mechanism that escapes differently. Exported
  * so a test can drive the matcher directly.
  *
- * **The residual on the SOLIDUS specifically**, measured and stated rather than implied: NFKC folds
- * the fullwidth solidus (U+FF0F) to `/`, but it does not fold the fraction slash (U+2044), the
- * division slash (U+2215) or the big solidus (U+29F8), and none of those is an invisible. A closing
- * tag spelled with one of them is not neutralised here.
+ * **THE RESIDUAL IS WIDER THAN A HOMOGLYPH LIST — measured, and do not size it from this comment.**
+ * This matcher catches the tag spelled essentially exactly. Four classes walk through, and the first
+ * needs no Unicode at all:
  *
- * **It is left open for SCOPE, not because it is mild.** The reader this function defends against is
- * a language model following glyphs — that is the whole premise of the loose matching above — so a
- * tag spelled with a solidus homoglyph is exactly the exposure this function exists to close,
- * narrowed to three code points. The only thing that makes it smaller is how few spellings it has.
- * What it does NOT reach is anything mechanical: such a sequence never produces the literal `</tag>`,
- * so no boundary count is fooled and no test that counts them can see it. Widening the match is a
- * decision about all four fences at once — take it deliberately, not as a side effect of one node.
+ * 1. **Pure ASCII near-misses** — `</tag foo>` (a trailing attribute), `<//tag>`, `</tag/>`, and a
+ *    plain space inside the name. Note the asymmetry that makes the last one easy to miss: a
+ *    ZERO-WIDTH space between two letters of the name IS neutralised by the strip below, while an
+ *    ordinary space in the identical position is not.
+ * 2. **Solidus homoglyphs** — NFKC folds the fullwidth solidus (U+FF0F) but not the fraction slash
+ *    (U+2044), the division slash (U+2215) or the big solidus (U+29F8).
+ * 3. **Bracket homoglyphs** — U+2039, U+27E8, U+3008, U+2329, U+276C.
+ * 4. **Tag-name homoglyphs** — Cyrillic and Greek lookalikes inside the tag name.
+ *
+ * **The ASCII class is the serious one.** The reader this function defends against is a language
+ * model, and `</tag foo>` reads as a closing tag to a model more readily than any homoglyph does —
+ * it is what a closing tag with an attribute looks like in the XML-shaped prompt it sits in.
+ *
+ * **Nothing mechanical is fooled by any of it:** none produces the literal `</tag>`, so no boundary
+ * count is wrong and no test that counts fences can see it. That is precisely why it is written here.
+ *
+ * **Left open for SCOPE, not because it is mild** — the matcher guards all four fences, so widening
+ * it lands on every one at once. That decision, and the shape it should take (a tolerant matcher
+ * reaches class 1; a confusable skeleton answers 2-4), is [[EXT-111]].
  */
 export function neutralizeClosingTag(text: string, tag: string): string {
   // NFKC folds the compatibility glyphs (a fullwidth solidus is a solidus to a reader) and the
