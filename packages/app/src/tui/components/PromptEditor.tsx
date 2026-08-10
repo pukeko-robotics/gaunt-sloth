@@ -13,7 +13,6 @@ import {
   moveRight,
   moveWordLeft,
   moveWordRight,
-  pressEnter,
   type EditorState,
 } from '#src/tui/lineEditor.js';
 
@@ -43,7 +42,12 @@ import {
  * deliberately splits repeated backspace bytes into separate events *because holding the key sends
  * them in one chunk*, so a buffer that computed from the prop would answer a held Backspace with a
  * single deletion. Handing the parent an updater makes each keystroke compose on the result of the
- * one before it, whatever the batching did. `Enter` is the sole exception, argued at its branch.
+ * one before it, whatever the batching did.
+ *
+ * The same rule is why `Enter` is *reported* rather than interpreted here (`onEnter`): whether it
+ * continues the line or submits is a question about the buffer, and a held Backspace released into
+ * Enter is exactly the shape that asks it about text the user has already corrected. So nothing in
+ * this component reads {@link state} except the renderer.
  *
  * **Two deliberate v1 narrowings.**
  *
@@ -82,7 +86,7 @@ function withCaret(line: string, column: number): string {
 export function PromptEditor({
   state,
   onChange,
-  onSubmit,
+  onEnter,
   menuActive,
 }: {
   /** The buffer and caret to RENDER. Owned by the parent — this component never stores them. */
@@ -92,8 +96,12 @@ export function PromptEditor({
    * load-bearing rather than a style choice — see the note on batching in the doc comment above.
    */
   onChange: (update: (previous: EditorState) => EditorState) => void;
-  /** Called when Enter means submit; a continuation is handled here, via `pressEnter`. */
-  onSubmit: (value: string) => void;
+  /**
+   * Enter was pressed with the menu closed. Reported, not interpreted: what Enter means depends on
+   * the buffer, so the parent decides it inside the buffer's own updater, for the same reason
+   * {@link onChange} is an updater.
+   */
+  onEnter: () => void;
   /** While true the editor ignores Up/Down and Enter — the slash menu owns them. */
   menuActive: boolean;
 }): React.ReactElement {
@@ -159,16 +167,10 @@ export function PromptEditor({
     if (key.return) {
       // With the menu open Enter belongs to it — the parent dispatches the highlighted command.
       if (menuActive) return;
-      // The one branch that reads the rendered `state` rather than deferring to an updater, and it
-      // has to: what Enter MEANS depends on the buffer (a trailing backslash continues, anything
-      // else submits), and the submit half leaves the component entirely. A React updater must be
-      // pure, so it is not somewhere `onSubmit` can be called from. The cost is the batching hazard
-      // the doc comment describes, confined to this key: an Enter sharing a chunk with a preceding
-      // keystroke decides from the state before it. Reaching that needs a terminal to deliver an
-      // edit and a Return in one read, which is not what a person typing produces.
-      const result = pressEnter(state);
-      if (result.kind === 'continue') onChange(() => result.state);
-      else onSubmit(result.value);
+      // Reported rather than decided, and for the same reason every other branch hands up an
+      // updater: what Enter means is a question about the buffer, and answering it from the
+      // rendered `state` answers it about the text as it stood before whatever shared this chunk.
+      onEnter();
       return;
     }
 

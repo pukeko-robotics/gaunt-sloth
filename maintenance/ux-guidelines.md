@@ -380,8 +380,8 @@ their config has a problem.
   stray character into whatever the user was part-way through writing; and gating a binding on "a
   turn is running" does not avoid it, because the prompt stays mounted while a turn streams.
   **`shift` is the one modifier deliberately not in that list** — it is how a capital is typed, not a
-  different key. A new text buffer anywhere in the TUI owes the same guard (`App.tsx` applies it to
-  the debug-pane search and the attack-banner phrase).
+  different key. Every text buffer in the TUI owes the same four-modifier guard, and they all carry
+  it: the prompt's editor, and `App.tsx`'s attack-banner phrase and debug-pane search.
 - **`o` / `s` / `a` / anything-else** at a pending shell approval — approve once / session / always
   / reject (fail-closed). `[s]` and `[a]` are offered only when there is something to remember.
   Changing the approvals mode is not one of the choices: the ladder has no "turn the gate down from
@@ -462,7 +462,8 @@ their config has a problem.
   before `Enter` continues the line instead of sending it; continuation rows are drawn with a dim
   `  … ` prefix exactly as wide as `  > `, so every row's text stays in one column (DL-7 legibility).
   `/help` lists the continuation, because `\` is a character a user types for other reasons and
-  nothing on screen would otherwise suggest it means anything (DL-1).
+  nothing on screen would otherwise suggest it means anything (DL-4 — an affordance nobody can see
+  is one nobody has).
 - **multiline paste** — pasting text with newlines buffers it into the prompt intact; the embedded
   newlines do **not** submit — only an explicit `Enter` sends the whole buffered value (DL-9
   keyboard-first, DL-3 preserve the user's content, TUI-C24). The prompt enables the terminal's

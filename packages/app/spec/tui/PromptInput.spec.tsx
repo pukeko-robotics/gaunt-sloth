@@ -971,6 +971,152 @@ describe('tui <PromptEditor> keystrokes sharing one stdin chunk (TUI-C25)', () =
     // Every motion lost, this reads `abcdefZ`; only the last one honoured, `abcdeZf`.
     expect(bufferIn(lastFrame() ?? '')).toBe('abcZdef');
   });
+
+  // Enter is in this class too, and it is the sharpest instance of it: a held Backspace RELEASED
+  // INTO Enter is what a person typing produces, and if Enter decides from the rendered state the
+  // corrected text is on screen, the UNcorrected text is sent, and the buffer clears — so nothing
+  // survives to show it happened.
+  it('submits the text as it stands after a backspace that shared Enter chunk', async () => {
+    const onSubmit = vi.fn();
+    const { stdin } = render(<PromptInput onSubmit={onSubmit} commands={[]} />);
+    stdin.write('abcdef');
+    await tick();
+    stdin.write(BACKSPACE + ENTER);
+    await tick();
+    // Deciding from the rendered state, this submits `abcdef` — the text the user just corrected.
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenCalledWith('abcde');
+  });
+
+  it('submits the text as it stands after a HELD backspace released into Enter', async () => {
+    const onSubmit = vi.fn();
+    const { stdin } = render(<PromptInput onSubmit={onSubmit} commands={[]} />);
+    stdin.write('abcdef');
+    await tick();
+    stdin.write(BACKSPACE + BACKSPACE + BACKSPACE + ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('abc');
+  });
+
+  it('decides CONTINUE vs submit from the caret a motion in the same chunk left', async () => {
+    // The other half of Enter's decision, and it fails the other way round: with the caret read
+    // from the render this sees `c` before it and submits `ab\c`, instead of seeing the backslash
+    // the motion moved onto and carrying the line on.
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(<PromptInput onSubmit={onSubmit} commands={[]} />);
+    stdin.write('ab\\c');
+    await tick();
+    stdin.write(LEFT + ENTER);
+    await tick();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(bufferIn(lastFrame() ?? '')).toBe('ab\nc');
+  });
+});
+
+/**
+ * TUI-C25 — the menu's transient state belongs to an EDIT, not to a string.
+ *
+ * Esc's dismissal and the highlighted row are both scoped to the query they were made against, and
+ * the obvious way to say that — key them on the buffer text — is wrong, because an edit can return
+ * the buffer to a value it has already held. Then a dismissal made in one message suppresses the
+ * menu for that same query in a later one, and a highlight the user has typed past comes back. The
+ * edit serial cannot repeat, so it cannot resurrect.
+ *
+ * Every case here edits BACK into a query the buffer has already been at, which is exactly what the
+ * rest of the menu suite never does — those all drive one query forward.
+ */
+describe('tui <PromptInput> the menu never resurrects a dismissal or a highlight (TUI-C25)', () => {
+  it('reopens for a query typed again in a LATER message, after Esc dismissed it in an earlier one', async () => {
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write('/de');
+    await tick();
+    expect(lastFrame() ?? '').toMatch(/❯/);
+
+    stdin.write(ESC); // dismissed for THIS query, in THIS message
+    await tick();
+    expect(lastFrame() ?? '').not.toMatch(/❯/);
+
+    stdin.write(ENTER); // …which sends it, and the buffer is a fresh one from here
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('/de');
+
+    // The same query again, in the next message. A dismissal keyed on the text silently suppresses
+    // the menu here, and the user has no way to ask for it back except to type something else.
+    stdin.write('/de');
+    await tick();
+    expect(lastFrame() ?? '').toMatch(/❯/);
+  });
+
+  it('keeps the menu open when a Backspace returns the buffer to an earlier query', async () => {
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={vi.fn()} commands={createCommandRegistry()} />
+    );
+    stdin.write('/de');
+    await tick();
+    stdin.write(ESC);
+    await tick();
+    expect(lastFrame() ?? '').not.toMatch(/❯/);
+
+    stdin.write('b'); // `/deb` — a query the dismissal never applied to, so the menu returns
+    await tick();
+    expect(lastFrame() ?? '').toMatch(/❯/);
+
+    stdin.write(BACKSPACE); // back to `/de` — the dismissal must NOT come back with it
+    await tick();
+    expect(lastFrame() ?? '').toMatch(/❯/);
+  });
+
+  it('does not restore a stale highlight when a Backspace returns to an earlier query', async () => {
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write('/de'); // [debug, debug-dump, model]
+    await tick();
+    stdin.write(DOWN);
+    await tick();
+    stdin.write(DOWN);
+    await tick();
+    expect(lastFrame() ?? '').toMatch(/❯ \/model/);
+
+    stdin.write('b'); // `/deb` — a new query, so the highlight starts at the top again
+    await tick();
+    expect(lastFrame() ?? '').toMatch(/❯ \/debug/);
+
+    stdin.write(BACKSPACE); // back to `/de`
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    // Keyed on the text, the highlight jumps back to `/model` and Enter dispatches THAT.
+    expect(onSubmit).toHaveBeenCalledWith('/debug');
+  });
+
+  it('still dismisses on Esc, survives a caret move, and reopens on the next edit', async () => {
+    // The path that must keep working, and the reason the key is an edit serial rather than a reset
+    // on every keystroke: a motion is not an edit, so Esc survives one.
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={vi.fn()} commands={createCommandRegistry()} />
+    );
+    stdin.write('/de');
+    await tick();
+    stdin.write(ESC);
+    await tick();
+    expect(lastFrame() ?? '').not.toMatch(/❯/);
+
+    stdin.write(LEFT);
+    await tick();
+    expect(lastFrame() ?? '', 'a caret move re-opened a dismissed menu').not.toMatch(/❯/);
+    stdin.write(RIGHT);
+    await tick();
+    expect(lastFrame() ?? '').not.toMatch(/❯/);
+
+    stdin.write('b'); // an edit, and the menu comes back
+    await tick();
+    expect(lastFrame() ?? '').toMatch(/❯/);
+  });
 });
 
 /**
@@ -991,7 +1137,7 @@ describe('tui <PromptEditor> the menuActive contract (TUI-C25)', () => {
   it('ignores Up/Down while the menu owns them, on a buffer where they WOULD move', async () => {
     const onChange = vi.fn();
     const { stdin, rerender } = render(
-      <PromptEditor state={twoLines} onChange={onChange} onSubmit={vi.fn()} menuActive />
+      <PromptEditor state={twoLines} onChange={onChange} onEnter={vi.fn()} menuActive />
     );
     stdin.write(UP);
     await tick();
@@ -1002,7 +1148,7 @@ describe('tui <PromptEditor> the menuActive contract (TUI-C25)', () => {
     // The control, and the half that makes the negative mean something: the same keys on the same
     // buffer with the menu closed do move the caret, one logical line up.
     rerender(
-      <PromptEditor state={twoLines} onChange={onChange} onSubmit={vi.fn()} menuActive={false} />
+      <PromptEditor state={twoLines} onChange={onChange} onEnter={vi.fn()} menuActive={false} />
     );
     stdin.write(UP);
     await tick();
@@ -1014,24 +1160,26 @@ describe('tui <PromptEditor> the menuActive contract (TUI-C25)', () => {
     });
   });
 
-  it('ignores Enter while the menu owns it — neither submitting nor continuing', async () => {
+  it('ignores Enter while the menu owns it — it is not even reported', async () => {
     const onChange = vi.fn();
-    const onSubmit = vi.fn();
+    const onEnter = vi.fn();
     const { stdin, rerender } = render(
-      <PromptEditor state={twoLines} onChange={onChange} onSubmit={onSubmit} menuActive />
+      <PromptEditor state={twoLines} onChange={onChange} onEnter={onEnter} menuActive />
     );
     stdin.write(ENTER);
     await tick();
-    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onEnter).not.toHaveBeenCalled();
     expect(onChange).not.toHaveBeenCalled();
 
     rerender(
-      <PromptEditor state={twoLines} onChange={onChange} onSubmit={onSubmit} menuActive={false} />
+      <PromptEditor state={twoLines} onChange={onChange} onEnter={onEnter} menuActive={false} />
     );
     stdin.write(ENTER);
     await tick();
-    expect(onSubmit).toHaveBeenCalledTimes(1);
-    expect(onSubmit).toHaveBeenCalledWith('alpha\ngamma');
+    expect(onEnter).toHaveBeenCalledTimes(1);
+    // Reported, not interpreted: the editor says Enter happened and hands over no decision with it.
+    expect(onEnter).toHaveBeenCalledWith();
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it('still edits and moves within a line while the menu is open', async () => {
@@ -1040,7 +1188,7 @@ describe('tui <PromptEditor> the menuActive contract (TUI-C25)', () => {
     // satisfy both negatives while making the menu impossible to type a query into.
     const onChange = vi.fn();
     const { stdin } = render(
-      <PromptEditor state={twoLines} onChange={onChange} onSubmit={vi.fn()} menuActive />
+      <PromptEditor state={twoLines} onChange={onChange} onEnter={vi.fn()} menuActive />
     );
     stdin.write('x');
     await tick();

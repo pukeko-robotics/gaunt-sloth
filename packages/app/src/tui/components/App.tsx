@@ -864,7 +864,10 @@ export function App(props: TuiAppProps): React.ReactElement {
         ) {
           return;
         }
-        if (input && !key.ctrl && !key.meta) {
+        // A chord belongs to whoever bound it, never to a text buffer — the same four modifiers the
+        // attack-banner phrase and the prompt's own editor refuse, so every buffer in the TUI reads
+        // a chord the same way. `shift` is excluded deliberately: it is how a capital is typed.
+        if (input && !key.ctrl && !key.meta && !key.super && !key.hyper) {
           setDebugSearch(debugSearchQueryRef.current + input);
         }
         return;
