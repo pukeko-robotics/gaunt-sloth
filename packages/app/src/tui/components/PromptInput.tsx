@@ -1,59 +1,44 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Box, Text, useInput, usePaste } from 'ink';
-import TextInput from 'ink-text-input';
+import React, { useEffect, useState } from 'react';
+import { Box, useInput, usePaste } from 'ink';
+import { PromptEditor } from '#src/tui/components/PromptEditor.js';
 import { SlashCommandMenu } from '#src/tui/components/SlashCommandMenu.js';
 import {
   filterSlashCommands,
   slashMenuQuery,
   type SlashCommand,
 } from '@gaunt-sloth/agent/modules/slashCommands.js';
+import { createEditorState, insertText } from '#src/tui/lineEditor.js';
 import { normalizePastedText } from '#src/tui/pasteParser.js';
 
 /**
  * The user prompt line. Mirrors the readline `  > ` prompt. Clears on submit; the parent
  * hides it while a turn is running so Ink owns stdin uncontended during streaming.
  *
+ * The buffer and caret live here as an {@link import('#src/tui/lineEditor.js').EditorState} and are
+ * rendered and driven by `<PromptEditor>` (TUI-C25), which owns the keyboard for everything that
+ * edits text. This component owns what the buffer *means*: the slash menu it may open, and the
+ * submission it becomes.
+ *
  * TUI-C10 — while the user is typing a bare slash command (input starts with `/`, no space yet),
  * a discovery menu of the matching registered commands appears just above the prompt. The registry
  * (`commands`) is the single source, so extension-registered commands show automatically. Arrow
  * keys move the highlight, Tab completes the highlighted name, Enter dispatches it, Esc dismisses
- * the menu. The keyboard split is clean: `ink-text-input` ignores Up/Down/Tab and only fires
- * `onSubmit` on Enter, so this component's `useInput` owns the arrows/Tab/Esc while `onSubmit` owns
- * Enter — no double-handling. A fully-typed command still dispatches exactly as before (Enter with
- * the menu open just submits the highlighted command, which equals what was typed).
+ * the menu. The keyboard split is stated in one place and honoured on both sides of it: while the
+ * menu is open `<PromptEditor>` stands down from Up/Down and Enter (its `menuActive` prop) and this
+ * component's `useInput` claims them, so no key is handled twice. A fully-typed command still
+ * dispatches exactly as before (Enter with the menu open submits the highlighted command, which
+ * equals what was typed).
  *
- * TUI-C24 — multiline paste. `ink-text-input` is single-line: an embedded newline in a pasted
- * burst would otherwise be read as Enter and submit the turn mid-paste (or jam the lines together).
- * `usePaste` puts the terminal into bracketed-paste mode (`\x1b[?2004h`) while the prompt is mounted
- * and disables it on unmount, and Ink delivers the pasted text on a channel separate from
- * `useInput` — so the payload never reaches `TextInput`'s Enter handling. We append the normalized
- * paste (CRLF/CR → `\n`) to the buffer without submitting; a subsequent explicit Enter submits the
- * whole multi-line value through the existing `onSubmit` path. Rich multi-line cursor editing /
- * continuation-line rendering is intentionally NOT handled here — that is node TUI-C25; a buffered
- * multi-line value may render imperfectly, but the submitted value is correct and intact.
+ * A buffer with a newline in it never opens the menu, and does not need a guard of its own to stop
+ * it: `slashMenuQuery` matches `/` followed by non-whitespace to the end of the input, and `\n` is
+ * whitespace — so a continued or pasted multi-line entry beginning with `/` is not a command query.
+ *
+ * TUI-C24 — multiline paste. `usePaste` puts the terminal into bracketed-paste mode (`\x1b[?2004h`)
+ * while the prompt is mounted and disables it on unmount, and Ink delivers the pasted text on a
+ * channel separate from `useInput` — so an embedded newline in a pasted burst is never read as
+ * Enter and can never submit the turn mid-paste. The normalized paste (CRLF/CR → `\n`) is inserted
+ * at the caret without submitting; a subsequent explicit Enter submits the whole multi-line value.
  */
-/**
- * Records whether the input event now being delivered is a control chord.
- *
- * `ink-text-input` claims only Ctrl+C among control chords and **types** the rest: Ink reports
- * Ctrl+T as `input` `'t'` with `key.ctrl`, and the text input's handler falls through to its insert
- * branch, so a keystroke the app binds elsewhere also drops a stray letter into whatever the user
- * was writing. That is a whole class reached by reflex — Ctrl+A, Ctrl+E, Ctrl+U, Ctrl+W and Ctrl+K
- * are what a terminal user's fingers do at any prompt — not one binding somebody chose to press.
- * Ink fans one event out to every registered handler and offers no way to stop it, so the only
- * place to catch this is *before* the text input sees it — which is what this is for.
- *
- * It renders nothing and exists only for its position: `useInput` subscribes from an effect, and
- * effects fire in mount order, so a sibling rendered ahead of the text input is called ahead of it.
- * That ordering is what the "leaves the buffer alone" case pins.
- */
-function ControlChordSentinel({ onKey }: { onKey: (isControlChord: boolean) => void }): null {
-  useInput((input, key) => {
-    onKey(key.ctrl && input.length > 0);
-  });
-  return null;
-}
-
 export function PromptInput({
   onSubmit,
   commands = [],
@@ -66,19 +51,15 @@ export function PromptInput({
    *  its own Tab handler while the menu is open). */
   onMenuStateChange?: (active: boolean) => void;
 }): React.ReactElement {
-  const [value, setValue] = useState('');
+  const [state, setState] = useState(() => createEditorState());
   // Highlighted row in the menu. Reset to the top whenever the query changes (the filtered list
   // changes under it), so navigation always starts from the most-relevant match.
   const [cursor, setCursor] = useState(0);
-  // Esc dismisses the menu without clearing the input; typing anything re-opens it (onChange
+  // Esc dismisses the menu without clearing the input; typing anything re-opens it (an edit
   // clears this flag), matching how palette menus behave elsewhere.
   const [dismissed, setDismissed] = useState(false);
-  // Set by <ControlChordSentinel> for every keystroke, read by onChange below.
-  const controlChordRef = useRef(false);
-  // Bumped to remount <TextInput> after a refused chord — see the onChange handler.
-  const [textInputGeneration, setTextInputGeneration] = useState(0);
 
-  const query = slashMenuQuery(value);
+  const query = slashMenuQuery(state.value);
   const matches = query !== null && !dismissed ? filterSlashCommands(commands, query) : [];
   const menuActive = matches.length > 0;
   // Clamp defensively in case the filtered list shrank below the cursor between renders.
@@ -89,24 +70,30 @@ export function PromptInput({
     onMenuStateChange?.(menuActive);
   }, [menuActive, onMenuStateChange]);
 
+  /** Submit `value`, clear the buffer, and put the menu back to its resting state. */
+  const submit = (value: string): void => {
+    setState(createEditorState());
+    setDismissed(false);
+    setCursor(0);
+    onSubmit(value);
+  };
+
   // TUI-C24 — capture a bracketed paste as buffered text instead of keystrokes. Ink enables
   // bracketed-paste mode while this hook is mounted and routes the pasted payload here (off the
-  // `useInput` channel), so its embedded newlines never reach TextInput's Enter handling. We append
-  // the normalized paste to the buffer and do NOT submit — a later explicit Enter submits it all.
-  // (Appending, rather than inserting at TextInput's internal cursor, is deliberate: multi-line
-  // cursor editing is TUI-C25's scope; the submitted value stays correct and intact.)
+  // `useInput` channel), so its embedded newlines never reach Enter handling. The paste is inserted
+  // AT THE CARET and does NOT submit — a later explicit Enter submits it all.
   usePaste((text) => {
     const pasted = normalizePastedText(text);
     if (!pasted) return;
-    setValue((current) => current + pasted);
-    // Mirror onChange's menu bookkeeping so a paste can't leave a stale/incorrectly-open menu.
+    setState((current) => insertText(current, pasted));
+    // Mirror the edit path's menu bookkeeping so a paste can't leave a stale/incorrectly-open menu.
     setDismissed(false);
     setCursor(0);
   });
 
   useInput(
     (_input, key) => {
-      // Only claim keys while the menu is visible; otherwise TextInput handles everything.
+      // Only claim keys while the menu is visible; otherwise the editor handles everything.
       if (!menuActive) return;
       if (key.upArrow) {
         setCursor((c) => (Math.min(c, matches.length - 1) - 1 + matches.length) % matches.length);
@@ -114,14 +101,19 @@ export function PromptInput({
         setCursor((c) => (Math.min(c, matches.length - 1) + 1) % matches.length);
       } else if (key.tab) {
         // Complete to the highlighted name plus a trailing space: the space closes the menu (the
-        // input now has whitespace) and leaves the cursor ready for args, without dispatching.
-        setValue(`/${matches[selectedIndex].name} `);
+        // input now has whitespace) and leaves the caret ready for args, without dispatching.
+        setState(createEditorState(`/${matches[selectedIndex].name} `));
         setDismissed(false);
         setCursor(0);
       } else if (key.escape) {
         setDismissed(true);
+      } else if (key.return) {
+        // With the menu open, Enter dispatches the HIGHLIGHTED command (so "/mo"+Enter runs
+        // "/mode") rather than the typed text. The parent's handler parses + dispatches through
+        // the registry either way, so fully-typed dispatch is unchanged. <PromptEditor> stands
+        // down from Enter while `menuActive`, so this is the only claimant.
+        submit(`/${matches[selectedIndex].name}`);
       }
-      // Enter is intentionally NOT handled here — TextInput's onSubmit owns it (see onSubmit).
     },
     // Active only while the prompt is mounted; harmless when the menu is closed (early return).
     { isActive: true }
@@ -130,59 +122,19 @@ export function PromptInput({
   return (
     <Box flexDirection="column">
       {menuActive ? <SlashCommandMenu commands={matches} selectedIndex={selectedIndex} /> : null}
-      {/* Ahead of the text input, and that is the whole point — see ControlChordSentinel. */}
-      <ControlChordSentinel
-        onKey={(isControlChord) => {
-          controlChordRef.current = isControlChord;
+      <PromptEditor
+        state={state}
+        onChange={(next) => {
+          setState(next);
+          // The menu bookkeeping follows the TEXT, not the caret: a dismissed menu stays dismissed
+          // while the user walks the buffer with the arrow keys, and only an edit reopens it.
+          if (next.value === state.value) return;
+          setDismissed(false);
+          setCursor(0);
         }}
+        onSubmit={submit}
+        menuActive={menuActive}
       />
-      <Box>
-        <Text color="cyan">{'  > '}</Text>
-        <TextInput
-          key={textInputGeneration}
-          value={value}
-          onChange={(next) => {
-            // A control chord belongs to whoever bound it, never to the buffer.
-            //
-            // Refusing the value is only half of it. `ink-text-input` commits its internal cursor
-            // offset BEFORE it asks whether the value may change, and it repairs an out-of-range
-            // offset only from an effect keyed on the value — which a refusal, by definition, does
-            // not change. So a refused chord leaves the offset one past the value, the reverse-video
-            // cursor cell matches no character and disappears, and every later character inserts one
-            // position early: `draft` + one chord + `m,o,r,e` submits `draftorem`.
-            //
-            // Remounting is what puts the offset back, because the component derives it from the
-            // value at mount. The cost is that a cursor the user had moved into the middle of the
-            // buffer returns to the end — visible, recoverable with the arrow keys, and not the
-            // value. [[TUI-C25]] builds the real line editor, binds Ctrl+A/Ctrl+E to line start/end
-            // and will own the cursor outright; until then this is the cheap half of the trade.
-            //
-            // It also re-subscribes the text input's `useInput`, which moves that listener to the
-            // back of Ink's emitter. Harmless, and checked rather than assumed: the ONE ordering
-            // anything here depends on is the sentinel being ahead of the text input, and the
-            // sentinel never re-subscribes. App's handler ending up ahead of the text input's is
-            // independent — they act on disjoint state, and App returns early from every branch it
-            // claims.
-            if (controlChordRef.current) {
-              setTextInputGeneration((generation) => generation + 1);
-              return;
-            }
-            setValue(next);
-            setDismissed(false);
-            setCursor(0);
-          }}
-          onSubmit={(submitted) => {
-            // With the menu open, Enter dispatches the HIGHLIGHTED command (so "/mo"+Enter runs
-            // "/mode"); otherwise submit exactly what was typed. Either way the parent's handler
-            // parses + dispatches through the registry, so fully-typed dispatch is unchanged.
-            const toSubmit = menuActive ? `/${matches[selectedIndex].name}` : submitted;
-            setValue('');
-            setDismissed(false);
-            setCursor(0);
-            onSubmit(toSubmit);
-          }}
-        />
-      </Box>
     </Box>
   );
 }

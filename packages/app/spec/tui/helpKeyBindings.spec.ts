@@ -54,7 +54,7 @@ const TUI_ONLY_KEYS = ['PgUp', 'PgDn', 'Ctrl+Home', 'Ctrl+End', 'Ctrl+T', 'wheel
 const EXPECTED_SECTIONS: readonly [title: string, bindings: number][] = [
   ['Scrolling the conversation (this window has no scrollback of its own)', 5],
   ['While the agent is working', 1],
-  ['At the prompt', 5],
+  ['At the prompt', 9],
   ['Panels', 7],
   ['When a tool call asks for approval (the prompt shows these too)', 1],
   ['Always', 1],
@@ -179,6 +179,26 @@ describe('/help key bindings — one registry, two keyboards (TUI-C63)', () => {
     expect(tabFocus).toBeDefined();
     expect(tabFocus).toMatch(/turn is running/);
     expect(tabFocus).toMatch(/menu is open/);
+
+    // TUI-C25 — the prompt's ↑/↓ mean two different things, decided by whether the menu is open.
+    // A line that names only one of them tells a reader in the other state that the key is broken.
+    const promptArrows = lines.find((line) => line.includes('lines of the message'));
+    expect(promptArrows).toBeDefined();
+    expect(promptArrows).toContain('↑ / ↓');
+    expect(promptArrows).toMatch(/menu/);
+
+    // The one prompt binding a user cannot discover by pressing something: `\` is a character they
+    // already type for other reasons, so it has to be listed or it does not exist.
+    const continuation = lines.find((line) => line.includes('\\ then Enter'));
+    expect(continuation).toBeDefined();
+    expect(continuation).toMatch(/another line/);
+
+    // Word motion ships in all three spellings terminals actually send, with no platform branch
+    // anywhere — so the listing names both families rather than promising one of them.
+    const wordMotion = lines.find((line) => line.includes('a word'));
+    expect(wordMotion).toBeDefined();
+    expect(wordMotion).toContain('Alt+←');
+    expect(wordMotion).toContain('Ctrl+←');
   });
 
   it('keeps the hint fragment a fragment: it joins the shared row, and only mentions scrolling', () => {

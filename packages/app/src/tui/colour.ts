@@ -17,8 +17,8 @@ import chalk, { type ChalkInstance, type ColorSupportLevel } from 'chalk';
  * into the one knob that reaches every renderer: `chalk.level` on the shared instance.
  *
  * **Why one knob is enough.** Ink imports the same `chalk` default export we do (`colorize.js`
- * and `render-border.js` both `import chalk from 'chalk'`), and under the scoped `ink>chalk` /
- * `ink-text-input>chalk` overrides in `pnpm-workspace.yaml` that resolves to the very same
+ * and `render-border.js` both `import chalk from 'chalk'`), and under the scoped `ink>chalk`
+ * override in `pnpm-workspace.yaml` that resolves to the very same
  * physical module as the app's. Mutating it therefore clamps every `<Text color>` Ink paints as
  * well as our markdown styling. Break the single-module property and this hook silently covers
  * only half the screen, which is why the overrides carry a comment saying so.

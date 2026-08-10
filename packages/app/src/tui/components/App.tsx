@@ -822,9 +822,9 @@ export function App(props: TuiAppProps): React.ReactElement {
     // typed twin of the same toggle, not a substitute for reaching it from the keyboard.
     //
     // The stray letter this used to stand off from is handled where it happens rather than by
-    // declining to bind the key: `ink-text-input` types any control chord it does not itself claim,
-    // and <PromptInput>'s sentinel keeps the whole class out of the buffer (the prompt is mounted
-    // while a turn streams too, so gating on `running` never prevented it).
+    // declining to bind the key: <PromptEditor>'s insert branch refuses every ctrl and meta chord,
+    // so a key bound here cannot also land in the buffer (the prompt is mounted while a turn
+    // streams too, so gating on `running` never prevented it).
     if (key.ctrl && input === 't') {
       // Share the /verbose helper so the same state-aware notice is committed (TUI-C14).
       toggleTools();

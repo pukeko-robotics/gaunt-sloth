@@ -57,8 +57,8 @@ type Cell = { x: number; y: number };
 /**
  * Where the prompt's own text cursor is.
  *
- * `ink-text-input` draws no real terminal cursor — it renders the character under the cursor in
- * reverse video instead (an empty cell past the end of the value when the cursor is at the end), so
+ * The prompt draws no real terminal cursor — it renders the character under the cursor in reverse
+ * video instead (an empty cell past the end of the value when the cursor is at the end), so
  * `terminal.getCursor()` reports the position Ink left the hardware cursor in and does NOT move when
  * the prompt cursor does. The reverse-video run is therefore the only observable of the prompt's
  * cursor, and `serialize()` exposes it: `shifts` records attribute transitions between adjacent
@@ -80,9 +80,7 @@ const promptCursorCell = (terminal: Term): Cell => {
   }
   throw new Error(
     'no reverse-video cell in the terminal: the prompt cursor is not being rendered at all — ' +
-      'colour is most likely off (NO_COLOR / FORCE_COLOR=0 reaching the app), or the cursor was ' +
-      'walked left past the start of the prompt, which leaves ink-text-input at offset -1 and ' +
-      'renders no cursor at all (its guard tests the pre-move offset, not the next one)'
+      'colour is most likely off (NO_COLOR / FORCE_COLOR=0 reaching the app)'
   );
 };
 

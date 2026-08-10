@@ -10,7 +10,8 @@
  * construction** rather than by anyone remembering (GS2-87: divergence is deliberate and stated).
  *
  * The bindings are the ones the code actually binds — `<App>`'s `useInput` and wheel subscription,
- * and `<PromptInput>`'s menu handler. Adding an entry here does not add a binding; it promises one.
+ * `<PromptInput>`'s menu handler and `<PromptEditor>`'s. Adding an entry here does not add a
+ * binding; it promises one.
  */
 
 import type { KeyBindingGroup } from '@gaunt-sloth/agent/modules/slashCommands.js';
@@ -68,7 +69,6 @@ export const TUI_KEY_BINDINGS: readonly KeyBindingGroup[] = [
     title: 'At the prompt',
     bindings: [
       { keys: '/', description: 'open the slash-command menu' },
-      { keys: '↑ / ↓', description: 'move through the open menu' },
       { keys: 'Tab', description: 'complete the highlighted command' },
       {
         // Worth a line precisely because it is not what the buffer shows: with the menu open,
@@ -77,6 +77,24 @@ export const TUI_KEY_BINDINGS: readonly KeyBindingGroup[] = [
         description: 'send the line — or run the highlighted command, while the menu is open',
       },
       { keys: 'Esc', description: 'dismiss the menu' },
+      {
+        // The one binding here a user cannot discover by pressing something: it is a character
+        // they already type for other reasons, and nothing on screen suggests it means anything.
+        keys: '\\ then Enter',
+        description: 'carry the message onto another line instead of sending it',
+      },
+      {
+        // Both meanings on one line, because the key is the same key and which one it has is
+        // decided by whether the menu is open — a reader who gets only one of them is misled.
+        keys: '↑ / ↓',
+        description: 'move between the lines of the message — or through the open menu',
+      },
+      { keys: '← / →', description: 'a character' },
+      { keys: 'Alt+← / Alt+→, or Ctrl+← / Ctrl+→', description: 'a word' },
+      {
+        keys: 'Ctrl+A / Ctrl+E, or Home / End',
+        description: 'the start / end of the current line',
+      },
     ],
   },
   {

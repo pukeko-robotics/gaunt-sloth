@@ -13,9 +13,9 @@ import { applyTuiColour, clampedChalkLevel } from '#src/tui/colour.js';
  * renders through Ink and `packages/app/src/tui/markdown.ts`, and both call the same `chalk`
  * singleton — Ink's `chalk` resolves to the very same physical module as the app's. That is no
  * longer an accident of the dependency tree: `packages/app` is on `chalk@^6.0.0` while ink 7.1.1
- * and ink-text-input 6.0.0 both still declare chalk 5, so the scoped `ink>chalk` /
- * `ink-text-input>chalk` overrides in `pnpm-workspace.yaml` are what hold the module single. Lose
- * them and Ink gets its own instance that the TUI's colour hook cannot reach.
+ * still declares chalk 5, so the scoped `ink>chalk` override in `pnpm-workspace.yaml` is what
+ * holds the module single. Lose it and Ink gets its own instance that the TUI's colour hook cannot
+ * reach.
  *
  * **What changed in TUI-C35, and the trap in testing it.** Chalk does not implement `NO_COLOR` —
  * not in 5.6.2 and not in 6.0.0; its vendored `supports-color` handles `FORCE_COLOR` and the

@@ -7,7 +7,6 @@ settings:
 overrides:
   '@langchain/core': ^1.2.1
   ink>chalk: ^6.0.0
-  ink-text-input>chalk: ^6.0.0
 
 importers:
 
@@ -207,9 +206,6 @@ importers:
       ink-spinner:
         specifier: ^5.0.0
         version: 5.0.0(ink@7.1.1(@types/react@19.2.17)(react@19.2.8))(react@19.2.8)
-      ink-text-input:
-        specifier: ^6.0.0
-        version: 6.0.0(ink@7.1.1(@types/react@19.2.17)(react@19.2.8))(react@19.2.8)
       react:
         specifier: ^19.2.8
         version: 19.2.8
@@ -1885,13 +1881,6 @@ packages:
       '@types/react':
         optional: true
 
-  ink-text-input@6.0.0:
-    resolution: {integrity: sha512-Fw64n7Yha5deb1rHY137zHTAbSTNelUKuB5Kkk2HACXEtwIHBCf9OH2tP/LQ9fRYTl1F0dZgbW0zPnZk6FA9Lw==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      ink: '>=5'
-      react: '>=18'
-
   ink@7.1.1:
     resolution: {integrity: sha512-Y43xxa1ZSPvpmfLHcN5o+OdP8Rf8ykkNJEuKYOUNZKT8wXVNLFTtEm1nSDMQkfBH+YANF4Xuu0hhZ4ejqAtN2w==}
     engines: {node: '>=22'}
@@ -2653,10 +2642,6 @@ packages:
   type-check@0.4.0:
     resolution: {integrity: sha512-XleUoc9uwGXqjWwXaUTZAmzMcFZ5858QA2vvx1Ur5xIcixXIP+8LnFDgRplU30us6teqdlskFfu+ae4K79Ooew==}
     engines: {node: '>= 0.8.0'}
-
-  type-fest@4.41.0:
-    resolution: {integrity: sha512-TeTSQ6H5YHvpqVwBRcnLDCBnDOHWYu7IvGbHT6N8AOymcr9PJGjc1GTtiWZTYg0NCgYwvnYWEkVChQAr9bjfwA==}
-    engines: {node: '>=16'}
 
   type-fest@5.8.0:
     resolution: {integrity: sha512-YGYEVz3Fm5iy/AybuA0oyNFq7H4CgQNfRp/qfe8nurE1kuCeNm3/vfm9X4Mtl+qLyaKJUh5xrFZwogr41SMjYA==}
@@ -4482,14 +4467,6 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.17
 
-  ink-text-input@6.0.0(ink@7.1.1(@types/react@19.2.17)(react@19.2.8))(react@19.2.8):
-    dependencies:
-      chalk: 6.0.0
-      ink: 7.1.1(@types/react@19.2.17)(react@19.2.8)
-      react: 19.2.8
-      type-fest: 4.41.0
-    optional: true
-
   ink@7.1.1(@types/react@19.2.17)(react@19.2.8):
     dependencies:
       '@alcalzone/ansi-tokenize': 0.3.0
@@ -5213,9 +5190,6 @@ snapshots:
   type-check@0.4.0:
     dependencies:
       prelude-ls: 1.2.1
-
-  type-fest@4.41.0:
-    optional: true
 
   type-fest@5.8.0:
     dependencies:

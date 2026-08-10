@@ -1300,18 +1300,17 @@ describe('tui <App>', () => {
   /**
    * TUI-C48 — Ctrl+T is bound in every state, and the letter never reaches the prompt.
    *
-   * The two halves are one case on purpose. Ctrl+T used to stand off while idle to keep
-   * `ink-text-input` — which types any control chord it does not itself claim — from dropping a
-   * stray `t` into the buffer, and that stand-off never worked: the prompt stays mounted while a
-   * turn streams, so the letter arrived anyway. Now that the chord is kept out of the buffer where
-   * it happens, the binding is free to work idle, which is when a reader paging back over the
+   * The two halves are one case on purpose. Ctrl+T used to stand off while idle to keep a stray `t`
+   * out of the buffer, and that stand-off never worked: the prompt stays mounted while a turn
+   * streams, so the letter arrived anyway. Now that the prompt's own editor refuses every ctrl and
+   * meta chord, the binding is free to work idle, which is when a reader paging back over the
    * conversation actually wants a turn's arguments and results. Assert the toggle without the
-   * buffer and a later fix could "simplify" the sentinel away unnoticed.
+   * buffer and a later change could put the chord back into the text unnoticed.
    *
    * The message is carried on ACROSS the chord, one character per input event, because that is the
    * flow the expanded panel invites: read the earlier turn, keep writing. It is also the only shape
-   * that discriminates — a chord leaves the text input's cursor stale, and a burst written as one
-   * event hides that where four separate keystrokes expose it.
+   * that discriminates — an editor that mishandles a chord leaves the caret stale, and a burst
+   * written as one event hides that where four separate keystrokes expose it.
    */
   it('Ctrl+T expands a COMMITTED turn while idle, without disturbing the prompt', async () => {
     const CTRL_T = '\x14';

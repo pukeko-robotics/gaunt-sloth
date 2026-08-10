@@ -201,22 +201,20 @@ test.describe('gth chat TUI — greeting fixture', () => {
 
   // TUI-C48 — Ctrl+T at a real terminal, with a half-written message in the prompt.
   //
-  // Both halves of this only exist end to end. `ink-text-input` claims one control chord and TYPES
-  // the letter of every other, and how a chord is decoded at all is a terminal-level fact — ConPTY
-  // reports keys differently from a POSIX pty, and a unit spec drives a fake stdin with exactly the
-  // bytes it wrote, so it cannot observe that difference. This is therefore the only place the
-  // "a control chord never reaches the buffer" guarantee is checked on Windows.
+  // Both halves of this only exist end to end. How a chord is decoded at all is a terminal-level
+  // fact — ConPTY reports keys differently from a POSIX pty, and a unit spec drives a fake stdin
+  // with exactly the bytes it wrote, so it cannot observe that difference. This is therefore the
+  // only place the "a control chord never reaches the buffer" guarantee is checked on Windows.
   //
   // The toggle is exercised IDLE, which is the state it was refused in until this node: it is now
   // bound in every state, because paging back over the conversation to read an earlier turn's
   // arguments and results is exactly when nothing is running.
   //
   // The message is then carried on with ONE chord behind it, a character at a time, waiting for
-  // each to be drawn before writing the next. Both parts are what make it discriminate: a chord
-  // leaves the text input's cursor one place past the value, an EVEN number of chords repairs that
-  // by accident, and a burst written as one event takes the repairing branch in a single step. Four
-  // separate keystrokes after a single chord are what a person actually does, and the only shape
-  // that sees it.
+  // each to be drawn before writing the next. Both parts are what make it discriminate: an ODD
+  // number of chords is what an editor that mishandles one cannot self-heal from, and a burst
+  // written as one event lands correctly even so. Four separate keystrokes after a single chord are
+  // what a person actually does, and the only shape that sees the difference.
   test('Ctrl+T toggles tool detail while idle, and the message survives it', async ({
     terminal,
   }) => {
@@ -246,7 +244,7 @@ test.describe('gth chat TUI — greeting fixture', () => {
     // `draftmore` is satisfied by `draftmoret` and would prove only the first chord.
     await expect(terminal.getByText('> draftmoret')).not.toBeVisible();
 
-    // …and what is sent is what was written. A cursor left stale by the chord sends `draftorem`.
+    // …and what is sent is what was written. A caret left stale by the chord sends `draftorem`.
     terminal.submit();
     await expect(terminal.getByText('You › draftmore')).toBeVisible();
     await expect(terminal.getByText('You › draftmoret')).not.toBeVisible();

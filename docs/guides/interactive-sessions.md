@@ -74,6 +74,26 @@ there opens a searchable command menu. A few worth knowing:
 A pasted filesystem path such as `/usr/local/bin` is not swallowed as a command — only a line with
 no further `/` after the leading one is parsed as one.
 
+## Writing a longer message
+
+Enter sends the message. To keep writing instead, end the line with a backslash and press Enter:
+the message carries onto a second line, marked `…`, and Enter sends the whole thing once you are
+done. Pasting several lines at once does the same without the backslash.
+
+Fixing something you have already written works the way it does at a shell prompt:
+
+| | |
+|---|---|
+| **←** / **→** | a character |
+| **Alt**+**←** / **Alt**+**→** (**Ctrl**+**←** / **Ctrl**+**→** in some terminals) | a word |
+| **Ctrl+A** / **Ctrl+E**, or **Home** / **End** | the start / the end of the line you are on |
+| **↑** / **↓** | between the lines of a multi-line message — or through the slash-command menu, while that is open |
+| **Backspace** | the character before the cursor |
+
+Both spellings of the word jump are always live, so whichever one your terminal sends for
+**Option**/**Alt** + arrow will work. `Ctrl+A`/`Ctrl+E` and `Home`/`End` go to the ends of the line
+the cursor is on, not of the whole message.
+
 ## TUI or plain readline (`--tui` / `--no-tui`, `tui`)
 
 Sessions have two surfaces. On a real interactive terminal, `gth` renders the Ink TUI — the full
