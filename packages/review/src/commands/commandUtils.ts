@@ -85,6 +85,22 @@ export async function getContentFromSource(
   );
 }
 
+/** A PR id is a bare number; anything else is literal content (a diff, a file path, text). */
+const PR_ID_PATTERN = /^\d+$/;
+
+/**
+ * Reads a PR id out of the CLI's first positional argument, which is a PR number in the GitHub
+ * flow and arbitrary content otherwise.
+ *
+ * The id binds GitHub-only review tools to the PR under review. Without it they fall back to
+ * resolving the PR from the checked-out branch, which no CI runner has: the standard checkout
+ * actions leave the workspace on a detached HEAD, so the fallback cannot succeed there and the
+ * tools degrade to unavailable.
+ */
+export function resolvePrIdFromArg(contentArg: string | undefined): string | undefined {
+  return contentArg !== undefined && PR_ID_PATTERN.test(contentArg) ? contentArg : undefined;
+}
+
 async function getFromSource(
   source: RequirementSourceType | ContentSourceType | undefined,
   id: string | undefined,

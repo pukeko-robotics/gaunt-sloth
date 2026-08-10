@@ -29,6 +29,7 @@ import {
   getContentFromSource,
   getRequirementsFromSource,
   getReviewPreamble,
+  resolvePrIdFromArg,
 } from '#src/commands/commandUtils.js';
 
 async function main() {
@@ -65,7 +66,11 @@ async function main() {
       ? `Requirements:\n${requirements}\nDiff:\n${content}`
       : content;
 
-    await review('pr-review', preambleText, diffWithReqs, config, 'pr');
+    // Pass the PR id on so GitHub-only tools address the PR explicitly instead of trying to
+    // resolve it from the checked-out branch, which a CI runner's detached HEAD cannot provide.
+    await review('pr-review', preambleText, diffWithReqs, config, 'pr', undefined, {
+      prId: resolvePrIdFromArg(contentArg),
+    });
   } catch (error) {
     displayError(error instanceof Error ? error.message : String(error));
     process.exit(1);
