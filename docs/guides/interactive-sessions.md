@@ -76,6 +76,10 @@ no further `/` after the leading one is parsed as one.
 
 ## Writing a longer message
 
+*In the TUI. The plain readline surface (`--no-tui`) keeps readline's own line editing and puts its
+own history on the arrow keys, so none of this applies there — a message is one line, and `↑`
+recalls the previous one.*
+
 Enter sends the message. To keep writing instead, end the line with a backslash and press Enter:
 the message carries onto a second line, marked `…`, and Enter sends the whole thing once you are
 done. Pasting several lines at once does the same without the backslash.

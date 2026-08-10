@@ -31,10 +31,19 @@ import {
  * Konsole sends for `Alt+←/→`. They are alternatives, not fallbacks. A platform check here would
  * buy nothing but a way to be wrong on a terminal nobody measured.
  *
- * **Control chords are refused, never typed.** The insert branch takes an event only when neither
- * `key.ctrl` nor `key.meta` is set, so a chord bound elsewhere in the app — or bound nowhere at all
- * — cannot drop its letter into what the user is writing. That is a property of owning the editor,
- * and it is what makes a separate guard component in front of the prompt unnecessary.
+ * **Control chords are refused, never typed.** The insert branch takes an event only when none of
+ * `ctrl`/`meta`/`super`/`hyper` is set, so a chord bound elsewhere in the app — or bound nowhere at
+ * all — cannot drop its letter into what the user is writing. That is a property of owning the
+ * editor, and it is what makes a separate guard component in front of the prompt unnecessary.
+ *
+ * **Every edit is an UPDATER, because keystrokes share a stdin chunk.** Ink splits one chunk into
+ * several key events and dispatches them synchronously, so every handler after the first in a chunk
+ * still closes over the `state` prop from before its predecessor's edit. A handler computing from
+ * that prop therefore throws its predecessor's work away — and this is not a rare shape: Ink
+ * deliberately splits repeated backspace bytes into separate events *because holding the key sends
+ * them in one chunk*, so a buffer that computed from the prop would answer a held Backspace with a
+ * single deletion. Handing the parent an updater makes each keystroke compose on the result of the
+ * one before it, whatever the batching did. `Enter` is the sole exception, argued at its branch.
  *
  * **Two deliberate v1 narrowings.**
  *
@@ -76,9 +85,13 @@ export function PromptEditor({
   onSubmit,
   menuActive,
 }: {
-  /** The buffer and caret to render. Owned by the parent — this component never stores them. */
+  /** The buffer and caret to RENDER. Owned by the parent — this component never stores them. */
   state: EditorState;
-  onChange: (next: EditorState) => void;
+  /**
+   * Applies one edit or motion. Takes an updater rather than a finished state, and that is
+   * load-bearing rather than a style choice — see the note on batching in the doc comment above.
+   */
+  onChange: (update: (previous: EditorState) => EditorState) => void;
   /** Called when Enter means submit; a continuation is handled here, via `pressEnter`. */
   onSubmit: (value: string) => void;
   /** While true the editor ignores Up/Down and Enter — the slash menu owns them. */
@@ -87,33 +100,38 @@ export function PromptEditor({
   useInput((input, key) => {
     // Word motion — three spellings, none of them a fallback for another (see the doc comment).
     if ((key.meta && input === 'b') || ((key.ctrl || key.meta) && key.leftArrow)) {
-      onChange(moveWordLeft(state));
+      onChange(moveWordLeft);
       return;
     }
     if ((key.meta && input === 'f') || ((key.ctrl || key.meta) && key.rightArrow)) {
-      onChange(moveWordRight(state));
+      onChange(moveWordRight);
       return;
     }
 
     // Line start / end. `Home`/`End` are claimed only WITHOUT Ctrl: <App> binds Ctrl+Home/Ctrl+End
     // to scrolling the transcript, and leaving those two alone is what keeps both bindings working.
     if ((key.ctrl && input === 'a') || (key.home && !key.ctrl)) {
-      onChange(moveLineStart(state));
+      onChange(moveLineStart);
       return;
     }
     if ((key.ctrl && input === 'e') || (key.end && !key.ctrl)) {
-      onChange(moveLineEnd(state));
+      onChange(moveLineEnd);
       return;
     }
 
     // One character at a time. Reached only after the word-motion branches above, so an arrow that
     // arrives carrying Ctrl or Meta has already been handled as a word motion.
+    //
+    // `Shift` is deliberately NOT tested on any motion branch: a terminal that reports Shift with an
+    // arrow (`\x1b[1;2D`) performs the plain motion. Selection is not a concept this editor has, so
+    // there is nothing else the shifted key could mean, and refusing it would make a key a user
+    // pressed do nothing at all.
     if (key.leftArrow) {
-      onChange(moveLeft(state));
+      onChange(moveLeft);
       return;
     }
     if (key.rightArrow) {
-      onChange(moveRight(state));
+      onChange(moveRight);
       return;
     }
 
@@ -129,29 +147,37 @@ export function PromptEditor({
     // (The debug panel also binds Up/Down, but the prompt is unmounted while that panel is focused.)
     if (key.upArrow || key.downArrow) {
       if (menuActive || key.ctrl || key.meta) return;
-      onChange(key.upArrow ? moveLineUp(state) : moveLineDown(state));
+      onChange(key.upArrow ? moveLineUp : moveLineDown);
       return;
     }
 
     if (key.backspace || key.delete) {
-      onChange(deleteBackward(state));
+      onChange(deleteBackward);
       return;
     }
 
     if (key.return) {
       // With the menu open Enter belongs to it — the parent dispatches the highlighted command.
       if (menuActive) return;
+      // The one branch that reads the rendered `state` rather than deferring to an updater, and it
+      // has to: what Enter MEANS depends on the buffer (a trailing backslash continues, anything
+      // else submits), and the submit half leaves the component entirely. A React updater must be
+      // pure, so it is not somewhere `onSubmit` can be called from. The cost is the batching hazard
+      // the doc comment describes, confined to this key: an Enter sharing a chunk with a preceding
+      // keystroke decides from the state before it. Reaching that needs a terminal to deliver an
+      // edit and a Return in one read, which is not what a person typing produces.
       const result = pressEnter(state);
-      if (result.kind === 'continue') onChange(result.state);
+      if (result.kind === 'continue') onChange(() => result.state);
       else onSubmit(result.value);
       return;
     }
 
     // Everything else that carries text. The guard is the point: a chord belongs to whoever bound
     // it, and an editor whose insert branch is the fall-through for unrecognised chords types `t`
-    // when the user presses Ctrl+T. Ours refuses every ctrl and meta chord, silently.
-    if (input.length > 0 && !key.ctrl && !key.meta) {
-      onChange(insertText(state, input));
+    // when the user presses Ctrl+T. Ours refuses every modifier that makes a key a chord, silently.
+    // `shift` is the one deliberately absent: it is how a capital is typed, not a different key.
+    if (input.length > 0 && !key.ctrl && !key.meta && !key.super && !key.hyper) {
+      onChange((previous) => insertText(previous, input));
     }
   });
 

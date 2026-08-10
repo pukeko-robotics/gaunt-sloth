@@ -6,7 +6,9 @@ import chalk from 'chalk';
 import stripAnsi from 'strip-ansi';
 import { render } from 'ink-testing-library';
 import { PromptInput } from '#src/tui/components/PromptInput.js';
+import { PromptEditor } from '#src/tui/components/PromptEditor.js';
 import { SlashCommandMenu } from '#src/tui/components/SlashCommandMenu.js';
+import type { EditorState } from '#src/tui/lineEditor.js';
 import {
   createCommandRegistry,
   type SlashCommand,
@@ -641,6 +643,12 @@ describe('tui <PromptEditor> line motion (TUI-C25)', () => {
 describe('tui <PromptEditor> Up/Down arbitration (TUI-C25)', () => {
   paintsAnsi();
 
+  // Integration-level, and it cannot discriminate the guard on its own — say so rather than let a
+  // reader take it for more than it is. `menuActive` implies `slashMenuQuery(value) !== null`, which
+  // implies a buffer with no whitespace in it, hence one logical line, on which `moveLineUp` and
+  // `moveLineDown` change neither the value nor the caret. Deleting the guard leaves this green.
+  // The case that fails without it drives <PromptEditor> directly, on a buffer <PromptInput> could
+  // never hold with the menu open — see 'the menuActive contract' below.
   it('gives Up/Down to the slash menu while it is open, and the buffer does not move', async () => {
     const onSubmit = vi.fn();
     const { stdin, lastFrame } = render(
@@ -660,6 +668,9 @@ describe('tui <PromptEditor> Up/Down arbitration (TUI-C25)', () => {
 
     stdin.write(ENTER);
     await tick();
+    // EXACTLY once. Without the editor's `menuActive` guard on Enter it would submit the typed
+    // `/de` as well, and `toHaveBeenCalledWith` alone is satisfied by the second of two calls.
+    expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(onSubmit).toHaveBeenCalledWith('/model');
   });
 
@@ -780,8 +791,10 @@ describe('tui <PromptEditor> multi-line entry (TUI-C25)', () => {
  * at the same time — for the prompt buffer, by construction rather than by a component standing
  * guard in front of another one.
  *
- * The shapes that make these discriminate: an ODD number of chords, and one input event per
- * character afterwards. A burst written as one event lands correctly even on a broken editor.
+ * What makes these discriminate is that characters are typed AFTER the chord, one input event each:
+ * a chord that reached the buffer shows up as a stray letter, and a chord that disturbed the caret
+ * shows up in where those characters land. Asserting only the buffer immediately after the chord
+ * would miss the second half entirely.
  */
 describe('tui <PromptEditor> control and meta chords (TUI-C25)', () => {
   paintsAnsi();
@@ -859,6 +872,183 @@ describe('tui <PromptEditor> control and meta chords (TUI-C25)', () => {
     stdin.write(ENTER);
     await tick();
     expect(onSubmit).toHaveBeenCalledWith('draXft');
+  });
+
+  it('refuses a chord on every press, not only the first (chord, type, chord, type)', async () => {
+    // The interleaved shape. A guard that fired once — a flag set rather than a condition tested —
+    // satisfies every single-chord case above and every case that types only before its second
+    // chord, while the second chord behaves exactly as an unguarded first one does. Both the caret
+    // read and the submitted value below are taken AFTER a second chord with characters following.
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    await typeSlowly(stdin, 'ab');
+    stdin.write('\x14'); // Ctrl+T
+    await tick();
+    expect(caretIn(lastFrame() ?? ''), 'the first chord moved the caret').toEqual({
+      row: 0,
+      column: 2,
+    });
+
+    await typeSlowly(stdin, 'cd');
+    stdin.write('\x14');
+    await tick();
+    expect(caretIn(lastFrame() ?? ''), 'the second chord moved the caret').toEqual({
+      row: 0,
+      column: 4,
+    });
+
+    await typeSlowly(stdin, 'ef');
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('abcdef');
+  });
+
+  it('leaves an EMPTY buffer empty, and types the next characters in order', async () => {
+    // The state a session spends most of its time in, and the one place a caret cannot be nudged
+    // backwards — so an editor that mishandled the chord fails here by typing rather than by
+    // misplacing, which is a different symptom from every case above.
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write('\x14'); // Ctrl+T
+    await tick();
+    expect(bufferIn(lastFrame() ?? '')).toBe('');
+    expect(caretIn(lastFrame() ?? '')).toEqual({ row: 0, column: 0 });
+
+    await typeSlowly(stdin, 'hi');
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('hi');
+  });
+});
+
+/**
+ * TUI-C25 — two keystrokes that arrive in ONE stdin chunk.
+ *
+ * Ink splits a chunk into several key events and dispatches them synchronously, so every handler
+ * after the first still closes over the React state from before its predecessor's edit. An editor
+ * that computed from that state would throw the predecessor's work away — and the first row below
+ * is the one that reaches users, because Ink deliberately splits repeated backspace bytes into
+ * separate events precisely because HOLDING the key sends them in one chunk.
+ *
+ * Every case here writes the whole burst as a SINGLE `stdin.write`. That is the entire point: typed
+ * one keystroke per write, with a tick between, all three pass on an editor that has this defect —
+ * which is why the rest of the suite, written that way, cannot see it.
+ */
+describe('tui <PromptEditor> keystrokes sharing one stdin chunk (TUI-C25)', () => {
+  paintsAnsi();
+
+  it('applies EVERY backspace of a held key, not just the first', async () => {
+    const { stdin, lastFrame } = render(<PromptInput onSubmit={vi.fn()} commands={[]} />);
+    stdin.write('abcdef');
+    await tick();
+    stdin.write(BACKSPACE + BACKSPACE + BACKSPACE);
+    await tick();
+    // Computing from the rendered state, this reads `abcde` — one deletion out of three.
+    expect(bufferIn(lastFrame() ?? '')).toBe('abc');
+    expect(caretIn(lastFrame() ?? '')).toEqual({ row: 0, column: 3 });
+  });
+
+  it('keeps a motion that shares its chunk with the character typed after it', async () => {
+    const { stdin, lastFrame } = render(<PromptInput onSubmit={vi.fn()} commands={[]} />);
+    stdin.write('alpha beta');
+    await tick();
+    stdin.write(META_B + 'X');
+    await tick();
+    // The motion lost, this reads `alpha betaX`.
+    expect(bufferIn(lastFrame() ?? '')).toBe('alpha Xbeta');
+  });
+
+  it('keeps ALL of several motions that share a chunk with the character after them', async () => {
+    const { stdin, lastFrame } = render(<PromptInput onSubmit={vi.fn()} commands={[]} />);
+    stdin.write('abcdef');
+    await tick();
+    stdin.write(LEFT + LEFT + LEFT + 'Z');
+    await tick();
+    // Every motion lost, this reads `abcdefZ`; only the last one honoured, `abcdeZf`.
+    expect(bufferIn(lastFrame() ?? '')).toBe('abcZdef');
+  });
+});
+
+/**
+ * TUI-C25 — the `menuActive` prop is a contract, and this is the case that holds it.
+ *
+ * It has to be driven at the component rather than through `<PromptInput>`: the menu is open only
+ * while the buffer holds a bare `/`-query, which by definition has no whitespace in it and is
+ * therefore one logical line — on which Up/Down are no-ops anyway. So the integration case cannot
+ * fail if the guard is deleted, and this one drives the editor directly with a multi-line buffer
+ * the parent could never pair with an open menu.
+ */
+describe('tui <PromptEditor> the menuActive contract (TUI-C25)', () => {
+  paintsAnsi();
+
+  /** A two-line buffer with the caret at the end, where Up/Down and Enter all have work to do. */
+  const twoLines: EditorState = { value: 'alpha\ngamma', cursor: 11 };
+
+  it('ignores Up/Down while the menu owns them, on a buffer where they WOULD move', async () => {
+    const onChange = vi.fn();
+    const { stdin, rerender } = render(
+      <PromptEditor state={twoLines} onChange={onChange} onSubmit={vi.fn()} menuActive />
+    );
+    stdin.write(UP);
+    await tick();
+    stdin.write(DOWN);
+    await tick();
+    expect(onChange).not.toHaveBeenCalled();
+
+    // The control, and the half that makes the negative mean something: the same keys on the same
+    // buffer with the menu closed do move the caret, one logical line up.
+    rerender(
+      <PromptEditor state={twoLines} onChange={onChange} onSubmit={vi.fn()} menuActive={false} />
+    );
+    stdin.write(UP);
+    await tick();
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange.mock.calls[0][0](twoLines)).toEqual({
+      value: 'alpha\ngamma',
+      cursor: 5,
+      desiredColumn: 5,
+    });
+  });
+
+  it('ignores Enter while the menu owns it — neither submitting nor continuing', async () => {
+    const onChange = vi.fn();
+    const onSubmit = vi.fn();
+    const { stdin, rerender } = render(
+      <PromptEditor state={twoLines} onChange={onChange} onSubmit={onSubmit} menuActive />
+    );
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+
+    rerender(
+      <PromptEditor state={twoLines} onChange={onChange} onSubmit={onSubmit} menuActive={false} />
+    );
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenCalledWith('alpha\ngamma');
+  });
+
+  it('still edits and moves within a line while the menu is open', async () => {
+    // The control for the two cases above at the level they are written: `menuActive` stands the
+    // editor down from exactly two keys, and a guard that stood it down from the keyboard would
+    // satisfy both negatives while making the menu impossible to type a query into.
+    const onChange = vi.fn();
+    const { stdin } = render(
+      <PromptEditor state={twoLines} onChange={onChange} onSubmit={vi.fn()} menuActive />
+    );
+    stdin.write('x');
+    await tick();
+    expect(onChange.mock.calls[0][0](twoLines)).toEqual({ value: 'alpha\ngammax', cursor: 12 });
+
+    stdin.write(LEFT);
+    await tick();
+    expect(onChange.mock.calls[1][0](twoLines)).toEqual({ value: 'alpha\ngamma', cursor: 10 });
   });
 });
 

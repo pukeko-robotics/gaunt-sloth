@@ -217,7 +217,7 @@ the ready message.
 - **A new TUI colour path must go through that hook, never around it.** Do not add a second read of
   `NO_COLOR`/`FORCE_COLOR` anywhere under `tui/`, and do not give Ink its own chalk: the hook works
   only because Ink and our markdown renderer share one physical chalk module, which the scoped
-  `ink>chalk` / `ink-text-input>chalk` overrides in `pnpm-workspace.yaml` exist to guarantee. The
+  `ink>chalk` override in `pnpm-workspace.yaml` exists to guarantee. The
   clamp is **downward only** — colour off means level 0, colour on keeps whatever depth chalk
   detected (floored at basic 16-colour when it detected none), and never promotes a terminal to a
   depth it did not report.
@@ -373,18 +373,15 @@ their config has a problem.
   newest output. The order is the specification, not an artefact of where the branches sit.
 - **`Ctrl+C`** — exit the app. (The bare `exit` keyword, `/exit` and `/quit` also quit.)
 - **`Ctrl+T`** — toggle tool-call detail, running or idle (mirrors `/verbose`).
-- **A control chord never types its letter, and never moves the message under it.**
-  `ink-text-input` claims only `Ctrl+C` and inserts the letter of every other chord, so the prompt
-  keeps the whole class out of its buffer (`PromptInput.tsx`). Without that, each keybinding the app
-  adds also drops a stray character into whatever the user was part-way through writing — and gating
-  a binding on "a turn is running" does not avoid it, because the prompt stays mounted while a turn
-  streams. **Refusing the value is only half the job**: the text input commits its cursor offset
-  before it asks whether the value may change, and repairs an out-of-range offset only from an
-  effect keyed on that value, so a refusal alone leaves the cursor past the end of the buffer, erases
-  it from the screen and makes every later keystroke insert one place early. The prompt therefore
-  remounts the input on a refused chord, which re-derives the offset from the value. The cost is
-  that a cursor the user had moved into the middle of the buffer returns to the end — visible, and
-  recoverable with the arrow keys; the line editor (TUI-C25) owns the cursor and settles it properly.
+- **A control chord never types its letter, and never moves the message under it.** The prompt's
+  editor (`PromptEditor.tsx`) inserts a keystroke only when none of `ctrl`/`meta`/`super`/`hyper` is
+  set, so a chord the app binds elsewhere — or binds nowhere at all — is refused silently rather
+  than falling through to the insert branch. Without that, each keybinding the app adds also drops a
+  stray character into whatever the user was part-way through writing; and gating a binding on "a
+  turn is running" does not avoid it, because the prompt stays mounted while a turn streams.
+  **`shift` is the one modifier deliberately not in that list** — it is how a capital is typed, not a
+  different key. A new text buffer anywhere in the TUI owes the same guard (`App.tsx` applies it to
+  the debug-pane search and the attack-banner phrase).
 - **`o` / `s` / `a` / anything-else** at a pending shell approval — approve once / session / always
   / reject (fail-closed). `[s]` and `[a]` are offered only when there is something to remember.
   Changing the approvals mode is not one of the choices: the ladder has no "turn the gate down from
@@ -441,14 +438,37 @@ their config has a problem.
     scroll clause added to the shared literal — would advertise keys that do nothing there. The TUI
     passes its bindings in as data and composes its own hint fragment; readline passes nothing and
     its output is unchanged by construction (GS2-87).
-- **arrows / Enter** — select / submit in the prompt.
+- **Editing the message is readline's keyboard, not a text field's (DL-5 respect the host, DL-9
+  keyboard-first, TUI-C25).** The prompt is a real line editor over a pure model
+  (`tui/lineEditor.ts`, rendered and driven by `tui/components/PromptEditor.tsx`): `←`/`→` a
+  character, `Alt`+`←`/`→` **and** `Ctrl`+`←`/`→` a word, `Ctrl+A`/`Ctrl+E` and bare `Home`/`End` the
+  ends of the caret's own line, `↑`/`↓` between the lines of a multiline message. The keys are the
+  ones a terminal user's fingers already know, which is the whole reason they are these keys.
+  - **Every spelling ships everywhere; no branch on the platform.** The three word-motion encodings
+    belong to terminal families rather than to operating systems (`Meta+B`/`Meta+F` is Terminal.app
+    and Ghostty for `Option`+arrow, `Ctrl`+arrow is xterm/Konsole, `Meta`+arrow is Konsole's `Alt`+
+    arrow), so an `os.platform()` check could only ever be wrong on a combination nobody measured.
+    A test reads both sources to keep it out.
+  - **`Home`/`End` are claimed only without `Ctrl`**, because `Ctrl+Home`/`Ctrl+End` scroll the
+    conversation. A binding that ignores the modifier silently takes the other one away.
+  - **`↑`/`↓` mean two things and the arbitration is stated at the branch**: the slash menu owns them
+    while it is open, the buffer owns them otherwise. There is no input-history recall at this
+    prompt, so the buffer's no-op on a single-line message is the end of the chain, not a
+    fall-through. `/help` lists both meanings on one line for the same reason (DL-4).
+  - **Two v1 narrowings, deliberate:** `↑`/`↓` move over *logical* lines, not visual wrapped rows
+    (visual motion would thread the terminal width into a pure module); and the line motions go to
+    the ends of the caret's own line, not of the whole buffer.
+- **A message can be more than one line (DL-3 preserve the user's content, DL-9).** A trailing `\`
+  before `Enter` continues the line instead of sending it; continuation rows are drawn with a dim
+  `  … ` prefix exactly as wide as `  > `, so every row's text stays in one column (DL-7 legibility).
+  `/help` lists the continuation, because `\` is a character a user types for other reasons and
+  nothing on screen would otherwise suggest it means anything (DL-1).
 - **multiline paste** — pasting text with newlines buffers it into the prompt intact; the embedded
   newlines do **not** submit — only an explicit `Enter` sends the whole buffered value (DL-9
   keyboard-first, DL-3 preserve the user's content, TUI-C24). The prompt enables the terminal's
   bracketed-paste mode while mounted (via Ink's `usePaste`) so a paste is captured as content rather
-  than misread as keystrokes; newlines are normalized to `\n`. Rich multiline cursor editing /
-  continuation-line rendering is a later step (TUI-C25) — a buffered multiline value may render
-  imperfectly, but the submitted value is correct and intact (DL-7 graceful degradation).
+  than misread as keystrokes; newlines are normalized to `\n`, and the payload is inserted **at the
+  caret** rather than appended.
 
 Defaults are beginner-safe (DL-9): tool detail collapsed, debug panel hidden — the expert opts into
 depth.

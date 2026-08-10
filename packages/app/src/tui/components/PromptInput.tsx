@@ -52,30 +52,56 @@ export function PromptInput({
   onMenuStateChange?: (active: boolean) => void;
 }): React.ReactElement {
   const [state, setState] = useState(() => createEditorState());
-  // Highlighted row in the menu. Reset to the top whenever the query changes (the filtered list
-  // changes under it), so navigation always starts from the most-relevant match.
-  const [cursor, setCursor] = useState(0);
-  // Esc dismisses the menu without clearing the input; typing anything re-opens it (an edit
-  // clears this flag), matching how palette menus behave elsewhere.
-  const [dismissed, setDismissed] = useState(false);
+  /**
+   * The menu's transient state, KEYED ON THE TEXT it belongs to rather than reset by whoever edits
+   * that text.
+   *
+   * Both fields answer "for this query": `dismissed` is Esc's, so the menu can be sent away without
+   * clearing the input, and `index` is the highlighted row, which starts at the most-relevant match
+   * whenever the query changes under it. Deriving both from `forValue` is what makes an edit
+   * invalidate them BY DEFINITION and a bare caret move leave them alone — where a handler that
+   * reset them itself would be resetting from a snapshot that a shared stdin chunk has already made
+   * stale, and would have to be got right at every call site (an edit, a paste, a completion, a
+   * submit) instead of in one place.
+   */
+  const [menu, setMenu] = useState<{ forValue: string; dismissed: boolean; index: number }>({
+    forValue: '',
+    dismissed: false,
+    index: 0,
+  });
+  const menuAppliesToBuffer = menu.forValue === state.value;
 
   const query = slashMenuQuery(state.value);
+  const dismissed = menuAppliesToBuffer && menu.dismissed;
   const matches = query !== null && !dismissed ? filterSlashCommands(commands, query) : [];
   const menuActive = matches.length > 0;
-  // Clamp defensively in case the filtered list shrank below the cursor between renders.
-  const selectedIndex = menuActive ? Math.min(cursor, matches.length - 1) : 0;
+  // Clamp defensively in case the filtered list shrank below the highlight between renders.
+  const selectedIndex = menuActive
+    ? Math.min(menuAppliesToBuffer ? menu.index : 0, matches.length - 1)
+    : 0;
 
   // Let the parent suppress its competing Tab handler (debug-panel focus) while the menu is open.
   useEffect(() => {
     onMenuStateChange?.(menuActive);
   }, [menuActive, onMenuStateChange]);
 
-  /** Submit `value`, clear the buffer, and put the menu back to its resting state. */
+  /** Submit `value` and clear the buffer; clearing it resets the menu by itself (see `menu`). */
   const submit = (value: string): void => {
     setState(createEditorState());
-    setDismissed(false);
-    setCursor(0);
     onSubmit(value);
+  };
+
+  /** Step the highlight by `step`, wrapping — the menu is open, so there is a list to step. */
+  const moveHighlight = (step: number): void => {
+    setMenu((previous) => {
+      const current = previous.forValue === state.value ? previous.index : 0;
+      const clamped = Math.min(current, matches.length - 1);
+      return {
+        forValue: state.value,
+        dismissed: false,
+        index: (clamped + step + matches.length) % matches.length,
+      };
+    });
   };
 
   // TUI-C24 — capture a bracketed paste as buffered text instead of keystrokes. Ink enables
@@ -86,9 +112,6 @@ export function PromptInput({
     const pasted = normalizePastedText(text);
     if (!pasted) return;
     setState((current) => insertText(current, pasted));
-    // Mirror the edit path's menu bookkeeping so a paste can't leave a stale/incorrectly-open menu.
-    setDismissed(false);
-    setCursor(0);
   });
 
   useInput(
@@ -96,17 +119,15 @@ export function PromptInput({
       // Only claim keys while the menu is visible; otherwise the editor handles everything.
       if (!menuActive) return;
       if (key.upArrow) {
-        setCursor((c) => (Math.min(c, matches.length - 1) - 1 + matches.length) % matches.length);
+        moveHighlight(-1);
       } else if (key.downArrow) {
-        setCursor((c) => (Math.min(c, matches.length - 1) + 1) % matches.length);
+        moveHighlight(1);
       } else if (key.tab) {
         // Complete to the highlighted name plus a trailing space: the space closes the menu (the
         // input now has whitespace) and leaves the caret ready for args, without dispatching.
         setState(createEditorState(`/${matches[selectedIndex].name} `));
-        setDismissed(false);
-        setCursor(0);
       } else if (key.escape) {
-        setDismissed(true);
+        setMenu({ forValue: state.value, dismissed: true, index: 0 });
       } else if (key.return) {
         // With the menu open, Enter dispatches the HIGHLIGHTED command (so "/mo"+Enter runs
         // "/mode") rather than the typed text. The parent's handler parses + dispatches through
@@ -122,19 +143,10 @@ export function PromptInput({
   return (
     <Box flexDirection="column">
       {menuActive ? <SlashCommandMenu commands={matches} selectedIndex={selectedIndex} /> : null}
-      <PromptEditor
-        state={state}
-        onChange={(next) => {
-          setState(next);
-          // The menu bookkeeping follows the TEXT, not the caret: a dismissed menu stays dismissed
-          // while the user walks the buffer with the arrow keys, and only an edit reopens it.
-          if (next.value === state.value) return;
-          setDismissed(false);
-          setCursor(0);
-        }}
-        onSubmit={submit}
-        menuActive={menuActive}
-      />
+      {/* The editor hands up an UPDATER, which goes straight to `setState`: two keystrokes that
+          share one stdin chunk are dispatched in one batch, and only an updater composes on its
+          predecessor's result rather than on the state both of them were rendered with. */}
+      <PromptEditor state={state} onChange={setState} onSubmit={submit} menuActive={menuActive} />
     </Box>
   );
 }

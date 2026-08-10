@@ -210,11 +210,11 @@ test.describe('gth chat TUI — greeting fixture', () => {
   // bound in every state, because paging back over the conversation to read an earlier turn's
   // arguments and results is exactly when nothing is running.
   //
-  // The message is then carried on with ONE chord behind it, a character at a time, waiting for
-  // each to be drawn before writing the next. Both parts are what make it discriminate: an ODD
-  // number of chords is what an editor that mishandles one cannot self-heal from, and a burst
-  // written as one event lands correctly even so. Four separate keystrokes after a single chord are
-  // what a person actually does, and the only shape that sees the difference.
+  // The message is then carried on ACROSS the chord, a character at a time, waiting for each to be
+  // drawn before writing the next — which is what a person actually does, and what makes this
+  // discriminate. A chord that reached the buffer shows up as a stray letter; a chord that disturbed
+  // the caret shows up in where those four characters land. A burst written as one event would test
+  // neither, because the pty delivers it as a single input event that lands in one step.
   test('Ctrl+T toggles tool detail while idle, and the message survives it', async ({
     terminal,
   }) => {

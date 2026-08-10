@@ -9,9 +9,16 @@
  * including the Windows cells, without a PTY.
  *
  * **Code points, not code units.** {@link EditorState.cursor} is a JS string index, but every
- * movement and deletion steps a whole code point, so a surrogate pair (an emoji) is never split —
- * one Backspace removes the whole character rather than half of it, which is what
- * `ink-text-input` does.
+ * movement and deletion steps a whole code point, so a surrogate pair is never split down the
+ * middle: one Backspace removes a plain emoji whole rather than leaving half of it on screen, and
+ * every offset handed back is a boundary the renderer can invert a whole character at.
+ *
+ * **The unit is the code point, not the grapheme cluster** — a deliberate v1 narrowing, stated
+ * because the difference is visible. A sequence joined by ZWJ (`👨‍👩‍👧`) or trailed by a combining
+ * mark is several code points, so Backspace takes the last of them rather than the whole cluster.
+ * Cluster segmentation needs `Intl.Segmenter` and a rule for every operation here; nothing in the
+ * prompt's own behaviour depends on it, and half-doing it is worse than a boundary that is at least
+ * always the same one.
  *
  * **Enter's continuation syntax.** A backslash immediately before the caret makes Enter continue
  * the line instead of submitting: the backslash is consumed and a newline takes its place, the way
