@@ -150,6 +150,16 @@ describe('lineEditor — start and end of the line', () => {
     expect(moveLineEnd(stateAt(buffer, 7)).cursor).toBe(7);
     expect(moveLineEnd(createEditorState(buffer)).cursor).toBe(13);
   });
+
+  it('stays put at offset 0, and never moves the caret to the RIGHT', () => {
+    // Offset 0 has no preceding newline to sit after, whatever the buffer holds after it. The
+    // buffer that begins with `\n` is the trap: a search for the preceding newline that starts
+    // before the buffer finds THIS one and reports the line as starting at 1.
+    expect(moveLineStart(stateAt(buffer, 0)).cursor).toBe(0);
+    expect(moveLineStart(stateAt('\nabc', 0)).cursor).toBe(0);
+    // The empty first line is also its own end — the newline at offset 0 terminates it.
+    expect(moveLineEnd(stateAt('\nabc', 0)).cursor).toBe(0);
+  });
 });
 
 describe('lineEditor — up, down, and the sticky column', () => {
@@ -196,9 +206,24 @@ describe('lineEditor — up, down, and the sticky column', () => {
       cursor: 18 + 4,
       desiredColumn: 4,
     });
-    // Up out of the short line, then back down: the column recorded by the blocked Up is honoured.
+    // Down into the short line, then Up twice: the second Up is blocked by the first line, and it
+    // honours the column already recorded rather than recomputing one from where the caret sits.
     const blocked = moveLineUp(moveLineUp(moveLineDown(stateAt(buffer, 10))));
     expect(blocked).toEqual({ value: buffer, cursor: 10, desiredColumn: 10 });
+  });
+
+  it('treats offset 0 as the first line even when the buffer opens with a newline', () => {
+    // The empty first line is a real line: Up from it is blocked, Down from it goes to line 1.
+    expect(moveLineUp(stateAt('\nabc', 0))).toEqual({
+      value: '\nabc',
+      cursor: 0,
+      desiredColumn: 0,
+    });
+    expect(moveLineDown(stateAt('\nabc', 0))).toEqual({
+      value: '\nabc',
+      cursor: 1,
+      desiredColumn: 0,
+    });
   });
 
   it('measures the column in code points, so an emoji counts once', () => {
@@ -296,9 +321,44 @@ describe('lineEditor — layout for the renderer', () => {
     });
   });
 
+  it('puts the caret on the FIRST line at offset 0, whatever follows it', () => {
+    expect(layout(stateAt('one\ntwo', 0))).toEqual({
+      lines: ['one', 'two'],
+      line: 0,
+      column: 0,
+    });
+    // A leading newline must not be read as the caret's own preceding newline: doing so names row
+    // 1 and a column of -1, which is a caret the renderer cannot draw.
+    expect(layout(stateAt('\nabc', 0))).toEqual({ lines: ['', 'abc'], line: 0, column: 0 });
+  });
+
   it('keeps the empty final line a trailing newline creates', () => {
     // This is the row the caret sits on right after a continuation; without it there is nothing to
     // draw the caret in.
     expect(layout(createEditorState('a\n'))).toEqual({ lines: ['a', ''], line: 1, column: 0 });
+  });
+});
+
+describe('lineEditor — the caret at the top of a continued buffer', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('survives the keystrokes that put it there: a bare continuation, then Up', () => {
+    // Three keystrokes of the headline feature reach offset 0 of a buffer beginning with `\n`, so
+    // this boundary is ordinary rather than contrived. Driving it through real operations, instead
+    // of hand-building the state, is what proves the sequence is reachable at all.
+    let state = insertText(createEditorState(''), '\\');
+    const entered = pressEnter(state);
+    if (entered.kind !== 'continue') throw new Error('expected a continuation');
+    state = insertText(entered.state, 'hi');
+    expect(state).toEqual({ value: '\nhi', cursor: 3 });
+
+    const up = moveLineUp(state);
+    expect(up).toEqual({ value: '\nhi', cursor: 0, desiredColumn: 2 });
+    // The renderer draws from this: row 0, column 0 — not row 1 at column -1.
+    expect(layout(up)).toEqual({ lines: ['', 'hi'], line: 0, column: 0 });
+    // And the line-start key holds the caret still rather than pushing it onto the next line.
+    expect(moveLineStart(up)).toEqual({ value: '\nhi', cursor: 0 });
   });
 });

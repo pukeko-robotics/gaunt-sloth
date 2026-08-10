@@ -65,11 +65,17 @@ function previousCodePointStart(value: string, index: number): number {
   return index - 1;
 }
 
-/** The index just past the code point starting at `index`. At the end of the buffer, unchanged. */
+/**
+ * The index just past the code point starting at `index` — the forward twin of
+ * {@link previousCodePointStart}, holding the same invariant from the other side: an index handed
+ * back by either is always the start of a whole character, never the middle of a surrogate pair.
+ * Forward, `codePointAt` does the pairing for us, so only its width has to be decided here; a code
+ * point above the BMP is the pair, everything else is one unit.
+ */
 function nextCodePointEnd(value: string, index: number): number {
   if (index >= value.length) return value.length;
   const codePoint = value.codePointAt(index);
-  return index + (codePoint === undefined ? 1 : String.fromCodePoint(codePoint).length);
+  return index + (codePoint !== undefined && codePoint > 0xffff ? 2 : 1);
 }
 
 /** Whether the code point starting at `index` is a word character. */
@@ -86,9 +92,27 @@ function codePointCount(text: string): number {
   return count;
 }
 
-/** The start of the logical line `cursor` sits on: just past the preceding `\n`, or 0. */
+/**
+ * The start of the logical line `cursor` sits on: just past the preceding `\n`, or 0.
+ *
+ * The zero guard is load-bearing, not defensive. `lastIndexOf` **clamps a negative `fromIndex` to
+ * 0** instead of reporting no match, so on a buffer that begins with `\n` — which is exactly what
+ * the backslash continuation produces — the caret at offset 0 would find that newline and report
+ * the line as starting at 1: `moveLineStart` would move the caret to the *right*, and `layout`
+ * would name the wrong row with a column of -1.
+ */
 function lineStartOffset(value: string, cursor: number): number {
+  if (cursor <= 0) return 0;
   return value.lastIndexOf('\n', cursor - 1) + 1;
+}
+
+/** How many newlines precede `offset` — which is the index of the line `offset` sits on. */
+function lineIndexAt(value: string, offset: number): number {
+  let count = 0;
+  for (let i = value.indexOf('\n'); i !== -1 && i < offset; i = value.indexOf('\n', i + 1)) {
+    count += 1;
+  }
+  return count;
 }
 
 /** The end of the logical line `cursor` sits on: the next `\n`, or the end of the buffer. */
@@ -250,6 +274,5 @@ export function layout(state: EditorState): {
 } {
   const lines = state.value.split('\n');
   const start = lineStartOffset(state.value, state.cursor);
-  const line = start === 0 ? 0 : state.value.slice(0, start).split('\n').length - 1;
-  return { lines, line, column: state.cursor - start };
+  return { lines, line: lineIndexAt(state.value, start), column: state.cursor - start };
 }
