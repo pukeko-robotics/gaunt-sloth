@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import React from 'react';
 import chalk from 'chalk';
 import stripAnsi from 'strip-ansi';
+import { Box, Text } from 'ink';
 import { render } from 'ink-testing-library';
 import { PromptInput } from '#src/tui/components/PromptInput.js';
 import { PromptEditor } from '#src/tui/components/PromptEditor.js';
@@ -1197,6 +1198,86 @@ describe('tui <PromptEditor> the menuActive contract (TUI-C25)', () => {
     stdin.write(LEFT);
     await tick();
     expect(onChange.mock.calls[1][0](twoLines)).toEqual({ value: 'alpha\ngamma', cursor: 10 });
+  });
+});
+
+/**
+ * TUI-C25 — a logical line the TERMINAL has to break across visual rows.
+ *
+ * Ink gives every child of a row `Box` a default `flexShrink: 1`, so when the text overflows, Yoga
+ * shrinks the `  > ` prefix along with it: the prefix loses its trailing space, row 0's text starts
+ * one column left of its own wrapped continuation, and the text is handed more columns than the row
+ * has — leaving Ink to emit a row WIDER than the terminal, which the terminal then hard-wraps
+ * mid-word into a stray row. Four columns is the alignment this component promises, and the promise
+ * is only interesting on the rows where it was being broken.
+ *
+ * The width is pinned by the case rather than inherited from the harness, so what "too long" means
+ * is stated here and cannot drift.
+ */
+describe('tui <PromptEditor> a line the terminal has to wrap (TUI-C25)', () => {
+  /**
+   * The width these cases are written against.
+   *
+   * The prompt must be rendered as Ink's ROOT, sized from the harness's own stdout, because that is
+   * where the defect lives: wrapping the component in a fixed-width `<Box>` changes how Yoga
+   * measures the text and the prefix stops being shrunk at all — a pinned container would make
+   * every assertion below pass with the defect fully present. `ink-testing-library` hardcodes 100
+   * columns, and the first case proves it rather than trusting it, so a library that changed the
+   * number fails loudly instead of quietly un-wrapping the fixture.
+   */
+  const HARNESS_COLUMNS = 100;
+  /** 146 characters — wider than the 96 the text gets at `HARNESS_COLUMNS`, so it must wrap. */
+  const LONG_LINE =
+    'alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike ' +
+    'november oscar papa quebec romeo sierra tango uniform victor whiskey';
+
+  it('renders at the width these cases assume', () => {
+    const { lastFrame } = render(
+      <Box>
+        <Text>{'x'.repeat(HARNESS_COLUMNS * 3)}</Text>
+      </Box>
+    );
+    const rows = stripAnsi(lastFrame() ?? '').split('\n');
+    expect(Math.max(...rows.map((row) => row.length))).toBe(HARNESS_COLUMNS);
+  });
+
+  it('keeps the whole 4-column prompt prefix and never draws past the terminal width', async () => {
+    const { stdin, lastFrame } = render(<PromptInput onSubmit={vi.fn()} commands={[]} />);
+    stdin.write(LONG_LINE);
+    await tick();
+    const rows = stripAnsi(lastFrame() ?? '').split('\n');
+
+    // It genuinely wrapped. Without this the assertions below all hold on a single short row and
+    // the case quietly stops testing the thing it is named for.
+    expect(rows.length).toBeGreaterThan(1);
+    // The prefix keeps its trailing space — squeezed to `  >`, the text starts a column early and
+    // no longer lines up with its own continuation.
+    expect(rows[0].startsWith(PROMPT)).toBe(true);
+    // …and no row runs past the terminal. A row one column too wide is what leaves the TERMINAL to
+    // hard-wrap it mid-word, orphaning a character onto a row of its own.
+    for (const row of rows) expect(row.length).toBeLessThanOrEqual(HARNESS_COLUMNS);
+    // Every wrapped row starts at the prompt's own text column, so the line reads as one block.
+    for (const row of rows.slice(1)) expect(row.startsWith(' '.repeat(PROMPT.length))).toBe(true);
+  });
+
+  it('keeps the continuation prefix at 4 columns when a LATER line is the one that wraps', async () => {
+    // The `  … ` prefix is the same shape and shrinks the same way, so a multi-line message whose
+    // second line is the long one has to be stated separately from the row-0 case.
+    const { stdin, lastFrame } = render(<PromptInput onSubmit={vi.fn()} commands={[]} />);
+    stdin.write('short first');
+    await tick();
+    stdin.write('\\');
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    stdin.write(LONG_LINE);
+    await tick();
+    const rows = stripAnsi(lastFrame() ?? '').split('\n');
+
+    expect(rows[0].startsWith(`${PROMPT}short first`)).toBe(true);
+    expect(rows[1].startsWith('  … ')).toBe(true);
+    expect(rows.length).toBeGreaterThan(2);
+    for (const row of rows) expect(row.length).toBeLessThanOrEqual(HARNESS_COLUMNS);
   });
 });
 

@@ -191,11 +191,19 @@ export function PromptEditor({
         // The row index is the only identity a line has here: two rows of a buffer can hold the
         // same text, and the caret's row is decided by position rather than by content.
         <Box key={index}>
-          {index === 0 ? (
-            <Text color="cyan">{PROMPT_PREFIX}</Text>
-          ) : (
-            <Text dimColor>{CONTINUATION_PREFIX}</Text>
-          )}
+          {/* The prefix is pinned at its natural width. Ink gives every child of a row `Box` a
+              default `flexShrink: 1`, so on a line long enough for the terminal to wrap, Yoga
+              shrinks the PREFIX as well as the text — dropping the trailing space, starting row 0's
+              text one column left of its own wrapped continuation, and handing the text more
+              columns than the row has, which the terminal then hard-wraps mid-word. Four columns is
+              the alignment this component promises; it is not a budget to borrow from. */}
+          <Box flexShrink={0}>
+            {index === 0 ? (
+              <Text color="cyan">{PROMPT_PREFIX}</Text>
+            ) : (
+              <Text dimColor>{CONTINUATION_PREFIX}</Text>
+            )}
+          </Box>
           <Text>{index === caretLine ? withCaret(text, column) : text}</Text>
         </Box>
       ))}

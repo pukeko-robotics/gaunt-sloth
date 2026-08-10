@@ -90,6 +90,39 @@ const awaitPromptCursorMovedFrom = async (terminal: Term, from: Cell): Promise<v
 };
 
 /**
+ * The terminal's own rows, with `serialize()`'s framing box stripped — index 0 is screen row 0.
+ *
+ * Used here only to ask which ROW a piece of text landed on, which is the one question a wrapped
+ * line makes interesting and the one no unit render can answer.
+ */
+const screenRows = (terminal: Term): string[] =>
+  terminal
+    .serialize()
+    .view.split('\n')
+    .slice(1, -1)
+    .map((line) => line.replace(/^│/, '').replace(/│$/, ''));
+
+/** The screen row `text` appears on. Throws rather than returning -1, so a miss names itself. */
+const rowContaining = (terminal: Term, text: string): number => {
+  const row = screenRows(terminal).findIndex((line) => line.includes(text));
+  if (row === -1) throw new Error(`no screen row contains ${JSON.stringify(text)}`);
+  return row;
+};
+
+/**
+ * A single logical line long enough that the terminal must break it across visual rows.
+ *
+ * The describes below set `columns` explicitly, so the threshold is known rather than inherited:
+ * the prompt spends 4 columns on its `  > ` prefix, leaving 96 for the text at 100 columns. This is
+ * 146 characters, so it wraps whatever the word boundaries do with it — and each case below proves
+ * the wrap happened rather than assuming it, because a line that quietly stopped wrapping would
+ * leave the case passing while testing nothing it was written for.
+ */
+const LONG_LINE =
+  'alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike ' +
+  'november oscar papa quebec romeo sierra tango uniform victor whiskey';
+
+/**
  * TUI-C25 — editing the message, at a real terminal.
  *
  * The unit suite drives Ink's parser with the bytes it wrote, which is what makes it a statement
@@ -169,5 +202,135 @@ test.describe('gth chat TUI — editing the message at the prompt (greeting fixt
 
     await expect(terminal.getByText('> alpha beta')).toBeVisible();
     await expect(terminal.getByText('> betaalpha')).not.toBeVisible();
+  });
+
+  /**
+   * Build `first` + `\` + Enter + `second` at the prompt, leaving the caret at the end of the
+   * second logical line. The continuation itself is asserted by the first case in this file; here it
+   * is the fixture the cross-line cases need.
+   */
+  const continueOnto = async (terminal: Term, first: string, second: string): Promise<void> => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+    terminal.write(first);
+    await expect(terminal.getByText(`> ${first}`)).toBeVisible();
+    terminal.write('\\');
+    await expect(terminal.getByText(`> ${first}\\`)).toBeVisible();
+    terminal.submit();
+    await expect(terminal.getByText('…')).toBeVisible();
+    terminal.write(second);
+    await expect(terminal.getByText(`… ${second}`)).toBeVisible();
+  };
+
+  // Up/Down over the rows of a real multi-line buffer — the acceptance clause that only exists once
+  // there IS a second row on screen. Asserted twice over: the caret changes SCREEN ROW (which is the
+  // pty's own statement), and the character typed afterwards lands on the row it moved to.
+  test('Up and Down move the caret between the rows of a multi-line message', async ({
+    terminal,
+  }) => {
+    await continueOnto(terminal, 'line one', 'line two');
+
+    const onSecondRow = promptCursorCell(terminal);
+    terminal.write('\x1b[A'); // Up
+    await awaitPromptCursorMovedFrom(terminal, onSecondRow);
+    const onFirstRow = promptCursorCell(terminal);
+    // One row up, same column — both lines are the same length, so the sticky column has nothing
+    // to clamp and any horizontal drift would be the editor losing the caret rather than moving it.
+    expect(onFirstRow.y).toBe(onSecondRow.y - 1);
+    expect(onFirstRow.x).toBe(onSecondRow.x);
+
+    terminal.write('X');
+    await expect(terminal.getByText('> line oneX')).toBeVisible();
+    await expect(terminal.getByText('… line two')).toBeVisible();
+
+    // …and back down. The insert cleared the sticky column, so Down returns to the end of the
+    // second line rather than to the column the caret started from.
+    const afterInsert = promptCursorCell(terminal);
+    terminal.write('\x1b[B'); // Down
+    await awaitPromptCursorMovedFrom(terminal, afterInsert);
+    expect(promptCursorCell(terminal).y).toBe(afterInsert.y + 1);
+
+    terminal.write('Y');
+    await expect(terminal.getByText('… line twoY')).toBeVisible();
+    await expect(terminal.getByText('> line oneX')).toBeVisible();
+  });
+
+  // Word motion on a multi-line buffer: the caret is on the second row and stays there, landing on
+  // the start of that row's last word.
+  test('Meta+B jumps back a word on the second row of a multi-line message', async ({
+    terminal,
+  }) => {
+    await continueOnto(terminal, 'alpha beta', 'gamma delta');
+
+    const before = promptCursorCell(terminal);
+    terminal.write('\x1bb'); // Meta+B → the start of `delta`
+    await awaitPromptCursorMovedFrom(terminal, before);
+    expect(promptCursorCell(terminal).y).toBe(before.y);
+    terminal.write('X');
+
+    await expect(terminal.getByText('… gamma Xdelta')).toBeVisible();
+    await expect(terminal.getByText('… gamma deltaX')).not.toBeVisible();
+    // The row above is untouched — the motion stayed inside the line it started on.
+    await expect(terminal.getByText('> alpha beta')).toBeVisible();
+  });
+
+  // Line motion on a multi-line buffer, and the v1 narrowing that goes with it: Ctrl+A is the start
+  // of the caret's OWN logical line, not of the whole message. Only a rendered second row can say
+  // which of the two it did.
+  test('Ctrl+A goes to the start of the caret own row, not of the whole message', async ({
+    terminal,
+  }) => {
+    await continueOnto(terminal, 'alpha beta', 'gamma delta');
+
+    const before = promptCursorCell(terminal);
+    terminal.write('\x01'); // Ctrl+A
+    await awaitPromptCursorMovedFrom(terminal, before);
+    // Still on the second row: a jump to the buffer start would have moved the caret up one.
+    expect(promptCursorCell(terminal).y).toBe(before.y);
+    terminal.write('Z');
+
+    await expect(terminal.getByText('… Zgamma delta')).toBeVisible();
+    // The reading this case exists to exclude.
+    await expect(terminal.getByText('> Zalpha beta')).not.toBeVisible();
+    await expect(terminal.getByText('> alpha beta')).toBeVisible();
+  });
+
+  // Word motion on a line the TERMINAL has broken across rows. The wrap is the whole point: to the
+  // model this is one logical line, and the only place that difference is observable is a pty.
+  test('Meta+B jumps back a word on a long wrapped single line', async ({ terminal }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    terminal.write(LONG_LINE);
+    await expect(terminal.getByText('whiskey')).toBeVisible();
+    // The line really is wrapped: its first and last words are on different screen rows.
+    expect(rowContaining(terminal, 'whiskey')).toBeGreaterThan(rowContaining(terminal, 'alpha'));
+
+    const before = promptCursorCell(terminal);
+    terminal.write('\x1bb'); // Meta+B → the start of `whiskey`
+    await awaitPromptCursorMovedFrom(terminal, before);
+    terminal.write('X');
+
+    await expect(terminal.getByText('Xwhiskey')).toBeVisible();
+    await expect(terminal.getByText('whiskeyX')).not.toBeVisible();
+  });
+
+  // Line motion across a wrap, which is the case the narrowing makes load-bearing: Up/Down do
+  // nothing on a wrapped line because it is ONE logical line, so Ctrl+A is how a user gets back to
+  // its start — and here it demonstrably crosses the visual row boundary to do it.
+  test('Ctrl+A crosses the wrap to the start of a long single line', async ({ terminal }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    terminal.write(LONG_LINE);
+    await expect(terminal.getByText('whiskey')).toBeVisible();
+    expect(rowContaining(terminal, 'whiskey')).toBeGreaterThan(rowContaining(terminal, 'alpha'));
+
+    const before = promptCursorCell(terminal);
+    terminal.write('\x01'); // Ctrl+A
+    await awaitPromptCursorMovedFrom(terminal, before);
+    // Up a screen row: the caret was on the wrapped tail and is now on the row the line starts on.
+    expect(promptCursorCell(terminal).y).toBeLessThan(before.y);
+    terminal.write('Z');
+
+    await expect(terminal.getByText('> Zalpha')).toBeVisible();
+    await expect(terminal.getByText('whiskeyZ')).not.toBeVisible();
   });
 });
