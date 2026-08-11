@@ -122,6 +122,12 @@ describe('lineEditor — killing a word, and killing to the ends of the line', (
     // Mid-word, and over a run of separators — both are the motion's own shape.
     const midWord = stateAt('foo bar baz', 10);
     expect(killWordLeft(midWord)).toEqual(backwardSpan(midWord));
+    // The literal is what carries the weight: `backwardSpan` is built from `moveWordLeft`, the same
+    // expression the implementation uses, so it would still hold if that motion were itself wrong.
+    expect(killWordLeft(midWord)).toEqual({
+      state: { value: 'foo bar z', cursor: 8 },
+      killed: 'ba',
+    });
     const afterGap = stateAt('foo   bar', 6);
     expect(killWordLeft(afterGap)).toEqual(backwardSpan(afterGap));
     expect(killWordLeft(afterGap)).toEqual({

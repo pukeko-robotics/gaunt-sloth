@@ -43,9 +43,19 @@ const help = (ctx: SlashCommandContext, registry = createCommandRegistry()): Sla
  *
  * `\ then Enter` is the most surface-specific of them: readline's prompt is one `rl.question` in
  * cooked mode, with no continuation and no way to add one, so promising it there would describe a
- * key that does nothing.
+ * key that does nothing. `Ctrl+J` is the other spelling of that same continuation and shares its
+ * entry, so it is exactly as TUI-only and belongs in this list beside it.
  */
-const TUI_ONLY_KEYS = ['PgUp', 'PgDn', 'Ctrl+Home', 'Ctrl+End', 'Ctrl+T', 'wheel', '\\ then Enter'];
+const TUI_ONLY_KEYS = [
+  'PgUp',
+  'PgDn',
+  'Ctrl+Home',
+  'Ctrl+End',
+  'Ctrl+T',
+  'wheel',
+  '\\ then Enter',
+  'Ctrl+J',
+];
 
 /**
  * The sections `/help` offers on this surface, and how many bindings each holds — written out as a

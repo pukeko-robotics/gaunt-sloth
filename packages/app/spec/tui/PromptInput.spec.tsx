@@ -732,7 +732,16 @@ describe('tui <PromptEditor> word deletion takes the motion span (TUI-C79)', () 
   /** At the end of the first line — a forward kill from here has to cross it. */
   const atLineEnd: EditorState = { value: TWO_LINES, cursor: 10 };
 
-  /** Press `sequence` at `state` and hand back the kill the editor asked its parent to apply. */
+  /**
+   * Press `sequence` at `state` and hand back the kill the editor asked its parent to apply.
+   *
+   * It answers WHICH verb a key triggers and over WHAT span, and only that. It cannot say the kill
+   * was computed against the authoritative buffer rather than the rendered prop, because it invokes
+   * the captured updater with the very object it passed as `state` — so `onKill(killWordLeft)` and
+   * `onKill(() => killWordLeft(state))` are indistinguishable from here, by construction. That
+   * property is pinned in 'keystrokes sharing one stdin chunk', which is the only place it can be:
+   * it takes two keystrokes in ONE `stdin.write` for the two to diverge at all.
+   */
   const killWith = async (
     sequence: string,
     state: EditorState
@@ -905,7 +914,7 @@ describe('tui <PromptEditor> killing to the ends of the line (TUI-C79)', () => {
 describe('tui <PromptEditor> the kill slot and Ctrl+Y (TUI-C79)', () => {
   paintsAnsi();
 
-  it('puts the most recent kill back at the caret', async () => {
+  it('puts the killed text back', async () => {
     const onSubmit = vi.fn();
     const { stdin, lastFrame } = render(<PromptInput onSubmit={onSubmit} commands={[]} />);
     stdin.write('hello world');
@@ -920,6 +929,50 @@ describe('tui <PromptEditor> the kill slot and Ctrl+Y (TUI-C79)', () => {
     stdin.write(ENTER);
     await tick();
     expect(onSubmit).toHaveBeenCalledWith('hello world');
+  });
+
+  it('holds the MOST RECENT kill, not the first one of the session', async () => {
+    // One kill cannot tell a one-slot store from a write-once one, and a write-once store is the
+    // shape a guard against clobbering is most likely to be mis-written into: the first kill of the
+    // session would then be the only text `Ctrl+Y` could ever produce, for the rest of the session.
+    const onSubmit = vi.fn();
+    const { stdin } = render(<PromptInput onSubmit={onSubmit} commands={[]} />);
+    stdin.write('alpha beta gamma');
+    await tick();
+    stdin.write(CTRL_W); // slot: `gamma`
+    await tick();
+    stdin.write(CTRL_W); // slot: `beta ` — the newer kill replaces it
+    await tick();
+    stdin.write(CTRL_Y);
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    // A slot that kept the FIRST kill submits `alpha gamma` here.
+    expect(onSubmit).toHaveBeenCalledWith('alpha beta ');
+  });
+
+  it('puts it back AT THE CARET, not at the end of the buffer', async () => {
+    // Every other yank in this suite happens with the caret already at the end of the buffer, where
+    // "at the caret" and "appended" are the same string — so the promise the node, the UX guidelines
+    // and the code comment all make is only visible from a caret that has been moved off the end.
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(<PromptInput onSubmit={onSubmit} commands={[]} />);
+    stdin.write('hello world');
+    await tick();
+    stdin.write(CTRL_W); // slot: `world`, buffer `hello `
+    await tick();
+    stdin.write(CTRL_A); // …and the caret to the start of the line, off the end of the buffer
+    await tick();
+    expect(caretIn(lastFrame() ?? '')).toEqual({ row: 0, column: 0 });
+
+    stdin.write(CTRL_Y);
+    await tick();
+    // Appended instead, this reads `hello world` with the caret left at column 11.
+    expect(bufferIn(lastFrame() ?? '')).toBe('worldhello');
+    expect(caretIn(lastFrame() ?? '')).toEqual({ row: 0, column: 5 });
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('worldhello ');
   });
 
   it('is NOT written by an ordinary Backspace', async () => {
@@ -1409,6 +1462,44 @@ describe('tui <PromptEditor> keystrokes sharing one stdin chunk (TUI-C25)', () =
     stdin.write(BACKSPACE + BACKSPACE + BACKSPACE + ENTER);
     await tick();
     expect(onSubmit).toHaveBeenCalledWith('abc');
+  });
+
+  // TUI-C79 — a KILL is in this class too, and it is the sharpest instance after Enter: the killed
+  // text is not only applied to the buffer, it is STORED, so a kill computed from the render puts
+  // text the user has already changed into the one slot `Ctrl+Y` reads back. Nothing on screen says
+  // the slot is stale, and it stays stale until the next kill.
+  it('kills the word the buffer holds after a backspace that shared its chunk', async () => {
+    const { stdin, lastFrame } = render(<PromptInput onSubmit={vi.fn()} commands={[]} />);
+    stdin.write('alpha beta');
+    await tick();
+    // `Alt+Backspace` rather than `Ctrl+W`, and that is forced: Ink's input parser splits a run of
+    // plain bytes only at backspace bytes, so `\x7f\x17\x19` would arrive as `\x7f` and then the
+    // two-byte string `\x17\x19`, which parses as no key at all. `\x1b\x7f` is an escape sequence,
+    // which the parser always cuts out on its own, so all three keys land as three events here.
+    //
+    // The YANK is what makes the defect observable. Both wirings leave the same buffer after the
+    // kill (`alpha ` either way); they differ only in the text they STORED — `bet` against `beta` —
+    // and the slot has no other window onto it.
+    stdin.write(BACKSPACE + ALT_BACKSPACE + CTRL_Y);
+    await tick();
+    // Computing the kill from the rendered prop, the backspace is thrown away, `beta` is killed and
+    // stored, and the yank puts it back whole — so this reads `alpha beta`, the text just corrected.
+    expect(bufferIn(lastFrame() ?? '')).toBe('alpha bet');
+    expect(caretIn(lastFrame() ?? '')).toEqual({ row: 0, column: 9 });
+  });
+
+  it('yanks at the caret the keystroke before it in the same chunk left', async () => {
+    const { stdin, lastFrame } = render(<PromptInput onSubmit={vi.fn()} commands={[]} />);
+    stdin.write('hello world');
+    await tick();
+    stdin.write(CTRL_W); // slot: `world`, buffer `hello `, in a chunk of its own
+    await tick();
+    stdin.write(BACKSPACE + CTRL_Y);
+    await tick();
+    // Inserting into the rendered state, the yank does not see the backspace that shared its chunk
+    // and reads `hello world` — the space back, and the caret one column past where it belongs.
+    expect(bufferIn(lastFrame() ?? '')).toBe('helloworld');
+    expect(caretIn(lastFrame() ?? '')).toEqual({ row: 0, column: 10 });
   });
 
   it('decides CONTINUE vs submit from the caret a motion in the same chunk left', async () => {

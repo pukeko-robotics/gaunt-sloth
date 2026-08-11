@@ -96,18 +96,23 @@ export const TUI_KEY_BINDINGS: readonly KeyBindingGroup[] = [
         keys: 'Ctrl+A / Ctrl+E, or Home / End',
         description: 'the start / end of the current line',
       },
-      { keys: 'Backspace', description: 'the character before the cursor' },
+      // Every line from here to Ctrl+Y names its verb, and the motions above deliberately do not.
+      // These sit directly under `Ctrl+A / Ctrl+E … the start / end of the current line` and are
+      // read one line at a time, so a verb-less `to the start / to the end of the current line`
+      // reads as a second way to say that motion — on the one key in the group whose mistaken
+      // press cannot be undone. The guide's table is written with the same verbs.
+      { keys: 'Backspace', description: 'delete the character before the cursor' },
       {
         // The exit note travels with the key, because a line is read alone and the reflex it has to
         // interrupt — Ctrl+D as end-of-input — is one a terminal user brings with them.
         keys: 'Delete, or Ctrl+D',
-        description: 'the character after the cursor — Ctrl+D deletes here, it never exits',
+        description: 'delete the character after the cursor — Ctrl+D deletes here, it never exits',
       },
-      { keys: 'Alt+Backspace, or Ctrl+W', description: 'the word before the cursor' },
-      { keys: 'Alt+Delete, or Ctrl+Delete', description: 'the word after the cursor' },
+      { keys: 'Alt+Backspace, or Ctrl+W', description: 'delete the word before the cursor' },
+      { keys: 'Alt+Delete, or Ctrl+Delete', description: 'delete the word after the cursor' },
       {
         keys: 'Ctrl+U / Ctrl+K',
-        description: 'to the start / to the end of the current line',
+        description: 'delete back to the start / on to the end of the current line',
       },
       {
         // Worth its own line rather than a clause on the four above: those four are the only keys

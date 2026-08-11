@@ -97,14 +97,23 @@ export function PromptInput({
     setBuffer(next);
   };
 
-  /** Apply one edit or motion, counting it as an edit only if it changed the text. */
-  const applyEdit = (update: (previous: EditorState) => EditorState): void => {
-    const previous = bufferRef.current;
-    const next = update(previous.state);
+  /**
+   * Commit `next` as the successor of `previous`, counting it as an edit only if it changed the
+   * text. Shared by every keystroke that produces a new buffer, so that what *counts* as an edit is
+   * decided in one place: an edit and a kill that answered that question differently would drift the
+   * serial the menu's bookkeeping hangs on.
+   */
+  const commit = (previous: PromptBuffer, next: EditorState): void => {
     commitBuffer({
       state: next,
       edits: next.value === previous.state.value ? previous.edits : previous.edits + 1,
     });
+  };
+
+  /** Apply one edit or motion, counting it as an edit only if it changed the text. */
+  const applyEdit = (update: (previous: EditorState) => EditorState): void => {
+    const previous = bufferRef.current;
+    commit(previous, update(previous.state));
   };
 
   /**
@@ -132,10 +141,7 @@ export function PromptInput({
     const previous = bufferRef.current;
     const { state: next, killed } = kill(previous.state);
     if (killed !== '') killRef.current = killed;
-    commitBuffer({
-      state: next,
-      edits: next.value === previous.state.value ? previous.edits : previous.edits + 1,
-    });
+    commit(previous, next);
   };
 
   /** `Ctrl+Y` — put the slot's text back at the caret. An empty slot inserts nothing. */
