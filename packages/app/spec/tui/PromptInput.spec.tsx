@@ -1012,6 +1012,31 @@ describe('tui <PromptEditor> the kill slot and Ctrl+Y (TUI-C79)', () => {
     expect(onSubmit).toHaveBeenCalledWith('hello world');
   });
 
+  it('survives its own yank: Ctrl+Y is repeatable', async () => {
+    // A DECISION, not an accident of the implementation: a yank that emptied the slot passes every
+    // other case in this file, so nothing here would notice one being added. It is repeatable
+    // because readline's `Ctrl+Y` — the key this deliberately imitates — is, and because a slot that
+    // spent itself on use would make the second press do nothing with nothing on screen to say why:
+    // the same unpredictability the "only the four killing verbs write it" rule exists to avoid.
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(<PromptInput onSubmit={onSubmit} commands={[]} />);
+    stdin.write('hello world');
+    await tick();
+    stdin.write(CTRL_W); // slot: `world`
+    await tick();
+    stdin.write(CTRL_Y);
+    await tick();
+    expect(bufferIn(lastFrame() ?? '')).toBe('hello world');
+
+    stdin.write(CTRL_Y);
+    await tick();
+    // A one-shot slot leaves `hello world` here, and the second press is silently inert.
+    expect(bufferIn(lastFrame() ?? '')).toBe('hello worldworld');
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('hello worldworld');
+  });
+
   it('inserts nothing when nothing has been killed yet', async () => {
     const onSubmit = vi.fn();
     const { stdin, lastFrame } = render(<PromptInput onSubmit={onSubmit} commands={[]} />);
@@ -1486,7 +1511,70 @@ describe('tui <PromptEditor> keystrokes sharing one stdin chunk (TUI-C25)', () =
     // stored, and the yank puts it back whole — so this reads `alpha beta`, the text just corrected.
     expect(bufferIn(lastFrame() ?? '')).toBe('alpha bet');
     expect(caretIn(lastFrame() ?? '')).toEqual({ row: 0, column: 9 });
+
+    // A SECOND yank, from the other end of the buffer, because the line above is also the buffer a
+    // burst that delivered only its backspace would leave: the assertion holds either because both
+    // keys were honoured or because neither was. That is not true today — Ink cuts `\x1b\x7f` out of
+    // the chunk as its own event — but it is a fact about a parser this file does not own, and if it
+    // ever changes this case must go RED rather than stay vacuously green. Reading the slot from a
+    // caret the kill did not leave the buffer at is the observable that cannot be faked by inaction.
+    stdin.write(CTRL_A);
+    await tick();
+    stdin.write(CTRL_Y);
+    await tick();
+    // Nothing killed, nothing stored: an empty slot leaves `alpha bet` here. A kill taken from the
+    // render stored `beta`, and this reads `betaalpha beta`.
+    expect(bufferIn(lastFrame() ?? '')).toBe('betalpha bet');
+    expect(caretIn(lastFrame() ?? '')).toEqual({ row: 0, column: 3 });
   });
+
+  /**
+   * The same invariant on the OTHER three killing verbs — one row per verb, because the wiring that
+   * carries it is per-branch: five separate `onKill(verb)` lines, and the next verb added is copied
+   * from one of them. A refactor that broke all five at once is caught by the case above; a single
+   * branch rewired to `onKill(() => verb(state))` is caught only here.
+   *
+   * Two events out of one write, which is all this needs: the parser cuts a run of plain bytes at
+   * the backspace byte, so the one-byte tail (`Ctrl+W`, `Ctrl+K`, `Ctrl+U`) parses on its own, and
+   * `Ctrl+Delete`'s escape sequence is cut out by the escape scan before that.
+   */
+  const CHUNK_KILLS: ReadonlyArray<
+    readonly [name: string, kill: string, back: string, at: number]
+  > = [
+    ['Ctrl+W kills back by a word', CTRL_W, CTRL_E, 5],
+    ['Ctrl+Delete kills on by a word', CTRL_DELETE, CTRL_A, 3],
+    ['Ctrl+K kills to the end of the line', CTRL_K, CTRL_A, 3],
+    ['Ctrl+U kills back to its start', CTRL_U, CTRL_E, 5],
+  ];
+
+  it.each(CHUNK_KILLS)(
+    '%s over the buffer as it stands after a backspace that shared its chunk',
+    async (_name, kill, back, column) => {
+      const { stdin, lastFrame } = render(<PromptInput onSubmit={vi.fn()} commands={[]} />);
+      stdin.write('abcdef');
+      await tick();
+      stdin.write(LEFT + LEFT + LEFT); // between `abc` and `def`, so both directions have text
+      await tick();
+
+      // The backspace takes the `c`, leaving `abdef` with the caret at 2 — so every one of the four
+      // verbs kills a two- or three-character span that DIFFERS from the span it would take on the
+      // rendered `abcdef`, in the text it stores as well as in the buffer it leaves.
+      stdin.write(BACKSPACE + kill);
+      await tick();
+
+      // Yank from the far end of what the kill left, never from where it put the caret: yanking in
+      // place would let a burst that delivered only its backspace produce the expected string by
+      // doing nothing at all. From here, `abdef` is what that failure reads as.
+      stdin.write(back);
+      await tick();
+      stdin.write(CTRL_Y);
+      await tick();
+      // Taken from the render, each verb stores one character more (`abc` or `def`) and this reads
+      // `defabc` — the `c` the user had already deleted, put back by a key that only pastes.
+      expect(bufferIn(lastFrame() ?? '')).toBe('defab');
+      expect(caretIn(lastFrame() ?? '')).toEqual({ row: 0, column });
+    }
+  );
 
   it('yanks at the caret the keystroke before it in the same chunk left', async () => {
     const { stdin, lastFrame } = render(<PromptInput onSubmit={vi.fn()} commands={[]} />);

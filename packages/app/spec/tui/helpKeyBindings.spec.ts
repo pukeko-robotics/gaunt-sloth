@@ -217,6 +217,35 @@ describe('/help key bindings — one registry, two keyboards (TUI-C63)', () => {
     expect(wordMotion).toContain('Ctrl+←');
   });
 
+  it('names the verb on every prompt key that destroys text, so none reads as a motion', () => {
+    const lines = help(tuiCtx).lines;
+
+    // The prompt group lists its motions without a verb (`← / →` — `a character`) and that reads
+    // fine, because a line is scanned alone: `a word` under `a character` can only be a movement.
+    // The deletions sit in the same run and are read the same way, so each of them has to say so
+    // itself — `Ctrl+U / Ctrl+K`, directly under `Ctrl+A / Ctrl+E … the start / end of the current
+    // line`, is the one that misleads hardest and the one key here whose press cannot be undone.
+    // Substance, not wording: the verb must be there, the rest of the sentence may change freely.
+    const DELETION_KEYS = [
+      'Backspace',
+      'Delete, or Ctrl+D',
+      'Alt+Backspace, or Ctrl+W',
+      'Alt+Delete, or Ctrl+Delete',
+      'Ctrl+U / Ctrl+K',
+    ];
+    for (const keys of DELETION_KEYS) {
+      const line = lines.find((candidate) => candidate.trimStart().startsWith(`${keys} — `));
+      expect(line, keys).toBeDefined();
+      // `[1]`, not the tail: the `Ctrl+D` line carries a second dash of its own.
+      expect((line ?? '').split(' — ')[1], keys).toMatch(/^delete\b/);
+    }
+
+    // And the key that undoes them names what it puts back, rather than promising a clipboard.
+    const yank = lines.find((candidate) => candidate.trimStart().startsWith('Ctrl+Y — '));
+    expect(yank).toBeDefined();
+    expect(yank).toMatch(/put back/);
+  });
+
   it('keeps the hint fragment a fragment: it joins the shared row, and only mentions scrolling', () => {
     // Opens with the separator the shared exitMessage already uses between its own clauses, so the
     // row reads as one sentence rather than two glued strings.

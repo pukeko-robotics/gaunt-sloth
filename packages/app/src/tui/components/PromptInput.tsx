@@ -129,6 +129,11 @@ export function PromptInput({
    * `Backspace`/`Delete`/`Ctrl+D` deliberately do not — a slot that every keystroke overwrites is
    * one nobody can predict the contents of — and neither does a kill that removed nothing, which
    * would otherwise destroy a yank the user still wanted by replacing it with an empty string.
+   *
+   * A yank READS the slot and leaves it, so `Ctrl+Y` is repeatable — deliberately, not incidentally.
+   * readline's `Ctrl+Y` is repeatable and this imitates it, and a slot that spent itself on use would
+   * make the second press do nothing with nothing on screen to explain why: the same unpredictability
+   * the rule above exists to avoid. Only the four killing verbs ever write here.
    */
   const killRef = useRef('');
 
