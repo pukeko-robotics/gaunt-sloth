@@ -26,8 +26,16 @@
  * always consumed there is no escape for a literal one, so a submitted line cannot end in a
  * backslash.
  *
- * Every exported function is pure: it returns a new {@link EditorState} and never mutates its
- * argument. A movement that cannot move returns an equivalent state.
+ * **Deleting, and what a deletion hands back.** The one-code-point deletions return a state like
+ * every motion does. The four *killing* verbs — both word deletions and both line-edge kills —
+ * return a {@link KillResult}, which carries the removed text alongside the new state so the caller
+ * can keep it. That is what makes them recoverable: `Ctrl+U` on a composed message removes it in one
+ * keystroke and this prompt has no undo. The one-slot store the text is kept in lives with the
+ * buffer in `<PromptInput>`, not here — a module-level slot would be shared by every render tree.
+ *
+ * Every exported function is pure: it returns a new {@link EditorState} (or a {@link KillResult}
+ * holding one) and never mutates its argument. A movement that cannot move returns an equivalent
+ * state, and a kill that removes nothing reports `''` rather than a fabricated empty kill.
  */
 
 /** An immutable snapshot of the prompt buffer and where the caret sits in it. */
@@ -160,6 +168,63 @@ export function deleteBackward(state: EditorState): EditorState {
     value: state.value.slice(0, start) + state.value.slice(state.cursor),
     cursor: start,
   };
+}
+
+/**
+ * Delete: remove the code point AFTER the caret, which stays where it is. No-op at the end of the
+ * buffer. `\n` is an ordinary code point here, so this joins the next line onto this one.
+ */
+export function deleteForward(state: EditorState): EditorState {
+  const end = nextCodePointEnd(state.value, state.cursor);
+  if (end <= state.cursor) return at(state, state.cursor);
+  return {
+    value: state.value.slice(0, state.cursor) + state.value.slice(end),
+    cursor: state.cursor,
+  };
+}
+
+/** What a killing verb removed, with the state it left behind. `killed` is `''` when it took none. */
+export interface KillResult {
+  readonly state: EditorState;
+  readonly killed: string;
+}
+
+/**
+ * Remove `value[start..end)` and report what came out, leaving the caret at `start`.
+ *
+ * An empty range is answered with `killed: ''` and an equivalent state — never a "kill" of the empty
+ * string, because the caller stores what it is handed and an empty kill would overwrite a stored one
+ * the user still wanted back.
+ */
+function killRange(state: EditorState, start: number, end: number): KillResult {
+  if (start >= end) return { state: at(state, state.cursor), killed: '' };
+  return {
+    state: { value: state.value.slice(0, start) + state.value.slice(end), cursor: start },
+    killed: state.value.slice(start, end),
+  };
+}
+
+/**
+ * Kill backward by a word: exactly the span {@link moveWordLeft} traverses, so the deletion and the
+ * motion cannot drift apart. `\n` is a separator like any other, so this crosses a line boundary.
+ */
+export function killWordLeft(state: EditorState): KillResult {
+  return killRange(state, moveWordLeft(state).cursor, state.cursor);
+}
+
+/** Kill forward by a word: exactly the span {@link moveWordRight} traverses, line boundary included. */
+export function killWordRight(state: EditorState): KillResult {
+  return killRange(state, state.cursor, moveWordRight(state).cursor);
+}
+
+/** Kill to the end of the caret's own LOGICAL line — `Ctrl+E`'s span, deleted. */
+export function killToLineEnd(state: EditorState): KillResult {
+  return killRange(state, state.cursor, lineEndOffset(state.value, state.cursor));
+}
+
+/** Kill back to the start of the caret's own LOGICAL line — `Ctrl+A`'s span, deleted. */
+export function killToLineStart(state: EditorState): KillResult {
+  return killRange(state, lineStartOffset(state.value, state.cursor), state.cursor);
 }
 
 export function moveLeft(state: EditorState): EditorState {

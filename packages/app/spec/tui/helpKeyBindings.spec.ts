@@ -60,7 +60,7 @@ const TUI_ONLY_KEYS = ['PgUp', 'PgDn', 'Ctrl+Home', 'Ctrl+End', 'Ctrl+T', 'wheel
 const EXPECTED_SECTIONS: readonly [title: string, bindings: number][] = [
   ['Scrolling the conversation (this window has no scrollback of its own)', 5],
   ['While the agent is working', 1],
-  ['At the prompt', 9],
+  ['At the prompt', 15],
   ['Panels', 7],
   ['When a tool call asks for approval (the prompt shows these too)', 1],
   ['Always', 1],

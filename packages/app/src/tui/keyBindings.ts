@@ -78,9 +78,10 @@ export const TUI_KEY_BINDINGS: readonly KeyBindingGroup[] = [
       },
       { keys: 'Esc', description: 'dismiss the menu' },
       {
-        // The one binding here a user cannot discover by pressing something: it is a character
-        // they already type for other reasons, and nothing on screen suggests it means anything.
-        keys: '\\ then Enter',
+        // The one binding here a user cannot discover by pressing something: neither spelling
+        // shows itself. `\` is a character they already type for other reasons and nothing on
+        // screen suggests it means anything, and a chord announces itself even less.
+        keys: '\\ then Enter, or Ctrl+J',
         description: 'carry the message onto another line instead of sending it',
       },
       {
@@ -94,6 +95,25 @@ export const TUI_KEY_BINDINGS: readonly KeyBindingGroup[] = [
       {
         keys: 'Ctrl+A / Ctrl+E, or Home / End',
         description: 'the start / end of the current line',
+      },
+      { keys: 'Backspace', description: 'the character before the cursor' },
+      {
+        // The exit note travels with the key, because a line is read alone and the reflex it has to
+        // interrupt — Ctrl+D as end-of-input — is one a terminal user brings with them.
+        keys: 'Delete, or Ctrl+D',
+        description: 'the character after the cursor — Ctrl+D deletes here, it never exits',
+      },
+      { keys: 'Alt+Backspace, or Ctrl+W', description: 'the word before the cursor' },
+      { keys: 'Alt+Delete, or Ctrl+Delete', description: 'the word after the cursor' },
+      {
+        keys: 'Ctrl+U / Ctrl+K',
+        description: 'to the start / to the end of the current line',
+      },
+      {
+        // Worth its own line rather than a clause on the four above: those four are the only keys
+        // that fill the slot, and it holds exactly one kill, so what comes back is predictable.
+        keys: 'Ctrl+Y',
+        description: 'put back the text the last of those four deletions removed',
       },
     ],
   },

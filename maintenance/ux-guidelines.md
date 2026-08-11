@@ -455,15 +455,37 @@ their config has a problem.
     while it is open, the buffer owns them otherwise. There is no input-history recall at this
     prompt, so the buffer's no-op on a single-line message is the end of the chain, not a
     fall-through. `/help` lists both meanings on one line for the same reason (DL-4).
+  - **Every deletion is a motion's span, deleted** (TUI-C79). `Backspace`/`Delete` (and `Ctrl+D`, a
+    second spelling of `Delete`) take one character each way; `Alt`+`⌫` and `Ctrl+W` take what word
+    motion moves back over; `Alt`+`Delete` and `Ctrl+Delete` take what it moves on over; `Ctrl+U`
+    and `Ctrl+K` take what `Ctrl+A` and `Ctrl+E` move over — the caret's own logical line. Defining
+    them by the motions is what stops the pair drifting: bash and zsh already disagree about both
+    `Ctrl+W` and `Ctrl+U`, so "what users expect" cannot settle it and internal coherence does.
+    - **`Ctrl+D` never exits, even on an empty buffer.** readline's EOF convention is declined
+      because `Ctrl+C` carries the buffer-dependent exit rule and a second exit key with a different
+      one is a trap. **`Ctrl`+`⌫` is not bindable at all** — Ink's `\x08` branch sits above its
+      ctrl+letter branch and blanks `input` for a backspace, so the chord is indistinguishable from
+      a plain one; `Ctrl+W` is what gives a keyboard without Option-as-Meta a backward word delete.
+  - **The four word/line deletions are recoverable; the one-character ones are not stored** (DL-3
+    preserve the user's content, TUI-C79). `Ctrl+U` on a composed message removes it in one
+    keystroke and the prompt has no undo, so the killed text goes to a **single slot** that `Ctrl+Y`
+    puts back at the caret. One slot, not a kill ring. `Backspace`/`Delete`/`Ctrl+D` deliberately do
+    not write it — a slot every keystroke overwrites is one nobody can predict — and neither does a
+    kill that removed nothing, which would otherwise destroy a yank the user still wanted. The slot
+    lives beside the buffer in `PromptInput.tsx`: the editor is controlled and unmounts in several
+    app states, and module scope in the pure model would share one slot across every render tree.
   - **Two v1 narrowings, deliberate:** `↑`/`↓` move over *logical* lines, not visual wrapped rows
     (visual motion would thread the terminal width into a pure module); and the line motions go to
     the ends of the caret's own line, not of the whole buffer.
 - **A message can be more than one line (DL-3 preserve the user's content, DL-9).** A trailing `\`
-  before `Enter` continues the line instead of sending it; continuation rows are drawn with a dim
-  `  … ` prefix exactly as wide as `  > `, so every row's text stays in one column (DL-7 legibility).
-  `/help` lists the continuation, because `\` is a character a user types for other reasons and
-  nothing on screen would otherwise suggest it means anything (DL-4 — an affordance nobody can see
-  is one nobody has).
+  before `Enter` continues the line instead of sending it, and `Ctrl+J` inserts a newline at the
+  caret directly (the same row, without the backslash's limitation that a sent line cannot end in
+  one); continuation rows are drawn with a dim `  … ` prefix exactly as wide as `  > `, so every
+  row's text stays in one column (DL-7 legibility). `/help` lists both spellings, because neither
+  announces itself — `\` is a character a user types for other reasons, and a chord is invisible
+  (DL-4 — an affordance nobody can see is one nobody has). `Shift+Enter` is not among them and
+  cannot be: terminals do not distinguish it from `Enter` without the kitty keyboard protocol, which
+  Terminal.app and iTerm2 do not speak.
 - **multiline paste** — pasting text with newlines buffers it into the prompt intact; the embedded
   newlines do **not** submit — only an explicit `Enter` sends the whole buffered value (DL-9
   keyboard-first, DL-3 preserve the user's content, TUI-C24). The prompt enables the terminal's

@@ -294,6 +294,85 @@ test.describe('gth chat TUI — editing the message at the prompt (greeting fixt
     await expect(terminal.getByText('> alpha beta')).toBeVisible();
   });
 
+  // TUI-C79 — deleting a word backwards, in the one spelling every keyboard can reach. The typed
+  // `X` is the assertion again: it lands where the deletion left the caret, so a chord that typed
+  // its letter or moved without deleting shows up in the text rather than only in a missing word.
+  test('Ctrl+W deletes the word before the cursor', async ({ terminal }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    terminal.write('alpha beta');
+    await expect(terminal.getByText('> alpha beta')).toBeVisible();
+
+    const before = promptCursorCell(terminal);
+    terminal.write('\x17'); // Ctrl+W → `beta` goes
+    await awaitPromptCursorMovedFrom(terminal, before);
+    terminal.write('X');
+
+    await expect(terminal.getByText('> alpha X')).toBeVisible();
+    await expect(terminal.getByText('> alpha betaX')).not.toBeVisible();
+    await expect(terminal.getByText('> alpha betaw')).not.toBeVisible();
+  });
+
+  // TUI-C79 — Ctrl+U removes the line and Ctrl+Y puts it back. Only the round trip is worth a pty
+  // case: the kill slot is the reason a one-keystroke destruction of a composed message is shippable
+  // at all, and both halves are asserted POSITIVELY here, by what ends up on screen.
+  test('Ctrl+U clears the line and Ctrl+Y puts the killed text back', async ({ terminal }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    terminal.write('alpha beta');
+    await expect(terminal.getByText('> alpha beta')).toBeVisible();
+
+    const before = promptCursorCell(terminal);
+    terminal.write('\x15'); // Ctrl+U → the whole line, since the caret is at its end
+    await awaitPromptCursorMovedFrom(terminal, before);
+    terminal.write('zzz');
+    // The line really was cleared: what is on screen is only what was typed after the kill.
+    await expect(terminal.getByText('> zzz')).toBeVisible();
+    await expect(terminal.getByText('> alpha beta')).not.toBeVisible();
+
+    terminal.write('\x19'); // Ctrl+Y → the killed text, back at the caret
+    await expect(terminal.getByText('> zzzalpha beta')).toBeVisible();
+  });
+
+  // TUI-C79 — Ctrl+D deletes forward and NEVER exits, not even on an empty buffer. readline's EOF
+  // convention is declined deliberately, and this is the only level the "never exits" half can be
+  // stated at: a unit render has no process to end.
+  test('Ctrl+D on an empty prompt does not end the session', async ({ terminal }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    terminal.write('\x04'); // Ctrl+D on an empty buffer
+    await expect(terminal.getByText('chat  ·  turns: 0  ·  ready')).toBeVisible();
+
+    // Still alive and still taking input — a session that had exited would render neither.
+    terminal.write('still here');
+    await expect(terminal.getByText('> still here')).toBeVisible();
+  });
+
+  // TUI-C79 item (6) — Ctrl+J is the newline key. It reaches the editor's insert branch by falling
+  // past every other one, so this pins the whole path at a real terminal: the byte survives the pty
+  // (ConPTY included) and arrives as a literal newline rather than as Enter.
+  test('Ctrl+J continues the message onto another line without sending it', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    terminal.write('line one');
+    await expect(terminal.getByText('> line one')).toBeVisible();
+
+    terminal.write('\n'); // Ctrl+J
+    await expect(terminal.getByText('…')).toBeVisible();
+    // No turn ran, which is what says this was a newline and not a submission.
+    await expect(terminal.getByText('chat  ·  turns: 0  ·  ready')).toBeVisible();
+
+    terminal.write('line two');
+    await expect(terminal.getByText('… line two')).toBeVisible();
+
+    terminal.submit();
+    await expect(terminal.getByText('You › line one')).toBeVisible();
+    await expect(terminal.getByText('line two')).toBeVisible();
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+  });
+
   // Word motion on a line the TERMINAL has broken across rows. The wrap is the whole point: to the
   // model this is one logical line, and the only place that difference is observable is a pty.
   test('Meta+B jumps back a word on a long wrapped single line', async ({ terminal }) => {

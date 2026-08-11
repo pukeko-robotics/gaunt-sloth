@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createEditorState,
   deleteBackward,
+  deleteForward,
   insertText,
+  killToLineEnd,
+  killToLineStart,
+  killWordLeft,
+  killWordRight,
   layout,
   moveLeft,
   moveLineDown,
@@ -60,6 +65,144 @@ describe('lineEditor — inserting and deleting', () => {
   it('backspaces a whole emoji with one press', () => {
     // 'ab😀' is four UTF-16 units; removing one would leave a lone surrogate on screen.
     expect(deleteBackward(createEditorState('ab😀'))).toEqual({ value: 'ab', cursor: 2 });
+  });
+
+  it('deletes FORWARD without moving the caret, and does nothing at the end of the buffer', () => {
+    // TUI-C79 item (1). Stated against the backward case in the same breath, because a forward
+    // deletion wired to `deleteBackward` passes any assertion that only counts characters.
+    expect(deleteForward(stateAt('abc', 1))).toEqual({ value: 'ac', cursor: 1 });
+    expect(deleteBackward(stateAt('abc', 1))).toEqual({ value: 'bc', cursor: 0 });
+    expect(deleteForward(createEditorState('abc'))).toEqual({ value: 'abc', cursor: 3 });
+    expect(deleteForward(createEditorState(''))).toEqual({ value: '', cursor: 0 });
+  });
+
+  it('deletes a whole emoji forward, and joins the next line when the caret is at a newline', () => {
+    expect(deleteForward(stateAt('a😀b', 1))).toEqual({ value: 'ab', cursor: 1 });
+    // `\n` is an ordinary code point to this operation — the same as Delete at end-of-line in any
+    // editor a user has met.
+    expect(deleteForward(stateAt('one\ntwo', 3))).toEqual({ value: 'onetwo', cursor: 3 });
+  });
+});
+
+/**
+ * TUI-C79 — the four killing verbs, and what makes them recoverable.
+ *
+ * Each direction is defined as *exactly the span its TUI-C25 motion traverses*, so the cases below
+ * state the span in terms of that motion rather than by repeating a literal: a deletion and a motion
+ * that drift apart is the failure this pairing exists to make impossible. The `killed` half matters
+ * as much as the state — an empty kill would clobber the one slot that holds the text back.
+ */
+describe('lineEditor — killing a word, and killing to the ends of the line', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  /** What a backward kill from `state` must be, said in terms of the motion it mirrors. */
+  const backwardSpan = (state: EditorState) => ({
+    state: {
+      value: state.value.slice(0, moveWordLeft(state).cursor) + state.value.slice(state.cursor),
+      cursor: moveWordLeft(state).cursor,
+    },
+    killed: state.value.slice(moveWordLeft(state).cursor, state.cursor),
+  });
+
+  /** The forward twin. */
+  const forwardSpan = (state: EditorState) => ({
+    state: {
+      value: state.value.slice(0, state.cursor) + state.value.slice(moveWordRight(state).cursor),
+      cursor: state.cursor,
+    },
+    killed: state.value.slice(state.cursor, moveWordRight(state).cursor),
+  });
+
+  it('kills back over exactly the span word motion traverses', () => {
+    const state = createEditorState('foo bar baz');
+    expect(killWordLeft(state)).toEqual(backwardSpan(state));
+    expect(killWordLeft(state)).toEqual({ state: { value: 'foo bar ', cursor: 8 }, killed: 'baz' });
+    // Mid-word, and over a run of separators — both are the motion's own shape.
+    const midWord = stateAt('foo bar baz', 10);
+    expect(killWordLeft(midWord)).toEqual(backwardSpan(midWord));
+    const afterGap = stateAt('foo   bar', 6);
+    expect(killWordLeft(afterGap)).toEqual(backwardSpan(afterGap));
+    expect(killWordLeft(afterGap)).toEqual({
+      state: { value: 'bar', cursor: 0 },
+      killed: 'foo   ',
+    });
+  });
+
+  it('kills forward over exactly the span word motion traverses', () => {
+    const state = stateAt('foo bar baz', 0);
+    expect(killWordRight(state)).toEqual(forwardSpan(state));
+    expect(killWordRight(state)).toEqual({
+      state: { value: ' bar baz', cursor: 0 },
+      killed: 'foo',
+    });
+    const midGap = stateAt('foo   bar', 3);
+    expect(killWordRight(midGap)).toEqual(forwardSpan(midGap));
+    expect(killWordRight(midGap)).toEqual({ state: { value: 'foo', cursor: 3 }, killed: '   bar' });
+  });
+
+  it('crosses a line boundary in both directions, because `\\n` is just another separator', () => {
+    const backward = stateAt('foo\nbar', 4);
+    expect(killWordLeft(backward)).toEqual(backwardSpan(backward));
+    expect(killWordLeft(backward)).toEqual({ state: { value: 'bar', cursor: 0 }, killed: 'foo\n' });
+    const forward = stateAt('foo\nbar', 3);
+    expect(killWordRight(forward)).toEqual(forwardSpan(forward));
+    expect(killWordRight(forward)).toEqual({ state: { value: 'foo', cursor: 3 }, killed: '\nbar' });
+  });
+
+  it('takes ONE alphanumeric word out of a punctuated token, not the whole token', () => {
+    // Where TUI-C79's one-action decision is visible. readline's `unix-word-rubout` (what bash binds
+    // `Ctrl+W` to) would take the whole of `foo.bar/baz`; both of this prompt's backward spellings
+    // are the same action, and it is the word definition the motions already use.
+    const state = createEditorState('foo.bar/baz');
+    expect(killWordLeft(state)).toEqual({ state: { value: 'foo.bar/', cursor: 8 }, killed: 'baz' });
+    expect(killWordLeft(state)).toEqual(backwardSpan(state));
+  });
+
+  it('kills to the end and the start of the caret OWN logical line', () => {
+    const buffer = 'one\ntwo\nthree';
+    expect(killToLineEnd(stateAt(buffer, 5))).toEqual({
+      state: { value: 'one\nt\nthree', cursor: 5 },
+      killed: 'wo',
+    });
+    // To the line START, not the whole line: the text after the caret is left exactly where it was.
+    expect(killToLineStart(stateAt(buffer, 5))).toEqual({
+      state: { value: 'one\nwo\nthree', cursor: 4 },
+      killed: 't',
+    });
+    // Killing a whole line is the two of them in sequence, which is why neither does it alone.
+    const toEnd = killToLineEnd(stateAt(buffer, 5));
+    expect(killToLineStart(toEnd.state)).toEqual({
+      state: { value: 'one\n\nthree', cursor: 4 },
+      killed: 't',
+    });
+  });
+
+  it('reports an empty kill rather than clobbering the slot, when there is nothing to take', () => {
+    // The slot is one deep and has no undo behind it, so a kill that removed nothing must be
+    // distinguishable from a kill of the empty string — the caller stores what it is handed.
+    expect(killToLineEnd(stateAt('one\ntwo', 3)).killed).toBe('');
+    expect(killToLineStart(stateAt('one\ntwo', 4)).killed).toBe('');
+    expect(killWordLeft(stateAt('foo bar', 0)).killed).toBe('');
+    expect(killWordRight(stateAt('foo bar', 7)).killed).toBe('');
+    // …and the state such a kill hands back is the buffer untouched.
+    expect(killToLineEnd(stateAt('one\ntwo', 3)).state).toEqual({ value: 'one\ntwo', cursor: 3 });
+  });
+
+  it('does not mutate the state it was given, and clears the sticky column', () => {
+    const before = stateAt('foo bar', 7);
+    killWordLeft(before);
+    killWordRight(stateAt('foo bar', 0));
+    expect(before).toEqual({ value: 'foo bar', cursor: 7 });
+
+    const down = moveLineDown(stateAt('long line\nab', 4));
+    expect(down.desiredColumn).toBe(4);
+    expect(killWordLeft(down).state.desiredColumn).toBeUndefined();
+    expect(killWordRight(down).state.desiredColumn).toBeUndefined();
+    expect(killToLineEnd(down).state.desiredColumn).toBeUndefined();
+    expect(killToLineStart(down).state.desiredColumn).toBeUndefined();
+    expect(deleteForward(down).desiredColumn).toBeUndefined();
   });
 });
 

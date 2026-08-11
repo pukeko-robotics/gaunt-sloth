@@ -12,6 +12,7 @@ import {
   insertText,
   pressEnter,
   type EditorState,
+  type KillResult,
 } from '#src/tui/lineEditor.js';
 import { normalizePastedText } from '#src/tui/pasteParser.js';
 
@@ -27,9 +28,10 @@ interface PromptBuffer {
  *
  * The buffer and caret live here as an {@link import('#src/tui/lineEditor.js').EditorState} and are
  * rendered and driven by `<PromptEditor>` (TUI-C25), which owns the keyboard for everything that
- * edits text. This component owns what the buffer *means*: the slash menu it may open, and the
+ * edits text. This component owns what the buffer *means*: the slash menu it may open, the
  * submission it becomes — including what Enter means, which is decided against the authoritative
- * buffer so that it reads the text its predecessors in the same stdin chunk produced.
+ * buffer so that it reads the text its predecessors in the same stdin chunk produced — and the
+ * one-slot kill store the editor's killing verbs feed and `Ctrl+Y` reads back (`killRef` below).
  *
  * TUI-C10 — while the user is typing a bare slash command (input starts with `/`, no space yet),
  * a discovery menu of the matching registered commands appears just above the prompt. The registry
@@ -103,6 +105,42 @@ export function PromptInput({
       state: next,
       edits: next.value === previous.state.value ? previous.edits : previous.edits + 1,
     });
+  };
+
+  /**
+   * The one-slot kill store: the text the most recent killing verb removed (TUI-C79).
+   *
+   * It sits here, beside the buffer, for the same reason the buffer does — `<PromptEditor>` is
+   * controlled and stores nothing, and it is unmounted in several app states, while module scope in
+   * `lineEditor.ts` would share one slot across every render tree. Nothing renders it, so a plain
+   * ref is the whole of it; it is written and read in the same synchronous handler the buffer is.
+   *
+   * ONE slot, not a readline kill ring: the four killing verbs (`Alt+Backspace`/`Ctrl+W`,
+   * `Alt+Delete`/`Ctrl+Delete`, `Ctrl+K`, `Ctrl+U`) feed it and `Ctrl+Y` puts it back. Plain
+   * `Backspace`/`Delete`/`Ctrl+D` deliberately do not — a slot that every keystroke overwrites is
+   * one nobody can predict the contents of — and neither does a kill that removed nothing, which
+   * would otherwise destroy a yank the user still wanted by replacing it with an empty string.
+   */
+  const killRef = useRef('');
+
+  /**
+   * Apply one kill: the same authoritative-buffer path as {@link applyEdit}, and the removed text
+   * comes out of that same call rather than being read off the render — a kill sharing a stdin chunk
+   * with an earlier edit would otherwise store text the user has already changed.
+   */
+  const applyKill = (kill: (previous: EditorState) => KillResult): void => {
+    const previous = bufferRef.current;
+    const { state: next, killed } = kill(previous.state);
+    if (killed !== '') killRef.current = killed;
+    commitBuffer({
+      state: next,
+      edits: next.value === previous.state.value ? previous.edits : previous.edits + 1,
+    });
+  };
+
+  /** `Ctrl+Y` — put the slot's text back at the caret. An empty slot inserts nothing. */
+  const yankKill = (): void => {
+    applyEdit((current) => insertText(current, killRef.current));
   };
 
   /** Submit `value` and clear the buffer; the bumped serial resets the menu (see `bufferRef`). */
@@ -215,6 +253,8 @@ export function PromptInput({
       <PromptEditor
         state={state}
         onChange={applyEdit}
+        onKill={applyKill}
+        onYank={yankKill}
         onEnter={pressEnterOnBuffer}
         menuActive={menuActive}
       />

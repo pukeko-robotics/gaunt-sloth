@@ -3,7 +3,12 @@ import { Box, Text, useInput } from 'ink';
 import chalk from 'chalk';
 import {
   deleteBackward,
+  deleteForward,
   insertText,
+  killToLineEnd,
+  killToLineStart,
+  killWordLeft,
+  killWordRight,
   layout,
   moveLeft,
   moveLineDown,
@@ -14,6 +19,7 @@ import {
   moveWordLeft,
   moveWordRight,
   type EditorState,
+  type KillResult,
 } from '#src/tui/lineEditor.js';
 
 /**
@@ -57,6 +63,19 @@ import {
  *   word motion plus `Ctrl+A`/`Ctrl+E` already give a wrapped line the navigation it needs.
  * - `Ctrl+A`/`Ctrl+E` and `Home`/`End` go to the ends of the caret's OWN logical line, not of the
  *   whole buffer. There is no buffer-start/buffer-end binding.
+ *
+ * **Every deletion has a matching motion, and takes exactly that motion's span** (TUI-C79). Word
+ * deletion deletes what word motion traverses, and `Ctrl+U`/`Ctrl+K` delete what `Ctrl+A`/`Ctrl+E`
+ * move over — the caret's own logical line, not the whole buffer and not a visual row. Two shells
+ * already disagree about both of those (bash rubs out to whitespace on `Ctrl+W` and to line start on
+ * `Ctrl+U`; zsh takes a word and the whole line), so "what users expect" cannot decide it and
+ * internal consistency with the motions does.
+ *
+ * **The four word/line deletions are KILLS: they hand the removed text up through {@link onKill},**
+ * and `<PromptInput>` keeps the most recent one in a single slot that `Ctrl+Y` puts back. Plain
+ * `Backspace`/`Delete`/`Ctrl+D` are deliberately NOT kills — a slot every keystroke overwrites is one
+ * nobody can predict the contents of. The kill travels with the state change rather than being read
+ * off {@link state} for the same batching reason every edit is an updater.
  */
 
 /** The `  > ` the first row of the buffer is written after. */
@@ -86,6 +105,8 @@ function withCaret(line: string, column: number): string {
 export function PromptEditor({
   state,
   onChange,
+  onKill,
+  onYank,
   onEnter,
   menuActive,
 }: {
@@ -96,6 +117,15 @@ export function PromptEditor({
    * load-bearing rather than a style choice — see the note on batching in the doc comment above.
    */
   onChange: (update: (previous: EditorState) => EditorState) => void;
+  /**
+   * Applies one KILL — a word deletion or a line-edge kill. Separate from {@link onChange} because
+   * the removed text has to be computed against the same authoritative buffer the state change is
+   * computed against; taken from the rendered {@link state} instead, a kill sharing a stdin chunk
+   * with an earlier edit would store text the user had already changed.
+   */
+  onKill: (kill: (previous: EditorState) => KillResult) => void;
+  /** `Ctrl+Y` — put the most recent kill back at the caret. The parent owns the slot and its text. */
+  onYank: () => void;
   /**
    * Enter was pressed with the menu closed. Reported, not interpreted: what Enter means depends on
    * the buffer, so the parent decides it inside the buffer's own updater, for the same reason
@@ -159,8 +189,56 @@ export function PromptEditor({
       return;
     }
 
-    if (key.backspace || key.delete) {
+    // Killing a word, in either direction. Above the one-character deletions because these arrive
+    // as the SAME keys carrying a modifier, and the plain branches below test the key alone.
+    //
+    // The asymmetry in the spellings is the terminals', not a choice: `Ctrl+Backspace` cannot be
+    // bound at all, because Ink's `\x08` branch sits above its ctrl+letter branch and `useInput`
+    // blanks `input` for a backspace, so the chord arrives indistinguishable from a plain one.
+    // `Ctrl+W` is therefore the only backward word-delete a keyboard without Option-as-Meta can
+    // reach. Forward has both spellings, and `{delete, meta}` covers `\x1b[3;3~` and `\x1b\x1b[3~`
+    // alike — Ink sets `meta` from the modifier bitmask and, separately, from a doubled leading
+    // escape, so the two encodings converge before they get here.
+    if ((key.backspace && key.meta) || (key.ctrl && input === 'w')) {
+      onKill(killWordLeft);
+      return;
+    }
+    if (key.delete && (key.ctrl || key.meta)) {
+      onKill(killWordRight);
+      return;
+    }
+
+    // One code point, in the direction the key names. `Delete` deleting FORWARD reverses an
+    // adjudication made in TUI-C25, where it was left as a second Backspace to preserve observable
+    // behaviour; TUI-C79 decided the other way, so a reader finding the change does not read it as
+    // an accident. `Ctrl+D` is a second spelling of the same forward delete, and it NEVER exits:
+    // readline's EOF convention is declined here on purpose, because `Ctrl+C` already carries a
+    // buffer-dependent exit rule and a second exit key with a different one is the trap to avoid.
+    // On an empty buffer it does nothing at all.
+    if (key.backspace) {
       onChange(deleteBackward);
+      return;
+    }
+    if (key.delete || (key.ctrl && input === 'd')) {
+      onChange(deleteForward);
+      return;
+    }
+
+    // Killing to the edges of the caret's own logical line — the partners of `Ctrl+A`/`Ctrl+E`
+    // above, scoped exactly as they are. `Ctrl+U` goes to the line START, not the whole line;
+    // killing a whole line is `Ctrl+E` then `Ctrl+U`.
+    if (key.ctrl && input === 'k') {
+      onKill(killToLineEnd);
+      return;
+    }
+    if (key.ctrl && input === 'u') {
+      onKill(killToLineStart);
+      return;
+    }
+    // The other half of the four kills above: without a way back, `Ctrl+U` on a composed message is
+    // an unrecoverable keystroke, because this prompt has no undo of any kind.
+    if (key.ctrl && input === 'y') {
+      onYank();
       return;
     }
 
@@ -178,6 +256,16 @@ export function PromptEditor({
     // it, and an editor whose insert branch is the fall-through for unrecognised chords types `t`
     // when the user presses Ctrl+T. Ours refuses every modifier that makes a key a chord, silently.
     // `shift` is the one deliberately absent: it is how a capital is typed, not a different key.
+    //
+    // **`Ctrl+J` reaches HERE, and that is deliberate — it is the newline key** (TUI-C79). The byte
+    // is `\n`, which Ink parses as `{name: 'enter'}`: `key.return` is set only for `'return'`, and
+    // `'enter'` is not one of the `nonAlphanumericKeys` whose `input` gets blanked, so the event
+    // arrives with `input === '\n'` and no modifier and this branch splices a literal newline. It
+    // works by fall-through rather than by a branch of its own, so tightening these guards would
+    // silently remove a documented key; `spec/tui/PromptInput.spec.tsx` pins it. `Alt+Enter` is NOT
+    // bound: `\x1b\r` decodes as `{return, meta}` and the Enter branch above tests no modifiers, so
+    // it already submits — binding it would mean narrowing that branch for a second spelling of a
+    // key that works.
     if (input.length > 0 && !key.ctrl && !key.meta && !key.super && !key.hyper) {
       onChange((previous) => insertText(previous, input));
     }

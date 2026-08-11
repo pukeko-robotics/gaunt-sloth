@@ -80,9 +80,11 @@ no further `/` after the leading one is parsed as one.
 own history on the arrow keys, so none of this applies there — a message is one line, and `↑`
 recalls the previous one.*
 
-Enter sends the message. To keep writing instead, end the line with a backslash and press Enter:
-the message carries onto a second line, marked `…`, and Enter sends the whole thing once you are
-done. Pasting several lines at once does the same without the backslash.
+Enter sends the message. To keep writing instead, press **Ctrl+J**, or end the line with a backslash
+and press Enter: the message carries onto a second line, marked `…`, and Enter sends the whole thing
+once you are done. Pasting several lines at once does the same without either key. `Ctrl+J` inserts
+a newline wherever the cursor is, and it has no effect on the text around it — the backslash form
+always consumes the backslash, so a message written that way cannot end in one.
 
 Fixing something you have already written works the way it does at a shell prompt:
 
@@ -92,11 +94,21 @@ Fixing something you have already written works the way it does at a shell promp
 | **Alt**+**←** / **Alt**+**→** (**Ctrl**+**←** / **Ctrl**+**→** in some terminals) | a word |
 | **Ctrl+A** / **Ctrl+E**, or **Home** / **End** | the start / the end of the line you are on |
 | **↑** / **↓** | between the lines of a multi-line message — or through the slash-command menu, while that is open |
-| **Backspace** | the character before the cursor |
+| **Backspace** | delete the character before the cursor |
+| **Delete**, or **Ctrl+D** | delete the character after the cursor |
+| **Alt**+**Backspace**, or **Ctrl+W** | delete the word before the cursor |
+| **Alt**+**Delete**, or **Ctrl+Delete** | delete the word after the cursor |
+| **Ctrl+U** / **Ctrl+K** | delete back to the start / on to the end of the line you are on |
+| **Ctrl+Y** | put back what the last of those four deletions removed |
 
 Both spellings of the word jump are always live, so whichever one your terminal sends for
-**Option**/**Alt** + arrow will work. `Ctrl+A`/`Ctrl+E` and `Home`/`End` go to the ends of the line
-the cursor is on, not of the whole message.
+**Option**/**Alt** + arrow will work. `Ctrl+A`/`Ctrl+E`, `Home`/`End`, `Ctrl+U` and `Ctrl+K` all work
+on the line the cursor is on, not on the whole message — so `Ctrl+E` then `Ctrl+U` is how you clear
+one line of several.
+
+`Ctrl+Y` holds one deletion, the most recent of the four word and line ones; `Backspace` and
+`Delete` do not change it, so it stays predictable while you type. `Ctrl+D` deletes forward here and
+never ends the session — use `Ctrl+C`, `/exit` or `/quit` for that.
 
 ## TUI or plain readline (`--tui` / `--no-tui`, `tui`)
 
