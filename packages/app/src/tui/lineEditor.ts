@@ -227,6 +227,20 @@ export function killToLineStart(state: EditorState): KillResult {
   return killRange(state, lineStartOffset(state.value, state.cursor), state.cursor);
 }
 
+/**
+ * Kill the WHOLE buffer, every line of it — what `Ctrl+C` does to a draft it is asked to scrap.
+ *
+ * The only killing verb whose span is not a motion's, because there is no motion over the whole
+ * message: `Ctrl+U`/`Ctrl+K` are scoped to the caret's own logical line, and a multi-line draft
+ * scrapped with one keystroke has to go in one piece or the key does not do what it says. It is a
+ * kill rather than a reset for the reason the slot exists at all — the text is recoverable with
+ * `Ctrl+Y` — and an empty buffer yields `killed: ''`, so scrapping nothing cannot overwrite a stored
+ * kill the user still wanted back.
+ */
+export function killAll(state: EditorState): KillResult {
+  return killRange(state, 0, state.value.length);
+}
+
 export function moveLeft(state: EditorState): EditorState {
   return at(state, previousCodePointStart(state.value, state.cursor));
 }

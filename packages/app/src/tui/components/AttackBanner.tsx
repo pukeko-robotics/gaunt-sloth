@@ -93,10 +93,11 @@ export function AttackBanner({
  * §6.1 — the abort keys, and they are the Ink TUI's alone.
  *
  * `q` costs nothing to bind because the phrase contains no `q`. `Esc` is this banner's own here
- * (the App's other `Esc` meanings sit after the banner's early return). **Ctrl+C is deliberately
- * left alone**: ending the program is the terminal's own contract, and a program that swallows the
- * one byte every user knows is not one they can trust to let go — so Ink claims it before any
- * `useInput` subscriber and unmounts.
+ * (the App's other `Esc` meanings sit after the banner's early return). **Ctrl+C still ends the
+ * program**: ending it is the terminal's own contract, and a program that swallows the one byte
+ * every user knows is not one they can trust to let go. `<App>` owns that key rather than Ink
+ * ([[TUI-C79]]) and answers a banner by leaving, ahead of the branch that would refuse to buffer a
+ * chord — so what changed is which code keeps the promise, not the promise.
  *
  * All three stop the command, and **they do not cost the same** — which is why the line names the
  * difference instead of listing them together. `q` and `Esc` hand the session back; Ctrl+C ends it,

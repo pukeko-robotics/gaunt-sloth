@@ -371,7 +371,19 @@ their config has a problem.
   a pending shell approval answers it (rejecting, fail-closed); a turn in flight is aborted; the
   focused debug pane clears its search or unfocuses; otherwise the conversation returns to the
   newest output. The order is the specification, not an artefact of where the branches sit.
-- **`Ctrl+C`** — exit the app. (The bare `exit` keyword, `/exit` and `/quit` also quit.)
+- **`Ctrl+C`** — on the TUI, one key with three meanings, resolved most-local-first: a **modal state**
+  (attack banner, pending approval, approvals picker) leaves, because that is what those screens
+  promise and the run is blocked on an answer nobody is at the keyboard to give; else a **typed
+  message** is scrapped into the kill slot, recoverable with `Ctrl+Y`; else a **turn in flight** is
+  stopped, exactly as `Esc` stops it; else the session **exits**. (The bare `exit` keyword, `/exit`
+  and `/quit` exit unconditionally.) Two reflexes meet on this key — *scrap this line* and *stop what
+  you are doing* — and the buffer holds a whole composed message, so an unconditional exit spends a
+  session on either of them. Modal on one key is a real cost, taken because `Esc` here is already
+  modal in the same way and `/help` groups it by context for that reason. **The arbitration lives in
+  exactly one handler** (`App.tsx`): Ink broadcasts every keypress to every `useInput` subscriber with
+  no way to stop propagation, and the prompt is unmounted in the states where rungs 2 and 3 still have
+  to work — so the prompt publishes a handle for the clear and `<App>` decides. This is the TUI
+  surface only; readline's `Ctrl+C` is unchanged (GS2-87).
 - **`Ctrl+T`** — toggle tool-call detail, running or idle (mirrors `/verbose`).
 - **A control chord never types its letter, and never moves the message under it.** The prompt's
   editor (`PromptEditor.tsx`) inserts a keystroke only when none of `ctrl`/`meta`/`super`/`hyper` is
@@ -466,14 +478,15 @@ their config has a problem.
       one is a trap. **`Ctrl`+`⌫` is not bindable at all** — Ink's `\x08` branch sits above its
       ctrl+letter branch and blanks `input` for a backspace, so the chord is indistinguishable from
       a plain one; `Ctrl+W` is what gives a keyboard without Option-as-Meta a backward word delete.
-  - **The four word/line deletions are recoverable; the one-character ones are not stored** (DL-3
-    preserve the user's content, TUI-C79). `Ctrl+U` on a composed message removes it in one
-    keystroke and the prompt has no undo, so the killed text goes to a **single slot** that `Ctrl+Y`
-    puts back at the caret. One slot, not a kill ring. `Backspace`/`Delete`/`Ctrl+D` deliberately do
-    not write it — a slot every keystroke overwrites is one nobody can predict — and neither does a
-    kill that removed nothing, which would otherwise destroy a yank the user still wanted. The slot
-    lives beside the buffer in `PromptInput.tsx`: the editor is controlled and unmounts in several
-    app states, and module scope in the pure model would share one slot across every render tree.
+  - **The word/line deletions and `Ctrl+C`'s clear are recoverable; the one-character ones are not
+    stored** (DL-3 preserve the user's content, TUI-C79). `Ctrl+U` on a composed message removes it
+    in one keystroke and `Ctrl+C` removes the whole of it, and the prompt has no undo, so the killed
+    text goes to a **single slot** that `Ctrl+Y` puts back at the caret. One slot, not a kill ring.
+    `Backspace`/`Delete`/`Ctrl+D` deliberately do not write it — a slot every keystroke overwrites is
+    one nobody can predict — and neither does a kill that removed nothing, which would otherwise
+    destroy a yank the user still wanted. The slot lives beside the buffer in `PromptInput.tsx`: the
+    editor is controlled and unmounts in several app states, and module scope in the pure model would
+    share one slot across every render tree.
   - **Two v1 narrowings, deliberate:** `↑`/`↓` move over *logical* lines, not visual wrapped rows
     (visual motion would thread the terminal width into a pure module); and the line motions go to
     the ends of the caret's own line, not of the whole buffer.

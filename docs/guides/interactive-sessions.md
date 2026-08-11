@@ -25,7 +25,8 @@ The agent reads the relevant files, edits them in place, and runs shell commands
 approvals gate — by default the auto-rater lets clearly-safe ones through and asks you about the
 rest (`/approvals write` to confirm each one — and every other tool call — yourself, while its
 built-in file tools keep working inside your working folder). Follow up in the same conversation —
-"now add a CHANGELOG entry" — context carries across turns. Type `exit` or press Ctrl+C to leave.
+"now add a CHANGELOG entry" — context carries across turns. Type `exit`, or press Ctrl+C with
+nothing typed, to leave.
 
 ## `gth` vs `gth code` vs `gth chat`
 
@@ -99,16 +100,18 @@ Fixing something you have already written works the way it does at a shell promp
 | **Alt**+**Backspace**, or **Ctrl+W** | delete the word before the cursor |
 | **Alt**+**Delete**, or **Ctrl+Delete** | delete the word after the cursor |
 | **Ctrl+U** / **Ctrl+K** | delete back to the start / on to the end of the line you are on |
-| **Ctrl+Y** | put back what the last of those four deletions removed |
+| **Ctrl+C** | scrap the whole message — with nothing typed it stops the turn, or leaves |
+| **Ctrl+Y** | put back what the last of those deletions removed |
 
 Both spellings of the word jump are always live, so whichever one your terminal sends for
 **Option**/**Alt** + arrow will work. `Ctrl+A`/`Ctrl+E`, `Home`/`End`, `Ctrl+U` and `Ctrl+K` all work
 on the line the cursor is on, not on the whole message — so `Ctrl+E` then `Ctrl+U` is how you clear
 one line of several.
 
-`Ctrl+Y` holds one deletion, the most recent of the four word and line ones; `Backspace` and
-`Delete` do not change it, so it stays predictable while you type. `Ctrl+D` deletes forward here and
-never ends the session — use `Ctrl+C`, `/exit` or `/quit` for that.
+`Ctrl+Y` holds one deletion, the most recent of the word and line ones or of a `Ctrl+C` that scrapped
+the message; `Backspace` and `Delete` do not change it, so it stays predictable while you type.
+`Ctrl+D` deletes forward here and never ends the session — use `/exit`, `/quit`, or `Ctrl+C` with
+nothing typed, for that.
 
 ## TUI or plain readline (`--tui` / `--no-tui`, `tui`)
 
@@ -217,11 +220,15 @@ scrolled back to. The same key folds it away again.
 ## Interrupting a response
 
 Press **Escape** while the agent is working to stop the current response; the session stays open
-and keeps its context. **Ctrl+C** (or typing `exit` at the prompt) ends the whole session — in the
-TUI it does so immediately, even mid-response, so Esc is the interrupt there. In the plain
-readline surface, `Q` also interrupts (a hint box above the response says so), a Ctrl+C during a
-response requests the interrupt first, and a second Ctrl+C force-exits — the escape hatch when a
-stuck tool call has wedged the run.
+and keeps its context. In the TUI, **Ctrl+C** stops it too when there is nothing typed at the
+prompt — the two keys are the same interrupt there, so the reflex either hand reaches for works.
+With a message half-written, Ctrl+C scraps that message first and leaves the turn running (press it
+again to stop the turn), and with nothing typed and nothing running it ends the session, as `/exit`,
+`/quit` and typing `exit` always do.
+
+The plain readline surface (`--no-tui`) keeps its own convention: `Q` interrupts (a hint box above
+the response says so), a Ctrl+C during a response requests the interrupt first, and a second Ctrl+C
+force-exits — the escape hatch when a stuck tool call has wedged the run.
 
 ## Saving a transcript
 

@@ -10,6 +10,7 @@ import {
 import {
   createEditorState,
   insertText,
+  killAll,
   pressEnter,
   type EditorState,
   type KillResult,
@@ -20,6 +21,29 @@ import { normalizePastedText } from '#src/tui/pasteParser.js';
 interface PromptBuffer {
   readonly state: EditorState;
   readonly edits: number;
+}
+
+/**
+ * What `<App>` may ask of a mounted prompt (TUI-C79) — the imperative half of the Ctrl+C ladder.
+ *
+ * `<App>` arbitrates Ctrl+C because Ink broadcasts a keypress to every `useInput` subscriber with no
+ * way to stop propagation, so exactly one handler may own a key with more than one meaning — and it
+ * has to be the one that is always mounted, since this component is not (a pending approval, an
+ * attack banner, the approvals picker and the focused debug pane each replace it). The buffer and
+ * the kill slot live HERE, though, so the rung that clears a draft is asked for rather than reached
+ * into: `<App>` holds the handle only while the prompt is mounted, and gets `false` when it is not.
+ */
+export interface PromptInputHandle {
+  /**
+   * Scrap the whole draft, into the kill slot — Ctrl+C's first rung.
+   *
+   * Returns whether there was anything to scrap, which is what tells `<App>` the keystroke was
+   * spent here and must not fall through to stopping the turn or leaving the session. The cleared
+   * text goes to the same one slot the editor's killing verbs feed, so `Ctrl+Y` puts it back: this
+   * key is a reflex, it can arrive on a message that took minutes to write, and the prompt has no
+   * undo of its own.
+   */
+  clearToKillSlot(): boolean;
 }
 
 /**
@@ -57,6 +81,7 @@ export function PromptInput({
   onSubmit,
   commands = [],
   onMenuStateChange,
+  handleRef,
 }: {
   onSubmit: (value: string) => void;
   /** The slash-command registry (App builds it once) — the menu's single source of truth. */
@@ -64,6 +89,9 @@ export function PromptInput({
   /** Notifies the parent whether the menu currently owns navigation keys (so App can stand down
    *  its own Tab handler while the menu is open). */
   onMenuStateChange?: (active: boolean) => void;
+  /** TUI-C79 — where to publish this prompt's {@link PromptInputHandle} while it is mounted, so
+   *  `<App>`'s Ctrl+C ladder can ask the buffer to clear itself (and is told when there is none). */
+  handleRef?: React.MutableRefObject<PromptInputHandle | null>;
 }): React.ReactElement {
   /**
    * The buffer and its edit serial — authoritative in a REF, mirrored into state for rendering.
@@ -124,8 +152,9 @@ export function PromptInput({
    * `lineEditor.ts` would share one slot across every render tree. Nothing renders it, so a plain
    * ref is the whole of it; it is written and read in the same synchronous handler the buffer is.
    *
-   * ONE slot, not a readline kill ring: the four killing verbs (`Alt+Backspace`/`Ctrl+W`,
-   * `Alt+Delete`/`Ctrl+Delete`, `Ctrl+K`, `Ctrl+U`) feed it and `Ctrl+Y` puts it back. Plain
+   * ONE slot, not a readline kill ring: the editor's four killing verbs (`Alt+Backspace`/`Ctrl+W`,
+   * `Alt+Delete`/`Ctrl+Delete`, `Ctrl+K`, `Ctrl+U`) feed it, `Ctrl+C` clearing the whole draft feeds
+   * it through {@link PromptInputHandle.clearToKillSlot}, and `Ctrl+Y` puts it back. Plain
    * `Backspace`/`Delete`/`Ctrl+D` deliberately do not — a slot that every keystroke overwrites is
    * one nobody can predict the contents of — and neither does a kill that removed nothing, which
    * would otherwise destroy a yank the user still wanted by replacing it with an empty string.
@@ -133,7 +162,7 @@ export function PromptInput({
    * A yank READS the slot and leaves it, so `Ctrl+Y` is repeatable — deliberately, not incidentally.
    * readline's `Ctrl+Y` is repeatable and this imitates it, and a slot that spent itself on use would
    * make the second press do nothing with nothing on screen to explain why: the same unpredictability
-   * the rule above exists to avoid. Only the four killing verbs ever write here.
+   * the rule above exists to avoid. Only killing verbs ever write here.
    */
   const killRef = useRef('');
 
@@ -153,6 +182,31 @@ export function PromptInput({
   const yankKill = (): void => {
     applyEdit((current) => insertText(current, killRef.current));
   };
+
+  /** {@link PromptInputHandle.clearToKillSlot} — `Ctrl+C` rung 1, asked for by `<App>`. */
+  const clearToKillSlot = (): boolean => {
+    // Answered from the AUTHORITATIVE buffer, like every other keystroke here: the ladder's whole
+    // decision hangs on this boolean, and a Ctrl+C sharing a stdin chunk with the edit that emptied
+    // the buffer would otherwise claim the keystroke and leave the session where the user meant to
+    // stop the turn. Emptiness is also exactly the "an empty range is not a kill" rule, kept here so
+    // the answer and the slot cannot disagree about whether anything was scrapped.
+    if (bufferRef.current.state.value === '') return false;
+    applyKill(killAll);
+    return true;
+  };
+
+  // Publish the handle for as long as this prompt is mounted, and take it away when it is not — the
+  // null is load-bearing, because `<App>` reads it in states where this component does not exist and
+  // a stale handle would clear a buffer nobody can see. Deliberately without a dependency array: the
+  // handle closes over functions rebuilt on every render, and republishing one object per render
+  // costs nothing next to a stale closure deciding what a keystroke means.
+  useEffect(() => {
+    if (!handleRef) return;
+    handleRef.current = { clearToKillSlot };
+    return () => {
+      handleRef.current = null;
+    };
+  });
 
   /** Submit `value` and clear the buffer; the bumped serial resets the menu (see `bufferRef`). */
   const submit = (value: string): void => {

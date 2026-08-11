@@ -308,10 +308,15 @@ test.describe('gth code TUI — [[TUI-C68]] §1 aborting from inside a partly ty
   }
 
   /**
-   * Ctrl+C is the third abort, and it is a blunter one: Ink claims that byte before any `useInput`
-   * subscriber and unmounts, so it ends the SESSION rather than only the run. That is still an
-   * abort in the only sense that matters here — the command does not run — and it is asserted as
-   * what actually happens rather than as a graceful in-session stop.
+   * Ctrl+C is the third abort, and it is a blunter one: it ends the SESSION rather than only the
+   * run. That is still an abort in the only sense that matters here — the command does not run —
+   * and it is asserted as what actually happens rather than as a graceful in-session stop.
+   *
+   * TUI-C79 made the key `<App>`'s rather than Ink's, and this is where the promise on the banner's
+   * own controls line (`Ctrl+C exits gth`) is measured against a real process. The ladder answers a
+   * modal state by leaving, ahead of the banner's branch — which refuses to buffer a chord and
+   * returns, so a Ctrl+C arriving there would be a silent no-op, taking away the escape a cornered
+   * user reaches for first. This case is what fails if that ever changes.
    */
   test('Ctrl+C aborts with text already typed, by ending the session', async ({ terminal }) => {
     await expect(terminal.getByText('ready to code')).toBeVisible();

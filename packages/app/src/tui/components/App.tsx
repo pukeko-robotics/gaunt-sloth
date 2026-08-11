@@ -28,7 +28,7 @@ import { LiveTurn, ChecklistPanel } from '#src/tui/components/LiveTurn.js';
 import { extractActiveChecklist } from '#src/tui/viewModel.js';
 import { StatusBar } from '#src/tui/components/StatusBar.js';
 import { NoticeBar, McpFailureBar } from '#src/tui/components/NoticeBar.js';
-import { PromptInput } from '#src/tui/components/PromptInput.js';
+import { PromptInput, type PromptInputHandle } from '#src/tui/components/PromptInput.js';
 import { Rule } from '#src/tui/components/Rule.js';
 import { ClearBanner } from '#src/tui/components/ClearBanner.js';
 import { LaunchBanner } from '#src/tui/components/LaunchBanner.js';
@@ -171,6 +171,10 @@ export function App(props: TuiAppProps): React.ReactElement {
   // TUI-C10 — mirror of whether the prompt's slash-command menu currently owns navigation keys, so
   // the top-level Tab handler (debug-panel focus) stands down while the menu is open.
   const slashMenuActiveRef = useRef(false);
+  // TUI-C79 — the mounted prompt's imperative handle, or null while it is not mounted. Ctrl+C's
+  // first rung asks the buffer to scrap itself through this; everything else about the buffer stays
+  // inside <PromptInput>, where it lives.
+  const promptHandleRef = useRef<PromptInputHandle | null>(null);
   const { exit } = useApp();
   // TUI-C48 — the full-screen frame is exactly this tall, which is what pins the dock to the
   // terminal floor AND what stops a frame from overflowing the screen (a taller frame loses its
@@ -694,12 +698,54 @@ export function App(props: TuiAppProps): React.ReactElement {
   );
 
   // Keyboard handling, in priority order:
-  //  1. Esc while running → abort the in-flight turn (stdin is uncontended here — the event
+  //  1. Ctrl+C → the ladder below: scrap the draft, else stop the turn, else leave.
+  //  2. Esc while running → abort the in-flight turn (stdin is uncontended here — the event
   //     path never registers gsloth's readline Esc handler, so Ink owns raw mode cleanly).
-  //  2. Tab while the panel is visible and idle → focus/cycle the panel.
-  //  3. While the panel is focused → Tab/Shift+Tab cycle sections, ↑/↓ scroll one line,
+  //  3. Tab while the panel is visible and idle → focus/cycle the panel.
+  //  4. While the panel is focused → Tab/Shift+Tab cycle sections, ↑/↓ scroll one line,
   //     PageUp/PageDown page-step, m maximises, Esc unfocuses.
   useInput((input, key) => {
+    // [[TUI-C79]] — **Ctrl+C is this app's, not Ink's**, and it is answered here before anything
+    // else can claim it. `render()` takes `exitOnCtrlC: false` (`tuiSessionModule.tsx`), which is
+    // what routes the byte to `useInput` at all; the predicate is Ink's own (`use-input.js` skips
+    // subscribers on `input === 'c' && key.ctrl`), so the set of keystrokes this branch claims is
+    // EXACTLY the set Ink used to swallow, and no key that reached a subscriber before reaches a
+    // different one now.
+    //
+    // **Three meanings, most local first** — the shape `Esc` on this surface already has:
+    //
+    //  1. **A draft in the prompt** → scrap it, into the kill slot, so `Ctrl+Y` brings it back.
+    //     The prompt buffer holds a whole multi-line message (TUI-C25), so the universal reflex for
+    //     "scrap this line" must not also end the session and take the message with it.
+    //  2. **A turn in flight** → stop the turn, down the same abort path `Esc` takes. Leaving this
+    //     rung out is what made the earlier draft dangerous: with an empty prompt — which is the
+    //     state a session is in while it watches a runaway operation — Ctrl+C would still quit.
+    //  3. **Otherwise** → leave, through `quit()`, the one exit route (`/exit`, `/quit` and the
+    //     bare `exit` keyword all take it too).
+    //
+    // **The modal states are answered first, and they exit.** While an attack banner, an approval
+    // prompt or the approvals picker owns the keyboard, a turn IS in flight, so rung 2 would read
+    // "stop the turn" where the banner's own controls line says `Ctrl+C exits gth` and the user is
+    // looking for the way out of an irreversible action. So it exits, as the screen promises — and
+    // it goes through `quit()`, which resolves both bridges fail-closed on the way out rather than
+    // leaving the halt unanswered.
+    if (key.ctrl && input === 'c') {
+      if (pendingAttack || pendingApproval || approvalsPicker) {
+        quit();
+        return;
+      }
+      // Rung 1 is a question for the prompt, because the buffer and the kill slot are its. It is
+      // unmounted in the states above and while the debug pane is focused, and answers `false`
+      // then — as it does for an empty buffer, which is the same "nothing to scrap" case.
+      if (promptHandleRef.current?.clearToKillSlot()) return;
+      if (runningRef.current) {
+        abortRef.current?.abort();
+        return;
+      }
+      quit();
+      return;
+    }
+
     // [[TUI-C68]] §6.1 — the ATTACK BANNER owns the keyboard ahead of everything, including a
     // pending approval. The two are separate questions and the run is blocked on both, but this one
     // is the irreversible one, so it is answered first and the approval prompt stands down (it is
@@ -718,8 +764,10 @@ export function App(props: TuiAppProps): React.ReactElement {
     //   a typo into another chance at an irreversible action.
     // - **`q` and `Esc` abort with text already typed**, so someone who starts typing and thinks
     //   better of it is not trapped. `q` costs nothing to bind — the phrase contains no `q`.
-    //   Ctrl+C aborts too, but never arrives here: Ink claims it before any `useInput` subscriber
-    //   and unmounts the app, which ends the session and is a blunter abort than these two.
+    //   Ctrl+C aborts too, and it is answered by the ladder ABOVE this branch rather than here: it
+    //   ends the session, which is a blunter abort than these two and is what the banner's own
+    //   controls line promises. It must never reach the chord guard below — that would refuse to
+    //   buffer it and return, turning the one key a cornered user reaches for into a silent no-op.
     //
     // **A chord is declined, not blanked.** The approval branch below maps a modified key to the
     // empty string so a chord cannot stand in for an approval key; here the equivalent is refusing
@@ -1213,6 +1261,7 @@ export function App(props: TuiAppProps): React.ReactElement {
                 onMenuStateChange={(active) => {
                   slashMenuActiveRef.current = active;
                 }}
+                handleRef={promptHandleRef}
               />
             ) : null}
             {/* TUI-C63 — the shared hint row plus this surface's own scroll fragment. `exitMessage`

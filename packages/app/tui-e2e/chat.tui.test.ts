@@ -180,7 +180,9 @@ test.describe('gth chat TUI — greeting fixture', () => {
     // At 30 rows the notice is taller than the conversation region, so its tail is what shows —
     // and the pinned dock (status bar, prompt, hint row) must still be there under it. A notice
     // that pushed the dock off screen would take the scroll advice with it.
-    await expect(terminal.getByText('Ctrl+C — exit')).toBeVisible();
+    await expect(
+      terminal.getByText('Ctrl+C, with nothing typed and no turn running')
+    ).toBeVisible();
     await expect(terminal.getByText('chat  ·  turns: 0  ·  ready')).toBeVisible();
     await expect(terminal.getByText(hintRow)).toBeVisible();
   });
@@ -379,9 +381,12 @@ test.describe('gth chat TUI — greeting fixture', () => {
     );
   }
 
-  // Ctrl+C is not a signal here — the terminal is in raw mode, so the byte reaches Ink and Ink
-  // unmounts — but it is how most sessions actually end, and it runs on every platform including
-  // the one where the signal cases above cannot.
+  // Ctrl+C is not a signal here — the terminal is in raw mode, so the byte reaches the app, and
+  // TUI-C79 has <App> answer it rather than Ink: with nothing typed and no turn running this is the
+  // ladder's bottom rung, an ordinary `quit()`. It is how most sessions actually end, and it runs on
+  // every platform including the one where the signal cases above cannot. The exit code is asserted
+  // because that rung now runs the session's own teardown on the way out, which Ink's unmount did
+  // not: a teardown that threw would leave by a different door and say so here.
   test('hands the terminal back on Ctrl+C', async ({ terminal }) => {
     await expect(terminal.getByText('ready to chat')).toBeVisible();
     terminal.write('hello');
@@ -390,7 +395,9 @@ test.describe('gth chat TUI — greeting fixture', () => {
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
 
     terminal.write('\x03');
-    expect(await waitForExit(terminal)).not.toBeNull();
+    const result = await waitForExit(terminal);
+    expect(result).not.toBeNull();
+    expect(result?.exitCode).toBe(0);
 
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).not.toBeVisible();
     await expect(terminal.getByText('Hello from the fixture agent.')).not.toBeVisible();
@@ -562,6 +569,32 @@ test.describe('gth chat TUI — slow fixture (interrupt)', () => {
     await expect(terminal.getByText('Interrupted')).toBeVisible();
     // ...and the app recovers to the ready prompt rather than crashing.
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+  });
+
+  /**
+   * TUI-C79 — Ctrl+C's SECOND rung: with nothing typed, it stops the turn and the session lives.
+   *
+   * This is the rung most easily built as an exit by accident, and an exit is indistinguishable
+   * from it by the transcript alone — a session that quit mid-turn also stops the turn. So liveness
+   * is asserted three ways that an exit fails: the ready line repaints, the prompt takes input
+   * afterwards, and the process has no exit result at all.
+   */
+  test('Ctrl+C interrupts an in-flight turn and leaves the session running', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+    terminal.write('go');
+    await expect(terminal.getByText('> go')).toBeVisible();
+    terminal.submit();
+    await expect(terminal.getByText('streaming')).toBeVisible();
+
+    terminal.write('\x03'); // Ctrl+C, with the prompt empty
+    await expect(terminal.getByText('Interrupted')).toBeVisible();
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+
+    terminal.write('still here');
+    await expect(terminal.getByText('> still here')).toBeVisible();
+    expect(terminal.exitResult ?? null).toBeNull();
   });
 
   /**
@@ -1011,7 +1044,14 @@ test.describe('gth chat TUI — /help lists the key bindings (greeting fixture, 
     await expect(
       terminal.getByText('Ctrl+T — fold and unfold tool output and thinking')
     ).toBeVisible();
-    await expect(terminal.getByText('Ctrl+C — exit')).toBeVisible();
+    // TUI-C79 — Ctrl+C is modal now, and `/help` says so one context at a time: the group that
+    // used to promise it unconditionally carries its condition, and the prompt group names the
+    // meaning that key has there. A single unqualified line would be wrong in two states out of
+    // three, which is the defect the grouping exists to prevent.
+    await expect(
+      terminal.getByText('Ctrl+C, with nothing typed and no turn running — exit')
+    ).toBeVisible();
+    await expect(terminal.getByText('Ctrl+C — clear the whole message')).toBeVisible();
 
     // The keyboard-honest half, which is the reason `/help` carries the detail and the hint row
     // does not: the keys named on the row do not exist on a Mac laptop, and this says so.

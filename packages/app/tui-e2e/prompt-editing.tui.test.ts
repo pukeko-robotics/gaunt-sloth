@@ -348,6 +348,27 @@ test.describe('gth chat TUI — editing the message at the prompt (greeting fixt
     await expect(terminal.getByText('> still here')).toBeVisible();
   });
 
+  // TUI-C79 — Ctrl+C's first rung, at a real terminal. The byte used to be Ink's: it unmounted the
+  // app before any handler saw it, so a message that took minutes to write was one reflex away from
+  // being gone with the session. Here it scraps the draft and the session is still standing — which
+  // is the half a unit render cannot say — and the kill slot makes the scrap recoverable.
+  test('Ctrl+C scraps the typed message instead of ending the session, and Ctrl+Y brings it back', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    terminal.write('a message worth keeping');
+    await expect(terminal.getByText('> a message worth keeping')).toBeVisible();
+
+    terminal.write('\x03'); // Ctrl+C
+    await expect(terminal.getByText('> a message worth keeping')).not.toBeVisible();
+    // Still alive and still taking input — a session that had exited would render neither.
+    await expect(terminal.getByText('chat  ·  turns: 0  ·  ready')).toBeVisible();
+
+    terminal.write('\x19'); // Ctrl+Y → the scrapped draft, back where it was
+    await expect(terminal.getByText('> a message worth keeping')).toBeVisible();
+  });
+
   // TUI-C79 item (6) — Ctrl+J is the newline key. It reaches the editor's insert branch by falling
   // past every other one, so this pins the whole path at a real terminal: the byte survives the pty
   // (ConPTY included) and arrives as a literal newline rather than as Enter.

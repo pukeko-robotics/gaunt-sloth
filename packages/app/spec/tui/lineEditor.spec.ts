@@ -4,6 +4,7 @@ import {
   deleteBackward,
   deleteForward,
   insertText,
+  killAll,
   killToLineEnd,
   killToLineStart,
   killWordLeft,
@@ -183,6 +184,18 @@ describe('lineEditor — killing a word, and killing to the ends of the line', (
       state: { value: 'one\n\nthree', cursor: 4 },
       killed: 't',
     });
+  });
+
+  it('kills the WHOLE buffer, every line of it, wherever the caret was', () => {
+    // TUI-C79 — Ctrl+C's first rung. The one kill whose span is not a motion's: `Ctrl+U`/`Ctrl+K`
+    // are scoped to the caret's own line, so a multi-line draft scrapped with one keystroke can only
+    // go in one piece here. Driven from mid-buffer, where a line-scoped implementation differs.
+    expect(killAll(stateAt('one\ntwo\nthree', 5))).toEqual({
+      state: { value: '', cursor: 0 },
+      killed: 'one\ntwo\nthree',
+    });
+    // Scrapping nothing is not a kill — the slot must survive a Ctrl+C on an empty prompt.
+    expect(killAll(createEditorState())).toEqual({ state: { value: '', cursor: 0 }, killed: '' });
   });
 
   it('reports an empty kill rather than clobbering the slot, when there is nothing to take', () => {

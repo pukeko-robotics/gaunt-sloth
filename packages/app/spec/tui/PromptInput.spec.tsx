@@ -6,7 +6,7 @@ import chalk from 'chalk';
 import stripAnsi from 'strip-ansi';
 import { Box, Text } from 'ink';
 import { render } from 'ink-testing-library';
-import { PromptInput } from '#src/tui/components/PromptInput.js';
+import { PromptInput, type PromptInputHandle } from '#src/tui/components/PromptInput.js';
 import { PromptEditor } from '#src/tui/components/PromptEditor.js';
 import { SlashCommandMenu } from '#src/tui/components/SlashCommandMenu.js';
 import { moveWordLeft, moveWordRight, type EditorState } from '#src/tui/lineEditor.js';
@@ -1046,6 +1046,51 @@ describe('tui <PromptEditor> the kill slot and Ctrl+Y (TUI-C79)', () => {
     await tick();
     expect(bufferIn(lastFrame() ?? '')).toBe('abc');
     expect(caretIn(lastFrame() ?? '')).toEqual({ row: 0, column: 3 });
+  });
+
+  /**
+   * TUI-C79 — the handle `<App>` clears the draft through, tested as the contract it is.
+   *
+   * The keystroke is arbitrated in `<App>` because Ink gives every subscriber every key and this
+   * component is unmounted in several app states; what belongs HERE is what the handle promises:
+   * the whole message goes to the same slot the killing verbs feed, and the return value says
+   * whether the keystroke was spent — which is what stops `<App>` scrapping nothing and calling it
+   * done while a turn it was asked to stop keeps running.
+   */
+  it('clears the whole message into the kill slot, and says whether there was one', async () => {
+    const onSubmit = vi.fn();
+    const handleRef: { current: PromptInputHandle | null } = { current: null };
+    const { stdin, lastFrame, unmount } = render(
+      <PromptInput onSubmit={onSubmit} commands={[]} handleRef={handleRef} />
+    );
+    await tick();
+    // Nothing typed is not a clear: `<App>` reads this exact `false` as "fall through to the rungs
+    // below", so an implementation that always claimed the key would strand a runaway turn.
+    expect(handleRef.current?.clearToKillSlot()).toBe(false);
+
+    stdin.write('alpha beta');
+    await tick();
+    stdin.write('\\');
+    await tick();
+    stdin.write(ENTER); // a second line, so the clear is proven to take the whole message
+    await tick();
+    stdin.write('gamma delta');
+    await tick();
+    expect(bufferIn(lastFrame() ?? '')).toBe('alpha beta\ngamma delta');
+
+    expect(handleRef.current?.clearToKillSlot()).toBe(true);
+    await tick();
+    expect(bufferIn(lastFrame() ?? '')).toBe('');
+
+    // The slot, not the bin: Ctrl+Y is the whole reason a one-keystroke scrap is shippable.
+    stdin.write(CTRL_Y);
+    await tick();
+    expect(bufferIn(lastFrame() ?? '')).toBe('alpha beta\ngamma delta');
+
+    // And the handle goes away with the prompt — `<App>` holds this ref in states where this
+    // component is not mounted, and a stale one would clear a buffer nobody can see.
+    unmount();
+    expect(handleRef.current).toBeNull();
   });
 });
 

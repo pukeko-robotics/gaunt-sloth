@@ -69,11 +69,11 @@ const TUI_ONLY_KEYS = [
  */
 const EXPECTED_SECTIONS: readonly [title: string, bindings: number][] = [
   ['Scrolling the conversation (this window has no scrollback of its own)', 5],
-  ['While the agent is working', 1],
-  ['At the prompt', 15],
+  ['While the agent is working', 2],
+  ['At the prompt', 16],
   ['Panels', 7],
   ['When a tool call asks for approval (the prompt shows these too)', 1],
-  ['Always', 1],
+  ['Leaving', 1],
 ];
 
 describe('/help key bindings — one registry, two keyboards (TUI-C63)', () => {
@@ -244,6 +244,35 @@ describe('/help key bindings — one registry, two keyboards (TUI-C63)', () => {
     const yank = lines.find((candidate) => candidate.trimStart().startsWith('Ctrl+Y — '));
     expect(yank).toBeDefined();
     expect(yank).toMatch(/put back/);
+  });
+
+  it('lists Ctrl+C under each context it acts in, never as an unconditional exit (TUI-C79)', () => {
+    const lines = help(tuiCtx).lines.map((line) => line.trimStart());
+    const ctrlC = lines.filter((line) => line.startsWith('Ctrl+C'));
+
+    // Three rungs, three lines — the shape Esc is already listed in. A single line for a key with
+    // three meanings is the defect: whichever meaning it names is wrong in the other two states.
+    expect(ctrlC).toHaveLength(3);
+    // The one this node exists to retire. `/help` promised it under an "Always" heading, and it is
+    // now true only from the bottom rung, so an unqualified line here is a false promise again.
+    expect(ctrlC).not.toContain('Ctrl+C — exit (so do the exit keyword, /exit and /quit)');
+
+    // Each line carries its own condition, because a scanned line is read alone.
+    const clears = ctrlC.find((line) => line.includes('clear'));
+    expect(clears).toBeDefined();
+    // Naming the recovery key on the same line is what makes it reachable at the moment it matters.
+    expect(clears).toContain('Ctrl+Y');
+
+    const stops = ctrlC.find((line) => line.includes('stop the turn'));
+    expect(stops).toBeDefined();
+    expect(stops).toMatch(/nothing is typed/);
+
+    // Selected by the alternatives it names rather than by the word "exit", which the prompt line
+    // above carries too — it has to, since that line is where the exit stops being unconditional.
+    const exits = ctrlC.find((line) => line.includes('/quit'));
+    expect(exits).toBeDefined();
+    expect(exits).toMatch(/nothing typed/);
+    expect(exits).toMatch(/no turn running/);
   });
 
   it('keeps the hint fragment a fragment: it joins the shared row, and only mentions scrolling', () => {

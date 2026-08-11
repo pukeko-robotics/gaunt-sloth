@@ -424,7 +424,13 @@ export async function createTuiSession(
         // optional/opaque and the command already handles it being undefined.
         dumpDebugSession={dumpDebugSession}
       />,
-      { stdin: fixtureMouse.stdin, alternateScreen: true }
+      {
+        stdin: fixtureMouse.stdin,
+        alternateScreen: true,
+        // TUI-C79 — the hermetic branch owns Ctrl+C exactly as the real session below does, so the
+        // pty suite exercises the ladder itself rather than a fixture-only shortcut to Ink's exit.
+        exitOnCtrlC: false,
+      }
     );
     try {
       await instance.waitUntilExit();
@@ -660,8 +666,9 @@ export async function createTuiSession(
         onExit={async () => {
           // Fail-closed: resolve any approval still awaiting a decision before tearing down,
           // so a suspended run can never hang on an unanswered prompt. The attack banner gets the
-          // same treatment, answered `stop` — which is also what Ctrl+C reaches, since Ink claims
-          // that key before any handler and unmounts straight into here.
+          // same treatment, answered `stop` — and Ctrl+C at either of those prompts reaches this,
+          // because [[TUI-C79]] routes it through <App>'s `quit()` rather than through an Ink
+          // unmount that would have torn the session down without running any of this.
           approvalBridge.abortPending();
           attackHaltBridge.abortPending();
           await runner.cleanup();
@@ -683,6 +690,13 @@ export async function createTuiSession(
         // teardown output as disposable, so nothing written during unmount survives onto the
         // restored screen. Anything the user must keep has to be written AFTER unmount.
         alternateScreen: true,
+        // TUI-C79 — Ctrl+C belongs to <App>, which answers it as a ladder (scrap the draft, else
+        // stop the turn, else leave). Ink's default unmounts on the byte before any subscriber sees
+        // it, which loses a composed message to the reflex for scrapping a line and ends the session
+        // to the reflex for stopping a runaway turn. Handing the key over is what makes both
+        // reachable — and it routes every exit through `onExit` below, which Ink's own unmount skips.
+        // <SelectList> already does the same for its own nested render.
+        exitOnCtrlC: false,
       }
     );
 

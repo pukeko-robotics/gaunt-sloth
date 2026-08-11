@@ -108,8 +108,16 @@ describe('[[TUI-C68]] §6.1 the attack banner in <App>', () => {
   /** Mount the app, raise one halt, and wait until the banner is on screen. */
   const raise = async () => {
     const bridge = createAttackHaltBridge();
+    // The session module hangs its fail-closed teardown on `onExit` (both bridges are answered
+    // there), so this spy is how a case says "the session left" without a process to watch.
+    const onExit = vi.fn();
     const { stdin, lastFrame, unmount } = render(
-      <App {...baseProps} agent={idleAgent} subscribeAttackHalt={bridge.subscribe} />
+      <App
+        {...baseProps}
+        agent={idleAgent}
+        subscribeAttackHalt={bridge.subscribe}
+        onExit={onExit}
+      />
     );
     teardown.push(unmount);
     let answer: AttackHaltAnswer | undefined;
@@ -124,6 +132,8 @@ describe('[[TUI-C68]] §6.1 the attack banner in <App>', () => {
       stdin,
       lastFrame,
       pending,
+      /** Called when the app leaves through `quit()` — the observable of an exit at this level. */
+      onExit,
       /** The answer so far — `undefined` while the banner is still waiting. */
       settled: () => answer,
       type: (text: string) => stdin.write(text),
@@ -220,6 +230,31 @@ describe('[[TUI-C68]] §6.1 the attack banner in <App>', () => {
     banner.enter();
     // Had the chord been buffered the phrase would be complete and this would run the command.
     await expect(banner.pending).resolves.toBe('stop');
+  });
+
+  /**
+   * [[TUI-C79]] — **Ctrl+C still gets a cornered user out, and this branch must never swallow it.**
+   *
+   * The banner's own controls line promises `Ctrl+C exits gth`, and until this node Ink made that
+   * true by claiming the byte before any subscriber. `<App>` owns the key now, so the promise is
+   * kept by the ladder answering it ahead of this branch — which is the only place it can be kept:
+   * the chord guard below refuses to buffer a modified key and returns, so a Ctrl+C arriving HERE
+   * would be a silent no-op on the one screen where a user is most likely to want out.
+   *
+   * Driven with text already typed, like the `q`/`Esc` cases, because a buffer that has started
+   * accumulating is the state where a swallow is easiest to mistake for "nothing happened".
+   */
+  it('exits the session on Ctrl+C, and never answers the halt on the way out', async () => {
+    const banner = await raise();
+    banner.type('run any');
+    await vi.waitFor(() => expect(banner.lastFrame() ?? '').toContain(buffer('run any')));
+
+    banner.type(String.fromCodePoint(0x03)); // Ctrl+C
+    await vi.waitFor(() => expect(banner.onExit).toHaveBeenCalledTimes(1));
+
+    // Leaving is not an answer: the halt is resolved by the session module's teardown (`stop`),
+    // never by this keystroke reaching the phrase matcher.
+    expect(banner.settled()).toBeUndefined();
   });
 
   /**

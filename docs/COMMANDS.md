@@ -276,7 +276,8 @@ Guide-shaped walkthrough: [Work interactively](guides/interactive-sessions.md).
 
 ### Features
 - Interactive conversation with context memory
-- Type 'exit' or press Ctrl+C to end the session
+- Type 'exit', run /exit, or press Ctrl+C with nothing typed, to end the session
+  (in the TUI, Ctrl+C scraps a half-written message first, and stops a running turn)
 - Chat history saved to file when `writeOutputToFile` is enabled
 - `/debug-dump` writes a diagnostic archive to attach to a bug report — see
   [debug-dump.md](debug-dump.md)
@@ -311,7 +312,8 @@ Guide-shaped walkthrough: [Work interactively](guides/interactive-sessions.md).
 ### Features
 - Full file system read access within project
 - Interactive coding session with context memory
-- Type 'exit' or press Ctrl+C to end the session
+- Type 'exit', run /exit, or press Ctrl+C with nothing typed, to end the session
+  (in the TUI, Ctrl+C scraps a half-written message first, and stops a running turn)
 - Code history saved to file when `writeOutputToFile` is enabled
 - Streaming disabled for better interactive experience
 - `/debug-dump` writes a diagnostic archive to attach to a bug report — see

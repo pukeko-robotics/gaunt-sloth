@@ -35,9 +35,12 @@ export function pickerRowLabel(choice: ApprovalPostureChoice): string {
  * session is somewhere it is not.
  *
  * Keyboard handling and cancellation are {@link SelectList}'s — the same widget the first-run
- * dialog and the slash-command menu use — so arrow keys, Enter, Esc and Ctrl+C behave here exactly
- * as they do everywhere else in the TUI. While it is mounted the parent `<App>` suspends the
- * prompt, as it does for `<ApprovalPrompt>`.
+ * dialog and the slash-command menu use — so arrow keys, Enter and Esc behave here exactly as they
+ * do everywhere else in the TUI. **`Ctrl+C` is the one exception, and it is the app's**: this picker
+ * renders inside the session's own Ink tree rather than in a nested `render`, so `<App>`'s ladder
+ * ([[TUI-C79]]) answers it and leaves the session — the same thing it did when Ink owned the key.
+ * The mode is untouched either way. While it is mounted the parent `<App>` suspends the prompt, as
+ * it does for `<ApprovalPrompt>`.
  *
  * **Type-to-filter is off** (`filterable={false}`). Four rows are readable at a glance, so
  * filtering could only cost: one stray keystroke would empty the list and leave Enter with nothing
@@ -52,7 +55,7 @@ export function ApprovalsPicker({
   choices: ApprovalPostureChoice[];
   /** Called with the chosen mode. The parent applies it through the runner. */
   onSelect: (rung: ApprovalRung) => void;
-  /** Esc / Ctrl+C — leave the mode exactly as it was. */
+  /** Esc — leave the mode exactly as it was. */
   onCancel: () => void;
 }): React.ReactElement {
   const items: SelectItem[] = choices.map((choice) => ({ label: pickerRowLabel(choice) }));

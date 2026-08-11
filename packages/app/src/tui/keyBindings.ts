@@ -33,6 +33,8 @@ export const TUI_HINT_SUFFIX = ' · PgUp/PgDn to scroll history';
  * Grouped, not flat, because the bindings are modal: `Esc` alone aborts a running turn, leaves the
  * focused debug panel, dismisses the slash menu, or returns to the newest output, decided by what
  * owns the keyboard at the time. A flat list would state four contradictory things about one key.
+ * `Ctrl+C` is the second such key — it scraps the typed message, stops the turn, or leaves — and it
+ * is listed the same way, one context at a time, rather than as a single unconditional promise.
  *
  * `Shift+wheel` is listed with its condition rather than beside the keys that always work: the
  * binding is correct (measured at exactly one page in a pty), but a terminal that never sets the
@@ -63,7 +65,13 @@ export const TUI_KEY_BINDINGS: readonly KeyBindingGroup[] = [
   },
   {
     title: 'While the agent is working',
-    bindings: [{ keys: 'Esc', description: 'stop the turn' }],
+    bindings: [
+      { keys: 'Esc', description: 'stop the turn' },
+      // Ctrl+C is listed under each context it has a meaning in, for the reason Esc is: a line is
+      // read alone, and the reader of THIS group is the one reaching for the key that stops things.
+      // Named here as the same abort rather than as its own verb, because it is the same one.
+      { keys: 'Ctrl+C', description: 'stop the turn too, when nothing is typed at the prompt' },
+    ],
   },
   {
     title: 'At the prompt',
@@ -115,10 +123,19 @@ export const TUI_KEY_BINDINGS: readonly KeyBindingGroup[] = [
         description: 'delete back to the start / on to the end of the current line',
       },
       {
-        // Worth its own line rather than a clause on the four above: those four are the only keys
-        // that fill the slot, and it holds exactly one kill, so what comes back is predictable.
+        // The condition travels with the line, like Ctrl+D's above: this is the key a terminal user
+        // presses to mean *get me out*, and here it takes the message first. Saying so on the line
+        // is what stops it reading as a promise that Ctrl+C leaves — and what makes the recovery
+        // key discoverable at the moment it is needed.
+        keys: 'Ctrl+C',
+        description: 'clear the whole message — Ctrl+Y puts it back; with none typed, it exits',
+      },
+      {
+        // Worth its own line rather than a clause on the deletions above: those keys and Ctrl+C are
+        // the only ones that fill the slot, and it holds exactly one kill, so what comes back is
+        // predictable.
         keys: 'Ctrl+Y',
-        description: 'put back the text the last of those four deletions removed',
+        description: 'put back the text the last of those deletions removed',
       },
     ],
   },
@@ -160,7 +177,15 @@ export const TUI_KEY_BINDINGS: readonly KeyBindingGroup[] = [
     ],
   },
   {
-    title: 'Always',
-    bindings: [{ keys: 'Ctrl+C', description: 'exit (so do the exit keyword, /exit and /quit)' }],
+    // Not "Always": Ctrl+C leaves only from the bottom of its ladder, and the two rungs above it are
+    // listed with the contexts they belong to. A group promising it unconditionally would contradict
+    // both of those lines, which is the same defect a flat listing of Esc would have.
+    title: 'Leaving',
+    bindings: [
+      {
+        keys: 'Ctrl+C, with nothing typed and no turn running',
+        description: 'exit (so do the exit keyword, /exit and /quit)',
+      },
+    ],
   },
 ];
