@@ -662,6 +662,10 @@ describe('checkHardline — the deterministic exfiltration subset (CFG-27 §8)',
     // colon is not rsync's destination, and this is the case that goes red if that bound is ever
     // widened to cross the pipe.
     "rsync -av ~/.ssh/ ~/backup/ | grep 'total size:'",
+    // A comment ENDS the command, so everything after it is inert — the invariant the destructive
+    // half of this module already builds its token classes around. Without the same exclusion here
+    // a refusal is assembled out of prose.
+    'rsync -av ~/.ssh/ ~/backup/ # note: keep two copies',
   ];
 
   it.each(localCredentialBackup)(
@@ -697,11 +701,22 @@ describe('checkHardline — the deterministic exfiltration subset (CFG-27 §8)',
     // Daemon module syntax, with a host and without one.
     'rsync -a ~/.ssh/ host::module/',
     'rsync -a ~/.ssh/ ::module/',
+    // The SINGLE leading colon, and it is not a duplicate of the case above: the daemon `::module/`
+    // matches whether the host run is `*` or `+` (`:` is a member of the run's own class, so under
+    // `+` the first colon feeds the run and the second satisfies the literal), while this one
+    // matches only under `*`. It is therefore the only case that can fail if someone "tightens" the
+    // run the way the docblock warns against, which is the whole reason the warning is written down.
+    'rsync -a ~/.ssh/ :module/',
     // A bare host with no user, which the `user@` spelling alone would miss.
     'rsync -a ~/.ssh/ backup.example.com:/srv/',
     'rsync -a ~/.ssh/ myhost:/srv/',
     // No `./`, so rsync reads `weird` as a host and so does the floor.
     'rsync -a ~/.ssh/ weird:name/backup/',
+    // A `#` inside a token is an ordinary character — a comment opens only at the start of a word —
+    // so this names a host called `back#up`, measured against rsync itself. It is what stops the
+    // comment fix above from being written one level too low: excluding `#` from the target token
+    // would turn this remote spelling into a miss.
+    'rsync -a ~/.ssh/ back#up:tmp',
     // A Windows drive letter is rsync's own ambiguity, resolved rsync's own way: `c` is a host.
     // Deliberate — the local spelling that avoids it is the one rsync itself documents.
     'rsync -a ~/.ssh/ c:/backup/ssh/',
@@ -716,6 +731,58 @@ describe('checkHardline — the deterministic exfiltration subset (CFG-27 §8)',
     expect(match).not.toBeNull();
     expect(match?.description).toContain('credentials');
   });
+
+  /**
+   * The two residuals of the rsync arm, pinned in the direction each actually errs. Neither is a
+   * defect this block is waiting to have fixed: both are the price of a LEXICAL test, and both are
+   * recorded here so a later reader meets a decision rather than a discovery.
+   *
+   * **Over-refusal — a colon-carrying option written with a SPACE.** `(?!-)` removes a token that
+   * begins with `-`, so `--chown=deploy:deploy` is covered; rsync also accepts `--chown
+   * deploy:deploy`, whose value is its own token and is indistinguishable from an operand without a
+   * per-flag table of which options take values. That table is the growth `hardline.ts`'s `CMD_POS`
+   * docblock refuses, and a wrong entry in it would be a MISS rather than mere noise — so the
+   * narrower attached spelling is covered and this one is not. **These floored before the arm
+   * existed too**, so the arm shrinks this class rather than creating it.
+   *
+   * **Under-refusal — a target the shell BUILDS.** An expansion hides the colon, so a genuinely
+   * remote destination goes unrecognised. The module does not parse the shell and never will; the
+   * miss is not naked, because the command is still rated at both rated rungs.
+   *
+   * A change to either line is a decision someone made on purpose — read the `RSYNC_REMOTE_TARGET`
+   * docblock before agreeing with it.
+   */
+  const knowinglyOverRefused = [
+    ['rsync -a --chown deploy:deploy ~/.ssh/ ~/backup/ssh/', 'space-separated option value'],
+    ['rsync -a --usermap me:them ~/.ssh/ ~/backup/ssh/', 'same, another ordinary option'],
+    ['rsync -av --exclude tmp:cache ~/.ssh/ ~/backup/', 'same, a pattern rather than a mapping'],
+  ];
+
+  it.each(knowinglyOverRefused)(
+    'is knowingly OVER-refused, pending an operand parser this layer will not grow: %s (%s)',
+    (command) => {
+      expect(
+        checkHardline(command),
+        `"${command}" is pinned as refused — if this is now clear, read the RSYNC_REMOTE_TARGET docblock`
+      ).not.toBeNull();
+    }
+  );
+
+  const knowinglyUnrefused = [
+    ['rsync -a ~/.ssh/ $DEST', 'the destination is built by the shell, not spelled'],
+    ['rsync -a ~/.ssh/ "$DEST"', 'same, quoted'],
+    ['rsync -a ~/.ssh/ ${DEST}', 'same, braced'],
+  ];
+
+  it.each(knowinglyUnrefused)(
+    'is knowingly NOT refused, because a lexical test cannot see an expansion: %s (%s)',
+    (command) => {
+      expect(
+        checkHardline(command),
+        `"${command}" is pinned as clear — if this now refuses, read the RSYNC_REMOTE_SINK_RE docblock`
+      ).toBeNull();
+    }
+  );
 
   /**
    * The narrowing is confined to `rsync`. The other file-copy sinks are unconditional on purpose —
