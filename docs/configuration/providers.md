@@ -363,7 +363,9 @@ replaces the `configuration` block with one of its own first, so nothing you put
 not a timeout, not headers, not even a base URL — and it is reported as ignored when the provider
 starts. Set `baseURL` or `timeout` as top-level fields of the `llm` block instead, beside `model`.
 Extra headers have no home on this provider at all: to send them, use the `openai` provider with
-`configuration.baseURL` set to `https://api.x.ai/v1`, which takes a full `configuration` block.
+`configuration.baseURL` set to `https://api.x.ai/v1`, which takes a full `configuration` block — and
+point `apiKeyEnvironmentVariable` at `XAI_API_KEY` there, since that provider otherwise reads
+`OPENAI_API_KEY`.
 
 ## Examples of configuration for different providers
 
