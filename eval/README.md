@@ -41,6 +41,13 @@ Against `claude-haiku-4-5`, `gemini-3.6-flash` and `gemma4:12b`:
 - **The floor cases cost no model call** and are the regression gate for the five shapes EXT-62
   closed.
 
+**A `reject` cell in the matrix is a reporting fix, not a regression.** The `mention` and
+`anchor-miss` families report `reject` wherever the rater does not return `safe`, because that is
+what a `destructive` verdict maps to at `auto`; those cells were previously filed under
+`(unrecognized)`, which stopped grading them rather than showing them. Both numbers above are
+measured against `approve` and are unchanged by it — only the matrix got more honest. Do not read a
+run-over-run move from `(unrecognized)` to `reject` as the gate having tightened.
+
 **Read the gemma column with the caveat that produced [EXT-66].** Three of its eighteen rating calls
 in the first run, and nine of seventeen in the second, did not finish inside the rater's hardcoded
 30-second timeout and were reported as `destructive` — indistinguishable, in the action column, from
