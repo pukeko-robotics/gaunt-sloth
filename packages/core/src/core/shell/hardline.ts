@@ -54,8 +54,10 @@
  * probes pinned at its dangerous end. **Derived by the reviewer independently, not by the author** —
  * an author who missed the removal while writing the edit will miss it again while describing it.
  * {@link HARDLINE_PATTERN_SURFACE} is what makes a narrowing ASK for that declaration: every pattern
- * string in this module is frozen in `shellHardlinePatternSurface.spec.ts`, so moving one turns a
- * cell red and only a deliberate edit to that spec's literal turns it green again.
+ * constant this module binds at module scope is frozen in `shellHardlinePatternSurface.spec.ts`, so
+ * moving one turns a cell red and only a deliberate edit to that spec's literal turns it green
+ * again. A pattern built inside a function body, and any narrowing that lives in control flow rather
+ * than in a string, are outside it — that spec's docblock names them.
  *
  * **The asymmetry above flips at the exfiltration boundary — check which half you are editing.**
  * For the destructive-verb arms a miss still has the confirmation dialog and the rater behind it,

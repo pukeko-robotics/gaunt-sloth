@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { HARDLINE_PATTERN_SURFACE } from '@gaunt-sloth/core/core/shell/hardline.js';
 
@@ -35,8 +36,11 @@ import { HARDLINE_PATTERN_SURFACE } from '@gaunt-sloth/core/core/shell/hardline.
  *  - **Control flow**: `isDeterministicExfiltration`'s per-pipeline split and its source-AND-sink
  *    conjunction, and the order `checkHardline` tries the arms. Dropping one of the two sink tests
  *    is a total narrowing of that arm and moves no string.
- *  - **A pattern built inside a function body** rather than bound at module scope would not be
- *    enumerated by the completeness check below, which reads module-scope bindings.
+ *  - **A pattern built inside a function body.** The completeness check below enumerates what
+ *    `hardline.ts` binds at MODULE SCOPE; a regex constructed inside a function is not a binding it
+ *    can see. What that check does now cover is every module-scope binding regardless of the FORM it
+ *    is declared in — it walks the TypeScript AST rather than scanning lines, so a continuation
+ *    declarator, an `enum`, or a destructuring pattern is enumerated like any other.
  *
  * Said plainly rather than left to a green run to overclaim: this gate covers the pattern surface,
  * not the floor.
@@ -132,8 +136,10 @@ const EXPECTED_SURFACE: Readonly<Record<string, string | readonly string[]>> = {
 /**
  * The module-scope bindings `hardline.ts` introduces that are deliberately NOT in the surface, each
  * with the reason. **A binding is either enrolled or listed here** — the completeness check below is
- * an exact-set equality over the two, so a new pattern constant cannot be forgotten into the blind
- * spot.
+ * an exact-set equality over the two, so a new pattern constant **bound at module scope** cannot be
+ * forgotten into the blind spot whatever form it is declared in. What that does not reach is a
+ * pattern that never becomes a module-scope binding at all: one built inside a function body. That
+ * limit is real and is stated in the file docblock rather than argued away here.
  *
  * The criterion is not "constant vs function". It is whether the value is **baked in at module
  * load** — `quotedOrBare` is a builder and is fully captured, because its output is what
@@ -170,26 +176,70 @@ const HARDLINE_SOURCE = readFileSync(
 );
 
 /**
- * Every name `hardline.ts` binds at module scope: its own top-level declarations (matched at column
- * zero, so nothing inside a docblock or a nested block is picked up) plus every value it imports.
- * `import type` is skipped — a type carries no runtime value and so cannot hold a pattern.
+ * Every name `hardline.ts` binds at module scope, **enumerated from the TypeScript AST** — every
+ * declarator of a variable statement (including the second and later ones), every function, class,
+ * enum, namespace and destructured name, and every value it imports. `import type` and the inline
+ * `{ type X }` modifier are skipped, as are `interface` and `type` declarations: a type carries no
+ * runtime value and so cannot hold a pattern.
+ *
+ * **It parses rather than scans, and that difference is the finding this cell was rebuilt on.** A
+ * lexical scan can only enumerate the declaration forms whoever wrote it thought of, and the two it
+ * missed here were not exotic: a continuation declarator (`const A = …,` newline `B = …`) is what
+ * `pnpm run format` itself writes, and the repo already uses `enum` elsewhere. Both are lint-clean
+ * and prettier-clean, and both carried a brand-new unenrolled pattern constant past every cell in
+ * this file. Hardening the regex form by form would have left the same shape of hole with a shorter
+ * list — and "someone will notice the odd declaration" is exactly the reliance this whole node
+ * exists because the floor's own history falsified. The parser knows every form by construction.
  */
 function moduleScopeBindings(source: string): string[] {
   const names = new Set<string>();
-  for (const match of source.matchAll(
-    /^(?:export\s+)?(?:async\s+)?(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm
-  )) {
-    names.add(match[1]);
-  }
-  for (const match of source.matchAll(/^import\s+(?!type\s)([\s\S]*?)\s+from\s+['"][^'"]+['"]/gm)) {
-    for (const clause of match[1].replace(/[{}]/g, ' ').split(',')) {
-      const local =
-        clause
-          .trim()
-          .split(/\s+as\s+/)
-          .pop()
-          ?.trim() ?? '';
-      if (/^[A-Za-z_$][\w$]*$/.test(local)) names.add(local);
+  const parsed = ts.createSourceFile(
+    'hardline.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ false,
+    ts.ScriptKind.TS
+  );
+
+  /** A declarator's name is either an identifier or a binding pattern that holds more names. */
+  const addBindingName = (name: ts.BindingName): void => {
+    if (ts.isIdentifier(name)) {
+      names.add(name.text);
+      return;
+    }
+    for (const element of name.elements) {
+      if (ts.isBindingElement(element)) addBindingName(element.name);
+    }
+  };
+
+  for (const statement of parsed.statements) {
+    if (ts.isVariableStatement(statement)) {
+      // EVERY declarator, not just the first: `const A = …, B = …` binds both.
+      for (const declaration of statement.declarationList.declarations) {
+        addBindingName(declaration.name);
+      }
+    } else if (
+      ts.isFunctionDeclaration(statement) ||
+      ts.isClassDeclaration(statement) ||
+      ts.isEnumDeclaration(statement) ||
+      ts.isModuleDeclaration(statement)
+    ) {
+      // An enum's MEMBERS are properties of the one binding its name introduces, so enrolling or
+      // excusing that name is the decision this forces. An unnamed `export default` binds nothing.
+      if (statement.name && ts.isIdentifier(statement.name)) names.add(statement.name.text);
+    } else if (ts.isImportDeclaration(statement)) {
+      const clause = statement.importClause;
+      if (!clause || clause.isTypeOnly) continue;
+      if (clause.name) names.add(clause.name.text);
+      const bindings = clause.namedBindings;
+      if (!bindings) continue;
+      if (ts.isNamespaceImport(bindings)) {
+        names.add(bindings.name.text);
+      } else {
+        for (const element of bindings.elements) {
+          if (!element.isTypeOnly) names.add(element.name.text);
+        }
+      }
     }
   }
   return [...names].sort();
@@ -213,6 +263,15 @@ function surfaceFragments(): Array<readonly [string, string]> {
  * (`/` escaped, as `RegExp.prototype.source` writes it outside a character class) and then raw; a
  * spelling that does not occur verbatim simply does not substitute, so this can only shorten the
  * value, never invent one. Very short fragments are skipped as too weak to be meaningful.
+ *
+ * **"One edit reddens one member" is the tendency, not a guarantee — do not read a two-member
+ * failure as two edits.** Substitution is by verbatim occurrence, so an edit to one member can make
+ * its new value a substring of a member that did not change, and that member is then reported as
+ * moved because its RENDERING moved. Measured: narrowing `COMMAND_SEPARATOR_CLASS` in `normalize.ts`
+ * named `PIPELINE_SPLIT_RE` as well, although `PIPELINE_SPLIT_RE` is a hardcoded literal that no
+ * edit to that class can touch. The direction that matters is unaffected — a member whose own value
+ * moves is always compared under its own key, so this cannot MASK a change, only add a name to the
+ * report. Read the printed frozen-vs-current pair per member rather than the count of names.
  */
 function render(key: string, value: string, fragments: Array<readonly [string, string]>): string {
   let out = value;
@@ -263,15 +322,19 @@ const REQUIREMENT = [
 ].join('\n');
 
 describe('the §8 hardline pattern surface is frozen (EXT-112)', () => {
-  it('reads hardline.ts itself, so a wrong path or a parse that matches nothing fails loudly rather than passing vacuously', () => {
+  /**
+   * The one thing here that no other cell covers: that the text being parsed is `hardline.ts` and
+   * not some other file the relative URL happens to reach.
+   *
+   * It deliberately does NOT also assert that the parse produced bindings, that `CMD_POS` is among
+   * them, or that `COMMAND_SEPARATOR_CLASS` is enrolled. Every one of those fails the completeness
+   * cell too, and with a better message — an empty parse leaves it reporting all 31 accounted names
+   * as no longer bound. An assertion that cannot fail ALONE adds no information, which is the same
+   * reasoning that removed a whole-object comparison from the cell below and a duplicate stale-entry
+   * cell after it.
+   */
+  it('parses hardline.ts itself and not some other file the relative URL reaches', () => {
     expect(HARDLINE_SOURCE).toContain('@module core/shell/hardline');
-    const bindings = moduleScopeBindings(HARDLINE_SOURCE);
-    expect(bindings.length).toBeGreaterThan(20);
-    expect(bindings).toContain('CMD_POS');
-    // The imported member — the writer audit this surface exists to carry, since a change to it
-    // lands in another module entirely.
-    expect(bindings).toContain('COMMAND_SEPARATOR_CLASS');
-    expect(Object.keys(HARDLINE_PATTERN_SURFACE)).toContain('COMMAND_SEPARATOR_CLASS');
   });
 
   it('matches the declared surface — every pattern string, verbatim', () => {
@@ -299,22 +362,37 @@ describe('the §8 hardline pattern surface is frozen (EXT-112)', () => {
     ).toEqual([]);
   });
 
-  it('enrols every module-scope binding hardline.ts has, so a new pattern constant cannot be forgotten', () => {
+  /**
+   * Exact-set equality, which makes this ONE cell cover three failures, each with its own message:
+   * a binding nobody enrolled, a surface or `NOT_A_PATTERN` entry naming something the module no
+   * longer binds (a rename or a deletion — there is no separate stale-entry cell, because such a
+   * cell could never fail while this one passed), and a name sitting in BOTH records.
+   */
+  it('accounts for every module-scope binding hardline.ts has, in whatever form it is declared', () => {
     const bindings = moduleScopeBindings(HARDLINE_SOURCE);
-    const accounted = [
-      ...Object.keys(HARDLINE_PATTERN_SURFACE),
-      ...Object.keys(NOT_A_PATTERN),
-    ].sort();
+    const surfaceKeys = Object.keys(HARDLINE_PATTERN_SURFACE);
+    const excusedKeys = Object.keys(NOT_A_PATTERN);
+    const accounted = [...surfaceKeys, ...excusedKeys].sort();
     const unenrolled = bindings.filter((name) => !accounted.includes(name));
-    // The other direction: enrolled or excused under a name hardline.ts no longer binds (a rename,
-    // a deletion). Without this clause that failure prints "(nothing new)" and reads as a puzzle.
+    // A binding enrolled or excused under a name hardline.ts no longer binds (a rename, a deletion).
     const vanished = accounted.filter((name) => !bindings.includes(name));
+    // `accounted` is a concatenation, so a name in BOTH records makes the arrays differ by a
+    // duplicate while both lists above are empty — the shape of "promoted into the surface, forgot
+    // to drop the NOT_A_PATTERN entry". Without this branch the failure prints an empty name list
+    // and the cause is visible only in the array diff.
+    const inBoth = surfaceKeys.filter((name) => excusedKeys.includes(name));
+
+    const lede = unenrolled.length
+      ? `hardline.ts binds ${unenrolled.join(', ')} at module scope with no place in the surface.`
+      : vanished.length
+        ? `hardline.ts no longer binds ${vanished.join(', ')}, which the surface still accounts for.`
+        : inBoth.length
+          ? `${inBoth.join(', ')} is in BOTH HARDLINE_PATTERN_SURFACE and NOT_A_PATTERN. A name is enrolled or excused, never both — drop the NOT_A_PATTERN entry.`
+          : 'The accounted names and the module-scope bindings differ.';
 
     expect(
       bindings,
-      (unenrolled.length
-        ? `hardline.ts binds ${unenrolled.join(', ')} at module scope with no place in the surface.\n\n`
-        : `hardline.ts no longer binds ${vanished.join(', ')}, which the surface still accounts for.\n\n`) +
+      `${lede}\n\n` +
         'Every module-scope binding is either a member of HARDLINE_PATTERN_SURFACE — which is what makes a\n' +
         'narrowing of it loud — or an entry in NOT_A_PATTERN carrying the reason it decides no refusal.\n' +
         'A binding in neither is a pattern this gate is blind to.\n\n' +
@@ -322,10 +400,79 @@ describe('the §8 hardline pattern surface is frozen (EXT-112)', () => {
     ).toEqual(accounted);
   });
 
-  it('keeps no stale NOT_A_PATTERN entry after a rename or a deletion', () => {
-    const bindings = moduleScopeBindings(HARDLINE_SOURCE);
-    for (const name of Object.keys(NOT_A_PATTERN)) {
-      expect(bindings, `${name} is no longer a binding in hardline.ts`).toContain(name);
-    }
+  /**
+   * **The enumerator's own guards.** The completeness cell above is only worth its name if
+   * `moduleScopeBindings` sees every declaration FORM, and the two forms that once slipped past it
+   * were ordinary rather than exotic — the multi-declarator `const` is what `pnpm run format`
+   * writes, and the repo already uses `enum`. These feed it synthetic source instead of mutating
+   * `hardline.ts`, so each form is pinned directly and a future rewrite of the enumerator has to
+   * keep them all visible.
+   */
+  describe('moduleScopeBindings sees every declaration form', () => {
+    const forms: ReadonlyArray<readonly [string, string, readonly string[]]> = [
+      ['a plain const', "const A = '1';", ['A']],
+      ['an exported const', "export const A = '1';", ['A']],
+      // THE REGRESSION ROWS: this one and the two below it, plus the `enum` row, are the forms that
+      // were measured carrying a brand-new unenrolled pattern constant past every cell in this file.
+      [
+        'a continuation declarator, indented as prettier writes it',
+        "const A = '1',\n  B = '2';",
+        ['A', 'B'],
+      ],
+      ['a continuation declarator at column zero', "const A = '1',\nB = '2';", ['A', 'B']],
+      [
+        'three declarators, the middle one on its own line',
+        "const A = '1',\n  B = '2',\n  C = '3';",
+        ['A', 'B', 'C'],
+      ],
+      ['let and var', "let A = '1';\nvar B = '2';", ['A', 'B']],
+      ['an enum', "enum A {\n  Stage = '[^|]*',\n}", ['A']],
+      ['an exported const enum', "export const enum A {\n  Stage = '1',\n}", ['A']],
+      ['an object destructuring binding', "const { A, B: C } = require('x');", ['A', 'C']],
+      ['a nested destructuring binding', 'const { A: { B } } = x;', ['B']],
+      ['an array destructuring binding', 'const [A, , B] = x;', ['A', 'B']],
+      ['a function', 'function A() {}', ['A']],
+      ['an async function', 'async function A() {}', ['A']],
+      ['a class', 'class A {}', ['A']],
+      ['a namespace', "namespace A {\n  export const B = '1';\n}", ['A']],
+      ['a named import', "import { A, B as C } from 'x';", ['A', 'C']],
+      ['a default import', "import A from 'x';", ['A']],
+      ['a namespace import', "import * as A from 'x';", ['A']],
+      ['a bare import', "import 'x';", []],
+    ];
+
+    it.each(forms)('binds the names in %s', (_form, source, expected) => {
+      expect(moduleScopeBindings(source)).toEqual([...expected].sort());
+    });
+
+    /**
+     * The exclusions, which are as load-bearing as the inclusions: a type carries no runtime value
+     * and so cannot hold a pattern, and enrolling one would make the surface claim to freeze
+     * something that does not exist at run time. A declaration INSIDE a function is not a
+     * module-scope binding — the gate's declared blind spot, pinned here so it stays a decision.
+     */
+    const excluded: ReadonlyArray<readonly [string, string]> = [
+      ['a type-only import', "import type { A } from 'x';"],
+      ['an inline type modifier in a named import', "import { type A } from 'x';"],
+      ['an interface', 'interface A {\n  b: string;\n}'],
+      ['a type alias', "type A = 'x';"],
+      ['a const inside a function body', "function f() {\n  const A = '1';\n  return A;\n}"],
+      ['a const inside a nested block', "{\n  const A = '1';\n}"],
+    ];
+
+    it.each(excluded)('binds nothing for %s', (_form, source) => {
+      expect(moduleScopeBindings(source).filter((name) => name === 'A')).toEqual([]);
+    });
+
+    /**
+     * The only property here that the two tables above do not already pin. A `toContain('HIDDEN')`
+     * probe for the continuation declarator and the enum would be exactly the rows named as the
+     * regression rows — it could not fail while they passed, and an assertion that cannot fail alone
+     * adds nothing but the appearance of coverage.
+     */
+    it('ignores a declaration keyword inside a comment or a string literal', () => {
+      expect(moduleScopeBindings("// const NOPE = '1';\nconst A = '1';")).toEqual(['A']);
+      expect(moduleScopeBindings("const A = '\\nconst NOPE = 1;';")).toEqual(['A']);
+    });
   });
 });
