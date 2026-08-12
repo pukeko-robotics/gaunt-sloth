@@ -544,8 +544,9 @@ const NETWORK_SINK_RE = new RegExp(
  * **The host run is a `*` and not a `+`, and the form that needs it is the single-leading-colon
  * `:module/`** — NOT the daemon `::module/`, which matches either way because `:` is itself a member
  * of the run's class, so under `+` the first colon feeds the run and the second satisfies the
- * literal. rsync reads both as remote (`:module/` resolves a hostname of `:`), and neither is a
- * local path, so tightening the run would drop a remote spelling and buy nothing back. `:module/` is
+ * literal. rsync reads both as remote — measured, it hands the remote shell an EMPTY hostname for
+ * `:module/` rather than a hostname of `:` — and neither is a local path, so tightening the run
+ * would drop a remote spelling and buy nothing back. `:module/` is
  * the case that pins this; the daemon form cannot, and a warning nothing can falsify is worth less
  * than no warning.
  *
@@ -555,11 +556,9 @@ const NETWORK_SINK_RE = new RegExp(
  * directory is rsync's own documented answer. A Windows drive letter (`c:/backup/`) resolves the
  * same way for the same reason.
  *
- * **`#` is NOT excluded here, and that is the opposite of the choice made one level up** in
- * {@link RSYNC_REMOTE_SINK_RE}'s bound. A `#` only opens a comment at the START of a word, so inside
- * a token it is an ordinary character: `back#up:tmp` is a host called `back#up`, measured against
- * rsync itself. Excluding it here would turn a genuinely remote spelling into a miss and defend
- * nothing — the comment case is carried entirely by the bound.
+ * **`#` is NOT excluded here.** A `#` opens a comment only at the START of a word, so inside a token
+ * it is an ordinary character: `back#up:tmp` is a host called `back#up`, measured against rsync
+ * itself. Excluding it would turn a genuinely remote spelling into a miss.
  *
  * **Options are excluded, and the exclusion is PARTIAL — read this before trusting it.** `(?!-)`
  * removes a token that itself begins with `-`, so the attached spelling of a colon-carrying flag
@@ -581,15 +580,28 @@ const RSYNC_REMOTE_TARGET = '(?!-)[^\\s/|]*:';
  * `rsync` transmitting off the machine — the command at a command position, and a remote target
  * somewhere in its own stage of the pipeline.
  *
- * **The `|` and `#` exclusions bound the search to rsync's own command**, so neither a later
- * pipeline stage's colon (`rsync -av ~/.ssh/ ~/backup/ | grep 'total size:'`) nor a trailing
- * comment's (`… ~/backup/ # note: keep two copies`) is read as rsync's destination. `#` is here for
- * the reason {@link H_TOKEN_EXCLUSIONS} gives: a comment ENDS the command, so everything after it is
- * inert, and without this a refusal is assembled out of prose — the defect the destructive half of
- * this module already builds its token classes to avoid. Both exclusions are strictly subtractive:
- * they can only make the search stop EARLIER, so they remove refusals and introduce none. A `#`
- * INSIDE a token is a different question and gets the opposite answer — see
- * {@link RSYNC_REMOTE_TARGET}.
+ * **The `|` exclusion bounds the search to rsync's own stage of the pipeline**, so a later stage's
+ * colon (`rsync -av ~/.ssh/ ~/backup/ | grep 'total size:'`) is not read as rsync's destination.
+ *
+ * **`#` is deliberately NOT excluded here, and a trailing comment therefore over-refuses**
+ * (`rsync -av ~/.ssh/ ~/backup/ # note: keep two copies` is refused, though it copies to
+ * `~/backup/`). That is accepted, and the reason is worth stating because the opposite looks
+ * obviously right: this run walks ACROSS tokens, so excluding `#` from it stops the walk at the
+ * FIRST `#` anywhere in the command — and `#` opens a comment only at the start of a WORD, so
+ * `--exclude=#recycle` and `~/x#1/.ssh/` are ordinary arguments that would then silence the whole
+ * arm. That is a one-token bypass of an exfiltration floor, which is a far worse error than the
+ * refusal it would remove. The three shapes are pinned as guards in `shellHardline.spec.ts`, and
+ * the over-refusal is pinned beside them as knowingly accepted.
+ *
+ * **The asymmetry with {@link RSYNC_REMOTE_TARGET}, which does not exclude `#` either, is not an
+ * inconsistency:** there the reason is that a `#` inside a token is an ordinary character, so
+ * `back#up:tmp` is a real host. Both halves decline the exclusion; only the cost of taking it
+ * differs.
+ *
+ * **Do not reason about a change here as "strictly subtractive".** That argument belongs to the
+ * destructive-verb matchers above, where removing a refusal is the safe direction. In THIS section
+ * removing a refusal is the harm — the whole arm exists to refuse — so a narrowing needs the same
+ * scrutiny a widening gets elsewhere, and the polarity flips at the section boundary.
  *
  * **It asks whether a remote end is NAMED, not which side of the copy it is on**, so a pull from a
  * remote source into a credential directory also matches. Naming the side means resolving operand
@@ -602,7 +614,7 @@ const RSYNC_REMOTE_TARGET = '(?!-)[^\\s/|]*:';
  * than an oversight (it does not parse the shell and never will), and the miss is not naked: the
  * command is rated at both rated rungs. It is pinned so it stays a decision.
  */
-const RSYNC_REMOTE_SINK_RE = new RegExp(CMD_POS + 'rsync\\b[^|#]*\\s' + RSYNC_REMOTE_TARGET);
+const RSYNC_REMOTE_SINK_RE = new RegExp(CMD_POS + 'rsync\\b[^|]*\\s' + RSYNC_REMOTE_TARGET);
 
 /**
  * A path token that ENDS here — at end of input, at whitespace, or after a single trailing slash.
