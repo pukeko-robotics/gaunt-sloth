@@ -186,8 +186,10 @@ describe('evalCommand', () => {
     outputDir = mkdtempSync(join(tmpdir(), 'gth-eval-command-'));
 
     configMock.initConfig.mockResolvedValue({ ...mockConfig, llm: { ...mockConfig.llm } });
-    // GS2-62: default the judge-profile pre-check to "resolves" so a --judge/judge_profile test
-    // reaches the judge build; the missing-profile test overrides this to undefined.
+    // BATCH-12: default every identity to "resolves" so a suite reaches the run; the two
+    // identities-precondition tests override this per name to make one identity unresolvable.
+    // A --judge profile is NOT pre-checked here — CFG-36 deleted that workaround, and a bad judge
+    // profile is now surfaced by initConfig raising (stubbed as a rejection in that test).
     configMock.resolveIdentityProfileConfigPath.mockReturnValue(
       '/mock/.gsloth/.gsloth-settings/judge/.gsloth.config.json'
     );

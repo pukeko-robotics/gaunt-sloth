@@ -480,7 +480,8 @@ const MAX_EXTENDS_CHAIN_DEPTH = 50;
  * cycle, a missing base, an over-deep chain, or an unreadable base. It carries the SAME clear,
  * user-facing message the run path prints, so the two consumers can translate one shared failure
  * into their own convention WITHOUT the traversal being forked or the checks duplicated:
- *   - the run path ({@link resolveConfigExtends}) → `displayError` + `exit(1)` (hard-fail a run),
+ *   - the run path ({@link resolveConfigExtends}) → re-raised as a {@link ConfigDiscoveryError}, so
+ *     the caller classifies it and chooses the exit code (CFG-36),
  *   - the read path ({@link validateConfig}) → a `not-ok` layer with this message (collect, never
  *     `exit`), so `gth config validate` mirrors what a real run would hit (GS2-29 invariant).
  */
@@ -526,15 +527,23 @@ export async function resolveConfigExtends(
   try {
     return await composeExtends(rawConfig, profileLabel);
   } catch (e) {
-    // GS2-73 — the traversal now RAISES a {@link ConfigExtendsError} rather than exiting inline, so
-    // the read side ({@link validateConfig}) can report the same failure without terminating. On the
-    // RUN path we translate it back to the original behaviour: print the clear message and exit(1).
+    // GS2-73 — the traversal RAISES a {@link ConfigExtendsError} rather than exiting inline, so the
+    // read side ({@link validateConfig}) can report the same failure without terminating.
+    //
+    // CFG-36 — the RUN path re-raises it as a {@link ConfigDiscoveryError} instead of printing and
+    // calling `exit(1)`. A profile whose `extends` base is missing (or forms a cycle) is a bad
+    // profile exactly as a profile with no config at all is, and both must be classifiable by the
+    // caller: exiting here from inside a library collapses `gth eval`'s harness-error (exit 2) and
+    // product-failure (exit 1) contract onto the same code, which is the collapse this node exists
+    // to remove. The CLI's top-level guard prints the same message and exits 1, so what a person at
+    // a terminal sees is unchanged.
+    //
+    // The message already names the profile, the base and the cycle; the optional detail fields are
+    // deliberately left unset rather than guessed at. `identityProfile` means "the profile that did
+    // not resolve", which for a missing base referenced from another profile is the BASE, not the
+    // `profileLabel` in hand here — a wrong value would be worse than an absent one.
     if (e instanceof ConfigExtendsError) {
-      displayError(e.message);
-      exit(1);
-      // Unreachable past exit(1) in production; LOAD-BEARING under the specs' mocked exit so the
-      // caller never observes a silently-composed config after a cycle/missing base.
-      throw new Error('Unexpected error occurred.');
+      throw new ConfigDiscoveryError(e.message);
     }
     throw e;
   }
@@ -544,7 +553,7 @@ export async function resolveConfigExtends(
  * GS2-73 — seed the `extends` chain from the selected profile's own name and run the throwing
  * traversal ({@link resolveExtendsChain}). Shared by BOTH consumers so the walk and its
  * cycle/missing-base checks live in ONE place: the run-path {@link resolveConfigExtends} (which
- * translates a {@link ConfigExtendsError} into `displayError` + `exit`) and the read-path
+ * re-raises a {@link ConfigExtendsError} as a {@link ConfigDiscoveryError}) and the read-path
  * {@link validateConfig} (which records it as a not-ok layer). Propagates the typed error to its
  * caller; the caller owns the reporting convention.
  */
@@ -727,11 +736,12 @@ async function readProjectConfiguredTui(
   // profile whose `tui` is inherited while the run composes it, which is precisely the
   // reader-vs-run divergence this seam exists to prevent.
   //
-  // Deliberately NOT inside the try above: a cycle or a missing base hard-fails the run inside
-  // `resolveConfigExtends`, and a MALFORMED base raises a {@link ConfigDiscoveryError} that must
-  // reach the top level to be reported. The try above exists to treat an unreadable config as
-  // "no configured tui"; extending it over these would swallow a hard configuration error and let
-  // the surface be selected from a config the run itself refuses to load.
+  // Deliberately NOT inside the try above: a cycle, a missing base and a MALFORMED base all raise a
+  // {@link ConfigDiscoveryError} that must reach the top level to be reported. The try above exists
+  // to treat an unreadable config as "no configured tui"; extending it over these would swallow a
+  // hard configuration error and let the surface be selected from a config the run itself refuses
+  // to load. This reader runs BEFORE the TUI/readline choice, so the error surfaces here rather than
+  // through `createTuiSession` — either way it is reported once, by the CLI's top-level guard.
   if (typeof raw.extends === 'string') {
     raw = await resolveConfigExtends(raw, commandLineConfigOverrides.identityProfile);
   }

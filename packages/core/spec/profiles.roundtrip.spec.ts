@@ -99,8 +99,44 @@ describe('config profiles — create → select round-trip (GS2-33)', () => {
     const report = await validateConfig({ identityProfile: 'typo' });
 
     expect(report.ok).toBe(false);
+    // `found` is load-bearing, not incidental: `configCommand` treats `found: false` as "nothing to
+    // validate" and prints "No configuration file found to validate. Run gth init" INSTEAD of the
+    // layers — which would both discard the real diagnosis and tell a user to create a
+    // configuration they already have, when their actual problem is a mistyped profile name.
+    expect(report.found).toBe(true);
     const failing = report.layers.find((layer) => !layer.ok);
     expect(failing?.errorMessage ?? '').toContain('identity profile "typo" not found');
+  });
+
+  it('CFG-36: a MALFORMED extends base is reported as a not-ok layer, not thrown at the caller', async () => {
+    // The read side COLLECTS and never terminates, and that has to hold for the base layer too:
+    // composing `extends` validates the base exactly as the project layer is validated, so a broken
+    // base now raises a ConfigDiscoveryError from inside the shared traversal. `validateConfig`
+    // catches it as a layer failure; without that arm the error escapes `validateConfig` entirely
+    // and `gth config validate` reports "Failed to read configuration:" with no per-layer report —
+    // wrong presentation of a real failure, and the one behaviour the CFG-36 caller table claims.
+    const baseDir = resolve(root, '.gsloth', '.gsloth-settings', 'broken-base');
+    mkdirSync(baseDir, { recursive: true });
+    // Schema-invalid base: `filesystem` must be an array or enum, never a number.
+    writeFileSync(
+      resolve(baseDir, '.gsloth.config.json'),
+      JSON.stringify({ llm: { type: 'anthropic' }, filesystem: 123 })
+    );
+    const childDir = resolve(root, '.gsloth', '.gsloth-settings', 'heir');
+    mkdirSync(childDir, { recursive: true });
+    writeFileSync(
+      resolve(childDir, '.gsloth.config.json'),
+      JSON.stringify({ extends: 'broken-base', llm: { type: 'anthropic' } })
+    );
+
+    // Resolves rather than rejecting — that is the contract under test.
+    const report = await validateConfig({ identityProfile: 'heir' });
+
+    expect(report.found).toBe(true);
+    expect(report.ok).toBe(false);
+    const failing = report.layers.find((layer) => !layer.ok);
+    expect(failing?.errorMessage ?? '').toMatch(/broken-base \(extends base\)/);
+    expect(failing?.errorMessage ?? '').toMatch(/filesystem/);
   });
 
   it('CFG-36 control: that same plain config raises no profile complaint when none is named', async () => {

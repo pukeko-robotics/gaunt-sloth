@@ -8,8 +8,9 @@ import { resolve } from 'node:path';
  * resolver that composes a named profile's `extends` chain into a single raw config via the SAME
  * GS2-1 deep-merge the config layers use.
  *
- * consoleUtils + systemUtils are mocked so the cycle / missing-base failures are OBSERVABLE and
- * `exit` never terminates the runner; `getCurrentWorkDir` is pointed at a per-test temp dir. node:fs
+ * consoleUtils + systemUtils are mocked so a cycle / missing base can be asserted to print NOTHING
+ * and exit NOTHING (CFG-36 — it is raised for the caller to classify, and a re-added print+exit must
+ * turn these red); `getCurrentWorkDir` is pointed at a per-test temp dir. node:fs
  * stays REAL — the actual strict up-tree profile walk (`resolveIdentityProfileConfigPath`), the raw
  * JSON read, and the deep-merge all run for real against on-disk temp profile dirs.
  */
@@ -62,8 +63,29 @@ describe('resolveConfigExtends — GS2-41 profile inheritance', () => {
     return p;
   };
 
-  const errorText = (): string =>
-    consoleUtilsMock.displayError.mock.calls.map((c) => String(c[0])).join('\n');
+  /**
+   * CFG-36 — the discriminating assertion for a hard `extends` failure.
+   *
+   * The old shape printed the message and called `exit(1)`, then threw a generic sentinel past the
+   * mocked `exit` — so a bare `rejects.toThrow()` passed against it unchanged and proved nothing.
+   * Four things are pinned instead: the rejection is a CATCHABLE `ConfigDiscoveryError`, it carries
+   * the real message, nothing was printed, and the process was never exited. The last two are what
+   * make the failure classifiable by a caller (`gth eval` needs it as a harness error, exit 2);
+   * without them a re-added `displayError` + `exit` would sail through.
+   */
+  const expectConfigDiscoveryRejection = async (promise: Promise<unknown>): Promise<Error> => {
+    const { isConfigDiscoveryError } = await import('#src/config/configDiscovery.js');
+    const error = await promise.then(
+      () => {
+        throw new Error('expected a ConfigDiscoveryError, but the call resolved');
+      },
+      (e: unknown) => e
+    );
+    expect(isConfigDiscoveryError(error)).toBe(true);
+    expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+    expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+    return error as Error;
+  };
 
   it('resolves a delta child to base + delta (base inherited, delta added, child override wins)', async () => {
     const { resolveConfigExtends } = await import('#src/config/loader.js');
@@ -175,11 +197,9 @@ describe('resolveConfigExtends — GS2-41 profile inheritance', () => {
     const childRaw = { extends: 'A', llm: { type: 'anthropic' } };
 
     // Terminates (no hang / stack-overflow) and surfaces the error rather than a composed config.
-    await expect(resolveConfigExtends(childRaw, 'selected')).rejects.toThrow(/Unexpected error/);
-    expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
-    const msg = errorText();
-    expect(msg).toMatch(/inheritance cycle detected/i);
-    expect(msg).toContain('selected -> A -> B -> A');
+    const error = await expectConfigDiscoveryRejection(resolveConfigExtends(childRaw, 'selected'));
+    expect(error.message).toMatch(/inheritance cycle detected/i);
+    expect(error.message).toContain('selected -> A -> B -> A');
   });
 
   it('fails fast on a self-extend (a profile that extends itself)', async () => {
@@ -187,22 +207,20 @@ describe('resolveConfigExtends — GS2-41 profile inheritance', () => {
 
     writeProfile('solo', { extends: 'solo', llm: { type: 'anthropic' } });
 
-    await expect(
+    const error = await expectConfigDiscoveryRejection(
       resolveConfigExtends({ extends: 'solo', llm: { type: 'anthropic' } }, 'solo')
-    ).rejects.toThrow(/Unexpected error/);
-    expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
-    expect(errorText()).toMatch(/inheritance cycle detected/i);
-    expect(errorText()).toContain('solo -> solo');
+    );
+    expect(error.message).toMatch(/inheritance cycle detected/i);
+    expect(error.message).toContain('solo -> solo');
   });
 
   it('fails fast when extends names a base profile that has no config', async () => {
     const { resolveConfigExtends } = await import('#src/config/loader.js');
 
-    await expect(
+    const error = await expectConfigDiscoveryRejection(
       resolveConfigExtends({ extends: 'ghost', llm: { type: 'anthropic' } }, 'child')
-    ).rejects.toThrow(/Unexpected error/);
-    expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
-    expect(errorText()).toMatch(/"ghost".*was not found/i);
+    );
+    expect(error.message).toMatch(/"ghost".*was not found/i);
   });
 
   it('returns a config without extends unchanged (no base lookup, no side effects)', async () => {
