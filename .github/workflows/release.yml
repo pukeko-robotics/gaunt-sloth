@@ -181,6 +181,78 @@ jobs:
           INCEPTION_API_KEY: ${{ secrets.INCEPTION_API_KEY }}
           OPEN_ROUTER_API_KEY: ${{ secrets.OPEN_ROUTER_API_KEY }}
 
+  integration-tests-small:
+    name: Integration tests small
+    # OPS-53: PROVIDER breadth at the release gate. The platforms job above is four legs of
+    # openrouter — it varies the OS, not the provider — and `integration-tests` runs openai alone,
+    # so without this a release never exercises anthropic, google, groq, xai, inception or
+    # huggingface beyond providerContract's two Anthropic cases. GS2-64 is why that matters: a
+    # double-SystemMessage bug that hard-rejected on Anthropic and shipped anyway, because CI ran a
+    # provider that silently merged the duplicate.
+    #
+    # openrouter is deliberately absent — the platforms job already runs it four times.
+    #
+    # NON-GATING, and the failure it guards against is a release blocked by somebody else's outage.
+    # The step carries `continue-on-error`, not the job, so the reading is unambiguous: the step
+    # fails, the job still succeeds, and `needs` proceeds. That matters because this job IS in the
+    # release job's `needs` — dependencies must finish before an environment's approval is
+    # requested, so every leg has reported by the time the release environment asks for the manual
+    # deploy approval. A red provider is therefore information the approver rules on, not a gate
+    # that stops them; distinguishing an outage from a regression is exactly what OPS-43 says no
+    # automatic gate can currently do.
+    #
+    # A matrix value is a config FILE name under packages/app/integration-tests/configs/, not a
+    # provider type, which is why xai/xai-build and google-genai-flash-lite are separate legs. Every
+    # name must also be in setup-config.js's validConfigs, and a config earns a leg only once the
+    # whole xx-small suite is green on it.
+    needs: lint-and-unit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment: integration tests
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [24.x]
+        provider: [anthropic, groq, inception, xai, xai-build, google-genai-flash-lite, huggingface]
+      # Three at a time because of GitHub runner capacity, not provider rate limits — do not raise
+      # this on the assumption that it is a spend knob.
+      max-parallel: 3
+    steps:
+      - uses: actions/checkout@v6
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run lite integration tests with ${{ matrix.provider }}
+        id: leg
+        continue-on-error: true
+        run: pnpm run it "$PROVIDER" xx-small
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          INCEPTION_API_KEY: ${{ secrets.INCEPTION_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          # The huggingface provider reads HF_TOKEN first, then HUGGINGFACEHUB_API_TOKEN / HF_API_KEY.
+          # The secret is named HF_TOKEN; any other spelling here makes the leg skip and exit 0,
+          # which is indistinguishable from a pass.
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      # Without this a failed leg is a red step inside a green job, which is precisely where nobody
+      # looks. A warning annotation surfaces in the run summary, next to the approval button.
+      - name: Surface a failed leg to the deploy approver
+        if: steps.leg.outcome == 'failure'
+        env:
+          PROVIDER: ${{ matrix.provider }}
+        run: echo "::warning title=Provider leg failed::$PROVIDER failed its xx-small suite. This does NOT block the release — decide at the deploy approval whether it matters."
+
   tui-e2e:
     name: TUI PTY e2e
     # TUI-C28: hermetic, key-free Ink-TUI PTY suite on the full Linux + macOS + Windows
@@ -209,7 +281,9 @@ jobs:
 
   release:
     name: Ship current version, then post-bump main to next (all five)
-    needs: [integration-tests, integration-tests-platforms, tui-e2e, evals]
+    # integration-tests-small is listed so its legs FINISH before this job's environment approval is
+    # requested, not to gate on them — its test step is continue-on-error, so it cannot go red here.
+    needs: [integration-tests, integration-tests-platforms, integration-tests-small, tui-e2e, evals]
     runs-on: ubuntu-latest
     # Must match the Environment name in npm's Trusted Publisher config (OIDC
     # only mints a token for a job running in this exact environment).
