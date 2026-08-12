@@ -3136,28 +3136,40 @@ describe('GthAgentRunner', () => {
     }
 
     /**
-     * One gated call, driven end to end, with the four things this block asserts separately handed
-     * back. The human ANSWERS `approve`, which is what makes "refused" and "the model was told" say
+     * One gated call, driven end to end, with everything this block asserts separately handed back.
+     * The human ANSWERS `approve`, which is what makes "refused" and "the model was told" say
      * something: a rejecting stub lands on the floor's own decision type and cannot tell the two
      * apart.
+     *
+     * `entries` adds declared approvals lists to the same config; `human: false` wires no approval
+     * callback at all, which is the non-interactive caller (batch, CI) and the one shape where the
+     * gate's answer is an error rather than a decision.
      */
-    async function driveOne(rung: 'manual' | 'write' | 'assisted', command: string) {
+    async function driveOne(
+      rung: 'manual' | 'write' | 'assisted',
+      command: string,
+      options: { entries?: Record<string, unknown>; human?: false } = {}
+    ) {
       const runner = new GthAgentRunner(statusUpdateCallback);
       const streamResume = pendingOnce(command);
-      const { config, withStructuredOutput } = gateConfig({ mode: rung });
+      const { config, withStructuredOutput } = gateConfig({ mode: rung, ...options.entries });
       await runner.init('code', config);
       const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
-      runner.setToolApprovalCallback(human);
+      if (options.human !== false) runner.setToolApprovalCallback(human);
 
-      await runner.processMessages([new HumanMessage('go')]);
+      const error = await runner
+        .processMessages([new HumanMessage('go')])
+        .then(() => undefined)
+        .catch((e: unknown) => e);
 
       return {
         human,
         withStructuredOutput,
-        decision: streamResume.mock.calls[0][0].decisions[0] as {
-          type: string;
-          message?: string;
-        },
+        error,
+        // Absent when the run ended before the graph was resumed — §6.2's non-interactive exit is
+        // exactly that shape, so this cannot be typed as always present.
+        decision: streamResume.mock.calls[0]?.[0].decisions[0] as
+          { type: string; message?: string } | undefined,
       };
     }
 
@@ -3175,8 +3187,16 @@ describe('GthAgentRunner', () => {
      * **Four separate cases, not four assertions in one.** A single test stops at its first failed
      * expectation, so the three behind it would be claims nobody had ever seen fail — the
      * assertion-that-cannot-fail class this suite is written against.
+     *
+     * **`assisted` is in the list even though it was never the defect**, and it is not padding: at
+     * the deterministic rungs "is NOT rated" is protected by two independent mechanisms — this
+     * floor, and the rung gate on the rating call — so no single change to production can turn it
+     * red there, and an assertion that survives every one-line mutation is one nobody has seen work.
+     * At `assisted` the rung gate is open, so disabling the floor alone reaches the rater and the
+     * same assertion falsifies. Being green at all three is also what says this is one rule about
+     * the command rather than three rung-shaped special cases.
      */
-    describe.each(['manual', 'write'] as const)('at %s', (rung) => {
+    describe.each(['manual', 'write', 'assisted'] as const)('at %s', (rung) => {
       it('a floored command reaches NO human', async () => {
         const { human } = await driveOne(rung, WIPE_ROOT);
         expect(human).not.toHaveBeenCalled();
@@ -3190,25 +3210,30 @@ describe('GthAgentRunner', () => {
 
       it('a floored command is refused, whatever the human would have said', async () => {
         const { decision } = await driveOne(rung, WIPE_ROOT);
-        expect(decision.type).toBe('reject');
+        expect(decision?.type).toBe('reject');
       });
 
       it('the floor’s refusal reaches the agent', async () => {
         const { decision } = await driveOne(rung, WIPE_ROOT);
         // A refusal the model is not told about reads to it as the tool having silently failed.
-        expect(decision.message).toContain('blocked by hardline safety policy');
+        expect(decision?.message).toContain('blocked by hardline safety policy');
       });
+    });
 
-      /**
-       * **The load-bearing control.** Without it this block is indistinguishable from a change that
-       * suppressed approval prompts in general — a serious safety regression a green suite would not
-       * catch — and "reaches NO human" above would be measuring the harness rather than the gate.
-       */
-      it('CONTROL: a non-floored command still reaches the human, and their answer decides it', async () => {
+    /**
+     * **The load-bearing control.** Without it this block is indistinguishable from a change that
+     * suppressed approval prompts in general — a serious safety regression a green suite would not
+     * catch — and "reaches NO human" above would be measuring the harness rather than the gate.
+     *
+     * The two deterministic rungs only: at `assisted` an ordinary command is settled by the rater
+     * and reaches nobody, which is that rung's own control immediately below.
+     */
+    describe.each(['manual', 'write'] as const)('an ordinary command at %s', (rung) => {
+      it('CONTROL: still reaches the human, and their answer decides it', async () => {
         const { human, decision } = await driveOne(rung, ORDINARY);
         expect(human).toHaveBeenCalledTimes(1);
         expect(human.mock.calls[0][0].args.command).toBe(ORDINARY);
-        expect(decision.type).toBe('approve');
+        expect(decision?.type).toBe('approve');
       });
     });
 
@@ -3222,8 +3247,83 @@ describe('GthAgentRunner', () => {
       expect(withStructuredOutput).toHaveBeenCalledTimes(1);
       // …and its `safe` answer is what settled the call, so the stub was heard and not merely built.
       expect(human).not.toHaveBeenCalled();
-      expect(decision.type).toBe('approve');
+      expect(decision?.type).toBe('approve');
     });
+
+    /**
+     * **The three routes this change closes at the deterministic rungs**, each of which used to
+     * decide a floored command some other way: an allow entry approved it outright, an escalate
+     * entry put it in front of a person, and a run with nobody to ask ended on it. All three follow
+     * from where the floor now sits — above the escalate and allow branches, and before the
+     * escalation — and all three were already the behaviour at the rated rungs.
+     *
+     * **They are pinned here because nothing else would notice them coming back.** A refactor that
+     * moved the floor test back below the allow branch would leave every case above green: the
+     * plain floored command has no entry to be approved by. The allow row is the sharpest of the
+     * three — before this node an `approvals.allow` entry naming `rm -rf /` produced a silent,
+     * session-scoped approval at `manual`, with no prompt and no rating, and only the execution-time
+     * floor behind it.
+     *
+     * Each case is paired with a control that drives the SAME list against the non-floored command,
+     * because "the entry did not decide the call" and "the entry was never wired" are the same green
+     * otherwise.
+     */
+    describe.each(['manual', 'write'] as const)(
+      'at %s the floor outranks every other route',
+      (rung) => {
+        const floorEntry = [{ type: 'shell', matcher: 'exact', pattern: WIPE_ROOT }] as unknown[];
+        const ordinaryEntry = [{ type: 'shell', matcher: 'exact', pattern: ORDINARY }] as unknown[];
+
+        it('an approvals.allow entry does not buy past it', async () => {
+          const { human, withStructuredOutput, decision } = await driveOne(rung, WIPE_ROOT, {
+            entries: { allow: floorEntry },
+          });
+          expect(decision?.type).toBe('reject');
+          expect(decision?.message).toContain('blocked by hardline safety policy');
+          expect(human).not.toHaveBeenCalled();
+          expect(withStructuredOutput).not.toHaveBeenCalled();
+        });
+
+        it('CONTROL: that allow list is live — it approves the command it names', async () => {
+          const { human, decision } = await driveOne(rung, ORDINARY, {
+            entries: { allow: ordinaryEntry },
+          });
+          expect(human).not.toHaveBeenCalled();
+          expect(decision?.type).toBe('approve');
+        });
+
+        it('an approvals.escalate entry does not send it to a person', async () => {
+          const { human, decision } = await driveOne(rung, WIPE_ROOT, {
+            entries: { escalate: floorEntry },
+          });
+          expect(human).not.toHaveBeenCalled();
+          expect(decision?.type).toBe('reject');
+          expect(decision?.message).toContain('blocked by hardline safety policy');
+        });
+
+        it('CONTROL: that escalate list is live — it names itself on the prompt it causes', async () => {
+          const { human } = await driveOne(rung, ORDINARY, {
+            entries: { escalate: ordinaryEntry },
+          });
+          expect(human).toHaveBeenCalledTimes(1);
+          // Provenance, not merely a prompt: at these rungs an ordinary command would reach a person
+          // anyway, so the entry firing is only visible in what the prompt says fired.
+          expect(human.mock.calls[0][0].escalatedBy).toBe(ORDINARY);
+        });
+
+        it('a run with nobody to ask is refused rather than ended', async () => {
+          const { error, decision } = await driveOne(rung, WIPE_ROOT, { human: false });
+          expect(error).toBeUndefined();
+          expect(decision?.type).toBe('reject');
+          expect(decision?.message).toContain('blocked by hardline safety policy');
+        });
+
+        it('CONTROL: an ordinary command with nobody to ask still ends the run', async () => {
+          const { error } = await driveOne(rung, ORDINARY, { human: false });
+          expect(error).toBeInstanceOf(NonInteractiveEscalationError);
+        });
+      }
+    );
   });
 
   // EXT-11 — the event-stream / TUI turn path must run the SAME tool-approval round-trip the

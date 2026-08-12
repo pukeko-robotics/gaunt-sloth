@@ -7,11 +7,13 @@
  *
  * **It is consulted twice, and the second call site is the one §4.2 asks for.** Exec time is the
  * guarantee that a matching command never runs. The approvals gate consults it *before any rating
- * and before any prompt*, at every rung it gates, because "refused at execution whatever you
- * decide" still lets the gate open a §5 negotiation, or put an approval dialog in front of a
- * person, about a command that was never going to run — and *"asking a human to approve something
- * that is then refused anyway teaches them their answer does not count, which is worse than a flat
- * refusal"*. Both sites share {@link buildHardlineRefusal}, so one policy speaks with one sentence.
+ * and before any prompt*, at every rung that reaches a decision — every one but `bypass`, where a
+ * shell call is approved before the gate gets that far, so there `executeCommand` alone enforces
+ * this. The gate-time site exists because "refused at execution whatever you decide" still lets the
+ * gate open a §5 negotiation, or put an approval dialog in front of a person, about a command that
+ * was never going to run — and *"asking a human to approve something that is then refused anyway
+ * teaches them their answer does not count, which is worse than a flat refusal"*. Both sites share
+ * {@link buildHardlineRefusal}, so one policy speaks with one sentence.
  *
  * It lives in `@gaunt-sloth/core` rather than beside the toolkit that executes commands because the
  * approvals gate (`GthAgentRunner`) is core's and core cannot import `@gaunt-sloth/agent`.
