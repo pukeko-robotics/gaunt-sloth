@@ -5,11 +5,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * use must stay silent and keep working.
  *
  * These two directions are asserted in one file on purpose. `configuration` is `ChatOpenAI`'s own
- * constructor field, so it is a supported passthrough for the providers that build one (openai
- * directly; huggingface composes the HF router base URL in FRONT of the user's block) and dead
- * weight for the providers on a native client (openrouter, ollama). A warning that fires for every
- * provider would be a regression, not a fix — so every silent cell here also asserts the user's
- * field actually reached the constructor, which a bare "did not warn" check would not catch.
+ * constructor field, so it is a supported passthrough for the providers that hand the user's block
+ * to such a client (openai directly; huggingface composes the HF router base URL in FRONT of it;
+ * deepseek spreads it over its own default) and dead weight everywhere else — both for providers on
+ * a native client (openrouter, ollama, …) and for xai, which builds an OpenAI client and replaces
+ * the block before handing it on. A warning that fires for every provider would be a regression,
+ * not a fix — so every silent cell here also asserts the user's field actually reached the
+ * constructor, which a bare "did not warn" check would not catch.
  */
 
 const chatOpenRouterConstructorMock = vi.fn();
@@ -315,22 +317,22 @@ describe('CFG-34 control — a configuration block a provider CAN use stays sile
  * built `dist/`: a `configuration` block reaches no client for any of them, so each gets one call
  * to the SAME helper, with the replacement field named for that provider's own client.
  */
+/** One transport key, one endpoint and one header: three paths, none of which reaches a client. */
+const UNUSABLE = {
+  timeout: 5000,
+  baseURL: 'https://gateway.example.com/v1',
+  defaultHeaders: { Authorization: 'Bearer gateway-token' },
+};
+
+/** Every path in {@link UNUSABLE} must be named — a message that reports only the first is a
+ * half-report, and the user would fix one key and keep the rest of the silence. */
+function expectNamesEveryDroppedPath(warning: string): void {
+  expect(warning).toContain('llm.configuration.timeout');
+  expect(warning).toContain('llm.configuration.baseURL');
+  expect(warning).toContain('llm.configuration.defaultHeaders');
+}
+
 describe('CFG-44 — the remaining native-client providers warn too', () => {
-  /** One transport key, one endpoint and one header: three paths, none of which reaches a client. */
-  const UNUSABLE = {
-    timeout: 5000,
-    baseURL: 'https://gateway.example.com/v1',
-    defaultHeaders: { Authorization: 'Bearer gateway-token' },
-  };
-
-  /** Every path in {@link UNUSABLE} must be named — a message that reports only the first is a
-   * half-report, and the user would fix one key and keep the rest of the silence. */
-  function expectNamesEveryDroppedPath(warning: string): void {
-    expect(warning).toContain('llm.configuration.timeout');
-    expect(warning).toContain('llm.configuration.baseURL');
-    expect(warning).toContain('llm.configuration.defaultHeaders');
-  }
-
   beforeEach(() => {
     vi.resetAllMocks();
     systemUtilsMock.env = {};
@@ -436,12 +438,78 @@ describe('CFG-44 — the remaining native-client providers warn too', () => {
   });
 });
 
-describe('CFG-44 control — the providers on an OpenAI client are left alone', () => {
+/**
+ * CFG-44 — xai is NOT a fifth copy of the four above, and this file must not read as though it were.
+ *
+ * `ChatXAI` DOES build an OpenAI client — it descends from the OpenAI chat model — and it still
+ * consumes nothing: its constructor passes `configuration: { baseURL: fields.baseURL ?? <default> }`
+ * to `super`, replacing the user's block wholesale. So the same helper is used, with a reason clause
+ * of its own; the shared native-client sentence would be a FALSE explanation printed next to a true
+ * warning, which is the same defect as the silence it replaces.
+ *
+ * The guidance was measured against the real package rather than inferred from the type: a
+ * top-level `baseURL` AND a top-level `timeout` both reach the built client, while extra headers
+ * reach it by no route at all.
+ */
+describe('CFG-44 — xai builds an OpenAI client and drops the block anyway', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     systemUtilsMock.env = {};
   });
 
+  it('xai warns with its OWN reason clause, not the shared native-client one', async () => {
+    const { processJsonConfig } = await import('#src/providers/xai.js');
+
+    await processJsonConfig({
+      type: 'xai',
+      apiKey: 'xai-test',
+      model: 'grok-4',
+      configuration: UNUSABLE,
+    } as never);
+
+    const warning = onlyWarning();
+    expect(warning).toContain('xai');
+    expectNamesEveryDroppedPath(warning);
+    // The reason clause is the whole point of this cell: it must say what is TRUE for xai (a client
+    // is built, and the block is replaced) and must NOT say what is true only of the other five.
+    expect(warning).toContain('replacing anything set here');
+    expect(warning).not.toContain('does not build an OpenAI client');
+    // Replacement guidance, verified: `baseURL` and `timeout` at the TOP level both reach the
+    // client. Headers are named as having nowhere to go rather than being quietly omitted — an
+    // unqualified "move it to the top level" would send a header from a warned location to an
+    // unwarned one.
+    expect(warning).toContain('"baseURL" or "timeout" as top-level fields');
+    expect(warning).toContain('Extra headers have no home');
+    // Warn, don't fail — the model is still built.
+    expect(chatXAIConstructorMock).toHaveBeenCalledTimes(1);
+    expect(chatXAIConstructorMock.mock.calls[0][0].model).toBe('grok-4');
+  });
+
+  it('xai says nothing when there is no configuration block', async () => {
+    const { processJsonConfig } = await import('#src/providers/xai.js');
+
+    await processJsonConfig({ type: 'xai', apiKey: 'xai-test', model: 'grok-4' } as never);
+    await processJsonConfig({
+      type: 'xai',
+      apiKey: 'xai-test',
+      model: 'grok-4',
+      configuration: {},
+    } as never);
+
+    expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+    expect(chatXAIConstructorMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('CFG-44 control — the provider that really does consume the block is left alone', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    systemUtilsMock.env = {};
+  });
+
+  // deepseek is the control, and it earns the place on evidence rather than on ancestry: unlike
+  // `ChatXAI`, its constructor spreads `...fields.configuration` OVER its own default base URL, so
+  // the user's block survives. Wiring this provider into the warn path must turn this cell red.
   it('deepseek passes the user block through untouched, silently', async () => {
     const { processJsonConfig } = await import('#src/providers/deepseek.js');
 
@@ -456,28 +524,6 @@ describe('CFG-44 control — the providers on an OpenAI client are left alone', 
     const built = chatDeepSeekConstructorMock.mock.calls[0][0];
     expect(built.configuration.timeout).toBe(5000);
     expect(built.configuration.baseURL).toBe('https://gateway.example.com/v1');
-  });
-
-  it('xai does not warn, and its block is passed on rather than dropped here', async () => {
-    const { processJsonConfig } = await import('#src/providers/xai.js');
-
-    await processJsonConfig({
-      type: 'xai',
-      apiKey: 'xai-test',
-      model: 'grok-4',
-      configuration: { timeout: 5000, baseURL: 'https://gateway.example.com/v1' },
-    } as never);
-
-    // This asserts the GTH boundary only: this factory hands the block on and says nothing. It
-    // deliberately does NOT assert the block is honoured, because it is not — `ChatXAI` descends
-    // from the OpenAI chat model but its constructor REPLACES `configuration` with its own
-    // `{ baseURL }` before calling super, so the user's timeout, headers and base URL all reach
-    // nothing. A mocked constructor cannot see that, and an assertion written as though the
-    // passthrough worked would pin the very premise this ticket measured to be false. Whether xai
-    // should warn is its own decision, and its reason clause cannot be this helper's "does not
-    // build an OpenAI client" — because it does build one.
-    expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
-    expect(chatXAIConstructorMock).toHaveBeenCalledTimes(1);
   });
 });
 

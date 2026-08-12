@@ -9,6 +9,7 @@ import type { ChatOpenRouterInput } from '@langchain/openrouter';
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 import {
+  NATIVE_CLIENT_REASON,
   warnConfigurationOverridesTopLevelField,
   warnUnappliedConfigurationPath,
   warnUnusedConfiguration,
@@ -89,6 +90,7 @@ export async function processJsonConfig(
     'openrouter',
     configuration,
     CONSUMED_CONFIGURATION_PATHS,
+    NATIVE_CLIENT_REASON,
     // Scope the advice to the options that HAVE a top-level home: told plainly to "put it at the
     // top level", a user with a transport key would move it from a warned location to an unwarned
     // one, which is worse than where they started.

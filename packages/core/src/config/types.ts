@@ -423,9 +423,10 @@ export interface GthConfig {
    * stashed by the loader from the raw `llm.type` before the built `BaseChatModel` replaces the raw
    * spec. INTERNAL (loader-set, never user-supplied), so it is deliberately absent from the config
    * schema. {@link import('#src/utils/systemPromptNotes.js').resolveModelIdentity} PREFERS this over
-   * the live model's `_llmType()` for the injected identity, because OpenAI-compatible shims
-   * (openrouter/deepseek/xai all extend `ChatOpenAI`) report `_llmType() === 'openai'` and would
-   * otherwise mislabel the provider half. Absent for module configs (which hand us an already-built
+   * the live model's `_llmType()` for the injected identity, because that is the model class's own
+   * label rather than the gth provider namespace (`huggingface` reports `openai`, and both Gemini
+   * providers report `google`) and would otherwise mislabel the provider half. Absent for module
+   * configs (which hand us an already-built
    * LLM with no raw `type`), where resolution falls back to the guarded `_llmType()`.
    */
   modelProviderType?: string;

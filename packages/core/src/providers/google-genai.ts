@@ -7,7 +7,10 @@ import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 import { applyGeminiToolSchemaSanitizer } from '#src/providers/geminiSchemaSanitizer.js';
 import { applyGeminiThoughtSummaries } from '#src/providers/geminiThinking.js';
-import { warnUnusedConfiguration } from '#src/providers/configurationPassthrough.js';
+import {
+  NATIVE_CLIENT_REASON,
+  warnUnusedConfiguration,
+} from '#src/providers/configurationPassthrough.js';
 
 // Function to process JSON config and create Google GenAI LLM instance
 export async function processJsonConfig(
@@ -30,6 +33,7 @@ export async function processJsonConfig(
     'google-genai',
     (llmConfig as { configuration?: unknown }).configuration,
     [],
+    NATIVE_CLIENT_REASON,
     'ChatGoogle talks to the Gemini API through its own client instead: set "customHeaders", ' +
       '"endpoint" or "apiVersion" as top-level fields of the "llm" block beside "model".'
   );

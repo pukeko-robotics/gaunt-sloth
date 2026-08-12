@@ -18,7 +18,10 @@ import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 import { applyGeminiToolSchemaSanitizer } from '#src/providers/geminiSchemaSanitizer.js';
 import { applyGeminiThoughtSummaries } from '#src/providers/geminiThinking.js';
-import { warnUnusedConfiguration } from '#src/providers/configurationPassthrough.js';
+import {
+  NATIVE_CLIENT_REASON,
+  warnUnusedConfiguration,
+} from '#src/providers/configurationPassthrough.js';
 
 export function init(configFileName: string, force = false, model?: string): void {
   // Determine which content to use based on file extension
@@ -50,6 +53,7 @@ export async function processJsonConfig(
     'vertexai',
     (llmConfig as { configuration?: unknown }).configuration,
     [],
+    NATIVE_CLIENT_REASON,
     'ChatGoogle talks to Vertex AI through its own client instead: set "customHeaders", ' +
       '"endpoint", "apiVersion" or "location" as top-level fields of the "llm" block beside ' +
       '"model".'

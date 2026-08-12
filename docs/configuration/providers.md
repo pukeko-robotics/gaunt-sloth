@@ -358,6 +358,13 @@ gth init xai
 
 Make sure you either define `XAI_API_KEY` environment variable or edit your configuration file and set up your key.
 
+**`configuration` is not a passthrough here.** `ChatXAI` does build an OpenAI client, but it
+replaces the `configuration` block with one of its own first, so nothing you put there survives —
+not a timeout, not headers, not even a base URL — and it is reported as ignored when the provider
+starts. Set `baseURL` or `timeout` as top-level fields of the `llm` block instead, beside `model`.
+Extra headers have no home on this provider at all: to send them, use the `openai` provider with
+`configuration.baseURL` set to `https://api.x.ai/v1`, which takes a full `configuration` block.
+
 ## Examples of configuration for different providers
 
 ### JSON Configuration (.gsloth.config.json)
@@ -759,8 +766,9 @@ prompt names no model anywhere.
 ```
 
 The identity is tagged with the configured `type` — e.g. `openrouter:<model>` — rather than with
-whatever the model class calls itself, so the OpenAI-compatible providers (`deepseek`, `xai`) are
-not all mislabelled `openai:<model>`.
+whatever the model class calls itself, so a provider is never labelled as the client it happens to
+be built on (`huggingface` would otherwise appear as `openai:<model>`, and both Gemini providers as
+`google:<model>`).
 
 ## Related
 

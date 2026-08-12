@@ -5,7 +5,10 @@ import { ChatGroqInput } from '@langchain/groq';
 
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
-import { warnUnusedConfiguration } from '#src/providers/configurationPassthrough.js';
+import {
+  NATIVE_CLIENT_REASON,
+  warnUnusedConfiguration,
+} from '#src/providers/configurationPassthrough.js';
 
 // Function to process JSON config and create Groq LLM instance
 export async function processJsonConfig(llmConfig: ChatGroqInput): Promise<BaseChatModel> {
@@ -18,6 +21,7 @@ export async function processJsonConfig(llmConfig: ChatGroqInput): Promise<BaseC
     'groq',
     (llmConfig as { configuration?: unknown }).configuration,
     [],
+    NATIVE_CLIENT_REASON,
     'ChatGroq builds a Groq SDK client from top-level fields of the "llm" block instead: set ' +
       '"baseUrl" (note the lower-case "url"), "timeout", "defaultHeaders", "defaultQuery", ' +
       '"httpAgent" or "fetch" beside "model".'

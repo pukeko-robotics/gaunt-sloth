@@ -54,8 +54,9 @@ export interface FrontendImageInjectionOptions {
  *   - **ollama** → `{ type:'image_url', image_url:'<data-URL string>' }`. ChatOllama's
  *     `convertToOllamaMessages` only handles `image_url` blocks (extractBase64FromDataUrl); the
  *     LangChain standard `source_type` block throws "Unsupported content type: image".
- *   - **OpenAI-compatible** (`openai`, `openrouter`, `deepseek`, `xai`, `groq` — all extend
- *     `ChatOpenAI` / report `_llmType()==='openai'`) → `{ type:'image_url', image_url:{ url:'<data-URL>' } }`.
+ *   - **OpenAI-compatible** (`openai`, `openrouter`, `deepseek`, `xai`, `groq` — served by an
+ *     OpenAI-compatible Chat Completions API, whichever LangChain class fronts it) →
+ *     `{ type:'image_url', image_url:{ url:'<data-URL>' } }`.
  *     This native OpenAI shape is correct on BOTH the Completions API AND the Responses API (GS2-74
  *     flips reasoning-capable openai models to Responses). A raw `source_type` standard block
  *     serialises to an *invalid* image part on the Responses path, so we emit the provider-native

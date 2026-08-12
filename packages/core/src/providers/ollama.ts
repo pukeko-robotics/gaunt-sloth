@@ -8,7 +8,10 @@ import type { ChatOllamaInput } from '@langchain/ollama';
 
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
-import { warnUnusedConfiguration } from '#src/providers/configurationPassthrough.js';
+import {
+  NATIVE_CLIENT_REASON,
+  warnUnusedConfiguration,
+} from '#src/providers/configurationPassthrough.js';
 
 /**
  * Default Ollama daemon host, matching the Ollama CLI/library default. GS2-59 — `ChatOllama` talks
@@ -86,6 +89,7 @@ export async function processJsonConfig(
     'ollama',
     configFields.configuration,
     [],
+    NATIVE_CLIENT_REASON,
     'Ollama runs as a local, unauthenticated daemon: point elsewhere with the OLLAMA_HOST ' +
       'environment variable or the "baseUrl" field of the "llm" block, and set "headers" there ' +
       'if a reverse proxy in front of it needs auth.'

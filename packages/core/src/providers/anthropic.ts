@@ -1,7 +1,10 @@
 import { displayWarning } from '#src/utils/consoleUtils.js';
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
-import { warnUnusedConfiguration } from '#src/providers/configurationPassthrough.js';
+import {
+  NATIVE_CLIENT_REASON,
+  warnUnusedConfiguration,
+} from '#src/providers/configurationPassthrough.js';
 import { env } from '#src/utils/systemUtils.js';
 import type { AnthropicInput } from '@langchain/anthropic';
 import type {
@@ -25,6 +28,7 @@ export async function processJsonConfig(
     'anthropic',
     (llmConfig as { configuration?: unknown }).configuration,
     [],
+    NATIVE_CLIENT_REASON,
     'ChatAnthropic builds an Anthropic SDK client instead: put client options such as a custom ' +
       'base URL, a timeout or extra headers under "clientOptions" in the "llm" block, or set ' +
       '"anthropicApiUrl" there for the base URL alone.'

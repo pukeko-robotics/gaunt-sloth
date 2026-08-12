@@ -2,9 +2,16 @@ import { displayWarning } from '#src/utils/consoleUtils.js';
 
 /**
  * `configuration` is `ChatOpenAI`'s own constructor field, which LangChain forwards to the OpenAI
- * Node SDK's `ClientOptions`. It therefore only means anything for a provider whose model class
- * descends from `ChatOpenAI` — `openai` and `huggingface` build one directly, `deepseek` and `xai`
- * inherit it. For those, a user's block is a supported, working passthrough and MUST be left alone.
+ * Node SDK's `ClientOptions`. It therefore only means anything for a provider that ends up handing
+ * the user's block to such a client: `openai` and `huggingface` build one directly, and `deepseek`
+ * spreads the user's block over its own defaults. For those, a block is a supported, working
+ * passthrough and MUST be left alone.
+ *
+ * **Descending from `ChatOpenAI` is NOT evidence of a passthrough — read the constructor.** `xai`
+ * descends from it and still consumes nothing: `ChatXAI` REPLACES `configuration` with a block of
+ * its own before calling `super`, so a timeout, headers, and even a base URL set there all reach
+ * nothing. Reading ancestry as consumption is exactly how a provider keeps its silence here, so
+ * classify a provider by what its constructor does with the block, never by what it extends.
  *
  * A provider on a NATIVE (non-OpenAI-SDK) client has nothing to hand the block to, so anything the
  * factory does not read itself goes nowhere. `llmConfigSchema` is a `z.looseObject`, so an orphaned
@@ -62,25 +69,46 @@ export function findUnusedConfigurationPaths(
 }
 
 /**
- * Warn — naming the provider, naming every dropped path, and pointing at the replacement — when a
- * user's `configuration` block carries settings this provider cannot consume.
+ * The `reason` for a provider built on a NATIVE client: there is no OpenAI client anywhere in the
+ * chain, so the block has nothing to be handed to.
+ *
+ * A shared clause is only safe while it is true of every caller that passes it — which is why
+ * {@link warnUnusedConfiguration} takes the reason as a required argument rather than defaulting to
+ * this one. A default would let the next provider inherit a sentence nobody checked against it, and
+ * a warning that states a false reason is the same defect as the silence it replaces.
+ */
+export const NATIVE_CLIENT_REASON =
+  'does not build an OpenAI client, so a "configuration" block is not passed through to one';
+
+/**
+ * Warn — naming the provider, saying why the block is dropped, naming every dropped path, and
+ * pointing at the replacement — when a user's `configuration` block carries settings this provider
+ * cannot consume.
  *
  * Warn rather than throw: a provider that reads SOME of the block (openrouter still honours
  * `configuration.baseURL`) would otherwise refuse a config that is partly valid, and an upgrading
  * user whose only config sets one dead transport key would be left with no way to start at all.
+ *
+ * @param reason Why THIS provider drops the block, as a clause completing `the "<provider>"
+ *   provider …`. Pass {@link NATIVE_CLIENT_REASON} for a native-client provider; a provider that
+ *   builds an OpenAI client and then overrides the block needs its own, because that sentence would
+ *   be false for it.
+ * @param guidance What to do instead, naming the replacement on THIS provider's own client — never
+ *   a generic "move it up a level", which for some keys moves a setting from a warned location to
+ *   an unwarned one.
  */
 export function warnUnusedConfiguration(
   provider: string,
   configuration: unknown,
   consumedPaths: readonly string[],
+  reason: string,
   guidance: string
 ): void {
   const unused = findUnusedConfigurationPaths(configuration, consumedPaths);
   if (unused.length === 0) return;
   displayWarning(
     `Ignoring ${unused.map((path) => `llm.configuration.${path}`).join(', ')} — ` +
-      `the "${provider}" provider does not build an OpenAI client, so a "configuration" block ` +
-      `is not passed through to one. ${guidance}`
+      `the "${provider}" provider ${reason}. ${guidance}`
   );
 }
 

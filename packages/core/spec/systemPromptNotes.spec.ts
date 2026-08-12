@@ -498,25 +498,30 @@ describe('resolveModelIdentity (GS2-34/GS2-53)', () => {
     });
   });
 
-  // GS2-53 — the OpenAI-compatible shims that extend ChatOpenAI (deepseek/xai) report a live
-  // `_llmType()` of `openai`. The configured provider `type` (stashed by the loader as
-  // `modelProviderType`) is the true provider and MUST win, or a `type: deepseek` config injects
-  // the wrong `openai:<model>` identity into the prompt.
-  it('prefers the configured provider type over _llmType() for OpenAI-compatible shims', () => {
+  // GS2-53 — `_llmType()` is the model CLASS's own label, not the gth provider namespace, so it
+  // disagrees with the configured `type` whenever a provider is served by a class named after
+  // something else. The configured provider `type` (stashed by the loader as `modelProviderType`)
+  // is the true provider and MUST win, or the prompt is injected with the wrong provider half.
+  //
+  // Both pairs below are the LIVE disagreements, measured against the built providers rather than
+  // supposed: `huggingface` is a `ChatOpenAI` aimed at the HF router and reports `openai`, and
+  // `vertexai` is a `ChatGoogle` and reports `google`. Every stub here must differ from its
+  // `modelProviderType`, or the cell could not tell which of the two sources won.
+  it('prefers the configured provider type over _llmType() when the class is named differently', () => {
     expect(
       resolveModelIdentity({
-        llm: { _llmType: () => 'openai', model: 'deepseek-chat' },
-        modelDisplayName: 'deepseek-chat',
-        modelProviderType: 'deepseek',
+        llm: { _llmType: () => 'openai', model: 'openai/gpt-oss-120b' },
+        modelDisplayName: 'openai/gpt-oss-120b',
+        modelProviderType: 'huggingface',
       })
-    ).toEqual({ identity: 'deepseek:deepseek-chat', hasProvider: true });
+    ).toEqual({ identity: 'huggingface:openai/gpt-oss-120b', hasProvider: true });
     expect(
       resolveModelIdentity({
-        llm: { _llmType: () => 'openai', model: 'grok-4' },
-        modelDisplayName: 'grok-4',
-        modelProviderType: 'xai',
+        llm: { _llmType: () => 'google', model: 'gemini-3-pro-preview' },
+        modelDisplayName: 'gemini-3-pro-preview',
+        modelProviderType: 'vertexai',
       })
-    ).toEqual({ identity: 'xai:grok-4', hasProvider: true });
+    ).toEqual({ identity: 'vertexai:gemini-3-pro-preview', hasProvider: true });
   });
 
   it('a configured type that matches _llmType() (anthropic/ollama/openrouter) is unchanged', () => {

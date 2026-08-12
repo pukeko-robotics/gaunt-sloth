@@ -8,6 +8,7 @@ import type { ChatXAIInput } from '@langchain/xai';
 
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
+import { warnUnusedConfiguration } from '#src/providers/configurationPassthrough.js';
 
 // Function to process JSON config and create XAI LLM instance
 export async function processJsonConfig(
@@ -16,6 +17,21 @@ export async function processJsonConfig(
   const { ChatXAI } = await import('@langchain/xai');
   // Use config value if available, otherwise use the environment variable
   const apiKey = llmConfig.apiKey || env.XAI_API_KEY;
+  // `ChatXAI` DOES build an OpenAI client, and still consumes none of the user's block: its
+  // constructor passes `configuration: { baseURL: fields.baseURL ?? <xAI default> }` to `super`,
+  // replacing whatever was set here. So the reason clause is xai's own — the shared native-client
+  // sentence would be a false explanation — and the replacements are the top-level fields that were
+  // measured to reach the client: `baseURL` (a declared `ChatXAIInput` field) and `timeout` (read
+  // by the OpenAI base class from the same spread). Headers reach it by no route at all.
+  warnUnusedConfiguration(
+    'xai',
+    (llmConfig as { configuration?: unknown }).configuration,
+    [],
+    'builds its OpenAI client with a "configuration" block of its own, replacing anything set here',
+    'Set "baseURL" or "timeout" as top-level fields of the "llm" block instead, beside "model". ' +
+      'Extra headers have no home on this provider at all — to send them, use the "openai" ' +
+      'provider with "configuration.baseURL" pointed at the xAI endpoint.'
+  );
   return new ChatXAI({
     ...llmConfig,
     apiKey,

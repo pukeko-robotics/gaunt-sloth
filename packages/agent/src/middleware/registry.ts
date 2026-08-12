@@ -35,9 +35,13 @@ type PredefinedMiddlewareFactory = (
  * Derive the provider string the vision middleware maps to a per-provider block shape. Prefers the
  * loader-stashed raw `llm.type` ({@link GthConfig.modelProviderType}) — the exact gth provider
  * namespace (`anthropic`/`openrouter`/`deepseek`/`xai`/`groq`/`ollama`/`google-genai`/`vertexai`/…)
- * — and falls back to the live model's `_llmType()` only when it is absent (module configs). The
- * OpenAI-compatible shims (openrouter/deepseek/xai/groq) all report `_llmType() === 'openai'`, which
- * maps to the same `image_url:{url}` block, so the fallback stays shape-correct.
+ * — and falls back to the live model's `_llmType()` only when it is absent (module configs).
+ * `_llmType()` is the model class's own label rather than the gth provider namespace, but every
+ * label it can return maps to the SAME block shape as the `type` it stands in for:
+ * `openrouter`/`deepseek`/`xai`/`groq`/`ollama`/`anthropic` each report their own name, which
+ * `imageBlockFor` matches directly, and both Gemini providers report `google`, which lands on
+ * the default branch — the same standard block its `google-genai`/`vertexai` cases return. So the
+ * fallback stays shape-correct.
  */
 function resolveVisionProvider(gthConfig: GthConfig): string {
   if (gthConfig.modelProviderType) return gthConfig.modelProviderType;
