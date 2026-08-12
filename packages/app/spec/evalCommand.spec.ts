@@ -594,14 +594,33 @@ cases:
       );
     });
 
-    it('GS2-62: a --judge profile with no config is pre-checked → exit 2, WITHOUT calling initConfig for it', async () => {
-      // The PURE pre-check (resolveIdentityProfileConfigPath) reports the profile has no config, so
-      // eval throws its OWN catchable error → exit 2, instead of handing the bad profile to
-      // initConfig, whose uncatchable exit(1) would end the process with the wrong code and collapse
-      // the harness-vs-product (2-vs-1) distinction. The misleading `Judge: profile "…"` line never
-      // prints, and the run never reaches the SUT.
+    it('CFG-36: a --judge profile with no config reaches initConfig, whose raise becomes exit 2', async () => {
+      // The GS2-62 pre-check that used to sit in front of this is GONE. It existed only because
+      // `initConfig` killed the process with an uncatchable exit(1) on an unresolvable profile,
+      // which collapsed the harness-vs-product (2-vs-1) distinction. `initConfig` now RAISES a
+      // catchable ConfigDiscoveryError instead, so eval hands the profile straight to it and the
+      // per-suite catch turns that into exit 2 — the same outcome, enforced at the one place that
+      // knows, rather than duplicated at every call site that might pass a profile name.
+      //
+      // This test is what makes the deletion safe: it goes red if the discovery path stops raising
+      // (eval would then grade under the wrong config and exit 0) or if eval stops routing the
+      // failure to exit 2.
       runSingleShot.mockResolvedValue({ ok: true, answer: 'a clear explanation', tools: [] });
-      configMock.resolveIdentityProfileConfigPath.mockReturnValue(undefined);
+      configMock.initConfig.mockImplementation(async (overrides?: { identityProfile?: string }) => {
+        if (overrides?.identityProfile === 'typo') {
+          // Faithful stand-in for the real error: the core config module is mocked in this file, so
+          // the class itself is out of reach. The marker property is what `isConfigDiscoveryError`
+          // duck-types on, which is precisely why the real predicate is not an `instanceof` check.
+          const error = Object.assign(
+            new Error(
+              'identity profile "typo" not found: no config file in .gsloth/.gsloth-settings/typo/'
+            ),
+            { gthConfigDiscoveryError: true as const, identityProfile: 'typo' }
+          );
+          throw error;
+        }
+        return { ...mockConfig, llm: { ...mockConfig.llm } };
+      });
 
       const { evalCommand } = await import('#src/commands/evalCommand.js');
       const program = new Command();
@@ -617,14 +636,13 @@ cases:
         outputDir,
       ]);
 
-      expect(configMock.resolveIdentityProfileConfigPath).toHaveBeenCalledWith('typo');
-      // Never handed the bad judge profile to initConfig (whose failure path can hard exit(1)).
-      expect(configMock.initConfig).not.toHaveBeenCalledWith(
+      // The bad judge profile IS handed to initConfig now — that is the point of the change.
+      expect(configMock.initConfig).toHaveBeenCalledWith(
         expect.objectContaining({ identityProfile: 'typo' })
       );
       expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
       expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
-        expect.stringContaining('judge profile "typo" not found')
+        expect.stringContaining('identity profile "typo" not found')
       );
       // The self-describing judge notice must NOT print for a profile that never resolved.
       expect(consoleUtilsMock.display).not.toHaveBeenCalledWith(expect.stringContaining('Judge:'));

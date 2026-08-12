@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { StatusLevel } from '#src/core/types.js';
 import type { RawGthConfig } from '#src/config.js';
+// REAL node:path + the REAL constants the loader uses, so a path this file builds is
+// byte-identical to the one production builds (OPS-27 — never a hand-written POSIX literal).
+import { resolve } from 'node:path';
+import { GSLOTH_DIR, GSLOTH_SETTINGS_DIR } from '#src/constants.js';
 
 const fsMock = {
   existsSync: vi.fn(),
@@ -446,6 +450,24 @@ describe('config B2b behavior changes', () => {
       setupGlobalAndProject(
         { approvals: { mode: 'assisted', rater: 'safety-rater', deny: [GLOBAL_DENY] } },
         { llm: { type: 'vertexai' }, approvals: 'bypass' }
+      );
+      // CFG-36 — `approvals.rater` is resolved against the filesystem as the layer is validated, and
+      // an unresolvable one is a hard config error. Give the named profile a real config so this
+      // fixture is a config a run could actually load; without it the test would only pass because
+      // the mocked `exit` let the loader fall through a branch production terminates on. Built with
+      // the real `resolve()` from the same mocked cwd the loader walks (OPS-27) — never a literal.
+      const RATER_PROFILE_CONFIG = resolve(
+        '/mock/current/dir',
+        GSLOTH_DIR,
+        GSLOTH_SETTINGS_DIR,
+        'safety-rater',
+        PROJECT_JSON_MARKER
+      );
+      fsMock.existsSync.mockImplementation(
+        (path: string) =>
+          path === GLOBAL_JSON_PATH ||
+          path === `/mock/read/${PROJECT_JSON_MARKER}` ||
+          path === RATER_PROFILE_CONFIG
       );
       const { initConfig } = await import('#src/config.js');
       const config = await initConfig({});
