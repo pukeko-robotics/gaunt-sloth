@@ -92,8 +92,20 @@ export const FORCED_BY_MECHANISMS = [
   ...Object.values(PREFLIGHT_MECHANISM_OF),
 ] as const;
 
-/** One of {@link FORCED_BY_MECHANISMS}. */
-export type ForcedByMechanism = 'hardline-floor' | PreflightMechanism;
+/**
+ * One of {@link FORCED_BY_MECHANISMS} — **derived from that array, never spelled beside it.**
+ *
+ * Spelling the union by hand decouples the two, and the decoupling is silent: `parseForcedBy`
+ * validates a suite's value against the ARRAY and then casts to this type, so a mechanism the array
+ * gained but the union did not reaches {@link FORCED_BY_ASSERTIONS} as a missing key. The assertion
+ * marker is then `undefined` and the run throws partway through grading — the exact crash the parse
+ * path exists to turn into a suite error. Derived, that member is a compile error on
+ * `FORCED_BY_ASSERTIONS` instead, which is where the missing marker has to be written anyway.
+ *
+ * The preflight half is guarded a second time through {@link PreflightMechanism}; the floor half has
+ * no core list behind it, so this is its only check.
+ */
+export type ForcedByMechanism = (typeof FORCED_BY_MECHANISMS)[number];
 
 /** The prefix a rationale carries for a decision a preflight forced, followed by the mechanism. */
 export const FORCED_BY_MARKER = 'forced by';

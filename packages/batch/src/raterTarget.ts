@@ -167,8 +167,11 @@ function calibrateGate(): GateCalibration {
       if (reason === undefined || reason === PROBE_REASON) continue;
       permissive ??= outcome;
       if (index.has(reason)) {
-        // Two mechanisms, one sentence: they are no longer distinguishable, so claim NEITHER rather
-        // than attribute a decision to the wrong one.
+        // Two mechanisms, one sentence: drop BOTH, so the map shrinks and the unit suite's size
+        // assertion goes red. This branch is a DETECTOR, not a safeguard — no production path reads
+        // the index (the runner takes only `permissive` from the calibration, and `forcedMechanism`
+        // names the arm from core), and `calibrateMechanisms` is exported for the suite alone. Keep
+        // it: without it a collision leaves the map full-sized and nothing notices.
         index.delete(reason);
       } else {
         index.set(reason, mechanism);
@@ -183,9 +186,15 @@ function calibrateGate(): GateCalibration {
 /**
  * Ask core which reason sentence each deterministic preflight writes, and index it.
  *
- * Exported for the unit suite: a run in which this returns fewer than the probed mechanisms means
- * the gate no longer distinguishes them, and every `forced_by` assertion in every corpus would fail.
- * That must be a red unit test rather than a surprise in someone's eval report.
+ * Exported for the unit suite, which is its only consumer: a run returning fewer entries than the
+ * probed mechanisms means a preflight stopped firing, and every case asserting THAT mechanism would
+ * fail across every corpus. That must be a red unit test rather than a surprise in someone's eval
+ * report.
+ *
+ * Attribution itself is not at stake. {@link forcedMechanism} names the arm from core's
+ * `preflightFloorFinding` rather than from this index, so two mechanisms that came to share a
+ * sentence stay individually attributable — a shrunken map is the SIGNAL that something moved, not
+ * the damage it causes.
  */
 export function calibrateMechanisms(): Map<string, ForcedByMechanism> {
   return new Map(calibrateGate().index);

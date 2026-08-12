@@ -559,9 +559,11 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
     });
 
     it('CALIBRATES against core: every probed mechanism is still distinguishable', async () => {
-      // If this goes red, the gate no longer tells its deterministic mechanisms apart (one stopped
-      // firing, or two now produce the same signal) and EVERY `forced_by` assertion in every corpus
-      // would fail. That must be a red unit test here, not a surprise in someone's eval report.
+      // If this goes red, a preflight stopped firing (or two came to produce the same signal), and
+      // every case asserting THAT mechanism would fail across every corpus. That must be a red unit
+      // test here, not a surprise in someone's eval report. Attribution is not what is at stake:
+      // `forcedMechanism` names the arm from core, so a shared sentence shows up here as a shrunken
+      // map rather than as a mis-attributed decision there.
       const { calibrateMechanisms } = await import('#src/raterTarget.js');
       const { PREFLIGHT_MECHANISMS } = await import('#src/evalTypes.js');
       const index = calibrateMechanisms();
@@ -948,8 +950,10 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
       const escalates = mapVerdictToAction('rm -rf /', undefined, { rung: 'assisted' }).action;
       const suite = parseEvalSuite(
         'target: { type: rater, rung: assisted }\n' +
-          // Neutral label tokens on purpose: a rater suite's enum is AUTHORED, and this test must not
-          // depend on what the approvals vocabulary happens to be called this week.
+          // Derived from core's vocabularies rather than spelled, which is this file's rule
+          // throughout: a rater suite must now declare the whole vocabulary to parse at all, and
+          // writing the words here would make the fixture assert what the approvals words are
+          // rather than what the target does.
           RATER_CLASSIFICATION +
           'cases:\n' +
           // Each deterministic case asserts the MECHANISM that decided it. `expect_action` rides

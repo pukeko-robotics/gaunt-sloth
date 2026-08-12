@@ -183,6 +183,20 @@ cases:
     forced_by: hardline-floor
 ```
 
+**A rater suite must declare the gate's whole vocabulary, not just the values its cases expect** —
+every outcome under `labels`, every action under `actions`. A value you leave out is not rejected at
+run time, it is filed under `(unrecognized)`, so the cell stops being graded and the metric watching
+it keeps reporting a clean number. The parser refuses the suite instead, before the run, naming what
+is missing.
+
+**If a suite you already have stops parsing, that is this check.** A rater suite that declared a
+narrow enum on purpose — an approve-versus-escalate ablation, or `actions: [escalate]` on a corpus of
+nothing but floor cases — no longer parses. Two ways forward, and the error names the values for you:
+add the missing ones, or drop the `actions:` line altogether if the suite asserts no action (that is
+still valid; it simply has no action dimension, and `expect_action` then becomes a parse error). To
+ask a deliberately narrow question, narrow the *scoring* rather than the enum — `where:` / `over:` on
+a metric, or a tag filter — which keeps what the gate produced visible in the matrix.
+
 Run it once for today's numbers:
 
 ```bash
@@ -233,9 +247,12 @@ action; when it doesn't, the case fails on the marker and the action together, w
 you want from a test. A `hardline-floor` case is not driven with a stub: the floor is checked at
 execution time and never sees a rating.
 
-A command whose target the gate cannot statically resolve — it composes, substitutes or redirects —
-is not a mechanism you can assert. The gate rates it like any other command, with a neutral note in
-the rating prompt naming the shape its parser saw, so nothing deterministic decided it.
+The two preflights part company on a command the gate cannot statically resolve — one that composes,
+substitutes or redirects. `open-world-preflight` needs a resolvable fetch target, so it does not fire
+there and `forced_by: open-world-preflight` on `ls && curl https://telemetry.example.org/collect`
+matches nothing; the gate rates that command like any other, with a neutral note in the rating prompt
+naming the shape its parser saw. `script-env-leak-preflight` reads the command's text rather than its
+target and still fires, so it stays assertable on the composed form.
 
 One more thing to know before you transcribe a corpus: on a **rated** case a `script-env-leak-
 preflight` marker only appears if the model rated that command permissively, because a rater that
