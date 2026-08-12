@@ -385,7 +385,7 @@ their config has a problem.
   to work — so the prompt publishes a handle for the clear and `<App>` decides. This is the TUI
   surface only; readline's `Ctrl+C` is unchanged (GS2-87).
 - **`Ctrl+T`** — toggle tool-call detail, running or idle (mirrors `/verbose`).
-- **A control chord never types its letter, and never moves the message under it.** The prompt's
+- **A control chord must not type its letter, and must not move the message under it.** The prompt's
   editor (`PromptEditor.tsx`) inserts a keystroke only when none of `ctrl`/`meta`/`super`/`hyper` is
   set, so a chord the app binds elsewhere — or binds nowhere at all — is refused silently rather
   than falling through to the insert branch. Without that, each keybinding the app adds also drops a
@@ -394,6 +394,11 @@ their config has a problem.
   **`shift` is the one modifier deliberately not in that list** — it is how a capital is typed, not a
   different key. Every text buffer in the TUI owes the same four-modifier guard, and they all carry
   it: the prompt's editor, and `App.tsx`'s attack-banner phrase and debug-pane search.
+  **The guard reaches exactly as far as Ink's decode does, and that is not all the way.** A control
+  byte that arrives merged into an escape sequence decodes with `ctrl: false`, so it falls through
+  the guard and is typed into the buffer — the `ESC ^C` residual of the hold-back filter
+  (`mouseStdin.ts`) is the known instance, measured. Read the guard as removing the ordinary case,
+  not as a guarantee that no binding can leave a stray character behind.
 - **`o` / `s` / `a` / anything-else** at a pending shell approval — approve once / session / always
   / reject (fail-closed). `[s]` and `[a]` are offered only when there is something to remember.
   Changing the approvals mode is not one of the choices: the ladder has no "turn the gate down from
