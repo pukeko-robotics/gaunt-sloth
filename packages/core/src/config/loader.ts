@@ -36,6 +36,7 @@ import {
 } from '#src/config/schema.js';
 import { parseJsonc } from '#src/config/jsonc.js';
 import { isMissingProviderKeyError, MissingProviderKeyError } from '#src/config/providerKeys.js';
+import { ConfigDiscoveryError, isConfigDiscoveryError } from '#src/config/configDiscovery.js';
 import { getGslothConfigReadPath, importExternalFile } from '#src/utils/fileUtils.js';
 import { getGlobalGslothConfigReadPath } from '#src/utils/globalConfigUtils.js';
 import {
@@ -72,7 +73,7 @@ import type {
  * 1. Deprecated-shape reject (GS2-28): a removed pre-2.0 shape — a top-level command key
  *    or a deprecated `*Provider*` name (root + per-command), detected by
  *    {@link findDeprecatedConfigIssues} — is a HARD error naming the canonical replacement +
- *    migration path, then exit. 2.0 dropped back-compat coercion, so these fail rather than
+ *    migration path. 2.0 dropped back-compat coercion, so these fail rather than
  *    remap. Runs FIRST so a deprecated name never merely surfaces as an unknown-key warning.
  * 1b. Approvals rule-grammar reject (EXT-71): a bare string in `allow`/`deny`/`escalate`, or a
  *    configured `mcpServers` key named `*`, detected by {@link findApprovalsGrammarIssues} — a
@@ -80,13 +81,22 @@ import type {
  *    user wrote) is the only one they see.
  * 2. Unknown top-level keys: warn (do NOT fail) so likely typos are surfaced while
  *    forward-compatible / extension keys still pass through untouched.
- * 3. Schema parse: on a genuine type mismatch on a known field, emit a friendly,
- *    path-scoped error and exit (matching the loader's existing invalid-config
- *    behaviour). Validation is shape-only — the loose schema preserves unknown keys,
+ * 3. Schema parse: on a genuine type mismatch on a known field, a friendly, path-scoped
+ *    error. Validation is shape-only — the loose schema preserves unknown keys,
  *    so the original `raw` is returned unchanged on success.
+ *
+ * CFG-36 — every hard failure above RAISES a {@link ConfigDiscoveryError} rather than printing and
+ * calling `exit(1)`. Config loading is a library operation: the caller chooses the exit code (the
+ * CLI's top-level guard prints the message and exits 1; `gth eval` classifies it as a harness error
+ * and exits 2). Because these now throw, every `catch` between here and a top level must re-raise
+ * them rather than fall through to another format or treat the layer as absent — see the
+ * {@link isConfigDiscoveryError} re-raises in {@link loadGlobalRawConfig}, {@link initConfig} and
+ * {@link tryModuleConfig}. Swallowing one would silently downgrade a hard config error to a
+ * different (or absent) config, which is the false-green this change exists to prevent.
  *
  * @param raw The freshly loaded config layer (read-only here).
  * @param sourceLabel Human-readable source name for messages (e.g. the filename).
+ * @throws ConfigDiscoveryError when the layer carries a hard configuration error.
  */
 function validateRawConfigLayer<T extends Record<string, unknown>>(raw: T, sourceLabel: string): T {
   // Only an object config can carry deprecated/unknown keys; a null/array/primitive config skips
@@ -95,13 +105,10 @@ function validateRawConfigLayer<T extends Record<string, unknown>>(raw: T, sourc
   if (isRecordConfig(raw)) {
     const deprecatedIssues = findDeprecatedConfigIssues(raw);
     if (deprecatedIssues.length > 0) {
-      displayError(
-        `Invalid configuration in ${sourceLabel}:\n${formatDeprecatedConfigIssues(deprecatedIssues)}`
+      throw new ConfigDiscoveryError(
+        `Invalid configuration in ${sourceLabel}:\n${formatDeprecatedConfigIssues(deprecatedIssues)}`,
+        { sourceLabel }
       );
-      exit(1);
-      // Unreachable past exit(1) in production; keeps the mocked-exit test path from falling
-      // through into the schema parse below.
-      return raw;
     }
 
     // EXT-71 — the rule-grammar errors that must be seen BEFORE the schema parse: a bare string in
@@ -110,11 +117,10 @@ function validateRawConfigLayer<T extends Record<string, unknown>>(raw: T, sourc
     // validate` too, so the validator can never green-light a config a real run refuses.
     const grammarIssues = findApprovalsGrammarIssues(raw);
     if (grammarIssues.length > 0) {
-      displayError(
-        `Invalid configuration in ${sourceLabel}:\n${formatDeprecatedConfigIssues(grammarIssues)}`
+      throw new ConfigDiscoveryError(
+        `Invalid configuration in ${sourceLabel}:\n${formatDeprecatedConfigIssues(grammarIssues)}`,
+        { sourceLabel }
       );
-      exit(1);
-      return raw;
     }
 
     const unknownKeys = findUnknownTopLevelKeys(raw);
@@ -129,13 +135,10 @@ function validateRawConfigLayer<T extends Record<string, unknown>>(raw: T, sourc
 
   const result = rawGthConfigSchema.safeParse(raw);
   if (!result.success) {
-    displayError(
-      `Invalid configuration in ${sourceLabel}:\n${formatConfigValidationError(result.error)}`
+    throw new ConfigDiscoveryError(
+      `Invalid configuration in ${sourceLabel}:\n${formatConfigValidationError(result.error)}`,
+      { sourceLabel }
     );
-    exit(1);
-    // Unreachable past exit(1) in production; in specs exit() is mocked, so returning here keeps
-    // a shape-invalid config from falling through into the profile check below.
-    return raw;
   }
 
   // CFG-26 — `approvals.rater` STRICT resolution (GS2-62): a named profile that does not
@@ -145,12 +148,11 @@ function validateRawConfigLayer<T extends Record<string, unknown>>(raw: T, sourc
   if (isRecordConfig(raw)) {
     for (const ref of findApprovalsRaterProfiles(raw)) {
       if (!resolveIdentityProfileConfigPath(ref.profile)) {
-        displayError(
+        throw new ConfigDiscoveryError(
           `Invalid configuration in ${sourceLabel}:\n` +
-            `  - ${ref.path}: ${unresolvedRaterProfileMessage(ref)}`
+            `  - ${ref.path}: ${unresolvedRaterProfileMessage(ref)}`,
+          { sourceLabel, identityProfile: ref.profile }
         );
-        exit(1);
-        return raw;
       }
     }
   }
@@ -324,11 +326,12 @@ const RAW_CONFIG_VALIDATION_OPTIONS = {
  * config happens to be present / a global config exists," a distinction the loader's fall-through
  * deliberately blurs.
  *
- * PURE PREDICATE — never throws, never calls `exit` (contrast the loader's interactive-CLI
- * `exit(1)` safety net in {@link initConfig}). So batch/eval code (e.g. `gth eval --judge <profile>`
- * and BATCH-12's identity matrix) can pre-check an explicitly-requested profile and raise its OWN
- * catchable error / graceful exit code instead of dying on an uncatchable `process.exit`. A
- * blank/whitespace-only name counts as "no profile" → `undefined`.
+ * PURE PREDICATE — never throws, never calls `exit`, so it can be asked the question without
+ * committing to an outcome. {@link initConfig} uses it to enforce that an explicitly-named profile
+ * really exists (raising a catchable {@link ConfigDiscoveryError} when it does not), and callers
+ * that want to CLASSIFY rather than fail — BATCH-12's identity matrix checks every declared identity
+ * up front so one message can name them all — ask it directly. A blank/whitespace-only name counts
+ * as "no profile" → `undefined`.
  *
  * @param identityProfile The explicitly-requested identity profile name.
  * @returns The resolved profile config path, or `undefined` when the profile has no config.
@@ -348,6 +351,37 @@ export function resolveIdentityProfileConfigPath(identityProfile: string): strin
     }
   }
   return undefined;
+}
+
+/**
+ * CFG-36 — the ONE statement of "an explicitly-named identity profile that does not exist", shared
+ * by the run path ({@link initConfig}, which raises) and the read path ({@link validateConfig},
+ * which records a not-ok layer). Single-sourced deliberately: GS2-29's invariant is that
+ * `gth config validate` can never green-light a config a real run refuses, and two copies of this
+ * rule is exactly how that invariant rots.
+ *
+ * Returns the offending profile name, or `undefined` when there is nothing to complain about —
+ * no profile named (a blank/whitespace name counts as none, keeping the CFG-8 no-profile path
+ * untouched), an explicit `--config` path (which names the file to load and bypasses discovery),
+ * or a profile that resolves to its own config.
+ */
+function findUnresolvedExplicitProfile(
+  commandLineConfigOverrides: CommandLineConfigOverrides
+): string | undefined {
+  const profile = commandLineConfigOverrides.identityProfile?.trim();
+  if (!profile || commandLineConfigOverrides.customConfigPath) {
+    return undefined;
+  }
+  return resolveIdentityProfileConfigPath(profile) ? undefined : profile;
+}
+
+/** The message both paths report for {@link findUnresolvedExplicitProfile}'s failure. */
+function identityProfileNotFoundMessage(profile: string): string {
+  return (
+    `identity profile "${profile}" not found: no config file in ` +
+    `${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${profile}/ ` +
+    `(checked ${PROJECT_CONFIG_FORMATS.join(', ')})`
+  );
 }
 
 /**
@@ -379,6 +413,13 @@ export async function loadGlobalRawConfig(): Promise<Partial<RawGthConfig> | und
         >;
         return validateRawConfigLayer(parsed, `${filename} (global)`) as Partial<RawGthConfig>;
       } catch (e) {
+        // CFG-36 — this catch exists to treat an UNREADABLE global as absent. A global that read
+        // fine and is MALFORMED is a hard configuration error (it used to `exit(1)` from inside
+        // the validator); swallowing it here would silently downgrade that to "ignoring it" and
+        // run under a different config — the exact false-green the throw was introduced to avoid.
+        if (isConfigDiscoveryError(e)) {
+          throw e;
+        }
         displayDebug(e instanceof Error ? e : String(e));
         displayWarning(`Failed to read global config from ${jsonPath}, ignoring it.`);
         return undefined;
@@ -398,6 +439,10 @@ export async function loadGlobalRawConfig(): Promise<Partial<RawGthConfig> | und
           `${filename} (global)`
         ) as Partial<RawGthConfig>;
       } catch (e) {
+        // CFG-36 — see the JSON branch above: a malformed global is a hard error, not an absent one.
+        if (isConfigDiscoveryError(e)) {
+          throw e;
+        }
         displayDebug(e instanceof Error ? e : String(e));
         displayWarning(`Failed to read global config from ${modulePath}, ignoring it.`);
         return undefined;
@@ -435,7 +480,8 @@ const MAX_EXTENDS_CHAIN_DEPTH = 50;
  * cycle, a missing base, an over-deep chain, or an unreadable base. It carries the SAME clear,
  * user-facing message the run path prints, so the two consumers can translate one shared failure
  * into their own convention WITHOUT the traversal being forked or the checks duplicated:
- *   - the run path ({@link resolveConfigExtends}) → `displayError` + `exit(1)` (hard-fail a run),
+ *   - the run path ({@link resolveConfigExtends}) → re-raised as a {@link ConfigDiscoveryError}, so
+ *     the caller classifies it and chooses the exit code (CFG-36),
  *   - the read path ({@link validateConfig}) → a `not-ok` layer with this message (collect, never
  *     `exit`), so `gth config validate` mirrors what a real run would hit (GS2-29 invariant).
  */
@@ -481,15 +527,23 @@ export async function resolveConfigExtends(
   try {
     return await composeExtends(rawConfig, profileLabel);
   } catch (e) {
-    // GS2-73 — the traversal now RAISES a {@link ConfigExtendsError} rather than exiting inline, so
-    // the read side ({@link validateConfig}) can report the same failure without terminating. On the
-    // RUN path we translate it back to the original behaviour: print the clear message and exit(1).
+    // GS2-73 — the traversal RAISES a {@link ConfigExtendsError} rather than exiting inline, so the
+    // read side ({@link validateConfig}) can report the same failure without terminating.
+    //
+    // CFG-36 — the RUN path re-raises it as a {@link ConfigDiscoveryError} instead of printing and
+    // calling `exit(1)`. A profile whose `extends` base is missing (or forms a cycle) is a bad
+    // profile exactly as a profile with no config at all is, and both must be classifiable by the
+    // caller: exiting here from inside a library collapses `gth eval`'s harness-error (exit 2) and
+    // product-failure (exit 1) contract onto the same code, which is the collapse this node exists
+    // to remove. The CLI's top-level guard prints the same message and exits 1, so what a person at
+    // a terminal sees is unchanged.
+    //
+    // The message already names the profile, the base and the cycle; the optional detail fields are
+    // deliberately left unset rather than guessed at. `identityProfile` means "the profile that did
+    // not resolve", which for a missing base referenced from another profile is the BASE, not the
+    // `profileLabel` in hand here — a wrong value would be worse than an absent one.
     if (e instanceof ConfigExtendsError) {
-      displayError(e.message);
-      exit(1);
-      // Unreachable past exit(1) in production; LOAD-BEARING under the specs' mocked exit so the
-      // caller never observes a silently-composed config after a cycle/missing base.
-      throw new Error('Unexpected error occurred.');
+      throw new ConfigDiscoveryError(e.message);
     }
     throw e;
   }
@@ -499,7 +553,7 @@ export async function resolveConfigExtends(
  * GS2-73 — seed the `extends` chain from the selected profile's own name and run the throwing
  * traversal ({@link resolveExtendsChain}). Shared by BOTH consumers so the walk and its
  * cycle/missing-base checks live in ONE place: the run-path {@link resolveConfigExtends} (which
- * translates a {@link ConfigExtendsError} into `displayError` + `exit`) and the read-path
+ * re-raises a {@link ConfigExtendsError} as a {@link ConfigDiscoveryError}) and the read-path
  * {@link validateConfig} (which records it as a not-ok layer). Propagates the typed error to its
  * caller; the caller owns the reporting convention.
  */
@@ -682,11 +736,12 @@ async function readProjectConfiguredTui(
   // profile whose `tui` is inherited while the run composes it, which is precisely the
   // reader-vs-run divergence this seam exists to prevent.
   //
-  // Deliberately NOT inside the try above: on a cycle / missing base / malformed base,
-  // `resolveConfigExtends` reports the problem and calls `exit(1)`, which ends the process — a
-  // catch could not suppress that, and the sentinel throw past it is load-bearing under the specs'
-  // mocked `exit` (the convention used throughout this file), so swallowing it would let a test
-  // observe a silent fall-through production can never reach.
+  // Deliberately NOT inside the try above: a cycle, a missing base and a MALFORMED base all raise a
+  // {@link ConfigDiscoveryError} that must reach the top level to be reported. The try above exists
+  // to treat an unreadable config as "no configured tui"; extending it over these would swallow a
+  // hard configuration error and let the surface be selected from a config the run itself refuses
+  // to load. This reader runs BEFORE the TUI/readline choice, so the error surfaces here rather than
+  // through `createTuiSession` — either way it is reported once, by the CLI's top-level guard.
   if (typeof raw.extends === 'string') {
     raw = await resolveConfigExtends(raw, commandLineConfigOverrides.identityProfile);
   }
@@ -720,6 +775,28 @@ export async function initConfig(
   // from cwd to the stop boundary (see findProjectConfigPath). Detection and loading share this
   // resolver, and the discovered dir becomes the base for the per-format cascade below.
   const discovered = findProjectConfigPath(commandLineConfigOverrides);
+
+  // GS2-62 / CFG-36 — an EXPLICITLY named identity profile (`-i <name>` / eval `--judge <name>`)
+  // must resolve to its OWN config; it must never silently run under some OTHER config. That is a
+  // false-green trap: `gth -i typo …` would run under the wrong model while appearing to use the
+  // named profile — in an authorization/eval context, hiding a real misconfiguration.
+  //
+  // Checked with the STRICT resolver, NOT with `discovered`. `findProjectConfigPath` deliberately
+  // falls back to a plain `<dir>/<config>` when the named profile has no config of its own (see its
+  // note, and the "Case C" spec in config.uptree.spec.ts), so gating on `!discovered` only catches
+  // the case where NO config exists anywhere — a project that has a plain config would sail past it
+  // and load that instead. `resolveIdentityProfileConfigPath` never falls through, which is what
+  // makes this check see the case the discovery gate cannot.
+  //
+  // The rule itself lives in findUnresolvedExplicitProfile, shared with `validateConfig` so the
+  // validator can never green-light a profile a run refuses (GS2-29).
+  const explicitProfile = findUnresolvedExplicitProfile(commandLineConfigOverrides);
+  if (explicitProfile) {
+    throw new ConfigDiscoveryError(identityProfileNotFoundMessage(explicitProfile), {
+      identityProfile: explicitProfile,
+    });
+  }
+
   const baseDir = discovered?.dir ?? getCurrentWorkDir();
 
   // Set the project root for post-config, project-relative artifact resolution (guidelines,
@@ -748,27 +825,10 @@ export async function initConfig(
   // standalone global config (loaded alone) before erroring. Project config still takes
   // precedence: this branch only runs when there is no project file to apply the global under.
   if (!discovered) {
-    // GS2-62 — an EXPLICITLY named identity profile (`-i <name>` / eval `--judge <name>`) that
-    // discovered no project config must NOT silently fall back to the global config. Doing so is a
-    // false-green trap: `gth -i typo …` would run under the GLOBAL model while appearing to use the
-    // named profile (in an authorization/eval context that hides a real misconfiguration). Fail
-    // loudly instead. Gated on a non-empty identityProfile, so the CFG-8 no-profile global fallback
-    // just below is UNTOUCHED — a run with no profile still loads the global exactly as before.
-    const explicitProfile = commandLineConfigOverrides.identityProfile?.trim();
-    if (explicitProfile) {
-      displayError(
-        `identity profile "${explicitProfile}" not found: no config file in ` +
-          `${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${explicitProfile}/ ` +
-          `(checked ${PROJECT_CONFIG_FORMATS.join(', ')})`
-      );
-      exit(1);
-      // Unreachable past exit(1) in production. In specs exit() is mocked to a no-op, so this throw
-      // is LOAD-BEARING: without it execution would fall through into loadGlobalRawConfig() below
-      // and the test would observe the global silently loaded — masking the very regression this
-      // guard fixes. Matches the loader's existing post-exit sentinel-throw pattern.
-      throw new Error('Unexpected error occurred.');
-    }
-
+    // The explicitly-named-profile guard that used to sit here now runs BEFORE discovery is
+    // consulted at all (see above), because gating it on `!discovered` missed the case where a
+    // plain project config exists. A run with no profile reaches the global fallback below exactly
+    // as before.
     const globalRawConfig = await loadGlobalRawConfig();
     if (globalRawConfig) {
       if (
@@ -831,6 +891,12 @@ export async function initConfig(
       // read failure, and falling through would end in the terminal "No configuration file found"
       // exit — the opposite of catchable, and a misleading message besides.
       if (isMissingProviderKeyError(e)) {
+        throw e;
+      }
+      // CFG-36 — same reasoning for a MALFORMED config: the config read fine and is invalid, which
+      // is a hard error the user must see. Falling through to the next FORMAT would end in the
+      // terminal "No configuration file found" exit, hiding the real (and clearly-worded) problem.
+      if (isConfigDiscoveryError(e)) {
         throw e;
       }
       displayDebug(e instanceof Error ? e : String(e));
@@ -906,6 +972,12 @@ async function tryModuleConfig(
       const mergedWithGlobal = await applyGlobalConfigBase(composedConfig);
       return await mergeConfig(mergedWithGlobal, commandLineConfigOverrides);
     } catch (e) {
+      // CFG-36 — a config that read fine and is MALFORMED (or names an unresolvable profile) is a
+      // hard error, not a reason to try the next format. Re-raise before the fall-through, exactly
+      // as the JSON branch in initConfig does.
+      if (isConfigDiscoveryError(e)) {
+        throw e;
+      }
       displayDebug(e instanceof Error ? e : String(e));
       if (nextFormat) {
         displayError(`Failed to read config from ${filename}, will try other formats.`);
@@ -1564,6 +1636,32 @@ export async function validateConfig(
 ): Promise<ConfigValidationReport> {
   const layers: ConfigLayerValidationReport[] = [];
 
+  // CFG-36 — mirror the run's STRICT named-profile rule before anything is read. `initConfig`
+  // refuses outright when an explicitly-named profile has no config of its own, so a validator that
+  // walked on would report OK for a config the run rejects — and it would do so in the ordinary
+  // case, because discovery falls back to a plain project config for an unresolved profile. That is
+  // the GS2-29 divergence in its purest form: `gth config validate -i typo` green-lighting a run
+  // that cannot start. Reported as a not-ok layer rather than thrown, because the read side
+  // COLLECTS and never terminates; returned immediately because a run gets no further either.
+  const unresolvedProfile = findUnresolvedExplicitProfile(commandLineConfigOverrides);
+  if (unresolvedProfile) {
+    return {
+      // `found: true` so the caller renders THIS message. `found: false` means "nothing to
+      // validate, run `gth init`", which would both discard the real diagnosis and misdirect a user
+      // whose actual problem is a mistyped `-i`.
+      found: true,
+      ok: false,
+      layers: [
+        {
+          sourceLabel: `${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${unresolvedProfile}/`,
+          ok: false,
+          warnings: [],
+          errorMessage: identityProfileNotFoundMessage(unresolvedProfile),
+        },
+      ],
+    };
+  }
+
   // Project layer first (run order): initConfig validates the discovered project config before
   // applying the global base. A parse failure here propagates (surfaced by the caller).
   const discovered = findProjectConfigPath(commandLineConfigOverrides);
@@ -1586,7 +1684,11 @@ export async function validateConfig(
       try {
         await composeExtends(raw, commandLineConfigOverrides.identityProfile);
       } catch (e) {
-        if (e instanceof ConfigExtendsError) {
+        // CFG-36 — a MALFORMED base layer now raises a ConfigDiscoveryError from
+        // `validateRawConfigLayer` instead of exiting the process. Record it as a not-ok layer
+        // alongside the traversal's own failures: the read side collects, it never terminates, so
+        // `gth config validate` reports the broken base rather than dying on it.
+        if (e instanceof ConfigExtendsError || isConfigDiscoveryError(e)) {
           layer.ok = false;
           layer.errorMessage = e.message;
         } else {

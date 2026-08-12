@@ -97,4 +97,34 @@ describe('GS2-41 profile inheritance — initConfig wiring', () => {
       expect.objectContaining({ model: 'base-model' })
     );
   });
+
+  it('CFG-36: a profile whose extends base is missing RAISES out of initConfig, catchably', async () => {
+    // The acceptance this node turns on: a bad profile must be classifiable by the caller, so
+    // `gth eval --judge <profile>` can report it as a HARNESS error (exit 2) rather than as the
+    // graded product failing (exit 1). A profile whose `extends` base is gone is a bad profile on
+    // any plain reading, and it used to end the process from inside config discovery — the same
+    // BATCH-11 collapse the node removes for a profile with no config at all.
+    //
+    // This is the level that proves it, through the REAL loader rather than the composer alone: the
+    // raise has to survive initConfig's JSON branch, whose catch would otherwise fall through to the
+    // next config FORMAT and end in the terminal "No configuration file found" exit — hiding the
+    // clearly-worded real problem. Asserting the error TYPE (not merely that something threw) is
+    // what makes it discriminating: the shape this replaced printed the message, called `exit(1)`
+    // and threw a generic sentinel, so a bare rejects.toThrow() would pass against it unchanged.
+    writeProfile('orphan', { extends: 'no-such-base', llm: { type: 'anthropic' } });
+
+    const { initConfig, isConfigDiscoveryError } = await import('#src/config.js');
+    const error = await initConfig({ identityProfile: 'orphan' }).then(
+      () => {
+        throw new Error('expected a ConfigDiscoveryError, but initConfig resolved');
+      },
+      (e: unknown) => e
+    );
+
+    expect(isConfigDiscoveryError(error)).toBe(true);
+    expect((error as Error).message).toMatch(/"no-such-base".*was not found/i);
+    // Never reached the provider: the run stops at discovery, it does not grade under a half-built
+    // config.
+    expect(ChatAnthropicMock).not.toHaveBeenCalled();
+  });
 });

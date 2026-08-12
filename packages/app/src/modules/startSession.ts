@@ -1,5 +1,7 @@
 import {
   hasAnyConfig,
+  isConfigDiscoveryError,
+  isMissingProviderKeyError,
   loadConfiguredTui,
   type CommandLineConfigOverrides,
 } from '@gaunt-sloth/core/config.js';
@@ -20,7 +22,8 @@ import { isInkAvailable } from '#src/tui/loadInk.js';
  * Entry point for the `chat`/`code` interactive sessions. Decides between the Ink TUI and
  * the readline session, then hands off the SAME `SessionConfig`/overrides/message either
  * way. Anything that prevents the TUI (non-TTY, `--no-tui`/`GTH_NO_TUI`, CI, missing
- * optional deps, or a TUI mount failure) degrades to readline — never a crash.
+ * optional deps, or a TUI mount failure) degrades to readline — never a crash. A failure of
+ * the *configuration* is not such a thing, and propagates; see the catch below.
  *
  * Because non-TTY environments always resolve to readline, the existing interactive
  * integration tests (spawned with piped, non-TTY stdio) keep exercising the unchanged
@@ -87,6 +90,21 @@ export async function startSession(
       await createTuiSession(sessionConfig, commandLineConfigOverrides, message);
       return;
     } catch (err) {
+      // CFG-36 — an unusable CONFIGURATION is not the TUI being unavailable, and must not be
+      // reported as one. `createTuiSession` loads config itself (and, through `runner.init`, the
+      // `subagents[].profile` configs under it), so a mistyped `-i`, a malformed layer or a missing
+      // provider key surfaces HERE first. Swallowed into the fallback it produces a false diagnosis
+      // ("TUI unavailable (identity profile "typo" not found…)"), silently restarts under readline,
+      // and only reaches the true message after loading the same broken config a second time — so
+      // the user is told the wrong thing first and the right thing second. Re-raised, it reaches the
+      // CLI's top-level guard (`guardProgramConfigErrors`), which prints it ONCE and exits 1.
+      //
+      // The classes are exactly the two that guard terminates on, and nothing else changes: a failed
+      // dynamic import (Ink genuinely absent) or a mount failure still degrades to readline, which
+      // is the behaviour the fallback exists for.
+      if (isConfigDiscoveryError(err) || isMissingProviderKeyError(err)) {
+        throw err;
+      }
       displayWarning(
         `TUI unavailable (${err instanceof Error ? err.message : String(err)}); ` +
           `falling back to the readline session.`

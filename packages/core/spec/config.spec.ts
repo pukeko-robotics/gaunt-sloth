@@ -522,20 +522,22 @@ describe('config', async () => {
         postProcessJsonConfig: undefined,
       }));
 
-      const { initConfig } = await import('#src/config.js');
-      try {
-        // The mocked exit() does not stop execution, so guard the subsequent throw.
-        await initConfig({});
-      } catch {
-        // Expected: downstream code may throw after the mocked exit(1).
-      }
+      const { initConfig, isConfigDiscoveryError } = await import('#src/config.js');
+      // CFG-36 — the rejection is the assertion. A bare `rejects.toThrow()` would NOT discriminate:
+      // the old code called exit(1) (a no-op here) and then threw a generic sentinel, so it threw
+      // too. Pinning the error TYPE and its message, and asserting exit was never called, is what
+      // tells the catchable error apart from the process kill it replaced.
+      const error = await initConfig({}).catch((e: unknown) => e);
 
-      const errorOutput = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
-      expect(errorOutput).toContain('Invalid configuration');
-      expect(errorOutput).toContain('contentSource'); // root contentProvider → contentSource
-      expect(errorOutput).toContain('commands.pr.requirementsProvider');
-      expect(errorOutput).toContain('requirementSource'); // per-command fix named
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toContain('Invalid configuration');
+      expect((error as Error).message).toContain('contentSource'); // contentProvider → contentSource
+      expect((error as Error).message).toContain('commands.pr.requirementsProvider');
+      expect((error as Error).message).toContain('requirementSource'); // per-command fix named
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+      // The loader neither prints nor swallows: the message rides on the error for the top level to
+      // print. A `displayError` here would mean a catch downgraded this to a format fall-through.
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
       // A removed shape errors; it is NOT remapped-and-warned.
       expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalledWith(
         expect.stringContaining('"contentProvider"')
@@ -573,20 +575,17 @@ describe('config', async () => {
         postProcessJsonConfig: undefined,
       }));
 
-      const { initConfig } = await import('#src/config.js');
-      try {
-        await initConfig({});
-      } catch {
-        // Expected: downstream code may throw after the mocked exit(1).
-      }
+      const { initConfig, isConfigDiscoveryError } = await import('#src/config.js');
+      const error = await initConfig({}).catch((e: unknown) => e);
 
-      const errorOutput = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
-      expect(errorOutput).toContain('Invalid configuration');
-      expect(errorOutput).toContain('approvals.deny[0]');
-      expect(errorOutput).toContain(
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toContain('Invalid configuration');
+      expect((error as Error).message).toContain('approvals.deny[0]');
+      expect((error as Error).message).toContain(
         '{ "type": "shell", "matcher": "exact", "pattern": "npm publish" }'
       );
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
     });
 
     /**
@@ -653,20 +652,17 @@ describe('config', async () => {
         postProcessJsonConfig: undefined,
       }));
 
-      const { initConfig } = await import('#src/config.js');
-      try {
-        await initConfig({});
-      } catch {
-        // Expected: downstream code may throw after the mocked exit(1).
-      }
+      const { initConfig, isConfigDiscoveryError } = await import('#src/config.js');
+      const error = await initConfig({}).catch((e: unknown) => e);
 
-      const errorOutput = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
-      expect(errorOutput).toContain('Invalid configuration');
-      expect(errorOutput).toContain('commands.pr');
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toContain('Invalid configuration');
+      expect((error as Error).message).toContain('commands.pr');
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
     });
 
-    it('Should fail with a path-scoped error and exit on schema type mismatch (B1)', async () => {
+    it('Should fail with a path-scoped error on schema type mismatch (B1)', async () => {
       const jsonConfig = {
         llm: { type: 'vertexai' },
         commands: { api: { port: '3000' } },
@@ -688,18 +684,13 @@ describe('config', async () => {
         postProcessJsonConfig: undefined,
       }));
 
-      const { initConfig } = await import('#src/config.js');
-      try {
-        // The mocked exit() does not stop execution, so guard the subsequent throw.
-        await initConfig({});
-      } catch {
-        // Expected: downstream code may throw after the mocked exit(1).
-      }
+      const { initConfig, isConfigDiscoveryError } = await import('#src/config.js');
+      const error = await initConfig({}).catch((e: unknown) => e);
 
-      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
-        expect.stringContaining('commands.api.port')
-      );
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toContain('commands.api.port');
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
     });
   });
 
@@ -978,25 +969,26 @@ describe('config', async () => {
         prompts: { guidelines: 'GLOBAL.md' },
       });
 
-      const { initConfig } = await import('#src/config.js');
-      let returned: unknown;
-      try {
-        // A valid global IS present; the buggy behaviour would silently build a config from it.
-        returned = await initConfig({ identityProfile: 'missing' });
-      } catch {
-        // Mocked exit() is a no-op, so the load-bearing sentinel throw lands here.
-      }
+      const { initConfig, isConfigDiscoveryError } = await import('#src/config.js');
+      // CFG-36 — a valid global IS present; the buggy behaviour would silently build a config from
+      // it. The failure is now a CATCHABLE error rather than a process exit, which is what lets
+      // `gth eval` classify it as a harness error (exit 2) instead of dying with the loader's
+      // exit(1). Asserting the TYPE + message + `exit` never being called is what discriminates:
+      // the old code threw a generic sentinel here too, so a bare `rejects.toThrow()` would pass
+      // against it unchanged.
+      const returned = await initConfig({ identityProfile: 'missing' }).catch((e: unknown) => e);
 
-      const errorOutput = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
-      expect(errorOutput).toContain('identity profile "missing" not found');
-      expect(errorOutput).toContain('.gsloth-settings/missing');
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
-      // The global was NOT silently loaded: no config was built, and global parsing never ran
+      expect(isConfigDiscoveryError(returned)).toBe(true);
+      expect((returned as Error).message).toContain('identity profile "missing" not found');
+      expect((returned as Error).message).toContain('.gsloth-settings/missing');
+      expect(
+        (returned as { identityProfile?: string }).identityProfile,
+        'the profile name rides as a FIELD, so a consumer can classify without parsing prose'
+      ).toBe('missing');
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+      // The global was NOT silently loaded: nothing was printed and global parsing never ran
       // (its "not in valid format" branch — which a valid global wouldn't hit anyway — stays clear).
-      expect(returned).toBeUndefined();
-      expect(consoleUtilsMock.displayError).not.toHaveBeenCalledWith(
-        expect.stringContaining('not in valid format')
-      );
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
     });
 
     it('GS2-62: a run with NO identity profile still falls back to the global config (CFG-8 preserved)', async () => {
@@ -1036,17 +1028,14 @@ describe('config', async () => {
           : ''
       );
 
-      const { initConfig } = await import('#src/config.js');
-      try {
-        await initConfig({});
-      } catch {
-        // Mocked exit() is a no-op, so the load-bearing sentinel throw lands here.
-      }
+      const { initConfig, isConfigDiscoveryError } = await import('#src/config.js');
+      const error = await initConfig({}).catch((e: unknown) => e);
 
-      const errorOutput = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
-      expect(errorOutput).toContain('approvals.rater');
-      expect(errorOutput).toContain('identity profile "missing-rater" not found');
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toContain('approvals.rater');
+      expect((error as Error).message).toContain('identity profile "missing-rater" not found');
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
     });
 
     it('CFG-26: a per-command approvals.rater is checked too', async () => {
@@ -1065,17 +1054,14 @@ describe('config', async () => {
           : ''
       );
 
-      const { initConfig } = await import('#src/config.js');
-      try {
-        await initConfig({});
-      } catch {
-        // exit() is mocked to a no-op; the sentinel throw lands here.
-      }
+      const { initConfig, isConfigDiscoveryError } = await import('#src/config.js');
+      const error = await initConfig({}).catch((e: unknown) => e);
 
-      const errorOutput = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
-      expect(errorOutput).toContain('commands.code.approvals.rater');
-      expect(errorOutput).toContain('identity profile "nope" not found');
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toContain('commands.code.approvals.rater');
+      expect((error as Error).message).toContain('identity profile "nope" not found');
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
     });
 
     it('CFG-26: an approvals.rater that DOES resolve loads without erroring', async () => {
@@ -1122,10 +1108,19 @@ describe('config', async () => {
     });
 
     it('GS2-62: an explicit identity profile that resolves to a config loads without erroring', async () => {
-      // A project config IS discovered (existsSync true for the project path). The mocked resolver
-      // ignores the profile name, so this stands in for "a config was found for the profile" — the
-      // point is the GS2-62 guard must NOT fire once initConfig discovered a config. Real profile-
-      // path resolution is covered against the live fs in config.uptree.spec.ts.
+      // The named profile genuinely HAS its own config, so the strict guard must not fire and the
+      // config loads. CFG-36 — the profile config has to exist on the (mocked) filesystem for that
+      // to be true: the guard now resolves the profile STRICTLY rather than accepting whatever
+      // discovery happened to find, so a fixture where only a plain config exists is the Case C
+      // failure, not this success. Path built with the real `resolve()` from the same mocked cwd
+      // the loader walks (OPS-27), exactly as the CFG-26 rater test above builds its own.
+      const EXISTING_PROFILE_CONFIG = resolve(
+        MOCK_CWD,
+        GSLOTH_DIR,
+        GSLOTH_SETTINGS_DIR,
+        'existing',
+        PROJECT_JSON_MARKER
+      );
       globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
         () => '/mock/global-absent/no-such-config'
       );
@@ -1133,7 +1128,8 @@ describe('config', async () => {
         (filename: string) => `/mock/read/${filename}`
       );
       fsMock.existsSync.mockImplementation(
-        (path: string) => path === `/mock/read/${PROJECT_JSON_MARKER}`
+        (path: string) =>
+          path === `/mock/read/${PROJECT_JSON_MARKER}` || path === EXISTING_PROFILE_CONFIG
       );
       fsMock.readFileSync.mockImplementation((path: string) =>
         path === `/mock/read/${PROJECT_JSON_MARKER}`
@@ -1151,6 +1147,131 @@ describe('config', async () => {
       expect((config.llm as unknown as Record<string, unknown>).type).toBe('vertexai');
       expect(consoleUtilsMock.displayError).not.toHaveBeenCalledWith(
         expect.stringContaining('not found')
+      );
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+    });
+
+    /**
+     * CFG-36 — "Case C", the gap the discovery gate could not see, and the reason `gth eval` needed
+     * a pre-check of its own.
+     *
+     * `findProjectConfigPath` deliberately falls back to a plain `<dir>/<config>` when a named
+     * profile has no config (see its note, and the Case C spec in config.uptree.spec.ts). So a
+     * guard gated on "nothing was discovered" fires only in a project with NO config at all: give
+     * the project an ordinary config and `-i typo` sailed past it and ran under THAT config —
+     * silently, under the wrong model, while appearing to use the named profile. The guard now
+     * resolves the profile STRICTLY, which is what lets the eval pre-check be deleted rather than
+     * merely moved.
+     */
+    const setupPlainProjectOnly = () => {
+      globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
+        () => '/mock/global-absent/no-such-config'
+      );
+      fileUtilsMock.getGslothConfigReadPath.mockImplementation(
+        (filename: string) => `/mock/read/${filename}`
+      );
+      // ONLY a plain project config exists — no `.gsloth/.gsloth-settings/<profile>/` anywhere.
+      fsMock.existsSync.mockImplementation(
+        (path: string) => path === `/mock/read/${PROJECT_JSON_MARKER}`
+      );
+      fsMock.readFileSync.mockImplementation((path: string) =>
+        path === `/mock/read/${PROJECT_JSON_MARKER}`
+          ? JSON.stringify({ llm: { type: 'vertexai', model: 'plain-config-model' } })
+          : ''
+      );
+      vi.doMock('#src/providers/vertexai.js', () => ({
+        processJsonConfig: vi.fn().mockImplementation((llm: Record<string, unknown>) => ({
+          type: 'vertexai',
+          ...llm,
+        })),
+        postProcessJsonConfig: undefined,
+      }));
+    };
+
+    it('CFG-36: a named profile with no config does NOT fall back to the plain project config', async () => {
+      setupPlainProjectOnly();
+
+      const { initConfig, isConfigDiscoveryError } = await import('#src/config.js');
+      const error = await initConfig({ identityProfile: 'typo' }).catch((e: unknown) => e);
+
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toContain('identity profile "typo" not found');
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+    });
+
+    it('CFG-36 control: with NO profile named, that same plain config loads (the guard cannot fire)', async () => {
+      // The discriminating half of the pair: the guard keys on a profile having been NAMED, so the
+      // no-profile path through the very same function is untouched. Without this, a guard that
+      // rejected every config would pass the test above.
+      setupPlainProjectOnly();
+
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({});
+
+      expect((config.llm as unknown as Record<string, unknown>).model).toBe('plain-config-model');
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+    });
+
+    it('CFG-36 control: a blank profile name is "no profile", not a missing one', async () => {
+      setupPlainProjectOnly();
+
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({ identityProfile: '   ' });
+
+      expect((config.llm as unknown as Record<string, unknown>).model).toBe('plain-config-model');
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+    });
+
+    it('CFG-36: an explicit --config path wins outright, so the profile guard does not fire', async () => {
+      // `--config` names the file to load and bypasses discovery entirely; the profile guard is
+      // gated on its absence so an explicit path keeps behaving as an explicit path.
+      const customConfigPath = customPathPrefix + '.json';
+      globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
+        () => '/mock/global-absent/no-such-config'
+      );
+      fileUtilsMock.getGslothConfigReadPath.mockImplementation(
+        (filename: string) => `/mock/read/${filename}`
+      );
+      fsMock.existsSync.mockImplementation((path: string) => path === customConfigPath);
+      fsMock.readFileSync.mockImplementation((path: string) =>
+        path === customConfigPath
+          ? JSON.stringify({ llm: { type: 'vertexai', model: 'custom-path-model' } })
+          : ''
+      );
+      vi.doMock('#src/providers/vertexai.js', () => ({
+        processJsonConfig: vi.fn().mockImplementation((llm: Record<string, unknown>) => ({
+          type: 'vertexai',
+          ...llm,
+        })),
+        postProcessJsonConfig: undefined,
+      }));
+
+      const { initConfig } = await import('#src/config.js');
+      const config = await initConfig({ customConfigPath, identityProfile: 'typo' });
+
+      expect((config.llm as unknown as Record<string, unknown>).model).toBe('custom-path-model');
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+    });
+
+    it('CFG-36: a MALFORMED global config is a hard error, not a silently ignored one', async () => {
+      // The catcher audit in one test. `loadGlobalRawConfig` catches read failures and treats the
+      // global as absent; a malformed global reaches that same catch, and letting it be swallowed
+      // would downgrade a hard config error (it used to exit(1)) into "ignoring it" plus a run
+      // under a different config — the false-green this change exists to prevent. The re-raise is
+      // what keeps it hard, and this goes red if the re-raise is removed.
+      setupGlobalOnly({
+        llm: { type: 'vertexai', model: 'global-model' },
+        commands: { api: { port: '3000' } }, // port must be a number
+      });
+
+      const { initConfig, isConfigDiscoveryError } = await import('#src/config.js');
+      const error = await initConfig({}).catch((e: unknown) => e);
+
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toContain('commands.api.port');
+      expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalledWith(
+        expect.stringContaining('ignoring it')
       );
       expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });

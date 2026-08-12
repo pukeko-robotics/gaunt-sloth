@@ -81,8 +81,10 @@ explicit CLI flags (-c, --model, --verbose, -w)  >  profile-dir config  >  globa
 
 So a profile is the highest-precedence *file* layer, still overridable by explicit command-line
 flags, and still sitting on top of your global `~/.gsloth` config and the built-in defaults. Naming a
-profile that has no config directory is an error (the run stops rather than silently falling back to
-the global config).
+profile that has no config file of its own is an error: the run stops rather than silently falling
+back to some other config — not to your global `~/.gsloth` config, and not to the project's own
+plain `.gsloth.config.*` either, which is the fallback you would otherwise get and the surprising
+one. A mistyped `-i` therefore tells you so, instead of running under a model you did not choose.
 
 ### Creating a profile
 

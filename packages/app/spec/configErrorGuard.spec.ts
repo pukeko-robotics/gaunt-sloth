@@ -39,6 +39,15 @@ async function missingKeyError(): Promise<Error> {
   });
 }
 
+const PROFILE_NOT_FOUND_MESSAGE =
+  'identity profile "typo" not found: no config file in .gsloth/.gsloth-settings/typo/';
+
+/** The REAL error a config load raises for an unusable configuration; see {@link missingKeyError}. */
+async function configDiscoveryError(): Promise<Error> {
+  const { ConfigDiscoveryError } = await import('@gaunt-sloth/core/config.js');
+  return new ConfigDiscoveryError(PROFILE_NOT_FOUND_MESSAGE, { identityProfile: 'typo' });
+}
+
 describe('configErrorGuard', () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -67,6 +76,32 @@ describe('configErrorGuard', () => {
     });
   });
 
+  /**
+   * CFG-36 — the loader raises instead of exiting on an unusable configuration, so the CLI has to
+   * choose the exit code. What the user sees must be unchanged from when the loader printed the
+   * message itself: same text, same exit 1. Only the place the decision is made has moved.
+   */
+  describe('handleConfigDiscoveryError', () => {
+    it('prints the message and exits 1', async () => {
+      const { handleConfigDiscoveryError } = await import('#src/utils/configErrorGuard.js');
+
+      expect(handleConfigDiscoveryError(await configDiscoveryError())).toBe(true);
+
+      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(PROFILE_NOT_FOUND_MESSAGE);
+      expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('leaves any other failure alone', async () => {
+      const { handleConfigDiscoveryError } = await import('#src/utils/configErrorGuard.js');
+
+      expect(handleConfigDiscoveryError(new Error('something else'))).toBe(false);
+
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
+    });
+  });
+
   describe('guardProgramConfigErrors', () => {
     it('ends the run cleanly when parsing hits a missing provider key', async () => {
       const { guardProgramConfigErrors } = await import('#src/utils/configErrorGuard.js');
@@ -78,6 +113,19 @@ describe('configErrorGuard', () => {
       await expect(guardProgramConfigErrors(program).parseAsync()).resolves.toBeUndefined();
 
       expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(MISSING_KEY_MESSAGE);
+      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('ends the run cleanly when parsing hits an unusable configuration', async () => {
+      const { guardProgramConfigErrors } = await import('#src/utils/configErrorGuard.js');
+      const program = {
+        getOptionValue: vi.fn(),
+        parseAsync: vi.fn().mockRejectedValue(await configDiscoveryError()),
+      };
+
+      await expect(guardProgramConfigErrors(program).parseAsync()).resolves.toBeUndefined();
+
+      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(PROFILE_NOT_FOUND_MESSAGE);
       expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
     });
 

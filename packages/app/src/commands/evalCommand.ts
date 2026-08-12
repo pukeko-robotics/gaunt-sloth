@@ -608,7 +608,7 @@ export function evalCommand(
         // default judge is the FIRST identity's already-built config — the matrix path NEVER calls
         // `initConfig` without an `identityProfile`. That is the fix: the old top-level
         // `initConfig(overrides)` demanded a resolvable base config (a matrix-only project has none),
-        // and its terminal `exit(1)` is uncatchable, so it can't be reached at all on this path. The
+        // and failing there aborts the whole suite rather than the one cell. The
         // NON-matrix path is unchanged — the base config is still `initConfig(overrides)`. (Configs
         // are built per suite, not cached across suites — a documented non-goal.)
         const runOneSuite = async (
@@ -622,11 +622,18 @@ export function evalCommand(
         ): Promise<EvalSuiteSummary> => {
           // BATCH-12 PRECONDITION — trustworthy loads (no false-green): every suite-declared identity
           // must resolve to its OWN config (`.gsloth-settings/<name>/`), not the global/plain
-          // fallback. Verify ALL of them with GS2-62's PURE, catchable helper BEFORE building any
-          // per-identity config, because handing a bad profile to `initConfig({ …, identityProfile })`
-          // would hit its uncatchable `exit(1)` and collapse the harness-vs-product (2-vs-1) exit-code
-          // distinction. A silent wrong-identity run is the worst failure for an auth matrix — so an
-          // unresolved identity throws here → per-suite catch → exit 2, and NOTHING runs.
+          // fallback. Verify ALL of them with GS2-62's PURE helper BEFORE building any per-identity
+          // config.
+          //
+          // CFG-36 — `initConfig` now raises a catchable error on an unresolvable profile of its own
+          // accord, so this is no longer what stands between a bad profile and an uncatchable exit.
+          // It is KEPT for what it still buys, which that per-call error cannot reproduce: it names
+          // EVERY unresolved identity in one message, and it does so BEFORE any per-identity config
+          // is built — so the author fixes all the typos in one pass and no cases run. Relying on
+          // the loader alone would surface the FIRST bad identity only, mid-loop, after configs for
+          // the earlier ones had already been built. A silent wrong-identity run is the worst
+          // failure for an auth matrix — so an unresolved identity throws here → per-suite catch →
+          // exit 2, and NOTHING runs.
           const suiteIdentities = parsedSuite.identities ?? [];
           const unresolvedIdentities = suiteIdentities.filter(
             (identity) => !resolveIdentityProfileConfigPath(identity)
@@ -768,20 +775,12 @@ export function evalCommand(
           // the judge would silently diverge from the documented "judge = SUT model by default"
           // contract. The docs tell the author to set `judge_profile:` when sweeping models.
           const judgeProfile = resolveJudgeProfile(options.judge, parsedSuite.judgeProfile);
-          if (judgeProfile && !resolveIdentityProfileConfigPath(judgeProfile)) {
-            // GS2-62 (BATCH-10 review Minor 1): pre-check the requested judge profile with the PURE
-            // helper and throw our OWN catchable error. Without this, `initConfig({ …, identityProfile
-            // })` would silently fall back to the global (or plain) config on a bad profile and the
-            // self-describing notice below would print `Judge: profile "<typo>" (model: <global>)` —
-            // asserting a profile that never loaded. The throw is caught per suite → exit 2 (harness
-            // error). We can't lean on initConfig's own hard-error here: that path calls the
-            // uncatchable `exit(1)`, which would end the process with code 1 and collapse the
-            // harness-vs-product (2-vs-1) exit-code distinction.
-            throw new Error(
-              `judge profile "${judgeProfile}" not found: no config file in ` +
-                `.gsloth/.gsloth-settings/${judgeProfile}/`
-            );
-          }
+          // CFG-36 — no pre-check here. `initConfig` itself now RAISES a catchable
+          // `ConfigDiscoveryError` when an explicitly-named identity profile does not resolve to
+          // its own config, instead of calling the uncatchable `exit(1)` this pre-check existed to
+          // get in front of. The throw lands in the per-suite catch below → exit 2 (harness error),
+          // which is the same outcome the pre-check produced — now enforced at the one place that
+          // knows, rather than duplicated at every call site that might pass a profile name.
           const judgeConfig = judgeProfile
             ? await initConfig({ ...commandLineConfigOverrides, identityProfile: judgeProfile })
             : baseConfig;

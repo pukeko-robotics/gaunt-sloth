@@ -215,39 +215,53 @@ describe('tui config key (CFG-37)', () => {
       expect(await loadConfiguredTui({ identityProfile: 'child-profile' })).toBe(false);
     });
 
-    it('hard-exits on a BROKEN extends chain, exactly as a run does (just earlier)', async () => {
+    it('RAISES on a BROKEN extends chain, exactly as a run does (just earlier)', async () => {
       // The documented exception to "quiet and fail-soft": walking the inheritance chain means
-      // reusing the shared traversal, and that traversal reports and exits on its own. initConfig
-      // would exit on this same chain with this same message moments later, so what a user sees is
-      // unchanged — but the reader must be honest that it can end the process, and this pins it.
+      // reusing the shared traversal, and a broken chain is a hard configuration error there.
+      // CFG-36 — it is RAISED, not exited on, so the caller classifies it (the CLI's top-level guard
+      // prints it and exits 1; `gth eval` makes it a harness error). initConfig hits the same chain
+      // with the same message moments later, so what a user sees is unchanged. `exit` must stay
+      // untouched: an exit from inside this reader is what would deny the caller that choice.
       writeProfileConfig('child-profile', { extends: 'no-such-base', llm: LLM_SPEC });
 
       const { loadConfiguredTui } = await import('#src/config/loader.js');
-      // exitMock throws here in place of terminating; production really does terminate.
-      await expect(loadConfiguredTui({ identityProfile: 'child-profile' })).rejects.toThrow(
-        'exit(1) called'
+      const { isConfigDiscoveryError } = await import('#src/config/configDiscovery.js');
+      const error = await loadConfiguredTui({ identityProfile: 'child-profile' }).then(
+        () => {
+          throw new Error('expected a ConfigDiscoveryError, but the reader resolved');
+        },
+        (e: unknown) => e
       );
-      expect(exitMock).toHaveBeenCalledWith(1);
+
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toMatch(/"no-such-base".*was not found/i);
+      expect(exitMock).not.toHaveBeenCalled();
     });
 
-    it('hard-exits on a broken chain for a MODULE-format config too', async () => {
-      // The pair with the JSON hard-exit above. Composing `extends` for every format means the
-      // reader can now end the process for a module-format config as well, and that is the one
-      // widened cell whose regression would be USER-VISIBLE (a hard exit) rather than a silent
-      // undefined — so it gets its own pin rather than riding on the JSON case. Nothing a user
-      // sees changes: both surfaces call initConfig before rendering, and initConfig exits on this
-      // same chain with this same message, so no run that used to succeed now fails.
+    it('raises on a broken chain for a MODULE-format config too', async () => {
+      // The pair with the JSON case above. Composing `extends` for every format means the reader can
+      // fail hard for a module-format config as well, and that is the one widened cell whose
+      // regression would be USER-VISIBLE (an ended run) rather than a silent undefined — so it gets
+      // its own pin rather than riding on the JSON case. Nothing a user sees changes: both surfaces
+      // call initConfig before rendering, and initConfig fails on this same chain with this same
+      // message, so no run that used to succeed now fails.
       writeModuleProfileConfig(
         'child-profile',
         'export async function configure() { return { extends: "no-such-base", llm: { type: "vertexai" } }; }\n'
       );
 
       const { loadConfiguredTui } = await import('#src/config/loader.js');
-      // exitMock throws here in place of terminating; production really does terminate.
-      await expect(loadConfiguredTui({ identityProfile: 'child-profile' })).rejects.toThrow(
-        'exit(1) called'
+      const { isConfigDiscoveryError } = await import('#src/config/configDiscovery.js');
+      const error = await loadConfiguredTui({ identityProfile: 'child-profile' }).then(
+        () => {
+          throw new Error('expected a ConfigDiscoveryError, but the reader resolved');
+        },
+        (e: unknown) => e
       );
-      expect(exitMock).toHaveBeenCalledWith(1);
+
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toMatch(/"no-such-base".*was not found/i);
+      expect(exitMock).not.toHaveBeenCalled();
     });
 
     it('stays quiet and undefined on an unreadable project config', async () => {

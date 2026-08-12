@@ -18,8 +18,15 @@ vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => consoleUtilsMock);
 // CFG-37 — the layered `tui` preference reader. Default: unset, so the dispatcher auto-detects.
 // The reader's own layering is proven against real files in packages/core/spec/config.tui.spec.ts,
 // and the unmocked discovery→dispatch path in startSession.tuiConfig.spec.ts.
+// CFG-36 — only the two readers the dispatcher calls are stubbed. The rest of the barrel stays
+// real because the dispatcher also CLASSIFIES the errors it catches (a config failure is re-raised
+// rather than reported as an absent TUI), and a wholesale mock would replace those predicates with
+// nothing. Both directions of that classification are pinned in startSession.configError.spec.ts.
 const configMock = { hasAnyConfig: vi.fn(), loadConfiguredTui: vi.fn() };
-vi.mock('@gaunt-sloth/core/config.js', () => configMock);
+vi.mock('@gaunt-sloth/core/config.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@gaunt-sloth/core/config.js')>();
+  return { ...actual, ...configMock };
+});
 
 const firstRunDialogMock = { runFirstRunDialog: vi.fn() };
 vi.mock('#src/commands/firstRunDialog.js', () => firstRunDialogMock);
