@@ -718,6 +718,23 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
       expect(commandsDoc).toContain(`must_contain: ["${HARDLINE_REFUSAL_MARKER}"]`);
       expect(FORCED_BY_ASSERTIONS['hardline-floor']).toBe(HARDLINE_REFUSAL_MARKER);
     });
+
+    it('pins every mechanism to COMMANDS.md, which is the `forced_by` grammar users write', async () => {
+      // `forced_by` values are user-facing suite syntax, and COMMANDS.md enumerates them twice — in
+      // the assertion table and in the per-mechanism "passes when" table. A mechanism added to the
+      // gate with the docs left behind is the same silent gap as one added with the guard left
+      // behind: the grammar grows, nobody is told, and the doc quietly becomes false. Derived from
+      // the mechanism list, so this covers whatever core gains next rather than what it has today.
+      const { FORCED_BY_MECHANISMS } = await import('#src/evalTypes.js');
+      const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+      const commandsDoc = fs.readFileSync(path.join(rootDir, 'docs', 'COMMANDS.md'), 'utf8');
+
+      for (const mechanism of FORCED_BY_MECHANISMS) {
+        expect(commandsDoc, `COMMANDS.md does not document "${mechanism}"`).toContain(
+          `\`${mechanism}\``
+        );
+      }
+    });
   });
 
   describe('the hardline floor', () => {
