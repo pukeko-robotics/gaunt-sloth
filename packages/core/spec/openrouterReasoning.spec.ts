@@ -97,6 +97,35 @@ describe('openrouter provider — ChatOpenRouter adoption & attribution wiring',
     expect(built.siteName).toBe('Custom App');
   });
 
+  // CFG-34 — the OpenRouter section of docs/configuration/providers.md tells users to write
+  // routing preferences as TOP-LEVEL fields of the `llm` block, and shows exactly this example.
+  // `ChatOpenRouter` assigns all of them in its constructor and forwards them in the request body,
+  // and the factory's `...restConfig` spread is what carries them there. Pin that here so a future
+  // destructure that swallows a top-level key fails a test instead of silently falsifying the doc.
+  it('forwards native top-level OpenRouter fields (the documented routing example)', async () => {
+    const { processJsonConfig } = await import('#src/providers/openrouter.js');
+
+    await processJsonConfig(
+      buildConfig({
+        model: 'moonshotai/kimi-k2',
+        provider: { order: ['together', 'fireworks'], allow_fallbacks: false },
+        models: ['moonshotai/kimi-k2', 'anthropic/claude-sonnet-5'],
+        route: 'fallback',
+        plugins: [{ id: 'web' }],
+        transforms: ['middle-out'],
+      }) as any
+    );
+
+    const built = chatOpenRouterConstructorMock.mock.calls[0][0];
+    expect(built.provider).toEqual({ order: ['together', 'fireworks'], allow_fallbacks: false });
+    expect(built.models).toEqual(['moonshotai/kimi-k2', 'anthropic/claude-sonnet-5']);
+    expect(built.route).toBe('fallback');
+    expect(built.plugins).toEqual([{ id: 'web' }]);
+    expect(built.transforms).toEqual(['middle-out']);
+    // Written where it takes effect, so nothing is reported as ignored.
+    expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+  });
+
   it('respects OPENROUTER_API_KEY environment variable fallback', async () => {
     systemUtilsMock.env = { OPENROUTER_API_KEY: 'alt-env-key' };
     const { processJsonConfig } = await import('#src/providers/openrouter.js');
