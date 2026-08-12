@@ -31,11 +31,7 @@ import {
 } from '@gaunt-sloth/core/core/toolDisplay.js';
 import { displayWidth } from '@gaunt-sloth/core/utils/displayWidth.js';
 import { renderMarkdown } from '#src/tui/markdown.js';
-import {
-  CHECKLIST_TOOL_NAME,
-  type ToolCallViewModel,
-  type TurnViewModel,
-} from '#src/tui/viewModel.js';
+import { displaySegments, type ToolCallViewModel, type TurnViewModel } from '#src/tui/viewModel.js';
 import type { TranscriptItem } from '#src/tui/types.js';
 
 /**
@@ -104,25 +100,24 @@ function reasoningPanelRows(reasoning: string, expanded: boolean, columns: numbe
 /**
  * Rows one committed assistant turn occupies (`<LiveTurn>` with `streaming` false).
  *
- * It walks the SAME segment list the renderer walks, measuring each text run on its own. That
- * lockstep is not a tidiness point: `<LiveTurn>` renders every text run through its own
+ * It walks `displaySegments` — the same function the renderer walks — so what is counted is what
+ * is drawn, down to which segments paint nothing and where the text runs around them re-join.
+ * That lockstep is not a tidiness point: `<LiveTurn>` renders every text run through its own
  * `renderMarkdown` call, and per-run markdown is a different row count from whole-turn markdown
  * (two runs are two lines where their concatenation is one, and a construct split across a tool
- * call frames itself on both sides). An oracle left measuring the turn's text as a single block
- * mis-counts by exactly that, and the symptom is content in the wrong place on screen rather than
- * an error anywhere.
+ * call frames itself on both sides). An oracle that resolved any of that differently would
+ * mis-count by exactly that much, and the symptom is content in the wrong place on screen rather
+ * than an error anywhere.
  */
 function turnRows(turn: TurnViewModel, toolsExpanded: boolean, columns: number): number {
   let rows = turn.reasoning ? reasoningPanelRows(turn.reasoning, toolsExpanded, columns) : 0;
-  for (const segment of turn.segments) {
+  for (const segment of displaySegments(turn)) {
     if (segment.kind === 'text') {
       // Measured from the RENDERED markdown, not the raw text: a fence becomes two rules plus an
       // indented body, so the raw line count is not a bound on either side of it.
-      if (segment.text) rows += textRows(renderMarkdown(segment.text, { columns }), columns);
+      rows += textRows(renderMarkdown(segment.text, { columns }), columns);
       continue;
     }
-    // The checklist tool renders as the pinned dock panel, never inside the turn.
-    if (segment.tool.name === CHECKLIST_TOOL_NAME) continue;
     rows += toolCallRows(segment.tool, toolsExpanded, columns);
   }
   return rows;

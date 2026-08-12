@@ -269,8 +269,11 @@ describe('TUI-C52 — <LiveTurn> paints the segments in the order they arrived',
     const frame = rows.join('\n');
     expect(frame).not.toContain(CHECKLIST_TOOL_NAME);
     expect(frame).not.toContain('step one');
-    // Both text runs still paint, in order, with nothing between them.
-    expect(rowOf(rows, 'planning-run')).toBeLessThan(rowOf(rows, 'acting-run'));
+    // Both text runs still paint, in order — and on ONE row, because nothing was drawn between
+    // them to justify breaking the paragraph (see the "draws nothing" group at the end of this
+    // file, which owns that rule).
+    expect(frame).toContain('planning-run acting-run');
+    expect(rowOf(rows, 'planning-run')).toBe(rowOf(rows, 'acting-run'));
   });
 
   it('never FLASHES a checklist panel on the output-first ordering', () => {
@@ -381,6 +384,41 @@ describe('TUI-C52 — the row-count oracle moves in lockstep with the renderer',
     );
   });
 
+  /**
+   * The fixture the lower-bound guard runs on.
+   *
+   * `t1` carries streamed args and a result that **exceeds the 10-line preview cap** on purpose.
+   * Without that the collapsed and expanded bodies are the same lines, `toolCallRows`' `expanded`
+   * branches are never taken, and the `detail on` half of the matrix below re-measures the
+   * `detail off` half — six parameterised cases carrying three measurements. With it, the fold
+   * state is a real input to both the estimate and the render.
+   */
+  const OVER_COUNT_TURN: AgentStreamEvent[] = [
+    text('# Heading\n\nalpha-run with enough prose to wrap at a narrow width. '),
+    { type: 'tool_start', id: 't1', name: 'alpha_tool' },
+    { type: 'tool_args', id: 't1', delta: '{"path":"notes/example.txt","mode":"read"}' },
+    { type: 'tool_end', id: 't1' },
+    {
+      type: 'tool_result',
+      id: 't1',
+      content: Array.from({ length: 14 }, (_, i) => `out-${i}`).join('\n'),
+    },
+    text('```js\nconst a = 1;'),
+    ...toolCall('t2', 'beta_tool', 'r4'),
+    text('\n```\n- closing item\n- another item'),
+  ];
+
+  it('the tool-detail axis is a real input to both the estimate and the render', () => {
+    // The control that keeps the six cases below from being three: if this fails, the fold state
+    // changes nothing on this fixture and the `detail on` variants are re-runs of `detail off`.
+    const entry = item(foldEventSequence(OVER_COUNT_TURN));
+    const base = { columns: 100, separator: false };
+    expect(estimateItemRows(entry, { ...base, toolsExpanded: true })).toBeGreaterThan(
+      estimateItemRows(entry, { ...base, toolsExpanded: false })
+    );
+    expect(actualRows(entry, 100, true)).toBeGreaterThan(actualRows(entry, 100, false));
+  });
+
   for (const columns of [24, 40, 100]) {
     for (const toolsExpanded of [false, true]) {
       it(`never over-counts an interleaved turn at ${columns} cols, detail ${
@@ -388,15 +426,7 @@ describe('TUI-C52 — the row-count oracle moves in lockstep with the renderer',
       }`, () => {
         // The direction the whole windowing design rests on: an under-count mounts a component or
         // two too many, an OVER-count cuts the list too high and leaves a blank band on screen.
-        const entry = item(
-          foldEventSequence([
-            text('# Heading\n\nalpha-run with enough prose to wrap at a narrow width. '),
-            ...toolCall('t1', 'alpha_tool', 'r1\nr2\nr3'),
-            text('```js\nconst a = 1;'),
-            ...toolCall('t2', 'beta_tool', 'r4'),
-            text('\n```\n- closing item\n- another item'),
-          ])
-        );
+        const entry = item(foldEventSequence(OVER_COUNT_TURN));
         const estimate = estimateItemRows(entry, { columns, toolsExpanded, separator: false });
         const actual = actualRows(entry, columns, toolsExpanded);
         expect(
@@ -423,5 +453,177 @@ describe('TUI-C52 — the row-count oracle moves in lockstep with the renderer',
     expect(new Set(mounted).size).toBe(1);
     // One turn already dwarfs the budget, so the slice is that turn plus the one item of slack.
     expect(mounted[0]).toBe(2);
+  });
+});
+
+/**
+ * TUI-C52 — a segment that DRAWS NOTHING must not break a text run.
+ *
+ * Recording arrival order truthfully and drawing it are different jobs. The checklist tool is
+ * recorded as a segment (`extractActiveChecklist` reads it, and the list is a record of what
+ * happened) but renders as the pinned dock panel, so it paints nothing inside the turn. Left to
+ * break the run around it, a sentence the model streamed as one paragraph arrives on two rows with
+ * no visible cause — a new text-placement artefact in the node that exists because text landed in
+ * the wrong place. The split is justified by an action the reader can SEE between the two runs; it
+ * is not justified by one they cannot.
+ *
+ * The renderer and the row oracle therefore share one definition of what a turn draws
+ * (`displaySegments`), which is what keeps them in lockstep here.
+ */
+describe('TUI-C52 — a segment that draws nothing does not break a text run', () => {
+  beforeEach(() => {
+    chalk.level = 0;
+  });
+
+  const PLAN = 'Let me plan this out. ';
+  const ACT = 'Now I will start with the first step.';
+  const JOINED = `${PLAN}${ACT}`;
+
+  /** A checklist call, which is recorded in the turn and drawn nowhere in it. */
+  const checklist = (id: string, content = 'step one'): AgentStreamEvent[] => [
+    { type: 'tool_start', id, name: CHECKLIST_TOOL_NAME },
+    {
+      type: 'tool_args',
+      id,
+      delta: JSON.stringify({ items: [{ content, status: 'pending' }] }),
+    },
+    { type: 'tool_end', id },
+  ];
+
+  /**
+   * A tool call that DRAWS — and nothing more. No result and no output, so its panel is exactly its
+   * summary row and the prose rows below are the turn's own text rather than an output preview.
+   */
+  const drawnTool = (id: string, name: string): AgentStreamEvent[] => [
+    { type: 'tool_start', id, name },
+    { type: 'tool_end', id },
+  ];
+
+  /** The painted frame, split into the prose rows and the count of tool panels. */
+  const painted = (turn: TurnViewModel): { prose: string[]; panels: number } => {
+    const rows = frameRows(<LiveTurn turn={turn} />)
+      .map((row) => row.trim())
+      .filter((row) => row !== '');
+    return {
+      prose: rows.filter((row) => !row.startsWith('▸') && !row.startsWith('▾')),
+      panels: rows.filter((row) => row.startsWith('▸') || row.startsWith('▾')).length,
+    };
+  };
+
+  const opts = { columns: 100, toolsExpanded: false, separator: false };
+  const estimate = (turn: TurnViewModel): number => estimateItemRows(item(turn), opts);
+
+  it('re-joins the runs around a checklist call, exactly as they streamed', async () => {
+    const { displaySegments } = await import('#src/tui/viewModel.js');
+    const vm = foldEventSequence([text(PLAN), ...checklist('c1'), text(ACT)]);
+    // The shape the reader gets: one run, and the string is the concatenation the deltas built.
+    expect(displaySegments(vm)).toEqual([{ kind: 'text', text: JOINED }]);
+  });
+
+  it('paints one paragraph, not two rows with nothing between them', () => {
+    const vm = foldEventSequence([text(PLAN), ...checklist('c1'), text(ACT)]);
+    expect(painted(vm)).toEqual({ prose: [JOINED], panels: 0 });
+  });
+
+  it('CONTROL: a tool call that DOES draw still keeps the two runs apart', () => {
+    // The over-fix this rules out is a rule that joins runs across any skipped segment, or that
+    // collapses runs generally. Keeping prose with the action it is about is the whole node, and it
+    // must not become a casualty of not-splitting on an action nobody can see.
+    const vm = foldEventSequence([text(PLAN), ...drawnTool('t1', 'read_file'), text(ACT)]);
+    const { prose, panels } = painted(vm);
+    expect(prose).toEqual([PLAN.trim(), ACT]);
+    expect(panels).toBe(1);
+    expect(prose).not.toContain(JOINED);
+  });
+
+  it('the oracle charges the re-joined runs as ONE run', () => {
+    const withChecklist = foldEventSequence([text(PLAN), ...checklist('c1'), text(ACT)]);
+    const asOneRun = foldEventSequence([text(JOINED)]);
+    expect(estimate(withChecklist)).toBe(estimate(asOneRun));
+  });
+
+  it('CONTROL: the oracle still charges a run split by a DRAWN tool as two', () => {
+    const withTool = foldEventSequence([text(PLAN), ...drawnTool('t1', 'read_file'), text(ACT)]);
+    const asOneRun = foldEventSequence([text(JOINED), ...drawnTool('t1', 'read_file')]);
+    expect(estimate(withTool)).toBe(estimate(asOneRun) + 1);
+  });
+
+  it('keeps the segment list truthful — the checklist call is still recorded and findable', () => {
+    const vm = foldEventSequence([text(PLAN), ...checklist('c1', 'the plan'), text(ACT)]);
+    // Presentation coalesces; the record does not. Both matter, and they are different lists.
+    expect(vm.segments.map((seg) => seg.kind)).toEqual(['text', 'tool', 'text']);
+    expect(extractActiveChecklist(vm, [])).toEqual([{ content: 'the plan', status: 'pending' }]);
+    expect(extractActiveChecklist(null, [item(vm)])).toEqual([
+      { content: 'the plan', status: 'pending' },
+    ]);
+  });
+
+  it('re-joins a markdown construct split by a checklist call', () => {
+    // The consequence worth pinning, stated as the strongest form available: a checklist call
+    // between the two halves of a fence leaves the frame byte-identical to the same text as one
+    // run. That is red for a split (the second half opens with a blank row where the run was cut)
+    // and stays red for any merge that inserts a separator.
+    const split = foldEventSequence([
+      text('```js\nconst a = 1;'),
+      ...checklist('c1'),
+      text('\n```\nDone.'),
+    ]);
+    const whole = foldEventSequence([text('```js\nconst a = 1;\n```\nDone.')]);
+    expect(frameRows(<LiveTurn turn={split} />)).toEqual(frameRows(<LiveTurn turn={whole} />));
+    // …and that frame is a real closed fence, not two identically-broken ones.
+    const rows = frameRows(<LiveTurn turn={split} />);
+    expect(rows.join('\n')).not.toContain('```');
+    expect(rowOf(rows, '── js ')).toBeLessThan(rowOf(rows, 'const a = 1;'));
+    expect(rowOf(rows, 'const a = 1;')).toBeLessThan(rowOf(rows, 'Done.'));
+  });
+
+  it('renderer and oracle agree while a tool is UNNAMED, and again once the name lands', () => {
+    // `upsertTool`'s placeholder branch opens a segment for an id nothing has named yet, so a turn
+    // can carry a nameless tool for a window. An unnamed segment DRAWS (a placeholder panel), so it
+    // keeps the runs apart; if the name that eventually lands is the checklist tool it stops
+    // drawing and the runs re-join. The row count therefore changes underneath the viewport — which
+    // is correct, and is safe only because the renderer and the oracle re-derive it from the same
+    // list. This is the one shape where they could resolve a segment differently, and nothing else
+    // in this suite has a name arriving AFTER the text run that follows it.
+    const unnamed = foldEventSequence([
+      text(PLAN),
+      { type: 'tool_args', id: 'x1', delta: '{}' }, // first mention of the id: name is ''
+      text(ACT),
+    ]);
+    const asChecklist = foldEvents(unnamed, {
+      type: 'tool_start',
+      id: 'x1',
+      name: CHECKLIST_TOOL_NAME,
+    });
+    const asTool = foldEvents(unnamed, { type: 'tool_start', id: 'x1', name: 'read_file' });
+
+    // What the renderer paints at each of the three states.
+    expect(painted(unnamed), 'unnamed').toEqual({ prose: [PLAN.trim(), ACT], panels: 1 });
+    expect(painted(asChecklist), 'named as the checklist tool').toEqual({
+      prose: [JOINED],
+      panels: 0,
+    });
+    expect(painted(asTool), 'named as an ordinary tool').toEqual({
+      prose: [PLAN.trim(), ACT],
+      panels: 1,
+    });
+
+    // What the oracle charges for the same three states — the same conclusions, independently.
+    // Naming an ordinary tool changes nothing; naming the checklist tool costs the panel's row AND
+    // merges the runs, which is exactly the turn measured as one run of text.
+    expect(estimate(asTool), 'an ordinary name changes no rows').toBe(estimate(unnamed));
+    expect(estimate(asChecklist), 'the merged turn is one run').toBe(
+      estimate(foldEventSequence([text(JOINED)]))
+    );
+    expect(estimate(unnamed)).toBeGreaterThan(estimate(asChecklist));
+
+    // …and the lower-bound invariant holds at every state, including mid-transition.
+    for (const [label, vm] of [
+      ['unnamed', unnamed],
+      ['asChecklist', asChecklist],
+      ['asTool', asTool],
+    ] as const) {
+      expect(estimate(vm), label).toBeLessThanOrEqual(actualRows(item(vm), 100, false));
+    }
   });
 });

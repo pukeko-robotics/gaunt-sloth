@@ -388,6 +388,57 @@ export function foldSubagentTree(
 /** The tool name the lean agent uses to record its checklist. Matches `gthChecklistTool.ts`. */
 export const CHECKLIST_TOOL_NAME = 'gth_checklist';
 
+/* ------------------------------------------------------------------------- *
+ * What a turn DRAWS                                                          *
+ * ------------------------------------------------------------------------- */
+
+/**
+ * True for a segment the turn records but paints NOTHING for.
+ *
+ * Today that is the checklist tool alone: it is recorded because the turn's segment list is the
+ * record of what happened (and {@link extractActiveChecklist} reads it), but it renders as the
+ * pinned dock panel rather than anywhere inside the turn. An UNNAMED tool call — `upsertTool`'s
+ * placeholder, created by whichever event mentions an id first — does draw: it paints a running
+ * panel under a placeholder label until its name arrives.
+ */
+function drawsNothing(segment: TurnSegment): boolean {
+  if (segment.kind === 'text') return segment.text === '';
+  return segment.tool.name === CHECKLIST_TOOL_NAME;
+}
+
+/**
+ * The segments a turn actually DRAWS, in order — with text runs re-joined across anything that
+ * paints nothing between them.
+ *
+ * Recording arrival order and drawing it are different jobs, and this is where they separate.
+ * {@link TurnViewModel.segments} stays a truthful record; this is what the reader sees. A text run
+ * is split by a tool call because the action happened between the two halves and the reader can
+ * see it there — a rationale that does not survive the call painting nothing at all. Left
+ * unhandled, a checklist call (which the lean agent makes mid-turn routinely) breaks a streamed
+ * paragraph across two rows with no visible cause.
+ *
+ * The runs re-join with **no separator**, so a re-joined run is byte-for-byte the text the deltas
+ * built — which is also what closes a markdown construct that the call fell inside of.
+ *
+ * **The renderer and the row-count oracle both go through here.** They have to agree about what is
+ * on screen — one draws it and the other decides how much of the conversation the viewport mounts
+ * — and a divergence between them shows up as content in the wrong place rather than as an error.
+ * One definition, two callers, is what makes that structural rather than a convention.
+ */
+export function displaySegments(turn: TurnViewModel): TurnSegment[] {
+  const drawn: TurnSegment[] = [];
+  for (const segment of turn.segments) {
+    if (drawsNothing(segment)) continue;
+    const last = drawn[drawn.length - 1];
+    if (segment.kind === 'text' && last?.kind === 'text') {
+      drawn[drawn.length - 1] = { kind: 'text', text: last.text + segment.text };
+      continue;
+    }
+    drawn.push(segment);
+  }
+  return drawn;
+}
+
 export type ChecklistItemStatus = 'pending' | 'in_progress' | 'completed';
 
 /** One checklist row parsed from a `gth_checklist` tool call's args. */

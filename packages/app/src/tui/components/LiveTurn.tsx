@@ -12,7 +12,7 @@ import type {
   ToolCallViewModel,
   ChecklistItemViewModel,
 } from '#src/tui/viewModel.js';
-import { CHECKLIST_TOOL_NAME } from '#src/tui/viewModel.js';
+import { displaySegments } from '#src/tui/viewModel.js';
 import { renderMarkdown } from '#src/tui/markdown.js';
 
 /** Status glyph + word for a tool call's compact summary line. */
@@ -279,22 +279,19 @@ export function LiveTurn({
       {turn.reasoning ? (
         <ReasoningPanel reasoning={turn.reasoning} expanded={toolsExpanded} live={streaming} />
       ) : null}
-      {/* Keyed by position: segments are append-only and a later event patches a segment in
-          place, so an index is stable for the life of the turn. */}
-      {turn.segments.map((segment, i) => {
-        if (segment.kind === 'text') {
-          return segment.text ? (
-            <Text key={i}>{streaming ? segment.text : renderMarkdown(segment.text)}</Text>
-          ) : null;
-        }
-        // The checklist tool is the pinned dock panel (TUI-C50), never an inline turn panel.
-        if (segment.tool.name === CHECKLIST_TOOL_NAME) {
-          return null;
-        }
-        return (
+      {/* `displaySegments` decides what is drawn — it drops the segments that paint nothing (the
+          checklist tool, which is the pinned dock panel) and re-joins the text runs around them,
+          so a call the reader cannot see never breaks a paragraph. The row-count oracle in
+          `transcriptWindow.ts` walks the SAME function, which is what keeps the two in lockstep.
+          Keyed by position: these components hold no state, so an index key can only affect how
+          React diffs them, never what they show. */}
+      {displaySegments(turn).map((segment, i) =>
+        segment.kind === 'text' ? (
+          <Text key={i}>{streaming ? segment.text : renderMarkdown(segment.text)}</Text>
+        ) : (
           <ToolCallPanel key={i} tc={segment.tool} expanded={toolsExpanded} live={streaming} />
-        );
-      })}
+        )
+      )}
     </Box>
   );
 }

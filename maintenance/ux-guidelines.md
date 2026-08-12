@@ -236,9 +236,21 @@ rendering supplied by the **surface-agnostic tool-display registry** (TUI-C30,
   every tool and then all of the text, which puts the sentence explaining an action dozens of rows
   below it. Every text run is rendered **independently**: a markdown construct split across a tool
   call frames itself on both sides rather than being re-joined across an action that happened in
-  the middle of it. The windowing estimator (`tui/transcriptWindow.ts`) walks the same segment list
-  and must keep doing so — it measures each run the way the renderer draws it, and an estimator
-  that drifts from the renderer shows up as content in the wrong place, not as an error.
+  the middle of it.
+- **A text run is only ever broken by something the reader can SEE.** What a turn *records* and
+  what it *draws* are separate: `displaySegments()` (`tui/viewModel.ts`) drops the segments that
+  paint nothing inside the turn — today the checklist tool, which is the pinned dock panel — and
+  re-joins the text runs around them with no separator, so a re-joined run is byte-for-byte what
+  the model streamed and a construct it fell inside of closes normally. The justification for
+  splitting a paragraph is an action visible between its halves; a call that paints nothing leaves
+  a sentence broken with no cause on screen, and the lean agent makes checklist calls mid-turn
+  routinely. An **unnamed** tool call (the placeholder created when a stream mentions an id before
+  naming it) *does* draw, so it does break the run — and when its name arrives and turns out to be
+  the checklist tool, the panel goes and the runs join. **`displaySegments()` is the single
+  definition of what a turn draws, and both the renderer and the windowing estimator
+  (`tui/transcriptWindow.ts`) must go through it.** The estimator decides how much conversation the
+  viewport mounts, so one that resolved any of this differently would show up as content in the
+  wrong place, not as an error.
 - **The call line carries the params inline, shortened** — `▸ ✓ 📁 read_file(path=README.md)
   [done]`: caret (`▸`/`▾`) + status glyph + registry glyph + `name(arg=val, …)`. Values are
   whitespace-collapsed, per-value truncated with `…`, the whole summary capped, and
