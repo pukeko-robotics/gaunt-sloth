@@ -1206,16 +1206,15 @@ export class GthAgentRunner {
     // **This is a second call site, not the exec-time one, and the promise is different.** The
     // toolkit's check guarantees such a command never RUNS; it does nothing about what happens on
     // the way there, so without this line `auto` spends three rating calls and a human dialog
-    // arguing about a fork bomb that was never going to run — and "asking a human to approve
-    // something that is then refused anyway teaches them their answer does not count, which is
-    // worse than a flat refusal". The exec-time check stays exactly where it is: it is the
-    // guarantee, this is the courtesy of not wasting a decision on it.
+    // arguing about a fork bomb that was never going to run, and `manual` puts a wipe-the-disk
+    // command in front of a person who answers it — and "asking a human to approve something that
+    // is then refused anyway teaches them their answer does not count, which is worse than a flat
+    // refusal". The exec-time check stays exactly where it is: it is the guarantee, this is the
+    // courtesy of not wasting a decision on it.
     //
-    // **Scoped to the rated rungs, which is where §4.2 speaks.** `bypass` has already returned
-    // above, and at `manual`/`write` the human is the gate rather than a second opinion on a
-    // rating; neither is a path §5 or §4.2's table governs. It sits above the allow branch because
-    // the floor is unappealable — an allow entry cannot buy past it — and below the deny check
-    // because a deny match refuses the same call for the user's own reason.
+    // It sits above the allow branch because the floor is unappealable — an allow entry cannot buy
+    // past it — and below the deny check because a deny match refuses the same call for the user's
+    // own reason.
     //
     // **`checkHardline` is asked, not `catastrophic`.** They are different predicates and the
     // difference is measured: EXT-60 recorded `chown -R /` as missing from the floor, so "the floor
@@ -1231,10 +1230,14 @@ export class GthAgentRunner {
     // model-free assertion, and the model-free consequence is the floor's own refusal, reached
     // earlier here than at exec and without spending a prompt on it.
     //
-    // **Both rated rungs, deliberately.** `assisted` gets the refusal without a prompt for the same
-    // reason `auto` gets it without a round: §4.2 is a statement about the command, not about who
-    // was going to be asked about it.
-    if (isShellCommand && command !== null && isRatedRung(approvals.rung)) {
+    // **Every rung that reaches this line, deliberately** — `assisted` and `auto`, and the two
+    // deterministic rungs alike (`bypass` returned above). §4.2 is a statement about the COMMAND,
+    // not about who was going to be asked about it: `assisted` gets the refusal without a prompt
+    // for the same reason `auto` gets it without a round, and `manual`/`write` for the same reason
+    // again. Those two are where the harm bites hardest, because they are the rungs a user picks in
+    // order to answer every call themselves — so they are the rungs whose answers a refusal after
+    // the fact teaches them not to trust.
+    if (isShellCommand && command !== null) {
       const floor = checkHardline(command);
       if (floor) {
         // [[TUI-C27]] — **the archive names the matched pattern; the refusal below does not.**

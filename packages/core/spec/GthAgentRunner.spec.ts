@@ -20,6 +20,7 @@ import {
 } from '#src/core/approvals/toolAnnotationSources.js';
 import { resolveApprovals } from '#src/config.js';
 import { MECHANISM_NOTES, PARSER_NOTE_PREAMBLE } from '#src/core/shell/abstention.js';
+import { checkHardline } from '#src/core/shell/hardline.js';
 import { describeApprovalEntry, MCP_FAIL_CLOSED_ANNOTATIONS } from '#src/core/approvals/matcher.js';
 import {
   approvalSubjectForToolName,
@@ -918,6 +919,13 @@ describe('GthAgentRunner', () => {
     });
 
     it('does NOT auto-approve a composed command sharing an approved prefix (injection guard)', async () => {
+      // **The injected command is deliberately one the §8 floor does NOT catch.** The floor is
+      // consulted before the allow-list at every gated rung, so a composition ending in `rm -rf /`
+      // would be refused without the matcher ever being asked — and this test, which exists to
+      // measure the matcher, would pass for a reason that has nothing to do with it. The matcher's
+      // own refusal to auto-approve the floored spelling is pinned in `approvalGrants.spec.ts`.
+      const INJECTED = 'git checkout x; rm -rf ./build';
+      expect(checkHardline(INJECTED), 'the guard must be the matcher, not the floor').toBeNull();
       const runner = new GthAgentRunner(statusUpdateCallback);
       mockAgent.stream.mockResolvedValue(streamOf('x'));
       (mockAgent as any).getPendingToolInterrupts = vi
@@ -925,9 +933,7 @@ describe('GthAgentRunner', () => {
         .mockResolvedValueOnce([
           { name: 'run_shell_command', args: { command: 'git checkout main' } },
         ])
-        .mockResolvedValueOnce([
-          { name: 'run_shell_command', args: { command: 'git checkout x; rm -rf /' } },
-        ])
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command: INJECTED } }])
         .mockResolvedValueOnce([]);
       (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
 
@@ -3060,6 +3066,163 @@ describe('GthAgentRunner', () => {
         expect(human.mock.calls[0][0].safetyVerdict.outcome).toBe('destructive');
         expect(human.mock.calls[0][0].safetyVerdict.reason).toContain('internal.example.com');
       });
+    });
+  });
+
+  /**
+   * [[EXT-103]] §4.2/§8 — **the floor is consulted before the human is, at the deterministic rungs
+   * too.** "If the deterministic floor matches, the command is refused at execution regardless of
+   * rating, rung, or approval — so it MUST NOT be negotiated and SHOULD NOT be escalated", because
+   * *"asking a human to approve something that is then refused anyway teaches them their answer does
+   * not count, which is worse than a flat refusal"*.
+   *
+   * §4.2 is a statement about the COMMAND, not about who was going to be asked about it, so
+   * `manual` and `write` are the rungs where the harm is sharpest: they are the two a user picks in
+   * order to read and answer every call themselves, and they are the two where a floored command
+   * used to reach a person, be approved, and be refused at exec anyway.
+   *
+   * **The human here APPROVES.** A prompt answered `reject` would land on the same decision type the
+   * floor produces, so a rejecting stub cannot tell the two apart — and the reported defect is
+   * precisely that the human's *yes* did not count.
+   */
+  describe('[[EXT-103]] §4.2/§8 — a floored command is refused before anyone is asked', () => {
+    /** On the floor at every rung. */
+    const WIPE_ROOT = 'rm -rf /';
+    /**
+     * Off the floor, matched by no list, and therefore the most ordinary gated call there is: at a
+     * deterministic rung it goes to the human, at a rated one it goes to the rater. That is what
+     * makes it the control for BOTH counterparts.
+     */
+    const ORDINARY = 'npm test';
+
+    function streamOf(...chunks: string[]) {
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const c of chunks) yield c;
+        },
+      };
+    }
+
+    /** One gated shell call, with the resume mock that carries what the gate decided about it. */
+    function pendingOnce(command: string) {
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([{ name: 'run_shell_command', args: { command } }])
+        .mockResolvedValueOnce([]);
+      const streamResume = vi.fn().mockResolvedValue(streamOf(''));
+      (mockAgent as any).streamResume = streamResume;
+      mockAgent.stream.mockResolvedValue(streamOf('x'));
+      return streamResume;
+    }
+
+    /**
+     * A rater stub that is **fully capable of answering, and answers `safe`** — deliberately
+     * permissive. A floored command must be refused even where the rater would have waved it
+     * through, and a stub that refused anyway could not tell whether the floor did the work.
+     */
+    function gateConfig(approvals: Record<string, unknown>) {
+      const invoke = vi.fn().mockResolvedValue({ outcome: 'safe', reason: 'the stub says safe' });
+      const withStructuredOutput = vi.fn().mockReturnValue({ invoke });
+      return {
+        withStructuredOutput,
+        config: {
+          ...mockConfig,
+          llm: { withStructuredOutput } as any,
+          streamOutput: true as const,
+          approvals,
+          commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+        } as unknown as GthConfig,
+      };
+    }
+
+    /**
+     * One gated call, driven end to end, with the four things this block asserts separately handed
+     * back. The human ANSWERS `approve`, which is what makes "refused" and "the model was told" say
+     * something: a rejecting stub lands on the floor's own decision type and cannot tell the two
+     * apart.
+     */
+    async function driveOne(rung: 'manual' | 'write' | 'assisted', command: string) {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      const streamResume = pendingOnce(command);
+      const { config, withStructuredOutput } = gateConfig({ mode: rung });
+      await runner.init('code', config);
+      const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
+      runner.setToolApprovalCallback(human);
+
+      await runner.processMessages([new HumanMessage('go')]);
+
+      return {
+        human,
+        withStructuredOutput,
+        decision: streamResume.mock.calls[0][0].decisions[0] as {
+          type: string;
+          message?: string;
+        },
+      };
+    }
+
+    /**
+     * The premise every case below rests on. Without it the control silently becomes a second copy
+     * of the floored case the day a pattern is widened, and the block would keep passing while
+     * asserting half of what it says.
+     */
+    it('the two commands sit on opposite sides of the floor', () => {
+      expect(checkHardline(WIPE_ROOT), WIPE_ROOT).not.toBeNull();
+      expect(checkHardline(ORDINARY), ORDINARY).toBeNull();
+    });
+
+    /**
+     * **Four separate cases, not four assertions in one.** A single test stops at its first failed
+     * expectation, so the three behind it would be claims nobody had ever seen fail — the
+     * assertion-that-cannot-fail class this suite is written against.
+     */
+    describe.each(['manual', 'write'] as const)('at %s', (rung) => {
+      it('a floored command reaches NO human', async () => {
+        const { human } = await driveOne(rung, WIPE_ROOT);
+        expect(human).not.toHaveBeenCalled();
+      });
+
+      it('a floored command is NOT rated', async () => {
+        const { withStructuredOutput } = await driveOne(rung, WIPE_ROOT);
+        // The stub would have answered `safe`. It was never consulted.
+        expect(withStructuredOutput).not.toHaveBeenCalled();
+      });
+
+      it('a floored command is refused, whatever the human would have said', async () => {
+        const { decision } = await driveOne(rung, WIPE_ROOT);
+        expect(decision.type).toBe('reject');
+      });
+
+      it('the floor’s refusal reaches the agent', async () => {
+        const { decision } = await driveOne(rung, WIPE_ROOT);
+        // A refusal the model is not told about reads to it as the tool having silently failed.
+        expect(decision.message).toContain('blocked by hardline safety policy');
+      });
+
+      /**
+       * **The load-bearing control.** Without it this block is indistinguishable from a change that
+       * suppressed approval prompts in general — a serious safety regression a green suite would not
+       * catch — and "reaches NO human" above would be measuring the harness rather than the gate.
+       */
+      it('CONTROL: a non-floored command still reaches the human, and their answer decides it', async () => {
+        const { human, decision } = await driveOne(rung, ORDINARY);
+        expect(human).toHaveBeenCalledTimes(1);
+        expect(human.mock.calls[0][0].args.command).toBe(ORDINARY);
+        expect(decision.type).toBe('approve');
+      });
+    });
+
+    /**
+     * The counterpart for "NOT rated": the SAME stub, reached. The rater has no call site at a
+     * deterministic rung at all, so the proof that it is wired has to come from a rung that rates —
+     * otherwise `not.toHaveBeenCalled()` would hold just as well for a config that never had one.
+     */
+    it('CONTROL: the same permissive rater stub IS reached at assisted', async () => {
+      const { withStructuredOutput, human, decision } = await driveOne('assisted', ORDINARY);
+      expect(withStructuredOutput).toHaveBeenCalledTimes(1);
+      // …and its `safe` answer is what settled the call, so the stub was heard and not merely built.
+      expect(human).not.toHaveBeenCalled();
+      expect(decision.type).toBe('approve');
     });
   });
 
