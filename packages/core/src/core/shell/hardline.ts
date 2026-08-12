@@ -39,6 +39,32 @@
  * escalation behind it at every rung but `bypass`.** {@link CMD_POS} carries the worked example of
  * a case measured and dropped.
  *
+ * **How it may SHRINK — a narrowing ships with its removal set pinned.** Any edit that makes the
+ * floor refuse strictly fewer commands is a narrowing: a new exclusion, a loosened bound, a
+ * tightened anchor, a narrower character class. **The suite cannot review one.** If the edit had
+ * removed a refusal that any spec asserts, that spec would be red — so a green run proves only that
+ * everything the edit removed was unasserted, which is the same set as "uncovered". Green is
+ * structurally silent about a narrowing, and an AI review of the diff is no better: both read what
+ * the change still does, and the whole risk is in what it quietly stopped doing.
+ *
+ * So the change states its **removal set** — the commands that matched before and do not match
+ * after — characterised from the shape of the edit, never sampled from the corpus
+ * (`shellHardlineCorpus.spec.ts` sees only its own cases *by construction*; its docblock says so). A
+ * regex's removal set cannot be enumerated exactly, so the requirement is a characterisation plus
+ * probes pinned at its dangerous end. **Derived by the reviewer independently, not by the author** —
+ * an author who missed the removal while writing the edit will miss it again while describing it.
+ * {@link HARDLINE_PATTERN_SURFACE} is what makes a narrowing ASK for that declaration: every pattern
+ * string in this module is frozen in `shellHardlinePatternSurface.spec.ts`, so moving one turns a
+ * cell red and only a deliberate edit to that spec's literal turns it green again.
+ *
+ * **The asymmetry above flips at the exfiltration boundary — check which half you are editing.**
+ * For the destructive-verb arms a miss still has the confirmation dialog and the rater behind it,
+ * which is what makes "prefer fewer false positives" safe there. For the exfiltration arms,
+ * removing a refusal **is** the harm, and "a miss still has the rater behind it" is the precise
+ * reliance §3 forbids: the deterministic subset exists *because* the `attack` outcome must not
+ * depend on the rater alone. "Strictly subtractive — it can only remove refusals, never add one" is
+ * a safety property in the first half and a description of the vulnerability in the second.
+ *
  * §8.1 — **the floor is never advertised.** It is documented for people reading the code and the
  * spec, never offered to a user as a reason to feel safe; user-facing copy cites only protections
  * the user can inspect and extend (the deny list).
@@ -672,6 +698,63 @@ const CREDENTIAL_SOURCE_PATTERNS: readonly RegExp[] = [
   // The whole environment, piped somewhere.
   new RegExp(CMD_POS + '(?:printenv|env)\\s*(?=\\||$)'),
 ];
+
+/**
+ * **Every string a §8 decision is made of, in one record — exported ONLY for the snapshot gate**
+ * (`shellHardlinePatternSurface.spec.ts`), which freezes it as a literal in its own source. Nothing
+ * in production reads it, and nothing should: it is the module's pattern surface made addressable so
+ * that a narrowing cannot land silently. **Any new pattern constant joins it**, and the gate's
+ * key-set check fails if one does not.
+ *
+ * **Membership is decided by what the patterns are BUILT FROM, not by what this file declares** —
+ * which is why {@link COMMAND_SEPARATOR_CLASS}, imported from `core/shell/normalize`, is a member.
+ * Floor behaviour depends on it and it is edited in another module, so a change there is exactly the
+ * silent narrowing this exists to make loud.
+ *
+ * A value composed at module load carries its parts with it: {@link CMD_POS} expands
+ * {@link WRAPPER_ARMS}, and {@link ROOT_TARGET} expands `quotedOrBare`, so those parts are frozen
+ * whether or not they are also members. The parts are listed anyway, because a diff that names
+ * `H_TOKEN_EXCLUSIONS` is actionable where one that names only `CHOWN_HEAD` is a wall of regex.
+ *
+ * Regexes are recorded as `String(re)` rather than `re.source` **because the flags are part of the
+ * behaviour**: a `g` flag makes `.test()` stateful across calls, a change no source-only record
+ * would show.
+ */
+export const HARDLINE_PATTERN_SURFACE: Readonly<Record<string, string | readonly string[]>> =
+  Object.freeze({
+    // Structural / shared.
+    COMMAND_SEPARATOR_CLASS,
+    WRAPPER_FLAGS,
+    WRAPPER_ARMS: Object.freeze([...WRAPPER_ARMS]),
+    CMD_POS,
+    TARGET_TOKEN_END,
+    H_SPACE,
+    H_TOKEN_EXCLUSIONS,
+    H_TOKEN_CHAR,
+    H_OPERAND_CHAR,
+    // The destructive-verb arms and the fragments they share.
+    ROOT_TARGET,
+    SYSTEM_DIR_TARGET,
+    RECURSIVE_FLAG,
+    CHOWN_SKIPPABLE_ARG,
+    CHOWN_HEAD,
+    // The pattern list itself, sources only: the human descriptions beside them are prose, and a
+    // reworded one is not a narrowing, so they stay out rather than train a reader to update the
+    // frozen literal without reading why the cell went red.
+    HARDLINE_PATTERNS: Object.freeze(HARDLINE_PATTERNS.map(([pattern]) => String(pattern))),
+    // The exfiltration arms.
+    PIPELINE_SPLIT_RE: String(PIPELINE_SPLIT_RE),
+    NETWORK_SINK_RE: String(NETWORK_SINK_RE),
+    RSYNC_REMOTE_TARGET,
+    RSYNC_REMOTE_SINK_RE: String(RSYNC_REMOTE_SINK_RE),
+    TOKEN_END,
+    NOT_PUBLIC_KEY,
+    DOTENV_RE: String(DOTENV_RE),
+    DOTENV_AS_OUTPUT_TARGET: String(DOTENV_AS_OUTPUT_TARGET),
+    CREDENTIAL_SOURCE_PATTERNS: Object.freeze(
+      CREDENTIAL_SOURCE_PATTERNS.map((pattern) => String(pattern))
+    ),
+  });
 
 /**
  * Whether one pipeline both reads credential material and transmits data off the machine.
