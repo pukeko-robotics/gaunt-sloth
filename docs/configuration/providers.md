@@ -133,7 +133,9 @@ your data, forbids fallbacks to anyone else, and gives a second model to fall ba
 client rather than an OpenAI one, so the only things read out of a `configuration` block are
 `baseURL` and the `HTTP-Referer` / `X-Title` attribution headers (`siteUrl` and `siteName` at the
 top level are the direct way to set those). Anything else you put there is reported as ignored when
-the provider starts — put it at the top level instead.
+the provider starts — move OpenRouter's own options (the fields listed above) to the top level.
+Transport settings are the exception: they have no top-level field either, so moving one up only
+makes it ignored quietly instead of loudly — see the next paragraph for what to do with those.
 
 Transport settings have no per-provider hook at all: there is no `fetch`, `timeout`, `maxRetries`
 or custom-header option on this client. To send OpenRouter traffic through a **corporate proxy**,

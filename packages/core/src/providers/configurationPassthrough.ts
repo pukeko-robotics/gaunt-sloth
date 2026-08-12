@@ -30,6 +30,14 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
  * header in it. Reporting `defaultHeaders` as wholly consumed would silence the warning for
  * exactly the case the user most needs it for — an auth header for a self-hosted gateway that is
  * quietly discarded.
+ *
+ * A `configuration` that is not a record at all (`configuration: "https://x/v1"`, a plausible typo
+ * for the block) has no paths and is reported as nothing. That is NOT a silent drop: `llm.configuration`
+ * is `z.record` in `schema.ts`, and every config layer goes through the loader's `validateRawConfigLayer`,
+ * so a non-record value is a hard, path-scoped validation error that ends the run before any provider
+ * factory is reached. The schema is the gate for the shape; this function is the gate for the
+ * contents. `configurationPassthrough.spec.ts` pins that boundary — if the schema ever stops
+ * requiring a record, the case has to be handled here instead.
  */
 export function findUnusedConfigurationPaths(
   configuration: unknown,
@@ -73,5 +81,33 @@ export function warnUnusedConfiguration(
     `Ignoring ${unused.map((path) => `llm.configuration.${path}`).join(', ')} — ` +
       `the "${provider}" provider does not build an OpenAI client, so a "configuration" block ` +
       `is not passed through to one. ${guidance}`
+  );
+}
+
+/**
+ * Warn when a path the factory DECLARES it consumes is present in the user's block but was not in
+ * fact applied — the empty string or `null` a factory's own guard skips.
+ *
+ * {@link findUnusedConfigurationPaths} cannot see this and must not: the path genuinely IS consumed,
+ * so it is correctly absent from the unused list — and the user's setting still goes nowhere.
+ * "Declared supported, in fact dropped" is the same silence this module exists to end, so it gets
+ * its own message: the "no OpenAI client" reason above would be the wrong reason for it.
+ *
+ * @param applied Whether the factory actually used the value. Pass the result of the SAME expression
+ *   that decides it (`'baseURL' in baseURLOverride`), never a second copy of the test — a re-test is
+ *   exactly how the guard and what the user is told drift apart.
+ */
+export function warnUnappliedConfigurationPath(
+  provider: string,
+  configuration: unknown,
+  path: string,
+  applied: boolean,
+  guidance: string
+): void {
+  if (applied) return;
+  if (!isPlainRecord(configuration) || !(path in configuration)) return;
+  displayWarning(
+    `Ignoring llm.configuration.${path} — it is set for the "${provider}" provider but carries no ` +
+      `usable value, so it is not applied. ${guidance}`
   );
 }

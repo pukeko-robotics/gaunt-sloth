@@ -8,7 +8,10 @@ import type { ChatOpenRouterInput } from '@langchain/openrouter';
 
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
-import { warnUnusedConfiguration } from '#src/providers/configurationPassthrough.js';
+import {
+  warnUnappliedConfigurationPath,
+  warnUnusedConfiguration,
+} from '#src/providers/configurationPassthrough.js';
 
 /**
  * The OpenRouter attribution headers, and the native `ChatOpenRouter` field each one is set from.
@@ -76,15 +79,33 @@ export async function processJsonConfig(
   const configObj = configuration as
     { baseURL?: string; defaultHeaders?: Record<string, string> } | undefined;
 
+  // The one place that decides whether the user's `configuration.baseURL` is applied; the warning
+  // below reads THIS result instead of re-testing the value, so the guard and what the user is told
+  // cannot drift apart.
+  const baseURLOverride = configObj?.baseURL ? { baseURL: configObj.baseURL } : {};
+
   warnUnusedConfiguration(
     'openrouter',
     configuration,
     CONSUMED_CONFIGURATION_PATHS,
-    'OpenRouter options are native top-level fields of the "llm" block — set "provider" (routing ' +
-      'preferences), "models", "route", "plugins" or "transforms" beside "model" rather than ' +
-      'under "configuration". Transport settings (proxy, custom fetch, timeout) have no ' +
-      'per-provider hook: run node with --use-env-proxy (or set NODE_USE_ENV_PROXY=1) plus ' +
-      'HTTP_PROXY/HTTPS_PROXY to route this provider through a proxy process-wide.'
+    // Scope the advice to the options that HAVE a top-level home: told plainly to "put it at the
+    // top level", a user with a transport key would move it from a warned location to an unwarned
+    // one, which is worse than where they started.
+    'OpenRouter\'s own options are native top-level fields of the "llm" block — set "provider" ' +
+      '(routing preferences), "models", "route", "plugins" or "transforms" beside "model" rather ' +
+      'than under "configuration". Transport settings (proxy, custom fetch, timeout, other ' +
+      'headers) have no top-level field and no per-provider hook at all: run node with ' +
+      '--use-env-proxy (or set NODE_USE_ENV_PROXY=1) plus HTTP_PROXY/HTTPS_PROXY to route this ' +
+      'provider through a proxy process-wide.'
+  );
+
+  warnUnappliedConfigurationPath(
+    'openrouter',
+    configuration,
+    'baseURL',
+    'baseURL' in baseURLOverride,
+    'Give it the full base URL of the OpenRouter-compatible endpoint, or remove it to use the ' +
+      'default https://openrouter.ai/api/v1.'
   );
 
   const resolvedSiteUrl =
@@ -100,7 +121,7 @@ export async function processJsonConfig(
     model: llmConfig.model || getCuratedFallbackModel('openrouter'),
     siteUrl: resolvedSiteUrl,
     siteName: resolvedSiteName,
-    ...(configObj?.baseURL ? { baseURL: configObj.baseURL } : {}),
+    ...baseURLOverride,
   });
 }
 
