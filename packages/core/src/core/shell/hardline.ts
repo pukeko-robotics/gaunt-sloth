@@ -482,6 +482,13 @@ export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
  *     exfiltration **by any route**, destination irrelevant, so a sink set omitting the file-copy
  *     tools would not implement part 1 at all.
  *
+ *  1b. **`rsync` is a sink only where it names a REMOTE end** ({@link RSYNC_REMOTE_SINK_RE}). It is
+ *     the one name in the set with an everyday LOCAL mode: `rsync -av ~/.ssh/ ~/backup/ssh/` copies
+ *     a directory within one machine and transmits nothing, which is not a route off it — so this
+ *     is not a narrowing of part 1's "destination irrelevant" but a refusal to call a local file
+ *     copy a transmission at all. The same backup written as `cp -r` or `tar` was never in range,
+ *     so without this the floor refused the tool rather than the effect.
+ *
  *  2. **A `.pub` file is never a credential source.** Registering a public key is among the most
  *     ordinary things a developer does, and `id_rsa.pub` satisfies `\bid_rsa\b` — the word boundary
  *     is the dot — so the exclusion has to be explicit.
@@ -518,11 +525,53 @@ const PIPELINE_SPLIT_RE = /[;&\n\r]/;
  * is what keeps them from firing on ordinary publishing (`scp ./report.pdf deploy@myhost:/srv/`
  * carries no credential source). `git`/`gh` stay out — a remote's identity is part 2, which cannot
  * be judged statically.
+ *
+ * **`rsync` is deliberately absent from this list and carries its own arm** below, because it is
+ * the only name here with an ordinary LOCAL mode; every name that remains transmits by definition.
  */
 const NETWORK_SINK_RE = new RegExp(
   CMD_POS +
-    '(?:curl|wget|nc|ncat|netcat|telnet|socat|tftp|scp|sftp|rsync|aws\\s+s3|gsutil|gcloud\\s+storage)\\b'
+    '(?:curl|wget|nc|ncat|netcat|telnet|socat|tftp|scp|sftp|aws\\s+s3|gsutil|gcloud\\s+storage)\\b'
 );
+
+/**
+ * A REMOTE target token, in rsync's own reading of one: a `:` appearing before any `/`. That single
+ * rule covers every remote spelling rsync accepts — `user@host:path`, the empty-path `user@host:`,
+ * a bare `host:/srv/`, the daemon `host::module/`, and `rsync://host/module/`, whose scheme colon
+ * also precedes its first slash — and it is the same rule rsync applies, so the floor and the tool
+ * disagree about no command.
+ *
+ * **The host part is a `*` and not a `+`, which is what carries the hostless daemon form `::mod`:**
+ * the run matches empty and the `:` matches immediately. Do not "tighten" it to `+` — that spelling
+ * is not a local path either (no ordinary path token opens with a colon), so requiring a host would
+ * drop a remote form and buy nothing back.
+ *
+ * **A token whose first `/` comes before any `:` is a local path**, which is what leaves
+ * `~/backup/`, `/mnt/backup/` and `./weird:name/` alone. The bare `weird:name/` spelling is remote
+ * on both readings: rsync would try to reach a host called `weird`, and the `./` that makes it a
+ * directory is rsync's own documented answer. A Windows drive letter (`c:/backup/`) resolves the
+ * same way for the same reason.
+ *
+ * **Options are excluded, and the exclusion is load-bearing.** A value-carrying flag is not a path,
+ * and several ordinary ones carry a colon — `--chown=deploy:deploy`, `--usermap=me:them` — so
+ * without `(?!-)` an entirely local backup is refused by its own flag.
+ */
+const RSYNC_REMOTE_TARGET = '(?!-)[^\\s/|]*:';
+
+/**
+ * `rsync` transmitting off the machine — the command at a command position, and a remote target
+ * somewhere in its own stage of the pipeline.
+ *
+ * **Both `|` exclusions bound the search to rsync's stage**, so a colon belonging to a later stage
+ * (`rsync -av ~/.ssh/ ~/backup/ | grep 'total size:'`) is not read as rsync's destination.
+ *
+ * **It asks whether a remote end is NAMED, not which side of the copy it is on**, so a pull from a
+ * remote source into a credential directory also matches. Naming the side means resolving operand
+ * positions past a per-flag table of which options take values — the growth {@link CMD_POS}
+ * refuses — and the direction this errs in is the safe one: it can only keep a refusal that the
+ * unconditional arm already made.
+ */
+const RSYNC_REMOTE_SINK_RE = new RegExp(CMD_POS + 'rsync\\b[^|]*\\s' + RSYNC_REMOTE_TARGET);
 
 /**
  * A path token that ENDS here — at end of input, at whitespace, or after a single trailing slash.
@@ -592,7 +641,7 @@ const CREDENTIAL_SOURCE_PATTERNS: readonly RegExp[] = [
  */
 export function isDeterministicExfiltration(normalizedLowerCommand: string): boolean {
   for (const pipeline of normalizedLowerCommand.split(PIPELINE_SPLIT_RE)) {
-    if (!NETWORK_SINK_RE.test(pipeline)) continue;
+    if (!NETWORK_SINK_RE.test(pipeline) && !RSYNC_REMOTE_SINK_RE.test(pipeline)) continue;
     if (CREDENTIAL_SOURCE_PATTERNS.some((pattern) => pattern.test(pipeline))) return true;
     // A dotenv file is a source unless the pipeline is FETCHING one (rule 4).
     if (DOTENV_RE.test(pipeline) && !DOTENV_AS_OUTPUT_TARGET.test(pipeline)) return true;
