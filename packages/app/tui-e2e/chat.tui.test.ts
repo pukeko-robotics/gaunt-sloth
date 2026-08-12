@@ -547,6 +547,56 @@ test.describe('gth chat TUI — TUI-C30 tool preview + diff (tool-preview fixtur
   });
 });
 
+test.describe('gth chat TUI — TUI-C52 a turn keeps its own order (interleaved fixture)', () => {
+  test.use({
+    program: { file: 'node', args: [cli, 'chat', '--tui'] },
+    env: envFor('interleaved.json'),
+    columns: 100,
+    rows: 40,
+  });
+
+  /**
+   * A turn that genuinely ran text → tool → text → tool → text has to READ that way once it is
+   * done. This is the one assertion `toBeVisible()` cannot make: the defect it guards had every
+   * panel and every paragraph on screen, just in the wrong order — forty-three tool panels above
+   * the sentence explaining them. So the claim is made against row INDICES of the painted screen,
+   * compared relatively so it holds wherever on the screen the turn happens to land.
+   */
+  test('paints each explanation between the tool calls it sits between', async ({ terminal }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    terminal.write('go');
+    await expect(terminal.getByText('> go')).toBeVisible();
+    terminal.submit();
+
+    // Wait for the whole turn: the last text run is the final thing the fixture streams.
+    await expect(terminal.getByText('third-explanation-run')).toBeVisible();
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+
+    const rows = screenRows(terminal);
+    const rowOf = (needle: string): number => {
+      const at = rows.findIndex((row) => row.includes(needle));
+      if (at === -1) {
+        throw new Error(`"${needle}" is not on screen; frame was:\n${rows.join('\n')}`);
+      }
+      return at;
+    };
+
+    const expected = [
+      'first-explanation-run',
+      'read_file(path=alpha.txt)',
+      'second-explanation-run',
+      'read_file(path=beta.txt)',
+      'third-explanation-run',
+    ];
+    // Sorting the markers by the row they landed on turns "what order did the screen paint these
+    // in" into a plain list comparison, so a regression reports itself as the order it painted —
+    // both tool panels first, then all three explanations — rather than as a bare index mismatch.
+    const painted = [...expected].sort((a, b) => rowOf(a) - rowOf(b));
+    expect(painted).toEqual(expected);
+  });
+});
+
 test.describe('gth chat TUI — slow fixture (interrupt)', () => {
   test.use({
     program: { file: 'node', args: [cli, 'chat', '--tui'] },

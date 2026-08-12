@@ -239,10 +239,9 @@ describe('<TranscriptViewport>', () => {
       kind: 'assistant',
       id: 1,
       turn: {
-        text: '```js\nconst fenced = 1;\n```',
+        segments: [{ kind: 'text', text: '```js\nconst fenced = 1;\n```' }],
         reasoning: '',
         isReasoning: false,
-        toolCalls: [],
       },
     };
 

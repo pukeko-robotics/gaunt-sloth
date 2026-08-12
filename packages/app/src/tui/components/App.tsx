@@ -5,6 +5,7 @@ import {
   foldSubagentEvents,
   initialSubagentTree,
   initialTurnViewModel,
+  turnText,
   type SubagentTreeViewModel,
   type TurnViewModel,
 } from '#src/tui/viewModel.js';
@@ -343,7 +344,9 @@ export function App(props: TuiAppProps): React.ReactElement {
         abortRef.current = null;
         turnCountRef.current += 1;
         setTurnCount(turnCountRef.current);
-        props.onTurnComplete?.(userInput, vm.text);
+        // The turn's prose, re-joined exactly as the deltas built it: segments changed where the
+        // text is drawn, never what the assistant said, so history keeps the same string.
+        props.onTurnComplete?.(userInput, turnText(vm));
       }
     },
     // props is stable for the session; intentionally run-once-bound

@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import { render as inkRender } from 'ink';
 import type { AgentStreamEvent } from '@gaunt-sloth/core/core/types.js';
 import type { TuiAgent } from '#src/tui/types.js';
+import type { TurnViewModel } from '#src/tui/viewModel.js';
 
 /**
  * TUI-C48 — how much of the conversation `<App>` actually mounts, counted rather than looked at.
@@ -22,15 +23,16 @@ const lifecycle = vi.hoisted(() => ({ mounts: 0, unmounts: 0 }));
 vi.mock('#src/tui/components/LiveTurn.js', async () => {
   const react = await import('react');
   const ink = await import('ink');
+  const { turnText } = await import('#src/tui/viewModel.js');
   return {
-    LiveTurn: ({ turn }: { turn: { text?: string } }) => {
+    LiveTurn: ({ turn }: { turn: TurnViewModel }) => {
       react.useEffect(() => {
         lifecycle.mounts += 1;
         return () => {
           lifecycle.unmounts += 1;
         };
       }, []);
-      return react.createElement(ink.Text, null, turn.text ?? '');
+      return react.createElement(ink.Text, null, turnText(turn));
     },
     ReasoningPanel: () => null,
     ChecklistPanel: () => null,

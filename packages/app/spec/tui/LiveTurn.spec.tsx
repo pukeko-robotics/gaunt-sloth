@@ -5,14 +5,27 @@ import { Box, renderToString } from 'ink';
 import chalk from 'chalk';
 import stripAnsi from 'strip-ansi';
 import { LiveTurn, ReasoningPanel } from '#src/tui/components/LiveTurn.js';
-import type { TurnViewModel } from '#src/tui/viewModel.js';
+import type { ToolCallViewModel, TurnViewModel } from '#src/tui/viewModel.js';
 
-const turn = (over: Partial<TurnViewModel> = {}): TurnViewModel => ({
-  text: '',
-  reasoning: '',
-  isReasoning: false,
-  toolCalls: [],
-  ...over,
+/**
+ * A turn in the tools-then-text layout these cases were written for. The turn model records
+ * arrival order as a segment list (TUI-C52), so this builds that layout explicitly; the
+ * interleaved orders it made expressible have their own spec (`turnSegments.spec.tsx`).
+ */
+const turn = (
+  over: {
+    text?: string;
+    reasoning?: string;
+    isReasoning?: boolean;
+    toolCalls?: ToolCallViewModel[];
+  } = {}
+): TurnViewModel => ({
+  reasoning: over.reasoning ?? '',
+  isReasoning: over.isReasoning ?? false,
+  segments: [
+    ...(over.toolCalls ?? []).map((tool) => ({ kind: 'tool' as const, tool })),
+    ...(over.text ? [{ kind: 'text' as const, text: over.text }] : []),
+  ],
 });
 
 describe('tui <LiveTurn>', () => {

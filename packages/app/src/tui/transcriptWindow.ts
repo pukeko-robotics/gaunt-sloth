@@ -101,17 +101,30 @@ function reasoningPanelRows(reasoning: string, expanded: boolean, columns: numbe
   return rows;
 }
 
-/** Rows one committed assistant turn occupies (`<LiveTurn>` with `streaming` false). */
+/**
+ * Rows one committed assistant turn occupies (`<LiveTurn>` with `streaming` false).
+ *
+ * It walks the SAME segment list the renderer walks, measuring each text run on its own. That
+ * lockstep is not a tidiness point: `<LiveTurn>` renders every text run through its own
+ * `renderMarkdown` call, and per-run markdown is a different row count from whole-turn markdown
+ * (two runs are two lines where their concatenation is one, and a construct split across a tool
+ * call frames itself on both sides). An oracle left measuring the turn's text as a single block
+ * mis-counts by exactly that, and the symptom is content in the wrong place on screen rather than
+ * an error anywhere.
+ */
 function turnRows(turn: TurnViewModel, toolsExpanded: boolean, columns: number): number {
   let rows = turn.reasoning ? reasoningPanelRows(turn.reasoning, toolsExpanded, columns) : 0;
-  for (const tc of turn.toolCalls) {
+  for (const segment of turn.segments) {
+    if (segment.kind === 'text') {
+      // Measured from the RENDERED markdown, not the raw text: a fence becomes two rules plus an
+      // indented body, so the raw line count is not a bound on either side of it.
+      if (segment.text) rows += textRows(renderMarkdown(segment.text, { columns }), columns);
+      continue;
+    }
     // The checklist tool renders as the pinned dock panel, never inside the turn.
-    if (tc.name === CHECKLIST_TOOL_NAME) continue;
-    rows += toolCallRows(tc, toolsExpanded, columns);
+    if (segment.tool.name === CHECKLIST_TOOL_NAME) continue;
+    rows += toolCallRows(segment.tool, toolsExpanded, columns);
   }
-  // Measured from the RENDERED markdown, not the raw text: a fence becomes two rules plus an
-  // indented body, so the raw line count is not a bound on either side of it.
-  if (turn.text) rows += textRows(renderMarkdown(turn.text, { columns }), columns);
   return rows;
 }
 

@@ -228,6 +228,17 @@ Tool calls render as **collapsible panels** (`tui/components/LiveTurn.tsx`), wit
 rendering supplied by the **surface-agnostic tool-display registry** (TUI-C30,
 `@gaunt-sloth/core/core/toolDisplay.js`) that the plain surface shares (DL-6 consistency):
 
+- **A turn paints in the order it happened (DL-4 transparency, DL-3 the user's context).** A turn
+  that ran text → tool → text → tool renders as those four things, in that order: each explanation
+  sits with the action it is about. The turn view-model therefore holds an ordered **segment list**
+  rather than a text string beside a tool-call array — with two parallel fields there is nowhere to
+  record that a text run arrived *between* two calls, so every completed turn can only be drawn as
+  every tool and then all of the text, which puts the sentence explaining an action dozens of rows
+  below it. Every text run is rendered **independently**: a markdown construct split across a tool
+  call frames itself on both sides rather than being re-joined across an action that happened in
+  the middle of it. The windowing estimator (`tui/transcriptWindow.ts`) walks the same segment list
+  and must keep doing so — it measures each run the way the renderer draws it, and an estimator
+  that drifts from the renderer shows up as content in the wrong place, not as an error.
 - **The call line carries the params inline, shortened** — `▸ ✓ 📁 read_file(path=README.md)
   [done]`: caret (`▸`/`▾`) + status glyph + registry glyph + `name(arg=val, …)`. Values are
   whitespace-collapsed, per-value truncated with `…`, the whole summary capped, and

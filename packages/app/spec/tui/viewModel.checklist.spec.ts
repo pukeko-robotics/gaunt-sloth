@@ -56,15 +56,17 @@ describe('viewModel — checklist parsing', () => {
 
   it('extractActiveChecklist prefers live turn and falls back to transcript in reverse order', () => {
     const live: TurnViewModel = {
-      text: '',
       reasoning: '',
       isReasoning: false,
-      toolCalls: [
+      segments: [
         {
-          id: '1',
-          name: CHECKLIST_TOOL_NAME,
-          argsText: JSON.stringify({ items: [{ content: 'Live item', status: 'in_progress' }] }),
-          status: 'running',
+          kind: 'tool',
+          tool: {
+            id: '1',
+            name: CHECKLIST_TOOL_NAME,
+            argsText: JSON.stringify({ items: [{ content: 'Live item', status: 'in_progress' }] }),
+            status: 'running',
+          },
         },
       ],
     };
@@ -74,15 +76,19 @@ describe('viewModel — checklist parsing', () => {
         kind: 'assistant',
         id: 1,
         turn: {
-          text: '',
           reasoning: '',
           isReasoning: false,
-          toolCalls: [
+          segments: [
             {
-              id: '0',
-              name: CHECKLIST_TOOL_NAME,
-              argsText: JSON.stringify({ items: [{ content: 'Old item', status: 'completed' }] }),
-              status: 'done',
+              kind: 'tool',
+              tool: {
+                id: '0',
+                name: CHECKLIST_TOOL_NAME,
+                argsText: JSON.stringify({
+                  items: [{ content: 'Old item', status: 'completed' }],
+                }),
+                status: 'done',
+              },
             },
           ],
         },

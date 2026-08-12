@@ -1,0 +1,20 @@
+{
+  "defaultDelayMs": 15,
+  "turns": [
+    {
+      "events": [
+        { "type": "text", "delta": "first-explanation-run " },
+        { "type": "tool_start", "id": "t1", "name": "read_file" },
+        { "type": "tool_args", "id": "t1", "delta": "{\"path\":\"alpha.txt\"}" },
+        { "type": "tool_end", "id": "t1" },
+        { "type": "tool_result", "id": "t1", "content": "alpha-tool-result" },
+        { "type": "text", "delta": "second-explanation-run " },
+        { "type": "tool_start", "id": "t2", "name": "read_file" },
+        { "type": "tool_args", "id": "t2", "delta": "{\"path\":\"beta.txt\"}" },
+        { "type": "tool_end", "id": "t2" },
+        { "type": "tool_result", "id": "t2", "content": "beta-tool-result" },
+        { "type": "text", "delta": "third-explanation-run" }
+      ]
+    }
+  ]
+}

@@ -244,15 +244,24 @@ export function ChecklistPanel({ items }: { items: ChecklistItemViewModel[] }): 
 
 /**
  * Renders one assistant turn from the pure {@link TurnViewModel}: a collapsible `💭 Thinking`
- * reasoning region, one collapsible panel per tool call, then the assistant text. Used both for
- * the in-progress live turn and (frozen) for committed turns in the transcript, so the look is
- * identical once done.
+ * reasoning region, then the turn's segments **in the order they arrived** — a text run, a tool
+ * panel, the next text run, and so on. Used both for the in-progress live turn and (frozen) for
+ * committed turns in the transcript, so the look is identical once done.
  *
- * Assistant text is rendered as terminal **markdown** once the segment is complete; while a
- * turn is still streaming (`streaming` true) we render it as plain text so the live region
- * never reflows mid-chunk or garbles a half-arrived markdown construct. `renderMarkdown`
- * falls back to the raw text whenever the content is not markdown-meaningful or rendering
- * fails, so plain prose always reads correctly.
+ * Order is the whole contract here. A turn that ran `text → tool → text → tool` reads as an
+ * explanation around its actions; drawn as every tool followed by all of the text it reads as
+ * forty-three panels and then a paragraph that no longer refers to anything nearby.
+ *
+ * Each text segment is rendered **independently**: a markdown construct split across a tool call
+ * renders as two blocks rather than one. `renderMarkdown` is stateless by design (fence state is
+ * per call), and threading that state across segments would be a renderer refactor; two honest
+ * blocks beat a construct silently re-joined across an action that happened between them.
+ *
+ * Assistant text is rendered as terminal **markdown** once the turn is complete; while it is still
+ * streaming (`streaming` true) every run renders as plain text so the live region never reflows
+ * mid-chunk or garbles a half-arrived construct. `renderMarkdown` falls back to the raw text
+ * whenever the content is not markdown-meaningful or rendering fails, so plain prose always reads
+ * correctly.
  */
 export function LiveTurn({
   turn,
@@ -270,13 +279,22 @@ export function LiveTurn({
       {turn.reasoning ? (
         <ReasoningPanel reasoning={turn.reasoning} expanded={toolsExpanded} live={streaming} />
       ) : null}
-      {turn.toolCalls.map((tc) => {
-        if (tc.name === CHECKLIST_TOOL_NAME) {
+      {/* Keyed by position: segments are append-only and a later event patches a segment in
+          place, so an index is stable for the life of the turn. */}
+      {turn.segments.map((segment, i) => {
+        if (segment.kind === 'text') {
+          return segment.text ? (
+            <Text key={i}>{streaming ? segment.text : renderMarkdown(segment.text)}</Text>
+          ) : null;
+        }
+        // The checklist tool is the pinned dock panel (TUI-C50), never an inline turn panel.
+        if (segment.tool.name === CHECKLIST_TOOL_NAME) {
           return null;
         }
-        return <ToolCallPanel key={tc.id} tc={tc} expanded={toolsExpanded} live={streaming} />;
+        return (
+          <ToolCallPanel key={i} tc={segment.tool} expanded={toolsExpanded} live={streaming} />
+        );
       })}
-      {turn.text ? <Text>{streaming ? turn.text : renderMarkdown(turn.text)}</Text> : null}
     </Box>
   );
 }

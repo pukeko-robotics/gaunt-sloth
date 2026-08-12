@@ -9,21 +9,22 @@ describe('tui/viewModel foldEvents', () => {
   it('starts empty', async () => {
     const { initialTurnViewModel } = await import('#src/tui/viewModel.js');
     expect(initialTurnViewModel()).toEqual({
-      text: '',
+      segments: [],
       reasoning: '',
       isReasoning: false,
-      toolCalls: [],
     });
   });
 
-  it('appends text deltas in order', async () => {
-    const { foldEventSequence } = await import('#src/tui/viewModel.js');
+  it('appends text deltas in order, as ONE uninterrupted run', async () => {
+    const { foldEventSequence, turnText } = await import('#src/tui/viewModel.js');
     const events: AgentStreamEvent[] = [
       { type: 'text', delta: 'Hel' },
       { type: 'text', delta: 'lo, ' },
       { type: 'text', delta: 'world' },
     ];
-    expect(foldEventSequence(events).text).toBe('Hello, world');
+    const vm = foldEventSequence(events);
+    expect(vm.segments).toEqual([{ kind: 'text', text: 'Hello, world' }]);
+    expect(turnText(vm)).toBe('Hello, world');
   });
 
   it('toggles the reasoning region and accumulates reasoning deltas', async () => {
@@ -43,7 +44,7 @@ describe('tui/viewModel foldEvents', () => {
   });
 
   it('builds a per-id tool-call record across start/args/end/result', async () => {
-    const { foldEventSequence } = await import('#src/tui/viewModel.js');
+    const { foldEventSequence, turnToolCalls } = await import('#src/tui/viewModel.js');
     const vm = foldEventSequence([
       { type: 'tool_start', id: 't1', name: 'read_file' },
       { type: 'tool_args', id: 't1', delta: '{"path":' },
@@ -51,8 +52,8 @@ describe('tui/viewModel foldEvents', () => {
       { type: 'tool_end', id: 't1' },
       { type: 'tool_result', id: 't1', content: 'file body' },
     ]);
-    expect(vm.toolCalls).toHaveLength(1);
-    expect(vm.toolCalls[0]).toEqual({
+    expect(turnToolCalls(vm)).toHaveLength(1);
+    expect(turnToolCalls(vm)[0]).toEqual({
       id: 't1',
       name: 'read_file',
       argsText: '{"path":"a.ts"}',
@@ -62,23 +63,27 @@ describe('tui/viewModel foldEvents', () => {
   });
 
   it('threads the tool_result isError signal onto the tool-call view model', async () => {
-    const { foldEventSequence } = await import('#src/tui/viewModel.js');
+    const { foldEventSequence, turnToolCalls } = await import('#src/tui/viewModel.js');
     const errored = foldEventSequence([
       { type: 'tool_start', id: 't1', name: 'run' },
       { type: 'tool_result', id: 't1', content: 'boom', isError: true },
     ]);
-    expect(errored.toolCalls[0]).toMatchObject({ status: 'done', result: 'boom', isError: true });
+    expect(turnToolCalls(errored)[0]).toMatchObject({
+      status: 'done',
+      result: 'boom',
+      isError: true,
+    });
 
     // Success: no isError on the event => undefined on the model (renderer shows ✓).
     const ok = foldEventSequence([
       { type: 'tool_start', id: 't1', name: 'run' },
       { type: 'tool_result', id: 't1', content: 'Error handling guide' },
     ]);
-    expect(ok.toolCalls[0].isError).toBeUndefined();
+    expect(turnToolCalls(ok)[0].isError).toBeUndefined();
   });
 
   it('interleaves multiple tool calls preserving first-seen order', async () => {
-    const { foldEventSequence } = await import('#src/tui/viewModel.js');
+    const { foldEventSequence, turnToolCalls } = await import('#src/tui/viewModel.js');
     const vm = foldEventSequence([
       { type: 'tool_start', id: 'a', name: 'ls' },
       { type: 'tool_start', id: 'b', name: 'grep' },
@@ -86,15 +91,19 @@ describe('tui/viewModel foldEvents', () => {
       { type: 'tool_args', id: 'a', delta: '{}' },
       { type: 'tool_end', id: 'a' },
     ]);
-    expect(vm.toolCalls.map((t) => t.id)).toEqual(['a', 'b']);
-    expect(vm.toolCalls[0]).toMatchObject({ name: 'ls', argsText: '{}', status: 'done' });
-    expect(vm.toolCalls[1]).toMatchObject({ name: 'grep', argsText: '{"q":1}', status: 'running' });
+    expect(turnToolCalls(vm).map((t) => t.id)).toEqual(['a', 'b']);
+    expect(turnToolCalls(vm)[0]).toMatchObject({ name: 'ls', argsText: '{}', status: 'done' });
+    expect(turnToolCalls(vm)[1]).toMatchObject({
+      name: 'grep',
+      argsText: '{"q":1}',
+      status: 'running',
+    });
   });
 
   it('is defensive: a stray event for an unseen id creates a placeholder, never drops', async () => {
-    const { foldEventSequence } = await import('#src/tui/viewModel.js');
+    const { foldEventSequence, turnToolCalls } = await import('#src/tui/viewModel.js');
     const vm = foldEventSequence([{ type: 'tool_result', id: 'ghost', content: 'orphan' }]);
-    expect(vm.toolCalls).toEqual([
+    expect(turnToolCalls(vm)).toEqual([
       { id: 'ghost', name: '', argsText: '', status: 'done', result: 'orphan' },
     ]);
   });
@@ -103,19 +112,19 @@ describe('tui/viewModel foldEvents', () => {
     const { initialTurnViewModel, foldEvents } = await import('#src/tui/viewModel.js');
     const start = initialTurnViewModel();
     const next = foldEvents(start, { type: 'text', delta: 'x' });
-    expect(start.text).toBe('');
+    expect(start.segments).toHaveLength(0);
     expect(next).not.toBe(start);
-    expect(next.text).toBe('x');
+    expect(next.segments).toEqual([{ kind: 'text', text: 'x' }]);
 
-    // A tool event must clone the toolCalls array rather than push into the prior one.
+    // A tool event must clone the segment list rather than push into the prior one.
     const withTool = foldEvents(start, { type: 'tool_start', id: 't', name: 'ls' });
-    expect(withTool.toolCalls).not.toBe(start.toolCalls);
-    expect(start.toolCalls).toHaveLength(0);
+    expect(withTool.segments).not.toBe(start.segments);
+    expect(start.segments).toHaveLength(0);
   });
 
   describe('tool_output live output (TUI-C17)', () => {
     it('accumulates chunks on `output` and the notice on the SEPARATE `notice` field (TUI-C30)', async () => {
-      const { foldEventSequence } = await import('#src/tui/viewModel.js');
+      const { foldEventSequence, turnToolCalls } = await import('#src/tui/viewModel.js');
       const vm = foldEventSequence([
         {
           type: 'tool_output',
@@ -127,15 +136,15 @@ describe('tui/viewModel foldEvents', () => {
         { type: 'tool_output', id: 't1', name: 'run_shell_command', chunk: 'total 12\n' },
         { type: 'tool_output', id: 't1', name: 'run_shell_command', chunk: 'drwxr file\n' },
       ]);
-      expect(vm.toolCalls).toHaveLength(1);
+      expect(turnToolCalls(vm)).toHaveLength(1);
       // The notice lives apart from the raw child output so the TUI-C30 preview counts only
       // real output lines and can style/strip the announcement independently.
-      expect(vm.toolCalls[0].notice).toBe('🔧 Executing run_shell_command: ls -la');
-      expect(vm.toolCalls[0].output).toBe('total 12\ndrwxr file\n');
+      expect(turnToolCalls(vm)[0].notice).toBe('🔧 Executing run_shell_command: ls -la');
+      expect(turnToolCalls(vm)[0].output).toBe('total 12\ndrwxr file\n');
     });
 
     it('joins multiple notices with newlines on the notice field', async () => {
-      const { foldEventSequence } = await import('#src/tui/viewModel.js');
+      const { foldEventSequence, turnToolCalls } = await import('#src/tui/viewModel.js');
       const vm = foldEventSequence([
         { type: 'tool_output', id: 't1', name: 'run_tests', chunk: 'first notice', isNotice: true },
         {
@@ -146,15 +155,15 @@ describe('tui/viewModel foldEvents', () => {
           isNotice: true,
         },
       ]);
-      expect(vm.toolCalls[0].notice).toBe('first notice\nsecond notice');
-      expect(vm.toolCalls[0].output).toBeUndefined();
+      expect(turnToolCalls(vm)[0].notice).toBe('first notice\nsecond notice');
+      expect(turnToolCalls(vm)[0].output).toBeUndefined();
     });
 
     it('creates a named placeholder when output arrives BEFORE tool_start (the common live case)', async () => {
       // The agent stream only flushes tool_start when the round's ToolMessage lands, so live
       // output normally precedes it. The placeholder must carry the tool name so the running
       // panel is labelled, and the later tool_start/result must land on the SAME call.
-      const { foldEventSequence } = await import('#src/tui/viewModel.js');
+      const { foldEventSequence, turnToolCalls } = await import('#src/tui/viewModel.js');
       const vm = foldEventSequence([
         { type: 'tool_output', id: 't1', name: 'run_tests', chunk: 'suite starting\n' },
         { type: 'tool_start', id: 't1', name: 'run_tests' },
@@ -162,8 +171,8 @@ describe('tui/viewModel foldEvents', () => {
         { type: 'tool_end', id: 't1' },
         { type: 'tool_result', id: 't1', content: 'all green' },
       ]);
-      expect(vm.toolCalls).toHaveLength(1);
-      expect(vm.toolCalls[0]).toMatchObject({
+      expect(turnToolCalls(vm)).toHaveLength(1);
+      expect(turnToolCalls(vm)[0]).toMatchObject({
         id: 't1',
         name: 'run_tests',
         status: 'done',
@@ -173,32 +182,32 @@ describe('tui/viewModel foldEvents', () => {
     });
 
     it('keeps output attributed per call id when two tools stream interleaved', async () => {
-      const { foldEventSequence } = await import('#src/tui/viewModel.js');
+      const { foldEventSequence, turnToolCalls } = await import('#src/tui/viewModel.js');
       const vm = foldEventSequence([
         { type: 'tool_output', id: 'a', name: 'run_lint', chunk: 'lint-1\n' },
         { type: 'tool_output', id: 'b', name: 'run_build', chunk: 'build-1\n' },
         { type: 'tool_output', id: 'a', name: 'run_lint', chunk: 'lint-2\n' },
       ]);
-      expect(vm.toolCalls.map((t) => t.id)).toEqual(['a', 'b']);
-      expect(vm.toolCalls[0].output).toBe('lint-1\nlint-2\n');
-      expect(vm.toolCalls[1].output).toBe('build-1\n');
+      expect(turnToolCalls(vm).map((t) => t.id)).toEqual(['a', 'b']);
+      expect(turnToolCalls(vm)[0].output).toBe('lint-1\nlint-2\n');
+      expect(turnToolCalls(vm)[1].output).toBe('build-1\n');
     });
 
     it('TUI-C31 (e): an id-less chunk goes to the synthetic per-name bucket, never pinned to a running same-name call', async () => {
-      const { foldEventSequence } = await import('#src/tui/viewModel.js');
+      const { foldEventSequence, turnToolCalls } = await import('#src/tui/viewModel.js');
       const vm = foldEventSequence([
         { type: 'tool_start', id: 'real', name: 'my_tool' },
         { type: 'tool_output', name: 'my_tool', chunk: 'no-id chunk\n' },
       ]);
       // The real running call is NOT polluted by an id-less chunk (the old fallback pinned it here).
-      expect(vm.toolCalls.find((t) => t.id === 'real')?.output).toBeUndefined();
+      expect(turnToolCalls(vm).find((t) => t.id === 'real')?.output).toBeUndefined();
       // Instead it lands in a clearly-synthetic bucket — output is still never dropped.
-      expect(vm.toolCalls.find((t) => t.id === 'my_tool#live')?.output).toBe('no-id chunk\n');
-      expect(vm.toolCalls).toHaveLength(2);
+      expect(turnToolCalls(vm).find((t) => t.id === 'my_tool#live')?.output).toBe('no-id chunk\n');
+      expect(turnToolCalls(vm)).toHaveLength(2);
     });
 
     it('TUI-C31 (e): an id-less chunk is not mis-attributed across two concurrent same-name calls', async () => {
-      const { foldEventSequence } = await import('#src/tui/viewModel.js');
+      const { foldEventSequence, turnToolCalls } = await import('#src/tui/viewModel.js');
       const vm = foldEventSequence([
         { type: 'tool_start', id: 'call-A', name: 'run_shell_command' },
         { type: 'tool_start', id: 'call-B', name: 'run_shell_command' },
@@ -207,18 +216,18 @@ describe('tui/viewModel foldEvents', () => {
         // another's panel. It must instead go to the synthetic bucket, leaving BOTH real calls clean.
         { type: 'tool_output', name: 'run_shell_command', chunk: 'ambiguous\n' },
       ]);
-      expect(vm.toolCalls.find((t) => t.id === 'call-A')?.output).toBeUndefined();
-      expect(vm.toolCalls.find((t) => t.id === 'call-B')?.output).toBeUndefined();
-      expect(vm.toolCalls.find((t) => t.id === 'run_shell_command#live')?.output).toBe(
+      expect(turnToolCalls(vm).find((t) => t.id === 'call-A')?.output).toBeUndefined();
+      expect(turnToolCalls(vm).find((t) => t.id === 'call-B')?.output).toBeUndefined();
+      expect(turnToolCalls(vm).find((t) => t.id === 'run_shell_command#live')?.output).toBe(
         'ambiguous\n'
       );
     });
 
     it('never drops id-less output with no matching running call (synthetic per-name bucket)', async () => {
-      const { foldEventSequence } = await import('#src/tui/viewModel.js');
+      const { foldEventSequence, turnToolCalls } = await import('#src/tui/viewModel.js');
       const vm = foldEventSequence([{ type: 'tool_output', name: 'orphan_tool', chunk: 'x\n' }]);
-      expect(vm.toolCalls).toHaveLength(1);
-      expect(vm.toolCalls[0]).toMatchObject({
+      expect(turnToolCalls(vm)).toHaveLength(1);
+      expect(turnToolCalls(vm)[0]).toMatchObject({
         id: 'orphan_tool#live',
         name: 'orphan_tool',
         output: 'x\n',
@@ -234,9 +243,9 @@ describe('tui/viewModel foldEvents', () => {
         name: 'run_tests',
         chunk: 'line\n',
       });
-      expect(start.toolCalls).toHaveLength(0);
-      expect(next.toolCalls).toHaveLength(1);
-      expect(next.toolCalls).not.toBe(start.toolCalls);
+      expect(start.segments).toHaveLength(0);
+      expect(next.segments).toHaveLength(1);
+      expect(next.segments).not.toBe(start.segments);
     });
   });
 });

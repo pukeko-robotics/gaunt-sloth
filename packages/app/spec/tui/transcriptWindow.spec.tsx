@@ -8,11 +8,32 @@ import {
 } from '#src/tui/transcriptWindow.js';
 import { TranscriptViewport } from '#src/tui/components/TranscriptViewport.js';
 import type { TranscriptItem } from '#src/tui/types.js';
-import { initialTurnViewModel, type TurnViewModel } from '#src/tui/viewModel.js';
+import {
+  initialTurnViewModel,
+  type ToolCallViewModel,
+  type TurnViewModel,
+} from '#src/tui/viewModel.js';
 
-const turn = (over: Partial<TurnViewModel> = {}): TurnViewModel => ({
+/**
+ * A turn in the tools-then-text layout these cases were written for. The turn model records
+ * arrival order as a segment list (TUI-C52); the interleaved shapes that ordering made
+ * expressible are estimated in `turnSegments.spec.tsx`, against the same Ink measurement.
+ */
+const turn = (
+  over: {
+    text?: string;
+    reasoning?: string;
+    isReasoning?: boolean;
+    toolCalls?: ToolCallViewModel[];
+  } = {}
+): TurnViewModel => ({
   ...initialTurnViewModel(),
-  ...over,
+  reasoning: over.reasoning ?? '',
+  isReasoning: over.isReasoning ?? false,
+  segments: [
+    ...(over.toolCalls ?? []).map((tool) => ({ kind: 'tool' as const, tool })),
+    ...(over.text ? [{ kind: 'text' as const, text: over.text }] : []),
+  ],
 });
 
 const toolCall = (over: Record<string, unknown> = {}) => ({

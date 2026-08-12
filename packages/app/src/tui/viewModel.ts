@@ -44,42 +44,111 @@ export interface ToolCallViewModel {
   isError?: boolean;
 }
 
-/** The renderable state of a single in-progress assistant turn. */
-export interface TurnViewModel {
-  /** Accumulated assistant `text` deltas. */
+/** One run of assistant text, uninterrupted by a tool call. */
+export interface TextSegment {
+  kind: 'text';
+  /** The `text` deltas that arrived while this run was open, concatenated. */
   text: string;
+}
+
+/** One tool call, held at the point in the turn where the stream first mentioned it. */
+export interface ToolSegment {
+  kind: 'tool';
+  tool: ToolCallViewModel;
+}
+
+/**
+ * One renderable piece of a turn, in arrival order.
+ *
+ * The tool call is nested rather than referenced by id on purpose: order and content then have a
+ * single home, so there is no second list that can disagree with this one about which tool calls
+ * a turn made or where they sit. {@link turnToolCalls} and {@link turnText} derive the flat views
+ * the rest of the app used to read off separate fields.
+ */
+export type TurnSegment = TextSegment | ToolSegment;
+
+/**
+ * The renderable state of a single in-progress assistant turn.
+ *
+ * `segments` is the whole point: a turn that ran text → tool → text → tool is FOUR entries in that
+ * order. Held instead as a `text` string beside a `toolCalls` array — the shape this replaces —
+ * there was nowhere to record that a text run arrived BETWEEN two calls, so a completed turn could
+ * only ever be drawn as every tool followed by all of the text. That is not a rendering choice; it
+ * is what two parallel fields can represent.
+ */
+export interface TurnViewModel {
+  /** Text runs and tool calls interleaved exactly as the stream delivered them. */
+  segments: TurnSegment[];
   /** Accumulated `reasoning_delta` deltas (the dim "thinking" region). */
   reasoning: string;
   /** True between `reasoning_start` and `reasoning_end`. */
   isReasoning: boolean;
-  /** Tool calls in first-seen order. */
-  toolCalls: ToolCallViewModel[];
 }
 
 export const initialTurnViewModel = (): TurnViewModel => ({
-  text: '',
+  segments: [],
   reasoning: '',
   isReasoning: false,
-  toolCalls: [],
 });
 
+/** Every tool call the turn made, in first-seen order — derived, never stored. */
+export function turnToolCalls(turn: TurnViewModel): ToolCallViewModel[] {
+  const out: ToolCallViewModel[] = [];
+  for (const segment of turn.segments) if (segment.kind === 'tool') out.push(segment.tool);
+  return out;
+}
+
 /**
- * Upsert a tool call by id, applying `patch`. If the id is unknown a placeholder is
- * created (name '') so a stray `tool_args`/`tool_end`/`tool_result` is never silently
- * dropped — robustness mirrors the AG-UI encoder's defensive posture toward local models.
+ * Every assistant `text` delta of the turn, concatenated — derived, never stored.
+ *
+ * The runs join with no separator, so this is byte-for-byte the string the deltas built: splitting
+ * them into segments changes where they are DRAWN, not what was said.
+ */
+export function turnText(turn: TurnViewModel): string {
+  let out = '';
+  for (const segment of turn.segments) if (segment.kind === 'text') out += segment.text;
+  return out;
+}
+
+/**
+ * Append a text delta: extend the run that is still open, or start a new one when a tool call
+ * closed the last one. That branch IS the fix — concatenating unconditionally is what put every
+ * character of a turn's prose below every one of its tool panels.
+ */
+function appendText(segments: TurnSegment[], delta: string): TurnSegment[] {
+  if (delta === '') return segments;
+  const last = segments[segments.length - 1];
+  if (last?.kind === 'text') {
+    const next = segments.slice();
+    next[next.length - 1] = { kind: 'text', text: last.text + delta };
+    return next;
+  }
+  return [...segments, { kind: 'text', text: delta }];
+}
+
+/**
+ * Upsert a tool call by id, applying `patch` to its segment IN PLACE. If the id is unknown a
+ * placeholder segment is appended (name '') so a stray `tool_args`/`tool_end`/`tool_result` is
+ * never silently dropped — robustness mirrors the AG-UI encoder's defensive posture toward local
+ * models, and the placeholder path is the common one because `tool_output` normally precedes
+ * `tool_start`.
+ *
+ * Patching in place is load-bearing: a call's later events routinely arrive after the next text
+ * run has started, and appending a second segment for them would re-order the very thing this
+ * model exists to keep in order.
  */
 function upsertTool(
-  toolCalls: ToolCallViewModel[],
+  segments: TurnSegment[],
   id: string,
   patch: (tc: ToolCallViewModel) => ToolCallViewModel
-): ToolCallViewModel[] {
-  const idx = toolCalls.findIndex((tc) => tc.id === id);
+): TurnSegment[] {
+  const idx = segments.findIndex((segment) => segment.kind === 'tool' && segment.tool.id === id);
   if (idx === -1) {
     const created: ToolCallViewModel = { id, name: '', argsText: '', status: 'running' };
-    return [...toolCalls, patch(created)];
+    return [...segments, { kind: 'tool', tool: patch(created) }];
   }
-  const next = toolCalls.slice();
-  next[idx] = patch(next[idx]);
+  const next = segments.slice();
+  next[idx] = { kind: 'tool', tool: patch((next[idx] as ToolSegment).tool) };
   return next;
 }
 
@@ -89,8 +158,10 @@ function upsertTool(
  */
 export function foldEvents(state: TurnViewModel, event: AgentStreamEvent): TurnViewModel {
   switch (event.type) {
-    case 'text':
-      return { ...state, text: state.text + event.delta };
+    case 'text': {
+      const segments = appendText(state.segments, event.delta);
+      return segments === state.segments ? state : { ...state, segments };
+    }
     case 'reasoning_start':
       return { ...state, isReasoning: true };
     case 'reasoning_delta':
@@ -100,7 +171,7 @@ export function foldEvents(state: TurnViewModel, event: AgentStreamEvent): TurnV
     case 'tool_start':
       return {
         ...state,
-        toolCalls: upsertTool(state.toolCalls, event.id, (tc) => ({
+        segments: upsertTool(state.segments, event.id, (tc) => ({
           ...tc,
           name: event.name,
           status: 'running',
@@ -109,7 +180,7 @@ export function foldEvents(state: TurnViewModel, event: AgentStreamEvent): TurnV
     case 'tool_args':
       return {
         ...state,
-        toolCalls: upsertTool(state.toolCalls, event.id, (tc) => ({
+        segments: upsertTool(state.segments, event.id, (tc) => ({
           ...tc,
           argsText: tc.argsText + event.delta,
         })),
@@ -117,7 +188,7 @@ export function foldEvents(state: TurnViewModel, event: AgentStreamEvent): TurnV
     case 'tool_end':
       return {
         ...state,
-        toolCalls: upsertTool(state.toolCalls, event.id, (tc) => ({
+        segments: upsertTool(state.segments, event.id, (tc) => ({
           ...tc,
           status: 'done',
         })),
@@ -125,7 +196,7 @@ export function foldEvents(state: TurnViewModel, event: AgentStreamEvent): TurnV
     case 'tool_result':
       return {
         ...state,
-        toolCalls: upsertTool(state.toolCalls, event.id, (tc) => ({
+        segments: upsertTool(state.segments, event.id, (tc) => ({
           ...tc,
           status: 'done',
           result: event.content,
@@ -149,7 +220,7 @@ export function foldEvents(state: TurnViewModel, event: AgentStreamEvent): TurnV
       const id = event.id ?? `${event.name}#live`;
       return {
         ...state,
-        toolCalls: upsertTool(state.toolCalls, id, (tc) => ({
+        segments: upsertTool(state.segments, id, (tc) => ({
           ...tc,
           name: tc.name || event.name,
           ...(event.isNotice
@@ -356,6 +427,23 @@ export function parseChecklistArgs(argsText: string): ChecklistItemViewModel[] |
 }
 
 /**
+ * The newest parseable checklist call in one turn, or `null`.
+ *
+ * Walks `segments` in reverse directly instead of deriving a tool-call array: the caller re-runs
+ * this on every streamed event, so materialising a filtered list per turn per event would put work
+ * proportional to the whole transcript on the live path.
+ */
+function latestChecklistIn(turn: TurnViewModel): ChecklistItemViewModel[] | null {
+  for (let i = turn.segments.length - 1; i >= 0; i--) {
+    const segment = turn.segments[i];
+    if (segment.kind !== 'tool' || segment.tool.name !== CHECKLIST_TOOL_NAME) continue;
+    const items = parseChecklistArgs(segment.tool.argsText);
+    if (items) return items;
+  }
+  return null;
+}
+
+/**
  * Extract the most recent checklist items from the in-progress live turn or committed transcript.
  * Returns `null` if no valid checklist tool calls exist.
  */
@@ -363,29 +451,18 @@ export function extractActiveChecklist(
   live: TurnViewModel | null,
   transcript: TranscriptItem[]
 ): ChecklistItemViewModel[] | null {
-  // First check the live turn tool calls in reverse order
+  // First check the live turn's tool calls in reverse order
   if (live) {
-    for (let i = live.toolCalls.length - 1; i >= 0; i--) {
-      const tc = live.toolCalls[i];
-      if (tc.name === CHECKLIST_TOOL_NAME) {
-        const items = parseChecklistArgs(tc.argsText);
-        if (items) return items;
-      }
-    }
+    const items = latestChecklistIn(live);
+    if (items) return items;
   }
 
   // Next search transcript items in reverse order
   for (let i = transcript.length - 1; i >= 0; i--) {
     const item = transcript[i];
-    if (item.kind === 'assistant') {
-      for (let j = item.turn.toolCalls.length - 1; j >= 0; j--) {
-        const tc = item.turn.toolCalls[j];
-        if (tc.name === CHECKLIST_TOOL_NAME) {
-          const items = parseChecklistArgs(tc.argsText);
-          if (items) return items;
-        }
-      }
-    }
+    if (item.kind !== 'assistant') continue;
+    const items = latestChecklistIn(item.turn);
+    if (items) return items;
   }
 
   return null;
