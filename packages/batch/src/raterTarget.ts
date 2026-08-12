@@ -414,11 +414,17 @@ async function classifyOneRound(
     // without one there is nothing to raise, and every command comes back identical. A round that
     // claims nothing (or claims the floor) is driven with no rating, as before: a permissive one
     // would move its action. `mechanismNeedsPermissiveRating` is the whole of that rule.
+    //
+    // Read WITHOUT an optional chain, deliberately. `ClassifyRequest.forcedBy` is required and the
+    // runner builds it by mapping the same `turns` array it maps for `inputs`, so it is present and
+    // index-parallel on every path that reaches here (pinned in `evalClassifierRunner.spec.ts`) —
+    // exactly as `request.caseId`, `request.modelFree` and `request.inputs` are read unguarded.
+    // The `undefined` this read really meets comes from the ELEMENT, not the field: a round that
+    // declared no mechanism, or an index past the end of a shorter array. A chain guards neither —
+    // indexing past the end yields `undefined` by value — and neither needs guarding, because an
+    // undefined mechanism is precisely "leave this round undriven".
     const permissive = calibrated().permissive;
-    if (
-      mechanismNeedsPermissiveRating(request.forcedBy?.[roundIndex]) &&
-      permissive !== undefined
-    ) {
+    if (mechanismNeedsPermissiveRating(request.forcedBy[roundIndex]) && permissive !== undefined) {
       verdict = { outcome: permissive as ShellSafetyVerdict['outcome'], reason: PROBE_REASON };
     }
   } else {

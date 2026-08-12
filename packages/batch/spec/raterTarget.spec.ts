@@ -83,11 +83,14 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
       caseId: 'case-1',
       tags: [],
       modelFree: false,
-      // Default: the case claims no mechanism, so no round is driven with a stubbed rating — the
-      // shape of every ordinary case, and the one whose action must not move.
-      forcedBy: inputs.map(() => undefined),
       ...over,
       inputs,
+      // Default: the case claims no mechanism, so no round is driven with a stubbed rating — the
+      // shape of every ordinary case, and the one whose action must not move. Resolved AFTER the
+      // spread, the same way `inputs` is, so an explicit `forcedBy: undefined` cannot shadow the
+      // default: `Partial<ClassifyRequest>` admits that spelling and specs are outside the build's
+      // type-check, which would hand the target a request the type forbids.
+      forcedBy: over.forcedBy ?? inputs.map(() => undefined),
     };
   };
 
@@ -637,6 +640,49 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
 
       expect(outcome.action).toBe(noVerdict);
       expect(outcome.rationale).toContain(FORCED_BY_ASSERTIONS['hardline-floor']);
+    });
+
+    /**
+     * BATCH-28 — the undefined this target's `forcedBy` read actually meets.
+     *
+     * The field is required and the runner builds it index-parallel to `inputs`
+     * (`evalClassifierRunner.spec.ts` pins that), so the field being ABSENT is a state the type
+     * forbids and no construction site produces — which is why the read carries no optional chain.
+     * What can still arrive undefined is the ELEMENT: a round that declared no mechanism, or an
+     * index past the end of a shorter array — legal, since no type ties the two array lengths, and
+     * something a chain never guarded in the first place. Both mean the same thing and get the same
+     * treatment: the round is left undriven. This case is the illustration of that mode, not a
+     * blessing of a misaligned request.
+     */
+    it('leaves a round PAST THE END of a shorter `forcedBy` undriven, and does not throw', async () => {
+      const { buildRaterClassifier } = await import('#src/raterTarget.js');
+      const { FORCED_BY_ASSERTIONS } = await import('#src/evalTypes.js');
+      const { model, invoke } = fakeModel([
+        { outcome: outcomeMappingTo('approve')!, reason: 'never consulted' },
+      ]);
+      const classify = await buildRaterClassifier({ type: 'rater', rung: 'assisted' }, configOf(), {
+        model,
+      });
+
+      const outcomes = await classify(
+        requestOf({
+          inputs: [ENV_LEAK, ENV_LEAK],
+          modelFree: true,
+          // ONE entry for TWO rounds: round 1 indexes past the end.
+          forcedBy: ['script-env-leak-preflight'],
+        })
+      );
+
+      expect(invoke).not.toHaveBeenCalled();
+      expect(outcomes).toHaveLength(2);
+      // The SAME command twice, driven and undriven. The marker is the whole of the difference —
+      // which is also why the action cannot carry this assertion: it is identical either way, as
+      // the `expect_action` finding above says it must be.
+      expect(outcomes[0].rationale).toContain(FORCED_BY_ASSERTIONS['script-env-leak-preflight']);
+      expect(outcomes[1].rationale).not.toContain(
+        FORCED_BY_ASSERTIONS['script-env-leak-preflight']
+      );
+      expect(outcomes[1].action).toBe(outcomes[0].action);
     });
 
     it('reports NO label for a preflight case, even though a rating now exists', async () => {
