@@ -178,9 +178,10 @@ const HARDLINE_SOURCE = readFileSync(
 /**
  * Every name `hardline.ts` binds at module scope, **enumerated from the TypeScript AST** — every
  * declarator of a variable statement (including the second and later ones), every function, class,
- * enum, namespace and destructured name, and every value it imports. `import type` and the inline
- * `{ type X }` modifier are skipped, as are `interface` and `type` declarations: a type carries no
- * runtime value and so cannot hold a pattern.
+ * enum, namespace and destructured name, and every value it imports, in the `from` form and the
+ * `import A = …` form alike. `import type` in either spelling and the inline `{ type X }` modifier
+ * are skipped, as are `interface` and `type` declarations: a type carries no runtime value and so
+ * cannot hold a pattern.
  *
  * **It parses rather than scans, and that difference is the finding this cell was rebuilt on.** A
  * lexical scan can only enumerate the declaration forms whoever wrote it thought of, and the two it
@@ -226,6 +227,11 @@ function moduleScopeBindings(source: string): string[] {
     ) {
       // An enum's MEMBERS are properties of the one binding its name introduces, so enrolling or
       // excusing that name is the decision this forces. An unnamed `export default` binds nothing.
+      //
+      // `declare global { … }` is also a ModuleDeclaration with an Identifier name, so it would
+      // yield a binding literally named `global` that then has to be enrolled or excused. That is
+      // OVER-inclusion, not a hole — it makes the gate louder, never quieter — so it is recorded
+      // here rather than special-cased.
       if (statement.name && ts.isIdentifier(statement.name)) names.add(statement.name.text);
     } else if (ts.isImportDeclaration(statement)) {
       const clause = statement.importClause;
@@ -240,6 +246,15 @@ function moduleScopeBindings(source: string): string[] {
           if (!element.isTypeOnly) names.add(element.name.text);
         }
       }
+    } else if (ts.isImportEqualsDeclaration(statement)) {
+      // `import A = require('x')` and `import A = N.M` — a seventh node kind that binds a
+      // module-scope name, and the one that can hide a value without introducing a visible
+      // declaration. Lint independently rejects both spellings in this repo at ERROR severity
+      // (`@typescript-eslint/no-require-imports` and `@typescript-eslint/no-namespace`), so this
+      // branch is not the only thing standing between the two and the surface — but that is a
+      // different file's promise, and this cell's name is unconditional. Do not delete it as dead.
+      // `import type A = require('x')` carries no runtime value, like every other type-only form.
+      if (!statement.isTypeOnly) names.add(statement.name.text);
     }
   }
   return [...names].sort();
@@ -334,9 +349,15 @@ describe('the §8 hardline pattern surface is frozen (EXT-112)', () => {
    * **That is measured, not argued** — the vacuity this file's first version guarded with a
    * `bindings.length` floor. Feeding a source that carries the module tag but parses to zero
    * statements (a degraded parser, a partial read) leaves the completeness cell red, naming all 31
-   * accounted names as no longer bound; feeding an empty source reddens this cell as well. There is
-   * no degradation of the parse that this file passes vacuously, because the completeness cell is an
-   * exact-set equality against names that are literals in this file and therefore always present.
+   * accounted names as no longer bound; feeding an empty source reddens this cell as well.
+   *
+   * The structural reason there is no degradation of the parse this file passes vacuously: the
+   * completeness cell is an exact-set equality whose expected side, `accounted`, includes the seven
+   * `NOT_A_PATTERN` keys — literals in THIS file, so present however badly the parse degrades. Seven
+   * names it can never match are enough to keep an emptied binding set red. (The rest of `accounted`
+   * is `Object.keys(HARDLINE_PATTERN_SURFACE)`, which comes from the imported live module and is NOT
+   * a literal here — do not lean on it for this argument. A degradation of the MODULE side is caught
+   * on the other side of the file, by the value cell above.)
    */
   it('parses hardline.ts itself and not some other file the relative URL reaches', () => {
     expect(HARDLINE_SOURCE).toContain('@module core/shell/hardline');
@@ -448,6 +469,14 @@ describe('the §8 hardline pattern surface is frozen (EXT-112)', () => {
       ['a default import', "import A from 'x';", ['A']],
       ['a namespace import', "import * as A from 'x';", ['A']],
       ['a bare import', "import 'x';", []],
+      // The seventh node kind that binds a module-scope name. All three spellings were measured
+      // returning NOTHING before the branch that handles them existed. This repo's lint rejects
+      // both at error severity, so neither could land here today — the rows are pinned anyway,
+      // because the cell above is named "in whatever form it is declared" without qualification
+      // and a lint rule is a promise made in a different file.
+      ['an import-equals require', "import A = require('x');", ['A']],
+      ['an exported import-equals require', "export import A = require('x');", ['A']],
+      ['an import-equals namespace alias', 'import A = N.M;', ['A']],
     ];
 
     it.each(forms)('binds the names in %s', (_form, source, expected) => {
@@ -463,6 +492,9 @@ describe('the §8 hardline pattern surface is frozen (EXT-112)', () => {
     const excluded: ReadonlyArray<readonly [string, string]> = [
       ['a type-only import', "import type { A } from 'x';"],
       ['an inline type modifier in a named import', "import { type A } from 'x';"],
+      // Pins the `isTypeOnly` skip in the import-equals branch: without this row that guard is
+      // the one line in the enumerator no cell would notice the loss of.
+      ['a type-only import-equals', "import type A = require('x');"],
       ['an interface', 'interface A {\n  b: string;\n}'],
       ['a type alias', "type A = 'x';"],
       ['a const inside a function body', "function f() {\n  const A = '1';\n  return A;\n}"],
@@ -474,14 +506,23 @@ describe('the §8 hardline pattern surface is frozen (EXT-112)', () => {
     });
 
     /**
-     * The only property here that the two tables above do not already pin. A `toContain('HIDDEN')`
-     * probe for the continuation declarator and the enum would be exactly the rows named as the
-     * regression rows — it could not fail while they passed, and an assertion that cannot fail alone
-     * adds nothing but the appearance of coverage.
+     * The only property here that the two tables above do not already pin: that a declaration
+     * keyword which is only TEXT — inside a comment, inside a string — binds nothing. A
+     * `toContain('HIDDEN')` probe for the continuation declarator and the enum would instead be
+     * exactly the rows named as the regression rows, unable to fail while those passed.
+     *
+     * **The fixture shape is the whole cell, and it is easy to write a version that cannot fail.**
+     * Both decoys must sit at COLUMN ZERO ON A LINE OF THEIR OWN, because that is precisely what a
+     * `^`-anchored line scan matches and what the parser, reading the comment and the template
+     * literal as single tokens, does not. A decoy trailing a `//` on the same line, or one behind an
+     * escaped `\n` inside a single-quoted string (which makes the fed source one line long), is
+     * invisible to a line scan as well — so the cell would pass against the very implementation
+     * class it exists to rule out. Measured, both ways: the two fixtures below return `["A","NOPE"]`
+     * under a line-anchored scan and `["A"]` here.
      */
     it('ignores a declaration keyword inside a comment or a string literal', () => {
-      expect(moduleScopeBindings("// const NOPE = '1';\nconst A = '1';")).toEqual(['A']);
-      expect(moduleScopeBindings("const A = '\\nconst NOPE = 1;';")).toEqual(['A']);
+      expect(moduleScopeBindings('const A = `\nconst NOPE = 1;`;')).toEqual(['A']);
+      expect(moduleScopeBindings("/*\nconst NOPE = 1;\n*/\nconst A = '1';")).toEqual(['A']);
     });
   });
 });
