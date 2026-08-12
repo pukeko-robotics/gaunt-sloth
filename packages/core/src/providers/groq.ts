@@ -5,12 +5,23 @@ import { ChatGroqInput } from '@langchain/groq';
 
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
+import { warnUnusedConfiguration } from '#src/providers/configurationPassthrough.js';
 
 // Function to process JSON config and create Groq LLM instance
 export async function processJsonConfig(llmConfig: ChatGroqInput): Promise<BaseChatModel> {
   const groq = await import('@langchain/groq');
   // Use config value if available, otherwise use the environment variable
   const groqApiKey = llmConfig.apiKey || env.GROQ_API_KEY;
+  // `ChatGroq` builds a Groq SDK client from its own TOP-LEVEL fields, so nothing in a
+  // `configuration` block reaches it — say so before dropping it.
+  warnUnusedConfiguration(
+    'groq',
+    (llmConfig as { configuration?: unknown }).configuration,
+    [],
+    'ChatGroq builds a Groq SDK client from top-level fields of the "llm" block instead: set ' +
+      '"baseUrl" (note the lower-case "url"), "timeout", "defaultHeaders", "defaultQuery", ' +
+      '"httpAgent" or "fetch" beside "model".'
+  );
   return new groq.ChatGroq({
     ...llmConfig,
     apiKey: groqApiKey,

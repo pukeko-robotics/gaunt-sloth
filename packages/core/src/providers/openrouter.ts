@@ -9,6 +9,7 @@ import type { ChatOpenRouterInput } from '@langchain/openrouter';
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 import {
+  warnConfigurationOverridesTopLevelField,
   warnUnappliedConfigurationPath,
   warnUnusedConfiguration,
 } from '#src/providers/configurationPassthrough.js';
@@ -106,6 +107,17 @@ export async function processJsonConfig(
     'baseURL' in baseURLOverride,
     'Give it the full base URL of the OpenRouter-compatible endpoint, or remove it to use the ' +
       'default https://openrouter.ai/api/v1.'
+  );
+
+  // `baseURL` is ALSO a native top-level field of `ChatOpenRouter`, forwarded by `...restConfig`
+  // below — and the block's value is spread after it, so it wins. Both are honoured surfaces, so
+  // the defect is only the silence: say which one takes effect rather than dropping the other
+  // without a word.
+  warnConfigurationOverridesTopLevelField(
+    'openrouter',
+    'baseURL',
+    restConfig.baseURL,
+    baseURLOverride.baseURL
   );
 
   const resolvedSiteUrl =

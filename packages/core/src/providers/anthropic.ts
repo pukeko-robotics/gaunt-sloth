@@ -1,6 +1,7 @@
 import { displayWarning } from '#src/utils/consoleUtils.js';
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
+import { warnUnusedConfiguration } from '#src/providers/configurationPassthrough.js';
 import { env } from '#src/utils/systemUtils.js';
 import type { AnthropicInput } from '@langchain/anthropic';
 import type {
@@ -18,6 +19,16 @@ export async function processJsonConfig(
   const anthropic = await import('@langchain/anthropic');
   // Use config value if available, otherwise use the environment variable
   const anthropicApiKey = llmConfig.apiKey || env.ANTHROPIC_API_KEY;
+  // `ChatAnthropic` builds an Anthropic SDK client from its own `clientOptions`, so nothing in a
+  // `configuration` block reaches it — say so before dropping it.
+  warnUnusedConfiguration(
+    'anthropic',
+    (llmConfig as { configuration?: unknown }).configuration,
+    [],
+    'ChatAnthropic builds an Anthropic SDK client instead: put client options such as a custom ' +
+      'base URL, a timeout or extra headers under "clientOptions" in the "llm" block, or set ' +
+      '"anthropicApiUrl" there for the base URL alone.'
+  );
   return new anthropic.ChatAnthropic({
     ...llmConfig,
     apiKey: anthropicApiKey,

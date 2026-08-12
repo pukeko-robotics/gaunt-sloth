@@ -52,6 +52,11 @@ cd ./your-project
 gth init google-genai
 ```
 
+**`configuration` is not a passthrough here.** Gaunt Sloth talks to the Gemini API through its own
+client rather than an OpenAI one, so nothing in a `configuration` block reaches it, and anything you
+put there is reported as ignored when the provider starts. Set `customHeaders`, `endpoint` or
+`apiVersion` as top-level fields of the `llm` block instead, beside `model`.
+
 ### Google Vertex AI
 
 ```bash
@@ -60,6 +65,11 @@ gth init vertexai
 gcloud auth login
 gcloud auth application-default login
 ```
+
+**`configuration` is not a passthrough here.** Vertex AI serves the same Gemini models through the
+same native client, so a `configuration` block reaches nothing here either and is reported as
+ignored when the provider starts. Set `customHeaders`, `endpoint`, `apiVersion` or `location` as
+top-level fields of the `llm` block instead, beside `model`.
 
 ### Anthropic
 
@@ -70,6 +80,11 @@ gth init anthropic
 
 Make sure you either define `ANTHROPIC_API_KEY` environment variable or edit your configuration file and set up your key.
 
+**`configuration` is not a passthrough here.** Gaunt Sloth builds an Anthropic SDK client, which
+takes its client options from `clientOptions`, so a `configuration` block reaches nothing and is
+reported as ignored when the provider starts. Put a custom base URL, a timeout or extra headers
+under `clientOptions` in the `llm` block, or set `anthropicApiUrl` there for the base URL alone.
+
 ### Groq
 
 ```bash
@@ -78,6 +93,11 @@ gth init groq
 ```
 
 Make sure you either define `GROQ_API_KEY` environment variable or edit your configuration file and set up your key.
+
+**`configuration` is not a passthrough here.** Gaunt Sloth builds a Groq SDK client from top-level
+fields of the `llm` block, so a `configuration` block reaches nothing and is reported as ignored when
+the provider starts. Set `baseUrl` (note the lower-case `url`), `timeout`, `defaultHeaders`,
+`defaultQuery`, `httpAgent` or `fetch` beside `model`.
 
 ### DeepSeek
 
@@ -132,7 +152,9 @@ your data, forbids fallbacks to anyone else, and gives a second model to fall ba
 **`configuration` is not a passthrough here.** Gaunt Sloth talks to OpenRouter through a native
 client rather than an OpenAI one, so the only things read out of a `configuration` block are
 `baseURL` and the `HTTP-Referer` / `X-Title` attribution headers (`siteUrl` and `siteName` at the
-top level are the direct way to set those). Anything else you put there is reported as ignored when
+top level are the direct way to set those). `baseURL` also exists as a top-level field; if you set
+it in both places the one under `configuration` wins, and the top-level one is reported as ignored
+so the two never disagree in silence. Anything else you put there is reported as ignored when
 the provider starts — move OpenRouter's own options (the fields listed above) to the top level.
 Transport settings are the exception: they have no top-level field either, so moving one up only
 makes it ignored quietly instead of loudly — see the next paragraph for what to do with those.

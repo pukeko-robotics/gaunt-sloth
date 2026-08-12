@@ -85,6 +85,40 @@ export function warnUnusedConfiguration(
 }
 
 /**
+ * Warn when a `configuration` path the factory DOES consume silently beats a top-level field of the
+ * `llm` block that sets the same thing.
+ *
+ * Neither value is unusable here and neither location is wrong, so this is not a case for
+ * {@link warnUnusedConfiguration}: both are honoured surfaces, and the only defect is that one wins
+ * without saying so. The user's config then reads as two settings and behaves as one.
+ *
+ * Values are never printed — a base URL can carry credentials — so the message names the two paths
+ * and which of them takes effect.
+ *
+ * @param appliedValue The value the factory actually applied. Pass the result of the SAME expression
+ *   that decides it, never a second copy of the test, for the reason given on
+ *   {@link warnUnappliedConfigurationPath}.
+ */
+export function warnConfigurationOverridesTopLevelField(
+  provider: string,
+  field: string,
+  topLevelValue: unknown,
+  appliedValue: unknown
+): void {
+  // Nothing to lose: no top-level field set, or the block's value was not applied over it.
+  if (topLevelValue === undefined || topLevelValue === null || topLevelValue === '') return;
+  if (appliedValue === undefined || appliedValue === null) return;
+  // The same endpoint written twice is redundant, not a conflict, and warning on it would train
+  // users to ignore the message.
+  if (topLevelValue === appliedValue) return;
+  displayWarning(
+    `Ignoring llm.${field} — the "${provider}" provider also has llm.configuration.${field} set, ` +
+      `and that one takes precedence. Set only one of the two so the "llm" block reads the way it ` +
+      `behaves.`
+  );
+}
+
+/**
  * Warn when a path the factory DECLARES it consumes is present in the user's block but was not in
  * fact applied — the empty string or `null` a factory's own guard skips.
  *

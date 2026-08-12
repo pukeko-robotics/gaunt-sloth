@@ -42,6 +42,56 @@ vi.mock('@langchain/openai', () => {
   return { ChatOpenAI };
 });
 
+const chatAnthropicConstructorMock = vi.fn();
+vi.mock('@langchain/anthropic', () => {
+  class ChatAnthropic {
+    constructor(config: unknown) {
+      chatAnthropicConstructorMock(config);
+    }
+  }
+  return { ChatAnthropic };
+});
+
+const chatGroqConstructorMock = vi.fn();
+vi.mock('@langchain/groq', () => {
+  class ChatGroq {
+    constructor(config: unknown) {
+      chatGroqConstructorMock(config);
+    }
+  }
+  return { ChatGroq };
+});
+
+const chatGoogleConstructorMock = vi.fn();
+vi.mock('@langchain/google/node', () => {
+  class ChatGoogle {
+    constructor(config: unknown) {
+      chatGoogleConstructorMock(config);
+    }
+  }
+  return { ChatGoogle };
+});
+
+const chatDeepSeekConstructorMock = vi.fn();
+vi.mock('@langchain/deepseek', () => {
+  class ChatDeepSeek {
+    constructor(config: unknown) {
+      chatDeepSeekConstructorMock(config);
+    }
+  }
+  return { ChatDeepSeek };
+});
+
+const chatXAIConstructorMock = vi.fn();
+vi.mock('@langchain/xai', () => {
+  class ChatXAI {
+    constructor(config: unknown) {
+      chatXAIConstructorMock(config);
+    }
+  }
+  return { ChatXAI };
+});
+
 const consoleUtilsMock = {
   display: vi.fn(),
   displayError: vi.fn(),
@@ -257,6 +307,258 @@ describe('CFG-34 control — a configuration block a provider CAN use stays sile
     await ollama({ type: 'ollama', model: 'gemma4:12b', configuration: {} } as never);
 
     expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * CFG-44 — the same defect in the four providers CFG-34 left behind. Each was measured against the
+ * built `dist/`: a `configuration` block reaches no client for any of them, so each gets one call
+ * to the SAME helper, with the replacement field named for that provider's own client.
+ */
+describe('CFG-44 — the remaining native-client providers warn too', () => {
+  /** One transport key, one endpoint and one header: three paths, none of which reaches a client. */
+  const UNUSABLE = {
+    timeout: 5000,
+    baseURL: 'https://gateway.example.com/v1',
+    defaultHeaders: { Authorization: 'Bearer gateway-token' },
+  };
+
+  /** Every path in {@link UNUSABLE} must be named — a message that reports only the first is a
+   * half-report, and the user would fix one key and keep the rest of the silence. */
+  function expectNamesEveryDroppedPath(warning: string): void {
+    expect(warning).toContain('llm.configuration.timeout');
+    expect(warning).toContain('llm.configuration.baseURL');
+    expect(warning).toContain('llm.configuration.defaultHeaders');
+  }
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    systemUtilsMock.env = {};
+  });
+
+  it('anthropic warns, naming the provider, every dropped path and clientOptions', async () => {
+    const { processJsonConfig } = await import('#src/providers/anthropic.js');
+
+    await processJsonConfig({
+      type: 'anthropic',
+      apiKey: 'sk-ant-test',
+      model: 'claude-sonnet-4-5',
+      configuration: UNUSABLE,
+    } as never);
+
+    const warning = onlyWarning();
+    expect(warning).toContain('anthropic');
+    expectNamesEveryDroppedPath(warning);
+    // The replacement is this client's own field, not a generic "move it to the top level":
+    // ChatAnthropic builds its SDK client from `clientOptions`.
+    expect(warning).toContain('clientOptions');
+    // Warn, don't fail — the model is still built.
+    expect(chatAnthropicConstructorMock).toHaveBeenCalledTimes(1);
+    expect(chatAnthropicConstructorMock.mock.calls[0][0].model).toBe('claude-sonnet-4-5');
+  });
+
+  it('groq warns, naming the provider, every dropped path and its top-level baseUrl', async () => {
+    const { processJsonConfig } = await import('#src/providers/groq.js');
+
+    await processJsonConfig({
+      type: 'groq',
+      apiKey: 'gsk-test',
+      model: 'llama-3.3-70b-versatile',
+      configuration: UNUSABLE,
+    } as never);
+
+    const warning = onlyWarning();
+    expect(warning).toContain('groq');
+    expectNamesEveryDroppedPath(warning);
+    // Groq's transport settings DO have top-level homes, and the spelling differs from the one the
+    // user just wrote (`baseUrl`, not `baseURL`) — which is precisely why naming it earns its place.
+    expect(warning).toContain('"baseUrl"');
+    expect(warning).toContain('defaultHeaders');
+    expect(chatGroqConstructorMock).toHaveBeenCalledTimes(1);
+    expect(chatGroqConstructorMock.mock.calls[0][0].model).toBe('llama-3.3-70b-versatile');
+  });
+
+  it('google-genai warns, naming the provider, every dropped path and customHeaders', async () => {
+    const { processJsonConfig } = await import('#src/providers/google-genai.js');
+
+    await processJsonConfig({
+      type: 'google-genai',
+      apiKey: 'goog-test',
+      model: 'gemini-3-pro-preview',
+      configuration: UNUSABLE,
+    } as never);
+
+    const warning = onlyWarning();
+    expect(warning).toContain('google-genai');
+    expectNamesEveryDroppedPath(warning);
+    expect(warning).toContain('customHeaders');
+    expect(chatGoogleConstructorMock).toHaveBeenCalledTimes(1);
+    expect(chatGoogleConstructorMock.mock.calls[0][0].platformType).toBe('gai');
+  });
+
+  it('vertexai warns, naming the provider, every dropped path and its own top-level fields', async () => {
+    const { processJsonConfig } = await import('#src/providers/vertexai.js');
+
+    await processJsonConfig({
+      type: 'vertexai',
+      model: 'gemini-3-pro-preview',
+      configuration: UNUSABLE,
+    } as never);
+
+    const warning = onlyWarning();
+    expect(warning).toContain('vertexai');
+    expectNamesEveryDroppedPath(warning);
+    expect(warning).toContain('customHeaders');
+    // `location` is a Vertex concern only, so the two ChatGoogle providers do NOT share one string.
+    expect(warning).toContain('location');
+    expect(chatGoogleConstructorMock).toHaveBeenCalledTimes(1);
+    expect(chatGoogleConstructorMock.mock.calls[0][0].vertexai).toBe(true);
+  });
+
+  it('none of the four says anything when there is no configuration block', async () => {
+    const { processJsonConfig: anthropic } = await import('#src/providers/anthropic.js');
+    const { processJsonConfig: groq } = await import('#src/providers/groq.js');
+    const { processJsonConfig: googleGenai } = await import('#src/providers/google-genai.js');
+    const { processJsonConfig: vertexai } = await import('#src/providers/vertexai.js');
+
+    await anthropic({ type: 'anthropic', apiKey: 'k', model: 'claude-sonnet-4-5' } as never);
+    await groq({ type: 'groq', apiKey: 'k', model: 'llama-3.3-70b-versatile' } as never);
+    // An empty block is the other shape a user's config takes on the way to being deleted.
+    await googleGenai({
+      type: 'google-genai',
+      apiKey: 'k',
+      model: 'gemini-3-pro-preview',
+      configuration: {},
+    } as never);
+    await vertexai({ type: 'vertexai', model: 'gemini-3-pro-preview' } as never);
+
+    expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+  });
+});
+
+describe('CFG-44 control — the providers on an OpenAI client are left alone', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    systemUtilsMock.env = {};
+  });
+
+  it('deepseek passes the user block through untouched, silently', async () => {
+    const { processJsonConfig } = await import('#src/providers/deepseek.js');
+
+    await processJsonConfig({
+      type: 'deepseek',
+      apiKey: 'ds-test',
+      model: 'deepseek-chat',
+      configuration: { timeout: 5000, baseURL: 'https://gateway.example.com/v1' },
+    } as never);
+
+    expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+    const built = chatDeepSeekConstructorMock.mock.calls[0][0];
+    expect(built.configuration.timeout).toBe(5000);
+    expect(built.configuration.baseURL).toBe('https://gateway.example.com/v1');
+  });
+
+  it('xai does not warn, and its block is passed on rather than dropped here', async () => {
+    const { processJsonConfig } = await import('#src/providers/xai.js');
+
+    await processJsonConfig({
+      type: 'xai',
+      apiKey: 'xai-test',
+      model: 'grok-4',
+      configuration: { timeout: 5000, baseURL: 'https://gateway.example.com/v1' },
+    } as never);
+
+    // This asserts the GTH boundary only: this factory hands the block on and says nothing. It
+    // deliberately does NOT assert the block is honoured, because it is not — `ChatXAI` descends
+    // from the OpenAI chat model but its constructor REPLACES `configuration` with its own
+    // `{ baseURL }` before calling super, so the user's timeout, headers and base URL all reach
+    // nothing. A mocked constructor cannot see that, and an assertion written as though the
+    // passthrough worked would pin the very premise this ticket measured to be false. Whether xai
+    // should warn is its own decision, and its reason clause cannot be this helper's "does not
+    // build an OpenAI client" — because it does build one.
+    expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+    expect(chatXAIConstructorMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * CFG-44 — `configuration.baseURL` is spread AFTER the top-level fields, so when a user sets both it
+ * wins. Both are honoured surfaces here (a top-level `baseURL` is a native `ChatOpenRouter` field),
+ * so neither is dropped as unusable and the only defect is that the config reads as two settings and
+ * behaves as one.
+ */
+describe('CFG-44 — a configuration path that quietly beats a top-level field', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    systemUtilsMock.env = { OPEN_ROUTER_API_KEY: 'test-key' };
+  });
+
+  it('openrouter says which of the two base URLs takes effect', async () => {
+    const { processJsonConfig } = await import('#src/providers/openrouter.js');
+
+    await processJsonConfig({
+      type: 'openrouter',
+      model: 'x-ai/grok',
+      baseURL: 'https://top-level.example.com/api/v1',
+      configuration: { baseURL: 'https://from-configuration.example.com/api/v1' },
+    } as never);
+
+    const warning = onlyWarning();
+    expect(warning).toContain('llm.baseURL');
+    expect(warning).toContain('llm.configuration.baseURL');
+    expect(warning).toContain('takes precedence');
+    // No value is quoted back: a base URL can carry credentials.
+    expect(warning).not.toContain('top-level.example.com');
+    // Precedence itself is unchanged — the message describes what happens, it does not alter it.
+    expect(chatOpenRouterConstructorMock.mock.calls[0][0].baseURL).toBe(
+      'https://from-configuration.example.com/api/v1'
+    );
+  });
+
+  it('openrouter stays silent when the two agree, and when only one of them is set', async () => {
+    const { processJsonConfig } = await import('#src/providers/openrouter.js');
+
+    // The same endpoint written twice is redundant, not a conflict: nothing is lost, so warning
+    // would only teach the user to ignore the message.
+    await processJsonConfig({
+      type: 'openrouter',
+      model: 'x-ai/grok',
+      baseURL: 'https://same.example.com/api/v1',
+      configuration: { baseURL: 'https://same.example.com/api/v1' },
+    } as never);
+
+    // A top-level `baseURL` on its own is applied, with nothing overriding it.
+    await processJsonConfig({
+      type: 'openrouter',
+      model: 'x-ai/grok',
+      baseURL: 'https://top-level.example.com/api/v1',
+    } as never);
+
+    expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+    expect(chatOpenRouterConstructorMock.mock.calls[1][0].baseURL).toBe(
+      'https://top-level.example.com/api/v1'
+    );
+  });
+
+  it('openrouter reports the unusable value case, not a precedence conflict, when the block is empty', async () => {
+    const { processJsonConfig } = await import('#src/providers/openrouter.js');
+
+    // `configuration.baseURL` is present but empty, so the factory's guard skips it and the
+    // top-level value survives. The user still needs to hear about the dead key — but calling that
+    // an override would be a false report, since nothing was overridden.
+    await processJsonConfig({
+      type: 'openrouter',
+      model: 'x-ai/grok',
+      baseURL: 'https://top-level.example.com/api/v1',
+      configuration: { baseURL: '' },
+    } as never);
+
+    const warning = onlyWarning();
+    expect(warning).toContain('no usable value');
+    expect(warning).not.toContain('takes precedence');
+    expect(chatOpenRouterConstructorMock.mock.calls[0][0].baseURL).toBe(
+      'https://top-level.example.com/api/v1'
+    );
   });
 });
 

@@ -18,6 +18,7 @@ import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 import { applyGeminiToolSchemaSanitizer } from '#src/providers/geminiSchemaSanitizer.js';
 import { applyGeminiThoughtSummaries } from '#src/providers/geminiThinking.js';
+import { warnUnusedConfiguration } from '#src/providers/configurationPassthrough.js';
 
 export function init(configFileName: string, force = false, model?: string): void {
   // Determine which content to use based on file extension
@@ -43,6 +44,16 @@ export async function processJsonConfig(
   };
   delete configFields.type;
   delete configFields.apiKeyEnvironmentVariable;
+  // `ChatGoogle` is a native client for the Gemini API, so nothing in a `configuration` block
+  // reaches it — say so before dropping it.
+  warnUnusedConfiguration(
+    'vertexai',
+    (llmConfig as { configuration?: unknown }).configuration,
+    [],
+    'ChatGoogle talks to Vertex AI through its own client instead: set "customHeaders", ' +
+      '"endpoint", "apiVersion" or "location" as top-level fields of the "llm" block beside ' +
+      '"model".'
+  );
   // GS2-58: normalise every tool's JSON-Schema at the ChatGoogle boundary so Gemini's OpenAPI-3.0
   // subset accepts built-in, custom, and MCP tools alike (see geminiSchemaSanitizer).
   // CFG-33: Vertex serves the same Gemini models through the same ChatGoogle class, so it has the

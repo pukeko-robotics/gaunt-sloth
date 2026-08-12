@@ -7,6 +7,7 @@ import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 import { applyGeminiToolSchemaSanitizer } from '#src/providers/geminiSchemaSanitizer.js';
 import { applyGeminiThoughtSummaries } from '#src/providers/geminiThinking.js';
+import { warnUnusedConfiguration } from '#src/providers/configurationPassthrough.js';
 
 // Function to process JSON config and create Google GenAI LLM instance
 export async function processJsonConfig(
@@ -23,6 +24,15 @@ export async function processJsonConfig(
   };
   delete configFields.type;
   delete configFields.apiKeyEnvironmentVariable;
+  // `ChatGoogle` is a native client for the Gemini API, so nothing in a `configuration` block
+  // reaches it — say so before dropping it.
+  warnUnusedConfiguration(
+    'google-genai',
+    (llmConfig as { configuration?: unknown }).configuration,
+    [],
+    'ChatGoogle talks to the Gemini API through its own client instead: set "customHeaders", ' +
+      '"endpoint" or "apiVersion" as top-level fields of the "llm" block beside "model".'
+  );
   // GS2-58: normalise every tool's JSON-Schema at the ChatGoogle boundary so Gemini's OpenAPI-3.0
   // subset accepts built-in, custom, and MCP tools alike (see geminiSchemaSanitizer).
   // CFG-33: ask for the thought summaries of the thinking Gemini already does and already bills,
