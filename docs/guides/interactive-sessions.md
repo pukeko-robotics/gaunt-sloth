@@ -26,7 +26,7 @@ approvals gate — by default the auto-rater lets clearly-safe ones through and 
 rest (`/approvals write` to confirm each one — and every other tool call — yourself, while its
 built-in file tools keep working inside your working folder). Follow up in the same conversation —
 "now add a CHANGELOG entry" — context carries across turns. Type `exit`, or press Ctrl+C with
-nothing typed, to leave.
+nothing typed and no turn running, to leave.
 
 ## `gth` vs `gth code` vs `gth chat`
 
@@ -111,7 +111,7 @@ one line of several.
 `Ctrl+Y` holds one deletion, the most recent of the word and line ones or of a `Ctrl+C` that scrapped
 the message; `Backspace` and `Delete` do not change it, so it stays predictable while you type.
 `Ctrl+D` deletes forward here and never ends the session — use `/exit`, `/quit`, or `Ctrl+C` with
-nothing typed, for that.
+nothing typed and no turn running, for that.
 
 ## TUI or plain readline (`--tui` / `--no-tui`, `tui`)
 

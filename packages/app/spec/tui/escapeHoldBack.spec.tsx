@@ -59,6 +59,8 @@ const KEY = {
   pageUp: '\x1b[5~',
   /** Option+↑ on Terminal.app, split the way 6 of 7 presses actually arrive. */
   metaUpSplit: ['\x1b', '\x1b[A'],
+  /** The interrupt byte. */
+  ctrlC: '\x03',
 };
 
 const baseProps = {
@@ -218,6 +220,75 @@ describe('<App> behind the TUI-C62 escape hold-back', () => {
     await vi.waitFor(() => expect(stdout.lastFrame()).toContain('numbered-row-080'), {
       timeout: 5_000,
     });
+
+    teardown();
+  }, 20_000);
+
+  /**
+   * TUI-C77's residual, stated as a test rather than only as a comment.
+   *
+   * `<App>` claims Ctrl+C on Ink's OWN predicate — `key.ctrl && input === 'c'` — so the set of
+   * keystrokes the ladder claims is exactly the set Ink used to swallow. A Ctrl+C released together
+   * with a held-back Escape reaches Ink as `ESC ^C`, which parses as `{name: '', ctrl: false}`; the
+   * `input` only becomes `'\x03'` after `use-input` strips the escape prefix, and `key.ctrl` is
+   * false throughout. So it does not match, and `mouseStdin.ts` says so in as many words.
+   *
+   * **What the difference is observable AS, which is not what it first looks like.** With no
+   * modifier set, `<PromptEditor>`'s insert branch takes the merged event and types the stray byte
+   * into the buffer — so by the time the ladder is asked, the prompt is never empty. Widening the
+   * predicate to `input === '\x03' || …`, the obvious tidy-up for a future reader, therefore does
+   * not change whether the session exits: it changes whether **rung 1 fires**, and a user who types
+   * a message and presses Escape then Ctrl+C within the hold window loses it. That is why this case
+   * is built around a draft rather than around the exit, and why the assertion below is the draft.
+   */
+  it('is not the interrupt key when the Ctrl+C is released with a held-back Escape', async () => {
+    const onExit = vi.fn();
+    const pump = blockingAgent();
+    const { stdout, source, teardown } = renderBehindFilter(
+      <App {...baseProps} agent={pump.agent} onExit={onExit} initialMessage="go" />
+    );
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('streaming'), {
+      timeout: RENDER_TIMEOUT_MS,
+    });
+
+    // The prompt stays mounted while a turn streams (EXT-12), so all three rungs are live at once
+    // and one case can say the merged form fires none of them.
+    source.write('a draft worth keeping');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> a draft worth keeping'), {
+      timeout: RENDER_TIMEOUT_MS,
+    });
+
+    // Same tick, so the filter hands Ink one chunk — the residual's exact shape.
+    source.write(KEY.escape);
+    source.write(KEY.ctrlC);
+
+    // "Nothing happened" again waits on a POSITIVE consequence ordered after it in the same stream.
+    source.write('z');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('z'), { timeout: 5_000 });
+
+    // Rung 1 did not fire — the draft is still there…
+    expect(stdout.lastFrame()).toContain('a draft worth keeping');
+    // …nor rung 2, nor rung 3.
+    expect(pump.wasAborted()).toBe(false);
+    expect(onExit).not.toHaveBeenCalled();
+
+    teardown();
+  }, 20_000);
+
+  it('is the interrupt key when the Ctrl+C arrives on its own', async () => {
+    // The control the case above needs: without it, a filter that dropped the byte entirely — or an
+    // <App> that never claimed it — would satisfy those assertions just as well.
+    const onExit = vi.fn();
+    const { stdout, source, teardown } = renderBehindFilter(
+      <App {...baseProps} agent={idleAgent} onExit={onExit} />
+    );
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready to chat'), {
+      timeout: RENDER_TIMEOUT_MS,
+    });
+
+    source.write(KEY.ctrlC);
+
+    await vi.waitFor(() => expect(onExit).toHaveBeenCalledTimes(1), { timeout: 5_000 });
 
     teardown();
   }, 20_000);

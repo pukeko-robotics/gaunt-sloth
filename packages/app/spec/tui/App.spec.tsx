@@ -7,7 +7,7 @@ import type {
   ToolApprovalDecision,
 } from '@gaunt-sloth/core/core/types.js';
 import type { PendingApproval, PendingAttackBanner, TuiAgent } from '#src/tui/types.js';
-import { App } from '#src/tui/components/App.js';
+import { App, QUIT_CLEANUP_DEADLINE_MS } from '#src/tui/components/App.js';
 import { FALLBACK_TERMINAL_ROWS } from '#src/tui/useTerminalSize.js';
 
 /** A fake agent that replays a fixed event script for each turn. */
@@ -25,7 +25,7 @@ function scriptedAgent(events: AgentStreamEvent[]): TuiAgent {
 const baseProps = {
   mode: 'chat',
   readyMessage: '\nGaunt Sloth is ready to chat. Type your prompt.',
-  exitMessage: "Type 'exit' or Ctrl+C to exit chat · /help for commands\n",
+  exitMessage: "Type 'exit' to leave chat · /help for commands\n",
 };
 
 const ESC = String.fromCharCode(27); // Escape key byte
@@ -34,6 +34,7 @@ const ESC = String.fromCharCode(27); // Escape key byte
 // a synthesised `{ctrl: true, input: 'c'}` would pass with the byte never decoded to it.
 const CTRL_C = '\x03';
 const CTRL_Y = '\x19';
+const CTRL_U = '\x15'; // kill back to the start of the line — used to empty the prompt mid-chunk
 const TAB = '\t'; // Tab key (char 9)
 const PAGE_DOWN = '\x1b[6~'; // PageDown CSI sequence
 const PAGE_UP = '\x1b[5~'; // PageUp CSI sequence
@@ -155,7 +156,7 @@ describe('tui <App>', () => {
       const frame = lastFrame() ?? '';
       // The whole row, as one sentence: the command's own half plus this surface's fragment.
       expect(frame).toContain(
-        "Type 'exit' or Ctrl+C to exit chat · /help for commands · PgUp/PgDn to scroll history"
+        "Type 'exit' to leave chat · /help for commands · PgUp/PgDn to scroll history"
       );
     });
     // That the shared literal itself is untouched is asserted where it is declared — chatCommand
@@ -1541,6 +1542,47 @@ describe('tui <App>', () => {
       unmount();
     });
 
+    /**
+     * The rung question is answered from the AUTHORITATIVE buffer, not the rendered mirror.
+     *
+     * Ink splits one stdin read into several key events and dispatches them synchronously, so a
+     * `Ctrl+C` sharing a chunk with the edit that emptied the prompt is decided against a render
+     * that still shows the old text. Reading the mirror makes rung 1 claim the keystroke and scrap
+     * a buffer that is already empty — the `Ctrl+C` is swallowed, the runaway turn keeps going, and
+     * the key the user pressed to stop it did nothing. That is the exact hazard the ladder exists
+     * to close, so it is asserted rather than left to the comment that explains it.
+     *
+     * The two writes are deliberately NOT awaited apart: awaiting between them lets React render in
+     * between, which is the state this case is about not being in.
+     */
+    it('answers the rung from the live buffer: Ctrl+U then Ctrl+C in one burst stops the turn', async () => {
+      const onExit = vi.fn();
+      let aborted = false;
+      const { stdin, lastFrame, frames, unmount } = render(
+        <App
+          {...baseProps}
+          agent={blockingAgent(() => {
+            aborted = true;
+          })}
+          onExit={onExit}
+          initialMessage="run"
+        />
+      );
+      await vi.waitFor(() => expect(frames.join('\n')).toContain('working'));
+
+      stdin.write('abc');
+      await vi.waitFor(() => expect(lastFrame()).toContain('> abc'));
+
+      stdin.write(CTRL_U);
+      stdin.write(CTRL_C);
+
+      await vi.waitFor(() => expect(aborted).toBe(true));
+      // Rung 2, not rung 3: stopping the turn is not leaving.
+      expect(onExit).not.toHaveBeenCalled();
+
+      unmount();
+    });
+
     it('rung 3: with nothing typed and nothing running, leaves', async () => {
       const onExit = vi.fn();
       const { stdin, lastFrame, unmount } = render(
@@ -1646,6 +1688,49 @@ describe('tui <App>', () => {
       unmount();
     });
 
+    /**
+     * The third modal limb, and the only one with a SECOND claimant for the byte: <SelectList> is a
+     * `useInput` subscriber too, so without the short-circuit the picker's own handler answers first
+     * and the ladder falls to rung 2 under it.
+     *
+     * It only changes anything MID-TURN — idle, the ladder falls through to rung 3 and exits anyway
+     * — which is why the picker is opened here while a turn is in flight. Anywhere else this case
+     * would pass with the limb deleted.
+     */
+    it('exits from the open approvals picker rather than stopping the turn under it', async () => {
+      const onExit = vi.fn();
+      let aborted = false;
+      const { agent, rung } = approvalsAgent('write', {
+        async *runTurn(_input, signal) {
+          yield { type: 'text', delta: 'working' };
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) return resolve();
+            signal.addEventListener('abort', () => {
+              aborted = true;
+              resolve();
+            });
+          });
+        },
+      });
+      const { stdin, lastFrame, frames, unmount } = render(
+        <App {...baseProps} agent={agent} onExit={onExit} initialMessage="run" />
+      );
+      await vi.waitFor(() => expect(frames.join('\n')).toContain('working'));
+
+      stdin.write('/approvals');
+      await vi.waitFor(() => expect(lastFrame()).toContain('> /approvals'));
+      stdin.write('\r');
+      await vi.waitFor(() => expect(lastFrame()).toContain('Choose an approvals mode:'));
+
+      stdin.write(CTRL_C);
+      await vi.waitFor(() => expect(onExit).toHaveBeenCalledTimes(1));
+
+      // Not stopped-and-still-here, and leaving is never a posture change either.
+      expect(aborted).toBe(false);
+      expect(rung()).toBe('write');
+      unmount();
+    });
+
     // The rest of the exit path, unchanged by the ladder and asserted so it stays that way: all
     // three routes go through the same `quit()` the bottom rung takes.
     it.each([
@@ -1665,6 +1750,153 @@ describe('tui <App>', () => {
       await vi.waitFor(() => expect(onExit).toHaveBeenCalledTimes(1));
 
       unmount();
+    });
+  });
+
+  /**
+   * TUI-C79 — **leaving is bounded, and a second press really goes.**
+   *
+   * Routing every exit through `props.onExit` is what stopped Ctrl+C skipping the fail-closed
+   * teardown, and it put an unbounded `runner.cleanup()` → MCP `close()` in front of the unmount.
+   * Raw mode means the byte is not a signal, so nothing underneath rescues a hung close: without a
+   * deadline, "Ctrl+C did nothing" is a reachable screen.
+   *
+   * These cases are about WHEN Ink unmounts relative to that teardown, which the rung cases above
+   * deliberately say nothing about — they observe leaving through the `onExit` prop, which is called
+   * at the same moment either way. The unmount is observed by a sibling whose effect cleanup runs
+   * when Ink tears the tree down: that is the event itself, not a proxy for it.
+   */
+  describe('quit() races the session teardown against a deadline (TUI-C79)', () => {
+    /** Records the moment Ink unmounts the tree — i.e. the moment `exit()` took effect. */
+    const ExitProbe = ({ onUnmount }: { onUnmount: () => void }): null => {
+      React.useEffect(() => onUnmount, [onUnmount]);
+      return null;
+    };
+
+    /** Long enough for any already-scheduled unmount to have happened, short enough to be free. */
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
+
+    /** Drain the microtask queue while `setTimeout` is faked (`setImmediate` is not). */
+    const drainMicrotasks = () => new Promise((resolve) => setImmediate(resolve));
+
+    /** A teardown that never settles — the hung MCP close, as a promise. */
+    const neverSettles = () => new Promise<void>(() => {});
+
+    it('leaves once the session teardown finishes, and not before', async () => {
+      let finishCleanup: (() => void) | undefined;
+      const onExit = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishCleanup = resolve;
+          })
+      );
+      const unmounted = vi.fn();
+      const { stdin, lastFrame, unmount } = render(
+        <>
+          <App {...baseProps} agent={scriptedAgent([])} onExit={onExit} />
+          <ExitProbe onUnmount={unmounted} />
+        </>
+      );
+      await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+
+      stdin.write(CTRL_C);
+      await vi.waitFor(() => expect(onExit).toHaveBeenCalledTimes(1));
+
+      // The wait is real: the teardown the fail-closed bridges live in is not skipped past.
+      await settle();
+      expect(unmounted).not.toHaveBeenCalled();
+
+      finishCleanup?.();
+      await vi.waitFor(() => expect(unmounted).toHaveBeenCalledTimes(1));
+      // And the deadline's own `exit()` is a no-op behind the latch, not a second unmount.
+      expect(onExit).toHaveBeenCalledTimes(1);
+
+      unmount();
+    });
+
+    it('leaves at the deadline when the session teardown never settles', async () => {
+      const onExit = vi.fn(neverSettles);
+      const unmounted = vi.fn();
+      const { stdin, lastFrame, unmount } = render(
+        <>
+          <App {...baseProps} agent={scriptedAgent([])} onExit={onExit} />
+          <ExitProbe onUnmount={unmounted} />
+        </>
+      );
+      await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+
+      // Only the two timer functions `quit()` uses, so Ink's own scheduling is left alone — and so
+      // the suite does not spend the deadline in real seconds.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        stdin.write(CTRL_C);
+        expect(onExit).toHaveBeenCalledTimes(1);
+
+        await drainMicrotasks();
+        expect(unmounted).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(QUIT_CLEANUP_DEADLINE_MS);
+        expect(unmounted).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+
+      unmount();
+    });
+
+    it('leaves at once on a second Ctrl+C while the teardown is still in flight', async () => {
+      const onExit = vi.fn(neverSettles);
+      const unmounted = vi.fn();
+      const { stdin, lastFrame, unmount } = render(
+        <>
+          <App {...baseProps} agent={scriptedAgent([])} onExit={onExit} />
+          <ExitProbe onUnmount={unmounted} />
+        </>
+      );
+      await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+
+      stdin.write(CTRL_C);
+      await vi.waitFor(() => expect(onExit).toHaveBeenCalledTimes(1));
+      await settle();
+      expect(unmounted).not.toHaveBeenCalled();
+
+      // The reflex when a keypress appears to do nothing, and the reason the deadline is not the
+      // only escape: no timers advanced here, and no waiting on the teardown either.
+      stdin.write(CTRL_C);
+      await vi.waitFor(() => expect(unmounted).toHaveBeenCalledTimes(1));
+      // Skipped the wait, not the teardown: it is already running and was not restarted.
+      expect(onExit).toHaveBeenCalledTimes(1);
+
+      unmount();
+    });
+
+    it('leaves when the session teardown throws, without leaking an unhandled rejection', async () => {
+      const leaked: unknown[] = [];
+      const record = (reason: unknown) => leaked.push(reason);
+      process.on('unhandledRejection', record);
+      try {
+        const onExit = vi.fn(() => Promise.reject(new Error('mcp close blew up')));
+        const unmounted = vi.fn();
+        const { stdin, lastFrame, unmount } = render(
+          <>
+            <App {...baseProps} agent={scriptedAgent([])} onExit={onExit} />
+            <ExitProbe onUnmount={unmounted} />
+          </>
+        );
+        await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+
+        stdin.write(CTRL_C);
+        await vi.waitFor(() => expect(unmounted).toHaveBeenCalledTimes(1));
+
+        // A `.finally()` here would re-raise into a promise nothing awaits, so the session would
+        // exit AND print an unhandled rejection over the user's restored screen.
+        await settle();
+        expect(leaked).toEqual([]);
+
+        unmount();
+      } finally {
+        process.off('unhandledRejection', record);
+      }
     });
   });
 

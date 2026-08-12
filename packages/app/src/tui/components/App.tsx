@@ -81,6 +81,26 @@ type DistributiveOmitId<T> = T extends unknown ? Omit<T, 'id'> : never;
 const isPlainExit = (s: string): boolean => s.trim().toLowerCase() === 'exit';
 
 /**
+ * [[TUI-C79]] — how long `quit()` gives the session's own teardown before it leaves anyway.
+ *
+ * **Why there is a deadline at all.** Every exit routes through `props.onExit`, which answers both
+ * fail-closed bridges and then awaits `runner.cleanup()` → the MCP client's `close()` — a network
+ * or subprocess close with no timeout of its own. Waiting on it unconditionally would make Ctrl+C
+ * conditional on a remote server being well behaved, and raw mode means the byte is not a signal, so
+ * there is no kernel-level fallback underneath. On a hung or merely slow close the screen simply
+ * reads as "Ctrl+C did nothing", which is the one thing this key must never do.
+ *
+ * **Why the cleanup is still awaited.** The fail-closed answers (`abortPending` on both bridges) are
+ * synchronous and land before the first await, so they are never at risk; what the wait buys is the
+ * ordinary case — MCP servers closed, the session log flushed — and that is worth a bounded pause.
+ *
+ * Two seconds is chosen to sit well past a healthy local teardown and well inside the ~1 s at which
+ * a keypress stops feeling connected to the screen. It is not a timeout on the cleanup itself: the
+ * work keeps running, it just stops being something the exit is gated on.
+ */
+export const QUIT_CLEANUP_DEADLINE_MS = 2000;
+
+/**
  * Root TUI component: owns the transcript, the in-progress live turn, and the run
  * lifecycle (one `AbortController` per turn; Esc aborts). It consumes the agent purely as
  * an `AsyncGenerator<AgentStreamEvent>` and folds events through the pure `foldEvents`
@@ -175,6 +195,9 @@ export function App(props: TuiAppProps): React.ReactElement {
   // first rung asks the buffer to scrap itself through this; everything else about the buffer stays
   // inside <PromptInput>, where it lives.
   const promptHandleRef = useRef<PromptInputHandle | null>(null);
+  // TUI-C79 — set the moment a teardown starts, so a second `quit()` can tell "leaving" from
+  // "already leaving" and skip straight to the unmount. See `quit()`.
+  const quittingRef = useRef(false);
   const { exit } = useApp();
   // TUI-C48 — the full-screen frame is exactly this tall, which is what pins the dock to the
   // terminal floor AND what stops a frame from overflowing the screen (a taller frame loses its
@@ -328,8 +351,45 @@ export function App(props: TuiAppProps): React.ReactElement {
     [agent]
   );
 
+  /**
+   * Leave the session: run the module's teardown, then unmount — but never wait on the teardown
+   * forever, and never make the user press the key twice with nothing to show for the first press.
+   *
+   * Three properties, each of them load-bearing:
+   *
+   *  1. **Bounded.** `exit()` happens when the teardown settles OR at
+   *     {@link QUIT_CLEANUP_DEADLINE_MS}, whichever comes first — see that constant for why. The
+   *     latch means the loser of that race is a no-op rather than a second unmount.
+   *  2. **A second press force-exits.** While a teardown is in flight the app is still mounted and
+   *     still reading the keyboard, so the reflex when nothing appears to happen is to press again;
+   *     that press leaves at once. It is safe because the teardown it skips waiting for is already
+   *     running and every step of it latches.
+   *  3. **A teardown that THROWS still exits.** `.then(leave, leave)` rather than `.finally(leave)`:
+   *     `finally` re-raises the rejection into the promise it returns, which nothing here awaits, so
+   *     a cleanup that threw would exit AND raise an unhandled rejection on the way out.
+   *
+   * The timer is `unref`'d because a pending exit deadline is never a reason to hold the process
+   * open — if everything else has finished, leaving is exactly what was wanted.
+   */
   const quit = useCallback(() => {
-    void Promise.resolve(props.onExit?.()).finally(() => exit());
+    if (quittingRef.current) {
+      exit();
+      return;
+    }
+    quittingRef.current = true;
+
+    let left = false;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const leave = () => {
+      if (left) return;
+      left = true;
+      if (deadline !== undefined) clearTimeout(deadline);
+      exit();
+    };
+
+    deadline = setTimeout(leave, QUIT_CLEANUP_DEADLINE_MS);
+    deadline.unref?.();
+    void Promise.resolve(props.onExit?.()).then(leave, leave);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exit]);
 

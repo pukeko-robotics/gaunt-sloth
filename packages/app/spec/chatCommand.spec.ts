@@ -105,7 +105,7 @@ describe('chatCommand', () => {
         mode: 'chat',
         description: 'Start an interactive chat session with Gaunt Sloth',
         readyMessage: '\nGaunt Sloth is ready to chat. Type your prompt.',
-        exitMessage: "Type 'exit' or Ctrl+C to exit chat · /help for commands\n",
+        exitMessage: "Type 'exit' to leave chat · /help for commands\n",
       }),
       {},
       'test message'
@@ -122,7 +122,7 @@ describe('chatCommand', () => {
         mode: 'chat',
         description: 'Start an interactive chat session with Gaunt Sloth',
         readyMessage: '\nGaunt Sloth is ready to chat. Type your prompt.',
-        exitMessage: "Type 'exit' or Ctrl+C to exit chat · /help for commands\n",
+        exitMessage: "Type 'exit' to leave chat · /help for commands\n",
       }),
       {},
       undefined
@@ -139,7 +139,7 @@ describe('chatCommand', () => {
         mode: 'chat',
         description: 'Start an interactive chat session with Gaunt Sloth',
         readyMessage: '\nGaunt Sloth is ready to chat. Type your prompt.',
-        exitMessage: "Type 'exit' or Ctrl+C to exit chat · /help for commands\n",
+        exitMessage: "Type 'exit' to leave chat · /help for commands\n",
       }),
       {},
       undefined
@@ -211,16 +211,14 @@ describe('Default Chat Behavior (no arguments)', () => {
       readModePrompt: readChatPrompt,
       description: 'Start an interactive chat session with Gaunt Sloth',
       readyMessage: '\nGaunt Sloth is ready to chat. Type your prompt.',
-      exitMessage: "Type 'exit' or Ctrl+C to exit chat · /help for commands\n",
+      exitMessage: "Type 'exit' to leave chat · /help for commands\n",
     };
 
     expect(sessionConfig.mode).toBe('chat');
     expect(sessionConfig.readModePrompt).toBe(readChatPrompt);
     expect(sessionConfig.description).toBe('Start an interactive chat session with Gaunt Sloth');
     expect(sessionConfig.readyMessage).toBe('\nGaunt Sloth is ready to chat. Type your prompt.');
-    expect(sessionConfig.exitMessage).toBe(
-      "Type 'exit' or Ctrl+C to exit chat · /help for commands\n"
-    );
+    expect(sessionConfig.exitMessage).toBe("Type 'exit' to leave chat · /help for commands\n");
   });
 
   it('Should handle createInteractiveSession with initial message', async () => {
@@ -233,7 +231,7 @@ describe('Default Chat Behavior (no arguments)', () => {
         mode: 'chat',
         description: 'Start an interactive chat session with Gaunt Sloth',
         readyMessage: '\nGaunt Sloth is ready to chat. Type your prompt.',
-        exitMessage: "Type 'exit' or Ctrl+C to exit chat · /help for commands\n",
+        exitMessage: "Type 'exit' to leave chat · /help for commands\n",
       }),
       {},
       'initial message'

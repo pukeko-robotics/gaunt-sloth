@@ -147,6 +147,23 @@ describe('createTuiSession — the full-screen surface (TUI-C48)', () => {
     expect(options.alternateScreen).toBe(true);
   });
 
+  // TUI-C79 — the option that hands Ctrl+C to <App> at all, on the render a real session uses.
+  // Without it Ink swallows the byte before any subscriber sees it and unmounts, which reverts the
+  // whole ladder (scrap the draft / stop the turn / leave) to an unconditional exit AND skips the
+  // `onExit` teardown the fail-closed bridges hang on. It is asserted here because the PTY suites
+  // cannot reach it: the ones that drive this render only assert that the session ended, which an
+  // Ink unmount satisfies just as well, and the rest set `GTH_TUI_E2E_FIXTURE` and drive the fixture
+  // render instead. Same shape as <SelectList>'s own assertion for its nested render.
+  it('hands Ctrl+C to <App> instead of letting Ink exit on it', async () => {
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await createTuiSession(sessionConfig, overrides);
+
+    expect(renderMock).toHaveBeenCalledTimes(1);
+    const options = renderMock.mock.calls[0][1] as { exitOnCtrlC?: boolean };
+    expect(options.exitOnCtrlC).toBe(false);
+  });
+
   it('writes no viewport bump of its own — the alternate screen replaced it', async () => {
     // The TUI-C13 launch bump pushed a screenful of newlines into the user's scrollback and then
     // homed the cursor. In the alternate screen that is both pointless and destructive: the buffer

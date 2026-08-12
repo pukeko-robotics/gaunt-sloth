@@ -169,8 +169,7 @@ test.describe('gth chat TUI — greeting fixture', () => {
   test('the hint row advertises scrolling, and survives a /help taller than the region', async ({
     terminal,
   }) => {
-    const hintRow =
-      "Type 'exit' or Ctrl+C to exit chat · /help for commands · PgUp/PgDn to scroll history";
+    const hintRow = "Type 'exit' to leave chat · /help for commands · PgUp/PgDn to scroll history";
     await expect(terminal.getByText(hintRow)).toBeVisible();
 
     terminal.write('/help');

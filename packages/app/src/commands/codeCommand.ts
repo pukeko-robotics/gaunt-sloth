@@ -14,7 +14,10 @@ export function codeCommand(
     description:
       'Interactively write code with sloth (has full file system access within your project)',
     readyMessage: '\nGaunt Sloth is ready to code. Type your prompt.',
-    exitMessage: "Type 'exit' or Ctrl+C to exit code session · /help for commands\n",
+    // [[TUI-C79]] — the same shared-row rule as `chatCommand`: `exit` is the one route that is true
+    // on both surfaces in every state, `Ctrl+C` is a three-meaning key on the TUI and cannot be
+    // stated accurately in a fixed row, and `/help` is where the per-context version lives.
+    exitMessage: "Type 'exit' to leave the code session · /help for commands\n",
   };
 
   // REL-3: bare `gth` (no subcommand) now defaults to the agentic code session.

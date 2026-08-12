@@ -13,7 +13,13 @@ export function chatCommand(
     readModePrompt: readChatPrompt,
     description: 'Start an interactive chat session with Gaunt Sloth',
     readyMessage: '\nGaunt Sloth is ready to chat. Type your prompt.',
-    exitMessage: "Type 'exit' or Ctrl+C to exit chat · /help for commands\n",
+    // [[TUI-C79]] — this row is shared by BOTH surfaces (the Ink dock composes it with
+    // TUI_HINT_SUFFIX; the readline session prints it as-is), so every clause has to be true on
+    // both. `exit` is: it needs no condition on either surface, in any state. `Ctrl+C` no longer
+    // is — on the TUI it scraps a draft first and stops a turn second, and it only leaves from the
+    // bottom of that ladder — and no accurate short wording exists for a fixed row, so the clause
+    // is dropped rather than qualified. `/help` is the reference, and lists Ctrl+C per context.
+    exitMessage: "Type 'exit' to leave chat · /help for commands\n",
   };
   // Chat command (REL-3: the no-subcommand default is now `code`, registered in codeCommand)
   program

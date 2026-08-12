@@ -128,7 +128,8 @@ export const TUI_KEY_BINDINGS: readonly KeyBindingGroup[] = [
         // is what stops it reading as a promise that Ctrl+C leaves — and what makes the recovery
         // key discoverable at the moment it is needed.
         keys: 'Ctrl+C',
-        description: 'clear the whole message — Ctrl+Y puts it back; with none typed, it exits',
+        description:
+          'clear the whole message — Ctrl+Y puts it back; with none typed and no turn running, it exits',
       },
       {
         // Worth its own line rather than a clause on the deletions above: those keys and Ctrl+C are

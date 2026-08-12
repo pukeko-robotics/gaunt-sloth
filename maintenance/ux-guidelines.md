@@ -449,7 +449,11 @@ their config has a problem.
     no mouse layer and its own scrollback, so a key section baked into the shared formatter — or a
     scroll clause added to the shared literal — would advertise keys that do nothing there. The TUI
     passes its bindings in as data and composes its own hint fragment; readline passes nothing and
-    its output is unchanged by construction (GS2-87).
+    its output is unchanged by construction (GS2-87). The rule cuts the other way too: **the shared
+    literal carries only what is true on both surfaces and in every state of them.** A key whose
+    meaning depends on the surface, or on what the session is doing, belongs in `/help` — which
+    groups by context and can say so — and not in a row that is always on screen and always the
+    same. That is why the row names the `exit` keyword and points at `/help`, and names no chord.
 - **Editing the message is readline's keyboard, not a text field's (DL-5 respect the host, DL-9
   keyboard-first, TUI-C25).** The prompt is a real line editor over a pure model
   (`tui/lineEditor.ts`, rendered and driven by `tui/components/PromptEditor.tsx`): `←`/`→` a

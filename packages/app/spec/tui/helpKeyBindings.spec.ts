@@ -262,6 +262,12 @@ describe('/help key bindings — one registry, two keyboards (TUI-C63)', () => {
     expect(clears).toBeDefined();
     // Naming the recovery key on the same line is what makes it reachable at the moment it matters.
     expect(clears).toContain('Ctrl+Y');
+    // And BOTH halves of the exit condition, which is the half of this line most easily lost. The
+    // prompt stays mounted while a turn streams (EXT-12), so "with none typed, it exits" is false in
+    // a state reachable from the very context this line is filed under — with nothing typed and a
+    // turn running, Ctrl+C stops the turn. The wording is free to change; the two conditions are not.
+    expect(clears).toMatch(/none typed|nothing typed/);
+    expect(clears).toMatch(/no turn running/);
 
     const stops = ctrlC.find((line) => line.includes('stop the turn'));
     expect(stops).toBeDefined();
