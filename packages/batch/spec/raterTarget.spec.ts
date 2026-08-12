@@ -72,11 +72,14 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
       caseId: 'case-1',
       tags: [],
       modelFree: false,
-      // Default: the case claims no mechanism, so no round is driven with a stubbed rating — the
-      // shape of every ordinary case, and the one whose action must not move.
-      forcedBy: inputs.map(() => undefined),
       ...over,
       inputs,
+      // Default: the case claims no mechanism, so no round is driven with a stubbed rating — the
+      // shape of every ordinary case, and the one whose action must not move. Resolved AFTER the
+      // spread, the same way `inputs` is, so an explicit `forcedBy: undefined` cannot shadow the
+      // default: `Partial<ClassifyRequest>` admits that spelling and specs are outside the build's
+      // type-check, which would hand the target a request the type forbids.
+      forcedBy: over.forcedBy ?? inputs.map(() => undefined),
     };
   };
 

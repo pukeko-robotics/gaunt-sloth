@@ -365,20 +365,23 @@ describe('runEvalSuite — classification', () => {
       const { runEvalSuite } = await import('#src/evalRunner.js');
       const seen: ClassifyRequest[] = [];
       const ENV_LEAK = 'python deploy.py --key $AWS_SECRET_ACCESS_KEY';
+      const FLOORED = 'rm -rf /';
 
       await runEvalSuite(
         classifierSuite([
           {
             id: 'parallel-1',
-            // Only the MIDDLE turn declares a mechanism, so a compacted or reordered array puts it
-            // on a round that never claimed it.
+            // The three entries are pairwise DISTINCT — two different mechanisms with an
+            // undeclared turn between them — so the identity is the only permutation that maps
+            // the array to itself. Any compaction, shift or reordering therefore puts a mechanism
+            // on a round that never claimed it, where the element-wise assertion below sees it.
             turns: [
+              { user: FLOORED, expectations: [expectation({ forcedBy: 'hardline-floor' })] },
               { user: 'ls -la', expectations: [expectation({})] },
               {
                 user: ENV_LEAK,
                 expectations: [expectation({ forcedBy: 'script-env-leak-preflight' })],
               },
-              { user: 'ls /tmp', expectations: [expectation({})] },
             ],
             passThreshold: 6,
             tags: [],
@@ -395,10 +398,14 @@ describe('runEvalSuite — classification', () => {
       );
 
       expect(seen).toHaveLength(1);
-      expect(seen[0].inputs).toStrictEqual(['ls -la', ENV_LEAK, 'ls /tmp']);
+      expect(seen[0].inputs).toStrictEqual([FLOORED, 'ls -la', ENV_LEAK]);
       // `toStrictEqual`, not `toEqual`: it is the one that distinguishes a present `undefined` from
       // a hole, which is the whole point of asserting the undeclared rounds at all.
-      expect(seen[0].forcedBy).toStrictEqual([undefined, 'script-env-leak-preflight', undefined]);
+      expect(seen[0].forcedBy).toStrictEqual([
+        'hardline-floor',
+        undefined,
+        'script-env-leak-preflight',
+      ]);
     });
 
     it('grades a NEGOTIATION case round by round — reject · reject · escalate', async () => {
