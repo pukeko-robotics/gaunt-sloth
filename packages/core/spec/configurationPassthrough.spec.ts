@@ -480,6 +480,11 @@ describe('CFG-44 — xai builds an OpenAI client and drops the block anyway', ()
     // unwarned one.
     expect(warning).toContain('"baseURL" or "timeout" as top-level fields');
     expect(warning).toContain('Extra headers have no home');
+    // The escape hatch has to be followable from the terminal alone: the "openai" provider reads
+    // OPENAI_API_KEY, so a user who switches to it for the headers and stops reading here hits a
+    // missing-key error. The doc carries this half; the message must too.
+    expect(warning).toContain('apiKeyEnvironmentVariable');
+    expect(warning).toContain('XAI_API_KEY');
     // Warn, don't fail — the model is still built.
     expect(chatXAIConstructorMock).toHaveBeenCalledTimes(1);
     expect(chatXAIConstructorMock.mock.calls[0][0].model).toBe('grok-4');
@@ -498,6 +503,124 @@ describe('CFG-44 — xai builds an OpenAI client and drops the block anyway', ()
 
     expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
     expect(chatXAIConstructorMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * CFG-44 — the reason clause each provider PRINTS, pinned to that provider.
+ *
+ * The per-provider cells above check that a warning fires, that it names every dropped path, and
+ * that its guidance points at the right replacement. None of them looks at the middle of the
+ * sentence, so a clause could migrate to a provider it is false of and the whole suite would stay
+ * green while a user was told something untrue about their own provider — which is the same defect
+ * as the silence this node exists to end, printed instead of withheld.
+ *
+ * Each row pins two properties, and both are load-bearing:
+ *   - the clause appears IN ITS SLOT — `the "<provider>" provider <reason>.` — not merely somewhere
+ *     in the message. A bare `toContain(reason)` cannot tell the reason slot from the guidance slot,
+ *     so it stays green with the two transposed: the rendered string still contains both sentences
+ *     and only their order is wrong. The named-field call shape makes that transposition visible
+ *     where it is written; this is what catches it if it is written anyway.
+ *   - no OTHER provider's clause appears at all, so one sentence cannot quietly serve two meanings.
+ *
+ * The expected sentences are written out here rather than imported from the source constants, and
+ * the duplication is the point: editing `NATIVE_CLIENT_REASON` reddens all six rows that pass it,
+ * which is exactly the moment someone has to re-check that sentence against each of those providers.
+ */
+const NATIVE_CLIENT_REASON_TEXT =
+  'does not build an OpenAI client, so a "configuration" block is not passed through to one';
+const XAI_OWN_REASON_TEXT =
+  'builds its OpenAI client with a "configuration" block of its own, replacing anything set here';
+const ALL_REASON_TEXTS = [NATIVE_CLIENT_REASON_TEXT, XAI_OWN_REASON_TEXT];
+
+/** The providers whose factory hands the user's block to a client that keeps it — see the controls. */
+const PROVIDERS_THAT_CONSUME_THE_BLOCK = ['openai', 'huggingface', 'deepseek'];
+
+type ProviderModule = { processJsonConfig: (llmConfig: never) => unknown };
+
+const WARNED_PROVIDERS: ReadonlyArray<{
+  provider: string;
+  reason: string;
+  load: () => Promise<ProviderModule>;
+  llmConfig: Record<string, unknown>;
+}> = [
+  {
+    provider: 'anthropic',
+    reason: NATIVE_CLIENT_REASON_TEXT,
+    load: () => import('#src/providers/anthropic.js'),
+    llmConfig: { type: 'anthropic', apiKey: 'sk-ant-test', model: 'claude-sonnet-4-5' },
+  },
+  {
+    provider: 'groq',
+    reason: NATIVE_CLIENT_REASON_TEXT,
+    load: () => import('#src/providers/groq.js'),
+    llmConfig: { type: 'groq', apiKey: 'gsk-test', model: 'llama-3.3-70b-versatile' },
+  },
+  {
+    provider: 'google-genai',
+    reason: NATIVE_CLIENT_REASON_TEXT,
+    load: () => import('#src/providers/google-genai.js'),
+    llmConfig: { type: 'google-genai', apiKey: 'goog-test', model: 'gemini-3-pro-preview' },
+  },
+  {
+    provider: 'vertexai',
+    reason: NATIVE_CLIENT_REASON_TEXT,
+    load: () => import('#src/providers/vertexai.js'),
+    llmConfig: { type: 'vertexai', model: 'gemini-3-pro-preview' },
+  },
+  {
+    provider: 'ollama',
+    reason: NATIVE_CLIENT_REASON_TEXT,
+    load: () => import('#src/providers/ollama.js'),
+    llmConfig: { type: 'ollama', model: 'gemma4:12b' },
+  },
+  {
+    // openrouter reads `baseURL` and two attribution headers out of the block, so it is warned for
+    // the REST of it. The clause it prints is the shared one all the same.
+    provider: 'openrouter',
+    reason: NATIVE_CLIENT_REASON_TEXT,
+    load: () => import('#src/providers/openrouter.js'),
+    llmConfig: { type: 'openrouter', model: 'x-ai/grok' },
+  },
+  {
+    // xai is the one provider that DOES build an OpenAI client and drops the block anyway, so the
+    // shared sentence would be false for it and it carries its own.
+    provider: 'xai',
+    reason: XAI_OWN_REASON_TEXT,
+    load: () => import('#src/providers/xai.js'),
+    llmConfig: { type: 'xai', apiKey: 'xai-test', model: 'grok-4' },
+  },
+];
+
+describe('CFG-44 — every warned provider prints the reason clause that is true of IT', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    systemUtilsMock.env = { OPEN_ROUTER_API_KEY: 'test-key' };
+  });
+
+  for (const row of WARNED_PROVIDERS) {
+    it(`${row.provider} states its own reason, in the reason slot`, async () => {
+      const { processJsonConfig } = await row.load();
+
+      await processJsonConfig({ ...row.llmConfig, configuration: UNUSABLE } as never);
+
+      const warning = onlyWarning();
+      expect(warning).toContain(`the "${row.provider}" provider ${row.reason}.`);
+      for (const otherReason of ALL_REASON_TEXTS.filter((text) => text !== row.reason)) {
+        expect(warning).not.toContain(otherReason);
+      }
+    });
+  }
+
+  // A hand-written table silently covers six of seven the moment someone deletes a row, and covers
+  // ten of eleven the moment a provider is added. Partitioning the shipped provider list over
+  // "warns" and "consumes the block" turns either into a red cell that names the missing provider.
+  it('classifies every selectable provider as one or the other', async () => {
+    const { availableDefaultConfigs } = await import('#src/config/types.js');
+
+    expect(
+      [...WARNED_PROVIDERS.map((row) => row.provider), ...PROVIDERS_THAT_CONSUME_THE_BLOCK].sort()
+    ).toEqual([...availableDefaultConfigs].sort());
   });
 });
 

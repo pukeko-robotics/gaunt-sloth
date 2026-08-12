@@ -20,6 +20,13 @@ import { displayWarning } from '#src/utils/consoleUtils.js';
  * than it reads. This is the one place that turns that silence into a message, so a second native
  * provider does not have to reinvent it.
  *
+ * **Scope: paths INSIDE a `configuration` block, and nothing else.** A top-level key of the `llm`
+ * block that the chosen provider does not read — `llm.defaultHeaders` on `xai`, say — is the same
+ * silently-ignored-key defect, and this module does not cover it: the loose schema accepts it, no
+ * factory reads it, and nothing is printed. Guidance that sends a setting "to the top level" is
+ * therefore only safe for a field that provider actually has, which is why every `guidance` here
+ * names the replacement rather than a direction.
+ *
  * Use it from a native-client factory only, and pass the paths that factory genuinely consumes.
  */
 
@@ -72,10 +79,17 @@ export function findUnusedConfigurationPaths(
  * The `reason` for a provider built on a NATIVE client: there is no OpenAI client anywhere in the
  * chain, so the block has nothing to be handed to.
  *
- * A shared clause is only safe while it is true of every caller that passes it — which is why
- * {@link warnUnusedConfiguration} takes the reason as a required argument rather than defaulting to
- * this one. A default would let the next provider inherit a sentence nobody checked against it, and
- * a warning that states a false reason is the same defect as the silence it replaces.
+ * A shared clause is only safe while it is true of every caller that passes it, and nothing in the
+ * language can check that: the field takes any string, so a caller can pass this sentence — or
+ * another provider's — for a provider it is false of, and a warning that states a false reason is
+ * the same defect as the silence it replaces. Requiring the field stops one narrow version of that
+ * (a default nobody re-read against the new caller) and stops nothing else; copying the neighbouring
+ * call site is the likelier move and is exactly how a false clause would spread.
+ *
+ * What actually holds it is `configurationPassthrough.spec.ts`, which pins every warned provider's
+ * printed clause IN ITS SLOT beside that provider's own name. A clause that migrates to a provider
+ * it is false of reddens a cell, and editing THIS sentence reddens every caller that passes it —
+ * which is the point: a shared clause has to be re-checked against each of them.
  */
 export const NATIVE_CLIENT_REASON =
   'does not build an OpenAI client, so a "configuration" block is not passed through to one';
@@ -89,21 +103,45 @@ export const NATIVE_CLIENT_REASON =
  * `configuration.baseURL`) would otherwise refuse a config that is partly valid, and an upgrading
  * user whose only config sets one dead transport key would be left with no way to start at all.
  *
- * @param reason Why THIS provider drops the block, as a clause completing `the "<provider>"
- *   provider …`. Pass {@link NATIVE_CLIENT_REASON} for a native-client provider; a provider that
- *   builds an OpenAI client and then overrides the block needs its own, because that sentence would
- *   be false for it.
- * @param guidance What to do instead, naming the replacement on THIS provider's own client — never
- *   a generic "move it up a level", which for some keys moves a setting from a warned location to
- *   an unwarned one.
+ * Takes ONE named-field object rather than a positional list. `reason` and `guidance` are both free
+ * text, so as adjacent positionals they could be transposed with nothing to catch it: `tsc` sees two
+ * strings, and the rendered message still contains both sentences — only their order is wrong, which
+ * no `toContain` check on either one can see. Named fields make that mistake visible where it is
+ * written; the slot-anchored pins in `configurationPassthrough.spec.ts` are what catch it if it is
+ * written anyway.
  */
-export function warnUnusedConfiguration(
-  provider: string,
-  configuration: unknown,
-  consumedPaths: readonly string[],
-  reason: string,
-  guidance: string
-): void {
+export interface UnusedConfigurationWarning {
+  /** The gth provider namespace, printed to the user (`anthropic`, `xai`, …). */
+  provider: string;
+  /** The user's `llm.configuration` block, exactly as it arrived. */
+  configuration: unknown;
+  /**
+   * The paths inside the block this factory genuinely reads — whole keys or dotted one-level paths.
+   * Required rather than defaulted to `[]`, so a new caller has to state what its factory consumes
+   * instead of inheriting an answer.
+   */
+  consumedPaths: readonly string[];
+  /**
+   * Why THIS provider drops the block, as a clause completing `the "<provider>" provider …`. Pass
+   * {@link NATIVE_CLIENT_REASON} for a native-client provider; a provider that builds an OpenAI
+   * client and then overrides the block needs its own, because that sentence would be false for it.
+   */
+  reason: string;
+  /**
+   * What to do instead, naming the replacement on THIS provider's own client — never a generic
+   * "move it up a level", which for some keys moves a setting from a warned location to an unwarned
+   * one.
+   */
+  guidance: string;
+}
+
+export function warnUnusedConfiguration({
+  provider,
+  configuration,
+  consumedPaths,
+  reason,
+  guidance,
+}: UnusedConfigurationWarning): void {
   const unused = findUnusedConfigurationPaths(configuration, consumedPaths);
   if (unused.length === 0) return;
   displayWarning(

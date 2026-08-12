@@ -17,15 +17,16 @@ export async function processJsonConfig(llmConfig: ChatGroqInput): Promise<BaseC
   const groqApiKey = llmConfig.apiKey || env.GROQ_API_KEY;
   // `ChatGroq` builds a Groq SDK client from its own TOP-LEVEL fields, so nothing in a
   // `configuration` block reaches it — say so before dropping it.
-  warnUnusedConfiguration(
-    'groq',
-    (llmConfig as { configuration?: unknown }).configuration,
-    [],
-    NATIVE_CLIENT_REASON,
-    'ChatGroq builds a Groq SDK client from top-level fields of the "llm" block instead: set ' +
+  warnUnusedConfiguration({
+    provider: 'groq',
+    configuration: (llmConfig as { configuration?: unknown }).configuration,
+    consumedPaths: [],
+    reason: NATIVE_CLIENT_REASON,
+    guidance:
+      'ChatGroq builds a Groq SDK client from top-level fields of the "llm" block instead: set ' +
       '"baseUrl" (note the lower-case "url"), "timeout", "defaultHeaders", "defaultQuery", ' +
-      '"httpAgent" or "fetch" beside "model".'
-  );
+      '"httpAgent" or "fetch" beside "model".',
+  });
   return new groq.ChatGroq({
     ...llmConfig,
     apiKey: groqApiKey,

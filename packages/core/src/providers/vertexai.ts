@@ -49,15 +49,16 @@ export async function processJsonConfig(
   delete configFields.apiKeyEnvironmentVariable;
   // `ChatGoogle` is a native client for the Gemini API, so nothing in a `configuration` block
   // reaches it — say so before dropping it.
-  warnUnusedConfiguration(
-    'vertexai',
-    (llmConfig as { configuration?: unknown }).configuration,
-    [],
-    NATIVE_CLIENT_REASON,
-    'ChatGoogle talks to Vertex AI through its own client instead: set "customHeaders", ' +
+  warnUnusedConfiguration({
+    provider: 'vertexai',
+    configuration: (llmConfig as { configuration?: unknown }).configuration,
+    consumedPaths: [],
+    reason: NATIVE_CLIENT_REASON,
+    guidance:
+      'ChatGoogle talks to Vertex AI through its own client instead: set "customHeaders", ' +
       '"endpoint", "apiVersion" or "location" as top-level fields of the "llm" block beside ' +
-      '"model".'
-  );
+      '"model".',
+  });
   // GS2-58: normalise every tool's JSON-Schema at the ChatGoogle boundary so Gemini's OpenAPI-3.0
   // subset accepts built-in, custom, and MCP tools alike (see geminiSchemaSanitizer).
   // CFG-33: Vertex serves the same Gemini models through the same ChatGoogle class, so it has the

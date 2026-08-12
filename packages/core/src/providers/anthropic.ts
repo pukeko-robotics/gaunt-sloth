@@ -24,15 +24,16 @@ export async function processJsonConfig(
   const anthropicApiKey = llmConfig.apiKey || env.ANTHROPIC_API_KEY;
   // `ChatAnthropic` builds an Anthropic SDK client from its own `clientOptions`, so nothing in a
   // `configuration` block reaches it — say so before dropping it.
-  warnUnusedConfiguration(
-    'anthropic',
-    (llmConfig as { configuration?: unknown }).configuration,
-    [],
-    NATIVE_CLIENT_REASON,
-    'ChatAnthropic builds an Anthropic SDK client instead: put client options such as a custom ' +
+  warnUnusedConfiguration({
+    provider: 'anthropic',
+    configuration: (llmConfig as { configuration?: unknown }).configuration,
+    consumedPaths: [],
+    reason: NATIVE_CLIENT_REASON,
+    guidance:
+      'ChatAnthropic builds an Anthropic SDK client instead: put client options such as a custom ' +
       'base URL, a timeout or extra headers under "clientOptions" in the "llm" block, or set ' +
-      '"anthropicApiUrl" there for the base URL alone.'
-  );
+      '"anthropicApiUrl" there for the base URL alone.',
+  });
   return new anthropic.ChatAnthropic({
     ...llmConfig,
     apiKey: anthropicApiKey,

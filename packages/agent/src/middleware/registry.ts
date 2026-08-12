@@ -36,12 +36,21 @@ type PredefinedMiddlewareFactory = (
  * loader-stashed raw `llm.type` ({@link GthConfig.modelProviderType}) — the exact gth provider
  * namespace (`anthropic`/`openrouter`/`deepseek`/`xai`/`groq`/`ollama`/`google-genai`/`vertexai`/…)
  * — and falls back to the live model's `_llmType()` only when it is absent (module configs).
- * `_llmType()` is the model class's own label rather than the gth provider namespace, but every
- * label it can return maps to the SAME block shape as the `type` it stands in for:
- * `openrouter`/`deepseek`/`xai`/`groq`/`ollama`/`anthropic` each report their own name, which
- * `imageBlockFor` matches directly, and both Gemini providers report `google`, which lands on
- * the default branch — the same standard block its `google-genai`/`vertexai` cases return. So the
- * fallback stays shape-correct.
+ * `_llmType()` is the model class's own label rather than the gth provider namespace, so the two
+ * only mostly agree. Where they do: `openrouter`/`deepseek`/`xai`/`groq`/`ollama`/`anthropic` each
+ * report their own name, which `imageBlockFor` matches directly, and both Gemini providers report
+ * `google`, which lands on the default branch — the same standard block its `google-genai`/
+ * `vertexai` cases return.
+ *
+ * Two labels do NOT agree, and this fallback is the only path either can arrive on:
+ *   - `huggingface` reports `openai`, so the fallback emits `image_url:{url}` where the configured
+ *     `type` would take the default standard block. Which of the two the HF router actually accepts
+ *     is unmeasured — see [[CFG-45]]. Do not add a branch by analogy.
+ *   - `ChatXAIResponses` reports `xai-responses`, which matches no case and so takes the default
+ *     standard block — while `imageBlockFor`'s own docstring records that a standard block
+ *     serialises to an INVALID image part on the Responses path. gth itself only ever constructs
+ *     `ChatXAI`, so this is reachable only from a module config that builds the Responses class
+ *     itself.
  */
 function resolveVisionProvider(gthConfig: GthConfig): string {
   if (gthConfig.modelProviderType) return gthConfig.modelProviderType;
