@@ -240,7 +240,6 @@ describe('<TranscriptViewport>', () => {
       id: 1,
       turn: {
         segments: [{ kind: 'text', text: '```js\nconst fenced = 1;\n```' }],
-        reasoning: '',
         isReasoning: false,
       },
     };

@@ -110,12 +110,19 @@ function reasoningPanelRows(reasoning: string, expanded: boolean, columns: numbe
  * than an error anywhere.
  */
 function turnRows(turn: TurnViewModel, toolsExpanded: boolean, columns: number): number {
-  let rows = turn.reasoning ? reasoningPanelRows(turn.reasoning, toolsExpanded, columns) : 0;
+  let rows = 0;
   for (const segment of displaySegments(turn)) {
     if (segment.kind === 'text') {
       // Measured from the RENDERED markdown, not the raw text: a fence becomes two rules plus an
       // indented body, so the raw line count is not a bound on either side of it.
       rows += textRows(renderMarkdown(segment.text, { columns }), columns);
+      continue;
+    }
+    if (segment.kind === 'reasoning') {
+      // Measured WHERE IT SITS, for the same reason the renderer draws it there. A turn's thoughts
+      // are several panels at several depths, not one block above everything, and counting them as
+      // one would put the same number of rows in the wrong place.
+      rows += reasoningPanelRows(segment.text, toolsExpanded, columns);
       continue;
     }
     rows += toolCallRows(segment.tool, toolsExpanded, columns);

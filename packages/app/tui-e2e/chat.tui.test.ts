@@ -597,6 +597,57 @@ test.describe('gth chat TUI — TUI-C52 a turn keeps its own order (interleaved 
   });
 });
 
+test.describe('gth chat TUI — TUI-C81 a turn keeps its THINKING in order (thinking fixture)', () => {
+  test.use({
+    program: { file: 'node', args: [cli, 'chat', '--tui'] },
+    env: envFor('thinking.json'),
+    columns: 100,
+    rows: 40,
+  });
+
+  /**
+   * The sibling of the TUI-C52 case above, for the segment kind it did not cover. A model that
+   * thinks, speaks, acts, then thinks again produces TWO thinking panels at two depths of the turn;
+   * the defect this guards drew one, at the top, holding both thoughts concatenated — so the
+   * reasoning that produced the tool call sat above the explanation that introduced it.
+   *
+   * Asserted on the collapsed panels rather than their bodies, because collapsed is the default a
+   * user actually sees, and the panel COUNT is the half of the claim a body assertion cannot make:
+   * one thought welded to another still renders its text, just in the wrong place and joined.
+   */
+  test('paints a thinking panel at each point the model stopped to think', async ({ terminal }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    terminal.write('go');
+    await expect(terminal.getByText('> go')).toBeVisible();
+    terminal.submit();
+
+    await expect(terminal.getByText('second-explanation-run')).toBeVisible();
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+
+    const rows = screenRows(terminal);
+    const rowOf = (needle: string): number => {
+      const at = rows.findIndex((row) => row.includes(needle));
+      if (at === -1) {
+        throw new Error(`"${needle}" is not on screen; frame was:\n${rows.join('\n')}`);
+      }
+      return at;
+    };
+    // Matched on the word, not the 💭 glyph: emoji cell width differs across terminals and ConPTY
+    // re-encodes them, so the glyph is the one part of the row a PTY assertion cannot rely on.
+    const thinkingRows = rows.flatMap((row, i) => (row.includes('Thinking') ? [i] : []));
+
+    // Two thoughts, two panels. Pre-fix this was one panel, and that is the whole defect.
+    expect(thinkingRows).toHaveLength(2);
+    // The first sits above the explanation it produced; the second BELOW the tool call, between
+    // the result and the sentence that reports it.
+    expect(thinkingRows[0]).toBeLessThan(rowOf('first-explanation-run'));
+    expect(rowOf('first-explanation-run')).toBeLessThan(rowOf('read_file(path=alpha.txt)'));
+    expect(rowOf('read_file(path=alpha.txt)')).toBeLessThan(thinkingRows[1]);
+    expect(thinkingRows[1]).toBeLessThan(rowOf('second-explanation-run'));
+  });
+});
+
 test.describe('gth chat TUI — slow fixture (interrupt)', () => {
   test.use({
     program: { file: 'node', args: [cli, 'chat', '--tui'] },

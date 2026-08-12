@@ -143,7 +143,7 @@ export const LIVE_REASONING_PREVIEW_ROWS = 2;
  * dim-only region reads as the answer. Cyan carries the layer boundary as colour; the body stays
  * dim+italic underneath the coloured gutter.
  *
- * While a turn is STREAMING and collapsed it keeps up to
+ * While the thought is still being WRITTEN and collapsed it keeps up to
  * {@link LIVE_REASONING_PREVIEW_ROWS} of its newest rows on screen, in the same gutter styling, so
  * a thinking model shows what it is thinking about instead of a bare header. One row per trailing
  * logical line, so a single streaming paragraph draws one. The preview follows the stream: it is
@@ -154,12 +154,22 @@ export function ReasoningPanel({
   reasoning,
   expanded,
   live,
+  previewTail = live,
   label = 'Thinking',
 }: {
   reasoning: string;
   expanded: boolean;
   /** True for the in-progress turn, where Ctrl+T can toggle the detail in place. */
   live: boolean;
+  /**
+   * True for the thought currently being WRITTEN — the last drawn segment of a streaming turn.
+   *
+   * Separate from {@link live} because a turn can hold several thoughts and they answer different
+   * questions. Ctrl+T toggles every panel of a live turn, so the hint belongs on all of them; the
+   * tail preview says "this is what the model is thinking about right now", which is true of one.
+   * A finished thought that kept previewing its tail would claim the model is still on it.
+   */
+  previewTail?: boolean;
   /**
    * Header text after the `💭` glyph. Defaults to `Thinking` for the in-turn region; the
    * `/reasoning` reprint (TUI-C18) passes a turn-tagged label so a recalled block is single-sourced
@@ -168,10 +178,11 @@ export function ReasoningPanel({
   label?: string;
 }): React.ReactElement {
   const caret = expanded ? '▾' : '▸';
-  // Expanded shows everything; collapsed-and-live shows the newest few lines; collapsed on a
-  // committed turn shows the header alone. Trailing newlines are dropped first so a chunk that
-  // happens to arrive ending in one does not spend a preview line on a blank row.
-  const preview = live ? reasoning.replace(/\n+$/, '') : '';
+  // Expanded shows everything; collapsed while the thought is still being written shows the newest
+  // few lines; collapsed on a committed or finished thought shows the header alone. Trailing
+  // newlines are dropped first so a chunk that happens to arrive ending in one does not spend a
+  // preview line on a blank row.
+  const preview = previewTail ? reasoning.replace(/\n+$/, '') : '';
   const lines = expanded
     ? reasoning.split('\n')
     : preview === ''
@@ -243,14 +254,17 @@ export function ChecklistPanel({ items }: { items: ChecklistItemViewModel[] }): 
 }
 
 /**
- * Renders one assistant turn from the pure {@link TurnViewModel}: a collapsible `💭 Thinking`
- * reasoning region, then the turn's segments **in the order they arrived** — a text run, a tool
- * panel, the next text run, and so on. Used both for the in-progress live turn and (frozen) for
- * committed turns in the transcript, so the look is identical once done.
+ * Renders one assistant turn from the pure {@link TurnViewModel}: its segments **in the order they
+ * arrived** — a thought, a text run, a tool panel, the next thought, and so on. Used both for the
+ * in-progress live turn and (frozen) for committed turns in the transcript, so the look is
+ * identical once done.
  *
  * Order is the whole contract here. A turn that ran `text → tool → text → tool` reads as an
  * explanation around its actions; drawn as every tool followed by all of the text it reads as
- * forty-three panels and then a paragraph that no longer refers to anything nearby.
+ * forty-three panels and then a paragraph that no longer refers to anything nearby. The `💭
+ * Thinking` panel is in the list for the same reason and not an exception to it: a model that
+ * thinks, acts, then thinks again had two thoughts at two points in the turn, and hoisting both to
+ * the top puts the reasoning that produced the last tool call above the first one.
  *
  * Each text segment is rendered **independently**: a markdown construct split across a tool call
  * renders as two blocks rather than one. `renderMarkdown` is stateless by design (fence state is
@@ -274,24 +288,38 @@ export function LiveTurn({
   /** True while the turn is still streaming; suppresses markdown reflow until complete. */
   streaming?: boolean;
 }): React.ReactElement {
+  // `displaySegments` decides what is drawn — it drops the segments that paint nothing (the
+  // checklist tool, which is the pinned dock panel) and re-joins the runs around them, so a call
+  // the reader cannot see never breaks a paragraph. The row-count oracle in `transcriptWindow.ts`
+  // walks the SAME function, which is what keeps the two in lockstep.
+  const drawn = displaySegments(turn);
   return (
     <Box flexDirection="column">
-      {turn.reasoning ? (
-        <ReasoningPanel reasoning={turn.reasoning} expanded={toolsExpanded} live={streaming} />
-      ) : null}
-      {/* `displaySegments` decides what is drawn — it drops the segments that paint nothing (the
-          checklist tool, which is the pinned dock panel) and re-joins the text runs around them,
-          so a call the reader cannot see never breaks a paragraph. The row-count oracle in
-          `transcriptWindow.ts` walks the SAME function, which is what keeps the two in lockstep.
-          Keyed by position: these components hold no state, so an index key can only affect how
+      {/* Keyed by position: these components hold no state, so an index key can only affect how
           React diffs them, never what they show. */}
-      {displaySegments(turn).map((segment, i) =>
-        segment.kind === 'text' ? (
-          <Text key={i}>{streaming ? segment.text : renderMarkdown(segment.text)}</Text>
-        ) : (
+      {drawn.map((segment, i) => {
+        if (segment.kind === 'text') {
+          return <Text key={i}>{streaming ? segment.text : renderMarkdown(segment.text)}</Text>;
+        }
+        if (segment.kind === 'reasoning') {
+          // Only the thought at the BOTTOM of a still-streaming turn is the one being written, so
+          // it is the only one that previews its newest rows. Once text or a tool call follows it
+          // the thought is finished. The expand hint stays on every panel of a live turn, because
+          // Ctrl+T toggles all of them.
+          return (
+            <ReasoningPanel
+              key={i}
+              reasoning={segment.text}
+              expanded={toolsExpanded}
+              live={streaming}
+              previewTail={streaming && i === drawn.length - 1}
+            />
+          );
+        }
+        return (
           <ToolCallPanel key={i} tc={segment.tool} expanded={toolsExpanded} live={streaming} />
-        )
-      )}
+        );
+      })}
     </Box>
   );
 }

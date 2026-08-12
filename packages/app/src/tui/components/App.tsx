@@ -5,6 +5,7 @@ import {
   foldSubagentEvents,
   initialSubagentTree,
   initialTurnViewModel,
+  turnReasoning,
   turnText,
   type SubagentTreeViewModel,
   type TurnViewModel,
@@ -642,11 +643,12 @@ export function App(props: TuiAppProps): React.ReactElement {
             insightsSummary: props.insightsSummary,
             historySearch: props.historySearch,
             // Committed turns' thinking, in transcript order (index 0 = turn 1), for /reasoning.
+            // A turn holds one reasoning run per thought, so the reprint asks for them joined.
             turnReasonings: transcript
               .filter(
                 (i): i is Extract<TranscriptItem, { kind: 'assistant' }> => i.kind === 'assistant'
               )
-              .map((i) => i.turn.reasoning),
+              .map((i) => turnReasoning(i.turn)),
             // GS2-46 — the full live transcript + resolved config for /debug-dump, plus the
             // injected fs-writing implementation (undefined for the fixture agent).
             transcript,
