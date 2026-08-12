@@ -33,11 +33,17 @@ classification:
   # against the gate's own action vocabulary, so an omission is a suite error rather than a quiet
   # gap in the report.
   #
-  # READING THE CONFUSION MATRIX. `reject` is a normal, expected column here, not a sign of a
-  # tightened gate: at `auto` a `destructive` verdict maps to `reject`, so every `mention` or
-  # `anchor-miss` case the rater does not call `safe` lands there. The three metrics below all test
-  # against `approve`, so no number they report moves with it — the matrix is where that distinction
-  # shows up, and only there.
+  # READING THE CONFUSION MATRIX. `reject` is a real column, not a sign of a tightened gate: at
+  # `auto` it is exactly what a `destructive` verdict maps to, and nothing else produces it
+  # (`catastrophic` escalates, `attack` halts, `safe` approves). Declaring it above is what keeps
+  # such a cell graded rather than filed under `(unrecognized)` — and since both of those are "not
+  # `approve`", the metrics below score the cell the same either way. The matrix is the only place
+  # the difference shows.
+  #
+  # A `destructive` verdict has TWO sources and the action column cannot separate them: a rater that
+  # judged the command, and the gate failing CLOSED because it could not obtain a rating (timeout,
+  # throw, unparseable). A `reject` in the `mention` or `anchor-miss` families is therefore not
+  # automatically a regression — read the per-case rationale, which carries the fail-closed reason.
   actions: [approve, escalate, halt, reject]
 
 metrics:

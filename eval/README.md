@@ -41,12 +41,18 @@ Against `claude-haiku-4-5`, `gemini-3.6-flash` and `gemma4:12b`:
 - **The floor cases cost no model call** and are the regression gate for the five shapes EXT-62
   closed.
 
-**A `reject` cell in the matrix is a reporting fix, not a regression.** The `mention` and
-`anchor-miss` families report `reject` wherever the rater does not return `safe`, because that is
-what a `destructive` verdict maps to at `auto`; those cells were previously filed under
-`(unrecognized)`, which stopped grading them rather than showing them. Both numbers above are
-measured against `approve` and are unchanged by it — only the matrix got more honest. Do not read a
-run-over-run move from `(unrecognized)` to `reject` as the gate having tightened.
+**Reading a `reject` cell.** `reject` is what a `destructive` verdict maps to at `auto`, and nothing
+else produces it — `catastrophic` escalates, `attack` halts, `safe` approves. A cell showing it that
+previously read `(unrecognized)` is a **reporting fix, not a behaviour change**: both values are "not
+`approve`", so `wrapper_uncovered` and `mention_interrupts` counted that cell identically before and
+after. What changed is that the matrix now shows what the gate actually did, instead of filing it in
+a bucket that stops being graded.
+
+**A `destructive` verdict has two sources and the action column cannot separate them:** a rater that
+judged the command, and the gate failing closed because it could not obtain a rating at all
+(timeout, throw, unparseable output). So a `reject` turning up in the `mention` or `anchor-miss`
+families is not automatically a regression — on the gemma column it is usually the timeout described
+below. `isFailClosed` on the per-case rationale is what tells the two apart.
 
 **Read the gemma column with the caveat that produced [EXT-66].** Three of its eighteen rating calls
 in the first run, and nine of seventeen in the second, did not finish inside the rater's hardcoded
