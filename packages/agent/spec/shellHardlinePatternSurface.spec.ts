@@ -327,11 +327,16 @@ describe('the §8 hardline pattern surface is frozen (EXT-112)', () => {
    * not some other file the relative URL happens to reach.
    *
    * It deliberately does NOT also assert that the parse produced bindings, that `CMD_POS` is among
-   * them, or that `COMMAND_SEPARATOR_CLASS` is enrolled. Every one of those fails the completeness
-   * cell too, and with a better message — an empty parse leaves it reporting all 31 accounted names
-   * as no longer bound. An assertion that cannot fail ALONE adds no information, which is the same
-   * reasoning that removed a whole-object comparison from the cell below and a duplicate stale-entry
-   * cell after it.
+   * them, or that `COMMAND_SEPARATOR_CLASS` is enrolled. An assertion that cannot fail ALONE adds no
+   * information, which is the same reasoning that removed a whole-object comparison from the cell
+   * below and a duplicate stale-entry cell after it.
+   *
+   * **That is measured, not argued** — the vacuity this file's first version guarded with a
+   * `bindings.length` floor. Feeding a source that carries the module tag but parses to zero
+   * statements (a degraded parser, a partial read) leaves the completeness cell red, naming all 31
+   * accounted names as no longer bound; feeding an empty source reddens this cell as well. There is
+   * no degradation of the parse that this file passes vacuously, because the completeness cell is an
+   * exact-set equality against names that are literals in this file and therefore always present.
    */
   it('parses hardline.ts itself and not some other file the relative URL reaches', () => {
     expect(HARDLINE_SOURCE).toContain('@module core/shell/hardline');
@@ -426,6 +431,10 @@ describe('the §8 hardline pattern surface is frozen (EXT-112)', () => {
         ['A', 'B', 'C'],
       ],
       ['let and var', "let A = '1';\nvar B = '2';", ['A', 'B']],
+      // An enum binds ONE name; a member holding a pattern is reached through it, so naming the
+      // enum is what forces the enrol-or-excuse decision. That a member-held pattern really is
+      // caught this way was measured end to end against `hardline.ts` itself (review mutation M7),
+      // which this row cannot show on synthetic source.
       ['an enum', "enum A {\n  Stage = '[^|]*',\n}", ['A']],
       ['an exported const enum', "export const enum A {\n  Stage = '1',\n}", ['A']],
       ['an object destructuring binding', "const { A, B: C } = require('x');", ['A', 'C']],
