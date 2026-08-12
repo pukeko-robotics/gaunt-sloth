@@ -288,12 +288,15 @@ describe('the §8 hardline pattern surface is frozen (EXT-112)', () => {
       )
       .join('\n');
 
+    // ONE assertion, deliberately. A whole-object `expect(actual).toEqual(EXPECTED_SURFACE)` beside
+    // it would be an assertion that CANNOT FAIL: `moved` is already computed over the union of both
+    // key sets, so an empty `moved` implies the objects are equal — and when they are not, this
+    // expect throws first and the second never runs. The message below carries frozen-vs-current per
+    // moved member, which is what a whole-object diff would have been for.
     expect(
       moved,
       `The §8 hardline pattern surface has MOVED: ${moved.join(', ')}\n\n${detail}\n\n${REQUIREMENT}`
     ).toEqual([]);
-    // Belt and braces: the same comparison as a whole-object diff, for the vitest output.
-    expect(actual).toEqual(EXPECTED_SURFACE);
   });
 
   it('enrols every module-scope binding hardline.ts has, so a new pattern constant cannot be forgotten', () => {
@@ -303,10 +306,15 @@ describe('the §8 hardline pattern surface is frozen (EXT-112)', () => {
       ...Object.keys(NOT_A_PATTERN),
     ].sort();
     const unenrolled = bindings.filter((name) => !accounted.includes(name));
+    // The other direction: enrolled or excused under a name hardline.ts no longer binds (a rename,
+    // a deletion). Without this clause that failure prints "(nothing new)" and reads as a puzzle.
+    const vanished = accounted.filter((name) => !bindings.includes(name));
 
     expect(
       bindings,
-      `hardline.ts binds ${unenrolled.join(', ') || '(nothing new)'} at module scope with no place in the surface.\n\n` +
+      (unenrolled.length
+        ? `hardline.ts binds ${unenrolled.join(', ')} at module scope with no place in the surface.\n\n`
+        : `hardline.ts no longer binds ${vanished.join(', ')}, which the surface still accounts for.\n\n`) +
         'Every module-scope binding is either a member of HARDLINE_PATTERN_SURFACE — which is what makes a\n' +
         'narrowing of it loud — or an entry in NOT_A_PATTERN carrying the reason it decides no refusal.\n' +
         'A binding in neither is a pattern this gate is blind to.\n\n' +
