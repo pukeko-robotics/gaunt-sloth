@@ -107,6 +107,43 @@ gth init openrouter
 
 Make sure you either define `OPEN_ROUTER_API_KEY` environment variable or edit your configuration file and set up your key.
 
+**OpenRouter's own options are top-level fields of the `llm` block**, written beside `model`. The
+useful ones are `provider` (routing preferences), `models` (a fallback list), `route`, `plugins`,
+`transforms`, `trace`, `sessionId`, and the sampling knobs `minP`, `topA`, `repetitionPenalty`,
+`seed`, `logitBias`, `topLogprobs`. This example pins routing to a provider that will not train on
+your data, forbids fallbacks to anyone else, and gives a second model to fall back to:
+
+```json
+{
+  "llm": {
+    "type": "openrouter",
+    "model": "moonshotai/kimi-k2",
+    "provider": {
+      "order": ["together", "fireworks"],
+      "allow_fallbacks": false,
+      "data_collection": "deny"
+    },
+    "models": ["moonshotai/kimi-k2", "anthropic/claude-sonnet-5"],
+    "route": "fallback"
+  }
+}
+```
+
+**`configuration` is not a passthrough here.** Gaunt Sloth talks to OpenRouter through a native
+client rather than an OpenAI one, so the only things read out of a `configuration` block are
+`baseURL` and the `HTTP-Referer` / `X-Title` attribution headers (`siteUrl` and `siteName` at the
+top level are the direct way to set those). Anything else you put there is reported as ignored when
+the provider starts — put it at the top level instead.
+
+Transport settings have no per-provider hook at all: there is no `fetch`, `timeout`, `maxRetries`
+or custom-header option on this client. To send OpenRouter traffic through a **corporate proxy**,
+set one process-wide — run node with `--use-env-proxy` (or set `NODE_USE_ENV_PROXY=1`) together
+with `HTTP_PROXY` / `HTTPS_PROXY`, which the global `fetch` this provider uses honours:
+
+```bash
+NODE_USE_ENV_PROXY=1 HTTPS_PROXY=http://proxy.corp:3128 gth chat
+```
+
 ### Hugging Face (Inference Providers)
 
 Hugging Face exposes a single **OpenAI-compatible router** at
@@ -145,7 +182,9 @@ Providers"** permission) or edit your configuration file and set up your key.
 - Tool-calling quality is model-dependent; `openai/gpt-oss-120b` is a strong
   tool-calling pick.
 - Any extra field under `configuration` is passed straight to the underlying
-  `ChatOpenAI` client, so provider-routing preferences can go there too.
+  `ChatOpenAI` client (the router base URL is composed in front of your block, so
+  the rest of it — `timeout`, `defaultHeaders`, … — applies as written). Backend
+  routing itself is chosen by the model-id suffix above, not by this block.
 
 #### Local Hugging Face models
 
@@ -695,8 +734,9 @@ prompt names no model anywhere.
 }
 ```
 
-For the OpenAI-compatible providers (`openrouter`, `deepseek`, `xai`) the identity is tagged with
-the configured `type` — e.g. `openrouter:<model>` — not the underlying `openai` transport they share.
+The identity is tagged with the configured `type` — e.g. `openrouter:<model>` — rather than with
+whatever the model class calls itself, so the OpenAI-compatible providers (`deepseek`, `xai`) are
+not all mislabelled `openai:<model>`.
 
 ## Related
 

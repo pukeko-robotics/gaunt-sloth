@@ -8,8 +8,49 @@ import type { ChatOpenRouterInput } from '@langchain/openrouter';
 
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
+import { warnUnusedConfiguration } from '#src/providers/configurationPassthrough.js';
 
-// Function to process JSON config and create OpenRouter LLM instance
+/**
+ * The OpenRouter attribution headers, and the native `ChatOpenRouter` field each one is set from.
+ * Declared once because they are read in two places that MUST agree: the `siteUrl`/`siteName`
+ * fallback below, and the list of `configuration` paths this factory consumes — if those drift, the
+ * orphaned-config warning starts firing on a header that is in fact honoured.
+ */
+const ATTRIBUTION_HEADERS = { siteUrl: 'HTTP-Referer', siteName: 'X-Title' } as const;
+
+/**
+ * The only paths inside a user's `configuration` block that this factory reads. Everything else in
+ * it reaches nothing — see the migration note on {@link processJsonConfig}.
+ */
+const CONSUMED_CONFIGURATION_PATHS = [
+  'baseURL',
+  `defaultHeaders.${ATTRIBUTION_HEADERS.siteUrl}`,
+  `defaultHeaders.${ATTRIBUTION_HEADERS.siteName}`,
+] as const;
+
+/**
+ * Build a native `ChatOpenRouter` (`@langchain/openrouter`). It is NOT a `ChatOpenAI` subclass: it
+ * talks to the OpenRouter REST API through the global `fetch` with no SDK client in between, and
+ * `_llmType()` reports `openrouter`.
+ *
+ * OpenRouter's own options are therefore native TOP-LEVEL fields of the `llm` block, forwarded by
+ * the `...restConfig` spread below: `provider` (routing preferences), `models` (the fallback list),
+ * `route`, `plugins`, `transforms`, `trace`, `minP`, `topA`, `repetitionPenalty`, `seed`,
+ * `logitBias`, `topLogprobs`, `sessionId`. Write them beside `model`, not under `configuration`.
+ *
+ * Migration note — the OpenAI-client knobs a `configuration` block used to carry are gone, because
+ * there is no client to give them to. `configuration.baseURL` still works (mapped to the native
+ * `baseURL`), and the two attribution headers are still honoured as a fallback for
+ * `siteUrl`/`siteName`. What has no injection point at all is transport: `fetch`, `fetchOptions`,
+ * `timeout`, `maxRetries`, `defaultQuery`, `dangerouslyAllowBrowser`, and any other
+ * `defaultHeaders` entry. That is an upstream surface gap, not something this module can restore —
+ * per-provider transport would need a `fetch` option added to `@langchain/openrouter`.
+ *
+ * The replacement is PROCESS-WIDE rather than per-provider, and it is verified working: run node
+ * with `--use-env-proxy` (or set `NODE_USE_ENV_PROXY=1`) together with `HTTP_PROXY`/`HTTPS_PROXY`,
+ * and the global `fetch` this model calls routes through the proxy — measured end to end against a
+ * local proxy, with a no-proxy control that stayed direct.
+ */
 // noinspection JSUnusedGlobalSymbols
 export async function processJsonConfig(
   llmConfig: ChatOpenRouterInput & BaseChatModelParams & Record<string, unknown>
@@ -35,9 +76,23 @@ export async function processJsonConfig(
   const configObj = configuration as
     { baseURL?: string; defaultHeaders?: Record<string, string> } | undefined;
 
+  warnUnusedConfiguration(
+    'openrouter',
+    configuration,
+    CONSUMED_CONFIGURATION_PATHS,
+    'OpenRouter options are native top-level fields of the "llm" block — set "provider" (routing ' +
+      'preferences), "models", "route", "plugins" or "transforms" beside "model" rather than ' +
+      'under "configuration". Transport settings (proxy, custom fetch, timeout) have no ' +
+      'per-provider hook: run node with --use-env-proxy (or set NODE_USE_ENV_PROXY=1) plus ' +
+      'HTTP_PROXY/HTTPS_PROXY to route this provider through a proxy process-wide.'
+  );
+
   const resolvedSiteUrl =
-    siteUrl ?? configObj?.defaultHeaders?.['HTTP-Referer'] ?? 'https://gauntsloth.app/';
-  const resolvedSiteName = siteName ?? configObj?.defaultHeaders?.['X-Title'] ?? 'Gaunt Sloth';
+    siteUrl ??
+    configObj?.defaultHeaders?.[ATTRIBUTION_HEADERS.siteUrl] ??
+    'https://gauntsloth.app/';
+  const resolvedSiteName =
+    siteName ?? configObj?.defaultHeaders?.[ATTRIBUTION_HEADERS.siteName] ?? 'Gaunt Sloth';
 
   return new ChatOpenRouter({
     ...restConfig,

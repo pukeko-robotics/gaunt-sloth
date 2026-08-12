@@ -245,9 +245,12 @@ export interface ResolvedModelIdentity {
  *   - PROVIDER: the configured `config.modelProviderType` (the raw `llm.type` the loader stashed —
  *     `openrouter`/`deepseek`/`xai`/`anthropic`/…) when present, otherwise the live LangChain
  *     model's `_llmType()` (the source the AG-UI `/info` endpoint reports). GS2-53 — preferring the
- *     configured `type` fixes the OpenAI-compatible shims (openrouter/deepseek/xai all extend
- *     ChatOpenAI, so their `_llmType()` reports `openai`): a `type: openrouter` config now injects
- *     `openrouter:<model>`, not `openai:<model>`. The `type` is absent for module configs (which
+ *     configured `type` fixes the OpenAI-compatible shims that extend `ChatOpenAI` (`deepseek`,
+ *     `xai`), whose `_llmType()` reports `openai` and would mislabel the provider half. It is also
+ *     the safer source in general: `_llmType()` is the model class's opinion, while the `type` is
+ *     the user's own declaration, so a provider swapped onto a different client (as `openrouter`
+ *     was) keeps its configured label without this file needing to know. The `type` is absent for
+ *     module configs (which
  *     hand us an already-built LLM), where we fall back to `_llmType()` unchanged. The MODEL half is
  *     always exact.
  *
@@ -272,8 +275,8 @@ export function resolveModelIdentity(
 ): ResolvedModelIdentity | undefined {
   const llm = config?.llm;
   // Prefer the configured provider `type` over the live model's `_llmType()`: OpenAI-compatible
-  // shims (openrouter/deepseek/xai) extend ChatOpenAI and report `_llmType() === 'openai'`, which
-  // would mislabel the provider half. Only fall through to the guarded `_llmType()` when no
+  // shims that extend ChatOpenAI (deepseek/xai) report `_llmType() === 'openai'`, which would
+  // mislabel the provider half. Only fall through to the guarded `_llmType()` when no
   // (non-blank) `type` was threaded (e.g. module configs that build the LLM themselves).
   let provider: string | undefined = config?.modelProviderType?.trim() || undefined;
   if (!provider) {

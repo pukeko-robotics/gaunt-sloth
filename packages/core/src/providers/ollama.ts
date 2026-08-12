@@ -8,6 +8,7 @@ import type { ChatOllamaInput } from '@langchain/ollama';
 
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
+import { warnUnusedConfiguration } from '#src/providers/configurationPassthrough.js';
 
 /**
  * Default Ollama daemon host, matching the Ollama CLI/library default. GS2-59 — `ChatOllama` talks
@@ -79,6 +80,16 @@ export async function processJsonConfig(
     baseUrl: llmConfig.baseUrl ?? resolveBaseUrl(),
     numCtx: llmConfig.numCtx ?? DEFAULT_OLLAMA_NUM_CTX,
   };
+  // `ChatOllama` is a native client, so NOTHING in a `configuration` block reaches it — say so
+  // before dropping it, rather than letting a stale config behave differently than it reads.
+  warnUnusedConfiguration(
+    'ollama',
+    configFields.configuration,
+    [],
+    'Ollama runs as a local, unauthenticated daemon: point elsewhere with the OLLAMA_HOST ' +
+      'environment variable or the "baseUrl" field of the "llm" block, and set "headers" there ' +
+      'if a reverse proxy in front of it needs auth.'
+  );
   // Strip OpenAI-client / gaunt-sloth-internal keys ChatOllama neither needs nor understands.
   for (const key of ['type', 'apiKeyEnvironmentVariable', 'apiKey', 'configuration']) {
     delete configFields[key];

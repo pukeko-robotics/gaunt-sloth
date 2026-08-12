@@ -498,18 +498,11 @@ describe('resolveModelIdentity (GS2-34/GS2-53)', () => {
     });
   });
 
-  // GS2-53 — OpenAI-compatible shims (openrouter/deepseek/xai) extend ChatOpenAI, so their live
-  // `_llmType()` reports `openai`. The configured provider `type` (stashed by the loader as
-  // `modelProviderType`) is the true provider and MUST win, or a `type: openrouter` config injects
+  // GS2-53 — the OpenAI-compatible shims that extend ChatOpenAI (deepseek/xai) report a live
+  // `_llmType()` of `openai`. The configured provider `type` (stashed by the loader as
+  // `modelProviderType`) is the true provider and MUST win, or a `type: deepseek` config injects
   // the wrong `openai:<model>` identity into the prompt.
   it('prefers the configured provider type over _llmType() for OpenAI-compatible shims', () => {
-    expect(
-      resolveModelIdentity({
-        llm: { _llmType: () => 'openai', model: 'anthropic/claude-3.5-sonnet' },
-        modelDisplayName: 'anthropic/claude-3.5-sonnet',
-        modelProviderType: 'openrouter',
-      })
-    ).toEqual({ identity: 'openrouter:anthropic/claude-3.5-sonnet', hasProvider: true });
     expect(
       resolveModelIdentity({
         llm: { _llmType: () => 'openai', model: 'deepseek-chat' },
@@ -526,8 +519,17 @@ describe('resolveModelIdentity (GS2-34/GS2-53)', () => {
     ).toEqual({ identity: 'xai:grok-4', hasProvider: true });
   });
 
-  it('a configured type that matches _llmType() (anthropic/ollama) is unchanged', () => {
+  it('a configured type that matches _llmType() (anthropic/ollama/openrouter) is unchanged', () => {
     // The type maps 1:1 to _llmType() here, so preferring it yields the same identity as before.
+    // `openrouter` belongs in THIS group: it is a native client, not a ChatOpenAI subclass, and
+    // its own `_llmType()` already reports `openrouter`.
+    expect(
+      resolveModelIdentity({
+        llm: { _llmType: () => 'openrouter', model: 'anthropic/claude-3.5-sonnet' },
+        modelDisplayName: 'anthropic/claude-3.5-sonnet',
+        modelProviderType: 'openrouter',
+      })
+    ).toEqual({ identity: 'openrouter:anthropic/claude-3.5-sonnet', hasProvider: true });
     expect(
       resolveModelIdentity({
         llm: { _llmType: () => 'anthropic', model: 'claude-sonnet-5' },

@@ -48,13 +48,47 @@ describe('openrouter provider — ChatOpenRouter adoption & attribution wiring',
     expect(built.siteName).toBe('Gaunt Sloth');
   });
 
-  it('honors custom siteUrl and siteName or configuration defaultHeaders fallback', async () => {
+  it('honors custom top-level siteUrl and siteName', async () => {
     const { processJsonConfig } = await import('#src/providers/openrouter.js');
 
     await processJsonConfig(
       buildConfig({
         siteUrl: 'https://custom.app',
         siteName: 'Custom App',
+      }) as any
+    );
+
+    const built = chatOpenRouterConstructorMock.mock.calls[0][0];
+    expect(built.siteUrl).toBe('https://custom.app');
+    expect(built.siteName).toBe('Custom App');
+  });
+
+  it('falls back to the configuration defaultHeaders attribution headers', async () => {
+    const { processJsonConfig } = await import('#src/providers/openrouter.js');
+
+    await processJsonConfig(
+      buildConfig({
+        configuration: {
+          defaultHeaders: { 'HTTP-Referer': 'https://fallback.app', 'X-Title': 'Fallback App' },
+        },
+      }) as any
+    );
+
+    const built = chatOpenRouterConstructorMock.mock.calls[0][0];
+    expect(built.siteUrl).toBe('https://fallback.app');
+    expect(built.siteName).toBe('Fallback App');
+  });
+
+  it('prefers explicit top-level fields over the defaultHeaders fallback', async () => {
+    const { processJsonConfig } = await import('#src/providers/openrouter.js');
+
+    await processJsonConfig(
+      buildConfig({
+        siteUrl: 'https://custom.app',
+        siteName: 'Custom App',
+        configuration: {
+          defaultHeaders: { 'HTTP-Referer': 'https://fallback.app', 'X-Title': 'Fallback App' },
+        },
       }) as any
     );
 
