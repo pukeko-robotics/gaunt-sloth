@@ -6,6 +6,11 @@
  * — eval's shapes layer on top of (not into) that file.
  */
 import type { ApprovalRung } from '@gaunt-sloth/core/config/shell-policy.js';
+// TYPE-ONLY, and it must stay that way: this module is on the suite-PARSE path, and a value import
+// of core's rater would pull the model layer into every parse. `raterVocabulary.js` is a leaf with
+// no imports of its own, so even a value import from it would be cheap — but the totality check
+// below needs only the type, and a type import erases entirely.
+import type { PreflightFloorKind } from '@gaunt-sloth/core/core/shell/raterVocabulary.js';
 import type { ToolResultRecord } from '#src/types.js';
 import type {
   EvalCaseClassification,
@@ -54,10 +59,46 @@ export const HARDLINE_REFUSAL_MARKER = 'hardline floor: refused';
  * What DOES discriminate is **which deterministic mechanism fired**, which the target reports in the
  * rationale, and which is exactly what the corpus records. So a deterministic case asserts that.
  */
-export const FORCED_BY_MECHANISMS = ['hardline-floor', 'script-env-leak-preflight'] as const;
+/**
+ * **Core's preflight list, with this package's `forced_by` spelling attached — the one place the two
+ * vocabularies meet.**
+ *
+ * Typed as a TOTAL `Record` over core's own `PreflightFloorKind`, which is what makes it a guard
+ * rather than a copy: a preflight added to the gate has no entry here, so this file stops compiling
+ * and names the missing kind. Everything downstream — the mechanism list, the `forced_by` grammar,
+ * the target's probe table, the assertion markers — is derived from this object, so there is nowhere
+ * else the new preflight could be forgotten.
+ *
+ * The failure it prevents is the silent one. A restated list does not fail when the gate grows; it
+ * simply never attributes the new mechanism, and every corpus keeps reporting a clean sheet over a
+ * gate it no longer fully covers.
+ *
+ * The two spellings differ because they answer different questions: core names the ARM
+ * (`script-env-leak`), while a suite names the MECHANISM THAT DECIDED a case
+ * (`script-env-leak-preflight`), which has to be distinguishable from the execution-time floor in
+ * the same `forced_by` grammar. Keep the suffix convention for any kind core adds.
+ */
+const PREFLIGHT_MECHANISM_OF = {
+  'script-env-leak': 'script-env-leak-preflight',
+  'open-world': 'open-world-preflight',
+} as const satisfies Readonly<Record<PreflightFloorKind, string>>;
+
+/**
+ * The mechanisms a `forced_by:` assertion may name: the §8 hardline floor, plus one per
+ * deterministic preflight core declares.
+ *
+ * The floor is spelled here because it is not a preflight — it fires at execution time inside the
+ * shell tool, under every rung, and core keeps no list of it to derive from. The preflights are NOT
+ * spelled: they come from {@link PREFLIGHT_MECHANISM_OF}, which is core's own
+ * `PREFLIGHT_FLOOR_KINDS` with our `forced_by` spelling attached.
+ */
+export const FORCED_BY_MECHANISMS = [
+  'hardline-floor',
+  ...Object.values(PREFLIGHT_MECHANISM_OF),
+] as const;
 
 /** One of {@link FORCED_BY_MECHANISMS}. */
-export type ForcedByMechanism = (typeof FORCED_BY_MECHANISMS)[number];
+export type ForcedByMechanism = 'hardline-floor' | PreflightMechanism;
 
 /** The prefix a rationale carries for a decision a preflight forced, followed by the mechanism. */
 export const FORCED_BY_MARKER = 'forced by';
@@ -70,6 +111,7 @@ export const FORCED_BY_MARKER = 'forced by';
 export const FORCED_BY_ASSERTIONS: Record<ForcedByMechanism, string> = {
   'hardline-floor': HARDLINE_REFUSAL_MARKER,
   'script-env-leak-preflight': `${FORCED_BY_MARKER}: script-env-leak-preflight`,
+  'open-world-preflight': `${FORCED_BY_MARKER}: open-world-preflight`,
 };
 
 /**
@@ -106,18 +148,27 @@ export const FORCED_BY_ASSERTIONS: Record<ForcedByMechanism, string> = {
  * the marker and the action go red **together**. That is the discrimination, not a side effect of
  * it.
  */
-export const PREFLIGHT_MECHANISMS = [
-  'script-env-leak-preflight',
-] as const satisfies readonly ForcedByMechanism[];
+export const PREFLIGHT_MECHANISMS = Object.values(PREFLIGHT_MECHANISM_OF);
 
 /**
  * One of {@link PREFLIGHT_MECHANISMS}. Narrower than {@link ForcedByMechanism} on purpose: the
- * target's probe table is typed as a TOTAL record over this, so adding a preflight to the list above
- * is a **compile error** until someone writes the probe command that observes it — the same
- * compile-time guard core's own `BELOW_DESTRUCTIVE_FLOOR` uses, for the same reason (the failure it
- * prevents is silent: an unprobed mechanism is simply never attributable).
+ * target's probe table is typed as a TOTAL record over this, so a preflight core gains is a
+ * **compile error** until someone writes the probe command that observes it — the same compile-time
+ * guard core's own `BELOW_DESTRUCTIVE_FLOOR` uses, for the same reason (the failure it prevents is
+ * silent: an unprobed mechanism is simply never attributable).
  */
-export type PreflightMechanism = (typeof PREFLIGHT_MECHANISMS)[number];
+export type PreflightMechanism = (typeof PREFLIGHT_MECHANISM_OF)[PreflightFloorKind];
+
+/**
+ * The `forced_by` spelling of one of core's preflight arms — the typed lookup into
+ * {@link PREFLIGHT_MECHANISM_OF}, which stays private so this is the only way in.
+ *
+ * TOTAL over core's `PreflightFloorKind` and therefore never `undefined`, which is the point: a
+ * caller cannot be handed an arm it has no name for, because such an arm would not have compiled.
+ */
+export function preflightMechanismFor(kind: PreflightFloorKind): PreflightMechanism {
+  return PREFLIGHT_MECHANISM_OF[kind];
+}
 
 /**
  * Must a round claiming this mechanism be driven with a permissive rating for the mechanism to be

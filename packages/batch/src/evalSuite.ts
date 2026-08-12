@@ -1,6 +1,10 @@
 import { parse as parseYaml } from 'yaml';
 import * as z from 'zod';
 import { APPROVAL_RUNGS, isApprovalRung } from '@gaunt-sloth/core/config/shell-policy.js';
+// The gate's own vocabularies, read rather than restated — see `assertCoversGateVocabulary`. This is
+// the suite-PARSE path, so it deliberately imports the leaf vocabulary module and NOT core's rater,
+// which would pull the model layer in behind it.
+import { RATER_ACTIONS, RATER_OUTCOMES } from '@gaunt-sloth/core/core/shell/raterVocabulary.js';
 
 import {
   DEFAULT_EVAL_PASS_THRESHOLD,
@@ -17,6 +21,7 @@ import type {
   EvalTurn,
   ForcedByMechanism,
 } from '#src/evalTypes.js';
+import { UNRECOGNIZED_LABEL } from '#src/classificationTypes.js';
 import type {
   ClassificationExtractor,
   EvalClassificationSpec,
@@ -553,6 +558,9 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
         'classifier layer is inert and the cases would be run through the ordinary agent instead.'
     );
   }
+  if (target.type === 'rater' && classification !== undefined) {
+    assertCoversGateVocabulary(classification, suffix);
+  }
 
   // BATCH-25 — a config sweep overrides the gth config the SUT is built from. An `adk-agent` /
   // `ag-ui` target runs OUT OF PROCESS with its own model, tools and auth, so there is no config to
@@ -868,6 +876,62 @@ function buildClassificationSpec(
     labelFrom: raw.label_from ? normalizeExtractor(raw.label_from) : { kind: 'answer' },
     actionFrom,
   };
+}
+
+/**
+ * A `rater` suite's declared enums must COVER the gate's own vocabularies — every outcome core's
+ * rater can return, and every action its decision mapping can resolve to.
+ *
+ * ## Why this is a parse error and not a report footnote
+ *
+ * The `rater` target does not read a value out of a model's prose: it reports what core's own
+ * functions returned, so the set of values it can produce is known exactly, at parse time, from
+ * core's vocabulary lists. A value outside the declared enum is therefore not an uninterpretable
+ * answer — it is a value this suite forgot to declare, and the difference matters because of what
+ * happens next. An undeclared value lands in the `(unrecognized)` bucket, which is the right home
+ * for an answer nobody can interpret and the wrong one here: the cell stops being graded, the
+ * confusion matrix grows a column nobody reads, and the metric that was supposed to be watching that
+ * behaviour keeps reporting a clean number. It fails in a user's eval report, silently, rather than
+ * in a build.
+ *
+ * So the vocabularies are read from core rather than restated in a suite, and a suite that does not
+ * cover one is rejected with the missing member named. The gate gaining an action then breaks every
+ * suite that has not accounted for it — loudly, before a run — which is the whole point.
+ *
+ * **This applies to the `rater` target only.** Every other target reads its classification out of an
+ * answer some model wrote, where an unmatched value is genuinely uninterpretable and
+ * `(unrecognized)` is exactly right. Nothing here changes that path.
+ *
+ * A suite that declares no `actions` at all is not covered by the action half: it has no action
+ * dimension, and `expect_action` is already a parse error without one, so nothing can be silently
+ * misfiled. Declaring a partial one is the failure this catches.
+ */
+function assertCoversGateVocabulary(spec: EvalClassificationSpec, suffix: string): void {
+  requireCoverage(spec.labels, RATER_OUTCOMES, 'labels', 'outcome', suffix);
+  if (spec.actions.length > 0) {
+    requireCoverage(spec.actions, RATER_ACTIONS, 'actions', 'action', suffix);
+  }
+}
+
+/** One half of {@link assertCoversGateVocabulary}: every member of the gate's vocabulary must appear
+ * in the suite's declared enum. */
+function requireCoverage(
+  declared: string[],
+  vocabulary: readonly string[],
+  field: string,
+  noun: string,
+  suffix: string
+): void {
+  const missing = vocabulary.filter((value) => !declared.includes(value));
+  if (missing.length === 0) return;
+  throw new Error(
+    `Invalid eval suite${suffix}: a "rater" target's \`classification.${field}\` must declare every ` +
+      `${noun} the approvals gate can produce, and this suite omits ${missing
+        .map((value) => `"${value}"`)
+        .join(', ')} (declared: ${declared.join(', ')}; the gate's: ${vocabulary.join(', ')}). ` +
+      `An undeclared ${noun} is not rejected at run time — it is filed under "${UNRECOGNIZED_LABEL}", ` +
+      'so the cell silently stops being graded instead of being reported as wrong.'
+  );
 }
 
 /** Validate one declared enum: non-blank, unique, and free of the parenthesized synthetic buckets

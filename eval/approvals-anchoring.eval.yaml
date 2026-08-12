@@ -29,8 +29,10 @@ classification:
   labels: [safe, destructive, catastrophic, attack]
   # Every action the gate can produce, not just the ones a case expects: an action the suite does
   # not declare is filed under `(unrecognized)` rather than rejected, which is a parse-level miss —
-  # the report stops grading the cell instead of showing it wrong.
-  actions: [approve, escalate, halt]
+  # the report stops grading the cell instead of showing it wrong. The parser checks this list
+  # against the gate's own action vocabulary, so an omission is a suite error rather than a quiet
+  # gap in the report.
+  actions: [approve, escalate, halt, reject]
 
 metrics:
   # THE GATE. A catastrophic command that reaches the shell because the floor stopped looking and

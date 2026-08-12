@@ -32,6 +32,7 @@ import {
   FAIL_CLOSED_VERDICT,
   RATER_OUTCOMES,
   mapVerdictToAction,
+  preflightFloorFinding,
   rateShellCommand,
 } from '@gaunt-sloth/core/core/shell/rater.js';
 import type { RaterDecision, ShellSafetyVerdict } from '@gaunt-sloth/core/core/shell/rater.js';
@@ -43,6 +44,7 @@ import {
   FORCED_BY_ASSERTIONS,
   HARDLINE_REFUSAL_MARKER,
   mechanismNeedsPermissiveRating,
+  preflightMechanismFor,
 } from '#src/evalTypes.js';
 import type {
   ClassifyOutcome,
@@ -87,32 +89,38 @@ export const NO_RATING_CALL_MARKER = 'no rating call';
  * One command per deterministic preflight FINDING, used ONLY to ask core's decision mapping what
  * that preflight says. They are probes, never rated, and nothing about them reaches a suite.
  *
- * ## Why probe at all
+ * ## What the probes are for
  *
- * A deterministic case has to be gradeable on WHICH mechanism decided it (see
- * {@link ../evalTypes.js FORCED_BY_MECHANISMS}), and the only thing the gate reports about that is
- * the REASON on the verdict `mapVerdictToAction` returns. Two ways to read it were available and
- * both were rejected:
+ * Two things, neither of which is attribution — {@link forcedMechanism} gets the arm's NAME from
+ * core directly:
  *
- * - copy core's reason sentences into this package — a second copy of core's prose, silently stale
- *   the day it is reworded;
- * - re-evaluate `classifyCommand(...) === null` / `hasScriptEnvLeakRisk(...)` here — a second copy
- *   of the *conditions*, i.e. exactly the "never re-decide the gate" rule this module opens with,
- *   and one that would keep naming a mechanism after that mechanism had been deleted from the gate.
+ * 1. **They derive the permissive rating.** A preflight raises only an outcome below core's
+ *    deterministic floor, so it is observable only when the gate is handed a rating it is willing to
+ *    override. Each probe is offered every outcome of core's own vocabulary in turn and the first
+ *    one the gate **rewrites** is kept, which derives that rating without spelling it.
+ * 2. **They prove every declared preflight still fires.** A probe the gate rewrites nothing on is a
+ *    preflight that has stopped firing, and every case asserting it would go red across every
+ *    corpus. That belongs in a unit test here rather than in someone's eval report, which is what
+ *    {@link calibrateMechanisms} is for.
  *
- * So: run each probe through the REAL mapping and record the sentence it produced. The probe is
- * offered each outcome of core's own vocabulary in turn and the one the gate **rewrites** is kept —
- * which both finds the sentence and derives the permissive rating, spelling neither. That makes the
- * index self-calibrating (a reworded reason moves with it) and honest under deletion (a preflight
- * that stops firing rewrites nothing, is not indexed, and every case asserting it goes red).
+ * The probe table is typed as a TOTAL record over {@link ../evalTypes.js PreflightMechanism}, which
+ * derives from core's own preflight list — so a preflight core gains does not compile here until
+ * someone writes the command that observes it.
  *
- * The probe cannot be run with NO verdict: CFG-28 narrowed the preflights to raise only an outcome
- * below the deterministic floor, and a missing verdict becomes core's fail-closed one, which is *at*
- * the floor. Every command then comes back with the identical placeholder — see
+ * A probe cannot be run with NO verdict: the preflights raise only an outcome below the
+ * deterministic floor, and a missing verdict becomes core's fail-closed one, which is *at* the
+ * floor. Every command then comes back with the identical placeholder — see
  * {@link ../evalTypes.js PREFLIGHT_MECHANISMS} for the whole rule.
+ *
+ * Exported for the unit suite, which exercises each mechanism on a command that is NOT its probe:
+ * that test has to be able to prove the two differ, or it silently stops being that test.
  */
-const MECHANISM_PROBES: Readonly<Record<PreflightMechanism, string>> = {
+export const MECHANISM_PROBES: Readonly<Record<PreflightMechanism, string>> = {
   'script-env-leak-preflight': 'node probe.js $PROBE_ENV_VALUE',
+  // A host literal in a fetch position. The host is deliberately in the reserved `.invalid` TLD —
+  // nothing here ever opens a connection, but a probe command must not name a domain that someone
+  // could register and point somewhere.
+  'open-world-preflight': 'curl https://probe.invalid/probe',
 };
 
 /**
@@ -194,13 +202,29 @@ export function calibratePermissiveRating(): string | undefined {
 }
 
 /**
- * Which deterministic mechanism forced this decision — read out of what the gate RETURNED, never
- * recomputed from the command. `undefined` when the decision was not forced by an indexed mechanism
- * (a rated verdict, an unrated rung, or a mechanism that no longer fires).
+ * Which deterministic mechanism forced this decision — still read out of what the gate RETURNED,
+ * never recomputed. `undefined` when the decision was not forced by a preflight (a rated verdict, an
+ * unrated rung, `bypass`, or a preflight that no longer fires).
+ *
+ * **The arm's name comes from core, and the fact that it decided comes from the gate.** Core's
+ * `preflightFloorFinding` is the single implementation of the preflight ordering, exported so a
+ * diagnostic can say which arm fired; asking it is derivation, not the "second copy of the
+ * conditions" this module refuses. But what it returns is only what a preflight WOULD find, so it is
+ * accepted only when the gate actually put that finding on the verdict — which is false at `bypass`,
+ * at the unrated rungs, and whenever a rater's own harsher verdict passed through untouched.
+ *
+ * **Attribution must key on the arm, never on the reason text.** The open-world arm interpolates the
+ * HOST into its sentence, so a prose index built from a fixed probe command would recognise exactly
+ * one host and silently attribute nothing for every other — a `forced_by` assertion that fails on
+ * real corpora while passing its own test. Two arms that came to share a sentence are also still
+ * told apart here, where a prose index could only drop both.
  */
-function forcedMechanism(decision: RaterDecision): ForcedByMechanism | undefined {
-  if (!decision.verdict?.reason) return undefined;
-  return calibrated().index.get(decision.verdict.reason);
+function forcedMechanism(command: string, decision: RaterDecision): ForcedByMechanism | undefined {
+  const reason = decision.verdict?.reason;
+  if (reason === undefined) return undefined;
+  const finding = preflightFloorFinding(command);
+  if (finding === null || finding.reason !== reason) return undefined;
+  return preflightMechanismFor(finding.kind);
 }
 
 /** The memoized {@link calibrateGate} — core's answers do not change within a run. */
@@ -270,6 +294,7 @@ function resolveRung(target: RaterTarget, config: GthConfig): ApprovalRung {
  * rung. See {@link ../evalTypes.js FORCED_BY_MECHANISMS}.
  */
 function buildRationale(
+  command: string,
   floorDescription: string | undefined,
   decision: RaterDecision,
   noRatingReason: string | undefined,
@@ -293,7 +318,7 @@ function buildRationale(
     noRatingReason !== undefined &&
     (verdict?.reason === ratingIn?.reason || verdict?.reason === FAIL_CLOSED_VERDICT.reason);
   const reason = verdict?.reason && !handedBack ? verdict.reason : undefined;
-  const mechanism = forcedMechanism(decision);
+  const mechanism = forcedMechanism(command, decision);
   if (mechanism !== undefined) {
     // A forced mechanism can arrive with no reason worth parenthesising — the `handedBack` case
     // just above, where the only sentence available came from us rather than from the gate. The
@@ -404,7 +429,7 @@ async function classifyOneRound(
     // would report is OUR lever floored by a preflight, never a judgement anyone rendered.
     ...(deterministicOnly ? {} : { label: decision.verdict?.outcome }),
     action: decision.action,
-    rationale: buildRationale(floor?.description, decision, noRatingReason, verdict),
+    rationale: buildRationale(trimmed, floor?.description, decision, noRatingReason, verdict),
     modelCalls,
   };
 }

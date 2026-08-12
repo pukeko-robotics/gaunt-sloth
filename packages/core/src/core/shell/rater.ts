@@ -59,38 +59,30 @@ import {
   buildComposedOpenWorldNote,
   findOpenWorldHostLiterals,
 } from '#src/core/shell/openWorld.js';
+import { RATER_OUTCOMES } from '#src/core/shell/raterVocabulary.js';
+import type {
+  PreflightFloorKind,
+  RaterAction,
+  RaterOutcome,
+} from '#src/core/shell/raterVocabulary.js';
 import { structuredOutputBoundary } from '#src/runtime/structuredOutput.js';
 import { debugLog, debugLogError } from '#src/utils/debugUtils.js';
 
 /**
- * CFG-28 (spec §4.1) — the **four** outcomes the rater may return. The retired third outcome named
- * the halt trigger by *mechanism* while positioning it as the top *severity*; the rescale (§11.1)
- * splits that into two outcomes asking two different questions. There is no
- * ordering knob and no threshold: each outcome's consequence is fixed by the rung
- * ({@link mapVerdictToAction}).
- *
- * - `safe` — no harmful effect.
- * - `destructive` — **the catch-all**: harmful, but recoverable from inside the session, and not
- *   an attack — **and anything the rater cannot assess**. The rating prompt defines it *by
- *   exclusion* ("not safe, not catastrophic and not an attack") precisely so no command can fall
- *   outside the four.
- * - `catastrophic` — *can this be undone from inside the session?* Irreversible without something
- *   OUTSIDE the session: rescue media, a backup, a re-provision, a restore from a third party.
- *   Escalates at both rated rungs; never negotiable and never sticky (§4.2).
- * - `attack` — *is something hostile acting here?* The command's own **structure** evidences
- *   compromise (§4.1.1: credential targeting, privilege escalation / permission weakening,
- *   persistence, deception, obfuscation). It is the only outcome that HALTS the run.
- *
- * **`catastrophic` and `attack` are not ranked against each other** — they ask different
- * questions, and the spec says so explicitly. A command can be both; `attack` wins the
- * *consequence* (a manipulated session cannot be trusted to continue) but MUST NOT swallow the
- * finding — see the §6.1 clause in {@link buildRaterSystemPrompt}. Nothing here may be written as
- * a severity comparison between the two.
+ * The gate's closed vocabularies are defined in {@link ./raterVocabulary.js} — a leaf module with no
+ * imports, so a checker can read the words without loading this file's model layer. They are
+ * re-exported here, where their meaning lives, so a caller needs only one import either way.
  */
-export const RATER_OUTCOMES = ['safe', 'destructive', 'catastrophic', 'attack'] as const;
-
-/** One outcome of {@link RATER_OUTCOMES}. */
-export type RaterOutcome = (typeof RATER_OUTCOMES)[number];
+export {
+  PREFLIGHT_FLOOR_KINDS,
+  RATER_ACTIONS,
+  RATER_OUTCOMES,
+} from '#src/core/shell/raterVocabulary.js';
+export type {
+  PreflightFloorKind,
+  RaterAction,
+  RaterOutcome,
+} from '#src/core/shell/raterVocabulary.js';
 
 /**
  * Structured verdict the rater model must return: one outcome plus one short sentence. There is
@@ -1417,47 +1409,6 @@ export async function rateShellCommand(
   }
 }
 
-/**
- * The action the approvals gate resolves to for a single gated call, BEFORE the human prompt.
- *
- * - `approve` — approve ONCE; do not touch the human or the allow-list.
- * - `escalate` — fall through to the human approval callback, carrying the verdict when one
- *   exists. Where there is no human, §6.2 turns this into an immediate non-zero exit — that
- *   translation belongs to the runner, not here.
- * - `halt` — **end the agent loop** (§4.2). Reserved for `attack`. It is not a rejection the
- *   model can respond to and offers it no moves; no rung except `bypass` can turn it into
- *   anything else.
- * - `reject` — [[EXT-29]] (§5): hand the rater's explanation back to the **agent** as the refused
- *   call's tool result (§7), opening a round of the negotiation. Returned for `destructive` at
- *   `auto` and nowhere else.
- *
- * **`reject` says the outcome is negotiable, NOT that the negotiation may continue.** This mapping
- * is keyed on the rung and knows nothing about how many rounds have been spent; §5.3's consecutive
- * cap and the reachability bound live with the state they count, in the runner, which turns a
- * `reject` into an escalation once either is spent. Putting the counters in here would make a pure
- * rung-keyed table depend on session history, and would give the eval target
- * (`@gaunt-sloth/batch`'s `raterTarget`) an action that varies with something it does not model.
- *
- * **[[EXT-81]] retired the fourth arm, `abstain`.** A command whose target the gate could not
- * statically resolve used to skip the rating call entirely and return that action instead. Under
- * §6.1's rule — *deterministic checks fire only where we are confident something is a threat; where
- * we cannot tell, the model decides* — a parser reporting that it could not resolve a string is not
- * a detection, so it no longer earns an action of its own. What it earns is a neutral note in the
- * rating prompt ({@link buildParserPreflightNote}) and a real rating, which is also what restores
- * the ceiling: `catastrophic` and `attack` were UNREACHABLE for that whole class while nobody rated
- * it, so `pwd && rm -rf ~` could only ever be floored at `destructive`.
- *
- * There is deliberately **no `refuse` arm for `catastrophic`** (settled 2026-07-27c, §4.2). The
- * deterministic members of that class — fork bomb, `mkfs`, `rm -rf /`, `dd` to a block device — are
- * already refused unappealably by the §8 hardline floor under every rung including `bypass`, so a
- * refusing `catastrophic` would add nothing for the commands that motivate the idea. What it would
- * newly refuse is the remainder the floor cannot reach, every member of which has routine
- * legitimate use (a staging database, an ephemeral `terraform destroy`, a preview namespace). An
- * unmeasured classifier belongs behind a human who can correct it; a refusal has no correction
- * path.
- */
-export type RaterAction = 'approve' | 'escalate' | 'halt' | 'reject';
-
 /** Inputs to the decision mapping: just the rung. Each rung fully determines behaviour (§1). */
 export interface RaterDecisionOptions {
   /** The rung in force for this session. */
@@ -1635,9 +1586,6 @@ export function openWorldToolFloorReason(
 function preflightFloorReason(command: string): string | null {
   return preflightFloorFinding(command)?.reason ?? null;
 }
-
-/** Which of the two deterministic preflights fired. See {@link preflightFloorFinding}. */
-export type PreflightFloorKind = 'script-env-leak' | 'open-world';
 
 /** A preflight finding: which arm fired, and the reason it floors the command with. */
 export interface PreflightFloorFinding {
