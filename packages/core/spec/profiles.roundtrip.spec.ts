@@ -80,4 +80,42 @@ describe('config profiles — create → select round-trip (GS2-33)', () => {
     expect(failing?.sourceLabel).toBe(brokenPath);
     expect(failing?.errorMessage ?? '').toMatch(/filesystem/);
   });
+
+  /**
+   * CFG-36 / GS2-29 — `gth config validate` must never green-light a config a real run refuses.
+   *
+   * The trap is specific: discovery deliberately falls back to a plain `<dir>/.gsloth.config.json`
+   * when a named profile has none, so with an ordinary project config present the validator would
+   * happily validate THAT file and report OK — while the run now refuses to start. Both sides read
+   * the same rule (`findUnresolvedExplicitProfile`), and this is what holds them together.
+   */
+  it('CFG-36: a named profile with no config FAILS validation, mirroring the run that refuses it', async () => {
+    // Case C: a plain project config exists and would be found by discovery for any profile name.
+    writeFileSync(
+      resolve(root, '.gsloth.config.json'),
+      JSON.stringify({ llm: { type: 'anthropic' } })
+    );
+
+    const report = await validateConfig({ identityProfile: 'typo' });
+
+    expect(report.ok).toBe(false);
+    const failing = report.layers.find((layer) => !layer.ok);
+    expect(failing?.errorMessage ?? '').toContain('identity profile "typo" not found');
+  });
+
+  it('CFG-36 control: that same plain config raises no profile complaint when none is named', async () => {
+    // The discriminating half: the rule keys on a profile having been NAMED. Asserted as "no
+    // profile complaint" rather than `ok: true`, because the global layer is read from the real
+    // home dir here and its validity is a property of the machine, not of this change.
+    writeFileSync(
+      resolve(root, '.gsloth.config.json'),
+      JSON.stringify({ llm: { type: 'anthropic' } })
+    );
+
+    const report = await validateConfig({});
+
+    expect(
+      report.layers.some((layer) => (layer.errorMessage ?? '').includes('identity profile'))
+    ).toBe(false);
+  });
 });

@@ -354,6 +354,37 @@ export function resolveIdentityProfileConfigPath(identityProfile: string): strin
 }
 
 /**
+ * CFG-36 — the ONE statement of "an explicitly-named identity profile that does not exist", shared
+ * by the run path ({@link initConfig}, which raises) and the read path ({@link validateConfig},
+ * which records a not-ok layer). Single-sourced deliberately: GS2-29's invariant is that
+ * `gth config validate` can never green-light a config a real run refuses, and two copies of this
+ * rule is exactly how that invariant rots.
+ *
+ * Returns the offending profile name, or `undefined` when there is nothing to complain about —
+ * no profile named (a blank/whitespace name counts as none, keeping the CFG-8 no-profile path
+ * untouched), an explicit `--config` path (which names the file to load and bypasses discovery),
+ * or a profile that resolves to its own config.
+ */
+function findUnresolvedExplicitProfile(
+  commandLineConfigOverrides: CommandLineConfigOverrides
+): string | undefined {
+  const profile = commandLineConfigOverrides.identityProfile?.trim();
+  if (!profile || commandLineConfigOverrides.customConfigPath) {
+    return undefined;
+  }
+  return resolveIdentityProfileConfigPath(profile) ? undefined : profile;
+}
+
+/** The message both paths report for {@link findUnresolvedExplicitProfile}'s failure. */
+function identityProfileNotFoundMessage(profile: string): string {
+  return (
+    `identity profile "${profile}" not found: no config file in ` +
+    `${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${profile}/ ` +
+    `(checked ${PROJECT_CONFIG_FORMATS.join(', ')})`
+  );
+}
+
+/**
  * Loads the global gsloth config (if present) from the global `~/.gsloth` folder.
  *
  * Precedence support: the returned raw config is intended to act as the BASE that the
@@ -747,21 +778,13 @@ export async function initConfig(
   // and load that instead. `resolveIdentityProfileConfigPath` never falls through, which is what
   // makes this check see the case the discovery gate cannot.
   //
-  // Gated on a non-empty profile name, so a blank `-i ''` stays "no profile" and the CFG-8
-  // no-profile global fallback below is UNTOUCHED. Gated on there being no `--config`, because an
-  // explicit config path wins discovery outright and names the file to load directly.
-  const explicitProfile = commandLineConfigOverrides.identityProfile?.trim();
-  if (
-    explicitProfile &&
-    !commandLineConfigOverrides.customConfigPath &&
-    !resolveIdentityProfileConfigPath(explicitProfile)
-  ) {
-    throw new ConfigDiscoveryError(
-      `identity profile "${explicitProfile}" not found: no config file in ` +
-        `${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${explicitProfile}/ ` +
-        `(checked ${PROJECT_CONFIG_FORMATS.join(', ')})`,
-      { identityProfile: explicitProfile }
-    );
+  // The rule itself lives in findUnresolvedExplicitProfile, shared with `validateConfig` so the
+  // validator can never green-light a profile a run refuses (GS2-29).
+  const explicitProfile = findUnresolvedExplicitProfile(commandLineConfigOverrides);
+  if (explicitProfile) {
+    throw new ConfigDiscoveryError(identityProfileNotFoundMessage(explicitProfile), {
+      identityProfile: explicitProfile,
+    });
   }
 
   const baseDir = discovered?.dir ?? getCurrentWorkDir();
@@ -1602,6 +1625,32 @@ export async function validateConfig(
   commandLineConfigOverrides: CommandLineConfigOverrides
 ): Promise<ConfigValidationReport> {
   const layers: ConfigLayerValidationReport[] = [];
+
+  // CFG-36 — mirror the run's STRICT named-profile rule before anything is read. `initConfig`
+  // refuses outright when an explicitly-named profile has no config of its own, so a validator that
+  // walked on would report OK for a config the run rejects — and it would do so in the ordinary
+  // case, because discovery falls back to a plain project config for an unresolved profile. That is
+  // the GS2-29 divergence in its purest form: `gth config validate -i typo` green-lighting a run
+  // that cannot start. Reported as a not-ok layer rather than thrown, because the read side
+  // COLLECTS and never terminates; returned immediately because a run gets no further either.
+  const unresolvedProfile = findUnresolvedExplicitProfile(commandLineConfigOverrides);
+  if (unresolvedProfile) {
+    return {
+      // `found: true` so the caller renders THIS message. `found: false` means "nothing to
+      // validate, run `gth init`", which would both discard the real diagnosis and misdirect a user
+      // whose actual problem is a mistyped `-i`.
+      found: true,
+      ok: false,
+      layers: [
+        {
+          sourceLabel: `${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${unresolvedProfile}/`,
+          ok: false,
+          warnings: [],
+          errorMessage: identityProfileNotFoundMessage(unresolvedProfile),
+        },
+      ],
+    };
+  }
 
   // Project layer first (run order): initConfig validates the discovered project config before
   // applying the global base. A parse failure here propagates (surfaced by the caller).
