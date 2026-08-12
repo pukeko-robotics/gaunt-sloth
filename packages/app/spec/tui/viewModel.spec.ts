@@ -10,7 +10,6 @@ describe('tui/viewModel foldEvents', () => {
     const { initialTurnViewModel } = await import('#src/tui/viewModel.js');
     expect(initialTurnViewModel()).toEqual({
       segments: [],
-      reasoning: '',
       isReasoning: false,
     });
   });
@@ -27,20 +26,21 @@ describe('tui/viewModel foldEvents', () => {
     expect(turnText(vm)).toBe('Hello, world');
   });
 
-  it('toggles the reasoning region and accumulates reasoning deltas', async () => {
-    const { foldEventSequence } = await import('#src/tui/viewModel.js');
+  it('toggles the reasoning region and accumulates reasoning deltas as ONE run', async () => {
+    const { foldEventSequence, turnReasoning } = await import('#src/tui/viewModel.js');
     const mid = foldEventSequence([
       { type: 'reasoning_start' },
       { type: 'reasoning_delta', delta: 'think ' },
       { type: 'reasoning_delta', delta: 'hard' },
     ]);
     expect(mid.isReasoning).toBe(true);
-    expect(mid.reasoning).toBe('think hard');
+    expect(mid.segments).toEqual([{ kind: 'reasoning', text: 'think hard' }]);
+    expect(turnReasoning(mid)).toBe('think hard');
 
     const { foldEvents } = await import('#src/tui/viewModel.js');
     const end = foldEvents(mid, { type: 'reasoning_end' });
     expect(end.isReasoning).toBe(false);
-    expect(end.reasoning).toBe('think hard');
+    expect(turnReasoning(end)).toBe('think hard');
   });
 
   it('builds a per-id tool-call record across start/args/end/result', async () => {

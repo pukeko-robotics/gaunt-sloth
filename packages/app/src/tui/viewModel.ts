@@ -44,10 +44,17 @@ export interface ToolCallViewModel {
   isError?: boolean;
 }
 
-/** One run of assistant text, uninterrupted by a tool call. */
+/** One run of assistant text, uninterrupted by a tool call or a run of reasoning. */
 export interface TextSegment {
   kind: 'text';
   /** The `text` deltas that arrived while this run was open, concatenated. */
+  text: string;
+}
+
+/** One run of the model's reasoning, uninterrupted by assistant text or a tool call. */
+export interface ReasoningSegment {
+  kind: 'reasoning';
+  /** The `reasoning_delta` deltas that arrived while this run was open, concatenated. */
   text: string;
 }
 
@@ -62,10 +69,18 @@ export interface ToolSegment {
  *
  * The tool call is nested rather than referenced by id on purpose: order and content then have a
  * single home, so there is no second list that can disagree with this one about which tool calls
- * a turn made or where they sit. {@link turnToolCalls} and {@link turnText} derive the flat views
- * the rest of the app used to read off separate fields.
+ * a turn made or where they sit. {@link turnToolCalls}, {@link turnText} and
+ * {@link turnReasoning} derive the flat views the rest of the app used to read off separate
+ * fields.
  */
-export type TurnSegment = TextSegment | ToolSegment;
+export type TurnSegment = TextSegment | ReasoningSegment | ToolSegment;
+
+/** The two segment kinds that are a run of accumulating characters rather than an event. */
+type RunKind = TextSegment['kind'] | ReasoningSegment['kind'];
+
+/** Build a run segment with its discriminant narrowed, so no cast is needed at the call sites. */
+const run = (kind: RunKind, text: string): TextSegment | ReasoningSegment =>
+  kind === 'text' ? { kind, text } : { kind, text };
 
 /**
  * The renderable state of a single in-progress assistant turn.
@@ -77,17 +92,22 @@ export type TurnSegment = TextSegment | ToolSegment;
  * is what two parallel fields can represent.
  */
 export interface TurnViewModel {
-  /** Text runs and tool calls interleaved exactly as the stream delivered them. */
+  /**
+   * Reasoning runs, text runs and tool calls interleaved exactly as the stream delivered them.
+   *
+   * Reasoning is IN this list rather than beside it for the same reason text is: a model that
+   * thinks, acts, then thinks again produces two thoughts at two different points in the turn, and
+   * a `reasoning: string` field can only ever describe one of them, drawn wherever the renderer
+   * chose to put the panel — in practice above the whole turn, so the thought that led to the last
+   * tool call sat above the first.
+   */
   segments: TurnSegment[];
-  /** Accumulated `reasoning_delta` deltas (the dim "thinking" region). */
-  reasoning: string;
   /** True between `reasoning_start` and `reasoning_end`. */
   isReasoning: boolean;
 }
 
 export const initialTurnViewModel = (): TurnViewModel => ({
   segments: [],
-  reasoning: '',
   isReasoning: false,
 });
 
@@ -111,19 +131,43 @@ export function turnText(turn: TurnViewModel): string {
 }
 
 /**
- * Append a text delta: extend the run that is still open, or start a new one when a tool call
- * closed the last one. That branch IS the fix — concatenating unconditionally is what put every
- * character of a turn's prose below every one of its tool panels.
+ * Every run of the turn's reasoning, joined for a consumer that wants the whole thought — derived,
+ * never stored. `/reasoning` reprints a committed turn through this.
+ *
+ * The runs join with a **blank line**, unlike {@link turnText}, and the difference is deliberate.
+ * Text must come back byte for byte because it is what the model said and history keeps it;
+ * reasoning is being reassembled for a person to read out of two thoughts the model had at
+ * different points of the turn, either side of an action. Joined with no separator they run
+ * together into one paragraph mid-sentence, which is the shape this node exists to stop.
  */
-function appendText(segments: TurnSegment[], delta: string): TurnSegment[] {
+export function turnReasoning(turn: TurnViewModel): string {
+  const runs: string[] = [];
+  for (const segment of turn.segments) if (segment.kind === 'reasoning') runs.push(segment.text);
+  return runs.join('\n\n');
+}
+
+/**
+ * Append a text or reasoning delta: extend the run that is still open, or start a new one when
+ * something else closed the last one. That branch IS the fix — concatenating unconditionally is
+ * what put every character of a turn's prose below every one of its tool panels, and what put
+ * every thought above them.
+ *
+ * **A run is closed by the next segment, not by the stream's own `reasoning_end`.** The agent
+ * stream only closes a reasoning block when answer TEXT arrives (`GthAbstractAgent.emitSegments`),
+ * so a think → tool → think turn never sees one, and a rule keyed on `reasoning_end` would merge
+ * those two thoughts back into a single panel above the call that separates them. Keying on what
+ * has since been appended is what makes the boundary hold for every ordering the stream produces.
+ */
+function appendRun(segments: TurnSegment[], kind: RunKind, delta: string): TurnSegment[] {
   if (delta === '') return segments;
   const last = segments[segments.length - 1];
-  if (last?.kind === 'text') {
+  // The `!== 'tool'` test is what narrows `last` to a run, so `last.text` needs no cast.
+  if (last && last.kind !== 'tool' && last.kind === kind) {
     const next = segments.slice();
-    next[next.length - 1] = { kind: 'text', text: last.text + delta };
+    next[next.length - 1] = run(kind, last.text + delta);
     return next;
   }
-  return [...segments, { kind: 'text', text: delta }];
+  return [...segments, run(kind, delta)];
 }
 
 /**
@@ -159,13 +203,17 @@ function upsertTool(
 export function foldEvents(state: TurnViewModel, event: AgentStreamEvent): TurnViewModel {
   switch (event.type) {
     case 'text': {
-      const segments = appendText(state.segments, event.delta);
+      const segments = appendRun(state.segments, 'text', event.delta);
       return segments === state.segments ? state : { ...state, segments };
     }
     case 'reasoning_start':
       return { ...state, isReasoning: true };
-    case 'reasoning_delta':
-      return { ...state, reasoning: state.reasoning + event.delta };
+    case 'reasoning_delta': {
+      // No `reasoning_start` is required first: a provider that streams a thought without opening
+      // one still gets a run, mirroring `upsertTool`'s placeholder posture toward local models.
+      const segments = appendRun(state.segments, 'reasoning', event.delta);
+      return segments === state.segments ? state : { ...state, segments };
+    }
     case 'reasoning_end':
       return { ...state, isReasoning: false };
     case 'tool_start':
@@ -402,13 +450,13 @@ export const CHECKLIST_TOOL_NAME = 'gth_checklist';
  * panel under a placeholder label until its name arrives.
  */
 function drawsNothing(segment: TurnSegment): boolean {
-  if (segment.kind === 'text') return segment.text === '';
+  if (segment.kind !== 'tool') return segment.text === '';
   return segment.tool.name === CHECKLIST_TOOL_NAME;
 }
 
 /**
- * The segments a turn actually DRAWS, in order — with text runs re-joined across anything that
- * paints nothing between them.
+ * The segments a turn actually DRAWS, in order — with same-kind runs re-joined across anything
+ * that paints nothing between them.
  *
  * Recording arrival order and drawing it are different jobs, and this is where they separate.
  * {@link TurnViewModel.segments} stays a truthful record; this is what the reader sees. A text run
@@ -430,8 +478,10 @@ export function displaySegments(turn: TurnViewModel): TurnSegment[] {
   for (const segment of turn.segments) {
     if (drawsNothing(segment)) continue;
     const last = drawn[drawn.length - 1];
-    if (segment.kind === 'text' && last?.kind === 'text') {
-      drawn[drawn.length - 1] = { kind: 'text', text: last.text + segment.text };
+    // Two runs of the SAME kind with only invisible segments between them re-join; a text run and
+    // a reasoning run never do, because they are different layers of the turn.
+    if (segment.kind !== 'tool' && last && last.kind !== 'tool' && last.kind === segment.kind) {
+      drawn[drawn.length - 1] = run(segment.kind, last.text + segment.text);
       continue;
     }
     drawn.push(segment);

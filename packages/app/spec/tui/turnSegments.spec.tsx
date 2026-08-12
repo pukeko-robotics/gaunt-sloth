@@ -14,6 +14,7 @@ import {
   foldEvents,
   foldEventSequence,
   initialTurnViewModel,
+  turnReasoning,
   type TurnViewModel,
 } from '#src/tui/viewModel.js';
 import type { TranscriptItem } from '#src/tui/types.js';
@@ -78,6 +79,25 @@ const INTERLEAVED: AgentStreamEvent[] = [
   ...toolCall('t1', 'alpha_tool'),
   text('beta-run '),
   ...toolCall('t2', 'beta_tool'),
+];
+
+/** One run of the model's thinking, as the stream delimits it. */
+const think = (delta: string): AgentStreamEvent[] => [
+  { type: 'reasoning_start' },
+  { type: 'reasoning_delta', delta },
+  { type: 'reasoning_end' },
+];
+
+/**
+ * A turn that thought, spoke, acted, and thought again — the shape CFG-33 measured on a live
+ * OpenRouter session, where reasoning arrives both before a call and after its result.
+ */
+const THINKS_TWICE: AgentStreamEvent[] = [
+  ...think('THOUGHT-A: I should read alpha.'),
+  text('Let me look at alpha. '),
+  ...toolCall('t1', 'alpha_tool'),
+  ...think('THOUGHT-B: alpha says X, so the answer is Y.'),
+  text('The answer is Y.'),
 ];
 
 describe('TUI-C52 — foldEvents records arrival order as an ordered segment list', () => {
@@ -626,4 +646,205 @@ describe('TUI-C52 — a segment that draws nothing does not break a text run', (
       expect(estimate(vm), label).toBeLessThanOrEqual(actualRows(item(vm), 100, false));
     }
   });
+});
+
+/**
+ * TUI-C81 — a turn's THINKING is in the order it happened too.
+ *
+ * TUI-C52 gave the turn an ordered segment list and moved text and tool calls into it; reasoning
+ * stayed a `reasoning: string` field beside that list, which is the same defect one field over. A
+ * model that thinks, acts, then thinks again produces two thoughts at two points in the turn, and a
+ * single string can only be drawn in one place — in practice above everything, so the reasoning
+ * that produced the LAST tool call sat above the FIRST one, and the two thoughts were concatenated
+ * into one paragraph with no separator between them.
+ */
+describe('TUI-C81 — reasoning is a segment, so a turn paints its thoughts where they happened', () => {
+  beforeEach(() => {
+    chalk.level = 0;
+  });
+
+  it('keeps reasoning → text → tool → reasoning → text as FIVE segments in that order', () => {
+    const vm = foldEventSequence(THINKS_TWICE);
+    expect(
+      vm.segments.map((seg) =>
+        seg.kind === 'tool' ? `tool:${seg.tool.id}` : `${seg.kind}:${seg.text}`
+      )
+    ).toEqual([
+      'reasoning:THOUGHT-A: I should read alpha.',
+      'text:Let me look at alpha. ',
+      'tool:t1',
+      'reasoning:THOUGHT-B: alpha says X, so the answer is Y.',
+      'text:The answer is Y.',
+    ]);
+  });
+
+  it('never runs two thoughts together: they are distinct runs, not one string', () => {
+    const vm = foldEventSequence(THINKS_TWICE);
+    const runs = vm.segments.filter((seg) => seg.kind === 'reasoning').map((seg) => seg.text);
+    expect(runs).toHaveLength(2);
+    // The pre-fix reducer produced exactly this concatenation, mid-sentence and with no separator.
+    expect(runs.join('')).not.toBe(turnReasoning(vm));
+    expect(turnReasoning(vm)).toBe(`${runs[0]}\n\n${runs[1]}`);
+  });
+
+  it('opens a NEW run after a tool call even though the stream never closed the block', () => {
+    // GthAbstractAgent emits `reasoning_end` only when answer TEXT arrives, so a think → tool →
+    // think turn never sees one. A boundary rule keyed on `reasoning_end` would merge these two
+    // thoughts back into a single panel above the call that separates them; keying on what has
+    // since been appended is what holds here.
+    const vm = foldEventSequence([
+      { type: 'reasoning_start' },
+      { type: 'reasoning_delta', delta: 'before the call' },
+      ...toolCall('t1', 'alpha_tool'),
+      { type: 'reasoning_delta', delta: 'after the result' },
+    ]);
+    expect(vm.segments.map((seg) => seg.kind)).toEqual(['reasoning', 'tool', 'reasoning']);
+  });
+
+  it('still accumulates deltas WITHIN one thought — the boundary is the segment, not the delta', () => {
+    const vm = foldEventSequence([
+      { type: 'reasoning_start' },
+      { type: 'reasoning_delta', delta: 'first ' },
+      { type: 'reasoning_delta', delta: 'half' },
+      { type: 'reasoning_end' },
+      { type: 'reasoning_start' },
+      { type: 'reasoning_delta', delta: ', still the same thought' },
+    ]);
+    // Nothing was drawn between them, so re-opening the block does not start a second panel.
+    expect(vm.segments).toEqual([
+      { kind: 'reasoning', text: 'first half, still the same thought' },
+    ]);
+  });
+
+  it('a reasoning_delta with no reasoning_start still records a run', () => {
+    // Defensive, mirroring upsertTool's placeholder path: a local model that streams a thought
+    // without opening one must not have it silently dropped.
+    const vm = foldEventSequence([{ type: 'reasoning_delta', delta: 'unopened thought' }]);
+    expect(vm.segments).toEqual([{ kind: 'reasoning', text: 'unopened thought' }]);
+  });
+
+  it('paints the SECOND thinking panel below the tool call, not above the first', () => {
+    const rows = frameRows(<LiveTurn turn={foldEventSequence(THINKS_TWICE)} toolsExpanded />);
+    const first = rowOf(rows, 'THOUGHT-A');
+    const tool = rowOf(rows, 'alpha_tool');
+    const second = rowOf(rows, 'THOUGHT-B');
+    const answer = rowOf(rows, 'The answer is Y.');
+    expect([first, tool, second, answer].every((i) => i >= 0)).toBe(true);
+    // The reported defect as an ordering: both thoughts used to sit above every panel and every
+    // character of text, so `second` came before `tool`.
+    expect(first).toBeLessThan(tool);
+    expect(tool).toBeLessThan(second);
+    expect(second).toBeLessThan(answer);
+    // Two panels, because there were two thoughts.
+    expect(rows.filter((row) => row.includes('💭 Thinking'))).toHaveLength(2);
+  });
+
+  it('keeps that order while STREAMING as well as once committed', () => {
+    const vm = foldEventSequence(THINKS_TWICE);
+    for (const streaming of [true, false]) {
+      const rows = frameRows(<LiveTurn turn={vm} streaming={streaming} toolsExpanded />);
+      expect(rowOf(rows, 'alpha_tool'), `streaming=${streaming}`).toBeLessThan(
+        rowOf(rows, 'THOUGHT-B')
+      );
+    }
+  });
+
+  it('a turn that ONLY thought renders its panel and nothing else', () => {
+    const vm = foldEventSequence(think('a thought and no answer yet'));
+    const rows = frameRows(<LiveTurn turn={vm} streaming toolsExpanded />);
+    expect(rowOf(rows, '💭 Thinking')).toBe(0);
+    expect(rowOf(rows, 'a thought and no answer yet')).toBeGreaterThan(0);
+  });
+
+  it('previews the tail of the thought being WRITTEN, and only that one', () => {
+    // Collapsed, streaming: the last drawn segment is the live thought and shows its newest rows;
+    // a thought that text or a tool has already followed is finished and shows its header alone.
+    const writing = foldEventSequence([
+      ...think('older thought'),
+      ...toolCall('t1', 'alpha_tool'),
+      { type: 'reasoning_delta', delta: 'newer thought' },
+    ]);
+    const rows = frameRows(<LiveTurn turn={writing} streaming />);
+    expect(rows.join('\n')).toContain('newer thought');
+    expect(rows.join('\n')).not.toContain('older thought');
+
+    // …and once the model moves on from it, the tail stops being previewed.
+    const finished = foldEvents(writing, { type: 'text', delta: 'done thinking' });
+    expect(frameRows(<LiveTurn turn={finished} streaming />).join('\n')).not.toContain(
+      'newer thought'
+    );
+  });
+
+  it('turnReasoning gives /reasoning the whole turn’s thinking, both blocks', () => {
+    // TUI-C18 reprints a committed turn through this; it must not lose the second thought, and it
+    // must not weld them into one paragraph either.
+    expect(turnReasoning(foldEventSequence(THINKS_TWICE))).toBe(
+      'THOUGHT-A: I should read alpha.\n\nTHOUGHT-B: alpha says X, so the answer is Y.'
+    );
+    expect(turnReasoning(foldEventSequence(INTERLEAVED))).toBe('');
+  });
+
+  it('a checklist call between two thoughts re-joins them rather than splitting the panel', async () => {
+    // The TUI-C52 rule, applied to the new segment kind: a split is justified by an action the
+    // reader can SEE, and the checklist tool draws nowhere in the turn.
+    const { displaySegments } = await import('#src/tui/viewModel.js');
+    const vm = foldEventSequence([
+      { type: 'reasoning_delta', delta: 'one thought ' },
+      { type: 'tool_start', id: 'c1', name: CHECKLIST_TOOL_NAME },
+      { type: 'tool_end', id: 'c1' },
+      { type: 'reasoning_delta', delta: 'continued' },
+    ]);
+    expect(displaySegments(vm)).toEqual([{ kind: 'reasoning', text: 'one thought continued' }]);
+    // The record still holds both runs and the call — presentation coalesces, the record does not.
+    expect(vm.segments.map((seg) => seg.kind)).toEqual(['reasoning', 'tool', 'reasoning']);
+  });
+
+  it('a text run and a reasoning run NEVER merge, even with nothing drawn between them', async () => {
+    const { displaySegments } = await import('#src/tui/viewModel.js');
+    const vm = foldEventSequence([
+      text('the answer '),
+      { type: 'tool_start', id: 'c1', name: CHECKLIST_TOOL_NAME },
+      { type: 'tool_end', id: 'c1' },
+      { type: 'reasoning_delta', delta: 'a private thought' },
+    ]);
+    // They are different layers of the turn: welding the model's thinking onto its answer is the
+    // failure TUI-C15 gave the panel a border to prevent.
+    expect(displaySegments(vm)).toEqual([
+      { kind: 'text', text: 'the answer ' },
+      { kind: 'reasoning', text: 'a private thought' },
+    ]);
+  });
+
+  it('the row oracle measures each thought WHERE IT SITS', () => {
+    const opts = { columns: 100, toolsExpanded: true, separator: false };
+    const twice = foldEventSequence(THINKS_TWICE);
+    // The control holds the same two thoughts as ONE run, one per line, so both turns draw the same
+    // two gutter rows of body and the only difference left is the second panel's header. An oracle
+    // still counting a turn's reasoning as a single block above everything reports the two as equal.
+    const once = foldEventSequence([
+      ...think('THOUGHT-A: I should read alpha.\nTHOUGHT-B: alpha says X, so the answer is Y.'),
+      text('Let me look at alpha. '),
+      ...toolCall('t1', 'alpha_tool'),
+      text('The answer is Y.'),
+    ]);
+    expect(estimateItemRows(item(twice), opts)).toBe(estimateItemRows(item(once), opts) + 1);
+  });
+
+  for (const columns of [24, 40, 100]) {
+    for (const toolsExpanded of [false, true]) {
+      it(`never over-counts a thinking turn at ${columns} cols, detail ${
+        toolsExpanded ? 'on' : 'off'
+      }`, () => {
+        // The invariant the whole windowing design rests on, extended to the third row source: an
+        // OVER-count cuts the mounted list too high and leaves a blank band on screen.
+        const entry = item(foldEventSequence(THINKS_TWICE));
+        const estimate = estimateItemRows(entry, { columns, toolsExpanded, separator: false });
+        const actual = actualRows(entry, columns, toolsExpanded);
+        expect(
+          estimate,
+          `thinking turn at ${columns} cols: estimated ${estimate} rows, Ink rendered ${actual}`
+        ).toBeLessThanOrEqual(actual);
+      });
+    }
+  }
 });

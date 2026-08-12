@@ -8,9 +8,10 @@ import { LiveTurn, ReasoningPanel } from '#src/tui/components/LiveTurn.js';
 import type { ToolCallViewModel, TurnViewModel } from '#src/tui/viewModel.js';
 
 /**
- * A turn in the tools-then-text layout these cases were written for. The turn model records
- * arrival order as a segment list (TUI-C52), so this builds that layout explicitly; the
- * interleaved orders it made expressible have their own spec (`turnSegments.spec.tsx`).
+ * A turn in the reasoning-then-tools-then-text layout these cases were written for. The turn model
+ * records arrival order as a segment list (TUI-C52, extended to reasoning by TUI-C81), so this
+ * builds that layout explicitly; the interleaved orders it made expressible have their own spec
+ * (`turnSegments.spec.tsx`).
  */
 const turn = (
   over: {
@@ -20,9 +21,9 @@ const turn = (
     toolCalls?: ToolCallViewModel[];
   } = {}
 ): TurnViewModel => ({
-  reasoning: over.reasoning ?? '',
   isReasoning: over.isReasoning ?? false,
   segments: [
+    ...(over.reasoning ? [{ kind: 'reasoning' as const, text: over.reasoning }] : []),
     ...(over.toolCalls ?? []).map((tool) => ({ kind: 'tool' as const, tool })),
     ...(over.text ? [{ kind: 'text' as const, text: over.text }] : []),
   ],

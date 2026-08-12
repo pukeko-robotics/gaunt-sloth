@@ -56,7 +56,6 @@ describe('viewModel — checklist parsing', () => {
 
   it('extractActiveChecklist prefers live turn and falls back to transcript in reverse order', () => {
     const live: TurnViewModel = {
-      reasoning: '',
       isReasoning: false,
       segments: [
         {
@@ -76,7 +75,6 @@ describe('viewModel — checklist parsing', () => {
         kind: 'assistant',
         id: 1,
         turn: {
-          reasoning: '',
           isReasoning: false,
           segments: [
             {

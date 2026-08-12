@@ -229,14 +229,18 @@ rendering supplied by the **surface-agnostic tool-display registry** (TUI-C30,
 `@gaunt-sloth/core/core/toolDisplay.js`) that the plain surface shares (DL-6 consistency):
 
 - **A turn paints in the order it happened (DL-4 transparency, DL-3 the user's context).** A turn
-  that ran text → tool → text → tool renders as those four things, in that order: each explanation
-  sits with the action it is about. The turn view-model therefore holds an ordered **segment list**
-  rather than a text string beside a tool-call array — with two parallel fields there is nowhere to
-  record that a text run arrived *between* two calls, so every completed turn can only be drawn as
-  every tool and then all of the text, which puts the sentence explaining an action dozens of rows
-  below it. Every text run is rendered **independently**: a markdown construct split across a tool
-  call frames itself on both sides rather than being re-joined across an action that happened in
-  the middle of it.
+  that ran think → text → tool → think → text renders as those five things, in that order: each
+  explanation sits with the action it is about, and each thought sits where the model had it. The
+  turn view-model therefore holds an ordered **segment list** — a run of reasoning, a run of text,
+  or a tool call — rather than strings beside a tool-call array. With parallel fields there is
+  nowhere to record that a run arrived *between* two calls, so every completed turn can only be
+  drawn as all the thinking, then every tool, then all of the text, which puts the sentence
+  explaining an action dozens of rows below it and the thought that produced the last call above
+  the first. **This binds on the `💭 Thinking` panel as much as on prose:** a model that thinks,
+  acts, then thinks again had two thoughts, and they are two panels at two depths, never one
+  hoisted to the top with the thoughts concatenated. Every text run is rendered **independently**:
+  a markdown construct split across a tool call frames itself on both sides rather than being
+  re-joined across an action that happened in the middle of it.
 - **A text run is only ever broken by something the reader can SEE.** What a turn *records* and
   what it *draws* are separate: `displaySegments()` (`tui/viewModel.ts`) drops the segments that
   paint nothing inside the turn — today the checklist tool, which is the pinned dock panel — and
@@ -269,8 +273,10 @@ rendering supplied by the **surface-agnostic tool-display registry** (TUI-C30,
   front of you, while reasoning is ambient and continuous — it streams for as long as the model
   thinks, it is superseded by the answer, and collapsed its whole job is to say "something is
   happening, and it is about this". Ten would let thinking take over the screen the panel collapses
-  to stay out of. The preview follows the stream (always the newest lines) and is **live-only**: a
-  committed turn's collapsed panel is its header alone, unchanged.
+  to stay out of. The preview follows the stream (always the newest lines) and belongs to the
+  thought being **written** — the last drawn segment of a streaming turn. A turn's earlier
+  thoughts are finished, and a committed turn's collapsed panel is its header alone: a finished
+  thought still previewing its tail would claim the model is still on it.
 - **`write_file`/`edit_file` render as a diff, not a dump.** The change is derived from the tool's
   args — added lines green with a `+` prefix, removed lines red with `-` (DL-8 colour semantics);
   the prefixes keep the diff readable on monochrome terminals (DL-7).

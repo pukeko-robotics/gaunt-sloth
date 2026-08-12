@@ -15,9 +15,10 @@ import {
 } from '#src/tui/viewModel.js';
 
 /**
- * A turn in the tools-then-text layout these cases were written for. The turn model records
- * arrival order as a segment list (TUI-C52); the interleaved shapes that ordering made
- * expressible are estimated in `turnSegments.spec.tsx`, against the same Ink measurement.
+ * A turn in the reasoning-then-tools-then-text layout these cases were written for. The turn model
+ * records arrival order as a segment list (TUI-C52, extended to reasoning by TUI-C81); the
+ * interleaved shapes that ordering made expressible are estimated in `turnSegments.spec.tsx`,
+ * against the same Ink measurement.
  */
 const turn = (
   over: {
@@ -28,9 +29,9 @@ const turn = (
   } = {}
 ): TurnViewModel => ({
   ...initialTurnViewModel(),
-  reasoning: over.reasoning ?? '',
   isReasoning: over.isReasoning ?? false,
   segments: [
+    ...(over.reasoning ? [{ kind: 'reasoning' as const, text: over.reasoning }] : []),
     ...(over.toolCalls ?? []).map((tool) => ({ kind: 'tool' as const, tool })),
     ...(over.text ? [{ kind: 'text' as const, text: over.text }] : []),
   ],
