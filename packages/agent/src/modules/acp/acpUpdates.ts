@@ -94,33 +94,37 @@ export class AcpUpdateMapper {
   private readonly toolArgs = new Map<string, string>();
 
   /**
-   * Tool calls the model has requested but which have not produced a result yet, in the order they
-   * were announced, as `[toolCallId, toolName]`.
+   * Tool calls the model has requested but which have neither produced a result nor been claimed by
+   * a permission request, in the order they were announced, as `[toolCallId, toolName]`.
    *
    * Kept so the approval bridge can name the tool call a permission request is ABOUT. The gate's
    * `PendingToolInterrupt` carries the tool's name and arguments but no call id — the graph
    * suspends inside the middleware wrapping the call, which is downstream of where the id lives —
-   * while the client has already drawn that call from this stream. Matching on the most recent
-   * still-open call of that name is what reconnects the two.
+   * while the client has already drawn that call from this stream. This queue reconnects the two.
    */
   private readonly openToolCalls: Array<[string, string]> = [];
 
   /**
-   * The id of the most recently announced tool call of `name` that has not yet produced a result,
-   * or `undefined` when there is none.
+   * Takes the id of the OLDEST unclaimed tool call of `name`, removing it from the queue, or
+   * `undefined` when there is none.
    *
-   * Most recent rather than oldest: a model that calls the same tool twice in one turn has the
-   * gate stop the second call while the first is still running, and the second is the one being
-   * asked about. Absent rather than guessed when nothing matches — a permission request pointing
-   * at the WRONG call is worse than one pointing at no call, because a client would then attach
-   * the answer to a call the user never saw.
+   * **Oldest-first and consumed, because the gate drains interrupts as a BATCH.** The runner asks
+   * for every pending call at once and loops over the array deciding each in turn; no result can
+   * arrive in between, because results only exist on the resumed run. So when a model emits two
+   * parallel calls of the same tool — routine on Anthropic and OpenAI — both are open and neither
+   * is running. Returning "the most recent" would hand BOTH permission requests the second call's
+   * id, and a client would attach one call's prompt, and its answer, to the other's row. Claiming
+   * pops the queue, so the runner's positional order over the pending array lines up with the
+   * announcement order this queue holds.
+   *
+   * Absent rather than guessed when nothing matches — a permission request pointing at the WRONG
+   * call is worse than one pointing at no call, because a client would then attach the answer to a
+   * call the user never saw.
    */
-  openToolCallId(name: string): string | undefined {
-    for (let i = this.openToolCalls.length - 1; i >= 0; i--) {
-      const [id, toolName] = this.openToolCalls[i];
-      if (toolName === name) return id;
-    }
-    return undefined;
+  claimToolCallId(name: string): string | undefined {
+    const index = this.openToolCalls.findIndex(([, toolName]) => toolName === name);
+    if (index < 0) return undefined;
+    return this.openToolCalls.splice(index, 1)[0][0];
   }
 
   /**
@@ -207,6 +211,8 @@ export class AcpUpdateMapper {
       }
       case 'tool_result': {
         this.toolArgs.delete(event.id);
+        // A call a permission request already claimed is no longer in the queue; that is expected,
+        // not a miss.
         const open = this.openToolCalls.findIndex(([id]) => id === event.id);
         if (open >= 0) this.openToolCalls.splice(open, 1);
         return [

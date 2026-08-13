@@ -197,7 +197,7 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
             permissionRequestFor({
               sessionId: session.sessionId,
               pending,
-              toolCallId: mapper.openToolCallId(pending.name),
+              toolCallId: mapper.claimToolCallId(pending.name),
               cwd: session.cwd,
             })
           );
@@ -271,6 +271,10 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
     session.cancelled = true;
     session.abort?.abort();
     sessions.delete(session.sessionId);
+    // Release the workspace binding once nothing is running: the refusal exists to stop a second
+    // workspace re-rooting a LIVE session's tools, and with no live session there is nothing to
+    // re-root. Holding it past the last close would refuse a workspace for no reason left.
+    if (sessions.size === 0) workspaceRoot = undefined;
     try {
       await session.runner.cleanup();
     } catch (error) {
@@ -420,10 +424,54 @@ function agentVersion(): string {
   }
 }
 
-/** The prompt's text content, concatenated. */
+/**
+ * One prompt content block, as text the model can act on.
+ *
+ * **`resource_link` is a baseline MUST, not a nicety.** The v2 initialization spec: "Agents that
+ * advertise `session` MUST support `ContentBlock::Text` and `ContentBlock::ResourceLink` in
+ * `session/prompt` requests" — and this agent advertises `session`. It is also the block an editor
+ * sends most: an @-mentioned file in Zed arrives as a `resource_link`. Dropping it is the worst
+ * possible failure shape, because the turn echoes the whole prompt array back as the `user_message`
+ * update, so the client would render the attachment while the model never saw it. The user would
+ * see their file on screen and an agent behaving as though it were never sent. The URI is surfaced
+ * because this agent has file-reading tools: given the path, it can go and read it.
+ *
+ * **Every other block type becomes a VISIBLE placeholder rather than a silent drop.** `image`,
+ * `audio` and `resource` are deliberately not claimed as capabilities, and a conforming client
+ * restricts what it sends to what was advertised — so a block arriving here means either a
+ * non-conforming client or a future ACP variant. Neither is a reason to fail the whole prompt,
+ * whose text half is usually perfectly usable; but neither may vanish. Saying "something arrived
+ * that I cannot read" lets the model ask for it or reach for the file, and lets the user see why
+ * their attachment was ignored. The alternative this deliberately rejects is returning the text and
+ * pretending nothing else was sent.
+ */
+function promptBlockText(block: acp.ContentBlock): string {
+  const raw = block as unknown as Record<string, unknown>;
+  const str = (key: string): string | undefined =>
+    typeof raw[key] === 'string' && (raw[key] as string).length > 0
+      ? (raw[key] as string)
+      : undefined;
+  switch (block.type) {
+    case 'text':
+      return str('text') ?? '';
+    case 'resource_link': {
+      const uri = str('uri');
+      if (uri === undefined) return '';
+      const name = str('name') ?? uri;
+      const description = str('description');
+      return description === undefined
+        ? `[Attached resource: ${name} (${uri})]`
+        : `[Attached resource: ${name} (${uri}) — ${description}]`;
+    }
+    default:
+      return `[The client attached ${block.type} content, which this agent cannot read.]`;
+  }
+}
+
+/** The prompt as the text handed to the model, one block per line. */
 function promptText(prompt: acp.ContentBlock[]): string {
   return prompt
-    .map((block) => (block.type === 'text' ? ((block as { text?: string }).text ?? '') : ''))
+    .map(promptBlockText)
     .filter((text) => text.length > 0)
     .join('\n');
 }

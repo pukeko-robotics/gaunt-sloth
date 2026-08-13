@@ -65,6 +65,10 @@ command; it needs no arguments.
 
 **ACP v2 only.** A host that speaks only ACP v1 cannot connect. Zed speaks v2.
 
+Files you attach to a message — an @-mention in Zed — reach the agent as a link it can open with its
+file tools. Images and audio are not accepted; if a host sends them anyway the agent says so in its
+reply rather than ignoring them silently.
+
 The editor is asked before a gated tool runs: a shell command the approvals gate stops arrives as
 an ACP permission request, with the command, its working directory, and — when the AI rater
 escalated it — the rater's reason.

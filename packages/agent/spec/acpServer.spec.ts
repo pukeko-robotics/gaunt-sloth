@@ -191,6 +191,12 @@ interface AgentScript {
 class FixtureAgent implements GthAgentInterface {
   /** Decisions the runner's gate resolved to, as handed back on resume. */
   readonly decisions: ToolApprovalDecision[] = [];
+  /**
+   * The text of each turn's messages, as the MODEL would see it — the only place a test can check
+   * that a prompt content block survived the trip, since the `user_message` update echoes the raw
+   * blocks back and would look right even if the model was handed nothing.
+   */
+  readonly seenPrompts: string[] = [];
   private pendingReported = false;
 
   constructor(private readonly script: AgentScript) {}
@@ -206,10 +212,11 @@ class FixtureAgent implements GthAgentInterface {
   }
 
   async *streamWithEvents(
-    _messages: Message[],
+    messages: Message[],
     _runConfig: unknown,
     signal?: AbortSignal
   ): AsyncGenerator<AgentStreamEvent> {
+    this.seenPrompts.push(messages.map((message) => String(message.content)).join('\n'));
     for (const event of this.script.events) yield event;
     if (this.script.throwAfterEvents) throw new Error(this.script.throwAfterEvents);
     if (this.script.hangUntilAborted) {
@@ -274,6 +281,8 @@ interface Harness {
   view: SessionView;
   permissionRequests: acp.RequestPermissionRequest[];
   agent: FixtureAgent;
+  /** The `sessionId` carried by every `session/update` notification, in arrival order. */
+  updateSessionIds: string[];
 }
 
 /**
@@ -293,7 +302,12 @@ async function withClient<T>(
   drive: (ctx: acp.ClientContext, harness: Harness) => Promise<T>
 ): Promise<T> {
   const agent = new FixtureAgent(options.script);
-  const harness: Harness = { view: new SessionView(), permissionRequests: [], agent };
+  const harness: Harness = {
+    view: new SessionView(),
+    permissionRequests: [],
+    agent,
+    updateSessionIds: [],
+  };
 
   const agentApp = createAcpAgentApp({
     loadConfig: async () => configWith(options.approvals),
@@ -304,6 +318,11 @@ async function withClient<T>(
   let clientApp = acp
     .client({ name: 'ext-46-test-client' })
     .onNotification(acp.CLIENT_METHODS.session_update, ({ params }) => {
+      // Recorded SEPARATELY from the update, so the session a notification claims to be about is
+      // something a test can assert rather than something the view silently collapses. A client
+      // with two open sessions routes on this field, and a wrong-but-valid id would be invisible
+      // to a harness that applied every notification to one view.
+      harness.updateSessionIds.push(params.sessionId);
       harness.view.apply(params.update);
     })
     .onRequest(acp.CLIENT_METHODS.session_request_permission, async ({ params }) => {
@@ -386,7 +405,7 @@ afterAll(() => rmSync(projectDir, { recursive: true, force: true }));
 
 describe('the ACP v2 agent — session lifecycle', () => {
   it('runs a session end to end and reports completion on an idle state update', async () => {
-    const view = await withClient(
+    const { view, sessionId, updateSessionIds } = await withClient(
       { script: { events: textEvents('Hello', ' world') } },
       async (ctx, h) => {
         const sessionId = await newSession(ctx);
@@ -395,9 +414,14 @@ describe('the ACP v2 agent — session lifecycle', () => {
           prompt: [{ type: 'text', text: 'say hello' }],
         });
         await waitForStop(h.view);
-        return h.view;
+        return { view: h.view, sessionId, updateSessionIds: h.updateSessionIds };
       }
     );
+
+    // Every notification names the session it belongs to — the field a client with two open
+    // sessions routes on.
+    expect(updateSessionIds.length).toBe(view.updates.length);
+    expect(new Set(updateSessionIds)).toEqual(new Set([sessionId]));
 
     // The user message is reported first, so the client knows where the prompt landed.
     expect(view.updates[0].sessionUpdate).toBe('user_message');
@@ -408,6 +432,50 @@ describe('the ACP v2 agent — session lifecycle', () => {
     // The two text deltas were sent as chunks and the client appended them into one message.
     expect(view.agentMessages.size).toBe(1);
     expect(view.textOf(view.agentMessages)).toBe('Hello world');
+  });
+
+  /**
+   * A v2 **MUST**: "Agents that advertise `session` MUST support `ContentBlock::Text` and
+   * `ContentBlock::ResourceLink` in `session/prompt` requests" — and this agent advertises
+   * `session`.
+   *
+   * The assertion is on what the MODEL was handed, not on what the client was sent back. That
+   * distinction is the whole point: the turn echoes the full prompt array as the `user_message`
+   * update, so a client rendering an @-mentioned file sees it either way. Only the agent's own
+   * input can tell a supported block from a silently dropped one, and a dropped one presents to a
+   * user as "the agent ignored my file" rather than as any kind of protocol error.
+   */
+  it('hands the model a resource link, and never silently drops a block it cannot read', async () => {
+    const prompts = await withClient({ script: { events: textEvents('ok') } }, async (ctx, h) => {
+      const sessionId = await newSession(ctx);
+      await ctx.request(acp.AGENT_METHODS.session_prompt, {
+        sessionId,
+        prompt: [
+          { type: 'text', text: 'explain this' },
+          {
+            type: 'resource_link',
+            name: 'server.ts',
+            uri: 'file:///work/src/server.ts',
+            description: 'the entry point',
+          },
+          // Not a capability this agent claims, so a conforming client never sends it — but if one
+          // arrives it may not vanish.
+          { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+        ] as acp.ContentBlock[],
+      });
+      await waitForStop(h.view);
+      return h.agent.seenPrompts;
+    });
+
+    expect(prompts).toHaveLength(1);
+    // The URI is what makes the link actionable: this agent has file tools and can go and read it.
+    expect(prompts[0]).toContain('file:///work/src/server.ts');
+    expect(prompts[0]).toContain('server.ts');
+    expect(prompts[0]).toContain('the entry point');
+    expect(prompts[0]).toContain('explain this');
+    // The unsupported block became something the model can see and mention, not nothing.
+    expect(prompts[0]).toContain('image');
+    expect(prompts[0]).toContain('cannot read');
   });
 
   it('answers session/prompt with a bare acknowledgement, before any update for that turn', async () => {
@@ -480,7 +548,7 @@ describe('the ACP v2 agent — session lifecycle', () => {
   });
 
   it('lists, resumes with a replay, and closes sessions', async () => {
-    const { listed, replayed, afterClose, promptAfterClose } = await withClient(
+    const { listed, replayed, afterClose, promptAfterClose, rebind } = await withClient(
       { script: { events: textEvents('answer') } },
       async (ctx, h) => {
         const sessionId = await newSession(ctx);
@@ -510,7 +578,16 @@ describe('the ACP v2 agent — session lifecycle', () => {
             () => 'accepted',
             (error: unknown) => (error as Error).message
           );
-        return { listed, replayed, afterClose, promptAfterClose };
+        // The workspace binding exists to stop a second workspace re-rooting a LIVE session's
+        // tools. With the last session closed there is nothing left to re-root, so the refusal
+        // must lift rather than outlive the sessions that justified it.
+        const rebind = await ctx
+          .request(acp.AGENT_METHODS.session_new, { cwd: join(projectDir, 'a-second-workspace') })
+          .then(
+            () => 'accepted',
+            (error: unknown) => (error as Error).message
+          );
+        return { listed, replayed, afterClose, promptAfterClose, rebind };
       }
     );
 
@@ -520,6 +597,7 @@ describe('the ACP v2 agent — session lifecycle', () => {
     expect(replayed.map((u) => u.sessionUpdate)).toEqual(['user_message', 'agent_message']);
     expect(afterClose.sessions).toHaveLength(0);
     expect(promptAfterClose).toContain('No such session');
+    expect(rebind).toBe('accepted');
   });
 
   /**
@@ -705,6 +783,127 @@ describe('the ACP v2 agent — session/request_permission', () => {
       }
     );
     expect(refused[0]).toMatchObject({ type: 'reject', scope: 'session' });
+  });
+
+  /**
+   * Two parallel gated calls of the SAME tool must not both point at the same tool call.
+   *
+   * This is the shape the gate actually produces, and the one an earlier version of this code got
+   * wrong. The runner drains interrupts as a batch: it asks for every pending call at once and
+   * loops over the array, and no result can arrive in between because results only exist on the
+   * resumed run. So both calls are open and neither is running — and a mapper handing out "the most
+   * recent open call of that name" gives BOTH requests the second id, which makes a client attach
+   * one command's prompt, and its answer, to the other's row.
+   *
+   * The pairing assertion is what has teeth: each request's `toolCallId` must match the call that
+   * carries ITS command, not merely be distinct.
+   */
+  it('gives two parallel gated calls of one tool their own tool call ids', async () => {
+    const requests = await withClient(
+      {
+        approvals: 'write',
+        answer: () => ({ outcome: 'selected', optionId: 'allow-once' }),
+        script: {
+          events: [
+            { type: 'tool_start', id: 'call-1', name: 'run_shell_command' },
+            { type: 'tool_args', id: 'call-1', delta: JSON.stringify({ command: 'echo one' }) },
+            { type: 'tool_end', id: 'call-1' },
+            { type: 'tool_start', id: 'call-2', name: 'run_shell_command' },
+            { type: 'tool_args', id: 'call-2', delta: JSON.stringify({ command: 'echo two' }) },
+            { type: 'tool_end', id: 'call-2' },
+          ],
+          pending: [
+            { name: 'run_shell_command', args: { command: 'echo one' } },
+            { name: 'run_shell_command', args: { command: 'echo two' } },
+          ],
+          resumeEvents: [
+            { type: 'tool_result', id: 'call-1', content: 'one' },
+            { type: 'tool_result', id: 'call-2', content: 'two' },
+          ],
+        },
+      },
+      async (ctx, h) => {
+        const sessionId = await newSession(ctx);
+        await ctx.request(acp.AGENT_METHODS.session_prompt, {
+          sessionId,
+          prompt: [{ type: 'text', text: 'run both' }],
+        });
+        await waitForStop(h.view);
+        return h.permissionRequests;
+      }
+    );
+
+    expect(requests).toHaveLength(2);
+    const pairs = requests.map((request) => {
+      const subject = request.subject as unknown as { command: string; toolCallId?: string };
+      return [subject.command, subject.toolCallId];
+    });
+    expect(pairs).toEqual([
+      ['echo one', 'call-1'],
+      ['echo two', 'call-2'],
+    ]);
+  });
+
+  /**
+   * The `tool_call` subject — every gated call that is NOT a shell command.
+   *
+   * At the deterministic rungs a tool with no access class escalates, which is every MCP tool,
+   * every custom tool and the write built-ins. Only the `command` subject was covered, so the
+   * branch every non-shell gated call takes had none at all.
+   *
+   * The second half covers the minted id: a call the update stream never announced still needs a
+   * `toolCallId`, because a `tool_call` subject has nowhere to put "no id".
+   */
+  it('describes a gated non-shell call as a tool_call subject', async () => {
+    const requests = await withClient(
+      {
+        approvals: 'manual',
+        answer: () => ({ outcome: 'selected', optionId: 'allow-once' }),
+        script: {
+          events: [
+            { type: 'tool_start', id: 'call-9', name: 'deploy_thing' },
+            { type: 'tool_args', id: 'call-9', delta: JSON.stringify({ target: 'prod' }) },
+            { type: 'tool_end', id: 'call-9' },
+          ],
+          pending: [
+            { name: 'deploy_thing', args: { target: 'prod' } },
+            // Never announced on the update stream, so there is no id to correlate with.
+            { name: 'unannounced_tool', args: { k: 'v' } },
+          ],
+          resumeEvents: [{ type: 'tool_result', id: 'call-9', content: 'deployed' }],
+        },
+      },
+      async (ctx, h) => {
+        const sessionId = await newSession(ctx);
+        await ctx.request(acp.AGENT_METHODS.session_prompt, {
+          sessionId,
+          prompt: [{ type: 'text', text: 'deploy' }],
+        });
+        await waitForStop(h.view);
+        return h.permissionRequests;
+      }
+    );
+
+    expect(requests).toHaveLength(2);
+    // The title is the agent's own words; nothing the model wrote is interpolated into it.
+    expect(requests[0].title).toBe('Run the deploy_thing tool');
+    expect(requests[0].subject).toEqual({
+      type: 'tool_call',
+      toolCall: {
+        toolCallId: 'call-9',
+        name: 'deploy_thing',
+        title: 'deploy_thing',
+        // Not a built-in, so `other` rather than a guess from the name.
+        kind: 'other',
+        status: 'pending',
+        rawInput: { target: 'prod' },
+      },
+    });
+    // A call with no announced id gets a minted one rather than an absent field.
+    expect(requests[1].subject).toMatchObject({
+      type: 'tool_call',
+      toolCall: { toolCallId: 'permission-unannounced_tool', name: 'unannounced_tool' },
+    });
   });
 
   it('fails closed on an outcome it does not understand', async () => {
