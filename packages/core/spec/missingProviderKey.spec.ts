@@ -397,7 +397,8 @@ describe('CFG-35 missing provider key', () => {
     it('propagates the missing key instead of falling through to the next config format', async () => {
       // The JSON branch's catch exists to try the next FORMAT when the JSON layer cannot be read.
       // A config that read fine and named a keyless provider is not a read failure: swallowing it
-      // would end in the terminal "No configuration file found" exit — uncatchable, and wrong.
+      // would end in the terminal "No configuration file found" raise — which reports a missing
+      // config instead of the keyless provider that actually stopped the run, and is wrong.
       fsMock.existsSync.mockImplementation(
         (path: string) => !!path && path.includes('.gsloth.config.json')
       );

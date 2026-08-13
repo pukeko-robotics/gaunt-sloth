@@ -747,8 +747,9 @@ cases:
       expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
         expect.stringContaining('limited')
       );
-      // Guard is BEFORE any per-identity initConfig (a bad profile reaching initConfig hits its
-      // uncatchable exit(1)) — so no per-identity config is built and no case runs.
+      // Guard is BEFORE any per-identity initConfig — so no per-identity config is built and no
+      // case runs. (A bad profile reaching initConfig raises catchably; the guard is kept because
+      // it names EVERY unresolved identity in one message, before any config is built.)
       expect(configMock.initConfig).not.toHaveBeenCalledWith(
         expect.objectContaining({ identityProfile: 'limited' })
       );

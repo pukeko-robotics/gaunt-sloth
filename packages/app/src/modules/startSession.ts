@@ -100,7 +100,15 @@ export async function startSession(
     // way, having first printed a false diagnosis. Only two things here are the TUI's alone:
     //
     //   1. loading this module at all — it statically imports the optional `ink` / `react` / `chalk`
-    //      subtree, so an incomplete install fails HERE, which is what the fallback exists for;
+    //      subtree, so a genuinely incomplete install fails at the IMPORT, before `createTuiSession`
+    //      is ever entered. That is why the import keeps a `try` of its own; narrowing the fallback
+    //      back to "the render" alone would break the one case it is honestly for. Know what else
+    //      is inside that net: `tuiSessionModule.tsx` also statically imports ~25 non-optional
+    //      `@gaunt-sloth/core/*` and `@gaunt-sloth/agent/*` modules, so an ESM load failure in ANY
+    //      of them is swallowed here into the same "TUI unavailable" notice and a silent readline
+    //      restart. That is a known residual, not an oversight: `isInkAvailable()` probes only
+    //      `ink` and `react`, so the `chalk` case genuinely needs this wrapper and it cannot be
+    //      narrowed further without losing it;
     //   2. the render phase — the mouse/stdin plumbing and Ink's mount, which touch the terminal.
     //
     // So the fallback wraps exactly those two, and the default for everything else is to propagate.
