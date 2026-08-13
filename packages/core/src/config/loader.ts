@@ -907,13 +907,14 @@ export async function initConfig(
       // failure. This catch exists to move on to the next config FORMAT when the JSON layer could
       // not be read; a config that read fine and named a provider we have no key for is not a
       // read failure, and falling through would end in the terminal "No configuration file found"
-      // exit — the opposite of catchable, and a misleading message besides.
+      // failure — which blames a missing config for what is actually a missing key, burying the
+      // clearly-worded message this branch already has.
       if (isMissingProviderKeyError(e)) {
         throw e;
       }
       // CFG-36 — same reasoning for a MALFORMED config: the config read fine and is invalid, which
       // is a hard error the user must see. Falling through to the next FORMAT would end in the
-      // terminal "No configuration file found" exit, hiding the real (and clearly-worded) problem.
+      // terminal "No configuration file found" failure, hiding the real (clearly-worded) problem.
       if (isConfigDiscoveryError(e)) {
         throw e;
       }

@@ -253,12 +253,13 @@ describe('configCommand', () => {
       expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
     });
 
-    it('scaffolds from the template when no config resolves — WITHOUT calling the exiting seed path', async () => {
-      // GS2-33 review Important #1/#2: in production, when no config resolves initConfig calls
-      // `exit(1)` (a real process.exit, not a throw), so the old mockRejectedValue test was a false
-      // green — it "proved" a reject path that never happens. Exercise the REAL branch instead: no
-      // config resolves (hasAnyConfig -> false), so the command must take the template path WITHOUT
-      // ever calling the process-exiting initConfig, and still write a profile (exit 0).
+    it('scaffolds from the template when no config resolves — WITHOUT calling the seed path at all', async () => {
+      // GS2-33 review Important #1/#2: the old mockRejectedValue test was a false green — it
+      // "proved" a reject path the command never reaches, because when no config resolves the seed
+      // is not attempted at all. Exercise the REAL branch instead: no config resolves
+      // (hasAnyConfig -> false), so the command must take the template path WITHOUT ever calling
+      // initConfig, and still write a profile (exit 0). Whether initConfig would exit or raise is
+      // beside the point for this cell — it raises, catchably — because it is never called.
       configMock.hasAnyConfig.mockResolvedValue(false);
       configMock.createNamedProfile.mockReturnValue({
         path: '/proj/.gsloth/.gsloth-settings/blank/.gsloth.config.json',
@@ -267,7 +268,7 @@ describe('configCommand', () => {
 
       await run('profile', 'create', 'blank', '--model', 'gemini-2.0-flash-lite');
 
-      // The exiting seed path is never touched — this is the crux of the fix.
+      // The seed path is never touched at all — this is the crux of the fix.
       expect(configMock.initConfig).not.toHaveBeenCalled();
       // Scaffolded from the template (no seed), with --model still applied on top of the template.
       expect(configMock.createNamedProfile).toHaveBeenCalledWith('blank', {

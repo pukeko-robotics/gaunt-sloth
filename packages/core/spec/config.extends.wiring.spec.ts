@@ -107,7 +107,7 @@ describe('GS2-41 profile inheritance — initConfig wiring', () => {
     //
     // This is the level that proves it, through the REAL loader rather than the composer alone: the
     // raise has to survive initConfig's JSON branch, whose catch would otherwise fall through to the
-    // next config FORMAT and end in the terminal "No configuration file found" exit — hiding the
+    // next config FORMAT and end in the terminal "No configuration file found" failure — hiding the
     // clearly-worded real problem. Asserting the error TYPE (not merely that something threw) is
     // what makes it discriminating: the shape this replaced printed the message, called `exit(1)`
     // and threw a generic sentinel, so a bare rejects.toThrow() would pass against it unchanged.
