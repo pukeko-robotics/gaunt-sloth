@@ -445,7 +445,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
    *
    * Two things make it track the RULE rather than these two strings: the rated set comes from
    * `isRatedRung`, the production predicate, so a sixth rated rung has to carry a clause on the day
-   * it is added; and the deterministic three are asserted NOT to carry the token, so the lazy fix —
+   * it is added; and the three UNRATED rungs are asserted NOT to carry the token, so the lazy fix —
    * spreading `recoverable` across all five — destroys the distinction instead of satisfying it.
    * Matched with a boundary that "unrecoverable" and "non-recoverable" fail, since a substring test
    * would accept copy meaning the opposite of the rule.

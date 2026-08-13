@@ -499,16 +499,23 @@ export const APPROVAL_WRITE_MODIFIER_HINT =
  *    the sentence offering it has to say what kind of work that is acceptable for — and a
  *    *terminus* is not a limit on use. "then asks you" and "anything riskier comes to you" say
  *    where the exchange ends; they do not say when the mode is a bad idea, which is what the three
- *    deterministic rungs each say ("not a mode to leave running", "a bounded stretch", "a throwaway
+ *    UNRATED rungs each say ("not a mode to leave running", "a bounded stretch", "a throwaway
  *    environment you would not mind losing"). Constraint 4 is why it must be the opener: the three
  *    surfaces a user chooses from print `firstSentence` and nothing else.
+ *
+ *    **"Unrated", not "deterministic", and the distinction is this file's own.** The complement of
+ *    {@link isRatedRung} is `{manual, write, bypass}` — the rungs that consult no rater. That is NOT
+ *    the set {@link isDeterministicRung} names, which is `{manual, write}`: `bypass` gates nothing at
+ *    all, so it is not a rung that decides deterministically, it is the absence of a decision. Prose
+ *    elsewhere in the repo calls the three "deterministic"; against the predicate exported a hundred
+ *    lines below, that reading is wrong, so this constraint says "unrated" and means the complement.
  *
  *    **A lexical test watches the word, and its failure is not a false positive.** "Carries a
  *    limit-on-use clause" has no mechanical predicate, so the rule names its own carrier token
  *    instead: `packages/app/spec/tui/slashCommands.spec.ts` — *"every rated rung's opener says what
  *    kind of work it is for, and only the rated ones do"* — takes the rated set from
  *    {@link isRatedRung} rather than a literal pair, so a sixth rated rung is required to carry a
- *    clause on the day it is added, and asserts the deterministic three do NOT carry the token, so
+ *    clause on the day it is added, and asserts the three unrated rungs do NOT carry the token, so
  *    that spreading `recoverable` across all five cannot satisfy it. Rewriting this copy is fine;
  *    dropping the word is the thing that must not happen quietly, because that is exactly how
  *    Auto's cautionary clause was lost once already — in an ordinary rewrite that broke no test.
