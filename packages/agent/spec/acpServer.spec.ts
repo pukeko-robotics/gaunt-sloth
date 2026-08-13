@@ -33,7 +33,7 @@
  * production gate decided to raise.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as acp from '@agentclientprotocol/sdk/experimental/v2';
@@ -365,12 +365,21 @@ const gatedShellScript = (command: string): AgentScript => ({
 });
 
 let priorProjectDir: string | undefined;
+let priorInitCwd: string | undefined;
 
 beforeEach(() => {
   priorProjectDir = peekProjectDir();
+  priorInitCwd = process.env.INIT_CWD;
   setProjectDir(projectDir);
 });
-afterEach(() => setProjectDir(priorProjectDir));
+afterEach(() => {
+  setProjectDir(priorProjectDir);
+  // The production config loader assigns INIT_CWD, a process-global that outlives the connection.
+  // Restoring it keeps a case that exercises the real loader from re-rooting every later spec in
+  // this worker.
+  if (priorInitCwd === undefined) delete process.env.INIT_CWD;
+  else process.env.INIT_CWD = priorInitCwd;
+});
 afterAll(() => rmSync(projectDir, { recursive: true, force: true }));
 
 // ---------------------------------------------------------------------------
@@ -464,7 +473,9 @@ describe('the ACP v2 agent — session lifecycle', () => {
       }
     );
 
-    expect(view.states.at(-1)).toMatchObject({ state: 'idle', stopReason: 'refusal' });
+    // `_error`, not `refusal`: a crash is not the agent declining to continue, and v2 reserves
+    // custom stop reasons to underscore-prefixed names.
+    expect(view.states.at(-1)).toMatchObject({ state: 'idle', stopReason: '_error' });
     expect(view.textOf(view.agentMessages)).toContain('the model exploded');
   });
 
@@ -509,6 +520,61 @@ describe('the ACP v2 agent — session lifecycle', () => {
     expect(replayed.map((u) => u.sessionUpdate)).toEqual(['user_message', 'agent_message']);
     expect(afterClose.sessions).toHaveLength(0);
     expect(promptAfterClose).toContain('No such session');
+  });
+
+  /**
+   * The PRODUCTION config loader, which every other case in this file injects around.
+   *
+   * It is the one thing this change invented that had no coverage, and it is what the shipped docs
+   * promise: the working directory the editor opens the session with roots config discovery and,
+   * through `getCurrentWorkDir()`, the filesystem tools, grep and the shell. It does that by
+   * assigning `INIT_CWD` rather than by `process.chdir()`, which in a process serving several
+   * sessions would be a race.
+   *
+   * The discriminating assertion is the config VALUE: `streamOutput` defaults to true, so reading
+   * it back as false can only mean discovery walked up from the directory the session named. That
+   * is the half source-reading cannot settle — whether the walk starts from the assigned value or
+   * from one captured earlier.
+   */
+  it('roots config discovery at the working directory the session named', async () => {
+    const sessionCwd = join(projectDir, 'discovered-workspace');
+    mkdirSync(join(sessionCwd, '.git'), { recursive: true });
+    writeFileSync(
+      join(sessionCwd, '.gsloth.config.json'),
+      JSON.stringify({ llm: { type: 'vertexai' }, streamOutput: false })
+    );
+    // A DIFFERENT directory, so a loader reading the ambient cwd would find the wrong config (or
+    // none) rather than accidentally agreeing with the right answer.
+    process.env.INIT_CWD = projectDir;
+
+    const agent = new FixtureAgent({ events: [] });
+    let seenConfig: GthConfig | undefined;
+    const agentApp = createAcpAgentApp({
+      // `loadConfig` deliberately NOT injected — this is the case that runs the real one.
+      agentFactory: () => (status, resolvers) => {
+        const captured = agent as unknown as { init: (c: unknown, config: GthConfig) => void };
+        captured.init = (_command, config) => {
+          seenConfig = config;
+        };
+        void status;
+        void resolvers;
+        return agent;
+      },
+      resolvers: {},
+    });
+
+    await acp.client({ name: 'ext-46-config-client' }).connectWith(agentApp, async (ctx) => {
+      await ctx.request(acp.AGENT_METHODS.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        info: { name: 'ext-46-config-client', version: '0.0.0' },
+      });
+      await ctx.request(acp.AGENT_METHODS.session_new, { cwd: sessionCwd });
+    });
+
+    // The process-global every work-dir consumer reads now names the session's workspace.
+    expect(process.env.INIT_CWD).toBe(sessionCwd);
+    // And the config the runner initialised with came from THAT directory's file.
+    expect(seenConfig?.streamOutput).toBe(false);
   });
 
   it('refuses a session for a different workspace rather than re-rooting the process', async () => {

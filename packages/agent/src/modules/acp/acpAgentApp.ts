@@ -233,7 +233,11 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
       if (session.cancelled || abort.signal.aborted) {
         stopReason = 'cancelled';
       } else {
-        stopReason = 'refusal';
+        // NOT `refusal`, which the spec defines as the agent declining to continue — a crash is
+        // not a refusal, and a client would render it as one. v2 reserves custom stop reasons to
+        // names beginning with an underscore, so this is the sanctioned way to say "stopped, and
+        // none of the defined reasons is what happened".
+        stopReason = '_error';
         const message = error instanceof Error ? error.message : String(error);
         displayWarning(`ACP session ${session.sessionId}: turn failed — ${message}`);
         await sendUpdate(session, {
@@ -281,11 +285,17 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
     .onRequest(acp.AGENT_METHODS.initialize, () => ({
       protocolVersion: acp.PROTOCOL_VERSION,
       info: { name: ACP_AGENT_NAME, title: ACP_AGENT_TITLE, version: agentVersion() },
-      // `session: {}` is the baseline claim: session/new, session/prompt, session/cancel and
-      // session/update. Nothing beyond the baseline is advertised, because every capability here
-      // is a promise a client will hold us to — and the ones not claimed (image and audio prompt
-      // content, MCP transports, session/delete, session/fork, additionalDirectories) are the ones
-      // this agent does not serve.
+      // `session: {}` claims the baseline session surface and nothing more. Per the v2
+      // initialization spec the baseline is `session/new`, `session/list`, `session/resume`,
+      // `session/close`, `session/prompt`, `session/cancel` and `session/update` — which is
+      // exactly the set of handlers registered below. (The SDK's own type doc for this field
+      // enumerates a shorter baseline; the protocol doc is the authority, and the handlers here
+      // match it.)
+      //
+      // Nothing beyond it is advertised, because every capability is a promise a client will hold
+      // us to: image and audio prompt content, MCP server transports, `session/delete`,
+      // `session/fork` and `additionalDirectories` are the things this agent does not serve, so it
+      // does not claim them.
       capabilities: { session: {} },
     }))
     .onRequest(acp.AGENT_METHODS.session_new, async ({ params, client }) => {
