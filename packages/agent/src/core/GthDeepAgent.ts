@@ -239,8 +239,8 @@ export class GthDeepAgent extends GthAbstractAgent {
     // EXT-22 (S1): last-word path-namespace correction. Appends the shared guidance as a trailing
     // system-message block ONLY in code + virtualMode (where the fs virtual `/` root and the
     // shell's real-OS paths diverge); a transparent pass-through otherwise. Added LAST in the
-    // middleware array so, being the innermost wrapModelCall, its block lands AFTER deepagents'
-    // "All file paths must start with a /." line (see handoff/spike-systemmessage-ordering.md).
+    // middleware array so, being the innermost wrapModelCall, its block is the final thing in the
+    // assembled system message (see handoff/spike-systemmessage-ordering.md).
     const pathNamespaceCorrectionMiddleware = createPathNamespaceCorrectionMiddleware(
       this.command === 'code' && useVirtualFs
     );
@@ -758,9 +758,10 @@ export class GthDeepAgent extends GthAbstractAgent {
     // force, so wiring wider does not gate wider.
     //
     // **`boundToolNames` must include deepagents' OWN tools.** deepagents registers its filesystem
-    // tools, `execute`, `task` and `write_todos` itself (this backend resolves with
-    // `filesystem: 'none'`), so they never appear in `passThroughTools`; deriving the set from that
-    // array alone would leave `write_file`, `edit_file`, `execute`, `task` and `write_todos` ungated
+    // tools, `execute` and `task` itself (plus `write_todos` under any harness profile that
+    // installs the todo middleware), and this backend resolves with `filesystem: 'none'`, so they
+    // never appear in `passThroughTools`; deriving the set from that array alone would leave
+    // `write_file`, `edit_file`, `execute` and `task` ungated
     // at `manual` on this backend — precisely the defect this change exists to remove. Gating
     // them by name works because deepagents installs the very same langchain
     // `humanInTheLoopMiddleware`, which matches the model's tool CALLS by name in `afterModel` and so
@@ -785,7 +786,7 @@ export class GthDeepAgent extends GthAbstractAgent {
     // `agent.backend === 'deep'` (and warns that it is experimental); every other configuration,
     // the default included, gets the lean `GthLangChainAgent`, which carries the same wiring for
     // the same reason. It matters on both: at `manual` and `write` the live set is non-empty, so a
-    // write, an MCP call, `task` or deepagents' own `write_todos` bookkeeping would simply vanish —
+    // write, an MCP call or a `task` delegation would simply vanish —
     // or be announced to the model as approvable when nothing will ever approve it.
     const answersApprovals = commandAnswersApprovals(this.command);
     const noDrainTools = gateShell ? [SHELL_TOOL_NAME] : [];
@@ -842,7 +843,7 @@ export class GthDeepAgent extends GthAbstractAgent {
  * EXT-22: shared virtualMode path-namespace guidance — ONE source of truth used by BOTH the S2
  * early-framing note ({@link appendVirtualCwdNote}, injected into gsloth's composed systemPrompt =
  * block 0) and the S1 last-word correction middleware
- * ({@link createPathNamespaceCorrectionMiddleware}, appended after deepagents' `/`-rooted line).
+ * ({@link createPathNamespaceCorrectionMiddleware}, appended as the final system-message block).
  *
  * In a virtualMode `code` session (EXT-16, e.g. Windows) the deepagents filesystem tools use a
  * VIRTUAL `/` root (= the working dir) while `run_shell_command` uses REAL native OS paths; the
@@ -857,7 +858,7 @@ export class GthDeepAgent extends GthAbstractAgent {
 export const PATH_NAMESPACE_GUIDANCE =
   'The filesystem tools (ls, read_file, write_file, edit_file, glob, grep) use a VIRTUAL root in ' +
   'this session: a leading `/` means your working directory, and their paths are written ' +
-  '`/`-rooted relative to it (this is what "all file paths must start with a /" refers to). That ' +
+  '`/`-rooted relative to it. That ' +
   '`/` is NOT the real operating-system filesystem root. run_shell_command is different: it runs ' +
   'in the real operating system and uses real native paths (on Windows, e.g. ' +
   '`C:\\Users\\...\\project`, with backslashes), never the virtual `/` root. A `/`-rooted path ' +
@@ -872,10 +873,11 @@ export const PATH_NAMESPACE_GUIDANCE =
  * backend runs in virtualMode (EXT-16), inject the shared path-namespace guidance EARLY in
  * gsloth's composed systemPrompt (block 0) so the model is framed before deepagents' own prompt.
  *
- * This is early framing only: deepagents' hardcoded `/`-rooted line lands in a LATER block and can
- * partially override block 0, so the authoritative last word is delivered by the S1 middleware
- * ({@link createPathNamespaceCorrectionMiddleware}); see handoff/spike-systemmessage-ordering.md.
- * Returns the note alone when there is no base prompt.
+ * This is early framing only: block 0 is the FIRST thing the model reads and everything after it —
+ * notably the fs tools' own parameter descriptions, which still demand an "Absolute path … Must be
+ * absolute, not relative" — pulls the other way, so the authoritative last word is delivered by the
+ * S1 middleware ({@link createPathNamespaceCorrectionMiddleware}); see
+ * handoff/spike-systemmessage-ordering.md. Returns the note alone when there is no base prompt.
  */
 export function appendVirtualCwdNote(systemPrompt: string | undefined): string {
   const note = `Filesystem vs shell path namespaces: ${PATH_NAMESPACE_GUIDANCE}`;
@@ -884,17 +886,17 @@ export function appendVirtualCwdNote(systemPrompt: string | undefined): string {
 
 /**
  * EXT-22 (S1): the load-bearing path-namespace correction. A gsloth `wrapModelCall` middleware
- * runs INNERMOST (inside deepagents' filesystem middleware), so appending a trailing block to
- * `request.systemMessage` lands AFTER deepagents' hardcoded "All file paths must start with a /."
- * line — giving gsloth the last word on path semantics (empirically verified; see
- * handoff/spike-systemmessage-ordering.md). It APPENDS via `request.systemMessage.concat(...)`
- * (mirroring how deepagents appends its own fs prompt), never string-splices, and returns a NEW
- * request so it never mutates persisted state (no compounding across turns).
+ * runs INNERMOST (deepagents merges custom middleware AFTER its own built-ins, and later in the
+ * array = closer to the model), so appending a trailing block to `request.systemMessage` makes it
+ * the LAST thing in the assembled system message — gsloth's last word on path semantics
+ * (empirically verified; see handoff/spike-systemmessage-ordering.md). It APPENDS via
+ * `request.systemMessage.concat(...)`, never string-splices, and returns a NEW request so it never
+ * mutates persisted state (no compounding across turns).
  *
  * `appendCorrection` gates it to `code` + virtualMode: only there do the fs virtual `/` root and
- * the shell's real-OS paths diverge. On POSIX real-path mode deepagents' "start with /" is
- * literally true, so the middleware is a transparent pass-through (like the debug-capture
- * middleware when no sink is attached).
+ * the shell's real-OS paths diverge. On POSIX real-path mode the two namespaces coincide and the
+ * fs tools' "Must be absolute, not relative" is literally true, so the middleware is a transparent
+ * pass-through (like the debug-capture middleware when no sink is attached).
  */
 export function createPathNamespaceCorrectionMiddleware(appendCorrection: boolean) {
   return createMiddleware({

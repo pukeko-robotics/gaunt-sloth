@@ -113,8 +113,8 @@ export interface GthConfig {
    *   tool), with no deepagents machinery (no `/large_tool_results` offload). This is the
    *   recommended backend and the default for the CLI (code/chat), single-shot (ask/exec), and
    *   the AG-UI/api server.
-   * - `deep` (**experimental**, opt-in): the deepagents runtime (subagents, `write_todos`,
-   *   summarization, tool-result offload). Selecting it emits a warning. It can exhibit
+   * - `deep` (**experimental**, opt-in): the deepagents runtime (subagents, summarization,
+   *   tool-result offload). Selecting it emits a warning. It can exhibit
    *   path-divergence and sporadic failures and carries extra internal workarounds; prefer `lean`.
    *
    * **Command-scoped**, and `docs/configuration/profiles.md` carries the one list of which commands

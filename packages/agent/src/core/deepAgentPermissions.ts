@@ -24,10 +24,12 @@ export const FILESYSTEM_TOOL_NAMES = [
 ] as const;
 
 /**
- * **Every tool name `createDeepAgent` registers on its own** — the filesystem set above plus the
- * tools its other standard middleware installs unconditionally: `write_todos` (`todoListMiddleware`)
- * and `task` (`createSubAgentMiddleware`). None of them ever appears in the tool array gsloth passes
- * `createDeepAgent`, so this is the only way the approval policy can see them.
+ * **Every tool name `createDeepAgent` may register on its own** — the filesystem set above plus
+ * `task` (`createSubAgentMiddleware`, always installed) and `write_todos` (`todoListMiddleware`,
+ * which deepagents installs only for the harness profiles that opt in). None of them ever appears
+ * in the tool array gsloth passes `createDeepAgent`, so this is the only way the approval policy
+ * can see them. The set is deliberately a SUPERSET: naming a tool the running version does not bind
+ * costs nothing, while missing one it does bind leaves it bound and ungated.
  *
  * **It exists because the approval question is "what did the graph bind", not "what did we supply".**
  * `task` and `write_todos` have no entry in core's `BUILT_IN_TOOL_ACCESS`, so the two deterministic

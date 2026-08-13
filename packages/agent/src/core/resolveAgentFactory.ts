@@ -11,8 +11,8 @@ import { gthDeepAgentFactory } from '#src/core/gthDeepAgentFactory.js';
  * Returns {@link gthDeepAgentFactory} for `'deep'` and {@link gthLeanAgentFactory} for `'lean'`.
  * Both factories receive the SAME `createResolvers()` toolset, so lean is not capability-stripped:
  * it keeps gaunt-sloth's own filesystem + (in code mode) dev/shell tools plus the `gth_checklist`
- * planning tool; it only drops the deepagents-specific extras (subagent `task`, `write_todos`,
- * summarization, `/large_tool_results`).
+ * planning tool; it only drops the deepagents-specific extras (subagent `task`, summarization,
+ * `/large_tool_results`).
  */
 export function resolveAgentFactory(
   config: GthConfig,
