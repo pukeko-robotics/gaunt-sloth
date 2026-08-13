@@ -491,3 +491,98 @@ describe('createTuiSession — mouse wiring (TUI-C37)', () => {
     expect(appElement.props.mouseEnabled).toBe(true);
   });
 });
+
+const renderPhaseBeforeEach = (): void => {
+  vi.resetAllMocks();
+  systemUtilsMock.env = {};
+  systemUtilsMock.stdout.isTTY = true;
+  systemUtilsMock.stdout.rows = 24;
+  initConfigMock.mockResolvedValue({});
+  resolveAgentFactoryMock.mockReturnValue(resolvedFactory);
+  runnerInitMock.mockResolvedValue(undefined);
+  runnerGetAgentMock.mockReturnValue({});
+  runnerCleanupMock.mockResolvedValue(undefined);
+  renderMock.mockReturnValue({
+    clear: vi.fn(),
+    waitUntilExit: vi.fn().mockResolvedValue(undefined),
+  });
+};
+
+/**
+ * CFG-47 — where the render phase begins.
+ *
+ * `startSession` falls back to readline only for a failure this function reports as being in the
+ * render phase, so the VALUE of that narrowing is entirely in where the announcement sits.
+ * `startSession.configError.spec.ts` proves the dispatcher obeys the signal; these cells prove the
+ * signal is raised in the right place — the two halves are worthless apart, because a correct
+ * dispatcher fed a boundary that moved to the top of the function would fall back for everything
+ * again, and every cell over there would stay green.
+ *
+ * The two failures pinned as pre-render are the two the node named: the config load, and
+ * `runner.init` (which is where the `subagents[].profile` configs resolve). Both are things the
+ * readline path does identically.
+ */
+describe('createTuiSession — the render-phase boundary (CFG-47)', () => {
+  beforeEach(renderPhaseBeforeEach);
+
+  it('announces the render phase exactly once, and not before the render', async () => {
+    const order: string[] = [];
+    renderMock.mockImplementation(() => {
+      order.push('render');
+      return { clear: vi.fn(), waitUntilExit: vi.fn().mockResolvedValue(undefined) };
+    });
+    const onRenderStart = vi.fn(() => {
+      order.push('onRenderStart');
+    });
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await createTuiSession(sessionConfig, overrides, undefined, onRenderStart);
+
+    expect(onRenderStart).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['onRenderStart', 'render']);
+  });
+
+  it('does NOT announce it when the config load fails', async () => {
+    const configFailure = new Error('identity profile "typo" not found');
+    initConfigMock.mockRejectedValue(configFailure);
+    const onRenderStart = vi.fn();
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await expect(createTuiSession(sessionConfig, overrides, undefined, onRenderStart)).rejects.toBe(
+      configFailure
+    );
+
+    // Never announced ⇒ `startSession` propagates instead of printing "TUI unavailable".
+    expect(onRenderStart).not.toHaveBeenCalled();
+    expect(renderMock).not.toHaveBeenCalled();
+  });
+
+  it('does NOT announce it when runner.init fails', async () => {
+    // The subagent-profile resolution point, and the one furthest down the setup — if the
+    // boundary ever drifts upward, this is the cell that catches it.
+    const initFailure = new Error('subagent profile "reviewer" could not be prepared');
+    runnerInitMock.mockRejectedValue(initFailure);
+    const onRenderStart = vi.fn();
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await expect(createTuiSession(sessionConfig, overrides, undefined, onRenderStart)).rejects.toBe(
+      initFailure
+    );
+
+    expect(onRenderStart).not.toHaveBeenCalled();
+    expect(renderMock).not.toHaveBeenCalled();
+  });
+
+  it('announces it on the hermetic e2e branch, which is render from its first line', async () => {
+    // That branch deliberately loads no config, so it shares nothing with the readline path and
+    // must keep the fallback it has always had — otherwise a fixture problem stops degrading and
+    // starts crashing the PTY harness.
+    systemUtilsMock.env = { GTH_TUI_E2E_FIXTURE: '/fixtures/session.json' };
+    const onRenderStart = vi.fn();
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await createTuiSession(sessionConfig, overrides, undefined, onRenderStart);
+
+    expect(onRenderStart).toHaveBeenCalledTimes(1);
+  });
+});

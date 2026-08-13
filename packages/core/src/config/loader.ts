@@ -41,8 +41,6 @@ import { getGslothConfigReadPath, importExternalFile } from '#src/utils/fileUtil
 import { getGlobalGslothConfigReadPath } from '#src/utils/globalConfigUtils.js';
 import {
   env,
-  error,
-  exit,
   getCurrentWorkDir,
   isStdoutTTY,
   isTTY,
@@ -85,14 +83,17 @@ import type {
  *    error. Validation is shape-only — the loose schema preserves unknown keys,
  *    so the original `raw` is returned unchanged on success.
  *
- * CFG-36 — every hard failure above RAISES a {@link ConfigDiscoveryError} rather than printing and
- * calling `exit(1)`. Config loading is a library operation: the caller chooses the exit code (the
- * CLI's top-level guard prints the message and exits 1; `gth eval` classifies it as a harness error
- * and exits 2). Because these now throw, every `catch` between here and a top level must re-raise
- * them rather than fall through to another format or treat the layer as absent — see the
- * {@link isConfigDiscoveryError} re-raises in {@link loadGlobalRawConfig}, {@link initConfig} and
- * {@link tryModuleConfig}. Swallowing one would silently downgrade a hard config error to a
- * different (or absent) config, which is the false-green this change exists to prevent.
+ * CFG-36 / CFG-47 — every hard failure above RAISES a {@link ConfigDiscoveryError} rather than
+ * printing and calling `exit(1)`, and so does every other "config present and unusable" site in this
+ * file. Config loading is a library operation: the caller chooses the exit code (the CLI's top-level
+ * guard prints the message and exits 1; `gth eval` classifies it as a harness error and exits 2).
+ * **This file no longer calls `exit` at all** — that is the invariant, and it is easier to keep than
+ * a list of which sites do. Because these throw, every `catch` between here and a top level must
+ * re-raise them rather than fall through to another format or treat the layer as absent — see the
+ * {@link isConfigDiscoveryError} re-raises in {@link loadGlobalRawConfig}, {@link initConfig},
+ * {@link tryModuleConfig} and {@link tryJsonConfig}. Swallowing one would silently downgrade a hard
+ * config error to a different (or absent) config, which is the false-green this change exists to
+ * prevent.
  *
  * @param raw The freshly loaded config layer (read-only here).
  * @param sourceLabel Human-readable source name for messages (e.g. the filename).
@@ -542,8 +543,13 @@ export async function resolveConfigExtends(
     // deliberately left unset rather than guessed at. `identityProfile` means "the profile that did
     // not resolve", which for a missing base referenced from another profile is the BASE, not the
     // `profileLabel` in hand here — a wrong value would be worse than an absent one.
+    //
+    // CFG-47 — the original travels as `cause`. Re-raising by message alone made the
+    // {@link ConfigExtendsError} (and any stack under it) unrecoverable from the wrapper, so a
+    // consumer that wanted the underlying failure had only the rendered string. The in-repo sibling
+    // ({@link MissingProviderKeyError} in {@link tryJsonConfig}) already carries it.
     if (e instanceof ConfigExtendsError) {
-      throw new ConfigDiscoveryError(e.message);
+      throw new ConfigDiscoveryError(e.message, {}, { cause: e });
     }
     throw e;
   }
@@ -759,8 +765,15 @@ export async function initConfig(
     commandLineConfigOverrides.customConfigPath &&
     !existsSync(commandLineConfigOverrides.customConfigPath)
   ) {
-    throw new Error(
-      `Provided manual config "${commandLineConfigOverrides.customConfigPath}" does not exist`
+    // CFG-47 — a {@link ConfigDiscoveryError}, not a plain `Error`. An explicitly named `-c` path
+    // that is not there is the same "this configuration cannot be used" failure as a named profile
+    // with no config, and it reaches the same two consumers: the CLI's top-level guard (prints the
+    // message, exits 1) and `gth eval` (harness error, exit 2). As a plain Error it was invisible to
+    // BOTH — it fell through the guard to the crash handler, so `gth -c <missing path> code` printed
+    // a false "TUI unavailable … falling back to the readline session" and then a crash snapshot.
+    throw new ConfigDiscoveryError(
+      `Provided manual config "${commandLineConfigOverrides.customConfigPath}" does not exist`,
+      { sourceLabel: commandLineConfigOverrides.customConfigPath }
     );
   }
 
@@ -839,12 +852,14 @@ export async function initConfig(
         // Route the global config through the same path the project JSON uses.
         return await tryJsonConfig(globalRawConfig as RawGthConfig, commandLineConfigOverrides);
       }
-      displayError(
-        'Global configuration found but it is not in valid format. Should at least define llm.type'
+      // CFG-47 — a global config that read fine and does not define `llm.type` is "config present
+      // and unusable", the same class CFG-36 converted: raise it, let the caller choose the exit
+      // code. The message is the one this branch has always printed, so the CLI's top-level guard
+      // reproduces the previous output exactly.
+      throw new ConfigDiscoveryError(
+        'Global configuration found but it is not in valid format. Should at least define llm.type',
+        { sourceLabel: `${USER_PROJECT_CONFIG_JSON} (global)` }
       );
-      exit(1);
-      // Unreachable past exit(1) in production; keeps TS happy and prevents test exit.
-      throw new Error('Unexpected error occurred.');
     }
   }
 
@@ -877,12 +892,15 @@ export async function initConfig(
       if (jsonConfig.llm && typeof jsonConfig.llm === 'object' && 'type' in jsonConfig.llm) {
         return await tryJsonConfig(jsonConfig, commandLineConfigOverrides);
       } else {
-        error(`${jsonConfigPath} is not in valid format. Should at least define llm.type`);
-        exit(1);
+        // CFG-47 — same class, same treatment. Deliberately a ConfigDiscoveryError and not a plain
+        // one: the catch below re-raises this class and swallows everything else into the next
+        // FORMAT, so a plain throw here would silently fall through to the module loader and end in
+        // the terminal "No configuration file found" — hiding the real, clearly-worded problem.
         // noinspection ExceptionCaughtLocallyJS
-        // This throw is unreachable due to exit(1) above, but satisfies TS type analysis and prevents tests from exiting
-        // noinspection ExceptionCaughtLocallyJS
-        throw new Error('Unexpected error occurred.');
+        throw new ConfigDiscoveryError(
+          `${jsonConfigPath} is not in valid format. Should at least define llm.type`,
+          { sourceLabel: jsonConfigName }
+        );
       }
     } catch (e) {
       // CFG-35 — the format fall-through must not swallow a resolvable-config-but-no-API-key
@@ -984,24 +1002,35 @@ async function tryModuleConfig(
         // Continue to try other formats
         return await tryModuleConfig(nextFormat, commandLineConfigOverrides, baseDir);
       }
-      displayError(`Failed to read config from ${filename}.`);
-      displayError(`No valid configuration found. Please create a valid configuration file.`);
-      exit(1);
+      // CFG-47 — the last format in the chain failed to read. The config IS present and cannot be
+      // used, so this raises like the rest of the class. Both lines are kept in the one message:
+      // the first names the file that failed, the second is the advice, and the guard prints them
+      // together exactly as the two `displayError` calls did.
+      throw new ConfigDiscoveryError(
+        `Failed to read config from ${filename}.\n` +
+          `No valid configuration found. Please create a valid configuration file.`,
+        { sourceLabel: filename }
+      );
     }
   } else if (nextFormat) {
     // This format not found, try the next one
     return await tryModuleConfig(nextFormat, commandLineConfigOverrides, baseDir);
   } else {
-    // No config files found
-    displayError(
+    // No config files found.
+    //
+    // CFG-47 — the terminal "nothing to load" exit, raised rather than exited. It is the same class
+    // for the same reason as the rest: the caller must classify it. `gth eval` in particular needs
+    // "the harness has no config" to be a harness error (exit 2), not the exit 1 that means the SUT
+    // ran and failed. The CLI's top-level guard prints this message and exits 1, so a person at a
+    // terminal sees exactly what they saw before — and `startSession` still runs the first-run
+    // dialog ahead of this on an interactive TTY with no config anywhere (CFG-10), so the ordinary
+    // unconfigured path never reaches here.
+    throw new ConfigDiscoveryError(
       'No configuration file found. Please create one of: ' +
         `${USER_PROJECT_CONFIG_JSON}, ${USER_PROJECT_CONFIG_JS}, or ${USER_PROJECT_CONFIG_MJS} ` +
         'in your project directory.'
     );
-    exit(1);
   }
-  // This throw is unreachable due to exit(1) above, but satisfies TS type analysis and prevents tests from exiting
-  throw new Error('Unexpected error occurred.');
 }
 
 /**
@@ -1019,8 +1048,12 @@ export async function tryJsonConfig(
       // Get the type of LLM (e.g. 'vertexai', 'anthropic') - this should exist
       const llmType = (jsonConfig.llm as LLMConfig).type;
       if (!llmType) {
-        displayError('LLM type not specified in config.');
-        exit(1);
+        // CFG-47 — same class, raised rather than exited. Note this throw is caught by THIS
+        // function's own catch below, which re-raises the class before its "Error processing LLM
+        // config" wrapper; without that re-raise the clear message here would be re-worded and then
+        // exited on anyway.
+        // noinspection ExceptionCaughtLocallyJS
+        throw new ConfigDiscoveryError('LLM type not specified in config.');
       }
 
       // Get the configuration for the specific LLM type
@@ -1046,17 +1079,39 @@ export async function tryJsonConfig(
           return await mergedConfig;
         }
       } else {
-        displayWarning(`Config module for ${llmType} does not have processJsonConfig function.`);
-        exit(1);
+        // CFG-47 — the node called this site the one that is "genuinely a different case". Measured,
+        // it is not: `#src/providers/<type>.js` resolves against the SAME directory that holds five
+        // real modules with no `processJsonConfig` export (modelCatalog, modelDiscovery,
+        // geminiThinking, geminiSchemaSanitizer, configurationPassthrough), so `llm.type:
+        // "modelCatalog"` reaches here from an ordinary config file — verified by resolving that
+        // specifier at runtime. It is therefore user-reachable "config present and unusable" like
+        // the rest, and is converted with them. Kept on the warning wording it has always had.
+        // noinspection ExceptionCaughtLocallyJS
+        throw new ConfigDiscoveryError(
+          `Config module for ${llmType} does not have processJsonConfig function.`
+        );
       }
     } else {
-      displayError('No LLM configuration found in config.');
-      exit(1);
+      // noinspection ExceptionCaughtLocallyJS
+      throw new ConfigDiscoveryError('No LLM configuration found in config.');
     }
   } catch (e) {
+    // CFG-47 — the four sites above raise INTO this catch, so it must re-raise the class before its
+    // own wrapper reaches them. Without this, a clear "LLM type not specified in config." would be
+    // re-worded as "Error processing LLM config: …" and exited on anyway — the local catch would
+    // undo the conversion three lines after it happened. Same shape as the re-raises in
+    // `initConfig` and `tryModuleConfig`.
+    if (isConfigDiscoveryError(e)) {
+      throw e;
+    }
     if (e instanceof Error && e.message.includes('Cannot find module')) {
-      displayError(`LLM type '${(jsonConfig.llm as LLMConfig).type}' not supported.`);
-      exit(1);
+      // CFG-47 — a configured `llm.type` we have no provider module for is a config error, not a
+      // process exit. `{ cause: e }` keeps the resolver's own failure reachable.
+      throw new ConfigDiscoveryError(
+        `LLM type '${(jsonConfig.llm as LLMConfig).type}' not supported.`,
+        {},
+        { cause: e }
+      );
     } else {
       const message = `Error processing LLM config: ${e instanceof Error ? e.message : String(e)}`;
       // CFG-35 — a provider that could not be built because NO API key is resolvable for it is a
@@ -1080,12 +1135,13 @@ export async function tryJsonConfig(
       if (missingKey) {
         throw new MissingProviderKeyError(message, missingKey, { cause: e });
       }
-      displayError(message);
-      exit(1);
+      // CFG-47 — and when it is NOT a missing key, raise too. This site's immediate neighbour three
+      // lines up already threw, so the file disagreed with itself about whether a provider that
+      // could not be built terminates the process; it does not. The message is unchanged and
+      // `{ cause: e }` keeps the provider's own error reachable, as the missing-key branch does.
+      throw new ConfigDiscoveryError(message, {}, { cause: e });
     }
   }
-  // This throw is unreachable due to exit(1) above, but satisfies TS type analysis and prevents tests from exiting
-  throw new Error('Unexpected error occurred.');
 }
 
 /**
