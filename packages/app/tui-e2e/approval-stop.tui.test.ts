@@ -109,7 +109,7 @@ const expectNoForgedChromeAtColumnZero = (rows: string[]): void => {
  * the case the gutter exists for — one neutralised line long enough for the TERMINAL to wrap it,
  * whose continuation starts at column 0 carrying whatever the attacker put at that offset.
  */
-const GUTTERED = /^ +(?:\d+ │|┊|⋯) /;
+const GUTTERED = /^ +(?:\d+ │|┊|⋯|line \d+ ·) /;
 const expectForgeryPresentButGuttered = (rows: string[]): void => {
   const forged = rows.filter((row) => row.includes(FORGED_MENU) || row.includes(FORGED_VERDICT));
   expect(forged.filter((row) => row.includes(FORGED_MENU)).length).toBeGreaterThan(0);
@@ -117,6 +117,23 @@ const expectForgeryPresentButGuttered = (rows: string[]): void => {
   for (const row of forged) {
     expect(row).toMatch(GUTTERED);
   }
+};
+
+/**
+ * The extracted-site notice, which the composing command in the fixture is what produces.
+ *
+ * Asserted rather than left to chance because it is the shape most easily lost: `framing.ts` calls
+ * the site row **the one place untrusted text renders outside the gutter**, bounded by two clips
+ * instead. A fixture whose command did not compose would never render it, so the row the renderer
+ * treats as its most delicate would be the one row this suite never looked at. It is admitted by
+ * `GUTTERED` above for that reason — it is a legitimate shape, not an escape from the rule.
+ */
+const expectSiteNoticeRendered = (rows: string[]): void => {
+  expect(rows.some((row) => row.includes('the gate could not statically resolve'))).toBe(true);
+  const siteRows = rows.filter((row) => /^ +line \d+ · composition/.test(row));
+  expect(siteRows.length).toBeGreaterThan(0);
+  // Inset like everything else untrusted, and bounded by the terminal it was budgeted against.
+  for (const row of siteRows) expect(row.trimEnd().length).toBeLessThanOrEqual(120);
 };
 
 /**
@@ -144,6 +161,35 @@ const BANNER_TITLE = 'RUN HALTED';
 const HALT_ANCHOR = 'Run halted: the auto-rater';
 /** The §6.2 message's own first sentence. */
 const ESCALATION_ANCHOR = 'Approval required, but this session has no one to ask.';
+
+/**
+ * The halt message's LAST part, and what every assertion here waits for before reading the screen.
+ *
+ * **Waiting on the first row would be a race, not a shortcut.** The readline surface writes one
+ * `display()` call per row, so the fifteen framed rows arrive as fifteen separate PTY writes after
+ * the sentence that opens the message — and a slice taken on the opening row would be reading a
+ * message still in flight. It would pass on a fast Linux runner and fail on a slower cell as
+ * "`\x0d` is not on the screen", which reads as a production regression rather than as the wait it
+ * is. The parts are printed in order, so the closing part being on screen is the whole of it being
+ * on screen.
+ */
+const HALT_LAST_PART = 'not negotiable';
+
+/**
+ * Waits for the process to end. The §6.2 message is the last thing `gth exec` prints before it
+ * exits non-zero, so the exit — not a string — is the honest signal that all of it has landed.
+ */
+async function waitForExit(
+  terminal: Terminal,
+  timeoutMs = 15_000
+): Promise<{ exitCode: number; signal?: number } | null> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (terminal.exitResult != null) return terminal.exitResult;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return null;
+}
 
 test.describe('gth code TUI — [[TUI-C71]] the halt message is framed in the transcript', () => {
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gth-e2e-stop-home-'));
@@ -175,12 +221,15 @@ test.describe('gth code TUI — [[TUI-C71]] the halt message is framed in the tr
     terminal.submit(); // bare Enter — refuse, which ends the run and prints the halt
     await expect(terminal.getByText('Run halted', { strict: false })).toBeVisible();
     await expect(terminal.getByText(BANNER_TITLE, { strict: false })).not.toBeVisible();
+    // The message's LAST part, so the screen is read once the whole of it has arrived.
+    await expect(terminal.getByText(HALT_LAST_PART, { strict: false })).toBeVisible();
 
     const rows = rowsFromStop(terminal, HALT_ANCHOR);
     expectControlsRenderedInert(rows);
     expectGutter(rows);
     expectForgeryPresentButGuttered(rows);
     expectNoForgedChromeAtColumnZero(rows);
+    expectSiteNoticeRendered(rows);
     // The rater's own words are on the screen too, and framed like the command: it is the string
     // easiest to protect the command and then forget.
     expect(rows.join('\n')).toContain('stop-reason-marker');
@@ -225,12 +274,17 @@ test.describe('gth code readline — [[TUI-C71]] the halt message is framed on t
     await expect(terminal.getByText('Your answer: run anyw', { strict: false })).toBeVisible();
     terminal.submit();
     await expect(terminal.getByText('Run halted', { strict: false })).toBeVisible();
+    // **This surface writes one row per `display()` call**, so the framed rows arrive as separate
+    // PTY writes after the opening sentence. Wait for the message's LAST part before reading the
+    // screen, or the slice below is taken mid-flight.
+    await expect(terminal.getByText(HALT_LAST_PART, { strict: false })).toBeVisible();
 
     const rows = rowsFromStop(terminal, HALT_ANCHOR);
     expectControlsRenderedInert(rows);
     expectGutter(rows);
     expectForgeryPresentButGuttered(rows);
     expectNoForgedChromeAtColumnZero(rows);
+    expectSiteNoticeRendered(rows);
     expect(rows.join('\n')).toContain('stop-reason-marker');
   });
 });
@@ -267,6 +321,10 @@ test.describe('gth exec — [[TUI-C71]] §6.2, the message that is all anyone se
     terminal,
   }) => {
     await expect(terminal.getByText('Approval required', { strict: false })).toBeVisible();
+    // The message is the last thing this command prints before it exits non-zero, and it arrives
+    // as one `displayError` call per row. The EXIT is therefore the honest signal that all of it
+    // has landed — a string wait would be satisfied by a message still being written.
+    expect(await waitForExit(terminal)).not.toBeNull();
 
     const rows = rowsFromStop(terminal, ESCALATION_ANCHOR);
     const joined = rows.join('\n');
@@ -286,6 +344,7 @@ test.describe('gth exec — [[TUI-C71]] §6.2, the message that is all anyone se
     expectGutter(rows);
     expectForgeryPresentButGuttered(rows);
     expectNoForgedChromeAtColumnZero(rows);
+    expectSiteNoticeRendered(rows);
     // The fixture really is hostile — a fixture that quietly lost its payload would make every
     // assertion above pass over nothing.
     expect(STOP_COMMAND).toContain(FORGED_MENU);
