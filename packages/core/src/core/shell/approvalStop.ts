@@ -37,20 +37,30 @@
  *
  * 1. **Neutralisation is done HERE, at construction, unconditionally.** It needs no width and no
  *    screen, it is idempotent, and it is the half every consumer needs — a thrown stop reaches the
- *    Ink transcript, `--no-tui` stderr, a session log, the approvals archive (`record.error`),
- *    AG-UI and a CI job's output, and only some of those are terminals. Doing it at each render
- *    site would mean every present and future consumer had to remember; doing it once here means
- *    none of them can forget. After it, `{@link message}` contains no control or format character
- *    at all: a carriage return is the five printable characters `\x0d`, and — because LF is a
- *    control character too — untrusted text cannot even open a new line, let alone reach column 0
- *    on one.
+ *    Ink transcript, `--no-tui` stderr, a session log, the approvals archive (`record.error`), an
+ *    eval turn record, AG-UI and a CI job's output, and only some of those are terminals. Doing it
+ *    at each render site would mean every present and future consumer had to remember; doing it
+ *    once here means none of them can forget. After it, `{@link message}` contains no control or
+ *    format character at all: a carriage return is the five printable characters `\x0d`, and —
+ *    because LF is a control character too — untrusted text cannot even open a new line, let alone
+ *    reach column 0 on one.
  * 2. **The gutter and the width bound are done at RENDER, by the surface** ({@link
  *    approvalStopRows} for the plain surfaces, `<ApprovalStopMessage>` for the Ink TUI). They
  *    cannot be done here: framing is arithmetic against a terminal width, an `Error.message` has
  *    no width, and a block wrapped for an 80-column terminal is wrong for every other one. What
  *    they buy over neutralisation alone is the last case it cannot close — one very long
  *    neutralised line that the *terminal* wraps, whose continuation starts at column 0 carrying
- *    whatever the attacker chose to put at that offset.
+ *    whatever the attacker chose to put at that offset. That route is measured, not theorised: on
+ *    a 120-column terminal the neutralised `Command:` line of a hostile command is ~164 columns.
+ *
+ * **Because half of it is the surface's job, the surfaces are enumerated rather than assumed.**
+ * Every place a stop is printed to a terminal calls {@link approvalStopRows} (or the Ink
+ * component): `runtime/singleShot.ts`, `runtime/conversation.ts`,
+ * `agent/modules/interactiveSessionModule.ts`, `review/modules/reviewModule.ts`,
+ * `app/commands/prCommand.ts` (which catches what the PR-discovery agent throws) and
+ * `app/tui/components/App.tsx`. **Adding a surface that prints a stop means adding it to that
+ * list.** The rest of the consumers above take {@link message} and want the string: they are not
+ * terminals, and the neutralisation they inherit is the whole of what they need.
  *
  * **The structured fields stay RAW; only the message is neutralised.** That is what answers the
  * obvious objection to construction-time work — that it stops the error being a faithful record of
@@ -88,6 +98,22 @@ import {
  *   negotiation transcript, whose rows `core/shell/negotiation` builds and whose leaves it has
  *   already collapsed to one line each. Its breaks survive into the message where a `value`'s
  *   would be escaped, because they are the thing that makes it readable at all.
+ *
+ * **A `block` is still neutralised line by line here, and that is deliberate defence in depth.**
+ * Its one production producer (`renderNegotiationTranscript`) has already cleaned every leaf, so
+ * on today's paths this arm changes nothing — but these constructors are public, and a caller
+ * handing one a raw multi-line string must not be the thing that decides whether a cursor can
+ * move. `approvalStop.spec.ts` builds exactly that string so the arm is falsifiable rather than
+ * merely reassuring.
+ *
+ * **The §5.4 VOICE distinction is deliberately not carried here**, and the trade is worth stating
+ * because `negotiation.ts` documents voice preservation as a rule: `renderNegotiationRows` tags
+ * each row `chrome`/`agent`/`rater` so a surface can colour the rater's turns apart from the
+ * agent's. A stop renders the transcript as one undifferentiated untrusted block instead. Framing
+ * a mixed-trust block wholly as untrusted is the safe direction (nothing in it is promoted to the
+ * gate's own voice), the row prefixes still name the speaker in text, and an `Error` carries no
+ * colour to any of the non-terminal consumers anyway. Colouring by voice here would mean
+ * re-deriving the tags from a string that no longer has them.
  */
 export type ApprovalStopPart =
   | { kind: 'own'; text: string }

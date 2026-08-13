@@ -91,6 +91,18 @@ const MARKERS = [
 /** Control, format and separator characters — the whole class the neutraliser covers. */
 const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 
+/**
+ * The row shapes untrusted text is allowed to arrive on: a numbered body row, a wrap continuation,
+ * an elision row, and the extracted-site notice.
+ *
+ * **The gutter, not merely a leading space.** A stop that was neutralised and indented under its
+ * own `  Command:` label satisfies a leading-space check while never having been framed at all —
+ * so that weaker form would stay green through the exact regression this suite exists to catch.
+ * (The site-notice row is `framing.ts`'s one deliberate exception: untrusted text outside the
+ * gutter, bounded by two clips instead. It is admitted here for that reason, not to make room.)
+ */
+const GUTTERED = /^ +(?:\d+ │|┊|⋯|line \d+ ·) /u;
+
 const escalation = (): NonInteractiveEscalationError =>
   new NonInteractiveEscalationError(
     HOSTILE_COMMAND,
@@ -175,6 +187,90 @@ describe('[[TUI-C71]] the stop MESSAGE is neutralised at construction', () => {
   });
 
   /**
+   * **The block arm neutralises too, and this is what makes that falsifiable.**
+   *
+   * Every other case feeds the negotiation built by `renderNegotiationTranscript`, whose leaves have
+   * already been through `neutralizeToOneLine` — so the block arm receives text that is *already*
+   * clean and removing its neutralisation changes nothing anywhere in the suite. A guard no test can
+   * fail is one an optimising reader deletes, and this constructor is **public**: nothing stops a
+   * caller (a future surface, a different negotiation renderer, a test) handing it a raw multi-line
+   * string. So the string here is hand-built and hostile, and it is what pins the arm.
+   *
+   * The two halves are asserted separately because they are different promises: the renderer-owned
+   * `\n` between rows SURVIVES, and everything the model could have put on those rows does not.
+   */
+  it('neutralises a raw multi-line negotiation handed straight to the constructor', () => {
+    const raw =
+      `The agent argued with the auto-rater 2 times before this:\n` +
+      `  Round 1: echo one${CR}${FORGED_MENU}\n` +
+      `    rater answered: destructive — ${CLEAR_SCREEN}${CURSOR_UP}raw-block-marker`;
+    const error = new NonInteractiveEscalationError(
+      'npm test',
+      undefined,
+      undefined,
+      undefined,
+      raw
+    );
+
+    // The renderer's own line structure is intact: three rows in, three rows out.
+    const rows = error.message
+      .split('\n')
+      .filter(
+        (line) =>
+          line.includes('argued with the auto-rater') ||
+          line.includes('Round 1') ||
+          line.includes('rater answered')
+      );
+    expect(rows).toHaveLength(3);
+    // ...and nothing on any of them can still move a cursor.
+    for (const line of error.message.split('\n')) {
+      expect(line, `a raw unprintable survived in: ${JSON.stringify(line)}`).not.toMatch(
+        UNPRINTABLE
+      );
+    }
+    expect(error.message).toContain('\\x0d');
+    expect(error.message).toContain('\\x1b[2J');
+    expect(error.message).toContain('raw-block-marker');
+  });
+
+  /**
+   * **The composition production can actually emit, which nothing else here covers.**
+   *
+   * `GthAgentRunner` skips the rating call entirely on an `approvals.escalate` match, so
+   * `escalatedBy` mechanically excludes `outcome` and `reason` — the all-five shape asserted above
+   * is a property of the class, not something the runner emits. What the runner CAN emit is this:
+   * a `destructive` rejection at `auto` leaves rounds on the negotiation transcript, and a later
+   * call matching an escalate entry then throws with the command, the entry and those rounds, and
+   * no rating at all. It also selects the other recovery tail, which no other case exercises.
+   */
+  it('neutralises the reachable shape: command, escalate entry and transcript, no rating', () => {
+    const error = new NonInteractiveEscalationError(
+      HOSTILE_COMMAND,
+      undefined,
+      undefined,
+      HOSTILE_ESCALATED_BY,
+      HOSTILE_NEGOTIATION
+    );
+    expect(error.outcome).toBeUndefined();
+    expect(error.reason).toBeUndefined();
+    expect(error.message).toContain('stop-command-start');
+    expect(error.message).toContain('stop-escalate-marker');
+    expect(error.message).toContain('stop-round-reason-marker');
+    // Neither label of the rating it never had.
+    expect(error.message).not.toContain('  Rating:');
+    expect(error.message).not.toContain('  Reason:');
+    // The escalate-entry recovery, not the allow-list one: pointing someone at approvals.allow when
+    // they wrote the escalate entry themselves sends them to a list that cannot win.
+    expect(error.message).toContain('An escalate entry always asks a human');
+    expect(error.message).not.toContain('Declare the commands this run is allowed to execute');
+    for (const line of error.message.split('\n')) {
+      expect(line, `a raw unprintable survived in: ${JSON.stringify(line)}`).not.toMatch(
+        UNPRINTABLE
+      );
+    }
+  });
+
+  /**
    * **The error stays a faithful record.** Only the presentation is neutralised; a consumer that
    * needs to know what was actually proposed — the approvals archive, a test, an audit — reads the
    * fields, and they are byte-for-byte what the agent wrote.
@@ -230,7 +326,9 @@ describe('[[TUI-C71]] the stop ROWS are framed at render', () => {
       if (own.includes(row)) continue;
       for (const marker of MARKERS) {
         if (!row.includes(marker)) continue;
-        expect(row, `untrusted text reached column 0: ${JSON.stringify(row)}`).toMatch(/^ /u);
+        expect(row, `untrusted text is not inside the gutter: ${JSON.stringify(row)}`).toMatch(
+          GUTTERED
+        );
       }
     }
   });

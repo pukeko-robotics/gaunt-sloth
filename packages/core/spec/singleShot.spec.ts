@@ -250,6 +250,13 @@ describe('singleShot', () => {
 
     // ...and the explanation the spec requires it to carry reaches the user (displayError → stderr),
     // intact rather than buried under a generic wrapper.
+    //
+    // [[TUI-C71]] — `displayError` now fires once per FRAMED ROW rather than once with the whole
+    // message, so these substrings survive only while each fixture value fits inside one gutter row
+    // at the mocked 120 columns. That is a precondition on the fixtures above, not on the code: a
+    // longer command or reason would be wrapped across rows and the substring would vanish. The
+    // failure direction is safe — a loud red, never a false green — but lengthen a fixture here and
+    // you must assert against the joined ROWS rather than a substring of them.
     const errorOutput = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]).join('\n');
     expect(errorOutput).toContain('rm -rf build');
     expect(errorOutput).toContain('destructive');

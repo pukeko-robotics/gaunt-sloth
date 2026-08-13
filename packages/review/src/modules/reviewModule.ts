@@ -22,7 +22,8 @@ import {
   type ReviewRatingArtifact,
 } from '#src/middleware/reviewRateMiddleware.js';
 import { deleteArtifact, getArtifact } from '@gaunt-sloth/core/state/artifactStore.js';
-import { setExitCode } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { setExitCode, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { ApprovalStopError, approvalStopRows } from '@gaunt-sloth/core/core/shell/approvalStop.js';
 import type { AgentResolvers } from '@gaunt-sloth/core/core/types.js';
 import { get as getGhReadFileTool, GTH_GH_READ_FILE_TOOL_NAME } from '#src/tools/ghReadFileTool.js';
 
@@ -118,12 +119,24 @@ export async function review(
       await runner.processMessages(messages);
     } catch (error) {
       displayDebug(error instanceof Error ? error : String(error));
-      const reason = error instanceof Error ? error.message : String(error);
-      displayError(
-        reason
-          ? `Failed to run review with agent.\n\n${reason}`
-          : 'Failed to run review with agent.'
-      );
+      // [[TUI-C71]] — `review` and `pr` wire no tool-approval callback, so an escalation here is
+      // always the §6.2 error and an `attack` verdict is always the halt: the untrusted text this
+      // catch prints is model-authored by construction. It goes through the SAME framed renderer
+      // as every other surface — one row per line, each inside the gutter — instead of being
+      // interpolated into a line the terminal is free to wrap back to column 0.
+      if (error instanceof ApprovalStopError) {
+        displayError('Failed to run review with agent.\n');
+        for (const row of approvalStopRows(error.parts, { columns: stdout.columns })) {
+          displayError(row);
+        }
+      } else {
+        const reason = error instanceof Error ? error.message : String(error);
+        displayError(
+          reason
+            ? `Failed to run review with agent.\n\n${reason}`
+            : 'Failed to run review with agent.'
+        );
+      }
     } finally {
       await runner.cleanup();
     }

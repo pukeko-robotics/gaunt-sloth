@@ -707,7 +707,17 @@ export async function createInteractiveSession(
   } catch (err) {
     await runner.cleanup();
     stopSessionLogging();
-    error(`Error in ${sessionConfig.mode} command: ${err}`);
+    // [[TUI-C71]] — **the `-m` path lands here, not on the loop's handler.** `processMessage` is
+    // called once directly for `gth chat -m …` / `gth code -m …`, outside the interactive loop's
+    // try/catch, so a run-ending approvals stop on that invocation reaches this outermost catch
+    // with nothing between it and the terminal. It is the same untrusted text and it gets the same
+    // framed renderer; only the channel differs, since this one writes to stderr.
+    if (err instanceof ApprovalStopError) {
+      error(`Error in ${sessionConfig.mode} command:`);
+      for (const row of approvalStopRows(err.parts, { columns: output.columns })) error(row);
+    } else {
+      error(`Error in ${sessionConfig.mode} command: ${err}`);
+    }
     exit(1);
   }
 }
