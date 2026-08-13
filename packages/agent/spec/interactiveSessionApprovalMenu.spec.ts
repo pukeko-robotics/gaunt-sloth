@@ -75,6 +75,7 @@ type PendingLike = {
     outcome: string;
     reason: string;
   }>;
+  negotiationAttempts?: number;
 };
 let capturedApprovalCallback:
   | ((_pending: PendingLike) => Promise<{ type: string; scope?: string; message?: string }>)
@@ -352,6 +353,47 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
     ]);
     // ...and the voices really are on different channels: no rater turn arrives on the agent's.
     expect(agentRows.some((row) => row.includes('rater answered'))).toBe(false);
+  });
+
+  /**
+   * [[TUI-C75]] — **the count on the screen is the attempts made, not the rounds that survived**,
+   * and this surface is where that claim reaches a person.
+   *
+   * §5.3 clears the transcript on an approved call, so a surface that counted the array it was
+   * handed reports the attempts since the last *approval* rather than since the last *human*: the
+   * measured escalation refused the same command five times, two approved calls erased the rounds
+   * before them, and the human was told three.
+   *
+   * **The fixture has to make the two numbers DIFFER**, which is the whole of this case. Every
+   * other negotiation fixture on this surface passes three rounds and either no count or a matching
+   * one, so the renderer's fallback to `rounds.length` produces the identical screen and deleting
+   * the pass-through below leaves them all green — the node's own defect class, a test that cannot
+   * fail on the thing it names, reproduced on the surface the node exists to fix.
+   */
+  it('reports the attempts the agent made, not the rounds an approved call left behind', async () => {
+    await startSession();
+    await ask('n', {
+      name: 'run_shell_command',
+      args: { command: 'git reset --hard' },
+      negotiationRounds: [1, 2, 3].map((n) => ({
+        command: 'git reset --hard',
+        justification: `justification ${n}`,
+        outcome: 'destructive',
+        reason: `answer ${n}`,
+      })),
+      // Five refused attempts; three survived the resets, which is what the surface is handed.
+      negotiationAttempts: 5,
+    });
+    expect(linesOf(displayInfoMock)).toContain(
+      'The agent argued with the auto-rater 5 times; the last 3 of them:'
+    );
+    // ...and the rounds carry their true attempt numbers, so the count and the rounds beneath it
+    // cannot describe two different exchanges.
+    const agentRows = linesOf(displayMock);
+    expect(agentRows).toContain('  Round 3: git reset --hard');
+    expect(agentRows).toContain('  Round 4: git reset --hard');
+    expect(agentRows).toContain('  Round 5 (this request): git reset --hard');
+    expect(allLines().join(LF)).not.toContain('auto-rater 3 times');
   });
 
   /**

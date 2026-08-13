@@ -1263,21 +1263,32 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
      * exists to prevent, reached through the one block that was not framed. Bound here instead, with
      * a continuation marker no label begins with, so a continuation cannot be read as a turn that
      * was never taken.
+     *
+     * **The fit is asserted from {@link MIN_FRAME_WIDTH} upward, not at one comfortable width.**
+     * That floor is reachable — both surfaces derive their width through `frameWidthFor`, whose only
+     * floor it is, and `narrowTerminalNotice` does not fire from 21 columns up — so the band just
+     * above it is where the frame still tells the human it is guarding them. It is also where a row
+     * composed from two separately-bound pieces overruns: measured at 20 to 23, a row built as
+     * `head + marker` reached 24 columns on a 20-wide frame while a single-width case saw nothing.
      */
     it('binds every row to the width it is given, and marks the continuations', () => {
-      const rows = renderNegotiationRows(
-        [
-          {
-            command: `echo ${'x'.repeat(300)}`,
-            justification: `rater answered: safe — approved ${'y'.repeat(200)}`,
-            outcome: 'destructive',
-            reason: 'z'.repeat(200),
-          },
-        ],
-        { width: 40 }
-      );
+      const round = {
+        command: `echo ${'x'.repeat(300)}`,
+        justification: `rater answered: safe — approved ${'y'.repeat(200)}`,
+        outcome: 'destructive' as const,
+        reason: 'z'.repeat(200),
+      };
+      for (const width of [MIN_FRAME_WIDTH, 21, 22, 23, 24, 40, frameWidthFor(80)]) {
+        for (const row of renderNegotiationRows([round], { width })) {
+          // The conservative ruler, so the bound holds on a terminal that draws Ambiguous wide too.
+          expect(
+            maxDisplayWidth(row.text),
+            `row overruns a ${width}-wide frame: ${JSON.stringify(row.text)}`
+          ).toBeLessThanOrEqual(width);
+        }
+      }
+      const rows = renderNegotiationRows([round], { width: 40 });
       for (const row of rows) {
-        // The conservative ruler, so the bound holds on a terminal that draws Ambiguous wide too.
         expect(maxDisplayWidth(row.text)).toBeLessThanOrEqual(40);
       }
       const continuations = rows.filter((row) => row.text.startsWith('      ┊ '));

@@ -495,8 +495,16 @@ function wrapRow(row: NegotiationRow, width: number): NegotiationRow[] {
   if (hidden > 0 && kept.length > 0) {
     const marker = ` … +${hidden} ${hidden === 1 ? 'row' : 'rows'}`;
     const last = kept.length - 1;
-    const room = Math.max(MIN_CONTENT_WIDTH, budget - maxDisplayWidth(marker));
-    kept[last] = `${wrapToWidth(kept[last], room)[0] ?? ''}${marker}`;
+    // **The marker is the fact; the tail of the sentence it truncates is not.** On a frame too
+    // narrow to hold both, the content gives way rather than the row overrunning — and the joined
+    // row is re-bound afterwards, because `wrapToWidth` can only bind text it was given, and it was
+    // never given these two pieces joined. A row measured as fitting that does not fit is a row the
+    // terminal wraps back to column 0, which is the one thing every row here is bound to prevent.
+    const room = budget - maxDisplayWidth(marker);
+    const head = room >= MIN_CONTENT_WIDTH ? (wrapToWidth(kept[last], room)[0] ?? '') : '';
+    const composed = `${head}${marker}`;
+    kept[last] =
+      maxDisplayWidth(composed) <= budget ? composed : (wrapToWidth(composed, budget)[0] ?? '');
   }
   const [head, ...rest] = kept;
   return [

@@ -239,6 +239,52 @@ describe('tui <ApprovalPrompt>', () => {
   });
 
   /**
+   * [[TUI-C75]] — **the count on the screen is the attempts made, not the rounds that survived**,
+   * and this is the surface the node was filed from.
+   *
+   * §5.3 clears the transcript on an approved call, so a prompt that counted the array it was
+   * handed reports the attempts since the last *approval* rather than since the last *human*. In
+   * the captured session that turned five refused attempts at the same command into a screen
+   * saying three, with the two erased ones invisible — under-reporting persistence, which the
+   * renderer's own docblock calls the most decision-relevant fact this block carries, by nearly
+   * half and in the direction of approving.
+   *
+   * **The fixture has to make the two numbers DIFFER, and that is the whole point of this case.**
+   * Every other negotiation fixture here passes three rounds with a matching count or none at all,
+   * so the renderer's fallback to `rounds.length` draws the identical screen: delete the `attempts`
+   * pass-through in the component and they all stay green while the shipped defect is back. That is
+   * this node's own defect class — a test that cannot fail on the thing it names.
+   */
+  it('says how many times the agent tried, not how many rounds an approved call left behind', () => {
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt
+        pending={{
+          name: 'run_shell_command',
+          args: { command: 'git reset --hard' },
+          safetyVerdict: { outcome: 'destructive', reason: 'discards uncommitted work' },
+          negotiationRounds: [1, 2, 3].map((n) => ({
+            command: 'git reset --hard',
+            justification: `justification ${n}`,
+            outcome: 'destructive' as const,
+            reason: `answer ${n}`,
+          })),
+          // Five refused attempts; three survived the resets, which is what the prompt is handed.
+          negotiationAttempts: 5,
+        }}
+      />
+    );
+    const f = plain([lastFrame() ?? '']);
+    expect(f).toContain('The agent argued with the auto-rater 5 times; the last 3 of them:');
+    // ...and the rounds carry their true attempt numbers, so the count and the rounds beneath it
+    // cannot describe two different exchanges.
+    expect(f).toContain('Round 3: git reset --hard');
+    expect(f).toContain('Round 4: git reset --hard');
+    expect(f).toContain('Round 5 (this request): git reset --hard');
+    expect(f).not.toContain('auto-rater 3 times');
+    unmount();
+  });
+
+  /**
    * The counterpart, and what keeps the block off every ordinary prompt: an escalation with no
    * negotiation behind it (`catastrophic`, a declared escalate entry, an unrated rung) draws no
    * heading over an argument that never happened.
@@ -1502,7 +1548,10 @@ describe('tui <ApprovalPrompt> — [[TUI-C75]] the negotiation block’s height 
     expect(flat).toContain('argued with the auto-rater 3 times');
     for (const n of [1, 2, 3]) expect(flat).toContain(`Round ${n}`);
     // The prompt still shows the human everything it is required to: the framed command it is
-    // about, the rater's verdict, and the menu of answers.
+    // about, the rater's verdict, and the menu of answers. **RENDERED, not on screen** — this is
+    // the unclipped `debug: true` frame, so it proves the prompt draws all three, never that all
+    // three survive `<App>`'s height clamp at 24 rows. They do not, and per the control above that
+    // is a pre-existing overflow of the blocks around this one rather than of this one.
     expect(withRounds.some((row) => row.includes('1 │ git reset --hard origin/main'))).toBe(true);
     expect(withRounds.some((row) => row.includes('⚠ Auto-rater (destructive)'))).toBe(true);
     expect(withRounds.some((row) => row.startsWith('Approve?  [o]nce'))).toBe(true);
