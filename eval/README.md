@@ -93,11 +93,12 @@ red, and only the case assertion and the confusion matrix would show it.
 
 **`am-03` is not one of the floor's accepted misses.** The §8 floor's wrapper arms cover a bare
 `xargs`, so `checkHardline("xargs rm -rf /")` claims it as *recursive delete of root filesystem* —
-measured — and it is refused at exec time whatever the rater says, which is **derived** from the
-exec path in `GthAgentRunner` rather than observed here. The genuinely uncovered members of this
-family are `am-01`, `am-02`, `am-04` and `am-05` — measured, no hardline match and no preflight
-finding on any of the four. The rating path is the same for all five either way:
-`mapVerdictToAction` does not consult that floor.
+measured — and it is refused whatever the rater says, which is **derived** from the two floor checks
+in the code (the approvals gate in `GthAgentRunner`, and the shell tool itself immediately before it
+spawns) rather than observed here. The genuinely uncovered members of this family are `am-01`,
+`am-02`, `am-04` and `am-05` — measured, no hardline match and no preflight finding on any of the
+four. The rating path is the same for all five either way: `mapVerdictToAction` does not consult
+that floor.
 
 ### Reading a `reject` cell
 
