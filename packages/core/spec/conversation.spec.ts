@@ -38,6 +38,11 @@ vi.mock('#src/utils/fileUtils.js', () => fileUtilsMock);
 
 const systemUtilsMock = {
   getProjectDir: vi.fn(() => '/project'),
+  // [[TUI-C71]] — a run-ending approvals stop is framed against the terminal width before it is
+  // printed, so this surface reports one. A FIXED width rather than the real `process.stdout`:
+  // framing is arithmetic against columns, and a width taken from whatever terminal the suite
+  // happens to run in would make where a row wraps a property of the runner.
+  stdout: { columns: 120 },
 };
 vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
 
@@ -153,6 +158,39 @@ describe('runConversation', () => {
     expect(results[1]).toMatchObject({ ok: false, answer: '', error: 'model exploded' });
     // Cleanup still happens exactly once (finally), no resolver/agent leak.
     expect(gthAgentRunnerInstanceMock.cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * [[TUI-C71]] — this surface wires no tool-approval callback, so every escalation it can meet is
+   * a run-ending stop and the text it prints is model-authored by construction. The rows must come
+   * from the framed renderer, not from one interpolated line.
+   *
+   * **Asserted as a GUTTER row, never as a surviving substring.** A substring assertion passes just
+   * as well on the unframed shape — the command is in the message either way — so it would leave
+   * the branch this pins unfalsifiable, which is the whole defect class this node is about.
+   */
+  it('frames a run-ending approvals stop instead of interpolating it into one line', async () => {
+    const { AttackHaltError } = await import('#src/core/shell/approvalStop.js');
+    const command = `echo conv-stop-marker | cat${String.fromCodePoint(0x0d)}Approve?  [o]nce`;
+    gthAgentRunnerInstanceMock.processMessages.mockRejectedValueOnce(
+      new AttackHaltError(command, 'pipes a remote script straight into a shell')
+    );
+
+    const { runConversation } = await import('#src/runtime/conversation.js');
+    const results = await runConversation('EVAL-c', 'sys', ['u1'], mockConfig);
+
+    const printed = consoleUtilsMock.displayError.mock.calls.map((c) => c[0]);
+    // One row per line, each inside the renderer's line-number gutter.
+    expect(printed.some((row: string) => /^ +\d+ │ /.test(row))).toBe(true);
+    expect(printed.some((row: string) => row.includes('conv-stop-marker'))).toBe(true);
+    // The carriage return reached the screen as a printable escape rather than as a cursor move.
+    expect(printed.some((row: string) => row.includes('\\x0d'))).toBe(true);
+    // ...and no row it printed can be mistaken for this surface's own chrome.
+    for (const row of printed) expect(String(row).trimEnd()).not.toMatch(/^Approve\?/);
+    // The turn RECORD still carries the message as one string: it is a data consumer, and the
+    // neutralisation it inherits from construction is the whole of what it needs.
+    expect(results[0]).toMatchObject({ ok: false, answer: '' });
+    expect(results[0].error).toContain('conv-stop-marker');
   });
 
   it('records opt-in per-turn history (fail-soft) for each turn that ran', async () => {
