@@ -462,7 +462,7 @@ export const APPROVAL_WRITE_MODIFIER_HINT =
  * The wording is constrained by four normative rules (state what the mode PERMITS, state the
  * allow-list carve-out, never claim safety this system cannot deliver, use the display spelling)
  * plus §8.1 — the hardline floor is real but is NEVER advertised, so descriptions cite only
- * protections the user can inspect and extend, i.e. the deny list. Five further constraints bind
+ * protections the user can inspect and extend, i.e. the deny list. Six further constraints bind
  * every edit here:
  *
  * 1. **No description may imply containment.** The gate protects against accidents, not intent, and
@@ -494,6 +494,24 @@ export const APPROVAL_WRITE_MODIFIER_HINT =
  *    promise the user watches it happen. The rounds reach a person at the escalation, all of them
  *    at once, and nothing renders them before that ([[TUI-C26]]), so a sentence implying a live
  *    commentary would be describing a screen that does not exist.
+ * 6. **Every rated rung states a LIMIT ON USE in its opener, and `recoverable` is the word that
+ *    carries it** ([[CFG-48]]). A rated rung settles some risky commands without asking anyone, so
+ *    the sentence offering it has to say what kind of work that is acceptable for — and a
+ *    *terminus* is not a limit on use. "then asks you" and "anything riskier comes to you" say
+ *    where the exchange ends; they do not say when the mode is a bad idea, which is what the three
+ *    deterministic rungs each say ("not a mode to leave running", "a bounded stretch", "a throwaway
+ *    environment you would not mind losing"). Constraint 4 is why it must be the opener: the three
+ *    surfaces a user chooses from print `firstSentence` and nothing else.
+ *
+ *    **A lexical test watches the word, and its failure is not a false positive.** "Carries a
+ *    limit-on-use clause" has no mechanical predicate, so the rule names its own carrier token
+ *    instead: `packages/app/spec/tui/slashCommands.spec.ts` — *"every rated rung's opener says what
+ *    kind of work it is for, and only the rated ones do"* — takes the rated set from
+ *    {@link isRatedRung} rather than a literal pair, so a sixth rated rung is required to carry a
+ *    clause on the day it is added, and asserts the deterministic three do NOT carry the token, so
+ *    that spreading `recoverable` across all five cannot satisfy it. Rewriting this copy is fine;
+ *    dropping the word is the thing that must not happen quietly, because that is exactly how
+ *    Auto's cautionary clause was lost once already — in an ordinary rewrite that broke no test.
  *
  * Everything these two sentences cannot hold lives at {@link APPROVAL_PROTECTION_DOCS_URL}, which
  * the surfaces print beside the copy rather than each description repeating it.
@@ -510,13 +528,13 @@ export const APPROVAL_RUNG_DESCRIPTIONS: Record<ApprovalRung, string> = {
     'commands, MCP calls and custom tools still come to you, until you tell it to always allow a ' +
     'command.',
   assisted:
-    'For everyday work: safe commands run, anything riskier comes to you — usually with a line ' +
-    'explaining what it does. Gaunt Sloth can still rewrite and delete files in your working ' +
-    'folder without asking — "safe" means each action is checked for reaching outside that folder ' +
-    'or harming your system, not that nothing changes.',
+    'For everyday, recoverable work: safe commands run, anything riskier comes to you — usually ' +
+    'with a line explaining what it does. Gaunt Sloth can still rewrite and delete files in your ' +
+    'working folder without asking — "safe" means each action is checked for reaching outside ' +
+    'that folder or harming your system, not that nothing changes.',
   auto:
-    'For work you want to keep moving: Auto sends a risky command back to the agent to fix or ' +
-    'justify a few times, then stops and asks you. It is not safe — Gaunt Sloth will change and ' +
+    'For recoverable work you want to keep moving: Auto sends a risky command back to the agent ' +
+    'to fix or justify a few times, then asks you. It is not safe — Gaunt Sloth will change and ' +
     'delete things, your deny list still applies, and when it does ask, you are shown the whole ' +
     'argument that led there.',
   bypass:

@@ -247,7 +247,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     expect(autoNotice.title).toBe('Approvals: Auto');
     expect(autoNotice.lines.join(' ')).toContain('It is not safe');
     expect(autoNotice.lines.join(' ')).toContain('back to the agent');
-    expect(autoNotice.lines.join(' ')).toContain('stops and asks you');
+    expect(autoNotice.lines.join(' ')).toContain('then asks you');
 
     // Every posture notice points at the page that carries what the two sentences cannot. Asserted
     // through the constant, not a literal: the URL moves to the docs site once that page is
@@ -422,11 +422,56 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     const { APPROVAL_RUNG_DESCRIPTIONS } = await import('@gaunt-sloth/core/config.js');
     const opener = firstSentence(APPROVAL_RUNG_DESCRIPTIONS['auto']);
     // The correction itself, in the rendered clause: the argument is bounded and ends at the user.
-    expect(opener).toContain('stops and asks you');
+    expect(opener).toContain('then asks you');
     expect(opener).toMatch(/a few times|a few rounds/);
     // And no promise beyond it. Each of these shipped or nearly shipped.
     expect(opener).not.toMatch(/few interruptions|instead of you|unattended|without stopping/i);
     expect(opener).not.toMatch(/does not stop to ask/i);
+  });
+
+  /**
+   * [[CFG-48]] — §10 constraint 6. A rated rung settles some risky commands without asking anyone,
+   * so the sentence that offers it has to say what kind of work that is acceptable for. A
+   * *terminus* is not that: "then asks you" and "anything riskier comes to you" say where the
+   * exchange ends, not when the mode is a bad idea — and for a while those were all the two rated
+   * openers carried, while all three deterministic ones carried a real limit on use.
+   *
+   * **Lexical on purpose, because that is the version that can actually fail.** "Carries a
+   * limit-on-use clause" has no mechanical predicate: a test written to that sentence either pins
+   * today's exact strings, which the next paraphrase defeats, or matches loosely enough to pass
+   * anything. So the rule names its carrier token and this asserts the token — and the docblock
+   * says so, so an author who moves the wording reads the failure as the rule and not as a false
+   * positive.
+   *
+   * Two things make it track the RULE rather than these two strings: the rated set comes from
+   * `isRatedRung`, the production predicate, so a sixth rated rung has to carry a clause on the day
+   * it is added; and the deterministic three are asserted NOT to carry the token, so the lazy fix —
+   * spreading `recoverable` across all five — destroys the distinction instead of satisfying it.
+   * Matched with a boundary that "unrecoverable" and "non-recoverable" fail, since a substring test
+   * would accept copy meaning the opposite of the rule.
+   */
+  it("every rated rung's opener says what kind of work it is for, and only the rated ones do", async () => {
+    const { firstSentence } = await import('@gaunt-sloth/agent/modules/slashCommands.js');
+    const { APPROVAL_RUNG_DESCRIPTIONS, APPROVAL_RUNGS, isRatedRung } =
+      await import('@gaunt-sloth/core/config.js');
+    const carrier = /(?<![\w-])recoverable\b/;
+    // The regex is the assertion, so prove it discriminates before trusting either half.
+    expect(carrier.test('unrecoverable')).toBe(false);
+    expect(carrier.test('non-recoverable')).toBe(false);
+    expect(carrier.test('for recoverable work')).toBe(true);
+
+    const rated = APPROVAL_RUNGS.filter((rung) => isRatedRung(rung));
+    expect(rated.length).toBeGreaterThan(0);
+    for (const rung of rated) {
+      const opener = firstSentence(APPROVAL_RUNG_DESCRIPTIONS[rung]);
+      expect(opener, `${rung}'s opener carries no limit on use: "${opener}"`).toMatch(carrier);
+    }
+    for (const rung of APPROVAL_RUNGS.filter((rung) => !isRatedRung(rung))) {
+      expect(
+        APPROVAL_RUNG_DESCRIPTIONS[rung],
+        `${rung} is not rated, so "recoverable" there erases the distinction the word draws`
+      ).not.toMatch(carrier);
+    }
   });
 
   it('CFG-39: the text fallback shortens a single-sentence description without doubling the period', async () => {
