@@ -76,6 +76,22 @@ export const ACP_AGENT_NAME = 'gaunt-sloth';
 /** Human-facing name for the same, used where a client shows a title rather than an id. */
 export const ACP_AGENT_TITLE = 'Gaunt Sloth';
 
+/**
+ * How long `session/close` waits for an aborted turn to finish unwinding before proceeding anyway.
+ *
+ * **The wait is bounded because it cannot be trusted to end.** A turn parked on
+ * `session/request_permission` is waiting on the CLIENT, and ACP cancellation is cooperative: the
+ * `$/cancel_request` we send settles the promise only when the peer answers it. A client that closes
+ * a session while its own permission prompt is on screen and then never answers would otherwise
+ * leave this handler suspended forever — and `session/close` would never get a response, which is a
+ * worse failure than the narrow re-rooting window the wait exists to close.
+ *
+ * On expiry the close proceeds exactly as it did before the wait existed. So the bound degrades to
+ * the previously accepted behaviour rather than to a hang, and an aborted turn — which unwinds in
+ * milliseconds — is unaffected.
+ */
+const CLOSE_TURN_DRAIN_MS = 2000;
+
 /** Seams the tests replace; production leaves every one of them at its default. */
 export interface AcpAgentAppOptions {
   /**
@@ -208,7 +224,7 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
       // The gate's last hop. Registered per turn so it closes over THIS turn's mapper, which is
       // what knows the id of the tool call a permission request is about.
       session.runner.setToolApprovalCallback(async (pending) => {
-        await sendState(session, { state: 'requires_action' });
+        await sendState(session, { state: 'requires_action' }).catch(() => undefined);
         try {
           const response = await session.client.request(
             acp.CLIENT_METHODS.session_request_permission,
@@ -217,11 +233,20 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
               pending,
               toolCallId: mapper.claimToolCallId(pending.name, pending.args),
               cwd: session.cwd,
-            })
+            }),
+            // The spec's cancellation cascade: when the turn is cancelled, outstanding permission
+            // requests are cancelled too, so the client can take its prompt off the screen instead
+            // of asking about work that has already stopped. Cooperative by design — the promise
+            // still settles on the peer's eventual answer — which is why `session/close` bounds its
+            // wait rather than trusting this to end it.
+            { cancellationSignal: abort.signal }
           );
           return decisionForOutcome(response.outcome);
         } finally {
-          await sendState(session, { state: 'running' });
+          // Never allowed to become the callback's result. A notification that fails — the usual
+          // reason being the connection going away mid-prompt — must not turn a decision the human
+          // actually made into an error the runner records as a failed gate.
+          await sendState(session, { state: 'running' }).catch(() => undefined);
         }
       });
 
@@ -298,7 +323,10 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
     // would let a `session/new` for another directory reassign INIT_CWD out from under a turn still
     // running its last tool call. That is precisely the "re-rooting a live session's tools" hazard
     // the binding exists to prevent, so the release must not be the thing that opens it.
-    await session.turn;
+    //
+    // BOUNDED, for the reason {@link CLOSE_TURN_DRAIN_MS} gives: a turn parked on a permission
+    // request is waiting on the client, and no abort of ours can force that to settle.
+    await drainWithDeadline(session.turn, CLOSE_TURN_DRAIN_MS);
     try {
       await session.runner.cleanup();
     } catch (error) {
@@ -459,6 +487,27 @@ function agentVersion(): string {
 }
 
 /**
+ * Waits for `work` to settle, giving up after `ms`. Never rejects — the caller is tearing a session
+ * down, and a failure in what it is waiting on changes nothing about that.
+ *
+ * The timer is cleared on the winning path and unreferenced regardless, so a close cannot leave a
+ * pending timer holding the process open.
+ */
+async function drainWithDeadline(work: Promise<void> | null, ms: number): Promise<void> {
+  if (!work) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<void>((resolveDeadline) => {
+    timer = setTimeout(resolveDeadline, ms);
+    timer.unref?.();
+  });
+  try {
+    await Promise.race([work.catch(() => undefined), deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
  * One untrusted attachment field, safe to quote into the model's context.
  *
  * **Defang, then cap, then (by the caller) fence** — the order the repo's one other consumer uses
@@ -513,7 +562,19 @@ function attachmentFields(block: acp.ContentBlock): string[] {
   const kind = safeAttachmentField(String(block.type));
   if (block.type === 'resource_link') {
     const uri = str('uri');
-    if (uri === undefined) return [];
+    // DEFENCE IN DEPTH, and unreachable through the protocol today: the SDK parses params before a
+    // handler runs and `zResourceLink` types `uri` as `z.url()`, so a link with a missing or empty
+    // one is rejected as `Invalid params` and never arrives here. The branch exists because `str()`
+    // can still return `undefined` by its own typing, and because if that validation ever loosened
+    // the right answer is a placeholder, not the silent drop this whole path exists to remove.
+    // Deliberately not covered by a test: it cannot be driven through the protocol, and a test that
+    // reached it another way would be describing a route production does not have.
+    if (uri === undefined) {
+      return [
+        'kind: resource link',
+        'note: this attachment arrived without a usable uri, so it cannot be opened.',
+      ];
+    }
     const description = str('description');
     return [
       'kind: resource link',
@@ -550,8 +611,9 @@ function promptText(prompt: acp.ContentBlock[]): string {
       if (typeof text === 'string' && text.length > 0) userText.push(text);
       continue;
     }
-    const fields = attachmentFields(block);
-    if (fields.length > 0) attachments.push(fields);
+    // Unconditional: every arm of `attachmentFields` returns something, because a block that
+    // produced nothing would be the silent drop this path exists to remove.
+    attachments.push(attachmentFields(block));
   }
   if (attachments.length === 0) return userText.join('\n');
 

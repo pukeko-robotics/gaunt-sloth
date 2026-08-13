@@ -111,8 +111,16 @@ export class AcpUpdateMapper {
    * **Matched on the ARGUMENTS, because position is not a reliable discriminator here.** The
    * arguments are the one value both sides hold: the gate's `PendingToolInterrupt` carries them, and
    * this mapper still holds the streamed argument text at claim time (it is only discarded on
-   * `tool_result`, which exists solely on the resumed run). So a batch of parallel calls of the same
-   * tool is paired exactly rather than guessed at.
+   * `tool_result`, which exists solely on the resumed run).
+   *
+   * **Where the exact match degrades, named rather than implied:** the mapper's side is JSON
+   * reassembled from the model's streamed argument deltas, and a local model that ignores
+   * `disable_parallel_tool_use` can merge sibling calls' buffers into invalid JSON (`{}{}`,
+   * `{"steps":3}{}` — see the AG-UI server's `parseToolArguments` note). {@link parseToolArgs}
+   * deliberately does not carry that path's recovery, so such a payload stays a raw string, matches
+   * nothing, and falls back to position — on exactly the model class most likely to emit sloppy
+   * parallel calls. The fallback is still the best remaining answer and the cost is which row a
+   * client attaches the prompt to, never which command the human rules on.
    *
    * **Position was tried and is wrong in both directions**, which is why it is only the fallback.
    * The runner drains suspended calls as a BATCH — every pending call decided in turn before

@@ -541,6 +541,35 @@ describe('the ACP v2 agent — session lifecycle', () => {
     expect(fenced.split('\n').some((line) => line.trim().startsWith('SYSTEM:'))).toBe(false);
   });
 
+  /**
+   * A `resource_link` with no usable `uri` never reaches the renderer at all.
+   *
+   * Measured, not assumed: the SDK parses params before a handler runs, and `zResourceLink` types
+   * `uri` as `z.url()`, so an empty one is rejected as `Invalid params` on the wire. That is a
+   * better outcome than anything this agent could do with it, and it is worth pinning — the
+   * renderer carries a placeholder branch for the case, and this records why that branch is
+   * deliberately uncovered rather than merely untested.
+   */
+  it('is protected by the SDK from a resource link with no usable uri', async () => {
+    const outcome = await withClient({ script: { events: textEvents('ok') } }, async (ctx) => {
+      const sessionId = await newSession(ctx);
+      return ctx
+        .request(acp.AGENT_METHODS.session_prompt, {
+          sessionId,
+          prompt: [
+            { type: 'text', text: 'look at this' },
+            { type: 'resource_link', name: 'broken.ts', uri: '' },
+          ] as unknown as acp.ContentBlock[],
+        })
+        .then(
+          () => 'accepted',
+          (error: unknown) => (error as Error).message
+        );
+    });
+
+    expect(outcome).toContain('Invalid params');
+  });
+
   it('answers session/prompt with a bare acknowledgement, before any update for that turn', async () => {
     const { response, updatesAtResponse } = await withClient(
       { script: { events: textEvents('later') } },
@@ -717,6 +746,42 @@ describe('the ACP v2 agent — session lifecycle', () => {
     // And the config the runner initialised with came from THAT directory's file.
     expect(seenConfig?.streamOutput).toBe(false);
   });
+
+  /**
+   * `session/close` must answer even when the turn it is tearing down cannot finish.
+   *
+   * The close waits for the aborted turn so the workspace binding is not released out from under a
+   * live session's tools. But a turn parked on `session/request_permission` is waiting on the
+   * CLIENT, and ACP cancellation is cooperative — the `$/cancel_request` the abort sends settles the
+   * promise only when the peer answers. So a client that closes a session while its own permission
+   * prompt is on screen and then never answers would suspend this handler forever, and
+   * `session/close` would never get a response: a worse failure than the window the wait closes.
+   *
+   * The bound is what makes that impossible. This case is the one the ordinary close test cannot
+   * see, because that one closes a session whose turn has already finished.
+   */
+  it('answers session/close even when a permission request is never answered', async () => {
+    const closed = await withClient(
+      {
+        approvals: 'write',
+        script: gatedShellScript('echo hi'),
+        // The client asks, and then never comes back.
+        answer: () => new Promise<acp.RequestPermissionOutcome>(() => {}),
+      },
+      async (ctx, h) => {
+        const sessionId = await newSession(ctx);
+        await ctx.request(acp.AGENT_METHODS.session_prompt, {
+          sessionId,
+          prompt: [{ type: 'text', text: 'run it' }],
+        });
+        await waitUntil(() => h.permissionRequests.length === 1, 'the permission request');
+        await ctx.request(acp.AGENT_METHODS.session_close, { sessionId });
+        return 'answered';
+      }
+    );
+
+    expect(closed).toBe('answered');
+  }, 15000);
 
   it('refuses a session for a different workspace rather than re-rooting the process', async () => {
     const message = await withClient({ script: { events: [] } }, async (ctx) => {
