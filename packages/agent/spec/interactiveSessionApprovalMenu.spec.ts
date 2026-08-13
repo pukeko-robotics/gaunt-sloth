@@ -333,14 +333,20 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
     });
     const agentRows = linesOf(displayMock);
     const raterRows = linesOf(displayWarningMock);
-    for (const n of [1, 2, 3]) {
-      expect(agentRows).toContain(`  Round ${n}: git reset --hard origin/main`);
+    expect(agentRows).toContain('  Round 1: git reset --hard origin/main');
+    expect(agentRows).toContain('  Round 2: git reset --hard origin/main');
+    expect(agentRows).toContain('  Round 3 (this request): git reset --hard origin/main');
+    expect(agentRows).toContain('    agent justified (not shown to the rater): justification 1');
+    expect(raterRows).toContain(
+      '    rater answered (on the command alone): destructive — answer 1'
+    );
+    for (const n of [2, 3]) {
       expect(agentRows).toContain(`    agent justified: justification ${n}`);
       expect(raterRows).toContain(`    rater answered: destructive — answer ${n}`);
     }
     // Order, so "all three appear" is not satisfied by a jumble...
     expect(raterRows.filter((row) => row.includes('rater answered'))).toEqual([
-      '    rater answered: destructive — answer 1',
+      '    rater answered (on the command alone): destructive — answer 1',
       '    rater answered: destructive — answer 2',
       '    rater answered: destructive — answer 3',
     ]);

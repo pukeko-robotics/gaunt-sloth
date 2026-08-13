@@ -181,7 +181,8 @@ export class ShellNegotiationState {
    * **The round is appended BEFORE either bound is tested**, so the rating that escalates is itself
    * on the transcript the human sees. §5.6's escalation example turns on this: what matters on the
    * screen is that the agent proposed the same command three times, and the third proposal is the
-   * one being escalated.
+   * one being escalated. {@link renderNegotiationRows} marks that last round as the pending request
+   * rather than as a prior one, which is the half of this the reader needs and cannot derive.
    */
   recordRejection(round: RaterNegotiationRound): NegotiationVerdict {
     this.rounds.push(round);
@@ -195,6 +196,14 @@ export class ShellNegotiationState {
   /**
    * §5.3 — a tool call the gate let through. Resets the consecutive counter **and clears the
    * transcript with it**; the reachability bound is deliberately untouched.
+   *
+   * **What it must NOT truncate is the human's record of how hard the agent pushed.** The counter's
+   * reset is §5.3's and is sound; the reader at an escalation is asking a different question, and
+   * the answer to theirs is {@link NegotiationCounters.rejectionsSinceHuman}, which this leaves
+   * standing. {@link renderNegotiationRows} reports that count rather than the surviving rounds, so
+   * an argument this erased is still declared even though its rounds are gone; every erased round
+   * itself survives whole in [[TUI-C27]]'s archive, which captures per RATING CALL and so is not
+   * truncated by anything here.
    *
    * **"Approved" is what the gate can observe, and it is not quite §5.3's "successful".** The
    * decision site sees whether a call was allowed to run, never whether it then exited zero — and
@@ -265,6 +274,10 @@ export class ShellNegotiationState {
    * was rejected"* and *"the call was the third consecutive rejection, so the next one goes to a
    * person"* are different facts, and a bug report carrying only the first invites the wrong
    * conclusion about why a session started interrupting.
+   *
+   * **`rejectionsSinceHuman` is also what the escalation prompt COUNTS**, and that is the one place
+   * it faces a person rather than a debugging archive. It is read at the escalation site before
+   * {@link humanReached} spends it; reading it after would report zero.
    */
   counters(): NegotiationCounters {
     return {
@@ -313,6 +326,33 @@ export interface NegotiationRow {
 const CONTINUATION_PREFIX = '      ┊ ';
 
 /**
+ * Terminal rows one element of a round — the command, the justification, the rater's answer — may
+ * occupy on a screen before the rest of it is elided.
+ *
+ * **MEASURED, and it is the height bound this block needs rather than a cap on rounds.** At 80
+ * columns three rounds of paragraph-length argument cost 37 rows, of which one round was 12; the
+ * whole prompt was 64 rows against a 20-row budget, so the human saw the command and the verdict
+ * and neither the later rounds nor the menu line. A cap on the NUMBER of rounds would have changed
+ * none of that — §5.3 already bounds the transcript at
+ * {@link MAX_CONSECUTIVE_REJECTIONS} — because the cost is per row, not per round. Bounding each
+ * element keeps every round structurally on the screen, which is what §5.6 calls the most important
+ * thing on it, and pays for it out of the tail of a paragraph the reader was never going to need in
+ * full: the archive keeps every round whole ([[TUI-C27]]'s capture is per rating call).
+ *
+ * Two rather than one so a wrapped command keeps the continuation that shows how it differs from
+ * the round above it — the comparison the block exists to make.
+ */
+export const NEGOTIATION_MAX_ROWS_PER_ELEMENT = 2;
+
+/**
+ * Rounds a screen shows, newest last. A backstop rather than today's binding constraint: §5.3
+ * escalates at {@link MAX_CONSECUTIVE_REJECTIONS}, so a transcript reaching a human is never longer
+ * than this — and an unscrollable prompt must not acquire an unbounded section the moment that
+ * number is raised. What is dropped is said out loud in the heading, which carries the true count.
+ */
+export const NEGOTIATION_MAX_ROUNDS_SHOWN = 3;
+
+/**
  * §6/§5.4 — render a negotiation for the human being asked to rule on it, one terminal row per
  * element, each tagged with the voice speaking it.
  *
@@ -334,39 +374,124 @@ const CONTINUATION_PREFIX = '      ┊ ';
  * A wrapped row keeps the voice of the row it continues. A continuation painted as chrome would put
  * the rater's words in the agent's colour at exactly the width where a long argument is hardest to
  * read, which is the confusion §5.4 exists to remove.
+ *
+ * ## The three things this block must not get wrong about its own exchange
+ *
+ * Every label here sits over data that is already correct, so a label that lies does so silently —
+ * and each of these lied toward approving, at the moment a human was deciding whether to overrule
+ * a refusal.
+ *
+ * - **`attempts` is the count, and it is not `rounds.length`.** §5.3 clears the transcript on an
+ *   approved call, so the rounds handed over are the attempts since the last *approval*, while the
+ *   fact the reader is weighing is how hard the agent pushed since the last *human* — the caller's
+ *   `rejectionsSinceHuman`. A measured escalation attempted the same command five times and
+ *   rendered three. Omit it and this falls back to `rounds.length`, which is the honest reading of
+ *   a caller that has no better number rather than a claim that none were erased.
+ * - **The last round IS the pending rating, not a prior one.** {@link
+ *   ShellNegotiationState.recordRejection} appends before either bound is tested, deliberately, so
+ *   that the rating being escalated is on the transcript the human sees. The old heading called
+ *   them all prior rounds, which both under-reported the argument and put the pending command on
+ *   the screen twice with nothing saying they were the same call.
+ * - **The first round was rated on the command alone.** A cleared transcript IS the round-1 case
+ *   (see {@link ShellNegotiationState.contextFor}), so §5.1 withheld the justification and the user
+ *   messages from that rating — while {@link ShellNegotiationState.recordRejection} stores the
+ *   justification the agent supplied whatever the round. Printed unmarked, the round reads as a
+ *   rater brushing past a direct answer to its own objection, which is the opposite of what
+ *   happened and makes the rater look stubborn exactly where the reader is deciding whether to
+ *   overrule it. The withholding is correct and is not what this marks. The same marker answers
+ *   *"were the user's own words in view when this was rated?"* — a justification claiming the user
+ *   asked for a command is exactly what a round-1 rating cannot check, and the user's messages are
+ *   several rows on a surface with none to spare.
+ *
+ * **The prompt this feeds does not scroll and nothing else on it can give up rows**, so the height
+ * bound is {@link NEGOTIATION_MAX_ROWS_PER_ELEMENT} and every fact above is carried by a row that
+ * already exists.
  */
 export function renderNegotiationRows(
   rounds: readonly RaterNegotiationRound[],
-  options?: { width?: number }
+  options?: {
+    width?: number;
+    /**
+     * Rejected attempts since a human was last involved — `rejectionsSinceHuman` from {@link
+     * ShellNegotiationState.counters}, read BEFORE the escalation spends it.
+     */
+    attempts?: number;
+  }
 ): NegotiationRow[] {
   if (rounds.length === 0) return [];
+  const width = options?.width;
+  // A screen shows the newest rounds; a consumer with no screen (§6.2's exception message) shows
+  // them all, for the same reason it is handed no width.
+  const shown = width === undefined ? rounds : rounds.slice(-NEGOTIATION_MAX_ROUNDS_SHOWN);
+  // Never fewer attempts than rounds on the screen: a caller that passes a stale or smaller number
+  // must not be able to make this block claim less argument than it is about to print.
+  const attempts = Math.max(options?.attempts ?? rounds.length, rounds.length);
+  // The shown rounds are the most recent ones, so they are attempts `attempts - shown + 1` … N.
+  // Numbering them by their true attempt number is what stops the heading's count and the rounds
+  // beneath it describing two different exchanges.
+  const firstNumber = attempts - shown.length + 1;
+  // How many of the transcript's own rounds this screen had to drop, so a marker keyed on a
+  // POSITION IN THE TRANSCRIPT (round one, the pending round) stays keyed on it after the slice.
+  const dropped = rounds.length - shown.length;
   const rows: NegotiationRow[] = [
     {
       voice: 'chrome',
-      text: `The agent argued with the auto-rater ${rounds.length} ${rounds.length === 1 ? 'time' : 'times'} before this:`,
+      text:
+        attempts > shown.length
+          ? `The agent argued with the auto-rater ${attempts} times; the last ${shown.length} of them:`
+          : `The agent argued with the auto-rater ${attempts} ${attempts === 1 ? 'time' : 'times'}:`,
     },
   ];
-  rounds.forEach((round, index) => {
-    rows.push({ voice: 'agent', text: `  Round ${index + 1}: ${oneLine(round.command)}` });
+  shown.forEach((round, index) => {
+    // **Each marker rides the row whose reading it corrects, and no other.** Put on the `Round`
+    // row they would be paid for in the one thing that row is for — the command, and how it
+    // compares with the round above it — which at a narrow width is most of what fits on it.
+    const pending = dropped + index === rounds.length - 1 ? ' (this request)' : '';
+    // A cleared transcript IS the round-1 case, so the transcript's FIRST round is the one §5.1
+    // rated on the command alone. Derived from the position rather than carried on the round
+    // because it is a property of the transcript, not of the rating — but that makes it a fact a
+    // reset could quietly invalidate, so it is pinned against a real run rather than by reading.
+    const roundOne = dropped + index === 0;
+    rows.push({
+      voice: 'agent',
+      text: `  Round ${firstNumber + index}${pending}: ${oneLine(round.command)}`,
+    });
     const justification = round.justification?.trim();
     if (justification) {
-      rows.push({ voice: 'agent', text: `    agent justified: ${oneLine(justification)}` });
+      rows.push({
+        voice: 'agent',
+        text: `    agent justified${roundOne ? ' (not shown to the rater)' : ''}: ${oneLine(justification)}`,
+      });
     }
     const reason = round.reason.trim();
     rows.push({
       voice: 'rater',
-      text: `    rater answered: ${round.outcome}${reason ? ` — ${oneLine(reason)}` : ''}`,
+      text: `    rater answered${roundOne ? ' (on the command alone)' : ''}: ${round.outcome}${reason ? ` — ${oneLine(reason)}` : ''}`,
     });
   });
-  const width = options?.width;
   if (width === undefined) return rows;
   return rows.flatMap((row) => wrapRow(row, width));
 }
 
-/** One logical row as the terminal rows it needs, continuations marked and voice preserved. */
+/**
+ * One logical row as the terminal rows it needs, continuations marked and voice preserved — and
+ * never more than {@link NEGOTIATION_MAX_ROWS_PER_ELEMENT} of them.
+ *
+ * The elision is stated on the last row it keeps rather than on one of its own: a row spent saying
+ * a row was dropped saves nothing on a surface whose whole problem is rows.
+ */
 function wrapRow(row: NegotiationRow, width: number): NegotiationRow[] {
   const budget = Math.max(MIN_CONTENT_WIDTH, width - maxDisplayWidth(CONTINUATION_PREFIX));
-  const [head, ...rest] = wrapToWidth(row.text, budget);
+  const lines = wrapToWidth(row.text, budget);
+  const kept = lines.slice(0, NEGOTIATION_MAX_ROWS_PER_ELEMENT);
+  const hidden = lines.length - kept.length;
+  if (hidden > 0 && kept.length > 0) {
+    const marker = ` … +${hidden} ${hidden === 1 ? 'row' : 'rows'}`;
+    const last = kept.length - 1;
+    const room = Math.max(MIN_CONTENT_WIDTH, budget - maxDisplayWidth(marker));
+    kept[last] = `${wrapToWidth(kept[last], room)[0] ?? ''}${marker}`;
+  }
+  const [head, ...rest] = kept;
   return [
     { voice: row.voice, text: head },
     ...rest.map((text) => ({ voice: row.voice, text: `${CONTINUATION_PREFIX}${text}` })),
@@ -381,11 +506,16 @@ function wrapRow(row: NegotiationRow, width: number): NegotiationRow[] {
  * Defined as {@link renderNegotiationRows} joined, so the string and the rows can never come to
  * describe one exchange two ways — the whole reason there is one renderer and two surfaces.
  * `null` when there is nothing to show.
+ *
+ * `attempts` carries the same fact it carries on a screen. It is the one thing a caller must pass
+ * for this message to be true, because the count it defaults to is the one an approved call
+ * truncated.
  */
 export function renderNegotiationTranscript(
-  rounds: readonly RaterNegotiationRound[]
+  rounds: readonly RaterNegotiationRound[],
+  attempts?: number
 ): string | null {
-  const rows = renderNegotiationRows(rounds);
+  const rows = renderNegotiationRows(rounds, attempts === undefined ? undefined : { attempts });
   if (rows.length === 0) return null;
   return rows.map((row) => row.text).join('\n');
 }

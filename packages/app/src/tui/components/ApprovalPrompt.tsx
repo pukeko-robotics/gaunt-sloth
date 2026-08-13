@@ -119,7 +119,16 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
   // reason the command's is — a long justification left to Ink's own wrap continues at column 0,
   // which is the forgery the framing exists to prevent, reached through the one block that was not
   // framed.
-  const negotiation = renderNegotiationRows(pending.negotiationRounds ?? [], { width });
+  //
+  // [[TUI-C75]] — `attempts` is passed because the rounds are not the whole count: an approved call
+  // clears the transcript (§5.3), so a block that counted the array would tell the human the agent
+  // argued three times where it argued five. This prompt cannot scroll and nothing else on it can
+  // give up rows, so the renderer states that count in the heading it already draws and bounds each
+  // round's rows rather than adding any.
+  const negotiation = renderNegotiationRows(pending.negotiationRounds ?? [], {
+    width,
+    ...(pending.negotiationAttempts !== undefined ? { attempts: pending.negotiationAttempts } : {}),
+  });
   // EXT-71/EXT-70 §6 — what a sticky choice will store, shown at the moment of the choice on every
   // surface. Under §3.1 a shell grant is the command itself as a fully-explicit exact entry, not a
   // pattern derived from it; for a tool call the stored thing is the TOOL, its server and the host

@@ -201,7 +201,7 @@ describe('[[TUI-C71]] the stop MESSAGE is neutralised at construction', () => {
    */
   it('neutralises a raw multi-line negotiation handed straight to the constructor', () => {
     const raw =
-      `The agent argued with the auto-rater 2 times before this:\n` +
+      `The agent argued with the auto-rater 2 times:\n` +
       `  Round 1: echo one${CR}${FORGED_MENU}\n` +
       `    rater answered: destructive — ${CLEAR_SCREEN}${CURSOR_UP}raw-block-marker`;
     const error = new NonInteractiveEscalationError(
@@ -364,9 +364,19 @@ describe('[[TUI-C71]] the stop ROWS are framed at render', () => {
     }
   });
 
-  /** The rows carry everything the message does — framing hides nothing a person needs. */
+  /**
+   * The rows carry everything the message does — framing hides nothing a person needs.
+   *
+   * Searched with the FRAMING'S OWN WRAP UNDONE, because the thing under test is whether a field
+   * survives into the rows and not where a wrap happened to fall in it: a marker that straddles a
+   * continuation is present, and an assertion that cannot see it fails for a reason that has
+   * nothing to do with the property. Undoing the wrap keeps the assertion able to fail — a dropped
+   * field is still absent once the gutters are gone.
+   */
   it('carries all five untrusted fields into the rows', () => {
-    const rendered = approvalStopRows(escalation().parts, { columns: COLUMNS }).join('\n');
+    const rendered = approvalStopRows(escalation().parts, { columns: COLUMNS })
+      .join('\n')
+      .replace(/\n\s*┊ /gu, '');
     expect(rendered).toContain('stop-command-start');
     expect(rendered).toContain('stop-outcome-marker');
     expect(rendered).toContain('stop-reason-marker');

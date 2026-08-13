@@ -1460,6 +1460,12 @@ export class GthAgentRunner {
     // recorder having failed, which is the opposite of what happened.
     record.stage ??= 'unrated-rung';
     const negotiationRounds: readonly RaterNegotiationRound[] = this.negotiation.transcript();
+    // §5.3 — **the count the human is given, and it is NOT the transcript's length.** An approved
+    // call clears the transcript, so the rounds above are the attempts since the last approval
+    // while the fact the reader is weighing is how hard the agent pushed since the last person:
+    // the agent that stashed between refusals had five refused attempts and three surviving
+    // rounds. Read HERE, one line before `humanReached()` spends it — after, it is zero.
+    const negotiationAttempts = this.negotiation.counters().rejectionsSinceHuman;
     // Reaching a person ends the negotiation (§5.3) and is the ONE thing that clears the
     // reachability bound: an escalation the human is about to answer is exactly the event that
     // bound exists to make happen, so it is spent here rather than accumulated across it.
@@ -1474,7 +1480,7 @@ export class GthAgentRunner {
         safetyVerdict?.outcome,
         safetyVerdict?.reason,
         escalatedBy,
-        renderNegotiationTranscript(negotiationRounds) ?? undefined
+        renderNegotiationTranscript(negotiationRounds, negotiationAttempts) ?? undefined
       );
     }
 
@@ -1528,7 +1534,7 @@ export class GthAgentRunner {
             ...(grantSummary ? { grantSummary } : {}),
             ...(denyPreview ? { denyPreview } : {}),
             ...(denySummary ? { denySummary } : {}),
-            ...(negotiationRounds.length > 0 ? { negotiationRounds } : {}),
+            ...(negotiationRounds.length > 0 ? { negotiationRounds, negotiationAttempts } : {}),
           }
         : tool;
     const decision = await this.toolApprovalCallback(pending);
