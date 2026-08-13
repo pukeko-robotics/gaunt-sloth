@@ -17,7 +17,8 @@ import { ProgressIndicator } from '#src/utils/ProgressIndicator.js';
 import type { AgentResolvers, GthAgentFactory, GthCommand } from '#src/core/types.js';
 import { recordSessionSafe } from '#src/history/recordSession.js';
 import type { GthRunStats } from '#src/core/types.js';
-import { getProjectDir } from '#src/utils/systemUtils.js';
+import { getProjectDir, stdout } from '#src/utils/systemUtils.js';
+import { ApprovalStopError, approvalStopRows } from '#src/core/shell/approvalStop.js';
 
 /**
  * One turn's result inside a {@link runConversation} run: the per-turn `ok`/`answer` plus that
@@ -126,7 +127,20 @@ export async function runConversation(
         } catch (err) {
           ok = false;
           error = err instanceof Error ? err.message : String(err);
-          displayError(`Failed to get answer: ${error}`);
+          // [[TUI-C71]] — the SAME branch `runSingleShot` carries, and for a sharper reason: this
+          // surface wires no tool-approval callback either, so every escalation it meets is a
+          // §6.2 `NonInteractiveEscalationError` — the error class that carries the command, the
+          // rating, the rater's reason AND the whole negotiation transcript. The hostile path is
+          // not an edge case here, it is the only path. `error` above keeps the neutralised
+          // message for the turn record, which is a data consumer and wants the string.
+          if (err instanceof ApprovalStopError) {
+            displayError('Failed to get answer:');
+            for (const row of approvalStopRows(err.parts, { columns: stdout.columns })) {
+              displayError(row);
+            }
+          } else {
+            displayError(`Failed to get answer: ${error}`);
+          }
         }
 
         // GS2-16: read this turn's token/tool delta from the live agent (before cleanup). Fail-soft

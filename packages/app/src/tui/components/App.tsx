@@ -19,6 +19,7 @@ import type {
 import type { AttackHaltAnswer, ToolApprovalScope } from '@gaunt-sloth/core/core/types.js';
 import type { ApprovalRung } from '@gaunt-sloth/core/config.js';
 import { buildRejectionMessage } from '@gaunt-sloth/core/core/shell/rejection.js';
+import { ApprovalStopError } from '@gaunt-sloth/core/core/shell/approvalStop.js';
 import {
   attackBannerCopy,
   grantsRunAnyway,
@@ -332,11 +333,21 @@ export function App(props: TuiAppProps): React.ReactElement {
           setSubagents((tree) => foldSubagentEvents(tree, event, subagentBuffersRef.current));
         }
       } catch (err) {
-        push({
-          kind: 'system',
-          level: 'error',
-          text: err instanceof Error ? err.message : String(err),
-        });
+        // [[TUI-C71]] — a run-ending approvals stop is the one error whose text is model-authored
+        // by construction: on an `attack` verdict the rater judged the command's own structure to
+        // evidence compromise, so the string most likely to be crafted to forge this surface's
+        // chrome is the string this catch prints. It gets its own item kind, which paints the
+        // untrusted halves through the [[TUI-C26]] gutter instead of into one re-wrappable
+        // `<Text>`. Every other failure is ordinary runtime text and stays a `system` line.
+        if (err instanceof ApprovalStopError) {
+          push({ kind: 'stop', parts: err.parts });
+        } else {
+          push({
+            kind: 'system',
+            level: 'error',
+            text: err instanceof Error ? err.message : String(err),
+          });
+        }
       } finally {
         push({ kind: 'assistant', turn: vm });
         setLive(null);

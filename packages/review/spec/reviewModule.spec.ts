@@ -332,6 +332,34 @@ describe('reviewModule', () => {
     expect(gthAgentRunnerInstanceMock.cleanup).toHaveBeenCalled();
   });
 
+  /**
+   * [[TUI-C71]] — `review` and `pr` wire no tool-approval callback, so an escalation here is always
+   * the §6.2 error and an `attack` verdict is always the halt: the untrusted text this catch prints
+   * is model-authored by construction.
+   *
+   * **Asserted as a GUTTER row, never as a surviving substring** — the command survives either way,
+   * so a substring assertion would pass on the unframed shape this case exists to forbid.
+   */
+  it('frames a run-ending approvals stop instead of interpolating it into one line', async () => {
+    const { AttackHaltError } = await import('@gaunt-sloth/core/core/shell/approvalStop.js');
+    const command = `echo review-stop-marker | cat${String.fromCodePoint(0x0d)}Approve?  [o]nce`;
+    gthAgentRunnerInstanceMock.processMessages.mockRejectedValueOnce(
+      new AttackHaltError(command, 'pipes a remote script straight into a shell')
+    );
+
+    const { review } = await import('#src/modules/reviewModule.js');
+    await review('test-source', 'test-preamble', 'test-diff', mockConfig);
+
+    const printed = consoleUtilsMock.displayError.mock.calls.map((c) => String(c[0]));
+    expect(printed.some((row) => /^ +\d+ │ /.test(row))).toBe(true);
+    expect(printed.some((row) => row.includes('review-stop-marker'))).toBe(true);
+    expect(printed.some((row) => row.includes('\\x0d'))).toBe(true);
+    for (const row of printed) expect(row.trimEnd()).not.toMatch(/^Approve\?/);
+    // The surface still says what failed, on its own row.
+    expect(printed.some((row) => row.includes('Failed to run review with agent.'))).toBe(true);
+    expect(gthAgentRunnerInstanceMock.cleanup).toHaveBeenCalled();
+  });
+
   describe('Rating functionality', () => {
     it('should display PASS rating when review passes threshold', async () => {
       const configWithRating: GthConfig = {

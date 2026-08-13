@@ -110,6 +110,34 @@ is a decision the user never sees, so the transparency has to move somewhere rat
   a judgement about the command, and wearing the auto-rater's name for it teaches the user to blame
   the wrong layer. The escalation prompt still does this; TUI-C26 owns the fix.
 
+## Text the model wrote (DL-4 transparency, DL-7 nothing wraps into the chrome)
+
+A command the agent proposed and an auto-rater's `reason` are **untrusted text going to a
+terminal**, where a string is not inert: a carriage return returns to column 0, an escape sequence
+moves the cursor or clears the screen, and a newline alone lays down a line that looks exactly like
+the surface's own chrome. A screen whose chrome can be forged by the text it is showing is not a
+gate.
+
+- **Neutralise, never sanitise, and do it once at the source.** Control and format characters become
+  printable escapes (`core/shell/framing`'s `neutralizeUntrustedText`), so what the model wrote is
+  still on the screen and none of it can move a cursor. Values that reach a person through an
+  `Error` — the run-ending approvals stops — are neutralised where the error is BUILT, because a
+  thrown stop also reaches logs, `--no-tui` stderr, the approvals archive and a CI job, and only
+  some of those are terminals.
+- **Every line renders inside the renderer's gutter** (`FramedLines` over
+  `frameUntrustedCommand` / `frameUntrustedText`), so nothing model-authored reaches column 0.
+  This is the half neutralisation cannot buy: a neutralised line is still one long line, and a
+  terminal wraps a long line back to column 0 with whatever bytes sit at that offset. It is a
+  render-time concern, so it belongs to the surface — an `Error.message` has no width to frame
+  against.
+- **Never clamp untrusted text to one line to make it safe.** The command that motivates this
+  surface hid its payload fifteen lines into a commit message; a clamp throws away exactly the span
+  the user is being asked to rule on, and buys no immunity — newlines forge chrome with no escape
+  sequence at all.
+- **Every surface uses the same renderer.** The approval dialog, the attack banner and the stop
+  message are painted by one module on both the Ink TUI and the readline session, so two surfaces
+  cannot come to disagree about how much of a command a person was shown.
+
 ## `/clear` (DL-3 preserve context, DL-5 respect host)
 
 `/clear` resets the session:

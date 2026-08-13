@@ -1,4 +1,6 @@
 import { display, displaySuccess, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import { frameUntrustedText, frameWidthFor } from '@gaunt-sloth/core/core/shell/framing.js';
+import { stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
 import type { EvalCaseResult, EvalSuiteSummary } from '#src/evalTypes.js';
 import type { EvalReporter, EvalRunContext } from '#src/reporters/reporterTypes.js';
 import { renderClassificationReport } from '#src/classificationRender.js';
@@ -32,8 +34,32 @@ export function createTextReporter(): EvalReporter {
       const label = result.identity ? `${result.id} [${result.identity}]` : result.id;
       if (result.verdict === 'PASS') {
         display(`PASS  ${label}`);
-      } else {
-        displayWarning(`FAIL  ${label} — ${result.reasons.join('; ') || 'no reason recorded'}`);
+        return;
+      }
+      const reasons = result.reasons.join('; ');
+      if (!reasons) {
+        displayWarning(`FAIL  ${label} — no reason recorded`);
+        return;
+      }
+      // [[TUI-C71]] — **a reason is untrusted text, and this reporter writes to a terminal.**
+      // `runConversation` swallows a run-ending approvals stop and hands its MESSAGE on as a
+      // string (`ConversationTurnResult.error` → `evalRunner`'s `SUT run failed: …` detail), so a
+      // stop reaches this line without this file ever seeing an `ApprovalStopError` — which is why
+      // enumerating the error's consumers did not find it. The message is already neutralised at
+      // construction, so nothing here can move a cursor; what framing closes is the residual that
+      // buys: one long line the TERMINAL wraps, whose continuation starts at column 0 carrying
+      // whatever the model put at that offset.
+      //
+      // Every reason is framed, not just a stop's: the rest of what lands here is SUT output and
+      // judge prose, model-authored the same way, and a renderer that decided per string which of
+      // them to trust would be a parser in a decision path.
+      //
+      // The verdict keeps its own row so the summary stays scannable, and the reasons follow it
+      // inside the gutter rather than sharing the row that names the case.
+      displayWarning(`FAIL  ${label}`);
+      for (const row of frameUntrustedText(reasons, { width: frameWidthFor(stdout.columns) })
+        .lines) {
+        displayWarning(row);
       }
     },
 

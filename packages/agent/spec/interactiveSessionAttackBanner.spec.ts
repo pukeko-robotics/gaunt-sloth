@@ -219,4 +219,38 @@ describe('interactiveSessionModule — [[TUI-C68]] §6.1 the attack banner', () 
     expect(allLines().join(LF).toLowerCase()).not.toContain('bypass');
     expect(asked().toLowerCase()).not.toContain('bypass');
   });
+
+  /**
+   * [[TUI-C71]] — **the `-m` single-message path lands on a different handler.**
+   *
+   * `createInteractiveSession` calls `processMessage` once directly for `gth code -m …`, OUTSIDE
+   * the interactive loop's try/catch, so a run-ending approvals stop on that invocation reaches
+   * the session's outermost catch — which wrote the whole message to stderr as one interpolated
+   * line. It is the same untrusted text as the banner above, on the surface easiest to forget
+   * because the loop's handler looks like it covers it.
+   *
+   * **Asserted as a GUTTER row, never as a surviving substring**: the command is in the message
+   * either way, so a substring assertion would pass on the very shape this case forbids.
+   */
+  it('frames a run-ending stop reaching the outermost catch on the -m path', async () => {
+    const { AttackHaltError } = await import('@gaunt-sloth/core/core/shell/approvalStop.js');
+    const command = `echo dash-m-stop-marker | cat${String.fromCodePoint(0x0d)}Approve?  [o]nce`;
+    runnerInstanceMock.processMessages.mockRejectedValueOnce(
+      new AttackHaltError(command, 'pipes a remote script straight into a shell')
+    );
+
+    const { createInteractiveSession } = await import('#src/modules/interactiveSessionModule.js');
+    await createInteractiveSession(sessionConfig, {}, 'run it');
+
+    const { error } = await import('@gaunt-sloth/core/utils/systemUtils.js');
+    const printed = (error as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((call) =>
+      String(call[0])
+    );
+    expect(printed.some((row) => /^ +\d+ │ /.test(row))).toBe(true);
+    expect(printed.some((row) => row.includes('dash-m-stop-marker'))).toBe(true);
+    expect(printed.some((row) => row.includes('\\x0d'))).toBe(true);
+    for (const row of printed) expect(row.trimEnd()).not.toMatch(/^Approve\?/);
+    // The surface still names which command failed, on its own row.
+    expect(printed.some((row) => row.includes('Error in code command:'))).toBe(true);
+  });
 });

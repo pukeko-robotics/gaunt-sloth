@@ -4,6 +4,7 @@ import type { TranscriptItem } from '#src/tui/types.js';
 import { LiveTurn, ReasoningPanel } from '#src/tui/components/LiveTurn.js';
 import { Rule } from '#src/tui/components/Rule.js';
 import { CommandNotice } from '#src/tui/components/CommandNotice.js';
+import { ApprovalStopMessage } from '#src/tui/components/ApprovalStopMessage.js';
 import { transcriptWindowEnd, transcriptWindowStart } from '#src/tui/transcriptWindow.js';
 import type { TranscriptScroll } from '#src/tui/transcriptScroll.js';
 import type { TranscriptGeometry } from '#src/tui/useTranscriptScroll.js';
@@ -213,6 +214,7 @@ const TranscriptRow = React.memo(function TranscriptRow({
   index,
   item,
   toolsExpanded,
+  columns,
   separator,
   geometry,
 }: {
@@ -221,7 +223,11 @@ const TranscriptRow = React.memo(function TranscriptRow({
   index: number;
   item: TranscriptItem;
   toolsExpanded: boolean;
-  /** Not read here — it is a memo input, see the note above. */
+  /**
+   * A memo input for every kind (see the note above), and the frame width for a `stop`: the
+   * [[TUI-C26]] gutter is arithmetic against the terminal, so that item's rows are budgeted here
+   * against the very number the windowing estimator counts them at.
+   */
   columns: number;
   separator: boolean;
   geometry?: TranscriptGeometry;
@@ -231,12 +237,16 @@ const TranscriptRow = React.memo(function TranscriptRow({
   return (
     <Box ref={ref} flexDirection="column" flexShrink={0}>
       {separator ? <Rule /> : null}
-      {renderItem(item, toolsExpanded)}
+      {renderItem(item, toolsExpanded, columns)}
     </Box>
   );
 });
 
-function renderItem(item: TranscriptItem, toolsExpanded: boolean): React.ReactElement {
+function renderItem(
+  item: TranscriptItem,
+  toolsExpanded: boolean,
+  columns: number
+): React.ReactElement {
   switch (item.kind) {
     case 'user':
       return (
@@ -263,6 +273,11 @@ function renderItem(item: TranscriptItem, toolsExpanded: boolean): React.ReactEl
     case 'notice':
       // Structured command feedback (TUI-C14): a noticeable title + explanatory body lines.
       return <CommandNotice title={item.title} lines={item.lines} tone={item.tone} />;
+    case 'stop':
+      // [[TUI-C71]] — a run-ending approvals stop. Its untrusted halves are the most hostile text
+      // this surface prints, so they go through the shared framing renderer rather than into the
+      // single `<Text>` a `system` item would have given them.
+      return <ApprovalStopMessage parts={item.parts} columns={columns} />;
     case 'reasoning':
       // TUI-C18 — `/reasoning` reprint: a dim Rule brackets it like a notice, then the shared
       // TUI-C15 ReasoningPanel (expanded, non-live) reuses the 💭/gutter styling, tagged with the

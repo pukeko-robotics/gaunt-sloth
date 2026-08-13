@@ -16,7 +16,8 @@ import { ProgressIndicator } from '#src/utils/ProgressIndicator.js';
 import type { AgentResolvers, GthAgentFactory, GthCommand } from '#src/core/types.js';
 import { recordSessionSafe } from '#src/history/recordSession.js';
 import type { GthRunStats } from '#src/core/types.js';
-import { getProjectDir } from '#src/utils/systemUtils.js';
+import { getProjectDir, stdout } from '#src/utils/systemUtils.js';
+import { ApprovalStopError, approvalStopRows } from '#src/core/shell/approvalStop.js';
 
 /**
  * Result of a {@link runSingleShot} run: the pass/fail contract callers such as `ask`/`exec` have
@@ -92,7 +93,21 @@ export async function runSingleShot(
       responseText = await runner.processMessages(messages);
     } catch (err) {
       succeeded = false;
-      displayError(`Failed to get answer: ${err instanceof Error ? err.message : String(err)}`);
+      // [[TUI-C71]] — §6.2's escalation and §4.2's halt reach a person HERE and nowhere else on
+      // this path: there is no prompt to attach anything to, so this message is the whole
+      // explanation and it is built almost entirely out of model-authored text. Its untrusted
+      // halves go through the [[TUI-C26]] gutter, one row per line, so a payload crafted to forge
+      // terminal chrome cannot reach column 0 even on a line the terminal would have wrapped. The
+      // rows are printed on the same channel as the wrapper so a redirected stderr still carries
+      // the whole thing.
+      if (err instanceof ApprovalStopError) {
+        displayError('Failed to get answer:');
+        for (const row of approvalStopRows(err.parts, { columns: stdout.columns })) {
+          displayError(row);
+        }
+      } else {
+        displayError(`Failed to get answer: ${err instanceof Error ? err.message : String(err)}`);
+      }
     } finally {
       await runner.cleanup();
     }

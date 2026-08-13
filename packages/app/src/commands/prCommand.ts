@@ -1,6 +1,7 @@
 import { Command, Option } from 'commander';
 import { displayError } from '@gaunt-sloth/core/utils/consoleUtils.js';
-import { setExitCode } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { setExitCode, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { ApprovalStopError, approvalStopRows } from '@gaunt-sloth/core/core/shell/approvalStop.js';
 import {
   getCommandSourceInput,
   getEffectiveContentSource,
@@ -122,7 +123,17 @@ export function prCommand(
           }
           content.push(wrapContent(discoveryResult.diff, 'discovered-diff', 'GitHub diff'));
         } catch (error) {
-          displayError(error instanceof Error ? error.message : String(error));
+          // [[TUI-C71]] — `runPrDiscovery` runs an agent inside a try/FINALLY with no catch of its
+          // own, so a run-ending approvals stop from the discovery agent surfaces here. That agent
+          // wires no tool-approval callback either, which makes §6.2 its only escalation path, and
+          // §6.2 is the message that carries the whole negotiation transcript.
+          if (error instanceof ApprovalStopError) {
+            for (const row of approvalStopRows(error.parts, { columns: stdout.columns })) {
+              displayError(row);
+            }
+          } else {
+            displayError(error instanceof Error ? error.message : String(error));
+          }
           setExitCode(1);
           return;
         }

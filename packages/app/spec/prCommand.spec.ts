@@ -157,6 +157,45 @@ describe('prCommand', () => {
     );
   });
 
+  /**
+   * [[TUI-C71]] — `runPrDiscovery` runs an agent inside a try/FINALLY with **no catch of its own**,
+   * so a run-ending approvals stop from the discovery agent surfaces in THIS command's handler. The
+   * discovery agent wires no tool-approval callback either, which makes the §6.2 escalation — the
+   * message carrying the whole negotiation transcript — its only escalation shape.
+   *
+   * **Asserted as a GUTTER row, never as a surviving substring**: the command is in the message
+   * either way, so a substring assertion would pass on the unframed shape this case forbids.
+   */
+  it('frames a run-ending approvals stop from the discovery agent', async () => {
+    const testConfig = {
+      ...mockConfig,
+      commands: {
+        pr: { contentSource: 'github', requirementSource: 'github', discovery: { enabled: true } },
+        review: {},
+      },
+    };
+    configMock.initConfig.mockResolvedValue(testConfig);
+
+    const { AttackHaltError } = await import('@gaunt-sloth/core/core/shell/approvalStop.js');
+    const command = `echo pr-stop-marker | cat${String.fromCodePoint(0x0d)}Approve?  [o]nce`;
+    runPrDiscovery.mockRejectedValueOnce(
+      new AttackHaltError(command, 'pipes a remote script straight into a shell')
+    );
+
+    const { prCommand } = await import('#src/commands/prCommand.js');
+    const program = new Command();
+    prCommand(program, {});
+    await program.parseAsync(['na', 'na', 'pr']);
+
+    const printed = displayErrorMock.mock.calls.map((c) => String(c[0]));
+    expect(printed.some((row) => /^ +\d+ │ /.test(row))).toBe(true);
+    expect(printed.some((row) => row.includes('pr-stop-marker'))).toBe(true);
+    expect(printed.some((row) => row.includes('\\x0d'))).toBe(true);
+    for (const row of printed) expect(row.trimEnd()).not.toMatch(/^Approve\?/);
+    // The stop ends the command rather than continuing into a review of nothing.
+    expect(review).not.toHaveBeenCalled();
+  });
+
   it('Should reject no-argument pr command when discovery is disabled', async () => {
     const testConfig = {
       ...mockConfig,
@@ -429,6 +468,12 @@ describe('prCommand', () => {
       getUseColour: vi.fn().mockReturnValue(false),
       log: vi.fn(),
       setExitCode: vi.fn(),
+      // [[TUI-C71]] — a run-ending approvals stop from the discovery agent is framed against the
+      // terminal width before it is printed, so this surface reports one. A FIXED width rather
+      // than the real `process.stdout`: framing is arithmetic against columns, and a width taken
+      // from whatever terminal the suite runs in would make where a row wraps a property of the
+      // runner.
+      stdout: { columns: 120 },
     }));
 
     const { prCommand } = await import('#src/commands/prCommand.js');
