@@ -105,35 +105,48 @@ export class AcpUpdateMapper {
   private readonly openToolCalls: Array<[string, string]> = [];
 
   /**
-   * Takes the id of the OLDEST unclaimed tool call of `name`, removing it from the queue, or
-   * `undefined` when there is none.
+   * Takes the id of the unclaimed tool call that matches `name` and `args`, removing it from the
+   * queue, or `undefined` when there is none.
    *
-   * **Consumed, because the gate drains interrupts as a BATCH.** The runner asks for every pending
-   * call at once and loops over the array deciding each in turn; no result can arrive in between,
-   * because results only exist on the resumed run. So when a model emits two parallel calls of the
-   * same tool — routine on Anthropic and OpenAI — both are open and neither is running. Returning
-   * "the most recent" would hand BOTH permission requests the second call's id, and a client would
-   * attach one call's prompt, and its answer, to the other's row. Popping the queue is what stops a
-   * second request re-claiming the first's id.
+   * **Matched on the ARGUMENTS, because position is not a reliable discriminator here.** The
+   * arguments are the one value both sides hold: the gate's `PendingToolInterrupt` carries them, and
+   * this mapper still holds the streamed argument text at claim time (it is only discarded on
+   * `tool_result`, which exists solely on the resumed run). So a batch of parallel calls of the same
+   * tool is paired exactly rather than guessed at.
    *
-   * **Oldest-first is the best available pairing, not a guarantee.** This queue is in the order the
-   * model announced the calls; the runner iterates `getPendingToolInterrupts()`, which flattens
-   * `state.tasks[].interrupts[].value.actionRequests[]` — and that innermost array is built by
-   * LangChain's `humanInTheLoopMiddleware`, not by us. FIFO matches the two under the natural
-   * assumption that the middleware preserves the AI message's `tool_call` order, which is not
-   * something this code can enforce. **If it ever did not, the cost is UI attribution and nothing
-   * more:** each request carries its own `command`/`rawInput` in its subject, and the runner applies
-   * decisions positionally over its own array, so the human still rules on the right call and the
-   * right decision still reaches it.
+   * **Position was tried and is wrong in both directions**, which is why it is only the fallback.
+   * The runner drains suspended calls as a BATCH — every pending call decided in turn before
+   * anything resumes — so a model emitting two parallel calls of one tool has both open and neither
+   * running. Returning "the most recent" handed BOTH requests the second call's id. But plain
+   * oldest-first is no better in the case that is *normal* at the rated rungs: this method is
+   * reached only from the human-approval callback, which sits behind the gate's earlier exits
+   * (not-gated, deny list, bypass, the hardline floor, the allow list, and the rater's own arms), so
+   * a batch where one call is settled without a human and its sibling escalates leaves the settled
+   * call's id unclaimed at the head of the queue — and oldest-first then hands the request the
+   * wrong one, with every upstream ordering assumption perfectly intact.
+   *
+   * **Consuming is right either way**, and the queue order still decides between two calls whose
+   * arguments are genuinely identical, where either answer is equally true.
    *
    * Absent rather than guessed when nothing matches — a permission request pointing at the WRONG
    * call is worse than one pointing at no call, because a client would then attach the answer to a
    * call the user never saw.
    */
-  claimToolCallId(name: string): string | undefined {
-    const index = this.openToolCalls.findIndex(([, toolName]) => toolName === name);
-    if (index < 0) return undefined;
-    return this.openToolCalls.splice(index, 1)[0][0];
+  claimToolCallId(name: string, args?: Record<string, unknown>): string | undefined {
+    const candidates = this.openToolCalls
+      .map(([id, toolName], index) => ({ id, toolName, index }))
+      .filter((candidate) => candidate.toolName === name);
+    if (candidates.length === 0) return undefined;
+    const wanted = args === undefined ? undefined : canonicalJson(args);
+    const matched =
+      wanted === undefined
+        ? undefined
+        : candidates.find(
+            (candidate) => canonicalJson(parseToolArgs(this.toolArgs.get(candidate.id))) === wanted
+          );
+    const chosen = matched ?? candidates[0];
+    this.openToolCalls.splice(chosen.index, 1);
+    return chosen.id;
   }
 
   /**
@@ -246,6 +259,26 @@ export class AcpUpdateMapper {
  * that reports it. An unparseable payload is passed through as the raw string so the client can
  * still show what the model asked for.
  */
+/**
+ * A value serialized with object keys in sorted order, so two arguments objects that differ only in
+ * key order compare equal.
+ *
+ * They routinely do: one side is JSON reassembled from a model's streamed argument deltas and the
+ * other is the object the graph handed the gate. Comparing raw `JSON.stringify` output would make
+ * the exact match in {@link AcpUpdateMapper.claimToolCallId} fail for a reason that has nothing to
+ * do with whether the two describe the same call.
+ */
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'undefined';
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const entries = Object.keys(value as Record<string, unknown>)
+    .sort()
+    .map(
+      (key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`
+    );
+  return `{${entries.join(',')}}`;
+}
+
 function parseToolArgs(raw: string | undefined): unknown {
   const text = (raw ?? '').trim();
   if (text.length === 0) return undefined;

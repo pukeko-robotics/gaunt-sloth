@@ -42,13 +42,36 @@ export const QUOTED_COMMAND_MAX_CHARS = 2000;
 export const QUOTED_COMMAND_TRUNCATION_MARKER = '… [truncated]';
 
 /**
+ * [[EXT-46]] — the fence the ACP server quotes a prompt's non-text content blocks inside, emitted by
+ * `@gaunt-sloth/agent`'s `modules/acp/acpAgentApp.ts`.
+ *
+ * An ACP client attaches content blocks to a prompt, and the ones that are not the user's own typed
+ * text carry values the user did not author: a resource link's `name`, `uri` and `description` come
+ * from the editor, the filesystem or an MCP server, and a block's `type` is an arbitrary client
+ * string by the v2 schema. The agent has to tell the model that something was attached — dropping it
+ * silently is worse — so those values are quoted into the same message as the user's words, which is
+ * the situation this module exists for.
+ */
+export const ACP_ATTACHMENT_FENCE_BEGIN = '[BEGIN CLIENT-PROVIDED ATTACHMENT]';
+export const ACP_ATTACHMENT_FENCE_END = '[END CLIENT-PROVIDED ATTACHMENT]';
+
+/**
+ * How much of one attachment FIELD is quoted. These are metadata (a file name, a URI, a one-line
+ * description), not documents, so this is generous rather than a limit anything real should reach.
+ */
+export const ACP_ATTACHMENT_FIELD_MAX_CHARS = 1000;
+
+/** Appended when {@link ACP_ATTACHMENT_FIELD_MAX_CHARS} actually clipped a field. */
+export const ACP_ATTACHMENT_TRUNCATION_MARKER = '… [truncated]';
+
+/**
  * Neutralize every structural delimiter this codebase emits, inside UNTRUSTED text.
  *
  * The text is fully attacker-influenceable, so it may forge:
- *   - either fence's tokens (`[BEGIN|END MCP SERVER-PROVIDED CONTEXT]`,
- *     `[BEGIN|END QUOTED COMMAND TEXT]`) — the bracket run is collapsed so they can no longer be
- *     read as the real delimiter, while staying legible to a reader who wants to see what was
- *     attempted; and
+ *   - any fence's tokens (`[BEGIN|END MCP SERVER-PROVIDED CONTEXT]`,
+ *     `[BEGIN|END QUOTED COMMAND TEXT]`, `[BEGIN|END CLIENT-PROVIDED ATTACHMENT]`) — the bracket run
+ *     is collapsed so they can no longer be read as the real delimiter, while staying legible to a
+ *     reader who wants to see what was attempted; and
  *   - a per-server label line `--- Server: …` (EXT-32) — the leading `---` run is broken so it
  *     cannot masquerade as one of ours.
  *
@@ -68,6 +91,10 @@ export function defangUntrustedDelimiters(text: string): string {
     .replace(
       /\[\s*(BEGIN|END)\s+QUOTED\s+COMMAND\s+TEXT\s*\]/gi,
       (_m, kw: string) => `(quoted text: ${kw.toUpperCase()} QUOTED COMMAND TEXT)`
+    )
+    .replace(
+      /\[\s*(BEGIN|END)\s+CLIENT-PROVIDED\s+ATTACHMENT\s*\]/gi,
+      (_m, kw: string) => `(client text: ${kw.toUpperCase()} CLIENT-PROVIDED ATTACHMENT)`
     )
     .replace(/-{3,}(\s*Server\s*:)/gi, '- - -$1');
 }
