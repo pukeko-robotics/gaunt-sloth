@@ -69,6 +69,7 @@ these before you upgrade.
 | The `gaunt-sloth` app package no longer exports modules (its `exports` map keeps only `./package.json`) | Any `import ... from 'gaunt-sloth/<path>'` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`; the CLI binaries (`gth`, `gsloth`, `gaunt-sloth`) are unaffected | Import from the scoped packages instead: `@gaunt-sloth/core`, `@gaunt-sloth/agent`, `@gaunt-sloth/review` (see each package's README for the embed surface) |
 | The `deep` agent backend removed | `agent.backend: "deep"` is a validation abort: `Agent backend "deep" is no longer supported: Gaunt Sloth ships one agent backend.` | Remove the `agent` block, or set `"backend": "lean"` (see section J) |
 | The ACP server stubbed | `gaunt-sloth-acp` and `gaunt-sloth --acp-agent` exit non-zero without serving; an ACP host (Zed, JetBrains) reports the agent as failing to start | Use the AG-UI server (`gth api`) or a terminal session until ACP returns (see section J) |
+| `@gaunt-sloth/agent` exports removed with the `deep` backend | `import { GthDeepAgent, gthDeepAgentFactory, startAcpServer, … } from '@gaunt-sloth/agent'` no longer resolves, and neither do the `@gaunt-sloth/agent/core/GthDeepAgent.js` / `deepAgentPermissions.js` / `gthAcpServer.js` / `modules/acpModule.js` deep paths | Nothing replaces them. `extractDebugRequestExtras` moved to `@gaunt-sloth/agent/core/debugCapture.js`; the rest have no successor (see section J) |
 
 There is also one behaviour change (array merge across config layers) that is not a
 validation error but can change results silently. It is covered in section D below.
@@ -549,6 +550,30 @@ What actually changes, if you were using it:
 | Automatic history summarization | Not available. |
 | Large-tool-result offload to a file | Not available; oversized tool results are truncated instead. |
 | The toolset, the composed system prompt, the approvals gate, `gth_checklist`, `gth_grep` | Unchanged — these were never `deep`-only. |
+
+### Removed exports (embedders)
+
+`@gaunt-sloth/agent` is the embed surface, so the backend's classes went with it. The root export
+no longer carries `GthDeepAgent` / `GthDeepAgentParams`, `gthDeepAgentFactory`, `startAcpServer` /
+`StartAcpServerOptions`, or the permission-mapping surface (`buildPermissions`,
+`guardFilesystemBackend`, `allowDirsToPermissions`, `aiignoreToPermissions`,
+`filesystemModeToPermissions`, `FILESYSTEM_TOOL_NAMES`, `DEEP_AGENT_BUILT_IN_TOOL_NAMES`,
+`PermissionConfigSlice`, `RealpathGuardOptions`, `FilesystemPermission`). The matching deep paths —
+`@gaunt-sloth/agent/core/GthDeepAgent.js`, `core/deepAgentPermissions.js`,
+`core/gthDeepAgentFactory.js`, `core/gthAcpServer.js`, `core/subagentProfiles.js`,
+`core/subagentThoughtRedaction.js`, `modules/acpModule.js` — are gone too.
+
+One of them has a new home rather than no home: **`extractDebugRequestExtras`** was exported from
+`core/GthDeepAgent.js` and lives at **`@gaunt-sloth/agent/core/debugCapture.js`** (re-exporting
+`@gaunt-sloth/core`). It was never backend-specific.
+
+`resolveAgentFactory` is unchanged and still the way to hand `GthAgentRunner` a backend; it now
+resolves to the lean agent for every input.
+
+Two smaller removals in the same family: `setAcpShellWorkDir`
+(`@gaunt-sloth/agent/tools/shell/workDir.js`) had no caller left once the ACP server went, and
+`AGENT_BACKEND_SCOPE_DOCS_URL` (`@gaunt-sloth/core/core/GthAgentRunner.js`) pointed at a docs
+section describing which commands honour a key that now has one value.
 
 ### The ACP server
 
