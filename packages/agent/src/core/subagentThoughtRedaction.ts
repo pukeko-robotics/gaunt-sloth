@@ -9,14 +9,21 @@
  * separator, so by the time the parent sees the `ToolMessage` there is nothing left to filter —
  * the redaction has to happen while the content is still a block array.
  *
- * **Where it happens, and why there.** `afterAgent` on the subagent is the last hook before
- * `task` builds its result, and the subagent's `messages` are excluded from the state update the
- * parent receives, so this is the one and only thing that escapes the child. Redacting here changes
- * nothing about how the child reasons: every model call in the run has already happened, and what
+ * **Where it happens, and why there.** `afterAgent` on the subagent is the last hook before `task`
+ * builds its result, and that result is the only thing carrying the child's own message content that
+ * escapes the child at all.
+ *
+ * **Why redacting a history costs nothing, not even a thought signature.** The redacted messages are
+ * never sent to any provider again, by any path. `messages` is one of deepagents'
+ * `EXCLUDED_STATE_KEYS`, so the child's history is discarded rather than merged into the parent's
+ * state; and `afterAgent` is terminal — while this middleware declares no jump targets (`canJumpTo`),
+ * its node edges straight to `END` and the child's graph cannot re-enter the model either. Every
+ * model call in the run has already happened. That is the whole argument, and it does not depend on
+ * any provider's rebuild rules; the wire shape merely agrees, for anyone auditing it: what
  * `@langchain/google` puts on the wire for a replayed text part is `{ text }` alone — it drops
- * `thought` and `thoughtSignature` from text parts, so a redacted history and an unredacted one
- * produce the same request. Signatures that matter ride on `functionCall` parts (and on
- * `tool_calls[].thoughtSignature`), which are typed `functionCall` and therefore never matched.
+ * `thought` and `thoughtSignature` from text parts — and the signatures that matter ride on
+ * `functionCall` parts (and on `tool_calls[].thoughtSignature`), which are typed `functionCall` and
+ * therefore never matched.
  *
  * **Why not at the model.** The general-purpose subagent shares the parent's model instance, so
  * asking that instance to withhold summaries would blind the parent's own reasoning panel too. The
@@ -107,9 +114,19 @@ export function withThoughtRedaction(subagent: SubAgent): SubAgent {
  * fields, because its own general-purpose subagent travels this exact code path.
  *
  * Name, description and prompt are spread from deepagents' exported constant so they track the
- * library. The one thing this does not reproduce is the harness-profile prompt overlay deepagents
- * applies to its own copy (a `systemPromptSuffix` registered for some Anthropic and Codex model
- * specs): the resolution behind it is not exported.
+ * library. The live delta is the harness-profile prompt overlay deepagents applies to its own copy
+ * (a `systemPromptSuffix` registered for some Anthropic and Codex model specs): the resolution behind
+ * it is not exported.
+ *
+ * **Two library inputs are not reproduced here, and both must be forwarded the moment anything feeds
+ * them.** `createDeepAgent` passes its own `skills` into its general-purpose spec, and the
+ * general-purpose subagent is the ONLY subagent that inherits the main agent's skills — so if gsloth
+ * ever passes `skills` to `createDeepAgent`, this spec has to carry them too, or that one subagent
+ * silently loses its skills and the failure presents as a skills bug a long way from this file.
+ * Likewise a harness profile's `generalPurposeSubagent` (`enabled` / `description` /
+ * `systemPrompt`): no built-in profile sets one, but `registerHarnessProfile` is public API, and
+ * declaring this subagent unconditionally would override a profile that set `enabled: false`.
+ * Nothing feeds either today, so forwarding them now would ship an untested path.
  */
 export function buildGeneralPurposeSubagent(params: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

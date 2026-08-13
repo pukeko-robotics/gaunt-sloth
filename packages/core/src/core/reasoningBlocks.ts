@@ -92,8 +92,12 @@ export function answerTextOf(content: unknown): string {
  * path). Returns the INPUT REFERENCE unchanged whenever nothing matched, so every other provider's
  * content object is untouched and identity comparisons still hold.
  *
- * Only the rendering path strips: the message kept in graph state is left intact, so the thought
- * parts (and any `thoughtSignature` riding with them) still replay to the provider as history.
+ * A pure content transform with no opinion about graph state — what a caller does with the result is
+ * the caller's argument to make. The rendering callers leave state alone, so the message kept in
+ * state stays whole and its thought parts (and any `thoughtSignature` riding with them) still replay
+ * to the provider as history. The one caller that rewrites state instead is the subagent thought
+ * redaction in `@gaunt-sloth/agent`, which strips a FINISHED subagent's own messages; why that costs
+ * nothing is argued there.
  */
 export function stripReasoningBlocks(content: unknown): unknown {
   if (!Array.isArray(content)) return content;
