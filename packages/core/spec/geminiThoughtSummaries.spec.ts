@@ -131,6 +131,20 @@ describe('google presets ask for thought summaries (CFG-33)', () => {
     expect(thinkingConfigOf(model)).toBeUndefined();
   });
 
+  it('leaves an image model alone even where the library asks for summaries itself', async () => {
+    const { applyGeminiThoughtSummaries } = await import('#src/providers/geminiThinking.js');
+    // A 3.x image model with a budget: `@langchain/google` sets `includeThoughts: true` on its own.
+    // The enable path has nothing to add there and must not install an override at all — asserted
+    // by identity of the method, since an equal-looking result would also hold if it had wrapped it.
+    const params = { generationConfig: { thinkingConfig: { includeThoughts: true } } };
+    const invocationParams = () => params;
+    const fake = { model: 'gemini-3.6-flash-image', invocationParams };
+
+    applyGeminiThoughtSummaries(fake as never);
+
+    expect(fake.invocationParams).toBe(invocationParams);
+  });
+
   it('survives bindTools — the agent never calls the bare model', async () => {
     const { processJsonConfig } = await import('#src/providers/google-genai.js');
 
@@ -230,5 +244,42 @@ describe('withholding thought summaries on a surface that cannot route them (CFG
     const fake = { model: 'claude-x', invocationParams: () => params };
     disableGeminiThoughtSummaries(fake as never);
     expect(fake.invocationParams()).toBe(params);
+  });
+
+  /**
+   * CFG-42 — the direction the enable-path guard must NOT be reused on. "We are unsure this model
+   * produces a summary, so do not ask for one" is a sound reason to skip an injection and the exact
+   * opposite of a reason to let one through, and image/tts is where `@langchain/google` sets
+   * `includeThoughts: true` itself once a budget or level is configured.
+   */
+  it.each([
+    ['gemini-3.6-flash-image', { thinkingBudget: 8192 }],
+    ['gemini-3-pro-image-preview', { thinkingBudget: 8192 }],
+    ['gemini-2.5-flash-preview-tts', { thinkingBudget: 8192 }],
+    ['gemini-3.6-flash-image', { thinkingLevel: 'low' }],
+  ])('withholds the summary an image/tts model would return: %s', async (model, llm) => {
+    const { processJsonConfig } = await import('#src/providers/google-genai.js');
+    // The library's own value, before the override — the summary these models WOULD return.
+    expect(
+      thinkingConfigOf(await processJsonConfig({ type: 'google-genai', model, ...llm } as never))
+    ).toMatchObject({ includeThoughts: true });
+
+    expect(thinkingConfigOf(await acpModel({ model, ...llm }))).toMatchObject({
+      includeThoughts: false,
+    });
+  });
+
+  it('never INTRODUCES a thinking config the library withheld', async () => {
+    // A 2.5 image model: `@langchain/google` sends no thinking config at all, so no summary comes
+    // back either way, and adding `includeThoughts: false` would send a field it deliberately
+    // omitted for that family. Withholding a summary must not change what else goes on the wire.
+    expect(
+      thinkingConfigOf(await acpModel({ model: 'gemini-2.5-flash-preview-image' }))
+    ).toBeUndefined();
+    expect(
+      thinkingConfigOf(
+        await acpModel({ model: 'gemini-2.5-flash-preview-image', thinkingBudget: 8192 })
+      )
+    ).toBeUndefined();
   });
 });

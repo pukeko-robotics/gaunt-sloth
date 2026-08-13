@@ -20,6 +20,7 @@ import { buildSystemMessages, readModePrompt } from '@gaunt-sloth/core/utils/llm
 import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
 import type { StructuredTool, StructuredToolInterface } from '@langchain/core/tools';
 import type { SubAgent } from 'deepagents';
+import { withThoughtRedaction } from '#src/core/subagentThoughtRedaction.js';
 
 /**
  * Resolve a named profile into a fully-merged child {@link GthConfig} by threading the profile name
@@ -94,13 +95,18 @@ export async function buildProfileSubagents(
       composeChildSystemPrompt(childConfig, options.command) ??
       `You are the ${spec.name} subagent.`;
 
-    subagents.push({
-      name: spec.name,
-      description: spec.description ?? `Runs under the "${spec.profile}" config profile.`,
-      systemPrompt,
-      model: childConfig.llm,
-      tools,
-    });
+    // CFG-42: every subagent redacts its own reasoning out of the result the parent reads — a
+    // profile subagent leaks a thought summary through the `task` tool exactly as the
+    // general-purpose one does, and its profile may well name a Gemini model.
+    subagents.push(
+      withThoughtRedaction({
+        name: spec.name,
+        description: spec.description ?? `Runs under the "${spec.profile}" config profile.`,
+        systemPrompt,
+        model: childConfig.llm,
+        tools,
+      })
+    );
   }
   return subagents;
 }
