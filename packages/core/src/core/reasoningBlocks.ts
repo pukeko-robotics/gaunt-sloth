@@ -93,9 +93,10 @@ export function answerTextOf(content: unknown): string {
  * content object is untouched and identity comparisons still hold.
  *
  * A pure content transform with no opinion about graph state — what a caller does with the result is
- * the caller's argument to make. The rendering callers leave state alone, so the message kept in
- * state stays whole and its thought parts (and any `thoughtSignature` riding with them) still replay
- * to the provider as history. The one caller that rewrites state instead is the subagent thought
+ * the caller's argument to make. Every caller in this package only READS the result — rendering it,
+ * or pulling a refusal's explanation out of it — so the message kept in state stays whole and its
+ * thought parts (and any `thoughtSignature` riding with them) still replay to the provider as
+ * history. The one caller that rewrites state instead is the subagent thought
  * redaction in `@gaunt-sloth/agent`, which strips a FINISHED subagent's own messages; why that costs
  * nothing is argued there.
  */

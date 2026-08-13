@@ -17,7 +17,7 @@
  * never sent to any provider again, by any path. `messages` is one of deepagents'
  * `EXCLUDED_STATE_KEYS`, so the child's history is discarded rather than merged into the parent's
  * state; and `afterAgent` is terminal — while this middleware declares no jump targets (`canJumpTo`),
- * its node edges straight to `END` and the child's graph cannot re-enter the model either. Every
+ * the after-agent chain edges to `END` and the child's graph cannot re-enter the model either. Every
  * model call in the run has already happened. That is the whole argument, and it does not depend on
  * any provider's rebuild rules; the wire shape merely agrees, for anyone auditing it: what
  * `@langchain/google` puts on the wire for a replayed text part is `{ text }` alone — it drops
