@@ -12,3 +12,7 @@ export { resolveMiddleware } from '#src/middleware/registry.js';
 
 // The agent-backend seam every command resolves its factory through.
 export { resolveAgentFactory } from '#src/core/resolveAgentFactory.js';
+
+// The ACP (Agent Client Protocol) v2 agent, and the stdio starter both ACP bins run.
+export { startAcpServer } from '#src/modules/acp/acpStdio.js';
+export { createAcpAgentApp } from '#src/modules/acp/acpAgentApp.js';

@@ -68,8 +68,8 @@ these before you upgrade.
 | `ContentProviderType` / `RequirementsProviderType` type exports removed, and the runtime `contentProvider` / `requirementsProvider` fields removed | TypeScript / programmatic configs that import those types or read those fields fail to compile or resolve | Use `contentSource` / `requirementSource` (and their `string` types) |
 | The `gaunt-sloth` app package no longer exports modules (its `exports` map keeps only `./package.json`) | Any `import ... from 'gaunt-sloth/<path>'` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`; the CLI binaries (`gth`, `gsloth`, `gaunt-sloth`) are unaffected | Import from the scoped packages instead: `@gaunt-sloth/core`, `@gaunt-sloth/agent`, `@gaunt-sloth/review` (see each package's README for the embed surface) |
 | The `deep` agent backend removed | `agent.backend: "deep"` is a validation abort: `Agent backend "deep" is no longer supported: Gaunt Sloth ships one agent backend.` | Remove the `agent` block, or set `"backend": "lean"` (see section J) |
-| The ACP server stubbed | `gaunt-sloth-acp` and `gaunt-sloth --acp-agent` exit non-zero without serving; an ACP host (Zed, JetBrains) reports the agent as failing to start | Use the AG-UI server (`gth api`) or a terminal session until ACP returns (see section J) |
-| `@gaunt-sloth/agent` exports removed with the `deep` backend | `import { GthDeepAgent, gthDeepAgentFactory, startAcpServer, … } from '@gaunt-sloth/agent'` no longer resolves, and neither do the `@gaunt-sloth/agent/core/GthDeepAgent.js` / `deepAgentPermissions.js` / `gthAcpServer.js` / `modules/acpModule.js` deep paths | Nothing replaces them. `extractDebugRequestExtras` moved to `@gaunt-sloth/agent/core/debugCapture.js`; the rest have no successor (see section J) |
+| The ACP server speaks ACP **v2 only** | A host that only speaks ACP v1 cannot get past `initialize`; hosts on v2 (Zed) connect normally | Use an ACP v2 client, or the AG-UI server (`gth api`) / a terminal session (see section J) |
+| `@gaunt-sloth/agent` exports removed with the `deep` backend | `import { GthDeepAgent, gthDeepAgentFactory, … } from '@gaunt-sloth/agent'` no longer resolves, and neither do the `@gaunt-sloth/agent/core/GthDeepAgent.js` / `deepAgentPermissions.js` / `gthAcpServer.js` / `modules/acpModule.js` deep paths | Nothing replaces them. `extractDebugRequestExtras` moved to `@gaunt-sloth/agent/core/debugCapture.js`; `startAcpServer` is still a root export and now starts the v2 server; the rest have no successor (see section J) |
 
 There is also one behaviour change (array merge across config layers) that is not a
 validation error but can change results silently. It is covered in section D below.
@@ -571,19 +571,31 @@ One of them has a new home rather than no home: **`extractDebugRequestExtras`** 
 resolves to the lean agent for every input.
 
 Two smaller removals in the same family: `setAcpShellWorkDir`
-(`@gaunt-sloth/agent/tools/shell/workDir.js`) had no caller left once the ACP server went, and
-`AGENT_BACKEND_SCOPE_DOCS_URL` (`@gaunt-sloth/core/core/GthAgentRunner.js`) pointed at a docs
-section describing which commands honour a key that now has one value.
+(`@gaunt-sloth/agent/tools/shell/workDir.js`) is gone — an ACP session roots its whole toolset at
+the session's `cwd` rather than the shell alone — and `AGENT_BACKEND_SCOPE_DOCS_URL`
+(`@gaunt-sloth/core/core/GthAgentRunner.js`) pointed at a docs section describing which commands
+honour a key that now has one value.
 
 ### The ACP server
 
-`gaunt-sloth-acp` and `gaunt-sloth --acp-agent` still exist and still resolve — removing them would
-break an editor that has the command wired in — but they now print an explanation and exit
-non-zero. If you drive Gaunt Sloth from an ACP host (Zed, JetBrains), that integration stops
-working until ACP is rebuilt on Gaunt Sloth's own agent.
+`gaunt-sloth-acp` and `gaunt-sloth --acp-agent` serve the
+[Agent Client Protocol](https://agentclientprotocol.com/) over stdio, on Gaunt Sloth's own agent.
 
-Meanwhile: `gth api` runs the AG-UI server for a programmatic front door, and `gth chat` / `gth
-code` run in a terminal.
+**They speak ACP v2 and only v2.** 1.x served v1 through a third-party runtime, so a host that
+speaks only v1 can no longer connect — it fails during `initialize` rather than misbehaving later.
+Zed speaks v2.
+
+Two things follow from the rebuild that were not true in 1.x. A gated tool now reaches the editor
+as a `session/request_permission` request, so a shell command the approvals gate stops is answered
+in the host instead of silently doing nothing. And the session's `cwd` roots config discovery and
+the whole toolset, so the agent reads and writes in the project the host named.
+
+One agent process serves one workspace: a `session/new` naming a different `cwd` is refused rather
+than silently re-rooting the sessions already running. Hosts spawn an agent per project, which is
+the shape this serves.
+
+If you would rather not use ACP: `gth api` runs the AG-UI server for a programmatic front door, and
+`gth chat` / `gth code` run in a terminal.
 
 ## Interactive slash commands (renames)
 

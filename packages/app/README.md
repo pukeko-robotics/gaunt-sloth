@@ -58,16 +58,23 @@ For full usage documentation see the [root README](https://github.com/pukeko-rob
 
 ## ACP server (editor integration)
 
-**Not available.** `gaunt-sloth --acp-agent` — and the standalone `gaunt-sloth-acp` binary — print
-an explanation and exit non-zero. The [Agent Client Protocol](https://agentclientprotocol.com/)
-server was built on a third-party agent runtime Gaunt Sloth no longer depends on; it returns
-rebuilt on Gaunt Sloth's own agent.
+`gaunt-sloth --acp-agent` — and the standalone `gaunt-sloth-acp` binary — serve the
+[Agent Client Protocol](https://agentclientprotocol.com/) over stdio, so an editor that speaks ACP
+can drive Gaunt Sloth as its coding agent. Point the editor's agent configuration at either
+command; it needs no arguments.
 
-The switch and the binary are kept rather than removed so an editor that already has the command
-configured reports a retired feature rather than a missing executable.
+**ACP v2 only.** A host that speaks only ACP v1 cannot connect. Zed speaks v2.
 
-Until then: `gth api` runs the AG-UI server for a programmatic front door, and `gth chat` / `gth
-code` run an interactive session in a terminal.
+The editor is asked before a gated tool runs: a shell command the approvals gate stops arrives as
+an ACP permission request, with the command, its working directory, and — when the AI rater
+escalated it — the rater's reason.
+
+One agent process serves one project. The working directory the editor opens the session with roots
+config discovery, the file tools and the shell; a session for a different directory is refused, so
+start a separate agent process per project.
+
+`gth api` runs the AG-UI server if you want a programmatic front door instead, and `gth chat` /
+`gth code` run an interactive session in a terminal.
 
 ## Related packages
 

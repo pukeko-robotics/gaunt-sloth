@@ -9,19 +9,29 @@ process.on('warning', (warning) => {
   console.warn(warning);
 });
 
-// --- ACP server bypass -----------------------------------------------------
+// --- ACP server ------------------------------------------------------------
 // `gaunt-sloth --acp-agent` is the ACP (Agent Client Protocol) door into the fat
-// `gaunt-sloth` package, and it is currently a stub: it exits non-zero with an
-// explanation. The switch is still recognised here rather than left to fall
-// through to the normal CLI, which would answer an ACP host with a chat session
-// on stdout and hang it. See @gaunt-sloth/agent's src/core/acpStub.ts.
+// `gaunt-sloth` package. It serves ACP v2 over stdio through the SAME startup as
+// the standalone `gaunt-sloth-acp` bin, so the two doors cannot behave
+// differently — including the redirect that keeps stdout free for JSON-RPC.
 //
-// The message goes to stderr: to an ACP host stdout is the JSON-RPC framing
+// The switch is handled here rather than left to fall through to the normal CLI,
+// which would answer an ACP host with a chat session on stdout and hang it.
+//
+// A startup failure goes to stderr: to an ACP host stdout is the JSON-RPC framing
 // channel, so prose written there is a protocol error, not a message.
 if (process.argv.includes('--acp-agent')) {
-  const { ACP_STUB_MESSAGE } = await import('@gaunt-sloth/agent/core/acpStub.js');
-  process.stderr.write(`${ACP_STUB_MESSAGE}\n`);
-  process.exit(1);
+  const { setEntryPoint } = await import('@gaunt-sloth/core/utils/systemUtils.js');
+  setEntryPoint(import.meta.url);
+  const { startAcpServer } = await import('@gaunt-sloth/agent/modules/acp/acpStdio.js');
+  try {
+    await startAcpServer();
+  } catch (err) {
+    process.stderr.write(
+      `Gaunt Sloth ACP agent failed to start: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`
+    );
+    process.exit(1);
+  }
 } else {
   // This is a minimalistic entry point that sets the installDir in systemUtils
   // and delegates to the compiled TypeScript code in dist/cli.js.

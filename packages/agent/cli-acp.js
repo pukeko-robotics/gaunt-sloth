@@ -1,17 +1,31 @@
 #!/usr/bin/env node
 
 /**
- * ACP (Agent Client Protocol) server entry — currently a stub.
+ * ACP (Agent Client Protocol) server entry.
  * Usage: gaunt-sloth-acp
  *
- * The bin resolves and exits non-zero with an explanation. See src/core/acpStub.ts for why the
- * command is kept rather than removed.
+ * Serves ACP v2 over stdio, for an editor that spawns the agent as a subprocess (Zed, and any
+ * other v2 client). The whole startup — including redirecting ordinary console output away from
+ * stdout, which the protocol owns — lives in `startAcpServer`, shared with
+ * `gaunt-sloth --acp-agent` so the two doors cannot drift.
  *
- * Writes to stderr, never stdout: an ACP host treats stdout as the JSON-RPC framing channel, and a
- * plain-text byte there is a protocol error rather than a message the user reads.
+ * A failure before the transport is up is written to stderr, never stdout: to a host, stdout is
+ * the JSON-RPC framing channel, so prose there is a protocol error rather than a message anyone
+ * reads.
  */
 
-import { ACP_STUB_MESSAGE } from '#src/core/acpStub.js';
+import { setEntryPoint } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { startAcpServer } from '#src/modules/acp/acpStdio.js';
 
-process.stderr.write(`${ACP_STUB_MESSAGE}\n`);
-process.exit(1);
+// The install dir is what `getSlothVersion()` reads, and the initialize handshake reports the
+// version. Set from THIS file so it resolves the agent package's own manifest.
+setEntryPoint(import.meta.url);
+
+try {
+  await startAcpServer();
+} catch (err) {
+  process.stderr.write(
+    `Gaunt Sloth ACP agent failed to start: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`
+  );
+  process.exit(1);
+}
