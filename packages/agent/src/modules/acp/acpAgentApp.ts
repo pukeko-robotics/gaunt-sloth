@@ -92,6 +92,29 @@ export const ACP_AGENT_TITLE = 'Gaunt Sloth';
  */
 const CLOSE_TURN_DRAIN_MS = 2000;
 
+/**
+ * Whether two already-resolved absolute paths name the same workspace.
+ *
+ * **Case-insensitive on win32 and nowhere else**, because that is where the answer differs: NTFS is
+ * case-insensitive and case-preserving, so `C:\Foo` and `c:\foo` are one directory and an exact
+ * string compare calls them two — a client that re-sends its own `cwd` with different casing would
+ * be told to start a second agent process for the project it is already in. On POSIX the two really
+ * are different directories and must keep comparing unequal, so the platform is the whole
+ * distinction rather than a workaround for one.
+ *
+ * `platform` is a parameter with the live value as its default so both arms are testable on any
+ * host. Every other bug of this shape in this repo (OPS-27, EXT-38, GS2-42, EXT-16) was a POSIX-only
+ * assertion that passed everywhere except the Windows cell, and a test that can only run on win32
+ * would have the same blind spot pointed the other way.
+ */
+export function isSameWorkspace(
+  a: string,
+  b: string,
+  platform: NodeJS.Platform = process.platform
+): boolean {
+  return platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
 /** Seams the tests replace; production leaves every one of them at its default. */
 export interface AcpAgentAppOptions {
   /**
@@ -166,6 +189,26 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
   const sessions = new Map<string, AcpSession>();
   /** The workspace this process is serving, bound by the first `session/new`. */
   let workspaceRoot: string | undefined;
+  /**
+   * `session/new` requests that have claimed the workspace and are still building their session.
+   *
+   * Counted so a release can tell "nothing depends on this binding" from "the session that depends
+   * on it does not exist yet". Without it, one `session/new` failing while a concurrent one is still
+   * loading would clear the root out from under the survivor, and a third request could then bind a
+   * different directory — the same race the claim closes, reopened by the cleanup.
+   */
+  let pendingSessions = 0;
+
+  /**
+   * Release the workspace binding when nothing — live or in flight — still depends on it.
+   *
+   * The binding exists to stop a second workspace re-rooting a LIVE session's tools; with no session
+   * and nothing building one there is nothing to re-root, and holding it would refuse a workspace
+   * for no reason left.
+   */
+  const releaseWorkspaceIfIdle = (): void => {
+    if (sessions.size === 0 && pendingSessions === 0) workspaceRoot = undefined;
+  };
 
   const sessionOrThrow = (sessionId: string): AcpSession => {
     const session = sessions.get(sessionId);
@@ -334,10 +377,7 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
         `ACP session ${session.sessionId}: cleanup failed — ${error instanceof Error ? error.message : String(error)}`
       );
     }
-    // Release the workspace binding once nothing is left running: the refusal exists to stop a
-    // second workspace re-rooting a LIVE session's tools, and with no live session there is nothing
-    // to re-root. Holding it past the last close would refuse a workspace for no reason left.
-    if (sessions.size === 0) workspaceRoot = undefined;
+    releaseWorkspaceIfIdle();
   };
 
   return acp
@@ -360,37 +400,53 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
     }))
     .onRequest(acp.AGENT_METHODS.session_new, async ({ params, client }) => {
       const cwd = resolvePath(params.cwd);
-      if (workspaceRoot !== undefined && workspaceRoot !== cwd) {
+      if (workspaceRoot !== undefined && !isSameWorkspace(workspaceRoot, cwd)) {
         throw acp.RequestError.invalidParams(
           { cwd: params.cwd, workspaceRoot },
           `This agent process is serving ${workspaceRoot}. Start a separate agent process for ${cwd}.`
         );
       }
-      const config = await loadConfig(cwd);
+      // **Claim the workspace BEFORE the first await, or the check above decides nothing.** Nothing
+      // serialises inbound requests on a stdio connection, so two `session/new` calls naming
+      // different directories both saw an unset root, both suspended on the config load, and both
+      // assigned — leaving two live sessions in different workspaces, which is the exact state the
+      // refusal exists to prevent. Testing and assigning either side of an await is not a check.
       workspaceRoot = cwd;
+      pendingSessions += 1;
+      try {
+        const config = await loadConfig(cwd);
 
-      const runner = new GthAgentRunner(
-        acpStatusCallback,
-        options.resolvers ?? createResolvers(),
-        agentFactoryFor(config)
-      );
-      // `chat` — an ACP session is an interactive conversation, and the command a run is resolved
-      // under decides its toolset and its approvals posture.
-      await runner.init('chat', config);
+        const runner = new GthAgentRunner(
+          acpStatusCallback,
+          options.resolvers ?? createResolvers(),
+          agentFactoryFor(config)
+        );
+        // `chat` — an ACP session is an interactive conversation, and the command a run is resolved
+        // under decides its toolset and its approvals posture.
+        await runner.init('chat', config);
 
-      const sessionId = randomUUID();
-      sessions.set(sessionId, {
-        sessionId,
-        cwd,
-        runner,
-        client,
-        abort: null,
-        turn: null,
-        closed: false,
-        cancelled: false,
-        replayLog: [],
-      });
-      return { sessionId };
+        const sessionId = randomUUID();
+        sessions.set(sessionId, {
+          sessionId,
+          cwd,
+          runner,
+          client,
+          abort: null,
+          turn: null,
+          closed: false,
+          cancelled: false,
+          replayLog: [],
+        });
+        return { sessionId };
+      } finally {
+        pendingSessions -= 1;
+        // A `session/new` that never produced a session must not leave the process bound to its
+        // directory — one bad config would otherwise refuse every later session for the life of the
+        // agent. Released on the same condition `closeSession` uses, and counting the in-flight
+        // requests as well as the live ones: a concurrent `session/new` that has claimed the root
+        // and is still loading is exactly as much a reason to hold it as a session already running.
+        releaseWorkspaceIfIdle();
+      }
     })
     .onRequest(acp.AGENT_METHODS.session_list, ({ params }) => {
       const filter = params.cwd === undefined || params.cwd === null ? undefined : params.cwd;
@@ -402,7 +458,9 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
     })
     .onRequest(acp.AGENT_METHODS.session_resume, async ({ params }) => {
       const session = sessionOrThrow(params.sessionId);
-      if (resolvePath(params.cwd) !== session.cwd) {
+      // Same comparison as the workspace binding, for the same reason: on win32 a client re-sending
+      // its own cwd with different casing names the same directory.
+      if (!isSameWorkspace(resolvePath(params.cwd), session.cwd)) {
         throw acp.RequestError.invalidParams(
           { cwd: params.cwd, sessionCwd: session.cwd },
           `Session ${session.sessionId} belongs to ${session.cwd}.`

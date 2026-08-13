@@ -50,7 +50,7 @@ import {
   ACP_ATTACHMENT_FENCE_BEGIN,
   ACP_ATTACHMENT_FENCE_END,
 } from '@gaunt-sloth/core/utils/untrustedText.js';
-import { createAcpAgentApp } from '#src/modules/acp/acpAgentApp.js';
+import { createAcpAgentApp, isSameWorkspace } from '#src/modules/acp/acpAgentApp.js';
 
 // ---------------------------------------------------------------------------
 // The upsert reducer — this file's model of the v2 `session/update` semantics.
@@ -301,6 +301,8 @@ async function withClient<T>(
     script: AgentScript;
     approvals?: unknown;
     answer?: PermissionAnswer;
+    /** Replaces the config loader, for cases about `session/new`'s own timing and failures. */
+    loadConfig?: (cwd: string) => Promise<GthConfig>;
     clientApp?: (app: acp.ClientApp, harness: Harness) => acp.ClientApp;
   },
   drive: (ctx: acp.ClientContext, harness: Harness) => Promise<T>
@@ -314,7 +316,7 @@ async function withClient<T>(
   };
 
   const agentApp = createAcpAgentApp({
-    loadConfig: async () => configWith(options.approvals),
+    loadConfig: options.loadConfig ?? (async () => configWith(options.approvals)),
     agentFactory: () => () => agent,
     resolvers: {},
   });
@@ -783,6 +785,86 @@ describe('the ACP v2 agent — session lifecycle', () => {
     expect(closed).toBe('answered');
   }, 15000);
 
+  /**
+   * The refusal has to survive two `session/new` calls in flight at once.
+   *
+   * Nothing serialises inbound requests on a stdio connection. The check and the assignment used to
+   * sit either side of the config load, so two calls naming different directories both saw an unset
+   * root, both suspended, and both assigned — leaving two live sessions in different workspaces,
+   * which is precisely the state the refusal exists to prevent. A slow loader widens the window so
+   * the case is driven rather than hoped for.
+   */
+  it('refuses a concurrent session for a second workspace, not just a sequential one', async () => {
+    const results = await withClient(
+      {
+        script: { events: [] },
+        loadConfig: async () => {
+          await new Promise((r) => setTimeout(r, 25));
+          return configWith();
+        },
+      },
+      async (ctx) => {
+        await ctx.request(acp.AGENT_METHODS.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          info: { name: 'ext-46-test-client', version: '0.0.0' },
+        });
+        // Deliberately NOT awaited in turn: both are on the wire before either completes.
+        const first = ctx.request(acp.AGENT_METHODS.session_new, { cwd: workspace });
+        const second = ctx.request(acp.AGENT_METHODS.session_new, {
+          cwd: join(projectDir, 'other-workspace'),
+        });
+        return Promise.allSettled([first, second]);
+      }
+    );
+
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const rejected = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    expect((rejected.reason as Error).message).toContain('separate agent process');
+  });
+
+  /**
+   * A `session/new` that fails must not leave the process bound to its directory.
+   *
+   * Claiming the workspace before the config load is what closes the race above, and it is exactly
+   * the shape that strands a claim when the load throws: one bad config would otherwise refuse every
+   * later session for the life of the agent. This is the release half, and it is worth its own cell
+   * because a release added to a claim has already misfired once in this node.
+   */
+  it('lets the next session bind after a session/new fails', async () => {
+    const { failed, thenAccepted } = await withClient(
+      {
+        script: { events: [] },
+        loadConfig: async (cwd) => {
+          if (cwd === workspace) throw new Error('the config is broken');
+          return configWith();
+        },
+      },
+      async (ctx) => {
+        await ctx.request(acp.AGENT_METHODS.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          info: { name: 'ext-46-test-client', version: '0.0.0' },
+        });
+        const failed = await ctx.request(acp.AGENT_METHODS.session_new, { cwd: workspace }).then(
+          () => 'accepted',
+          (error: unknown) => (error as Error).message
+        );
+        const thenAccepted = await ctx
+          .request(acp.AGENT_METHODS.session_new, { cwd: join(projectDir, 'recovered-workspace') })
+          .then(
+            () => 'accepted',
+            (error: unknown) => (error as Error).message
+          );
+        return { failed, thenAccepted };
+      }
+    );
+
+    // A loader failure is not a protocol error, so the SDK reports it as an internal one; what
+    // matters here is that the request was refused rather than quietly serving a broken session.
+    expect(failed).toBe('Internal error');
+    // The failed claim was released, so a different workspace can still bind.
+    expect(thenAccepted).toBe('accepted');
+  });
+
   it('refuses a session for a different workspace rather than re-rooting the process', async () => {
     const message = await withClient({ script: { events: [] } }, async (ctx) => {
       await newSession(ctx);
@@ -794,6 +876,29 @@ describe('the ACP v2 agent — session lifecycle', () => {
         );
     });
     expect(message).toContain('separate agent process');
+  });
+});
+
+/**
+ * The workspace comparison, on BOTH platforms, from any host.
+ *
+ * The platform is a production parameter rather than something these cells fake, so the win32 arm is
+ * exercised on the Linux cell and vice versa. That matters more than usual here: every bug of this
+ * shape in this repo (OPS-27, EXT-38, GS2-42, EXT-16) was an assertion that held everywhere except
+ * win32, and a test that could only run on win32 would have the same blind spot pointed the other
+ * way. A plain `a === b` fails the first cell below.
+ */
+describe('the ACP v2 agent — comparing workspace paths', () => {
+  it('treats differing case as the same directory on win32 and a different one on POSIX', () => {
+    expect(isSameWorkspace('C:\\Users\\a\\Proj', 'c:\\users\\a\\proj', 'win32')).toBe(true);
+    expect(isSameWorkspace('/home/a/Proj', '/home/a/proj', 'linux')).toBe(false);
+    expect(isSameWorkspace('/home/a/Proj', '/home/a/proj', 'darwin')).toBe(false);
+  });
+
+  it('still tells genuinely different directories apart on win32', () => {
+    // The case-insensitive arm must not collapse everything: only case may differ.
+    expect(isSameWorkspace('C:\\Users\\a\\Proj', 'C:\\Users\\a\\Other', 'win32')).toBe(false);
+    expect(isSameWorkspace('/home/a/proj', '/home/a/proj', 'linux')).toBe(true);
   });
 });
 
