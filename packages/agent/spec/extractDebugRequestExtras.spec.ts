@@ -7,7 +7,7 @@ describe('extractDebugRequestExtras', () => {
   });
 
   it('pulls system prompt, tools, model params and tool-choice from a request', async () => {
-    const { extractDebugRequestExtras } = await import('#src/core/GthDeepAgent.js');
+    const { extractDebugRequestExtras } = await import('#src/core/debugCapture.js');
     const extras = extractDebugRequestExtras({
       systemPrompt: 'you are a sloth',
       messages: [],
@@ -28,7 +28,7 @@ describe('extractDebugRequestExtras', () => {
   });
 
   it('NEVER includes credential-shaped fields in model params (security)', async () => {
-    const { extractDebugRequestExtras } = await import('#src/core/GthDeepAgent.js');
+    const { extractDebugRequestExtras } = await import('#src/core/debugCapture.js');
     const extras = extractDebugRequestExtras({
       model: {
         model: 'gpt-x',
@@ -43,7 +43,7 @@ describe('extractDebugRequestExtras', () => {
   });
 
   it('collapses model/modelName/modelId aliases and omits the misleading streaming flag', async () => {
-    const { extractDebugRequestExtras } = await import('#src/core/GthDeepAgent.js');
+    const { extractDebugRequestExtras } = await import('#src/core/debugCapture.js');
     const extras = extractDebugRequestExtras({
       model: {
         model: 'claude-sonnet-4-5',
@@ -59,13 +59,13 @@ describe('extractDebugRequestExtras', () => {
   });
 
   it('derives `model` from `modelName` when only the alias is set', async () => {
-    const { extractDebugRequestExtras } = await import('#src/core/GthDeepAgent.js');
+    const { extractDebugRequestExtras } = await import('#src/core/debugCapture.js');
     const extras = extractDebugRequestExtras({ model: { modelName: 'legacy-name' } });
     expect(extras?.modelParams).toEqual({ model: 'legacy-name' });
   });
 
   it('falls back to systemMessage.content when systemPrompt is absent', async () => {
-    const { extractDebugRequestExtras } = await import('#src/core/GthDeepAgent.js');
+    const { extractDebugRequestExtras } = await import('#src/core/debugCapture.js');
     const extras = extractDebugRequestExtras({
       systemMessage: new SystemMessage('from system message'),
     });
@@ -73,7 +73,7 @@ describe('extractDebugRequestExtras', () => {
   });
 
   it('returns undefined when nothing useful is present', async () => {
-    const { extractDebugRequestExtras } = await import('#src/core/GthDeepAgent.js');
+    const { extractDebugRequestExtras } = await import('#src/core/debugCapture.js');
     expect(extractDebugRequestExtras({})).toBeUndefined();
     expect(extractDebugRequestExtras(null)).toBeUndefined();
     expect(extractDebugRequestExtras('nope')).toBeUndefined();

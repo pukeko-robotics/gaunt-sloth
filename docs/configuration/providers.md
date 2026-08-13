@@ -511,12 +511,6 @@ Summaries are not requested for a model whose name marks it as an image or speec
 provider library withholds thinking configuration from some of those on purpose, and an image or
 speech generation has no reasoning panel to fill.
 
-The ACP server (`gaunt-sloth-acp`) does not ask for thought summaries at all: an ACP host renders
-them as ordinary assistant text, so Gaunt Sloth withholds them there — on every model family,
-including the image and speech models the library asks for summaries on by itself once a thinking
-budget is set. Withholding never adds a thinking configuration to a request that carries none. What
-the model thinks, and what that costs, is unchanged.
-
 A subagent's thinking is withheld from its parent for the same reason. The `task` tool reports a
 delegation as plain text, in which a thought summary cannot be told apart from the subagent's
 answer, so the summary is left out of the report. The subagent still thinks, and what that costs is

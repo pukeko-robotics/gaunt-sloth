@@ -479,10 +479,9 @@ export async function createInteractiveSession(
         appendToFile(logFileName, logEntry);
       }
       flushSessionLog(); // Ensure user input is immediately written to file
-      // The system prompt (backstory + guidelines + mode prompt + identity) now lives in the
-      // deep-agent graph via createDeepAgent({ systemPrompt }) — see GthDeepAgent — so it is no
-      // longer injected here as a per-turn SystemMessage (which yielded a second, non-first system
-      // message that Anthropic rejects).
+      // The system prompt (backstory + guidelines + mode prompt + identity) is composed by the
+      // agent and handed to its graph, so it is not injected here as a per-turn SystemMessage
+      // (which yielded a second, non-first system message that Anthropic rejects).
       const messages: BaseMessage[] = [new HumanMessage(userInput)];
 
       // GS2-18: wire the readline (`--no-tui`) interactive path into the opt-in history recorder

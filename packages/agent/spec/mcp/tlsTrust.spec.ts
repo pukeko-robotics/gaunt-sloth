@@ -131,7 +131,7 @@ describe('installMcpTlsTrust', () => {
   // getProjectDir is mocked to a POSIX literal ('/proj'); tlsTrust.ts resolves the cert path with
   // node:path's native resolve(), which treats a leading-slash string as drive-relative on win32
   // (-> 'D:\proj\support\ca.crt'). A real getProjectDir() returns a platform-native path, so this
-  // is a test-fixture gap, not a real bug (same class as the deepAgentPermissions win32 skips).
+  // is a test-fixture gap, not a real bug (the same class as other win32 path-shape skips).
   it.skipIf(process.platform === 'win32')(
     'installs a global dispatcher whose ca includes the read cert, no insecure warning',
     () => {

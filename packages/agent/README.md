@@ -2,7 +2,7 @@
 
 The agent runtime for Gaunt Sloth: built-in tools and toolkits (filesystem, dev/shell, web
 fetch, custom), the middleware registry, MCP client + OAuth provider, A2A client and tools, the
-AG-UI server (`startAgUiServer`), the ACP server (`startAcpServer`), the interactive session
+AG-UI server (`startAgUiServer`), the interactive session
 module, and the `createResolvers` tool/middleware resolver wiring. It builds on
 [`@gaunt-sloth/core`](https://www.npmjs.com/package/@gaunt-sloth/core) (config, provider
 factory, lean agent runtime).
@@ -45,19 +45,16 @@ not expose it to public networks. Port and CORS come from `commands.api.*` in th
 
 - **`gaunt-sloth-api`** — starts the AG-UI server standalone (the code above as a command):
   `gaunt-sloth-api` (defaults to the `ag-ui` server on `commands.api.port`, 3000 by default).
-- **`gaunt-sloth-acp`** — runs the [Agent Client Protocol](https://agentclientprotocol.com/)
-  server over stdio, for ACP hosts (Zed, JetBrains). Prefer `gaunt-sloth --acp-agent` from the
-  [`gaunt-sloth`](https://www.npmjs.com/package/gaunt-sloth) app instead: the LLM providers are
-  `peerDependencies` of `@gaunt-sloth/core` that only the app declares, so a bare
-  `@gaunt-sloth/agent` install has no providers to construct a model from. See the
-  [app README → ACP server](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/packages/app/README.md#acp-server-editor-integration)
-  for setup and a Zed `settings.json` example.
+- **`gaunt-sloth-acp`** — the [Agent Client Protocol](https://agentclientprotocol.com/) server
+  entry, currently a **stub**: it prints an explanation and exits non-zero. The binary is kept so
+  a host that has the command wired in reports a retired feature rather than a missing
+  executable. Use the AG-UI server above until ACP is rebuilt on Gaunt Sloth's own agent.
 
 ## Exports
 
-- `@gaunt-sloth/agent` (the root export) is the public API: the AG-UI/ACP/interactive-session
+- `@gaunt-sloth/agent` (the root export) is the public API: the AG-UI and interactive-session
   modules, A2A client and tool, MCP utilities and OAuth provider, built-in tools config, the
-  middleware registry, the deep-agent factory, and `createResolvers`.
+  middleware registry, the agent-backend seam (`resolveAgentFactory`), and `createResolvers`.
 - `@gaunt-sloth/agent/<path>.js` deep paths mirror the internal `dist/` layout 1:1 and are
   deliberately kept open for reach-in (the fat CLI imports e.g.
   `@gaunt-sloth/agent/resolvers.js`). They are supported at your own risk: internal files can

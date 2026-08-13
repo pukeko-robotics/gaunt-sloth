@@ -1,7 +1,7 @@
 {
   "name": "@gaunt-sloth/agent",
   "version": "2.0.0-alpha.36",
-  "description": "Deep agent runtime for Gaunt Sloth: tools, middleware, MCP/A2A clients and the AG-UI server",
+  "description": "Agent runtime for Gaunt Sloth: tools, middleware, MCP/A2A clients and the AG-UI server",
   "license": "MIT",
   "author": "Andrew Kondratev",
   "repository": {
@@ -46,8 +46,6 @@
     "@langchain/langgraph": "^1.4.9",
     "@langchain/mcp-adapters": "^1.1.3",
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "deepagents": "^1.12.2",
-    "deepagents-acp": "^0.1.23",
     "diff": "^9.0.0",
     "express": "^5.2.1",
     "langchain": "^1.5.5",

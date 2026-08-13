@@ -425,9 +425,8 @@ export interface GthAgentInterface {
 
 /**
  * Factory that produces a {@link GthAgentInterface} implementation. Injected into
- * {@link GthAgentRunner} so embedders can swap the lean `GthLangChainAgent` (default,
- * in core) for a deep `GthDeepAgent` (in `@gaunt-sloth/agent`) without core ever
- * importing deepagents.
+ * {@link GthAgentRunner} so embedders can swap the lean `GthLangChainAgent` (the default, in
+ * core) for another graph builder without core ever importing it.
  */
 export type GthAgentFactory = (
   statusUpdate: StatusUpdateCallback,

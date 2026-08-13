@@ -169,8 +169,8 @@ export interface GthDevToolsConfig {
   /**
    * Opt-in general-purpose shell tool (`run_shell_command`). Unlike the fixed
    * `run_*` commands above, this lets the agent run ARBITRARY shell commands it
-   * composes itself — the agentic-coding escape hatch the deep agent otherwise
-   * lacks (it can read/write files but not run commands).
+   * composes itself — the agentic-coding escape hatch the filesystem tools alone
+   * do not give (they read and write files but run nothing).
    *
    * EXT-12 — default: ON in `code` mode, OFF elsewhere. When this is ABSENT/undefined,
    * `code` mode emits the tool (still GATED behind the approval gate — the absent-config
@@ -179,7 +179,7 @@ export interface GthDevToolsConfig {
    * disables it even in `code`. Accepts a bare boolean or an `{ enabled }` object.
    *
    * Because the model chooses the command, every invocation is gated behind the CFG-26
-   * approvals gate (LangChain `humanInTheLoopMiddleware`, wired via deepagents' `interruptOn`)
+   * approvals gate (LangChain `humanInTheLoopMiddleware`)
    * UNLESS `approvals.mode: "bypass"` turns the gate off. The gate — not string-filtering — is
    * the guardrail, so the command is passed through verbatim (pipes / `$` / `;` are all
    * legitimate).
@@ -230,8 +230,8 @@ export const SHELL_DEFAULT_MAX_OUTPUT_BYTES = 100_000;
 
 /**
  * Normalize the {@link GthDevToolsConfig.shell} opt-in (bare boolean or
- * `{ enabled }`) to a plain boolean. Centralized so the toolkit (tool emission)
- * and the deep agent (interrupt wiring) agree on what "shell enabled" means.
+ * `{ enabled }`) to a plain boolean. Centralized so tool emission and interrupt
+ * wiring agree on what "shell enabled" means.
  *
  * EXT-12 / CFG-18 — default-resolution is `enabled ?? default`. An EXPLICIT `enabled` always wins
  * (a bare boolean, or the object form's `enabled`), so `shell: false` / `{ enabled: false }` remains
@@ -594,7 +594,7 @@ export function isDeterministicRung(rung: ApprovalRung): boolean {
  * - At the two **deterministic** rungs, a tool is gated when the rung's own grant does not cover its
  *   access class ({@link isAccessClassGrantedAtRung}). At `manual` that leaves only the built-in
  *   READ tools free; at `write`, the built-in read and write tools. The write built-ins, the shell,
- *   deepagents' `execute`, MCP tools and custom/agent-authored tools all escalate to the human.
+ *   MCP tools and custom/agent-authored tools all escalate to the human.
  * - At `assisted`, `auto` and `bypass` nothing but the shell is gated. **That split is
  *   deliberate and load-bearing, not tidiness.** At a rated rung a gated non-shell call reaches the
  *   `subject.kind !== 'shell'` arm of `GthAgentRunner.decideToolApproval`, which floors it at
@@ -609,9 +609,9 @@ export function isDeterministicRung(rung: ApprovalRung): boolean {
  * a disabled shell tool is never bound, so the two agree.
  *
  * **This takes no bound toolset**, which is what lets `GthAgentRunner` ask it about a single
- * arriving call: the runner sees the names the graph registered, and on the deep backend that list
- * omits tools deepagents registers itself. A decision that consulted a bound list would grant
- * `execute` at `manual` purely because the runner could not see it.
+ * arriving call: the runner sees only the names the graph registered, and a graph builder that
+ * registers tools of its own leaves them off that list. A decision that consulted a bound list
+ * would grant such a tool at `manual` purely because the runner could not see it.
  */
 export function isToolGatedAtRung(options: {
   toolName: string;
@@ -641,8 +641,8 @@ export function isToolGatedAtRung(options: {
  * **Derived from the bound toolset, never a hand-written list.** A static list of built-ins would
  * leave MCP, custom and agent-authored tools out — the exact tools with no access class and so the
  * exact tools the deterministic rungs must escalate. `boundToolNames` must therefore be the FINAL
- * toolset the graph is handed, including tools the graph builder registers itself (deepagents'
- * filesystem tools, `execute`, `task` and `write_todos` never appear in the array gsloth passes it).
+ * toolset the graph is handed, including any tool the graph builder registers itself, which by
+ * definition never appears in the array gsloth passes it.
  *
  * Order is stable: the shell first, then bound order. Duplicates are collapsed, so a caller may pass
  * overlapping name sources without deduplicating first.
@@ -719,9 +719,8 @@ export function commandAnswersApprovals(command: GthCommand | undefined): boolea
  * {@link APPROVAL_RUNGS}, which in practice is the shell plus every bound tool that is not a
  * built-in READ tool.
  *
- * One derivation for both backends, for the same reason {@link resolveShellApprovalGate} is one: the
- * lean backend installs `humanInTheLoopMiddleware` directly and the deep backend installs the very
- * same middleware through deepagents' `interruptOn`, and a set computed twice is a set that drifts.
+ * One derivation for every backend, for the same reason {@link resolveShellApprovalGate} is one: a
+ * set computed twice is a set that drifts.
  *
  * **Deliberately rung-independent.** The interrupt is installed once, when the agent is built, and
  * `/approvals <rung>` then moves the rung for the rest of the session without rebuilding it. Only a
@@ -1181,8 +1180,7 @@ export interface ShellApprovalGateNotice {
 export interface ShellApprovalGateDecision {
   /**
    * Whether `run_shell_command` must be wired behind the per-command approval interrupt
-   * (langchain's `humanInTheLoopMiddleware` — installed directly on the lean backend, via
-   * deepagents' `interruptOn` on the deep one).
+   * (langchain's `humanInTheLoopMiddleware`).
    */
   gateShell: boolean;
   /** The notice to surface, when this configuration warrants one. */
@@ -1190,12 +1188,12 @@ export interface ShellApprovalGateDecision {
 }
 
 /**
- * EXT-52 — the ONE shell approval-gate policy both agent backends resolve
- * (`GthLangChainAgent` = lean/default, `GthDeepAgent` = deep). It decides whether the opt-in
- * `run_shell_command` tool is gated behind the per-command approval interrupt, and which status
- * notice (if any) the backend should surface. The backends differ only in HOW they install the
- * interrupt; the policy and its user-facing copy live here so the two can never drift (and so a
- * later rename of this config surface has one place to change).
+ * EXT-52 — the ONE shell approval-gate policy every agent backend resolves
+ * (`GthLangChainAgent` = lean/default). It decides whether the opt-in `run_shell_command` tool is
+ * gated behind the per-command approval interrupt, and which status notice (if any) the backend
+ * should surface. A backend contributes only HOW it installs the interrupt; the policy and its
+ * user-facing copy live here so no two can drift (and so a later rename of this config surface has
+ * one place to change).
  *
  * CFG-27 — **the tool is gated whenever it is enabled, at every rung including `bypass`.** CFG-26
  * used to leave it UNGATED under `bypass` outside interactive `code`, which the ladder cannot

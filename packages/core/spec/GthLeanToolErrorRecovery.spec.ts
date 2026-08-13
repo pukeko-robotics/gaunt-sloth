@@ -6,7 +6,7 @@
  *
  * Unlike GthLangChainAgent.spec.ts (which mocks `createAgent` and unit-tests each middleware in
  * isolation), this drives the REAL createAgent middleware/router stack with a scripted chat model
- * (no API key) and a real failing tool, mirroring GthDeepAgentPathNamespaceOrdering.spec's
+ * (no API key) and a real failing tool, mirroring the ordering spec's
  * "prove the MECHANISM end-to-end" approach. The retry budget under test is the REAL exported
  * `createToolErrorBudgetMiddleware`; the shell-exit softening is reproduced inline (its production
  * copy is unit-tested in GthLangChainAgent.spec.ts) so the graph observes the same status:'error'

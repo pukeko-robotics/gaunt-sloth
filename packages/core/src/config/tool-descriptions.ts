@@ -90,12 +90,12 @@ const ALL_SUFFIXES: readonly string[] = Array.from(
 export type BuiltInToolAccess = 'read' | 'write';
 
 /**
- * Access class per built-in tool name. Covers BOTH backends' names: gsloth's own
- * `GthFileSystemToolkit` (lean) and deepagents' filesystem tools (`ls`/`glob`/`grep`, deep) — the
- * two sets overlap on `read_file`/`write_file`/`edit_file`, which is exactly why one flat table
- * keyed by name serves both.
+ * Access class per built-in tool name. Keyed by NAME, not by owner, so it covers gsloth's own
+ * `GthFileSystemToolkit` and the conventional filesystem names (`ls`/`glob`/`grep`, and the
+ * `read_file`/`write_file`/`edit_file` the two conventions share) that a graph builder or an MCP
+ * server may register instead. One flat table serves them all.
  *
- * Deliberately absent: `run_shell_command`, deepagents' `execute`, the fixed dev-command tools,
+ * Deliberately absent: `run_shell_command`, the fixed dev-command tools,
  * `gth_web_fetch`, `gth_checklist`, `gth_status_update`, `show_a2ui_surface`, MCP/custom/A2A tools.
  * None of them is "reading or writing files in the working folder", so none is granted by a rung's
  * access class, and at `manual`/`write` every one of them escalates to the human.
@@ -122,7 +122,7 @@ export const BUILT_IN_TOOL_ACCESS: Readonly<Record<string, BuiltInToolAccess>> =
   move_file: 'write',
   delete_file: 'write',
   delete_directory: 'write',
-  // deepagents filesystem tools (deep backend) not already named above
+  // Conventional filesystem read names not already listed above
   ls: 'read',
   glob: 'read',
   grep: 'read',
@@ -201,7 +201,7 @@ export function getRungToolDescriptionSuffix(rung: ApprovalRung): string | null 
  * - `read` — granted at every rung (§2.1).
  * - `write` — granted from `write` up (§2.2, and §2.3/§2.4 which grant "everything `write` grants"),
  *   so it escalates at `manual`.
- * - **no class at all** — the shell, deepagents' `execute`, a network call, an MCP tool, a custom or
+ * - **no class at all** — the shell, a network call, an MCP tool, a custom or
  *   agent-authored tool: granted by no rung. There is no implicit exemption; a tool is free here
  *   only by appearing in {@link BUILT_IN_TOOL_ACCESS}.
  *

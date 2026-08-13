@@ -931,15 +931,13 @@ describe('config schema (GS2-1 B1)', () => {
     });
   });
 
-  describe('agent.backend selector (GS2-2 B5)', () => {
-    it("accepts agent.backend 'deep' and 'lean'", () => {
-      for (const backend of ['deep', 'lean'] as const) {
-        const result = rawGthConfigSchema.safeParse({
-          llm: { type: 'openai' },
-          agent: { backend },
-        });
-        expect(result.success).toBe(true);
-      }
+  describe('agent.backend selector (GS2-2 B5, narrowed by EXT-114)', () => {
+    it("accepts agent.backend 'lean'", () => {
+      const result = rawGthConfigSchema.safeParse({
+        llm: { type: 'openai' },
+        agent: { backend: 'lean' },
+      });
+      expect(result.success).toBe(true);
     });
 
     it('rejects an invalid agent.backend value with a path-scoped message', () => {
@@ -957,9 +955,55 @@ describe('config schema (GS2-1 B1)', () => {
       expect(findUnknownTopLevelKeys({ llm: {}, agent: { backend: 'lean' } })).toEqual([]);
     });
 
-    it('accepts a config that omits agent (undefined ⇒ deep)', () => {
+    it('accepts a config that omits agent (undefined ⇒ lean)', () => {
       const result = rawGthConfigSchema.safeParse({ llm: { type: 'openai' } });
       expect(result.success).toBe(true);
+    });
+
+    /**
+     * EXT-114 — the retired `deep` backend. The pair below is the whole rule, and both halves are
+     * load-bearing: `deep` must NOT be coerced to `lean` (a config asking for a runtime that no
+     * longer exists must be told so, not quietly handed a different agent), and `lean` must NOT be
+     * caught by the same net.
+     */
+    describe('the retired deep backend (EXT-114)', () => {
+      it('hard-errors on agent.backend: deep, naming lean and what deep took with it', () => {
+        const issues = findDeprecatedConfigIssues({
+          llm: { type: 'openai' },
+          agent: { backend: 'deep' },
+        });
+        expect(issues).toHaveLength(1);
+        expect(issues[0].path).toBe('agent.backend');
+        expect(issues[0].message).toContain('deep');
+        expect(issues[0].message).toContain('lean');
+        // Names what actually leaves, so a user who chose `deep` on purpose can tell whether they
+        // are losing something they used.
+        expect(issues[0].message).toContain('task');
+        // The migration pointer every deprecated-shape message carries.
+        expect(issues[0].message).toContain('MIGRATION.md');
+      });
+
+      it('does not fire on the surviving lean value, nor on an absent agent block', () => {
+        expect(
+          findDeprecatedConfigIssues({ llm: { type: 'openai' }, agent: { backend: 'lean' } })
+        ).toEqual([]);
+        expect(findDeprecatedConfigIssues({ llm: { type: 'openai' }, agent: {} })).toEqual([]);
+        expect(findDeprecatedConfigIssues({ llm: { type: 'openai' } })).toEqual([]);
+      });
+
+      /**
+       * The pre-parse check is what produces the migration message, but the enum has to reject the
+       * value too — otherwise a caller that parses without the deprecation scan (or a future
+       * refactor that drops it) would accept `deep` and run lean silently, which is the exact
+       * substitution the hard error exists to prevent.
+       */
+      it('the enum rejects deep as well, so nothing accepts it by another route', () => {
+        const result = rawGthConfigSchema.safeParse({
+          llm: { type: 'openai' },
+          agent: { backend: 'deep' },
+        });
+        expect(result.success).toBe(false);
+      });
     });
   });
 

@@ -70,7 +70,7 @@ unambiguous meaning — and there is no per-prompt "turn the gate down from here
   file *tools* and false of the agent as a whole. Copy cites only protections the user can inspect
   and extend — the deny list — never the hardline floor.
 - **Scope every claim to the session the user is in.** These strings render on terminal surfaces;
-  the AG-UI and ACP servers never drain an approval interrupt, so a universal "Gaunt Sloth always
+  the AG-UI server never drains an approval interrupt, so a universal "Gaunt Sloth always
   asks" would be false.
 - **Tone = `warn` at `bypass`.** Running with no gate is caution-worthy, so its notice is yellow and
   the status bar carries the unmissable **`⚡ Bypass`** badge; every other mode is `info`.
@@ -323,8 +323,8 @@ lines are suppressed** (`tui/components/App.tsx`): the agent's per-turn `INFO` o
 tools`, `Loaded tools`, `Loaded middleware`, `Workdir`, `Model`, `Thinking…` — duplicates what the
 TUI already renders (live tool-call cards, the checklist panel, the status-bar spinner), so echoing it
 into the transcript is redundant noise (DL-2 progressive disclosure, DL-10 budget). **`WARNING` and
-`ERROR` still surface** — e.g. the experimental deepagents-backend warning — because those are signal,
-not chatter (DL-1 no important action is silent). Plain (non-TUI) CLI keeps all levels via
+`ERROR` still surface** — e.g. the notice that a configured `subagents` block is not dispatched —
+because those are signal, not chatter (DL-1 no important action is silent). Plain (non-TUI) CLI keeps all levels via
 `defaultStatusCallback`, which does its own level filtering; the suppression is TUI-only.
 
 ## Markdown (DL-7 legibility & graceful degradation)

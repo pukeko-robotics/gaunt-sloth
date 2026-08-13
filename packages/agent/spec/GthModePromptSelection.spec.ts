@@ -1,13 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GthConfig } from '#src/config.js';
 import type { GthCommand } from '@gaunt-sloth/core/core/types.js';
-import * as deepAgentPermissions from '#src/core/deepAgentPermissions.js';
 
 /**
- * GS2-79 — WHICH mode prompt each command composes, on BOTH backends.
+ * GS2-79 — WHICH mode prompt each command composes.
  *
- * `GthPromptParity.spec.ts` pins which prompt PIECES each backend carries; this pins which mode
- * prompt each COMMAND selects. The distinction is the whole defect: `review`/`pr` were absent from
+ * `GthComposedSystemPrompt.spec.ts` pins which prompt PIECES composition carries; this pins which
+ * mode prompt each COMMAND selects. The distinction is the whole defect: `review`/`pr` were absent from
  * the selection, so they fell through to the chat prompt — the default branch — and the review
  * instructions reached the model only as a caller-side leading `SystemMessage`, the second system
  * message that `@langchain/anthropic` rejects outright.
@@ -23,31 +22,15 @@ import * as deepAgentPermissions from '#src/core/deepAgentPermissions.js';
  * there is no literal here to be wrong about.
  */
 
-// Pinned so the deep backend's shouldUseVirtualFs() decision is the same on every platform: a
-// POSIX cwd means virtualMode is off, so no deep-only note perturbs the composed prompt on Windows.
+// Pinned so the cwd note is the same on every platform and cannot perturb the composed prompt
+// differently on Windows.
 const getCurrentWorkDirMock = vi.fn();
 vi.mock('@gaunt-sloth/core/utils/systemUtils.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gaunt-sloth/core/utils/systemUtils.js')>()),
   getCurrentWorkDir: () => getCurrentWorkDirMock(),
 }));
 
-// Capture createDeepAgent params (deep backend graph builder); stub FilesystemBackend as a marker.
-const createDeepAgentMock = vi.fn();
-class FilesystemBackendStub {
-  options: unknown;
-  constructor(options: unknown) {
-    this.options = options;
-  }
-}
-vi.mock('deepagents', async (importOriginal) => ({
-  // Partial mock: only the graph builder and the fs backend are stubbed, so a module that imports
-  // any other deepagents export (GENERAL_PURPOSE_SUBAGENT, …) still gets the real thing.
-  ...(await importOriginal<typeof import('deepagents')>()),
-  createDeepAgent: createDeepAgentMock,
-  FilesystemBackend: FilesystemBackendStub,
-}));
-
-// Capture createAgent params (lean backend graph builder); keep the rest of langchain real.
+// Capture createAgent params (the graph builder); keep the rest of langchain real.
 const createAgentMock = vi.fn();
 vi.mock('langchain', async () => {
   const actual = await vi.importActual<typeof import('langchain')>('langchain');
@@ -63,7 +46,7 @@ function makeConfig(over: Partial<GthConfig> = {}): GthConfig {
   } as GthConfig;
 }
 
-async function leanSystemPrompt(command: GthCommand, config: GthConfig): Promise<string> {
+async function systemPromptFor(command: GthCommand, config: GthConfig): Promise<string> {
   createAgentMock.mockReturnValue({ invoke: vi.fn(), stream: vi.fn() });
   const { GthLangChainAgent } = await import('@gaunt-sloth/core/core/GthLangChainAgent.js');
   const agent = new GthLangChainAgent(vi.fn(), { resolveTools: vi.fn().mockResolvedValue([]) });
@@ -71,26 +54,10 @@ async function leanSystemPrompt(command: GthCommand, config: GthConfig): Promise
   return createAgentMock.mock.calls.at(-1)?.[0].systemPrompt as string;
 }
 
-async function deepSystemPrompt(command: GthCommand, config: GthConfig): Promise<string> {
-  createDeepAgentMock.mockReturnValue({ invoke: vi.fn(), stream: vi.fn() });
-  const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
-  const agent = new GthDeepAgent(vi.fn(), { resolveTools: vi.fn().mockResolvedValue([]) });
-  await agent.init(command, config);
-  return createDeepAgentMock.mock.calls.at(-1)?.[0].systemPrompt as string;
-}
-
-/** Both backends' composed system prompt for one command, in a fixed order. */
-async function bothBackends(command: GthCommand, config: GthConfig): Promise<[string, string]> {
-  return [await leanSystemPrompt(command, config), await deepSystemPrompt(command, config)];
-}
-
 describe('mode-prompt selection per command (GS2-79)', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     getCurrentWorkDirMock.mockReturnValue('/home/user/proj');
-    vi.spyOn(deepAgentPermissions, 'guardFilesystemBackend').mockImplementation(
-      (backend) => backend as never
-    );
   });
 
   // The load-bearing acceptance: the REVIEW INSTRUCTIONS reach the model for `review` and `pr`, and
@@ -99,7 +66,7 @@ describe('mode-prompt selection per command (GS2-79)', () => {
   // only string that equals buildSystemMessages(config, readReviewInstructions(config)) is the one
   // built from the review instructions.
   it.each(['review', 'pr'] as const)(
-    'composes the REVIEW INSTRUCTIONS (not the chat prompt) for %s, on BOTH backends',
+    'composes the REVIEW INSTRUCTIONS (not the chat prompt) for %s',
     async (command) => {
       const llmUtils = await import('@gaunt-sloth/core/utils/llmUtils.js');
       const config = makeConfig();
@@ -115,18 +82,17 @@ describe('mode-prompt selection per command (GS2-79)', () => {
       const expected = llmUtils.buildSystemMessages(config, reviewInstructions)[0]?.content;
       expect(typeof expected).toBe('string');
 
-      for (const prompt of await bothBackends(command, config)) {
-        expect(prompt).toBe(expected);
-        expect(prompt).toContain(reviewInstructions);
-        expect(prompt).not.toContain(chatPrompt);
-      }
+      const prompt = await systemPromptFor(command, config);
+      expect(prompt).toBe(expected);
+      expect(prompt).toContain(reviewInstructions);
+      expect(prompt).not.toContain(chatPrompt);
     }
   );
 
   // The discriminating control. Without it, "review composes the review instructions" would also
   // pass if EVERY command composed them; these are the commands that must NOT change, and they are
   // what proves the selection is per-command rather than a blanket swap.
-  it('leaves the other commands on their own mode prompts, on BOTH backends', async () => {
+  it('leaves the other commands on their own mode prompts', async () => {
     const llmUtils = await import('@gaunt-sloth/core/utils/llmUtils.js');
     const config = makeConfig();
     const reviewInstructions = llmUtils.readReviewInstructions(config);
@@ -141,17 +107,16 @@ describe('mode-prompt selection per command (GS2-79)', () => {
 
     for (const [command, modePrompt] of expectations) {
       expect(modePrompt.trim().length).toBeGreaterThan(0);
-      for (const prompt of await bothBackends(command, config)) {
-        expect(prompt).toContain(modePrompt);
-        expect(prompt).not.toContain(reviewInstructions);
-      }
+      const prompt = await systemPromptFor(command, config);
+      expect(prompt).toContain(modePrompt);
+      expect(prompt).not.toContain(reviewInstructions);
     }
   });
 
   // The selection reads the CONFIGURED review segment, not a hardcoded file: a user who retargets
   // `prompts.review` must see their own instructions in a review run. This is what makes the
   // equality above a statement about the segment rather than about one file on disk.
-  it('honours a configured review prompt segment on BOTH backends', async () => {
+  it('honours a configured review prompt segment', async () => {
     const llmUtils = await import('@gaunt-sloth/core/utils/llmUtils.js');
     const bundledReviewInstructions = llmUtils.readReviewInstructions(makeConfig());
     // `enabled: false` drops the segment entirely — a config-driven change to the composed prompt
@@ -161,9 +126,8 @@ describe('mode-prompt selection per command (GS2-79)', () => {
     } as unknown as Partial<GthConfig>);
 
     expect(llmUtils.readReviewInstructions(config)).toBe('');
-    for (const prompt of await bothBackends('review', config)) {
-      expect(prompt).not.toContain(bundledReviewInstructions);
-      expect(prompt).toBe(llmUtils.buildSystemMessages(config, '')[0]?.content);
-    }
+    const prompt = await systemPromptFor('review', config);
+    expect(prompt).not.toContain(bundledReviewInstructions);
+    expect(prompt).toBe(llmUtils.buildSystemMessages(config, '')[0]?.content);
   });
 });

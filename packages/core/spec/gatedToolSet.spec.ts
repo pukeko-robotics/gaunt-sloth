@@ -15,7 +15,8 @@
  *    descriptions and the rater's summary report cannot drift apart.
  *
  * The fixture is one representative bound toolset covering every class that behaves differently:
- * both read-name families (gsloth's and deepagents'), all six write built-ins, the two shells, MCP
+ * both read-name families (gsloth's own and the conventional ls/glob/grep), all six write
+ * built-ins, the two shells, MCP
  * with and without `readOnlyHint`, a custom tool, and the internal bookkeeping tools.
  */
 import { describe, expect, it } from 'vitest';
@@ -35,7 +36,7 @@ import {
 } from '#src/config.js';
 import type { GthCommand } from '#src/core/types.js';
 
-/** gsloth's `GthFileSystemToolkit` read tools, plus deepagents' differently-named ones. */
+/** gsloth's `GthFileSystemToolkit` read tools, plus the conventional differently-named ones. */
 const READ_BUILT_INS = [
   'read_file',
   'read_multiple_files',
@@ -68,7 +69,7 @@ const WRITE_BUILT_INS = [
 /**
  * Tools with NO access class. Every one of them must escalate at both deterministic rungs — this is
  * the literal reading of "everything else escalates", including the internal bookkeeping tools that
- * look harmless and deepagents' `execute`, which is a shell wearing a filesystem-sounding name.
+ * look harmless and `execute`, a shell wearing a filesystem-sounding name.
  */
 const UNCLASSED = [
   SHELL_TOOL_NAME,
@@ -219,7 +220,7 @@ describe('EXT-80 — resolveGatedToolNames membership', () => {
     expect(gatedAt('manual')).toContain('move_file');
   });
 
-  it("gates deepagents' execute at both deterministic rungs", () => {
+  it('gates an unclassified execute at both deterministic rungs', () => {
     expect(gatedAt('manual')).toContain('execute');
     expect(gatedAt('write')).toContain('execute');
   });
@@ -277,12 +278,12 @@ describe('EXT-80 — resolveGatedToolNames membership', () => {
 describe('EXT-80 — isToolGatedAtRung, asked about ONE call', () => {
   /**
    * **This is what `GthAgentRunner.decideToolApproval` consults, and it takes no bound toolset on
-   * purpose.** The runner sees the names the graph reported registering, and on the deep backend
-   * that list omits tools deepagents registers itself — `execute` above all. A decision that
-   * consulted a bound list would grant deepagents' shell at `manual` purely because the runner
-   * could not see it.
+   * purpose.** The runner sees only the names the graph reported registering, so a graph builder
+   * that registers tools of its own leaves them off that list — `execute`, a shell wearing a
+   * filesystem-sounding name, above all. A decision that consulted a bound list would grant such a
+   * shell at `manual` purely because the runner could not see it.
    */
-  it("gates deepagents' execute at the deterministic rungs with no bound set in play", () => {
+  it('gates an unregistered execute at the deterministic rungs with no bound set in play', () => {
     expect(isToolGatedAtRung({ toolName: 'execute', rung: 'manual', gateShell: false })).toBe(true);
     expect(isToolGatedAtRung({ toolName: 'execute', rung: 'write', gateShell: false })).toBe(true);
   });
@@ -370,8 +371,8 @@ describe('EXT-80 — resolveInterruptToolNames: the rung-independent interrupt s
  * [[EXT-80]] — **which surfaces may be handed an approval interrupt at all.** A command that drains
  * none must be wired with no interrupt beyond the shell gate's own: an interrupt nobody answers
  * suspends the graph, so the tool never runs and the client is never asked. The wiring that consumes
- * this is asserted per backend (`approvalRungTransition.spec.ts`, `GthDeepAgent.spec.ts`); what is
- * asserted here is the classification itself, one command at a time.
+ * this is asserted per backend (`approvalRungTransition.spec.ts`); what is asserted here is the
+ * classification itself, one command at a time.
  */
 describe('EXT-80 — commandAnswersApprovals: which surfaces can be handed an interrupt', () => {
   /**

@@ -21,9 +21,9 @@
  * `createEffectiveToolAnnotationSource` resolves to the MCP fail-closed defaults — a destructive,
  * non-idempotent, open-world writer. That is why tools whose honest annotation set simply *is* the
  * fail-closed default are deliberately absent below rather than spelled out: `run_shell_command`,
- * the fixed dev-command tools, deepagents' `execute`, A2A agent tools and user-authored custom
- * tools all reach arbitrary code or the network, and writing four rows that restate the default
- * would add entries no behaviour could distinguish from their absence.
+ * the fixed dev-command tools, A2A agent tools and user-authored custom tools all reach arbitrary
+ * code or the network, and writing rows that restate the default would add entries no behaviour
+ * could distinguish from their absence.
  */
 import { TOOL_ANNOTATION_HINTS } from '#src/config/shell-policy.js';
 import type { DeclaredToolAnnotations } from '#src/core/approvals/annotations.js';
@@ -113,10 +113,10 @@ const SESSION_STATE_CHANGE = authored({
  * through the trusted provenance (§4.7.1: we author these), so every value here has to be *true*
  * rather than convenient.
  *
- * Keyed by the registered tool name, covering both backends — gsloth's own `GthFileSystemToolkit`
- * and `gth_*` tools on the lean backend, deepagents' `ls`/`glob`/`grep` on the deep one — because
- * the two sets overlap on `read_file`/`write_file`/`edit_file` and one flat table by name serves
- * both, exactly as `BUILT_IN_TOOL_ACCESS` does.
+ * Keyed by the registered tool NAME, not by owner — gsloth's own `GthFileSystemToolkit` and
+ * `gth_*` tools, plus the conventional `ls`/`glob`/`grep` a graph builder or MCP server may
+ * register — because the conventions overlap on `read_file`/`write_file`/`edit_file` and one flat
+ * table by name serves them all, exactly as `BUILT_IN_TOOL_ACCESS` does.
  *
  * The judgments that carry security weight:
  *
@@ -152,7 +152,7 @@ export const BUILT_IN_TOOL_ANNOTATIONS: Readonly<Record<string, AuthoredToolAnno
     // Reports which directories the file tools may touch. Reads configuration, changes nothing.
     list_allowed_directories: LOCAL_READ,
     gth_grep: LOCAL_READ,
-    // ---- Local reads registered by deepagents on the deep backend. ---------------------------
+    // ---- Conventional local-read names a graph builder or MCP server may register. -----------
     ls: LOCAL_READ,
     glob: LOCAL_READ,
     grep: LOCAL_READ,

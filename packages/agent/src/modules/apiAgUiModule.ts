@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { EventEncoder } from '@ag-ui/encoder';
 import { EventType } from '@ag-ui/core';
 import { GthConfig } from '@gaunt-sloth/core/config.js';
-import { GthDeepAgent } from '#src/core/GthDeepAgent.js';
 import { GthAbstractAgent } from '@gaunt-sloth/core/core/GthAbstractAgent.js';
 import { GthLangChainAgent } from '@gaunt-sloth/core/core/GthLangChainAgent.js';
 import {
@@ -294,22 +293,13 @@ export function convertMessages(
 
 /**
  * Construct the AG-UI agent for the configured backend (B5).
- * - `agent.backend: 'deep'` → {@link GthDeepAgent} (deepagents runtime, experimental).
- * - anything else (including `'lean'` and the default `undefined`) → {@link GthLangChainAgent}
- *   (plain LangChain agent, no deepagents `/large_tool_results` offload — also the fix for
- *   `filesystem: 'none'` consumers). Lean is the default.
  *
- * Returns the shared {@link GthAbstractAgent} base so both backends flow through the same
- * `.init`/`.streamWithEvents`/`.streamWithEventsResume` surface used below.
+ * There is one backend, the lean {@link GthLangChainAgent}, so `agent.backend` selects nothing
+ * here. The return type stays the shared {@link GthAbstractAgent} base — the
+ * `.init`/`.streamWithEvents`/`.streamWithEventsResume` surface used below — so a second backend
+ * would slot in without touching the server.
  */
-function createConfiguredAgent(cfg: GthConfig): GthAbstractAgent {
-  if (cfg.agent?.backend === 'deep') {
-    displayWarning(
-      'Using the experimental deepagents backend (agent.backend: deep). The lean agent is the ' +
-        'default and recommended backend.'
-    );
-    return new GthDeepAgent(defaultStatusCallback, createResolvers());
-  }
+function createConfiguredAgent(_cfg: GthConfig): GthAbstractAgent {
   return new GthLangChainAgent(defaultStatusCallback, createResolvers());
 }
 
@@ -576,9 +566,9 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
           ac.signal
         );
       } else {
-        // The system prompt (backstory + guidelines + mode prompt + identity) lives in the
-        // deep-agent graph via createDeepAgent({ systemPrompt }) — see GthDeepAgent — so it is no
-        // longer prepended here. A separate, non-first SystemMessage would be rejected by Anthropic.
+        // The system prompt (backstory + guidelines + mode prompt + identity) is composed by the
+        // agent itself (GthLangChainAgent) and handed to the graph, so it is not prepended here. A
+        // separate, non-first SystemMessage would be rejected by Anthropic.
         // EXT-43: convertMessages (not a bare map) applies the dangling-call guard so a stalled
         // text call replayed in history is not promoted to a native tool_call with no result.
         const langChainMessages: BaseMessage[] = convertMessages(

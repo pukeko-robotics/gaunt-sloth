@@ -1,23 +1,22 @@
 import type { GthAgentFactory } from '@gaunt-sloth/core/core/types.js';
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import { gthLeanAgentFactory } from '@gaunt-sloth/core/core/gthLeanAgentFactory.js';
-import { gthDeepAgentFactory } from '#src/core/gthDeepAgentFactory.js';
 
 /**
- * Resolve the agent backend factory from config (B5). An explicit `agent.backend` wins;
- * otherwise `defaultBackend` is used — the per-command default. Every command now defaults to
- * `'lean'`; `'deep'` is the experimental, opt-in backend (selecting it emits a warning).
+ * Resolve the agent backend factory from config (B5).
  *
- * Returns {@link gthDeepAgentFactory} for `'deep'` and {@link gthLeanAgentFactory} for `'lean'`.
- * Both factories receive the SAME `createResolvers()` toolset, so lean is not capability-stripped:
- * it keeps gaunt-sloth's own filesystem + (in code mode) dev/shell tools plus the `gth_checklist`
- * planning tool; it only drops the deepagents-specific extras (subagent `task`, summarization,
- * `/large_tool_results`).
+ * There is one backend — the lean {@link gthLeanAgentFactory} — so every call resolves to it, and
+ * `agent.backend` can only name it. The seam is kept rather than inlined at the ten call sites
+ * because it is the single place a backend choice is made: reinstating a choice (EXT-46's ACP
+ * rebuild, or any later runtime) is an edit here, not an edit spread across every command.
+ *
+ * The parameters are accepted and ignored for the same reason. `defaultBackend` is each caller's
+ * per-command default, and every caller passes `'lean'`; typing it as the literal keeps a caller
+ * that means something else from compiling silently.
  */
 export function resolveAgentFactory(
-  config: GthConfig,
-  defaultBackend: 'deep' | 'lean'
+  _config: GthConfig,
+  _defaultBackend: 'lean' = 'lean'
 ): GthAgentFactory {
-  const backend = config.agent?.backend ?? defaultBackend;
-  return backend === 'deep' ? gthDeepAgentFactory : gthLeanAgentFactory;
+  return gthLeanAgentFactory;
 }

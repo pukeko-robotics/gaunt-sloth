@@ -470,8 +470,7 @@ export class GthLangChainAgent extends GthAbstractAgent {
       },
     });
 
-    // EXT-21: lean-path sibling of the deep agent's GthDeepShellExitSoftening (GthDeepAgent.ts).
-    // `exec` / `ask --write` route through this lean `createAgent` graph, whose run_* shell/dev
+    // EXT-21: `exec` / `ask --write` route through this `createAgent` graph, whose run_* shell/dev
     // tools (GthDevToolkit.executeCommand) THROW a ShellCommandFailedError on a non-zero exit or a
     // timeout-kill. langchain's default ToolNode would catch that throw into a ToolMessage but leave
     // it status:'success' (✓) — misreporting a failed command. Catch it here at the tool-wrap layer
@@ -548,7 +547,7 @@ export class GthLangChainAgent extends GthAbstractAgent {
       },
     });
 
-    // Debug-capture middleware (TUI `/debug` panel) — the lean-path sibling of GthDeepAgent's.
+    // Debug-capture middleware (TUI `/debug` panel); the contract lives in core's debugCapture.
     // Always installed but lazy: it reads `this.debugCapture` per call, so until the TUI attaches a
     // sink it is a transparent pass-through (one extra await around the handler — the normal path
     // pays nothing). `request.messages` is the real history at call time; `handler(request)`
@@ -622,8 +621,8 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // provider-unsafe steer, not a warn); HALT (opt-in) actively breaks the loop via a terminal
     // jumpTo:'end'. Default WARN-ON is applied here at the read site (resolveToolLoopGuardOptions),
     // NOT in DEFAULT_CONFIG, so the
-    // effective-config snapshot never churns. Lean backend only (like GS2-36); the deep array is
-    // untouched. `toolLoopGuard: false` resolves to a no-op guard (still installed at index 3 so the
+    // effective-config snapshot never churns.
+    // `toolLoopGuard: false` resolves to a no-op guard (still installed at index 3 so the
     // placement is stable).
     const toolLoopGuard = createToolLoopGuardMiddleware(
       resolveToolLoopGuardOptions(this.config.toolLoopGuard),
@@ -632,10 +631,9 @@ export class GthLangChainAgent extends GthAbstractAgent {
       (message) => statusUpdate(StatusLevel.WARNING, message)
     );
 
-    // EXT-52: gate the opt-in run_shell_command tool behind the SAME per-command approval
-    // interrupt the deep backend has always wired (deepagents' `interruptOn` installs this very
-    // langchain `humanInTheLoopMiddleware` — see GthDeepAgent.buildDeepAgentParams). Without it,
-    // no interrupt ever fired on the lean (default) backend, so the runner's whole approval stack
+    // EXT-52: gate the opt-in run_shell_command tool behind the per-command approval interrupt —
+    // langchain's `humanInTheLoopMiddleware`. Without it,
+    // no interrupt ever fires, so the runner's whole approval stack
     // (`GthAgentRunner.decideToolApproval`: sessionYolo → allow-list → judge → human callback,
     // fail-closed reject) was DEAD CODE on lean and shell commands ran unprompted. A matching tool
     // call now suspends the graph with a HITLRequest interrupt; the runner drains it via
@@ -644,9 +642,8 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // identically on lean.
     //
     // The gate condition and its user-facing notices are the SHARED policy
-    // (`resolveShellApprovalGate`, EXT-12 semantics documented there); the two backends differ only
-    // in how they install the interrupt — directly as middleware here, via deepagents' `interruptOn`
-    // in GthDeepAgent.
+    // (`resolveShellApprovalGate`, EXT-12 semantics documented there); the interrupt itself is
+    // installed directly as middleware here.
     const { gateShell, notice: shellGateNotice } = resolveShellApprovalGate(
       this.config ?? undefined,
       this.command
@@ -665,8 +662,8 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // in force instead, which is where the rung has always been read — so wiring wider does not gate
     // wider: at a rated rung a non-shell call is approved there with no rating call and no prompt.
     //
-    // Both sets come from core's shared policy, which the deep backend and the runner also call, so
-    // no two of the three can disagree; and both read the FINAL tool array below rather than any
+    // Both sets come from core's shared policy, which the runner also calls, so
+    // the two cannot disagree; and both read the FINAL tool array below rather than any
     // static list, because a hand-written list cannot contain an MCP or custom tool, which is
     // exactly what has to escalate.
     const rung = resolveApprovals(this.config ?? undefined, this.command).rung;
@@ -728,8 +725,8 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // REVERSE array order (the EXT-35 rule above). The gate's afterModel therefore executes LAST,
     // after EXT-35's repair has promoted a text-emitted `run_shell_command` into a native
     // tool_call, so a small local model that serialises the call as text is gated too (were the
-    // gate appended last, like deepagents does on the deep path, it would run FIRST and a promoted
-    // shell call would bypass approval entirely).
+    // gate appended last it would run FIRST and a promoted shell call would bypass approval
+    // entirely).
     const middleware = [
       shellExitSoftening,
       mcpToolErrorSoftening,
@@ -745,30 +742,24 @@ export class GthLangChainAgent extends GthAbstractAgent {
     this.headerStatus(`Loaded middleware: ${middleware.map((m) => m.name).join(', ')}`);
 
     // GS2-21: compose gsloth's system prompt (backstory + guidelines + per-command mode prompt +
-    // system prompt) EXACTLY as GthDeepAgent does, so identity profiles and `.gsloth.*.md` are
-    // honored on the lean backend too. Previously the lean agent gave the model NO system prompt
-    // (only the deep agent composed one), so `system-prompt.md` / the guidelines never reached
-    // the model — the robot (agent.backend: lean) behaved as if it never got its guidelines.
+    // system prompt), so identity profiles and `.gsloth.*.md` reach the model.
     // This is passed to createAgent as `systemPrompt`, which langchain applies as the agent's
     // static system message on every turn — NOT injected as a separate mid-conversation
     // SystemMessage (a non-first system message that Anthropic rejects). GS2-79: which mode prompt
     // a command gets is decided ONCE, in core's `readModePrompt` — 'code' the code-mode prompt,
     // 'exec' the exec-mode prompt, 'review'/'pr' the REVIEW INSTRUCTIONS, chat/api/others the chat
-    // prompt — so this backend and the deep one cannot disagree, and a command left out of the
-    // selection can no longer be served the chat prompt by silent default.
+    // prompt — so a command left out of the selection can no longer be served the chat prompt by
+    // silent default.
     const modePrompt = readModePrompt(this.command, this.config);
     const systemMessages = buildSystemMessages(this.config, modePrompt);
     const baseSystemPrompt =
       typeof systemMessages[0]?.content === 'string' ? systemMessages[0].content : undefined;
 
-    // GS2-27: in `code` mode append the SHARED code-mode notes the deep backend has always carried
-    // — the real-cwd / path-model note (EXT-13) and the OS + shell-dialect note (EXT-26). Both are
-    // backend-agnostic (the lean backend also exposes `run_shell_command` and runs on the real-fs
-    // cwd), so composing them here closes the deep-only drift that left a lean code session with no
-    // cwd value and no shell-dialect guidance (e.g. on Windows). The deepagents virtual-fs-namespace
-    // notes stay deep-only (lean never runs virtualMode). Same order the deep backend's real-path
-    // branch uses: cwd note first, OS/shell note last. `getCurrentWorkDir()` is already read above
-    // for the status line, so the value is free.
+    // GS2-27: in `code` mode append the SHARED code-mode notes — the real-cwd / path-model note
+    // (EXT-13) and the OS + shell-dialect note (EXT-26). They are backend-agnostic (they describe
+    // the opt-in `run_shell_command` tool and the real-fs cwd), which is why they are composed from
+    // core's `systemPromptNotes` rather than inline here. Order: cwd note first, OS/shell note
+    // last. `getCurrentWorkDir()` is already read above for the status line, so the value is free.
     // GS2-34/EXT-83: resolve the active model identity ONCE, honouring the `injectModelContext`
     // opt-out (default ON) at this single read site. Both consumers below take this same value, so
     // the commit trailer and the model-context note can never disagree about which model is serving
@@ -785,7 +776,7 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // EXT-84: the effective `filesystem` is threaded in so the note names the writing tool only
     // where that tool is registered. `this.config` is the command-merged value (getEffectiveConfig,
     // above) — the SAME value handed to the tool resolver, so the note and the registered toolset
-    // cannot disagree. Mirrored on the deep backend.
+    // cannot disagree.
     const codeNotesPrompt =
       this.command === 'code'
         ? appendCommitCoAuthorNote(
@@ -802,15 +793,15 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // arise in ANY mode (chat/ask/code/exec), so the identity must be visible everywhere. The
     // `injectModelContext` opt-out is applied at the single read site above; when it is off — or
     // when no model resolves — `modelIdentity` is undefined, nothing is appended, and the prompt is
-    // exactly as before. Backend-agnostic: the deep backend composes the same note (GS2-27). GS2-6's
-    // capability note is a deferred follow-up (bare provider:model identity only for now).
+    // exactly as before. GS2-6's capability note is a deferred follow-up (bare provider:model
+    // identity only for now).
     const modelContextPrompt = appendModelContextNote(codeNotesPrompt, modelIdentity);
 
     // EXT-32: inject each connected MCP server's discovery `instructions` (captured during tool
     // resolution) into the prompt — fenced + per-server-labelled as untrusted server-provided
     // context. Mode-independent: MCP tools load in every mode, so their usage guidance applies in
     // every mode (not just `code`). Empty/absent capture (or a resolver without the accessor) adds
-    // nothing. Composed through this shared path so it reaches the lean AND deep backends alike.
+    // nothing. Composed through the shared path in core so any backend reaches it alike.
     // When tools are disabled, resolveTools is skipped entirely (no MCP contact), so a REUSED
     // resolver could still hold a prior run's capture — gate on toolsDisabled so no stale
     // instructions leak into a tools-disabled session.

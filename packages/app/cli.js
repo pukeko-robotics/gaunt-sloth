@@ -10,36 +10,18 @@ process.on('warning', (warning) => {
 });
 
 // --- ACP server bypass -----------------------------------------------------
-// `gaunt-sloth --acp-agent` runs the Agent Client Protocol (ACP) server instead
-// of the normal CLI, so an ACP host (Zed, JetBrains, a future Pukeko client) can
-// spawn the fat `gaunt-sloth` package as a coding-agent subprocess.
+// `gaunt-sloth --acp-agent` is the ACP (Agent Client Protocol) door into the fat
+// `gaunt-sloth` package, and it is currently a stub: it exits non-zero with an
+// explanation. The switch is still recognised here rather than left to fall
+// through to the normal CLI, which would answer an ACP host with a chat session
+// on stdout and hang it. See @gaunt-sloth/agent's src/core/acpStub.ts.
 //
-// Why route ACP through the app rather than the standalone `gaunt-sloth-acp`
-// binary in @gaunt-sloth/agent: the LLM providers (@langchain/anthropic, openai,
-// google, …) are peerDependencies of @gaunt-sloth/core, and only this app package
-// declares them as real dependencies. A bare `@gaunt-sloth/agent` install leaves
-// those peers unmet, so its ACP server has no providers to construct a model from.
-// Starting the same ACP server from here resolves providers out of the app's tree.
-//
-// ACP speaks JSON-RPC over stdio, so stdout MUST stay a clean protocol channel:
-// redirect console.log/info (used by initConfig/status output) to stderr BEFORE
-// touching config, exactly as the standalone `gaunt-sloth-acp` entry does.
+// The message goes to stderr: to an ACP host stdout is the JSON-RPC framing
+// channel, so prose written there is a protocol error, not a message.
 if (process.argv.includes('--acp-agent')) {
-  for (const method of ['log', 'info']) {
-    console[method] = (...args) => process.stderr.write(args.join(' ') + '\n');
-  }
-  const [{ initConfig }, { displayError }, { startAcpServer }] = await Promise.all([
-    import('@gaunt-sloth/core/config.js'),
-    import('@gaunt-sloth/core/utils/consoleUtils.js'),
-    import('@gaunt-sloth/agent'),
-  ]);
-  try {
-    const config = await initConfig({});
-    await startAcpServer(config);
-  } catch (err) {
-    displayError(`ACP server failed: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
-  }
+  const { ACP_STUB_MESSAGE } = await import('@gaunt-sloth/agent/core/acpStub.js');
+  process.stderr.write(`${ACP_STUB_MESSAGE}\n`);
+  process.exit(1);
 } else {
   // This is a minimalistic entry point that sets the installDir in systemUtils
   // and delegates to the compiled TypeScript code in dist/cli.js.

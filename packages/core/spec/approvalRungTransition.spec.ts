@@ -22,9 +22,8 @@
  *    when the interrupt held the shell alone. Widening there would turn every MCP call at the
  *    default rung into a human prompt with no rating, which belongs to [[EXT-30]].
  *
- * The deep backend wires the same set through deepagents' `interruptOn` (asserted in
- * `@gaunt-sloth/agent`'s `GthDeepAgent.spec.ts`) and decides through this same runner, so the
- * decision assertions below cover both backends and the wiring assertions are per-backend.
+ * Every backend decides through this same runner, so the decision assertions below are
+ * backend-independent; only the WIRING of the interrupt is per-backend.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';

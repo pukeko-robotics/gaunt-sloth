@@ -1,18 +1,17 @@
 /**
- * GS2-81 — end-to-end: `gth review` / `gth pr` tell the user their `agent.backend: deep` is not
- * honored, instead of dropping it in silence.
+ * EXT-114 — end-to-end: a `gth review` / `gth pr` run whose config declares `subagents` tells the
+ * user they are not dispatched, instead of dropping them in silence.
  *
  * This drives the whole real path a `gth review` run takes below the CLI: the real `review()`, the
- * real `GthAgentRunner` it builds (with no backend factory — `@gaunt-sloth/review` does not depend
- * on `@gaunt-sloth/agent`, so it has none to give), the real `defaultStatusCallback` and the real
- * `displayWarning`, and asserts on what is written to the terminal. Nothing about the selection is
- * injected or stubbed, and the assertion is on the user-visible write rather than on a warning
- * function having been called.
+ * real `GthAgentRunner` it builds, the real `defaultStatusCallback` and the real `displayWarning`,
+ * and asserts on what is written to the terminal. Nothing is injected or stubbed on the notice
+ * path, and the assertion is on the user-visible write rather than on a warning function having
+ * been called — the unit-level cells in `core/spec/subagentScope.spec.ts` cannot prove that a
+ * status-level message survives the callback and reaches a terminal channel.
  *
  * `GthLangChainAgent` is stubbed because it is the model boundary — the thing that would otherwise
- * need a live LLM. The runner still reaches it through the same `agentFactory ?? lean` fallback
- * that decides the backend, so the decision under test is untouched: the stub stands in for the
- * lean agent, and `reviewModule.spec.ts` cannot host this test at all because it mocks the runner
+ * need a live LLM. The runner still reaches it through the same path, so the behaviour under test
+ * is untouched; `reviewModule.spec.ts` cannot host this test at all because it mocks the runner
  * itself.
  */
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
@@ -36,11 +35,11 @@ vi.mock('#src/core/GthLangChainAgent.js', () => ({
   },
 }));
 
-describe('GS2-81 — review tells the user agent.backend: deep is not honored', () => {
+describe('EXT-114 — review tells the user declared subagents are not dispatched', () => {
   let review: typeof import('#src/modules/reviewModule.js').review;
   let warnSpy: ReturnType<typeof vi.spyOn>;
 
-  const configWith = (backend?: 'deep' | 'lean'): GthConfig =>
+  const configWith = (subagents?: Array<{ name: string; profile: string }>): GthConfig =>
     ({
       llm: { _llmType: () => 'test', bindTools: vi.fn() },
       streamOutput: false,
@@ -55,14 +54,12 @@ describe('GS2-81 — review tells the user agent.backend: deep is not honored', 
       includeCurrentDateAfterGuidelines: false,
       noDefaultPrompts: true,
       output: { header: false },
-      ...(backend ? { agent: { backend } } : {}),
+      ...(subagents ? { subagents } : {}),
     }) as unknown as GthConfig;
 
   /** Everything actually written to the terminal's warning channel during the run. */
   const terminalWarnings = (): string[] =>
-    warnSpy.mock.calls
-      .map((call) => String(call[0]))
-      .filter((line) => line.includes('agent.backend'));
+    warnSpy.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('subagents'));
 
   beforeEach(async () => {
     vi.resetAllMocks();
@@ -77,23 +74,29 @@ describe('GS2-81 — review tells the user agent.backend: deep is not honored', 
     warnSpy.mockRestore();
   });
 
-  it('prints a warning naming the review command when agent.backend is deep', async () => {
-    await review('review', '', 'a diff', configWith('deep'), 'review');
+  it('prints a warning naming the review command and the declared subagent', async () => {
+    await review(
+      'review',
+      '',
+      'a diff',
+      configWith([{ name: 'searcher', profile: 'flash' }]),
+      'review'
+    );
 
     expect(terminalWarnings()).toHaveLength(1);
-    expect(terminalWarnings()[0]).toContain('agent.backend: deep');
+    expect(terminalWarnings()[0]).toContain('searcher');
     expect(terminalWarnings()[0]).toContain('the review command');
-    // The run itself still happened on the lean agent, so the notice is about a real substitution.
+    // The run itself still happened, so the notice is about a real run that went without them.
     expect(leanAgent.invoke).toHaveBeenCalledTimes(1);
   });
 
-  it('prints a warning naming the pr command when agent.backend is deep', async () => {
-    await review('pr', '', 'a diff', configWith('deep'), 'pr');
+  it('prints a warning naming the pr command', async () => {
+    await review('pr', '', 'a diff', configWith([{ name: 'searcher', profile: 'flash' }]), 'pr');
 
     expect(terminalWarnings()[0]).toContain('the pr command');
   });
 
-  it('prints nothing about the backend when agent.backend is unset', async () => {
+  it('prints nothing about subagents when none are declared', async () => {
     await review('review', '', 'a diff', configWith(), 'review');
 
     expect(terminalWarnings()).toEqual([]);

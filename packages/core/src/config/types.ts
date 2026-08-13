@@ -78,10 +78,12 @@ export interface CommandToolingConfig {
 }
 
 /**
- * GS2-33 — one profile-backed subagent declaration. When the parent agent spawns this subagent
- * (the deepagents `task` tool), the CHILD resolves the named config {@link profile} through the
- * GS2-1 cascade, so it runs under THAT profile's model + tools + prompt (e.g. a cheap flash-lite
- * profile for recall/search subagents while the parent runs on a strong model).
+ * GS2-33 — one profile-backed subagent declaration. When the parent agent spawns this subagent,
+ * the CHILD resolves the named config {@link profile} through the GS2-1 cascade, so it runs under
+ * THAT profile's model + tools + prompt (e.g. a cheap flash-lite profile for recall/search
+ * subagents while the parent runs on a strong model).
+ *
+ * No backend spawns subagents today — see the `subagents` field on {@link GthConfig}.
  *
  * The `profile` is a named profile block created by `gth config profile create <name>` — a
  * `.gsloth/.gsloth-settings/<name>/` config dir, the same discovery convention `--profile` /
@@ -108,23 +110,18 @@ export interface GthConfig {
   llm: BaseChatModel;
   /**
    * Selects the agent backend.
-   * - `lean` (default when omitted): the plain LangChain agent ({@link GthLangChainAgent}). It is
-   *   given gsloth's full toolset (filesystem + hardened dev/shell + the `gth_checklist` planning
-   *   tool), with no deepagents machinery (no `/large_tool_results` offload). This is the
-   *   recommended backend and the default for the CLI (code/chat), single-shot (ask/exec), and
-   *   the AG-UI/api server.
-   * - `deep` (**experimental**, opt-in): the deepagents runtime (subagents, summarization,
-   *   tool-result offload). Selecting it emits a warning. It can exhibit
-   *   path-divergence and sporadic failures and carries extra internal workarounds; prefer `lean`.
    *
-   * **Command-scoped**, and `docs/configuration/profiles.md` carries the one list of which commands
-   * honor it — don't restate it here, or the copies drift. What the type itself must say: `review`
-   * and `pr` — including the `pr` change-requirements discovery agent — always run lean, because
-   * `@gaunt-sloth/review` cannot reach the deep backend; a run that asks for `deep` there says so
-   * rather than dropping the key silently. The ACP server is the mirror image: structurally
-   * deep-only, it always runs deep and rejects `lean` outright.
+   * `lean` — the plain LangChain agent ({@link GthLangChainAgent}), given gsloth's full toolset
+   * (filesystem + hardened dev/shell + the `gth_checklist` planning tool) — is the only backend,
+   * and what runs when the key is omitted. Every command resolves the same one, so the key selects
+   * nothing today; it exists so a config can name what it runs on, and so a second backend has a
+   * name to arrive under.
+   *
+   * The retired `deep` value is a hard config error, not a coercion — see `RETIRED_AGENT_BACKENDS`
+   * in `config/schema.ts` for why substituting a different agent for the one a config named is the
+   * wrong kindness.
    */
-  agent?: { backend?: 'deep' | 'lean' };
+  agent?: { backend?: 'lean' };
   /**
    * GS2-7 (B20) — local, opt-in session history store. DEFAULT OFF (absent = disabled): a default
    * run persists nothing and behaves exactly as before. When `enabled`, each run is recorded to a
@@ -457,12 +454,16 @@ export interface GthConfig {
     redact?: boolean;
   };
   /**
-   * Transient (runtime-only) extra filesystem roots the agent is allowed to read/write for
-   * THIS run, in addition to the cwd sandbox. Populated by `gth exec --allow-dir <path>`
-   * (repeatable); never persisted to a config file. When set, the deep agent's
-   * {@link FilesystemBackend} drops `virtualMode` (so absolute paths and `..` resolve on the
-   * real filesystem) and access is constrained to cwd + these dirs via permission allow-rules.
-   * Removing the cwd-only sandbox is a guardrail removal, so callers announce it loudly.
+   * Transient (runtime-only) extra filesystem roots the agent may read/write for THIS run, in
+   * addition to the cwd sandbox. Populated by `gth exec --allow-dir <path>` (repeatable); never
+   * persisted to a config file.
+   *
+   * **Currently inert.** The permission layer that widened the sandbox belonged to the deepagents
+   * backend; the filesystem toolkit the lean agent uses is rooted at the cwd and has no notion of
+   * extra roots. The field, the flag and the config merge policy are kept so a config and a script
+   * that already declare roots keep working when widening returns, and `gth exec` says plainly
+   * that the flag does nothing rather than announcing a widening that never happens — a warning
+   * about a guardrail that was not actually removed teaches the user to distrust the warnings.
    */
   allowDirs?: string[];
   /**

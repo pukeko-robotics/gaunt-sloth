@@ -13,9 +13,9 @@
  * engines ({@link makeAiignoreFilter}) — since the tool reads file contents through its own path, it
  * must honour `.aiignore` itself rather than rely on the filesystem toolkit.
  *
- * Named `gth_grep`, NOT `grep`: the experimental deep backend (deepagents) registers its own `grep`
- * built-in and `createDeepAgent` throws on a name collision because both backends share the resolved
- * toolset — the same reason {@link file://./gthChecklistTool.ts} is not called `write_todos`.
+ * Named `gth_grep`, NOT `grep`: a graph builder registering a `grep` built-in of its own throws on
+ * a name collision, because every backend is handed the same resolved toolset — the same reason
+ * {@link file://./gthChecklistTool.ts} is not called `write_todos`.
  */
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
@@ -57,9 +57,9 @@ type IsAllowed = (absPath: string) => boolean;
  *
  * SECURITY (GS2-51): `gth_grep` reads file CONTENTS through its OWN ripgrep / `fs.readFile` path,
  * so — unlike the gsloth filesystem toolkit — it must enforce `.aiignore` ITSELF. Otherwise, being
- * on by default, it would be a default-on bypass of that boundary on BOTH backends: the deep backend
- * deliberately disables its fs toolkit precisely so a model cannot read an `.aiignore`-protected file
- * (see {@link file://../core/GthDeepAgent.ts}), and `gth_grep` would re-open exactly that hole.
+ * on by default, it would be a default-on bypass of that boundary: every other read path enforces
+ * `.aiignore` precisely so a model cannot read a protected file, and `gth_grep` would re-open
+ * exactly that hole.
  * `.gitignore` means "don't commit" (build junk); `.aiignore` means "don't let the AI read this,
  * even though it is a real tracked file" — so an `.aiignore`'d-but-tracked-and-not-hidden file is the
  * PRIMARY case, and is enforced on BOTH engines and under BOTH {@link GrepFileSet} corpora (the

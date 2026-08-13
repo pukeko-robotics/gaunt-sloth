@@ -153,15 +153,14 @@ function pickReasoningDelta(kwargs: Record<string, unknown> | undefined): string
 /**
  * Shared, graph-agnostic agent plumbing.
  *
- * Both the lean {@link GthLangChainAgent} (`createAgent`, in core) and the deep
- * `GthDeepAgent` (`createDeepAgent`, in `@gaunt-sloth/agent`) differ only in how they
- * build the compiled LangGraph in {@link init}; everything downstream — invoking,
+ * A backend differs from another only in how it builds the compiled LangGraph in {@link init} —
+ * today that is the lean {@link GthLangChainAgent} (`createAgent`, in core); everything downstream — invoking,
  * streaming to the console, emitting typed {@link AgentStreamEvent}s, client-tool
  * `interrupt()` stubbing, suspend/resume, and cleanup — is identical and lives here.
  *
- * The base operates solely on the structural {@link GthCompiledGraph} surface, so it
- * does NOT import `langchain`/`deepagents` graph builders. Subclasses construct the
- * graph and assign it to {@link agent} in their `init()`.
+ * The base operates solely on the structural {@link GthCompiledGraph} surface, so it does NOT
+ * import a graph builder. Subclasses construct the graph and assign it to {@link agent} in their
+ * `init()`.
  */
 export abstract class GthAbstractAgent implements GthAgentInterface {
   protected statusUpdate: StatusUpdateCallback;
@@ -174,8 +173,8 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
    * Opt-in debug sink for the TUI `/debug` panel. Set AFTER {@link init} via
    * `runner.getAgent()`; read lazily inside each backend's `wrapModelCall` capture middleware
    * so that when it is `undefined` (the normal path) the middleware is a transparent
-   * pass-through. Lives on the base so BOTH the lean and deep backends support it; the AG-UI
-   * server / non-TUI callers simply never set it, so those contracts are unchanged.
+   * pass-through. Lives on the base so every backend supports it; the AG-UI server / non-TUI
+   * callers simply never set it, so those contracts are unchanged.
    */
   public debugCapture: DebugCapture | undefined;
 
@@ -274,9 +273,8 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
    * with what the gate will actually do is worse than no description at all".
    *
    * `additionalToolNames` covers tools the graph builder registers itself and that therefore never
-   * appear in `tools` — deepagents' own filesystem tools on the deep backend. Their descriptions
-   * are deepagents', not ours, so they cannot be suffixed here; they are recorded only so the
-   * rater's suggestion list reflects what the deep model actually has.
+   * appear in `tools`. Their descriptions are not ours to write, so they cannot be suffixed here;
+   * they are recorded only so the rater's suggestion list reflects what the model actually has.
    */
   protected registerApprovalsAwareTools<T extends DescribableTool>(
     tools: T[],
@@ -354,8 +352,8 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   }
 
   /**
-   * Build the underlying compiled graph and assign it to {@link agent}. This is the only
-   * part that differs between the lean and deep agents.
+   * Build the underlying compiled graph and assign it to {@link agent}. This is the part a
+   * backend implements; everything else on the base is shared.
    */
   abstract init(
     command: GthCommand | undefined,

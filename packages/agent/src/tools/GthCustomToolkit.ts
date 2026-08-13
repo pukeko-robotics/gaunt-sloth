@@ -233,7 +233,7 @@ export default class GthCustomToolkit extends BaseToolkit {
         shell: true,
         // EXT-42: spawn in the SAME working directory as GthDevToolkit's `run_shell_command`, via
         // the shared getShellWorkDir() helper, so custom-tool subprocesses and the agent's own shell
-        // agree on one path namespace (the deepagents fs-backend root, tracking the ACP session cwd).
+        // agree on one path namespace (see tools/shell/workDir.ts).
         cwd: getShellWorkDir(),
         // EXT-39 (part 2): give the child /dev/null on stdin so it reads EOF immediately instead
         // of inheriting an open-but-never-written `pipe` (spawn's default). Without this, a spawned

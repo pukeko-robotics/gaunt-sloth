@@ -16,8 +16,7 @@
  * differs per rung — a description promising an approval the runner will not ask for is the drift
  * §4.5 calls worse than no description at all.
  *
- * The sibling assertions for the deep backend live in `@gaunt-sloth/agent`'s `GthDeepAgent.spec.ts`;
- * the pure set resolution lives in `gatedToolSet.spec.ts`.
+ * The pure set resolution lives in `gatedToolSet.spec.ts`.
  */
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type { GthConfig } from '#src/config.js';

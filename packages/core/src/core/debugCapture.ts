@@ -50,7 +50,7 @@ export interface LastModelRequest {
  *
  * A {@link DebugCapture} is an OPT-IN callback the TUI sets on a live agent after `init`
  * (on the shared {@link import('#src/core/GthAbstractAgent.js').GthAbstractAgent} base, so
- * both the lean and deep backends support it). When present, the agent's `wrapModelCall`
+ * every backend supports it). When present, the agent's `wrapModelCall`
  * middleware reports, per model call:
  *
  * - `request` — `request.messages: BaseMessage[]`, the real history sent to the model at
@@ -139,8 +139,7 @@ function extractToolDefs(tools: unknown): DebugToolDef[] | undefined {
  * Assemble the non-message request parts ({@link DebugRequestExtras}) for the `/debug`
  * panel from a `wrapModelCall` request, defensively and key-free. Never throws (the caller
  * already guards, but a debug sink must never break a run) and never dumps the raw model.
- * Shared by both the lean ({@link import('#src/core/GthLangChainAgent.js').GthLangChainAgent})
- * and deep backends so the panel behaves identically on either.
+ * Lives in core, beside the capture type itself, so every backend feeds the panel the same shape.
  */
 export function extractDebugRequestExtras(request: unknown): DebugRequestExtras | undefined {
   if (!request || typeof request !== 'object') return undefined;

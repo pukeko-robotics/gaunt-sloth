@@ -56,9 +56,9 @@ export async function review(
   // (Google/OpenAI silently merged them, so only Anthropic showed it). The same removal was made in
   // `runSingleShot` and `conversation` for the same reason.
   //
-  // Dropping it is content-preserving ONLY because the backends now select the review instructions:
-  // before that they composed the CHAT prompt for `review`/`pr`, so removing the preamble alone
-  // would have silently turned a review into a chat. `GthPromptParity.spec.ts` pins that.
+  // Dropping it is content-preserving ONLY because the agent selects the review instructions for
+  // `review`/`pr` itself; composing the CHAT prompt there and removing the preamble would silently
+  // turn a review into a chat. `GthModePromptSelection.spec.ts` pins that.
   _preamble: string,
   diff: string,
   config: GthConfig,
@@ -106,12 +106,10 @@ export async function review(
     const effectiveResolvers: AgentResolvers = resolvers ?? {
       resolveMiddleware: async (middleware) => middleware ?? [],
     };
-    // GS2-81: no backend factory, so `review`/`pr` always run the lean agent — `@gaunt-sloth/review`
-    // is a leaf package that does not depend on `@gaunt-sloth/agent` and cannot reach the deep
-    // backend. `agent.backend` is therefore a command-scoped key, and the runner says so out loud
-    // when a config asks for `deep` here rather than dropping it in silence. Giving this package a
-    // dependency on the agent package to honour the key instead would invert the layering AND
-    // silently change what an existing review does.
+    // GS2-81: no backend factory, so `review`/`pr` run the runner's built-in lean agent —
+    // `@gaunt-sloth/review` is a leaf package that does not depend on `@gaunt-sloth/agent`. That is
+    // the same agent every other command resolves to, so the layering costs nothing today; giving
+    // this package a dependency on the agent package to reach a backend seam would invert it.
     const runner = new GthAgentRunner(defaultStatusCallback, effectiveResolvers);
     try {
       await runner.init(command, config, new MemorySaver());

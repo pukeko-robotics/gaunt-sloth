@@ -1,18 +1,10 @@
 /**
  * Shared code-mode system-prompt augmentations (GS2-27).
  *
- * These notes describe capabilities that are IDENTICAL across both agent backends — the lean
- * {@link import('#src/core/GthLangChainAgent.js').GthLangChainAgent} (`createAgent`, in core) and
- * the deep `GthDeepAgent` (`createDeepAgent`, in `@gaunt-sloth/agent`): both expose the opt-in
- * `run_shell_command` tool and both operate on the real filesystem cwd. They were originally
- * composed ONLY inside `GthDeepAgent.init()` (EXT-13/EXT-26), so the now-default lean backend never
- * received them — accidental deep-only drift of the same class GS2-21 fixed for the main prompt.
- *
- * They live here in core so BOTH backends compose from ONE source. `GthDeepAgent` re-exports them
- * for back-compat with existing importers. The deepagents virtual-fs-namespace notes
- * (`appendVirtualCwdNote` / `PATH_NAMESPACE_GUIDANCE` / the correction middleware) are NOT here:
- * they are genuinely deep-only (a deepagents artifact — lean never runs virtualMode) and stay in
- * `GthDeepAgent`.
+ * These notes describe capabilities of the agent itself — the opt-in `run_shell_command` tool and
+ * the real filesystem cwd — rather than of any one graph builder, which is why they live in core
+ * rather than beside the agent that composes them: a note composed inside one backend is a note
+ * the next backend silently loses, the drift GS2-21 fixed for the main prompt.
  */
 
 import type { McpServerInstruction } from '#src/core/types.js';
@@ -166,9 +158,9 @@ export interface CommitCoAuthor {
  * that string; the identity decorates only the default. An unresolvable identity (`undefined`) falls
  * back to the plain default name, never to a placeholder.
  *
- * Backend-agnostic: composed through the shared code path so BOTH the lean `GthLangChainAgent` and
- * the deep `GthDeepAgent` inject it (the git-commit capability rides on `run_shell_command`, which
- * both backends expose in code mode). Returns the note alone when there is no base prompt.
+ * Backend-agnostic: composed through the shared code path, so any backend injects it (the
+ * git-commit capability rides on `run_shell_command`, exposed in code mode). Returns the note alone
+ * when there is no base prompt.
  */
 export function appendCommitCoAuthorNote(
   systemPrompt: string | undefined,
@@ -375,8 +367,8 @@ function capMcpText(text: string): string {
  *     the model reads is gsloth's own authority, not the server text — server instructions may not
  *     override the system instructions, safety rules, or the user's directives.
  *
- * Backend-agnostic: composed through the shared path so BOTH the lean `GthLangChainAgent` and the
- * deep `GthDeepAgent` inject it. Empty/absent contributes NOTHING: when no server supplied
+ * Backend-agnostic: composed through the shared path, so any backend injects it.
+ * Empty/absent contributes NOTHING: when no server supplied
  * (non-whitespace) instructions the base prompt is returned unchanged — no empty header, no dangling
  * label. Each server's text is trimmed and capped at {@link MCP_INSTRUCTIONS_MAX_CHARS_PER_SERVER}.
  * Returns the block alone when there is no base prompt.

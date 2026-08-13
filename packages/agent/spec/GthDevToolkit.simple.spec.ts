@@ -211,7 +211,7 @@ describe('GthDevToolkit - Basic Tests', () => {
 
     it('EXT-22 (S4): spawns with cwd === getCurrentWorkDir() (the fs-backend root)', async () => {
       await toolkit['executeCommand']('echo hi', 'run_shell_command');
-      // The shell must spawn in the same directory the deepagents FilesystemBackend is rooted at
+      // The shell must spawn in the same directory the filesystem tools are rooted at
       // (getCurrentWorkDir()), so the shell tool and the fs tools share one path namespace.
       expect(childProcessMock.spawn).toHaveBeenCalledTimes(1);
       const [, options] = childProcessMock.spawn.mock.calls[0];

@@ -196,21 +196,17 @@ function humanMessageTexts(messages: readonly Message[]): string[] {
 }
 
 /**
- * GS2-81 — the page carrying WHICH commands honor `agent.backend`, pointed at rather than
- * enumerated in the notice itself.
- *
- * The list belongs in exactly one place. A copy of it inside a runtime string is a second source of
- * truth with nothing pinning it: the first draft of this notice already disagreed with the docs
- * table written in the same commit (it omitted `workflow` agent steps), and no test could tell,
- * because a sentence is not a claim a test can check. The docs table is checkable, and
- * `agentBackendScope.spec.ts` pins that this URL's anchor still resolves to a real heading in it.
+ * EXT-114 — the page describing the `subagents` config key, pointed at rather than paraphrased in
+ * the notice itself.
  *
  * **A GitHub blob URL, matching the other user-facing runtime doc links in this repo** (the
  * approvals-protection pointer in `config/shell-policy.ts` and the 2.0 migration pointer in
  * `config/schema.ts`) — a running CLI's user has no checkout for a relative path to resolve in.
+ * `subagentScope.spec.ts` pins that this URL's anchor still resolves to a real heading in the page
+ * it names, because a doc link that silently rots is worse than no link.
  */
-export const AGENT_BACKEND_SCOPE_DOCS_URL =
-  'https://github.com/pukeko-robotics/gaunt-sloth/blob/main/docs/configuration/profiles.md#which-commands-honour-it';
+export const SUBAGENTS_DOCS_URL =
+  'https://github.com/pukeko-robotics/gaunt-sloth/blob/main/docs/configuration/profiles.md#named-profile-subagents-subagents';
 
 /** Options for {@link GthAgentRunner#init} that qualify the run without changing how it behaves. */
 export interface GthAgentRunnerInitOptions {
@@ -337,20 +333,9 @@ export class GthAgentRunner {
   private readonly approvalCaptures = new ApprovalCaptureLog();
 
   /**
-   * GS2-81 — whether the caller supplied a backend factory. When it did NOT, this runner is
-   * hard-wired to the lean default below, so a config asking for `agent.backend: 'deep'` cannot be
-   * honored no matter what it says. Recorded here (rather than inferred later) because by then the
-   * fallback has already collapsed both cases into one function.
-   */
-  private readonly backendFactorySupplied: boolean;
-
-  /**
    * @param agentFactory Produces the {@link GthAgentInterface} the runner drives.
-   *   Defaults to the lean {@link GthLangChainAgent} (core). `@gaunt-sloth/agent`
-   *   passes a factory returning a deep `GthDeepAgent` so the same runner can drive a
-   *   `createDeepAgent` graph without core depending on deepagents.
-   *   **Omitting it opts the caller out of `agent.backend`** — see {@link init}, which says so out
-   *   loud rather than letting the key be dropped in silence.
+   *   Defaults to the lean {@link GthLangChainAgent} (core). The seam stays parameterised so a
+   *   caller can drive the runner with a different graph builder without core depending on it.
    */
   constructor(
     statusUpdate: StatusUpdateCallback,
@@ -359,7 +344,6 @@ export class GthAgentRunner {
   ) {
     this.statusUpdate = statusUpdate;
     this.resolvers = resolvers;
-    this.backendFactorySupplied = agentFactory !== undefined;
     this.agentFactory =
       agentFactory ?? ((status, agentResolvers) => new GthLangChainAgent(status, agentResolvers));
   }
@@ -710,7 +694,7 @@ export class GthAgentRunner {
 
     debugLogObject('Runnable Config', this.runConfig);
 
-    this.warnIfBackendCannotBeHonored(configIn, command ?? options?.owningCommand);
+    this.warnIfSubagentsCannotBeHonored(configIn, command ?? options?.owningCommand);
 
     this.agent = this.agentFactory(this.statusUpdate, this.resolvers);
 
@@ -722,30 +706,29 @@ export class GthAgentRunner {
   }
 
   /**
-   * GS2-81 — `agent.backend` is a COMMAND-SCOPED key, and this is where a command opts out of it.
+   * EXT-114 — `subagents` is configurable but not yet dispatched, and a run that declares them must
+   * say so rather than start with a quietly smaller toolset than the config describes.
    *
-   * A caller that hands the runner no factory gets the lean {@link GthLangChainAgent}, whatever the
-   * config asked for: `agent.backend: 'deep'` is then accepted by the schema, resolved into the
-   * config, and dropped on the floor. `gth review` and `gth pr` are in exactly that position — the
-   * review module builds its runner without one, and `@gaunt-sloth/review` does not depend on
-   * `@gaunt-sloth/agent`, so the deep backend is out of its reach — as is the `gth pr` change-
-   * requirements discovery agent.
+   * The `task` tool that spawned them belonged to the deepagents runtime, which is gone; the lean
+   * primitive that replaces it is GS2-25. Until then a declared subagent is inert. Keeping the key
+   * valid is deliberate — a config written for GS2-25 should not have to be un-written and
+   * re-written — but inert-and-silent is the failure this notice exists to prevent: the parent
+   * simply does the work itself, on the parent's model, and the only visible symptom is the bill.
    *
-   * The check lives HERE, on the `agentFactory ?? lean` fallback itself, rather than in a list of
-   * verbs that cannot honor the key: a list is a second source of truth that goes stale the first
-   * time someone adds a command, whereas anything that reaches this fallback is by construction a
-   * run the key cannot reach. `lean` and the unset default need no warning — that IS what runs.
+   * Fires on EVERY run rather than only where a backend could once have honoured it, because there
+   * is no longer any run that can.
    */
-  private warnIfBackendCannotBeHonored(config: GthConfig, command: GthCommand | undefined): void {
-    if (this.backendFactorySupplied || config.agent?.backend !== 'deep') {
+  private warnIfSubagentsCannotBeHonored(config: GthConfig, command: GthCommand | undefined): void {
+    if (!config.subagents || config.subagents.length === 0) {
       return;
     }
     const scope = command ? `the ${command} command` : 'this run';
+    const names = config.subagents.map((spec) => spec.name).join(', ');
     this.statusUpdate(
       StatusLevel.WARNING,
-      `Config sets agent.backend: deep, but ${scope} always runs the lean backend, so the ` +
-        'setting has no effect here. Which commands honor it: ' +
-        AGENT_BACKEND_SCOPE_DOCS_URL
+      `Config declares subagents (${names}), but no agent backend dispatches subagents yet, so ` +
+        `${scope} runs without them. See ` +
+        SUBAGENTS_DOCS_URL
     );
   }
 

@@ -159,8 +159,8 @@ export function execCommand(
 
       if (options.allowDir && options.allowDir.length > 0) {
         displayWarning(
-          `Filesystem sandbox widened beyond cwd for this run: ${options.allowDir.join(', ')}. ` +
-            'The agent can read and write outside the project directory.'
+          `--allow-dir has no effect in this release: ${options.allowDir.join(', ')} stays ` +
+            'outside the sandbox. The agent reads and writes within the working directory only.'
         );
       }
 

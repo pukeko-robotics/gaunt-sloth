@@ -105,7 +105,6 @@ vi.mock('@gaunt-sloth/core/core/GthAgentRunner.js', () => ({
 vi.mock('@langchain/core/messages', () => ({ HumanMessage: vi.fn() }));
 vi.mock('@langchain/langgraph', () => ({ MemorySaver: vi.fn() }));
 vi.mock('#src/resolvers.js', () => ({ createResolvers: vi.fn() }));
-vi.mock('#src/core/gthDeepAgentFactory.js', () => ({ gthDeepAgentFactory: vi.fn() }));
 
 const sessionConfig = {
   mode: 'code',

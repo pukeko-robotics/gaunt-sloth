@@ -47,8 +47,8 @@ export const AVAILABLE_BUILT_IN_TOOLS = {
   /**
    * Content-search (grep) tool: ripgrep-backed regex search over file CONTENTS, with an
    * in-process JS fallback when `rg` is absent. Permission-light (no shell approval) and
-   * available in every mode. Named `gth_grep` to avoid colliding with the deep backend's
-   * built-in `grep`. Enabled by default (see {@link DEFAULT_CONFIG.builtInTools}, GS2-51); disable
+   * available in every mode. Named `gth_grep` rather than `grep` so it cannot collide with a
+   * built-in a graph builder registers under that name. Enabled by default (see {@link DEFAULT_CONFIG.builtInTools}, GS2-51); disable
    * with `{ "builtInTools": { "gth_grep": { "enabled": false } } }`. Its searched corpus is
    * selectable via the `fileSet` tool-config key (`gitignore` default / `all`).
    */

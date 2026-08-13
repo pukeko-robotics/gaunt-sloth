@@ -6,10 +6,9 @@
  * body so a softening middleware can hand the model the exact observation it saw before — the
  * only change being that the tool result's status flips to `'error'` (→ `isError` → the ✗ glyph).
  *
- * Canonical home is **core** so BOTH agents can recognise a shell failure without violating the
- * `agent → core` dependency direction:
- *  - the deep agent (`code` mode, `@gaunt-sloth/agent` `GthDeepShellExitSoftening`) and
- *  - the lean agent (`exec` / `ask --write`, core `GthLangChainAgent` `GthLeanShellExitSoftening`).
+ * Canonical home is **core** so any agent can recognise a shell failure without violating the
+ * `agent → core` dependency direction — today the lean agent (`exec` / `ask --write`, core
+ * `GthLangChainAgent` `GthLeanShellExitSoftening`).
  *
  * The throw site (`GthDevToolkit.executeCommand`) lives in the `agent` package and re-exports this
  * class, so its `throw new ShellCommandFailedError(...)` is one and the same type both agents catch.

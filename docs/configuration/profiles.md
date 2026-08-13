@@ -115,7 +115,6 @@ Each entry names a subagent (the name the model selects it by) and the profile t
 ```json
 {
   "llm": { "type": "anthropic", "model": "claude-opus-4-1" },
-  "agent": { "backend": "deep" },
   "subagents": [
     { "name": "recall", "description": "Cheap read-only search/recall.", "profile": "cheap" }
   ]
@@ -135,10 +134,11 @@ The child resolves the named profile through the same config cascade a top-level
 so it picks up that profile's model, tool selection, and prompt files. A subagent whose `profile` has
 no config directory is an error, exactly as selecting a missing profile with `--profile` is.
 
-> **Deep backend only.** Subagents are dispatched through the deepagents `task` tool, which the
-> experimental `deep` backend provides — set `agent.backend: "deep"` (see the **Agent Backend**
-> section below). The default `lean` backend does not spawn subagents yet, so `subagents` has no
-> effect there.
+> **Not dispatched yet.** No agent backend spawns subagents at present, so a declared `subagents`
+> block has no effect on a run. It stays a valid config key rather than an error, and a run that
+> declares one prints a warning naming the subagents it did not use — so the setting is announced,
+> never quietly ignored. Write the block now if you want it in place; expect no delegation until
+> subagent dispatch ships.
 
 ## AG-UI Server Configuration
 
@@ -176,12 +176,9 @@ The `api ag-ui` command reads its settings from `commands.api` in your config fi
 
 ## Agent Backend (`agent.backend`)
 
-Gaunt Sloth ships two agent backends. Select one with the top-level `agent.backend` field.
-
-| Value | Backend | Notes |
-|-------|---------|-------|
-| `lean` (**default**) | Plain LangChain agent | Recommended. Gaunt Sloth's own toolset — filesystem, hardened dev/shell, and the `gth_checklist` planning tool. Used for the CLI (`code`/`chat`), single-shot (`ask`/`exec`), the AG-UI/`api` server, and always for `review`/`pr`. |
-| `deep` | deepagents runtime | **Experimental, opt-in.** Adds subagents, `write_todos`, summarization, and large-tool-result offload, but can exhibit path divergence and sporadic failures. Selecting it prints a warning. |
+Gaunt Sloth ships one agent backend, `lean` — a plain LangChain agent carrying Gaunt Sloth's own
+toolset: filesystem, hardened dev/shell, and the `gth_checklist` planning tool. It is what every
+command runs, and what runs when the key is absent, so setting it changes nothing:
 
 ```json
 {
@@ -190,23 +187,9 @@ Gaunt Sloth ships two agent backends. Select one with the top-level `agent.backe
 }
 ```
 
-When `agent.backend` is omitted, the lean backend is used everywhere. Set `"backend": "deep"` only
-to opt into the experimental deepagents runtime (required for [subagents](#named-profile-subagents-subagents)).
+`"lean"` is the only accepted value. The key is kept so a config can state what it runs on, and so
+a second backend has a name to be selected by; a value that is not `"lean"` is a config error
+rather than a silently ignored key.
 
-### Which commands honour it
-
-`agent.backend` is **command-scoped** — `"deep"` does not reach every verb:
-
-| Command | Honours `agent.backend` |
-|---------|-------------------------|
-| `chat`, `code` (readline and TUI) | Yes |
-| `ask`, `exec` | Yes |
-| `batch`, `eval` cells, `workflow` agent steps | Yes |
-| `api` (AG-UI server) | Yes |
-| `review`, `pr` | **No** — always lean, including the `pr` change-requirements discovery agent |
-| the ACP server (`--acp-agent`) | **No** — always deep; `"lean"` is rejected with an error |
-
-A `review` or `pr` run that finds `"backend": "deep"` in its config prints a warning saying the
-setting has no effect there, so the key is never dropped in silence. To review with the deep
-backend, drive the review through a command that honours it (for example `gth ask` or `gth code`
-over the diff), or leave the key off your review profile.
+A config carrying the retired `"backend": "deep"` **fails to load**, with a message naming the
+replacement — see [Migrating to 2.0](../MIGRATION.md) for what to change and what it costs you.

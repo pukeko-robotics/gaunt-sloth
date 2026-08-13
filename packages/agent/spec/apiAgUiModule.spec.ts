@@ -24,27 +24,8 @@ vi.mock('@langchain/langgraph', () => ({
   MemorySaver: memorySaverMock,
 }));
 
-const gthDeepAgentCtorMock = vi.fn();
-const gthDeepAgentInitMock = vi.fn();
-const gthDeepAgentStreamMock = vi.fn();
-const gthDeepAgentStreamWithEventsMock = vi.fn();
-const gthDeepAgentStreamWithEventsResumeMock = vi.fn();
-vi.mock('#src/core/GthDeepAgent.js', () => {
-  const GthDeepAgent = vi.fn(function (this: unknown, ...args: unknown[]) {
-    gthDeepAgentCtorMock(...args);
-  });
-  GthDeepAgent.prototype.init = gthDeepAgentInitMock;
-  GthDeepAgent.prototype.stream = gthDeepAgentStreamMock;
-  GthDeepAgent.prototype.streamWithEvents = gthDeepAgentStreamWithEventsMock;
-  GthDeepAgent.prototype.streamWithEventsResume = gthDeepAgentStreamWithEventsResumeMock;
-  return {
-    GthDeepAgent,
-  };
-});
-
-// B5: the lean backend. createConfiguredAgent constructs this instead of GthDeepAgent
-// when config.agent.backend === 'lean'. Mirror the same init/stream surface so a lean run
-// flows through the AG-UI handler unchanged.
+// B5: the lean backend — the one createConfiguredAgent constructs, whatever agent.backend says.
+// Mirrors the init/stream surface the AG-UI handler drives.
 const gthLangChainAgentCtorMock = vi.fn();
 const gthLangChainAgentInitMock = vi.fn();
 const gthLangChainAgentStreamWithEventsMock = vi.fn();
@@ -180,7 +161,6 @@ describe('apiAgUiModule', () => {
     // clearAllMocks keeps implementations intact (e.g. HumanMessage/AIMessage constructor mocks).
     // resetAllMocks would strip them, breaking `new HumanMessage()` calls inside the handler.
     vi.clearAllMocks();
-    gthDeepAgentInitMock.mockResolvedValue(undefined);
     gthLangChainAgentInitMock.mockResolvedValue(undefined);
     gthLangChainAgentStreamWithEventsMock.mockReturnValue(emptyStream());
     gthLangChainAgentStreamWithEventsResumeMock.mockReturnValue(emptyStream());
@@ -195,9 +175,6 @@ describe('apiAgUiModule', () => {
     EventEncoderMock.mockImplementation(function () {
       return mockEncoderInstance;
     });
-    gthDeepAgentStreamMock.mockReturnValue(emptyStream());
-    gthDeepAgentStreamWithEventsMock.mockReturnValue(emptyStream());
-    gthDeepAgentStreamWithEventsResumeMock.mockReturnValue(emptyStream());
     // Reset to default so tests that override it don't bleed into the next test
     llmUtilsMock.buildSystemMessages.mockReturnValue([]);
   });
@@ -552,11 +529,10 @@ describe('apiAgUiModule', () => {
 
     // ─── System prompt lives in the graph, not the request ─────────────────
 
-    it('should NOT prepend a system message — the prompt lives in the deep-agent graph', async () => {
-      // The system prompt (backstory + guidelines + mode prompt + identity) is set on the
-      // deep-agent graph via createDeepAgent({ systemPrompt }); AG-UI must not inject a second,
-      // non-first SystemMessage (Anthropic rejects that). The module no longer calls
-      // buildSystemMessages at all.
+    it('should NOT prepend a system message — the prompt lives in the agent graph', async () => {
+      // The system prompt (backstory + guidelines + mode prompt + identity) is composed by the
+      // agent and set on its graph; AG-UI must not inject a second, non-first SystemMessage
+      // (Anthropic rejects that). The module no longer calls buildSystemMessages at all.
       const handler = await getRunHandler();
       const req = makeRunReq({
         threadId: 'fresh-thread-abc',
@@ -1144,24 +1120,8 @@ describe('apiAgUiModule', () => {
     it('uses the lean backend when agent.backend is undefined (default)', async () => {
       await startAndGetHandler(baseConfig);
 
-      // Lean is the default: the static server agent is a GthLangChainAgent; deep is never built.
       expect(gthLangChainAgentCtorMock).toHaveBeenCalledTimes(1);
       expect(gthLangChainAgentInitMock).toHaveBeenCalledWith('api', baseConfig, expect.anything());
-      expect(gthDeepAgentCtorMock).not.toHaveBeenCalled();
-      expect(gthDeepAgentInitMock).not.toHaveBeenCalled();
-    });
-
-    it("uses the deep backend for agent.backend: 'deep'", async () => {
-      const config = {
-        commands: { api: { port: 3000 } },
-        agent: { backend: 'deep' },
-      } as unknown as GthConfig;
-
-      await startAndGetHandler(config);
-
-      expect(gthDeepAgentCtorMock).toHaveBeenCalledTimes(1);
-      expect(gthDeepAgentInitMock).toHaveBeenCalledWith('api', config, expect.anything());
-      expect(gthLangChainAgentCtorMock).not.toHaveBeenCalled();
     });
 
     it("uses the lean backend (GthLangChainAgent) for agent.backend: 'lean'", async () => {
@@ -1172,11 +1132,8 @@ describe('apiAgUiModule', () => {
 
       await startAndGetHandler(config);
 
-      // The static server agent is now a GthLangChainAgent; the deep agent is never built.
       expect(gthLangChainAgentCtorMock).toHaveBeenCalledTimes(1);
       expect(gthLangChainAgentInitMock).toHaveBeenCalledWith('api', config, expect.anything());
-      expect(gthDeepAgentCtorMock).not.toHaveBeenCalled();
-      expect(gthDeepAgentInitMock).not.toHaveBeenCalled();
     });
 
     it('routes the per-tool-set agent through the lean backend too', async () => {
@@ -1194,9 +1151,8 @@ describe('apiAgUiModule', () => {
 
       await handler(req, makeMockRes());
 
-      // Static agent + per-toolset agent — both lean, deep never constructed.
+      // Static agent + per-toolset agent.
       expect(gthLangChainAgentCtorMock).toHaveBeenCalledTimes(2);
-      expect(gthDeepAgentCtorMock).not.toHaveBeenCalled();
     });
 
     it('routes the per-tool-set agent through the lean backend by default', async () => {
@@ -1208,9 +1164,8 @@ describe('apiAgUiModule', () => {
 
       await handler(req, makeMockRes());
 
-      // Static agent + per-toolset agent — both lean by default, deep never constructed.
+      // Static agent + per-toolset agent.
       expect(gthLangChainAgentCtorMock).toHaveBeenCalledTimes(2);
-      expect(gthDeepAgentCtorMock).not.toHaveBeenCalled();
     });
   });
 

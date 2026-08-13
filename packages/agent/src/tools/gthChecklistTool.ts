@@ -1,8 +1,7 @@
 /**
  * @module gthChecklistTool
- * The `gth_checklist` planning tool — the lean agent's first-party equivalent of the deepagents
- * `write_todos` capability. Gives the model a durable, structured task list for multi-step work so
- * it can plan, track progress, and stay oriented across a long run.
+ * The `gth_checklist` planning tool. Gives the model a durable, structured task list for
+ * multi-step work so it can plan, track progress, and stay oriented across a long run.
  *
  * Design (mirrors Claude Code's `TodoWrite` / opencode's todo tools): the model sends the WHOLE
  * list every call and it REPLACES the previous one (no incremental add/remove verbs to keep in
@@ -12,8 +11,8 @@
  * checkbox panel (see {@link file://../../../app/src/tui/viewModel.ts} `CHECKLIST_TOOL_NAME`).
  *
  * The name is deliberately NOT `write_todos` (nor `task`/`read_file`/`write_file`/`edit_file`/`ls`):
- * on the experimental deep backend `createDeepAgent` throws on a name collision with its built-ins,
- * and both backends share the same resolved toolset.
+ * a graph builder registering built-ins of its own throws on a name collision, and every backend is
+ * handed the same resolved toolset.
  */
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';

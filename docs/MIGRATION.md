@@ -67,6 +67,8 @@ these before you upgrade.
 | `--content-provider` / `--requirements-provider` CLI flags removed | Scripts passing those flags error out | `--content-source` / `--requirements-source` (`-p` still aliases `--requirements-source`) |
 | `ContentProviderType` / `RequirementsProviderType` type exports removed, and the runtime `contentProvider` / `requirementsProvider` fields removed | TypeScript / programmatic configs that import those types or read those fields fail to compile or resolve | Use `contentSource` / `requirementSource` (and their `string` types) |
 | The `gaunt-sloth` app package no longer exports modules (its `exports` map keeps only `./package.json`) | Any `import ... from 'gaunt-sloth/<path>'` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`; the CLI binaries (`gth`, `gsloth`, `gaunt-sloth`) are unaffected | Import from the scoped packages instead: `@gaunt-sloth/core`, `@gaunt-sloth/agent`, `@gaunt-sloth/review` (see each package's README for the embed surface) |
+| The `deep` agent backend removed | `agent.backend: "deep"` is a validation abort: `Agent backend "deep" is no longer supported: Gaunt Sloth ships one agent backend.` | Remove the `agent` block, or set `"backend": "lean"` (see section J) |
+| The ACP server stubbed | `gaunt-sloth-acp` and `gaunt-sloth --acp-agent` exit non-zero without serving; an ACP host (Zed, JetBrains) reports the agent as failing to start | Use the AG-UI server (`gth api`) or a terminal session until ACP returns (see section J) |
 
 There is also one behaviour change (array merge across config layers) that is not a
 validation error but can change results silently. It is covered in section D below.
@@ -519,6 +521,45 @@ object to write instead. The fields are listed in
 
 See [Shell tool & approvals](guides/shell-tool-and-approvals.md).
 
+## J. The `deep` agent backend and the ACP server (HARD)
+
+Gaunt Sloth's optional second agent backend, `deep`, was a wrapper around a third-party agent
+runtime. It is gone, and with it the only ACP (Agent Client Protocol) server implementation, which
+was built on it.
+
+### `agent.backend: "deep"`
+
+A config still naming it **fails to load**:
+
+```
+Agent backend "deep" is no longer supported: Gaunt Sloth ships one agent backend.
+Use "lean" — the only backend there is. …
+```
+
+Remove the `agent` block, or set `"backend": "lean"`. It is a hard error rather than a silent
+fallback on purpose: a config asking for `deep` is asking for behaviour that no longer exists, and
+running a different agent without saying so would surface later as an unexplained change in what
+the agent can do.
+
+What actually changes, if you were using it:
+
+| What `deep` provided | Where you stand now |
+| --- | --- |
+| Subagent dispatch (the `task` tool) | Not available. `subagents` stays a valid config key and a run that declares one says so, but nothing spawns them. |
+| Automatic history summarization | Not available. |
+| Large-tool-result offload to a file | Not available; oversized tool results are truncated instead. |
+| The toolset, the composed system prompt, the approvals gate, `gth_checklist`, `gth_grep` | Unchanged — these were never `deep`-only. |
+
+### The ACP server
+
+`gaunt-sloth-acp` and `gaunt-sloth --acp-agent` still exist and still resolve — removing them would
+break an editor that has the command wired in — but they now print an explanation and exit
+non-zero. If you drive Gaunt Sloth from an ACP host (Zed, JetBrains), that integration stops
+working until ACP is rebuilt on Gaunt Sloth's own agent.
+
+Meanwhile: `gth api` runs the AG-UI server for a programmatic front door, and `gth chat` / `gth
+code` run in a terminal.
+
 ## Interactive slash commands (renames)
 
 Inside `chat`/`code` sessions (both the TUI and the plain `--no-tui` readline surface, which now
@@ -559,4 +600,6 @@ share one command registry):
    want the new `assisted` default or `"write"` (I).
 8. Rename `projectGuidelines` → `prompts.guidelines` and `projectReviewInstructions` →
    `prompts.review` (H).
-9. Run `gth config validate` (and optionally `gth config print`) to confirm the result.
+9. Remove `agent.backend: "deep"` (or set it to `"lean"`), and move off the ACP server if you
+   were driving Gaunt Sloth from an ACP host (J).
+10. Run `gth config validate` (and optionally `gth config print`) to confirm the result.

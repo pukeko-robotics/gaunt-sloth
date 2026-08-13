@@ -742,7 +742,7 @@ const apiCommandSchema = z.object({
 /**
  * GS2-33 — one profile-backed subagent: a `name` the model selects it by, an optional
  * `description`, and the named config `profile` the CHILD resolves through the GS2-1 cascade when
- * spawned. See {@link SubagentProfileSpec}.
+ * spawned. Not dispatched yet — see the `subagents` field below. See {@link SubagentProfileSpec}.
  */
 const subagentSpecSchema = z.object({
   name: z.string(),
@@ -783,13 +783,14 @@ export const rawGthConfigSchema = z.looseObject({
   // extend another, with a cycle guard). Consumed during load — never appears in the resolved
   // config. See `resolveConfigExtends` in loader.ts.
   extends: z.string().optional(),
-  // Selects the agent backend. `lean` (the default when omitted) uses the plain LangChain agent
-  // with gsloth's full toolset (no `/large_tool_results` offload). `deep` is the EXPERIMENTAL,
-  // opt-in deepagents runtime and emits a warning when selected. The key is COMMAND-SCOPED:
-  // `review`/`pr` always run lean and warn when it asks for `deep`; the ACP server is deep-only.
+  // Selects the agent backend. `lean` — the plain LangChain agent with gsloth's full toolset — is
+  // the only one, and the default when omitted, so the key exists to let a config say so
+  // explicitly. The retired `deep` value is rejected with a migration message (EXT-114); see
+  // RETIRED_AGENT_BACKENDS. Kept as an enum rather than dropped so a future backend has a name to
+  // be selected by, and so a typo stays an error instead of an ignored unknown key.
   agent: z
     .object({
-      backend: z.enum(['deep', 'lean']).optional(),
+      backend: z.enum(['lean']).optional(),
     })
     .optional(),
   // GS2-7 (B20) — local, opt-in session history. DEFAULT OFF: absent or `enabled: false` means
@@ -936,8 +937,13 @@ export const rawGthConfigSchema = z.looseObject({
   // reporters use; a name here overrides a built-in of the same name.
   reporters: z.record(z.string(), z.string()).optional(),
   // GS2-33 — profile-backed subagents. Each entry names a subagent and the named config profile the
-  // CHILD resolves when the deep backend's `task` tool spawns it, so a subagent can run under a
-  // different model/tools/prompt than the parent. See {@link subagentSpecSchema}.
+  // CHILD resolves when the parent spawns it, so a subagent can run under a different
+  // model/tools/prompt than the parent. See {@link subagentSpecSchema}.
+  //
+  // No backend dispatches subagents today — the `task` tool went with the deepagents runtime
+  // (EXT-114) and the lean primitive lands in GS2-25. The key is KEPT rather than retired so a
+  // config that already declares subagents keeps validating, and a run that declares them says so
+  // out loud (see `warnIfSubagentsCannotBeHonored`) instead of dropping them in silence.
   subagents: z.array(subagentSpecSchema).optional(),
 });
 
@@ -1142,6 +1148,26 @@ const RETIRED_APPROVAL_MODES: ReadonlyArray<readonly [string, string]> = [
 ];
 
 /**
+ * EXT-114 — retired `agent.backend` VALUES → what to say instead. `[retired, replacement]`.
+ *
+ * Caught pre-parse for the same reason as {@link RETIRED_APPROVAL_MODES}: the enum's own message
+ * would list the surviving identifier and leave the user to guess whether their setting still
+ * means anything. It does not — `deep` named a runtime that no longer exists, so the value is a
+ * HARD error rather than a coercion to `lean`. Coercing would silently run a different agent than
+ * the config asked for, which is precisely the substitution a config file exists to prevent, and
+ * the run that mattered (subagents, summarization, large-tool-result offload) would come back
+ * looking like a capability regression with nothing to point at.
+ */
+const RETIRED_AGENT_BACKENDS: ReadonlyArray<readonly [string, string]> = [
+  [
+    'deep',
+    '"lean" — the only backend there is. It carries the same toolset, system prompt, ' +
+      'approval gate and checklist; what leaves with "deep" is the deepagents-only extras ' +
+      '(the subagent "task" tool, summarization and large-tool-result offload)',
+  ],
+];
+
+/**
  * Pointer to the migration path, appended to every deprecated-shape error so the user
  * always learns HOW to fix it, not just that it broke. Doc link only, per DOC-STYLE
  * rule 9 (user-visible doc references are absolute GitHub URLs).
@@ -1271,6 +1297,30 @@ function collectRetiredApprovalsIssues(
 }
 
 /**
+ * EXT-114 — scan the `agent` value for a retired `backend` name ({@link RETIRED_AGENT_BACKENDS}),
+ * pushing one issue per occurrence so the error names the surviving backend and what the retired
+ * one took with it.
+ */
+function collectRetiredAgentBackendIssues(
+  agent: unknown,
+  pathPrefix: string,
+  issues: DeprecatedConfigIssue[]
+): void {
+  if (!agent || typeof agent !== 'object' || Array.isArray(agent)) return;
+  const backend = (agent as Record<string, unknown>).backend;
+  for (const [retired, replacement] of RETIRED_AGENT_BACKENDS) {
+    if (backend === retired) {
+      issues.push({
+        path: `${pathPrefix}.backend`,
+        message:
+          `Agent backend "${retired}" is no longer supported: Gaunt Sloth ships one agent ` +
+          `backend. Use ${replacement}. ${MIGRATION_HINT}`,
+      });
+    }
+  }
+}
+
+/**
  * GS2-28 — detect the removed pre-2.0 config shapes on the RAW input (read-only; no
  * mutation), returning one {@link DeprecatedConfigIssue} per occurrence. A non-empty
  * result is a HARD validation failure: 2.0 dropped back-compat coercion, so an old shape
@@ -1287,7 +1337,9 @@ function collectRetiredApprovalsIssues(
  *   — each message names the `approvals.*` key that replaced it;
  * - (F, CFG-27) a retired `approvals` key or `mode` value ({@link RETIRED_APPROVALS_KEYS},
  *   {@link RETIRED_APPROVAL_MODES}) at EITHER `approvals.*` or `commands.<cmd>.approvals.*` —
- *   each message names the rung that replaced it.
+ *   each message names the rung that replaced it;
+ * - (G, EXT-114) a retired `agent.backend` value ({@link RETIRED_AGENT_BACKENDS}) — the message
+ *   names the surviving backend and what the retired one took with it.
  *
  * Runs on the raw input specifically so nested `commands.*.contentProvider` is still visible
  * (zod's per-command `z.object` would strip it before any schema-embedded check could fire).
@@ -1326,6 +1378,9 @@ export function findDeprecatedConfigIssues(raw: Record<string, unknown>): Deprec
 
   // (F, CFG-27) Retired approvals keys / mode values in the ROOT approvals value.
   collectRetiredApprovalsIssues(raw.approvals, 'approvals', issues);
+
+  // (G, EXT-114) Retired agent backend name. Root-only: `agent` is not a per-command key.
+  collectRetiredAgentBackendIssues(raw.agent, 'agent', issues);
 
   // (C) Deprecated *Provider* names + (CFG-18) removed keys inside each commands.<name> block.
   const commands = raw.commands;

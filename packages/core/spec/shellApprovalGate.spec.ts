@@ -4,7 +4,7 @@ import { StatusLevel } from '#src/core/types.js';
 
 /**
  * EXT-52 — `resolveShellApprovalGate` is the ONE shell approval-gate policy both backends read
- * (GthLangChainAgent installs `humanInTheLoopMiddleware` from it, GthDeepAgent passes deepagents
+ * (GthLangChainAgent installs `humanInTheLoopMiddleware` from it, and any future backend passes
  * an `interruptOn` from it). These pin the decision AND the exact user-facing notice copy, so the
  * two backends cannot drift apart again.
  */

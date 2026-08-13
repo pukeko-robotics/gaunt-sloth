@@ -58,7 +58,7 @@ top-level one. Available tools:
 
 | Tool | Description |
 |------|-------------|
-| `gth_checklist` | Planning / todo checklist for multi-step work (the lean agent's `write_todos` equivalent). Renders as a live checkbox panel in the TUI. **Enabled by default.** |
+| `gth_checklist` | Planning / todo checklist for multi-step work. Renders as a live checkbox panel in the TUI. **Enabled by default.** |
 | `gth_grep` | Regex search over file **contents** (ripgrep-backed, with an in-process fallback) — finds where a symbol or string appears, complementing `search_files`, which matches file **names**. Available in every mode; needs no shell approval. **Enabled by default.** Honors `.aiignore` and takes a `fileSet` option — see [Content search (`gth_grep`)](#content-search-gth_grep) below. |
 | `gth_web_fetch` | Fetch content from an HTTP/HTTPS URL. |
 | `gth_status_update` | Print a short status line to the console. |

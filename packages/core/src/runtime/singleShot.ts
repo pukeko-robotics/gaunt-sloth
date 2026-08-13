@@ -46,9 +46,8 @@ export interface SingleShotResult extends GthRunStats {
  * @param resolvers - Optional agent resolvers (tools/middleware)
  * @param command - The originating command (defaults to `ask`); selects the agent mode prompt
  * @param agentFactory - Optional backend factory (B5). When omitted the runner uses its built-in
- *   lean {@link GthLangChainAgent} default and warns if `agent.backend` asked for `deep`, since
- *   omitting it opts the run out of that key. The app layer passes
- *   `resolveAgentFactory(config, 'lean')` so an explicit `agent.backend` is honored.
+ *   lean {@link GthLangChainAgent} default. The app layer passes `resolveAgentFactory(config,
+ *   'lean')`, which resolves to the same agent through the shared backend seam.
  * @returns A {@link SingleShotResult}: `ok` is `true` when the run completed without error, `false`
  *   when it failed (so callers such as `exec` can set a non-zero exit code); `answer`/`tokensInput`/
  *   `tokensOutput`/`tools` carry the SUT's answer text and run stats for callers that need them
@@ -57,8 +56,8 @@ export interface SingleShotResult extends GthRunStats {
 export async function runSingleShot(
   source: string,
   // BATCH-13: `_preamble` is retained for signature stability but is NO LONGER injected as a
-  // SystemMessage. The agent backends (lean `GthLangChainAgent` since GS2-21, and `GthDeepAgent`)
-  // each COMPOSE the full system prompt themselves from the same config — backstory + guidelines +
+  // SystemMessage. The agent (lean `GthLangChainAgent`, since GS2-21) COMPOSES the full system
+  // prompt itself from the config — backstory + guidelines +
   // per-command mode prompt + system prompt, PLUS the model-identity (GS2-34) and MCP-instructions
   // (EXT-32) notes — and hand it to `createAgent` as `systemPrompt`. Also passing this preamble as a
   // leading SystemMessage produced TWO system messages, which `@langchain/anthropic` rejects

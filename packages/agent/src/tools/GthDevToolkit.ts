@@ -23,11 +23,10 @@ import { buildScrubbedEnv } from '#src/tools/shell/env.js';
 import { OutputBuffer } from '#src/tools/shell/outputBuffer.js';
 import { getShellWorkDir } from '#src/tools/shell/workDir.js';
 
-// EXT-21: `ShellCommandFailedError` moved to core so BOTH agents can recognise a shell failure
+// EXT-21: `ShellCommandFailedError` lives in core so any agent can recognise a shell failure
 // without breaking the agent→core dependency direction (the lean `GthLangChainAgent` lives in core
-// and cannot import from agent). Re-exported here so the historical import site
-// (`#src/tools/GthDevToolkit.js`) — GthDeepAgent + the existing GthDevToolkit specs — keeps working
-// and every throw below is one and the same core type both agents' softeners catch.
+// and cannot import from agent). Re-exported here so `#src/tools/GthDevToolkit.js` importers
+// resolve it too, and every throw below is one and the same core type the softener catches.
 export { ShellCommandFailedError } from '@gaunt-sloth/core/core/shell/ShellCommandFailedError.js';
 
 // Grace period (ms) between SIGTERM and the escalation to SIGKILL when a command
@@ -151,8 +150,8 @@ export default class GthDevToolkit extends BaseToolkit {
   private commands: GthDevToolsConfig;
   /**
    * The active command, threaded through so the EXT-12 absent-config default for the shell
-   * tool (ON in `code`, OFF elsewhere) is resolved consistently with the deep agent's
-   * interrupt wiring. Omitted → historical OFF-by-default behaviour.
+   * tool (ON in `code`, OFF elsewhere) is resolved consistently with the approval-interrupt
+   * wiring. Omitted → historical OFF-by-default behaviour.
    */
   private readonly command: GthCommand | undefined;
 
@@ -289,13 +288,9 @@ export default class GthDevToolkit extends BaseToolkit {
     return new Promise((resolve, reject) => {
       const child = spawn(command, {
         shell: true,
-        // EXT-22 (S4) / EXT-23: spawn in the SAME directory the deepagents FilesystemBackend is
-        // rooted at, so the shell tool and the fs tools (ls/read_file/write_file/edit_file/glob/grep)
-        // operate on one path namespace instead of diverging. `getShellWorkDir()` returns
-        // `getCurrentWorkDir()` on the local code/chat runner + AG-UI (where init() roots the backend
-        // at `rootDir: getCurrentWorkDir()`), and the ACP session override on the ACP transport (where
-        // `gthAcpServer` re-roots the per-session backend to `session/new.cwd` and updates the
-        // override to match — see tools/shell/workDir.ts). Evaluated at call time.
+        // EXT-22 (S4) / EXT-23: spawn in the SAME directory the filesystem tools are rooted at, so
+        // the shell tool and the fs tools operate on one path namespace instead of diverging.
+        // Resolved through the shared seam (see tools/shell/workDir.ts) and evaluated at call time.
         cwd: getShellWorkDir(),
         // (1) Never let the child block on stdin (e.g. git commit opening $EDITOR).
         stdio: ['ignore', 'pipe', 'pipe'],
