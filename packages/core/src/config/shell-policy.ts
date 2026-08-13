@@ -475,12 +475,12 @@ export const APPROVAL_WRITE_MODIFIER_HINT =
  *    rather than merely convenient: these strings render on terminal surfaces only, and every
  *    surface that renders them is a session a person is sitting in, so a claim scoped to *this
  *    session* describes the only place the sentence appears rather than hedging around a
- *    falsehood. Unscoped it would not:
- *    a sentence whose subject is "Gaunt Sloth" and whose claim is that it always asks is false over
- *    the AG-UI and ACP servers, which never drain an approval interrupt ([[EXT-54]] — worth fixing
- *    on its own merits, never as a gate on this copy). **That is also the boundary: the moment an
- *    approvals string is rendered by a server surface this ruling stops covering it**, and the
- *    scoped sentence has to be re-earned there rather than inherited from here.
+ *    falsehood. Unscoped it would not: a sentence whose subject is "Gaunt Sloth" and whose claim
+ *    is that it always asks is false over the AG-UI and ACP servers, which never drain an approval
+ *    interrupt ([[EXT-54]] — worth fixing on its own merits, never as a gate on this copy).
+ *    **That is also the boundary: the moment an approvals string is rendered by a server surface
+ *    this ruling stops covering it**, and the scoped sentence has to be re-earned there rather
+ *    than inherited from here.
  * 3. **`assisted` MUST keep the sentence saying files are still rewritten and deleted without
  *    asking** — it sounds safer than it is, and that clause is the correction.
  * 4. **A qualification may not live in the second sentence alone.** The picker, the text fallback
