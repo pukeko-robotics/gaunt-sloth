@@ -1,0 +1,119 @@
+/**
+ * @packageDocumentation
+ * CFG-42 — keep a subagent's private reasoning out of the result its parent reads.
+ *
+ * deepagents' `task` tool reports a delegation by taking the subagent's last AI message and reading
+ * `BaseMessage.text`. Gemini returns a thought summary as a content block marked `thought: true` and
+ * typed `text` exactly like an answer block, so `.text` folds the thinking into the answer and the
+ * parent model receives the child's reasoning as its report. The two are concatenated with no
+ * separator, so by the time the parent sees the `ToolMessage` there is nothing left to filter —
+ * the redaction has to happen while the content is still a block array.
+ *
+ * **Where it happens, and why there.** `afterAgent` on the subagent is the last hook before
+ * `task` builds its result, and the subagent's `messages` are excluded from the state update the
+ * parent receives, so this is the one and only thing that escapes the child. Redacting here changes
+ * nothing about how the child reasons: every model call in the run has already happened, and what
+ * `@langchain/google` puts on the wire for a replayed text part is `{ text }` alone — it drops
+ * `thought` and `thoughtSignature` from text parts, so a redacted history and an unredacted one
+ * produce the same request. Signatures that matter ride on `functionCall` parts (and on
+ * `tool_calls[].thoughtSignature`), which are typed `functionCall` and therefore never matched.
+ *
+ * **Why not at the model.** The general-purpose subagent shares the parent's model instance, so
+ * asking that instance to withhold summaries would blind the parent's own reasoning panel too. The
+ * leak is about what a third party is HANDED, not about what the model produces.
+ *
+ * The match is `stripReasoningBlocks`' — shape-driven and provider-agnostic — so a message carrying
+ * no reasoning block yields no state update at all and every other provider's content is untouched.
+ */
+import { stripReasoningBlocks } from '@gaunt-sloth/core/core/reasoningBlocks.js';
+import { AIMessage } from '@langchain/core/messages';
+import type { StructuredToolInterface } from '@langchain/core/tools';
+import { createMiddleware } from 'langchain';
+import { GENERAL_PURPOSE_SUBAGENT, type SubAgent } from 'deepagents';
+
+/** Middleware name, so a test (and a `Loaded middleware:` line) can name it without a string copy. */
+export const SUBAGENT_THOUGHT_REDACTION_MIDDLEWARE_NAME = 'GthSubagentThoughtRedaction';
+
+/** The one AI-message field set that must survive a redaction untouched. */
+function redactAssistantMessage(message: AIMessage, content: unknown): AIMessage {
+  // Keep the concrete class (an AIMessageChunk stays a chunk) and the id — the messages reducer
+  // REPLACES by id, so a copy that lost its id would be appended beside the original instead.
+  const Constructor = message.constructor as new (fields: Record<string, unknown>) => AIMessage;
+  return new Constructor({
+    id: message.id,
+    name: message.name,
+    content,
+    additional_kwargs: message.additional_kwargs,
+    response_metadata: message.response_metadata,
+    tool_calls: message.tool_calls,
+    invalid_tool_calls: message.invalid_tool_calls,
+    usage_metadata: message.usage_metadata,
+  });
+}
+
+/**
+ * Strip reasoning blocks from a subagent's assistant messages as its run ends, so the `task` tool
+ * builds the parent's result from the answer alone. Returns NO state update when nothing matched,
+ * which is what makes an ordinary (no-thought-part) delegation byte-identical rather than merely
+ * equal.
+ */
+export function createSubagentThoughtRedactionMiddleware() {
+  return createMiddleware({
+    name: SUBAGENT_THOUGHT_REDACTION_MIDDLEWARE_NAME,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    afterAgent: (state: any) => {
+      const messages: unknown = state?.messages;
+      if (!Array.isArray(messages)) return undefined;
+      const redacted: AIMessage[] = [];
+      for (const message of messages) {
+        if (!AIMessage.isInstance(message)) continue;
+        const content = stripReasoningBlocks(message.content);
+        // Identity, not equality: `stripReasoningBlocks` hands back the input reference whenever
+        // no block matched, so this skips every message that carries no reasoning.
+        if (content === message.content) continue;
+        redacted.push(redactAssistantMessage(message, content));
+      }
+      return redacted.length > 0 ? { messages: redacted } : undefined;
+    },
+  });
+}
+
+/** Add the redaction middleware to a declarative subagent spec, keeping its own middleware. */
+export function withThoughtRedaction(subagent: SubAgent): SubAgent {
+  return {
+    ...subagent,
+    middleware: [
+      ...((subagent as { middleware?: unknown[] }).middleware ?? []),
+      createSubagentThoughtRedactionMiddleware(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ] as any,
+  };
+}
+
+/**
+ * gsloth's copy of deepagents' default general-purpose subagent, carrying the redaction middleware.
+ *
+ * `createDeepAgent` adds its own general-purpose subagent only when no declared subagent already
+ * claims that name, and it merges caller middleware into that one with `appendNew: false` — so a
+ * middleware gsloth passes to `createDeepAgent` reaches the parent graph but NEVER the default
+ * subagent. Declaring the subagent ourselves is the supported way in (deepagents documents the
+ * "custom general-purpose variant" shape); everything else about it — the fs/todo/summarization
+ * middleware, the permissions, the HITL gating — is still assembled by deepagents from the same spec
+ * fields, because its own general-purpose subagent travels this exact code path.
+ *
+ * Name, description and prompt are spread from deepagents' exported constant so they track the
+ * library. The one thing this does not reproduce is the harness-profile prompt overlay deepagents
+ * applies to its own copy (a `systemPromptSuffix` registered for some Anthropic and Codex model
+ * specs): the resolution behind it is not exported.
+ */
+export function buildGeneralPurposeSubagent(params: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  model: any;
+  tools: StructuredToolInterface[];
+}): SubAgent {
+  return withThoughtRedaction({
+    ...GENERAL_PURPOSE_SUBAGENT,
+    model: params.model,
+    tools: params.tools as never,
+  });
+}

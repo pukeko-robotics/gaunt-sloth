@@ -188,6 +188,27 @@ describe('gaunt-sloth-acp never renders Gemini thinking as the answer (CFG-33)',
     });
   });
 
+  /**
+   * CFG-42 — the families the ENABLE path skips are not families the disable path may skip.
+   * `@langchain/google` sets `includeThoughts: true` itself for a 3.x image/tts model once a budget
+   * is configured, so a shared "does this model produce summaries?" guard let exactly those
+   * summaries reach the IDE as answer text. Driven end-to-end, like the case above.
+   */
+  it('withholds the summary on an image model, where the library asks for one itself', async () => {
+    const bodies = stubGeminiEndpoint();
+    const model = await modelHandedToAcp({
+      model: 'gemini-3.6-flash-image',
+      thinkingBudget: 8192,
+    });
+
+    const message = (await model.invoke('draw the sheep')) as AIMessage;
+    const updates = await routeThroughAcpServer(model, message);
+
+    expect(bodies[0]?.generationConfig?.thinkingConfig).toMatchObject({ includeThoughts: false });
+    expect(textOf(updates, 'agent_message_chunk')).not.toContain(THOUGHT_TEXT);
+    expect(textOf(updates, 'agent_message_chunk')).toContain(ANSWER_TEXT);
+  });
+
   it('control: deepagents-acp DOES route a properly typed thinking block to the thought channel', async () => {
     stubGeminiEndpoint();
     const model = await modelHandedToAcp();

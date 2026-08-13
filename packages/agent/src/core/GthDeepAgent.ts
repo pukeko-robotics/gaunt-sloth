@@ -50,7 +50,13 @@ import type { StructuredToolInterface } from '@langchain/core/tools';
 import type { BaseCheckpointSaver } from '@langchain/langgraph';
 import { GraphInterrupt } from '@langchain/langgraph';
 import { createMiddleware, type InterruptOnConfig } from 'langchain';
-import { createDeepAgent, FilesystemBackend, type SubAgent } from 'deepagents';
+import {
+  createDeepAgent,
+  FilesystemBackend,
+  GENERAL_PURPOSE_SUBAGENT,
+  type SubAgent,
+} from 'deepagents';
+import { buildGeneralPurposeSubagent } from '#src/core/subagentThoughtRedaction.js';
 import {
   buildPermissions,
   DEEP_AGENT_BUILT_IN_TOOL_NAMES,
@@ -388,12 +394,32 @@ export class GthDeepAgent extends GthAbstractAgent {
       }
     }
 
+    // CFG-42 — declare the general-purpose subagent ourselves, so it carries the thought-redaction
+    // middleware that keeps a child's private reasoning out of the `task` result its parent reads.
+    // `createDeepAgent` adds its own general-purpose subagent only when no declared subagent claims
+    // that name, and merges caller `middleware` into it with `appendNew: false` — so nothing passed
+    // below can reach it and declaring the subagent is the only seam. A configured profile subagent
+    // that already claims the name wins: it comes back from buildProfileSubagents with the same
+    // middleware, so redaction holds either way.
+    const profileSubagents = subagents ?? [];
+    const deepSubagents = profileSubagents.some(
+      (subagent) => subagent.name === GENERAL_PURPOSE_SUBAGENT.name
+    )
+      ? profileSubagents
+      : [
+          buildGeneralPurposeSubagent({
+            model: params.model,
+            tools: params.tools as StructuredToolInterface[],
+          }),
+          ...profileSubagents,
+        ];
+
     this.agent = createDeepAgent({
       model: params.model,
       tools: params.tools as StructuredToolInterface[],
-      // GS2-33 — profile-backed subagents (undefined when none configured → deepagents' default
-      // general-purpose subagent only, unchanged behaviour).
-      subagents,
+      // GS2-33 — profile-backed subagents (config `subagents`), plus the general-purpose subagent
+      // gsloth declares above.
+      subagents: deepSubagents,
       // gsloth's composed prompt, combined ADDITIVELY by deepagents with its base + fs prompts
       // into a single system message (avoids the two-system-message Anthropic rejection).
       systemPrompt,

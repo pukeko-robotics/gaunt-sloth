@@ -118,4 +118,31 @@ describe('buildProfileSubagents — subagent profile reuse (GS2-33)', () => {
     expect((subagents[0].model as { _id: string })._id).toBe('cheap-model');
     expect((subagents[1].model as { _id: string })._id).toBe('strong-model');
   });
+
+  it('CFG-42: every profile subagent redacts its own reasoning out of the task result', async () => {
+    // A profile subagent leaks a Gemini thought summary through the `task` tool exactly as the
+    // general-purpose one does — more easily, in fact, since a profile is where a cheap Gemini
+    // model is most likely to be named.
+    initConfigMock.mockImplementation(async (overrides: { identityProfile?: string }) => ({
+      llm: fakeModel(`${overrides.identityProfile}-model`),
+    }));
+
+    const { buildProfileSubagents } = await import('#src/core/subagentProfiles.js');
+    const { SUBAGENT_THOUGHT_REDACTION_MIDDLEWARE_NAME } =
+      await import('#src/core/subagentThoughtRedaction.js');
+    const subagents = await buildProfileSubagents(
+      [
+        { name: 'a', profile: 'cheap' },
+        { name: 'b', profile: 'strong' },
+      ],
+      { command: 'chat' }
+    );
+
+    for (const subagent of subagents) {
+      expect(
+        (subagent.middleware ?? []).map((m: { name: string }) => m.name),
+        `subagent ${subagent.name}`
+      ).toContain(SUBAGENT_THOUGHT_REDACTION_MIDDLEWARE_NAME);
+    }
+  });
 });
