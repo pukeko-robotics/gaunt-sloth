@@ -472,10 +472,10 @@ export const APPROVAL_WRITE_MODIFIER_HINT =
  * 2. **Claims are scoped to the session the user is in — ratified by Andrew on 2026-08-13** as the
  *    standing rule for every in-product approval promise ([[CFG-40]]), so it is a decision and not
  *    a habit inherited from whichever string happened to be written last. What makes it true
- *    rather than merely convenient: these strings render on terminal surfaces only — the
- *    `/approvals` picker, its text fallback, the usage hint and the status display — every one of
- *    them a session a person is sitting in, so a claim scoped to *this session* describes the only
- *    place the sentence appears rather than hedging around a falsehood. Unscoped it would not:
+ *    rather than merely convenient: these strings render on terminal surfaces only, and every
+ *    surface that renders them is a session a person is sitting in, so a claim scoped to *this
+ *    session* describes the only place the sentence appears rather than hedging around a
+ *    falsehood. Unscoped it would not:
  *    a sentence whose subject is "Gaunt Sloth" and whose claim is that it always asks is false over
  *    the AG-UI and ACP servers, which never drain an approval interrupt ([[EXT-54]] — worth fixing
  *    on its own merits, never as a gate on this copy). **That is also the boundary: the moment an
