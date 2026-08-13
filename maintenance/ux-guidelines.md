@@ -69,9 +69,13 @@ unambiguous meaning — and there is no per-prompt "turn the gate down from here
   gate protects against accidents, not intent, and a working-folder claim is true of the built-in
   file *tools* and false of the agent as a whole. Copy cites only protections the user can inspect
   and extend — the deny list — never the hardline floor.
-- **Scope every claim to the session the user is in.** These strings render on terminal surfaces;
-  the AG-UI and ACP servers never drain an approval interrupt, so a universal "Gaunt Sloth always
-  asks" would be false.
+- **Scope every claim to the session the user is in — ratified 2026-08-13, and it binds every
+  approvals surface written from here on.** These strings render on terminal surfaces only, each of
+  them a session a person is sitting in, so "in this session" describes where the sentence actually
+  appears rather than hedging around a falsehood; unscoped, a universal "Gaunt Sloth always asks"
+  would be false over the AG-UI and ACP servers, which never drain an approval interrupt. **The
+  boundary: the moment an approvals string is rendered by a server surface this ruling stops
+  covering it**, and the claim has to be re-earned there rather than inherited from the terminal.
 - **Tone = `warn` at `bypass`.** Running with no gate is caution-worthy, so its notice is yellow and
   the status bar carries the unmissable **`⚡ Bypass`** badge; every other mode is `info`.
 - **Choosing is a picker on a TTY, a list everywhere else.** `/approvals` with no argument renders

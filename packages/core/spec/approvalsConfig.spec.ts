@@ -584,9 +584,10 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
     });
 
     /**
-     * [[EXT-94]] — the AG-UI and ACP servers build their own agent and never drain an approval
+     * [[EXT-54]] — the AG-UI and ACP servers build their own agent and never drain an approval
      * interrupt, so a universal "Gaunt Sloth always asks" is false there. These strings render on
-     * terminal surfaces only, so the claim is scoped to the session the user is in.
+     * terminal surfaces only, so the claim is scoped to the session the user is in — the standing
+     * rule for in-product approval copy, ratified 2026-08-13 ([[CFG-40]]).
      */
     it('rule 3: no description promises that Gaunt Sloth ALWAYS asks', () => {
       for (const rung of APPROVAL_RUNGS) {
