@@ -240,6 +240,21 @@ export interface PendingToolInterrupt {
    * at all), a declared `approvals.escalate` entry, an unrated rung, a tool subject.
    */
   negotiationRounds?: readonly RaterNegotiationRound[];
+  /**
+   * [[EXT-29]] §5.3 — **how many attempts the agent actually made**, counted since a human was last
+   * involved rather than since the last approved call.
+   *
+   * It is a separate number from `negotiationRounds.length` because an approved call clears the
+   * transcript, and a surface reading the array's length reports only the attempts that happened
+   * after the last one. On the escalation this was measured from, the agent proposed the same
+   * command five times, was refused every time, and the human was shown three — the two calls it
+   * made in between were `git stash` and `git status`, both approved, both erasing the rounds
+   * before them. Persistence is the single most decision-relevant fact this block carries, so
+   * under-reporting it by nearly half is not a cosmetic count.
+   *
+   * Present exactly when {@link negotiationRounds} is, and never smaller than its length.
+   */
+  negotiationAttempts?: number;
 }
 
 /**

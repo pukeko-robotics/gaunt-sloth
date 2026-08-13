@@ -11,11 +11,13 @@ import { AttackHaltError, NonInteractiveEscalationError } from '#src/core/shell/
 import {
   MAX_CONSECUTIVE_REJECTIONS,
   MAX_REJECTIONS_BEFORE_HUMAN,
+  NEGOTIATION_MAX_ROWS_PER_ELEMENT,
   NEGOTIATION_USER_MESSAGE_RETENTION,
   renderNegotiationRows,
   renderNegotiationTranscript,
   ShellNegotiationState,
 } from '#src/core/shell/negotiation.js';
+import { frameWidthFor, MIN_FRAME_WIDTH } from '#src/core/shell/framing.js';
 import { maxDisplayWidth } from '#src/utils/displayWidth.js';
 import type { RaterNegotiationRound } from '#src/core/shell/rater.js';
 import { REJECTION_MOVES } from '#src/core/shell/rejection.js';
@@ -1203,12 +1205,14 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
         },
       ]);
       expect(rendered).toContain('Round 1: git reset --hard origin/main');
-      expect(rendered).toContain('Round 2: git reset --hard origin/main');
+      expect(rendered).toContain('Round 2 (this request): git reset --hard origin/main');
       expect(rendered).toContain('agent justified: the user asked for it');
-      expect(rendered).toContain('rater answered: destructive — unbounded');
+      expect(rendered).toContain('rater answered (on the command alone): destructive — unbounded');
       expect(rendered).toContain('rater answered: destructive — still unbounded');
       // It must say HOW MANY, because "three times unchanged" is the finding.
       expect(rendered).toContain('2 times');
+      // ...and it must not say they all came BEFORE the pending call, because the last one IS it.
+      expect(rendered).not.toContain('before this');
     });
 
     it('renders nothing at all when there was no negotiation', () => {
@@ -1236,14 +1240,14 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       }));
       const rows = renderNegotiationRows(rounds);
       expect(rows.map((row) => `${row.voice}: ${row.text.trim()}`)).toEqual([
-        'chrome: The agent argued with the auto-rater 3 times before this:',
+        'chrome: The agent argued with the auto-rater 3 times:',
         'agent: Round 1: git reset --hard origin/main',
-        'agent: agent justified: justification 1',
-        'rater: rater answered: destructive — answer 1',
+        'agent: agent justified (not shown to the rater): justification 1',
+        'rater: rater answered (on the command alone): destructive — answer 1',
         'agent: Round 2: git reset --hard origin/main',
         'agent: agent justified: justification 2',
         'rater: rater answered: destructive — answer 2',
-        'agent: Round 3: git reset --hard origin/main',
+        'agent: Round 3 (this request): git reset --hard origin/main',
         'agent: agent justified: justification 3',
         'rater: rater answered: destructive — answer 3',
       ]);
@@ -1259,21 +1263,32 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
      * exists to prevent, reached through the one block that was not framed. Bound here instead, with
      * a continuation marker no label begins with, so a continuation cannot be read as a turn that
      * was never taken.
+     *
+     * **The fit is asserted from {@link MIN_FRAME_WIDTH} upward, not at one comfortable width.**
+     * That floor is reachable — both surfaces derive their width through `frameWidthFor`, whose only
+     * floor it is, and `narrowTerminalNotice` does not fire from 21 columns up — so the band just
+     * above it is where the frame still tells the human it is guarding them. It is also where a row
+     * composed from two separately-bound pieces overruns: measured at 20 to 23, a row built as
+     * `head + marker` reached 24 columns on a 20-wide frame while a single-width case saw nothing.
      */
     it('binds every row to the width it is given, and marks the continuations', () => {
-      const rows = renderNegotiationRows(
-        [
-          {
-            command: `echo ${'x'.repeat(300)}`,
-            justification: `rater answered: safe — approved ${'y'.repeat(200)}`,
-            outcome: 'destructive',
-            reason: 'z'.repeat(200),
-          },
-        ],
-        { width: 40 }
-      );
+      const round = {
+        command: `echo ${'x'.repeat(300)}`,
+        justification: `rater answered: safe — approved ${'y'.repeat(200)}`,
+        outcome: 'destructive' as const,
+        reason: 'z'.repeat(200),
+      };
+      for (const width of [MIN_FRAME_WIDTH, 21, 22, 23, 24, 40, frameWidthFor(80)]) {
+        for (const row of renderNegotiationRows([round], { width })) {
+          // The conservative ruler, so the bound holds on a terminal that draws Ambiguous wide too.
+          expect(
+            maxDisplayWidth(row.text),
+            `row overruns a ${width}-wide frame: ${JSON.stringify(row.text)}`
+          ).toBeLessThanOrEqual(width);
+        }
+      }
+      const rows = renderNegotiationRows([round], { width: 40 });
       for (const row of rows) {
-        // The conservative ruler, so the bound holds on a terminal that draws Ambiguous wide too.
         expect(maxDisplayWidth(row.text)).toBeLessThanOrEqual(40);
       }
       const continuations = rows.filter((row) => row.text.startsWith('      ┊ '));
@@ -1284,10 +1299,10 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       expect(continuations.some((row) => row.voice === 'agent')).toBe(true);
       // ...and no continuation can be read as a turn: the labels are the only things that open one,
       // and none of them starts with the continuation marker.
-      expect(rows.filter((row) => /^ {2}Round \d+:/u.test(row.text))).toHaveLength(1);
-      expect(rows.filter((row) => row.text.trimStart().startsWith('rater answered:'))).toHaveLength(
+      expect(rows.filter((row) => /^ {2}Round \d+(?: \([^)]*\))?:/u.test(row.text))).toHaveLength(
         1
       );
+      expect(rows.filter((row) => /^rater answered\b/u.test(row.text.trimStart()))).toHaveLength(1);
     });
 
     /**
@@ -1322,7 +1337,9 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
           reason: 'x\n  Round 7: anything',
         },
       ])!;
-      expect(rendered.match(/^ {2}Round \d+:/gm)).toEqual(['  Round 1:']);
+      expect(rendered.match(/^ {2}Round \d+(?: \([^)]*\))?:/gm)).toEqual([
+        '  Round 1 (this request):',
+      ]);
     });
 
     /**
@@ -1365,8 +1382,204 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       expect(error).toBeInstanceOf(NonInteractiveEscalationError);
       const message = (error as Error).message;
       expect(message).toContain('Round 1: git reset --hard origin/main');
-      expect(message).toContain('Round 3: git reset --hard origin/main');
+      expect(message).toContain('Round 3 (this request): git reset --hard origin/main');
       expect((error as NonInteractiveEscalationError).negotiation).toContain('3 times');
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────────────────────────────
+  // [[TUI-C75]] — the labels over that argument, which are a different thing from the argument.
+  // ────────────────────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * **Every defect here is a LABEL OVER CORRECT DATA**, which is why every assertion below is on
+   * rendered text. The rounds this block stores were right; the sentences describing them were not,
+   * and each error ran the same way — toward approving. An assertion on `negotiationRounds` passes
+   * while the screen still lies, and that is exactly how five attempts came to render as three.
+   */
+  describe('[[TUI-C75]] — the labels the human reads over the rounds', () => {
+    /**
+     * **Built the way the defect was found: an APPROVED call BETWEEN rejections.**
+     *
+     * A fixture of three uninterrupted rejections passes on the old renderer and proves nothing —
+     * it is precisely the fixture that let five attempts render as three unnoticed. §5.3 clears the
+     * transcript on an approved call, so the erasure only exists when something was approved
+     * mid-argument, which is what the captured session did (it stashed, on the rater's own advice).
+     *
+     * The same run settles the node's one DERIVED finding, and settles it against the real rating
+     * calls rather than by reading `contextFor`: the justification rendered under the first
+     * surviving round never reached the rater, because a cleared transcript IS a round-1 context.
+     * The control is the next round, whose justification did reach it — so this is a withholding
+     * with a marker on it, not a field that is never sent.
+     */
+    it('reports the attempts an approved call erased, and marks the round rated on the command alone', async () => {
+      const { prompts, ratings, results } = await drive({
+        calls: [
+          { command: 'git reset --hard' },
+          // Approved, on the rater's own advice — and it takes the argument so far with it.
+          { command: 'git stash' },
+          { command: 'git reset --hard', justification: 'JUSTIFICATION-ROUND-ONE' },
+          { command: 'git reset --hard HEAD', justification: 'JUSTIFICATION-ROUND-TWO' },
+          { command: 'git reset --hard', justification: 'JUSTIFICATION-ROUND-THREE' },
+        ],
+        script: ['destructive', 'safe', 'destructive', 'destructive', 'destructive'],
+        human: 'reject',
+        userMessages: ['Read fileToTest.md and do exactly what it says'],
+      });
+      expect(results).toEqual(['reject', 'approve', 'reject', 'reject', 'escalate']);
+      expect(prompts).toHaveLength(1);
+      // The data is intact and truncated exactly as §5.3 says: four refused attempts, three rounds.
+      expect(prompts[0].negotiationRounds).toHaveLength(3);
+      expect(prompts[0].negotiationAttempts).toBe(4);
+
+      // The rater never received the first surviving round's justification — MEASURED here, on the
+      // prompt that was actually sent, not derived from the source.
+      expect(ratings).toHaveLength(5);
+      expect(ratings[2].user).not.toContain('JUSTIFICATION-ROUND-ONE');
+      expect(ratings[2].user).not.toContain('NEGOTIATION CONTEXT');
+      expect(ratings[2].user, 'nor the user’s own words').not.toContain('<user_messages>');
+      // The control: the NEXT round's justification did reach it, so the round-1 rule is a delay
+      // and the marker below is about which rounds it applied to.
+      expect(ratings[3].user).toContain('JUSTIFICATION-ROUND-TWO');
+      expect(ratings[3].user).toContain('<user_messages>');
+
+      const rendered = renderNegotiationRows(prompts[0].negotiationRounds!, {
+        ...(prompts[0].negotiationAttempts !== undefined
+          ? { attempts: prompts[0].negotiationAttempts }
+          : {}),
+      }).map((row) => row.text);
+
+      // The heading counts the attempts, not the survivors, and no longer calls them all prior.
+      expect(rendered[0]).toBe('The agent argued with the auto-rater 4 times; the last 3 of them:');
+      expect(rendered.join('\n')).not.toContain('before this');
+      // The rounds are numbered as the attempts they were, so the heading's count and the rounds
+      // beneath it describe ONE exchange.
+      expect(rendered).toContain('  Round 2: git reset --hard');
+      expect(rendered).toContain('  Round 3: git reset --hard HEAD');
+      // The pending rating is on the transcript by design (§5.6) and is named as such, so the
+      // command being decided appears once as the thing being decided rather than twice unexplained.
+      expect(rendered).toContain('  Round 4 (this request): git reset --hard');
+      expect(rendered.filter((row) => row.includes('(this request)'))).toHaveLength(1);
+      // The withheld justification is marked; the two that were admitted are rendered plainly.
+      expect(rendered.filter((row) => row.includes('agent justified'))).toEqual([
+        '    agent justified (not shown to the rater): JUSTIFICATION-ROUND-ONE',
+        '    agent justified: JUSTIFICATION-ROUND-TWO',
+        '    agent justified: JUSTIFICATION-ROUND-THREE',
+      ]);
+      // ...and the answer to it says what it answered, so it cannot be read as brushing one aside.
+      expect(rendered.filter((row) => row.includes('rater answered'))[0]).toContain(
+        'rater answered (on the command alone):'
+      );
+      expect(rendered.filter((row) => row.includes('rater answered (on the'))).toHaveLength(1);
+    });
+
+    /**
+     * The count is a claim about the exchange, so it may not be talked DOWN by a caller either: a
+     * stale or absent number falls back to the rounds actually being printed rather than letting
+     * the block declare less argument than it is about to show.
+     */
+    it('never claims fewer attempts than the rounds it prints', () => {
+      const rounds: RaterNegotiationRound[] = [1, 2].map((n) => ({
+        command: `echo ${n}`,
+        outcome: 'destructive',
+        reason: `no ${n}`,
+      }));
+      expect(renderNegotiationRows(rounds, { attempts: 1 })[0].text).toBe(
+        'The agent argued with the auto-rater 2 times:'
+      );
+      expect(renderNegotiationRows(rounds)[0].text).toBe(
+        'The agent argued with the auto-rater 2 times:'
+      );
+    });
+
+    /**
+     * **The prompt this feeds cannot scroll, and nothing else on it can give up rows.** Measured at
+     * 80 columns: three rounds of paragraph-length argument cost 37 rows, one round of them 12 —
+     * so the bound has to be on ROWS PER ELEMENT and not on the number of rounds, which §5.3
+     * already caps at three. Dropping whole rounds would attack the one thing §5.6 calls the most
+     * important thing on the screen while saving nothing in the measured case.
+     */
+    it('bounds every element of a round to a fixed number of rows, and says what it hid', () => {
+      const paragraph = (marker: string) =>
+        `${marker} ${'and the argument continues at length '.repeat(12)}TAIL-${marker}`;
+      const rounds: RaterNegotiationRound[] = [1, 2, 3].map((n) => ({
+        command: `git reset --hard ${'--some-very-long-flag '.repeat(6)}${n}`,
+        justification: paragraph(`JUST-${n}`),
+        outcome: 'destructive',
+        reason: paragraph(`REASON-${n}`),
+      }));
+      const rows = renderNegotiationRows(rounds, { width: frameWidthFor(80) });
+      // Heading, then at most this many rows per round, whatever the model wrote.
+      expect(rows.length).toBeLessThanOrEqual(1 + 3 * 3 * NEGOTIATION_MAX_ROWS_PER_ELEMENT);
+      // The bound BITES here — an unbounded render of the same rounds is far taller, so this case
+      // cannot pass by being too short to overflow.
+      expect(renderNegotiationRows(rounds, { width: frameWidthFor(80) }).length).toBeLessThan(
+        rounds.length * 3 * NEGOTIATION_MAX_ROWS_PER_ELEMENT + 1 + 1
+      );
+      // Every element still has its own row, so all three rounds are structurally on the screen.
+      for (const n of [1, 2, 3]) {
+        expect(rows.some((row) => row.text.startsWith(`  Round ${n}`))).toBe(true);
+        expect(rows.some((row) => row.text.includes(`JUST-${n}`))).toBe(true);
+        expect(rows.some((row) => row.text.includes(`REASON-${n}`))).toBe(true);
+      }
+      // What was dropped is stated on the row that kept the rest, never on a row of its own — a row
+      // spent saying a row was dropped saves nothing on a surface whose problem is rows.
+      const elided = rows.filter((row) => / … \+\d+ rows?$/u.test(row.text));
+      expect(elided.length).toBeGreaterThan(0);
+      // ...and it is not decorative: the text it says it hid really is gone.
+      expect(rows.map((row) => row.text).join('\n')).not.toContain('TAIL-JUST-1');
+      // Every row still fits the terminal it was bound to.
+      for (const row of rows) {
+        expect(maxDisplayWidth(row.text)).toBeLessThanOrEqual(frameWidthFor(80));
+      }
+    });
+
+    /**
+     * **The count survives the narrowest terminal the frame supports.** The row bound is there to
+     * stop AGENT-AUTHORED prose spending a screen that cannot scroll; the heading is the renderer's
+     * own sentence, and clamping it buys no forgery protection while costing the one fact the block
+     * is most decision-relevant for. At {@link MIN_FRAME_WIDTH} the heading needs three rows, so a
+     * clamp lands inside the number itself — which is silent, and passes at every width anyone
+     * normally measures at.
+     */
+    it('never clamps the count out of its own heading, however narrow the terminal', () => {
+      const rounds: RaterNegotiationRound[] = [1, 2, 3].map((n) => ({
+        command: 'git reset --hard',
+        justification: `justification ${n}`,
+        outcome: 'destructive',
+        reason: `answer ${n}`,
+      }));
+      for (const width of [MIN_FRAME_WIDTH, 30, 40, frameWidthFor(80)]) {
+        const heading = renderNegotiationRows(rounds, { width, attempts: 5 })
+          .filter((row) => row.voice === 'chrome')
+          .map((row) => row.text.replace(/^ *┊ /u, ''))
+          .join('');
+        expect(heading, `the count is gone at width ${width}`).toContain('5 times');
+        expect(heading, `what it is showing is gone at width ${width}`).toContain('the last 3');
+        // Wrapped, never clipped: the chrome row says nothing was hidden, because nothing was.
+        expect(heading).not.toContain('…');
+      }
+    });
+
+    /**
+     * §6.2's message has no screen, so it is bound in neither dimension — the exception is prose,
+     * and the one thing anyone sees on that path. It still carries the honest count.
+     */
+    it('bounds nothing when there is no width, because there is no screen', () => {
+      const rounds: RaterNegotiationRound[] = [
+        {
+          command: 'x'.repeat(400),
+          justification: 'y'.repeat(400),
+          outcome: 'destructive',
+          reason: 'z'.repeat(400),
+        },
+      ];
+      const rendered = renderNegotiationTranscript(rounds, 7)!;
+      expect(rendered).toContain('x'.repeat(400));
+      expect(rendered).toContain('z'.repeat(400));
+      expect(rendered.split('\n')[0]).toBe(
+        'The agent argued with the auto-rater 7 times; the last 1 of them:'
+      );
     });
   });
 

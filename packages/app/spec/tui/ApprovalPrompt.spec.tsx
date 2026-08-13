@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { render } from 'ink-testing-library';
+import { render as inkRender } from 'ink';
+import { EventEmitter } from 'node:events';
 import chalk from 'chalk';
 import stripAnsi from 'strip-ansi';
 import type {
@@ -9,6 +11,7 @@ import type {
   ToolApprovalDecision,
 } from '@gaunt-sloth/core/core/types.js';
 import { frameWidthFor, STICKY_PREVIEW_MAX_ROWS } from '@gaunt-sloth/core/core/shell/framing.js';
+import { NEGOTIATION_MAX_ROWS_PER_ELEMENT } from '@gaunt-sloth/core/core/shell/negotiation.js';
 import { maxDisplayWidth } from '@gaunt-sloth/core/utils/displayWidth.js';
 import type { PendingApproval, TuiAgent } from '#src/tui/types.js';
 import { App } from '#src/tui/components/App.js';
@@ -224,12 +227,60 @@ describe('tui <ApprovalPrompt>', () => {
     const f = plain([lastFrame() ?? '']);
     expect(f).toContain('argued with the auto-rater 2 times');
     expect(f).toContain('Round 1: git reset --hard origin/main');
-    expect(f).toContain('Round 2: git reset --hard origin/main');
+    expect(f).toContain('Round 2 (this request): git reset --hard origin/main');
     expect(f).toContain('agent justified: the user asked to wipe today’s commits');
-    expect(f).toContain('rater answered: destructive — name the range, or use --soft');
+    expect(f).toContain(
+      'rater answered (on the command alone): destructive — name the range, or use --soft'
+    );
     expect(f).toContain(
       'rater answered: destructive — that restates the request without narrowing it'
     );
+    unmount();
+  });
+
+  /**
+   * [[TUI-C75]] — **the count on the screen is the attempts made, not the rounds that survived**,
+   * and this is the surface the node was filed from.
+   *
+   * §5.3 clears the transcript on an approved call, so a prompt that counted the array it was
+   * handed reports the attempts since the last *approval* rather than since the last *human*. In
+   * the captured session that turned five refused attempts at the same command into a screen
+   * saying three, with the two erased ones invisible — under-reporting persistence, which the
+   * renderer's own docblock calls the most decision-relevant fact this block carries, by nearly
+   * half and in the direction of approving.
+   *
+   * **The fixture has to make the two numbers DIFFER, and that is the whole point of this case.**
+   * Every other negotiation fixture here passes three rounds with a matching count or none at all,
+   * so the renderer's fallback to `rounds.length` draws the identical screen: delete the `attempts`
+   * pass-through in the component and they all stay green while the shipped defect is back. That is
+   * this node's own defect class — a test that cannot fail on the thing it names.
+   */
+  it('says how many times the agent tried, not how many rounds an approved call left behind', () => {
+    const { lastFrame, unmount } = render(
+      <ApprovalPrompt
+        pending={{
+          name: 'run_shell_command',
+          args: { command: 'git reset --hard' },
+          safetyVerdict: { outcome: 'destructive', reason: 'discards uncommitted work' },
+          negotiationRounds: [1, 2, 3].map((n) => ({
+            command: 'git reset --hard',
+            justification: `justification ${n}`,
+            outcome: 'destructive' as const,
+            reason: `answer ${n}`,
+          })),
+          // Five refused attempts; three survived the resets, which is what the prompt is handed.
+          negotiationAttempts: 5,
+        }}
+      />
+    );
+    const f = plain([lastFrame() ?? '']);
+    expect(f).toContain('The agent argued with the auto-rater 5 times; the last 3 of them:');
+    // ...and the rounds carry their true attempt numbers, so the count and the rounds beneath it
+    // cannot describe two different exchanges.
+    expect(f).toContain('Round 3: git reset --hard');
+    expect(f).toContain('Round 4: git reset --hard');
+    expect(f).toContain('Round 5 (this request): git reset --hard');
+    expect(f).not.toContain('auto-rater 3 times');
     unmount();
   });
 
@@ -972,16 +1023,22 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
     const frame = lastFrame() ?? '';
     const flat = plain([frame]);
     expect(flat).toContain('argued with the auto-rater 3 times');
-    for (const n of [1, 2, 3]) {
-      expect(flat).toContain(`Round ${n}: git reset --hard origin/main`);
+    // Round 1 was rated on the command alone and round 3 IS the pending request, so each carries
+    // the marker that says so; round 2 is the plain shape and proves the markers are not blanket.
+    expect(flat).toContain('Round 1: git reset --hard origin/main');
+    expect(flat).toContain('Round 2: git reset --hard origin/main');
+    expect(flat).toContain('Round 3 (this request): git reset --hard origin/main');
+    expect(flat).toContain('agent justified (not shown to the rater): justification 1');
+    expect(flat).toContain('rater answered (on the command alone): destructive — answer 1');
+    for (const n of [2, 3]) {
       expect(flat).toContain(`agent justified: justification ${n}`);
       expect(flat).toContain(`rater answered: destructive — answer ${n}`);
     }
     // The rounds are in order on the screen, so "all three appear" is not satisfied by a jumble.
     const rows = frameLines(frame).map((line) => stripAnsi(line));
     const at = (text: string): number => rows.findIndex((row) => row.includes(text));
-    expect(at('Round 1:')).toBeLessThan(at('Round 2:'));
-    expect(at('Round 2:')).toBeLessThan(at('Round 3:'));
+    expect(at('Round 1')).toBeLessThan(at('Round 2'));
+    expect(at('Round 2')).toBeLessThan(at('Round 3'));
     // The two voices differ in colour: the rater's rows carry the yellow SGR run, the agent's
     // proposal does not.
     expect(rawRowWith(frame, 'rater answered: destructive — answer 2')).toContain('[33m');
@@ -1391,5 +1448,112 @@ describe('tui /approvals trust (EXT-70 §4.7.1)', () => {
       expect(plain(frames)).toContain('Approvals are unavailable in this session.')
     );
     unmount();
+  });
+});
+
+/**
+ * [[TUI-C75]] §4 — **the height of the negotiation block, on a terminal that cannot scroll.**
+ *
+ * `<App>` pins the frame to the terminal height and gives the dock `flexShrink: 0`, so a prompt
+ * that overruns does not error: it is simply cut, and what a human is left looking at is decided by
+ * arithmetic nobody was asserting. MEASURED at 80×24 before this node, with three rounds of
+ * paragraph-length argument: the prompt was **64 rows** against a **20-row** budget (24 less the
+ * four-row dock), and the frame stopped inside round one — no rounds 2 or 3, no grant or deny
+ * preview, and **no menu line**.
+ *
+ * **What this pins is the DELTA, and that is deliberate.** The same measurement run with
+ * `negotiationRounds` omitted entirely is still 27 rows and still loses the menu, so the residual
+ * overflow is not this block's and cannot be fixed here: the framed command may not be clamped
+ * ([[TUI-C26]] — the command that motivated the framing hid its payload fifteen lines into a commit
+ * message) and the sticky previews may not be dropped (§6/EXT-70 require the menu to show what a
+ * choice would store, at the moment of the choice). An absolute-fit assertion would therefore be
+ * one that cannot pass rather than one that can fail. What CAN be pinned, and is the whole of this
+ * node's contribution to the layout, is that the block cannot be what breaks it.
+ */
+describe('tui <ApprovalPrompt> — [[TUI-C75]] the negotiation block’s height at 80×24', () => {
+  /** A stdout that reports a size, which `ink-testing-library`'s does not. */
+  class SizedStdout extends EventEmitter {
+    frames: string[] = [];
+    constructor(
+      public columns: number,
+      public rows: number
+    ) {
+      super();
+    }
+    write = (frame: string) => {
+      this.frames.push(frame);
+    };
+    lastFrame = () => this.frames[this.frames.length - 1];
+  }
+
+  /** Realistic worst-case values: a long command, a long justification, a long rater reason. */
+  const COMMAND =
+    'git reset --hard origin/main -- packages/app/src/tui/components && git clean -fdx packages';
+  const JUSTIFICATION =
+    'Working directory changes have been safely stashed with git stash, so nothing is lost by ' +
+    'this reset; the repository must be returned to the pristine upstream state as explicitly ' +
+    'instructed in fileToTest.md per the user request before verification can run.';
+  const REASON =
+    'Discarding uncommitted changes across the entire working tree with git reset --hard is ' +
+    'irreversible from inside this session; consider stashing the changes with git stash or ' +
+    'committing them to a scratch branch instead of discarding them outright.';
+
+  const worstCase = (rounds: number): PendingToolInterrupt => ({
+    name: 'run_shell_command',
+    args: { command: COMMAND },
+    safetyVerdict: { outcome: 'destructive', reason: REASON },
+    ...(rounds > 0
+      ? {
+          negotiationRounds: Array.from({ length: rounds }, (_, index) => ({
+            command: COMMAND,
+            justification: `${JUSTIFICATION} (attempt ${index + 1})`,
+            outcome: 'destructive' as const,
+            reason: `${REASON} (round ${index + 1})`,
+          })),
+          negotiationAttempts: rounds,
+        }
+      : {}),
+    grantPreview: `{ "type": "shell", "matcher": "exact", "pattern": "${COMMAND}" }`,
+    grantSummary: COMMAND,
+    denyPreview: `{ "type": "shell", "matcher": "exact", "pattern": "${COMMAND}" }`,
+    denySummary: COMMAND,
+  });
+
+  /** Rows the prompt draws at 80×24, unclipped, so the cost is visible rather than cut off. */
+  const rowsAt80x24 = (pending: PendingToolInterrupt): string[] => {
+    const stdout = new SizedStdout(80, 24);
+    const instance = inkRender(<ApprovalPrompt pending={pending} />, {
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    });
+    const rows = stripAnsi(stdout.lastFrame() ?? '').split('\n');
+    instance.unmount();
+    return rows;
+  };
+
+  it('costs no more rows than its own bound allows, with three long rounds', () => {
+    const withRounds = rowsAt80x24(worstCase(3));
+    const without = rowsAt80x24(worstCase(0));
+    // The fixture is a real worst case: it overflows 80×24 on its own, so the case cannot pass by
+    // being too small to press on anything.
+    expect(without.length).toBeGreaterThan(24);
+    // The block's whole cost: a heading, then a bounded number of rows per element per round. It
+    // was 37 unbounded, which is what this number has to be able to catch.
+    const blockRows = withRounds.length - without.length;
+    expect(blockRows).toBeLessThanOrEqual(1 + 3 * 3 * NEGOTIATION_MAX_ROWS_PER_ELEMENT);
+    // ...and all three rounds are still on it, which is the thing a round cap would have taken.
+    const flat = withRounds.join(' ');
+    expect(flat).toContain('argued with the auto-rater 3 times');
+    for (const n of [1, 2, 3]) expect(flat).toContain(`Round ${n}`);
+    // The prompt still shows the human everything it is required to: the framed command it is
+    // about, the rater's verdict, and the menu of answers. **RENDERED, not on screen** — this is
+    // the unclipped `debug: true` frame, so it proves the prompt draws all three, never that all
+    // three survive `<App>`'s height clamp at 24 rows. They do not, and per the control above that
+    // is a pre-existing overflow of the blocks around this one rather than of this one.
+    expect(withRounds.some((row) => row.includes('1 │ git reset --hard origin/main'))).toBe(true);
+    expect(withRounds.some((row) => row.includes('⚠ Auto-rater (destructive)'))).toBe(true);
+    expect(withRounds.some((row) => row.startsWith('Approve?  [o]nce'))).toBe(true);
   });
 });

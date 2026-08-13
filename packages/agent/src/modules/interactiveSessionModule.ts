@@ -256,8 +256,15 @@ export async function createInteractiveSession(
       // for and what one joined string could not express — the whole exchange used to arrive in a
       // single colour. The rows are bound to the terminal width for the same reason the command is:
       // a long justification left to the terminal's own wrap continues at column 0.
+      //
+      // [[TUI-C75]] — the count comes from `negotiationAttempts`, not from the array: §5.3 clears
+      // the transcript on an approved call, so the rounds that survive to here are the attempts
+      // since the last approval and not the attempts the human is being asked to weigh.
       for (const row of renderNegotiationRows(pending.negotiationRounds ?? [], {
         width: frameWidth,
+        ...(pending.negotiationAttempts !== undefined
+          ? { attempts: pending.negotiationAttempts }
+          : {}),
       })) {
         if (row.voice === 'rater') displayWarning(row.text);
         else if (row.voice === 'agent') display(row.text);

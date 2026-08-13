@@ -96,19 +96,34 @@ test.describe('approval menu — a negotiated destructive escalation', () => {
     const rows = screenRows(terminal);
     const at = (text: string): number => rows.findIndex((row) => row.includes(text));
     for (const round of [1, 2, 3]) {
-      expect(at(`Round ${round}: echo menu-negotiate-marker`)).toBeGreaterThan(-1);
-      expect(at(`agent justified: menu-justification-marker round ${round}`)).toBeGreaterThan(-1);
+      expect(at(`Round ${round}`)).toBeGreaterThan(-1);
     }
     // In order — "all three appear" would hold just as well for a jumble.
-    expect(at('Round 1: echo menu-negotiate-marker')).toBeLessThan(
-      at('Round 2: echo menu-negotiate-marker')
-    );
-    expect(at('Round 2: echo menu-negotiate-marker')).toBeLessThan(
-      at('Round 3: echo menu-negotiate-marker')
-    );
+    expect(at('Round 1')).toBeLessThan(at('Round 2'));
+    expect(at('Round 2')).toBeLessThan(at('Round 3'));
+    // [[TUI-C75]] — **the labels over those rounds, on a real terminal.** Round 3 IS the rating
+    // being escalated (`recordRejection` appends before either bound is tested), so it is named as
+    // the pending request rather than printed as a third prior attempt; round 1 was rated with the
+    // transcript empty, which §5.1 makes a command-only rating, so the justification under it is
+    // marked as one the rater was never shown and its answer says what it answered. Round 2 is the
+    // plain shape and is what stops the markers being read as decoration on every row.
+    expect(at('Round 1: echo menu-negotiate-marker')).toBeGreaterThan(-1);
+    expect(at('Round 2: echo menu-negotiate-marker')).toBeGreaterThan(-1);
+    expect(at('Round 3 (this request): echo menu-negotiate-marker')).toBeGreaterThan(-1);
+    expect(
+      at('agent justified (not shown to the rater): menu-justification-marker round 1')
+    ).toBeGreaterThan(-1);
+    for (const round of [2, 3]) {
+      expect(at(`agent justified: menu-justification-marker round ${round}`)).toBeGreaterThan(-1);
+    }
     // Both voices are on the screen, and the rater's answer is its own row rather than folded into
     // the agent's.
-    expect(rows.filter((row) => row.includes('rater answered: destructive')).length).toBe(3);
+    expect(
+      rows.filter((row) => /rater answered(?: \([^)]*\))?: destructive/u.test(row)).length
+    ).toBe(3);
+    expect(rows.filter((row) => row.includes('rater answered (on the command alone)')).length).toBe(
+      1
+    );
 
     // §2 — the severity is said in WORDS, and they are the destructive ones.
     atColumnZero(terminal, '⚠ Auto-rater (destructive):');
