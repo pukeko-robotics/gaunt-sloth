@@ -108,14 +108,23 @@ export class AcpUpdateMapper {
    * Takes the id of the OLDEST unclaimed tool call of `name`, removing it from the queue, or
    * `undefined` when there is none.
    *
-   * **Oldest-first and consumed, because the gate drains interrupts as a BATCH.** The runner asks
-   * for every pending call at once and loops over the array deciding each in turn; no result can
-   * arrive in between, because results only exist on the resumed run. So when a model emits two
-   * parallel calls of the same tool — routine on Anthropic and OpenAI — both are open and neither
-   * is running. Returning "the most recent" would hand BOTH permission requests the second call's
-   * id, and a client would attach one call's prompt, and its answer, to the other's row. Claiming
-   * pops the queue, so the runner's positional order over the pending array lines up with the
-   * announcement order this queue holds.
+   * **Consumed, because the gate drains interrupts as a BATCH.** The runner asks for every pending
+   * call at once and loops over the array deciding each in turn; no result can arrive in between,
+   * because results only exist on the resumed run. So when a model emits two parallel calls of the
+   * same tool — routine on Anthropic and OpenAI — both are open and neither is running. Returning
+   * "the most recent" would hand BOTH permission requests the second call's id, and a client would
+   * attach one call's prompt, and its answer, to the other's row. Popping the queue is what stops a
+   * second request re-claiming the first's id.
+   *
+   * **Oldest-first is the best available pairing, not a guarantee.** This queue is in the order the
+   * model announced the calls; the runner iterates `getPendingToolInterrupts()`, which flattens
+   * `state.tasks[].interrupts[].value.actionRequests[]` — and that innermost array is built by
+   * LangChain's `humanInTheLoopMiddleware`, not by us. FIFO matches the two under the natural
+   * assumption that the middleware preserves the AI message's `tool_call` order, which is not
+   * something this code can enforce. **If it ever did not, the cost is UI attribution and nothing
+   * more:** each request carries its own `command`/`rawInput` in its subject, and the runner applies
+   * decisions positionally over its own array, so the human still rules on the right call and the
+   * right decision still reaches it.
    *
    * Absent rather than guessed when nothing matches — a permission request pointing at the WRONG
    * call is worse than one pointing at no call, because a client would then attach the answer to a

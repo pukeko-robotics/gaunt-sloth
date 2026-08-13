@@ -458,9 +458,12 @@ describe('the ACP v2 agent — session lifecycle', () => {
             uri: 'file:///work/src/server.ts',
             description: 'the entry point',
           },
-          // Not a capability this agent claims, so a conforming client never sends it — but if one
-          // arrives it may not vanish.
+          // Neither is a capability this agent claims, so a conforming client never sends them —
+          // but if one arrives it may not vanish. `resource` is included as well as `image`
+          // because it is the one a client that misread the capabilities is likeliest to send,
+          // and because it proves the fallback arm is reached for more than a single type.
           { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+          { type: 'resource', resource: { uri: 'file:///work/notes.md', text: 'inline' } },
         ] as acp.ContentBlock[],
       });
       await waitForStop(h.view);
@@ -473,9 +476,11 @@ describe('the ACP v2 agent — session lifecycle', () => {
     expect(prompts[0]).toContain('server.ts');
     expect(prompts[0]).toContain('the entry point');
     expect(prompts[0]).toContain('explain this');
-    // The unsupported block became something the model can see and mention, not nothing.
+    // Each unsupported block became something the model can see and mention, not nothing — and
+    // both types are named, so the fallback arm is reached per block rather than once.
     expect(prompts[0]).toContain('image');
-    expect(prompts[0]).toContain('cannot read');
+    expect(prompts[0]).toContain('resource content, which this agent cannot read');
+    expect(prompts[0].match(/cannot read/g)).toHaveLength(2);
   });
 
   it('answers session/prompt with a bare acknowledgement, before any update for that turn', async () => {
