@@ -29,6 +29,7 @@ import {
   buildToolPreviewLines,
   summariseToolCall,
 } from '@gaunt-sloth/core/core/toolDisplay.js';
+import { approvalStopRows } from '@gaunt-sloth/core/core/shell/approvalStop.js';
 import { displayWidth } from '@gaunt-sloth/core/utils/displayWidth.js';
 import { renderMarkdown } from '#src/tui/markdown.js';
 import { displaySegments, type ToolCallViewModel, type TurnViewModel } from '#src/tui/viewModel.js';
@@ -153,6 +154,14 @@ export function estimateItemRows(
       // <CommandNotice>: a bracketing rule, the title, then one sibling <Text> per body line.
       rows += 1 + siblingRows(item.title, columns);
       for (const line of item.lines) rows += siblingRows(line, columns);
+      break;
+    case 'stop':
+      // [[TUI-C71]] <ApprovalStopMessage>: one sibling <Text> per row, and the rows are built by
+      // core's own renderer at the same width the component frames at — the estimator counting a
+      // second model of a framed block is exactly how the two would drift apart.
+      for (const row of approvalStopRows(item.parts, { columns })) {
+        rows += siblingRows(row, columns);
+      }
       break;
     case 'reasoning':
       // The `/reasoning` reprint: a bracketing rule, then an always-expanded panel.

@@ -30,6 +30,7 @@ import {
   narrowTerminalNotice,
   STICKY_PREVIEW_MAX_ROWS,
 } from '@gaunt-sloth/core/core/shell/framing.js';
+import { ApprovalStopError, approvalStopRows } from '@gaunt-sloth/core/core/shell/approvalStop.js';
 import { writeDebugDump } from '@gaunt-sloth/core/utils/debugDump.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
 import {
@@ -636,9 +637,22 @@ export async function createInteractiveSession(
             await processMessage(userInput);
             shouldRetry = false;
           } catch (err) {
-            display(
-              `\n❌ Error processing message: ${err instanceof Error ? err.message : String(err)}\n`
-            );
+            // [[TUI-C71]] — a run-ending approvals stop carries the command the rater called an
+            // attack, and the rater's own words about it. Both are model-authored text on a
+            // terminal, so they are painted through the SAME framing renderer as this surface's
+            // approval dialog and §6.1 banner — one row per line, each inside the gutter — rather
+            // than interpolated into a line the terminal is free to wrap back to column 0.
+            if (err instanceof ApprovalStopError) {
+              display('\n❌ Error processing message:');
+              for (const row of approvalStopRows(err.parts, { columns: output.columns })) {
+                display(row);
+              }
+              display('');
+            } else {
+              display(
+                `\n❌ Error processing message: ${err instanceof Error ? err.message : String(err)}\n`
+              );
+            }
             // EXT-18: askLine() refs stdin first. This prompt runs in the catch after
             // processMessage threw, by which point the stream's finally has already unref'd
             // stdin (same exit as the approval prompt) - re-ref so it waits for input.

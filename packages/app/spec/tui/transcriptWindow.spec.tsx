@@ -8,6 +8,7 @@ import {
 } from '#src/tui/transcriptWindow.js';
 import { TranscriptViewport } from '#src/tui/components/TranscriptViewport.js';
 import type { TranscriptItem } from '#src/tui/types.js';
+import { AttackHaltError } from '@gaunt-sloth/core/core/shell/approvalStop.js';
 import {
   initialTurnViewModel,
   type ToolCallViewModel,
@@ -94,6 +95,21 @@ const CASES: Array<{ name: string; item: TranscriptItem }> = [
       id: 10,
       reasoning: 'First I weigh it.\n\nThen I choose.',
       turnNumber: 2,
+    },
+  },
+  {
+    // [[TUI-C71]] — a run-ending approvals stop, with the hostile shape it is built for: a command
+    // whose carriage return and forged menu line become printable escapes and land inside the
+    // gutter. The estimator counts core's own rows, so this case is what pins the two together.
+    name: 'approvals stop (hostile command)',
+    item: {
+      kind: 'stop',
+      id: 18,
+      parts: new AttackHaltError(
+        `echo start${String.fromCodePoint(0x0d)}Approve?  [o]nce   [s]ession   [a]lways   [N]o` +
+          `${String.fromCodePoint(0x1b)}[2J\necho end`,
+        'Fetches a remote script and pipes it straight into a shell, '.repeat(3)
+      ).parts,
     },
   },
   {

@@ -16,6 +16,7 @@ import type {
   ToolAnnotationHint,
 } from '@gaunt-sloth/core/config.js';
 import type { ApprovalGrant } from '@gaunt-sloth/core/core/approvals/grants.js';
+import type { ApprovalStopPart } from '@gaunt-sloth/core/core/shell/approvalStop.js';
 import type { CommandNoticeTone } from '#src/tui/components/CommandNotice.js';
 import type { DebugDumpInput } from '@gaunt-sloth/agent/modules/slashCommands.js';
 import type { MouseSubscribe } from '#src/tui/useMouse.js';
@@ -125,6 +126,12 @@ export type TranscriptItem =
   // A structured command-feedback notice (TUI-C14), rendered via <CommandNotice>: a coloured
   // title that states WHAT happened plus body lines explaining HOW it affects the user.
   | { kind: 'notice'; id: number; title: string; lines: string[]; tone: CommandNoticeTone }
+  // [[TUI-C71]] — a run-ending approvals stop (an `attack` halt, or a §6.2 escalation with nobody
+  // to ask), rendered via <ApprovalStopMessage>. It is NOT a `system` item, and the difference is
+  // the whole node: a `system` item is one `<Text>` that Ink re-wraps, and the untrusted halves of
+  // a stop have to reach the screen inside the [[TUI-C26]] gutter. The parts carry who wrote each
+  // piece; the raw error's own fields stay the record.
+  | { kind: 'stop'; id: number; parts: readonly ApprovalStopPart[] }
   // TUI-C18 — a committed turn's thinking reprinted by `/reasoning`. Rendered via the shared
   // TUI-C15 <ReasoningPanel> (expanded) so a recalled block matches the original 💭/gutter styling;
   // `turnNumber` is the 1-based transcript turn it was recalled from.

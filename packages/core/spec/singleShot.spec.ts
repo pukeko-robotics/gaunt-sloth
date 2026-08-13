@@ -35,6 +35,11 @@ const systemUtilsMock = {
   getCurrentWorkDir: vi.fn(),
   // GS2-7: singleShot now records opt-in history and reads the project dir for the record.
   getProjectDir: vi.fn(() => '/project'),
+  // [[TUI-C71]] — a run-ending approvals stop is framed against the terminal width before it is
+  // printed, so this surface reports one. A FIXED width rather than the real `process.stdout`:
+  // framing is arithmetic against columns, and a width taken from whatever terminal the suite
+  // happens to run in would make where a row wraps a property of the runner.
+  stdout: { columns: 120 },
 };
 vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
 
