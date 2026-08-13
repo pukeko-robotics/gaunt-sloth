@@ -483,7 +483,14 @@ export function renderNegotiationRows(
 function wrapRow(row: NegotiationRow, width: number): NegotiationRow[] {
   const budget = Math.max(MIN_CONTENT_WIDTH, width - maxDisplayWidth(CONTINUATION_PREFIX));
   const lines = wrapToWidth(row.text, budget);
-  const kept = lines.slice(0, NEGOTIATION_MAX_ROWS_PER_ELEMENT);
+  // **The heading WRAPS but is never clamped, and the distinction is the same one
+  // `approvalStop`'s rows make**: the row bound exists to stop agent-authored prose spending a
+  // screen that cannot scroll, and the heading is this renderer's own sentence — nothing can forge
+  // it, so it may wrap like ordinary prose, and clamping it buys nothing. It costs, though: the
+  // heading is where the attempt count lives, and at {@link MIN_FRAME_WIDTH} a clamp lands inside
+  // the number, deleting the single most decision-relevant fact on the block to save one row.
+  const kept =
+    row.voice === 'chrome' ? [...lines] : lines.slice(0, NEGOTIATION_MAX_ROWS_PER_ELEMENT);
   const hidden = lines.length - kept.length;
   if (hidden > 0 && kept.length > 0) {
     const marker = ` … +${hidden} ${hidden === 1 ? 'row' : 'rows'}`;

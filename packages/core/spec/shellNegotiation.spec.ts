@@ -17,7 +17,7 @@ import {
   renderNegotiationTranscript,
   ShellNegotiationState,
 } from '#src/core/shell/negotiation.js';
-import { frameWidthFor } from '#src/core/shell/framing.js';
+import { frameWidthFor, MIN_FRAME_WIDTH } from '#src/core/shell/framing.js';
 import { maxDisplayWidth } from '#src/utils/displayWidth.js';
 import type { RaterNegotiationRound } from '#src/core/shell/rater.js';
 import { REJECTION_MOVES } from '#src/core/shell/rejection.js';
@@ -1520,6 +1520,33 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       // Every row still fits the terminal it was bound to.
       for (const row of rows) {
         expect(maxDisplayWidth(row.text)).toBeLessThanOrEqual(frameWidthFor(80));
+      }
+    });
+
+    /**
+     * **The count survives the narrowest terminal the frame supports.** The row bound is there to
+     * stop AGENT-AUTHORED prose spending a screen that cannot scroll; the heading is the renderer's
+     * own sentence, and clamping it buys no forgery protection while costing the one fact the block
+     * is most decision-relevant for. At {@link MIN_FRAME_WIDTH} the heading needs three rows, so a
+     * clamp lands inside the number itself — which is silent, and passes at every width anyone
+     * normally measures at.
+     */
+    it('never clamps the count out of its own heading, however narrow the terminal', () => {
+      const rounds: RaterNegotiationRound[] = [1, 2, 3].map((n) => ({
+        command: 'git reset --hard',
+        justification: `justification ${n}`,
+        outcome: 'destructive',
+        reason: `answer ${n}`,
+      }));
+      for (const width of [MIN_FRAME_WIDTH, 30, 40, frameWidthFor(80)]) {
+        const heading = renderNegotiationRows(rounds, { width, attempts: 5 })
+          .filter((row) => row.voice === 'chrome')
+          .map((row) => row.text.replace(/^ *┊ /u, ''))
+          .join('');
+        expect(heading, `the count is gone at width ${width}`).toContain('5 times');
+        expect(heading, `what it is showing is gone at width ${width}`).toContain('the last 3');
+        // Wrapped, never clipped: the chrome row says nothing was hidden, because nothing was.
+        expect(heading).not.toContain('…');
       }
     });
 
