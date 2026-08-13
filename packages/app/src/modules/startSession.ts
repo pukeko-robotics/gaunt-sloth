@@ -1,7 +1,5 @@
 import {
   hasAnyConfig,
-  isConfigDiscoveryError,
-  isMissingProviderKeyError,
   loadConfiguredTui,
   type CommandLineConfigOverrides,
 } from '@gaunt-sloth/core/config.js';
@@ -23,7 +21,8 @@ import { isInkAvailable } from '#src/tui/loadInk.js';
  * the readline session, then hands off the SAME `SessionConfig`/overrides/message either
  * way. Anything that prevents the TUI (non-TTY, `--no-tui`/`GTH_NO_TUI`, CI, missing
  * optional deps, or a TUI mount failure) degrades to readline — never a crash. A failure of
- * the *configuration* is not such a thing, and propagates; see the catch below.
+ * anything the readline path would ALSO have done is not such a thing, and propagates; see
+ * the two narrow try blocks below and the note above them.
  *
  * Because non-TTY environments always resolve to readline, the existing interactive
  * integration tests (spawned with piped, non-TTY stdio) keep exercising the unchanged
@@ -85,32 +84,71 @@ export async function startSession(
   });
 
   if (environmentFavoursTui && (await isInkAvailable())) {
+    // CFG-36 found that a config failure under the TUI was being reported as the TUI being
+    // unavailable, and fixed it by re-raising the two config error CLASSES from this catch.
+    //
+    // CFG-47 — a marker list is the wrong shape for that job, because it always trails the code: it
+    // has to be extended every time a new kind of failure learns to reach here, and the only
+    // evidence that it was not extended is a user being told the wrong thing. It already missed one
+    // (`initConfig`'s "-c <path> does not exist", a plain `Error`).
+    //
+    // The general rule the list was approximating: **falling back can only help a failure the
+    // readline path would not also have.** Everything `createTuiSession` does before it starts
+    // taking over the terminal — load config, open the conversation, start session logging, build
+    // the runner, `runner.init` (which resolves the `subagents[].profile` configs) — the readline
+    // path does identically, so restarting under readline re-runs the same work and fails the same
+    // way, having first printed a false diagnosis. Only two things here are the TUI's alone:
+    //
+    //   1. loading this module at all — it statically imports the optional `ink` / `react` / `chalk`
+    //      subtree, so a genuinely incomplete install fails at the IMPORT, before `createTuiSession`
+    //      is ever entered. That is why the import keeps a `try` of its own; narrowing the fallback
+    //      back to "the render" alone would break the one case it is honestly for. Know what else
+    //      is inside that net: `tuiSessionModule.tsx` also statically imports ~25 non-optional
+    //      `@gaunt-sloth/core/*` and `@gaunt-sloth/agent/*` modules, so an ESM load failure in ANY
+    //      of them is swallowed here into the same "TUI unavailable" notice and a silent readline
+    //      restart. That is a known residual, not an oversight: `isInkAvailable()` probes only
+    //      `ink` and `react`, so the `chalk` case genuinely needs this wrapper and it cannot be
+    //      narrowed further without losing it;
+    //   2. the render phase — the mouse/stdin plumbing and Ink's mount, which touch the terminal.
+    //
+    // So the fallback wraps exactly those two, and the default for everything else is to propagate.
+    // A failure mode added to `createTuiSession`'s setup in future reaches the caller without anyone
+    // having to remember to list it, which is the property the marker list could not have.
+    let createTuiSession:
+      Awaited<typeof import('#src/tui/tuiSessionModule.js')>['createTuiSession'] | undefined;
     try {
-      const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
-      await createTuiSession(sessionConfig, commandLineConfigOverrides, message);
-      return;
+      ({ createTuiSession } = await import('#src/tui/tuiSessionModule.js'));
     } catch (err) {
-      // CFG-36 — an unusable CONFIGURATION is not the TUI being unavailable, and must not be
-      // reported as one. `createTuiSession` loads config itself (and, through `runner.init`, the
-      // `subagents[].profile` configs under it), so a mistyped `-i`, a malformed layer or a missing
-      // provider key surfaces HERE first. Swallowed into the fallback it produces a false diagnosis
-      // ("TUI unavailable (identity profile "typo" not found…)"), silently restarts under readline,
-      // and only reaches the true message after loading the same broken config a second time — so
-      // the user is told the wrong thing first and the right thing second. Re-raised, it reaches the
-      // CLI's top-level guard (`guardProgramConfigErrors`), which prints it ONCE and exits 1.
-      //
-      // The classes are exactly the two that guard terminates on, and nothing else changes: a failed
-      // dynamic import (Ink genuinely absent) or a mount failure still degrades to readline, which
-      // is the behaviour the fallback exists for.
-      if (isConfigDiscoveryError(err) || isMissingProviderKeyError(err)) {
-        throw err;
+      warnTuiUnavailable(err);
+    }
+    if (createTuiSession) {
+      // False until `createTuiSession` reports that it has reached the render phase. Deliberately
+      // this polarity: an unrecognised failure leaves it false and therefore propagates.
+      let inRenderPhase = false;
+      try {
+        await createTuiSession(sessionConfig, commandLineConfigOverrides, message, () => {
+          inRenderPhase = true;
+        });
+        return;
+      } catch (err) {
+        // Pre-render: readline cannot help, and saying "TUI unavailable" would be a false
+        // diagnosis. The error reaches the CLI's top-level guard (`guardProgramConfigErrors`),
+        // which prints a config failure once and exits 1, or the GS2-48 crash handler otherwise.
+        if (!inRenderPhase) {
+          throw err;
+        }
+        warnTuiUnavailable(err);
       }
-      displayWarning(
-        `TUI unavailable (${err instanceof Error ? err.message : String(err)}); ` +
-          `falling back to the readline session.`
-      );
     }
   }
 
   await createInteractiveSession(sessionConfig, commandLineConfigOverrides, message);
+}
+
+/** The one "the TUI itself could not run; use readline" notice, worded as it always has been. */
+function warnTuiUnavailable(err: unknown): void {
+  displayWarning(
+    `TUI unavailable (${err instanceof Error ? err.message : String(err)}); ` +
+      `falling back to the readline session.`
+  );
 }

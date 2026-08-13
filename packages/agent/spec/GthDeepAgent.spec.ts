@@ -41,7 +41,10 @@ class FilesystemBackendStub {
     this.options = options;
   }
 }
-vi.mock('deepagents', () => ({
+vi.mock('deepagents', async (importOriginal) => ({
+  // Partial mock: only the graph builder and the fs backend are stubbed, so a module that imports
+  // any other deepagents export (GENERAL_PURPOSE_SUBAGENT, …) still gets the real thing.
+  ...(await importOriginal<typeof import('deepagents')>()),
   createDeepAgent: createDeepAgentMock,
   FilesystemBackend: FilesystemBackendStub,
 }));
@@ -1007,22 +1010,78 @@ describe('GthDeepAgent', () => {
     const params = createDeepAgentMock.mock.calls[0][0];
     // The parent runs on its own model...
     expect(params.model).toBe(parentModel);
-    // ...and each subagent resolved its OWN profile's model, distinct from the parent's.
-    expect(params.subagents.map((s: { name: string }) => s.name)).toEqual(['recall', 'auditor']);
-    expect((params.subagents[0].model as { _id: string })._id).toBe('cheap-model');
-    expect((params.subagents[1].model as { _id: string })._id).toBe('strong-model');
+    // ...and each subagent resolved its OWN profile's model, distinct from the parent's. CFG-42:
+    // gsloth also declares the general-purpose subagent itself (so it can carry the thought
+    // redaction middleware), which is why it leads the list.
+    expect(params.subagents.map((s: { name: string }) => s.name)).toEqual([
+      'general-purpose',
+      'recall',
+      'auditor',
+    ]);
+    expect((params.subagents[1].model as { _id: string })._id).toBe('cheap-model');
+    expect((params.subagents[2].model as { _id: string })._id).toBe('strong-model');
     expect(initConfigMock).toHaveBeenCalledWith({ identityProfile: 'cheap' });
     expect(initConfigMock).toHaveBeenCalledWith({ identityProfile: 'strong' });
   });
 
-  it('GS2-33: passes no subagents (and never resolves a profile) when none are configured', async () => {
+  it('GS2-33: resolves no profile when no subagents are configured', async () => {
     const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
     const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
 
     await agent.init('chat', makeConfig());
 
-    expect(createDeepAgentMock.mock.calls[0][0].subagents).toBeUndefined();
+    // CFG-42: the general-purpose subagent is always declared by gsloth so it carries the thought
+    // redaction middleware; configuring none means exactly that one, and no profile is resolved.
+    expect(
+      createDeepAgentMock.mock.calls[0][0].subagents.map((s: { name: string }) => s.name)
+    ).toEqual(['general-purpose']);
     expect(initConfigMock).not.toHaveBeenCalled();
+  });
+
+  it('CFG-42: the declared general-purpose subagent carries the thought-redaction middleware', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const { SUBAGENT_THOUGHT_REDACTION_MIDDLEWARE_NAME } =
+      await import('#src/core/subagentThoughtRedaction.js');
+    const parentModel = { _id: 'parent-model', bindTools: () => ({}) } as any;
+    const tool = fakeTool('some_tool');
+    const agent = new GthDeepAgent(statusUpdate, {
+      resolveTools: vi.fn().mockResolvedValue([tool]),
+    });
+
+    await agent.init('chat', makeConfig({ llm: parentModel }));
+
+    const [generalPurpose] = createDeepAgentMock.mock.calls[0][0].subagents;
+    expect(generalPurpose.middleware.map((m: { name: string }) => m.name)).toContain(
+      SUBAGENT_THOUGHT_REDACTION_MIDDLEWARE_NAME
+    );
+    // It is deepagents' own general-purpose subagent otherwise: the parent's model and the same
+    // tool set the parent was given, so declaring it changes nothing else about the delegation.
+    expect(generalPurpose.model).toBe(parentModel);
+    expect(generalPurpose.tools).toEqual(createDeepAgentMock.mock.calls[0][0].tools);
+  });
+
+  it('CFG-42: a configured subagent named general-purpose wins, and still redacts', async () => {
+    const { GthDeepAgent } = await import('#src/core/GthDeepAgent.js');
+    const { SUBAGENT_THOUGHT_REDACTION_MIDDLEWARE_NAME } =
+      await import('#src/core/subagentThoughtRedaction.js');
+    initConfigMock.mockImplementation(async (overrides: { identityProfile?: string }) => ({
+      llm: { _id: `${overrides.identityProfile}-model`, bindTools: () => ({}) },
+    }));
+    const agent = new GthDeepAgent(statusUpdate, { resolveTools: vi.fn().mockResolvedValue([]) });
+
+    await agent.init(
+      'chat',
+      makeConfig({ subagents: [{ name: 'general-purpose', profile: 'cheap' }] })
+    );
+
+    // Exactly one general-purpose subagent — a duplicate name would make the task tool's dispatch
+    // table ambiguous — and it is the user's, on the profile's own model.
+    const { subagents } = createDeepAgentMock.mock.calls[0][0];
+    expect(subagents.map((s: { name: string }) => s.name)).toEqual(['general-purpose']);
+    expect((subagents[0].model as { _id: string })._id).toBe('cheap-model');
+    expect(subagents[0].middleware.map((m: { name: string }) => m.name)).toContain(
+      SUBAGENT_THOUGHT_REDACTION_MIDDLEWARE_NAME
+    );
   });
 });
 

@@ -107,7 +107,7 @@ describe('GS2-41 profile inheritance — initConfig wiring', () => {
     //
     // This is the level that proves it, through the REAL loader rather than the composer alone: the
     // raise has to survive initConfig's JSON branch, whose catch would otherwise fall through to the
-    // next config FORMAT and end in the terminal "No configuration file found" exit — hiding the
+    // next config FORMAT and end in the terminal "No configuration file found" failure — hiding the
     // clearly-worded real problem. Asserting the error TYPE (not merely that something threw) is
     // what makes it discriminating: the shape this replaced printed the message, called `exit(1)`
     // and threw a generic sentinel, so a bare rejects.toThrow() would pass against it unchanged.
@@ -123,6 +123,10 @@ describe('GS2-41 profile inheritance — initConfig wiring', () => {
 
     expect(isConfigDiscoveryError(error)).toBe(true);
     expect((error as Error).message).toMatch(/"no-such-base".*was not found/i);
+    // CFG-47 — the original `ConfigExtendsError` travels as `cause`. Asserted because re-raising by
+    // message alone is silently revertible: the wrapper still carries the right words, and the
+    // underlying error and its stack are simply gone for anyone who wants them.
+    expect((error as Error).cause).toBeInstanceOf(Error);
     // Never reached the provider: the run stops at discovery, it does not grade under a half-built
     // config.
     expect(ChatAnthropicMock).not.toHaveBeenCalled();

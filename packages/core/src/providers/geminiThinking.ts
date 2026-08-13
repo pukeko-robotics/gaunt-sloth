@@ -34,10 +34,16 @@ type InvocationParams = Record<string, unknown> & { generationConfig?: Generatio
 type InvocationParamsFn = (options?: unknown) => InvocationParams;
 
 /**
- * Model families that produce no thought summary to show. `@langchain/google` itself declines to
- * send any thinking config for a 2.5 image model, so injecting one there would send a field the
- * library deliberately withheld; image/tts generations have no reasoning panel to fill either way.
- * Skipping them keeps this change to the models it is about.
+ * Model families to leave alone when ADDING a request for thought summaries. `@langchain/google`
+ * itself declines to send any thinking config for a 2.5 image model, so injecting one there would
+ * send a field the library deliberately withheld; image/tts generations have no reasoning panel to
+ * fill either way. Skipping them keeps the enable path to the models it is about.
+ *
+ * This gates the ENABLE direction only, and it must never gate the disable one. The sentence it
+ * encodes — "we are unsure this model produces a summary, so do not ask for one" — inverts into
+ * "…so let one through" the moment the same test is applied to a leak-prevention override, and
+ * these families are exactly where `@langchain/google` sets `includeThoughts: true` on its own
+ * once a thinking budget is configured.
  */
 function producesThoughtSummaries(model: unknown): boolean {
   if (typeof model !== 'string') return true;
@@ -53,6 +59,9 @@ function producesThoughtSummaries(model: unknown): boolean {
  * that decision is left exactly as it stands. Returns the same model instance for chaining.
  */
 export function applyGeminiThoughtSummaries<T extends BaseChatModel>(model: T): T {
+  if (!producesThoughtSummaries((model as unknown as { model?: unknown }).model)) {
+    return model;
+  }
   return overrideThinkingConfig(model, (thinkingConfig) =>
     // `thinkingConfig` is always PRESENT as a key and may hold `undefined`; an explicit value means
     // the user's budget/level was honoured and must win.
@@ -71,20 +80,33 @@ export function applyGeminiThoughtSummaries<T extends BaseChatModel>(model: T): 
  * no way to tell them apart and prints the thinking as the assistant's answer. Not asking for the
  * summary is the only thing that reliably stops that; nothing is stripped, so the message kept in
  * graph state (and any `thoughtSignature` riding on it) is untouched. Returns the same instance.
+ *
+ * It applies to EVERY model family, including the image/tts ones the enable path skips: those are
+ * precisely where `@langchain/google` sets `includeThoughts: true` itself once a budget or level is
+ * configured, so a shared "does this model produce summaries?" guard would let exactly those
+ * summaries through. What it will not do is INTRODUCE a thinking config where the library built
+ * none — a request that carries no `thinkingConfig` gets no summary anyway (that is the whole
+ * premise of {@link applyGeminiThoughtSummaries}), and adding the field to a model family the
+ * library withholds it from would send something it deliberately did not.
  */
 export function disableGeminiThoughtSummaries<T extends BaseChatModel>(model: T): T {
-  return overrideThinkingConfig(model, (thinkingConfig) => ({
-    ...(typeof thinkingConfig === 'object' && thinkingConfig !== null ? thinkingConfig : {}),
-    includeThoughts: false,
-  }));
+  return overrideThinkingConfig(model, (thinkingConfig) =>
+    thinkingConfig === undefined
+      ? thinkingConfig
+      : {
+          ...(typeof thinkingConfig === 'object' && thinkingConfig !== null ? thinkingConfig : {}),
+          includeThoughts: false,
+        }
+  );
 }
 
 /**
  * Shared plumbing: re-derive `generationConfig.thinkingConfig` on every built request. Models that
- * build no `generationConfig` (every non-Google provider) and model families that produce no thought
- * summary are left completely alone, so this is a no-op wherever it does not apply. Overrides stack:
- * the outermost one sees what the inner ones produced, which is what lets a surface-level decision
- * override the construction-time default.
+ * build no `generationConfig` (every non-Google provider) are left completely alone, so this is a
+ * no-op wherever it does not apply. Which model families to skip is the CALLER's decision, because
+ * it differs by direction — see {@link producesThoughtSummaries}. Overrides stack: the outermost one
+ * sees what the inner ones produced, which is what lets a surface-level decision override the
+ * construction-time default.
  */
 function overrideThinkingConfig<T extends BaseChatModel>(
   model: T,
@@ -92,7 +114,7 @@ function overrideThinkingConfig<T extends BaseChatModel>(
 ): T {
   const holder = model as unknown as { model?: unknown; invocationParams?: InvocationParamsFn };
   const original = holder.invocationParams;
-  if (typeof original !== 'function' || !producesThoughtSummaries(holder.model)) {
+  if (typeof original !== 'function') {
     return model;
   }
   const bound = original.bind(model) as InvocationParamsFn;

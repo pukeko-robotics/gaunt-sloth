@@ -221,8 +221,8 @@ describe('eval-gate (scripts/eval-gate.mjs)', () => {
       expect(result.report).toContain('SKIP');
     });
 
-    // The eager-provider abort: loader.ts's uncatchable exit(1) kills the matrix before anything is
-    // graded, so no results.json is written at all. That must be fatal, never a skip.
+    // The eager-provider abort: the raise out of loader.ts ends the run as a harness error before
+    // anything is graded, so no results.json is written at all. That must be fatal, never a skip.
     it('fails, on stderr, when no results.json was written anywhere under the root', async () => {
       const { runGate } = await import(HELPER);
       const empty = mkdtempSync(join(tmpdir(), 'eval-gate-'));

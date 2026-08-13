@@ -36,7 +36,10 @@ class FilesystemBackendStub {
     this.options = options;
   }
 }
-vi.mock('deepagents', () => ({
+vi.mock('deepagents', async (importOriginal) => ({
+  // Partial mock: only the graph builder and the fs backend are stubbed, so a module that imports
+  // any other deepagents export (GENERAL_PURPOSE_SUBAGENT, …) still gets the real thing.
+  ...(await importOriginal<typeof import('deepagents')>()),
   createDeepAgent: createDeepAgentMock,
   FilesystemBackend: FilesystemBackendStub,
 }));

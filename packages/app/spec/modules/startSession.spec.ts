@@ -82,7 +82,14 @@ describe('startSession dispatcher', () => {
 
     await startSession(sessionConfig, {}, 'hi');
 
-    expect(tuiSessionMock.createTuiSession).toHaveBeenCalledWith(sessionConfig, {}, 'hi');
+    expect(tuiSessionMock.createTuiSession).toHaveBeenCalledWith(
+      sessionConfig,
+      {},
+      'hi',
+      // CFG-47 — the render-phase callback the dispatcher uses to tell a TUI failure from one the
+      // readline path would also have had.
+      expect.any(Function)
+    );
     expect(interactiveSessionMock.createInteractiveSession).not.toHaveBeenCalled();
   });
 
@@ -138,7 +145,12 @@ describe('startSession dispatcher', () => {
     await startSession(sessionConfig, {}, undefined);
 
     expect(firstRunDialogMock.runFirstRunDialog).toHaveBeenCalledTimes(1);
-    expect(tuiSessionMock.createTuiSession).toHaveBeenCalledWith(sessionConfig, {}, undefined);
+    expect(tuiSessionMock.createTuiSession).toHaveBeenCalledWith(
+      sessionConfig,
+      {},
+      undefined,
+      expect.any(Function)
+    );
     expect(interactiveSessionMock.createInteractiveSession).not.toHaveBeenCalled();
   });
 
@@ -193,7 +205,12 @@ describe('startSession dispatcher', () => {
 
       await startSession(sessionConfig, {}, undefined);
 
-      expect(tuiSessionMock.createTuiSession).toHaveBeenCalledWith(sessionConfig, {}, undefined);
+      expect(tuiSessionMock.createTuiSession).toHaveBeenCalledWith(
+        sessionConfig,
+        {},
+        undefined,
+        expect.any(Function)
+      );
       expect(interactiveSessionMock.createInteractiveSession).not.toHaveBeenCalled();
     });
 
@@ -253,7 +270,22 @@ describe('startSession dispatcher', () => {
   });
 
   it('degrades to readline with a warning if mounting the TUI throws', async () => {
-    tuiSessionMock.createTuiSession.mockRejectedValue(new Error('no raw mode'));
+    // CFG-47 — "mounting" is now a phase the session announces rather than an assumption about any
+    // throw: the dispatcher falls back only for a failure raised after `onRenderStart` fires. A
+    // mount failure is raised after it, so this behaviour is unchanged; a failure BEFORE it (a bad
+    // config, a runner that would not start) propagates instead, which
+    // startSession.configError.spec.ts pins in both directions.
+    tuiSessionMock.createTuiSession.mockImplementation(
+      async (
+        _sessionConfig: unknown,
+        _overrides: unknown,
+        _message: unknown,
+        onRenderStart?: () => void
+      ) => {
+        onRenderStart?.();
+        throw new Error('no raw mode');
+      }
+    );
     const { startSession } = await import('#src/modules/startSession.js');
 
     await startSession(sessionConfig, {}, 'hi');

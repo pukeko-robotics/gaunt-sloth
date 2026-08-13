@@ -1,9 +1,17 @@
 /**
  * @packageDocumentation
- * The catchable error a config **load** raises when the configuration itself cannot be used — an
- * explicitly-named identity profile that resolves to no config, or a config layer that is present
- * but malformed (a removed pre-2.0 shape, a bad approvals rule grammar, a schema mismatch, an
- * unresolvable `approvals.rater`).
+ * The catchable error a config **load** raises when the configuration itself cannot be used. The
+ * cases, all one class on purpose:
+ *
+ * - an explicitly-named identity profile (or an `extends` base) that resolves to no config;
+ * - a `--config` path that does not exist;
+ * - a config layer present but malformed — a removed pre-2.0 shape, a bad approvals rule grammar,
+ *   a schema mismatch, an unresolvable `approvals.rater`;
+ * - a config that read fine but names no usable model — no `llm` block, no `llm.type`, an
+ *   `llm.type` with no provider module, or a provider module that cannot build from a JSON spec;
+ * - a provider instance that could not be constructed for a reason other than a missing API key
+ *   (that one is {@link MissingProviderKeyError}, which carries the key details);
+ * - no configuration file anywhere at all.
  *
  * Deliberately dependency-free (no imports beyond types) so the config barrel, the loader and
  * downstream consumers can all reach it without an import cycle — the same shape
@@ -17,9 +25,10 @@
  * reports a genuine regression. Callers that legitimately want to terminate — the CLI entry points —
  * catch it at their top level, where the exit code is chosen deliberately.
  *
- * One class covers both the "not found" and the "malformed" cases on purpose: no caller needs to
- * tell them apart (both mean "this configuration cannot be used"), and the fields carry whichever
- * detail applies.
+ * One class covers every case above on purpose: no caller needs to tell them apart (all of them mean
+ * "this configuration cannot be used"), and the fields carry whichever detail applies. Sub-classing
+ * per case would only push the callers back to the marker-list problem this class exists to end —
+ * a consumer that wants the underlying failure reads `cause`.
  */
 
 /** Marker property carried by every {@link ConfigDiscoveryError}; see {@link isConfigDiscoveryError}. */

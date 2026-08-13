@@ -118,16 +118,17 @@ export function configCommand(
     )
     .action(async (name: string, options: { model?: string; force?: boolean }) => {
       // Best-effort seed from the current effective config, falling back to a minimal template when
-      // no config resolves. We must NOT reach for the seed by calling initConfig blindly: when no
-      // config file is found, initConfig -> the loader calls `exit(1)` ("No configuration file
-      // found") — a real, uncatchable `process.exit`, NOT a throw — so a try/catch around the seed
-      // can never reach the template branch, and the process dies before a profile is ever written
-      // (GS2-33 review Important #1). `hasAnyConfig` is the non-exiting mirror of exactly what
+      // no config resolves. When no config file is found, `initConfig` RAISES a catchable
+      // `ConfigDiscoveryError` ("No configuration file found") — the loader does not call `exit` at
+      // all (CFG-47), so a try/catch around the seed does reach the template branch.
+      // `hasAnyConfig` is KEPT anyway, and deliberately: it is the pure mirror of exactly what
       // initConfig would discover — a project config anywhere up-tree OR a global `~/.gsloth`
-      // config — so gating the seed on it lets the template branch actually run in a pristine env.
+      // config — so in a pristine environment the seed is never attempted at all, rather than
+      // attempted, raised and swallowed. Gating on it is what lets the template branch run cleanly
+      // in an environment that has no config (GS2-33 review Important #1).
       let seed: GthConfig | undefined;
       if (await hasAnyConfig(commandLineConfigOverrides)) {
-        // A config exists, so initConfig won't hit the no-config exit. Still guard: a config that
+        // A config exists, so initConfig won't hit the no-config raise. Still guard: a config that
         // exists but fails to build (e.g. a malformed file) should fall back to the template rather
         // than block profile creation.
         try {

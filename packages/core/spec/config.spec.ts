@@ -468,7 +468,12 @@ describe('config', async () => {
       });
     });
 
-    it('Should exit when no config files exist', async () => {
+    // CFG-47 — "no config anywhere" is raised, not exited on. It is the terminal case of the class
+    // CFG-36 converted, and it needs converting for the same reason: `gth eval` has to be able to
+    // report "the harness has no configuration" as a harness error (exit 2) rather than as the
+    // exit 1 that means the system under test ran and failed. The message is unchanged; the CLI's
+    // top-level guard prints it and exits 1, so a person at a terminal sees what they saw before.
+    it('Should raise a catchable error when no config files exist', async () => {
       // Set up fs mocks for this specific test
       fsMock.existsSync.mockReturnValue(false);
 
@@ -478,23 +483,20 @@ describe('config', async () => {
       });
 
       // Ensure custom config path is cleared
-      const { initConfig } = await import('#src/config.js');
+      const { initConfig, isConfigDiscoveryError } = await import('#src/config.js');
 
-      // Function under test
-      try {
-        await initConfig({});
-      } catch {
-        // the mock exit does not exit, so we reach to unexpected error
-      }
+      const error = await initConfig({}).catch((e: unknown) => e);
 
       // It is easier to debug if messages checked first
-      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+      expect((error as Error).message).toBe(
         'No configuration file found. Please create one of: ' +
           '.gsloth.config.json, .gsloth.config.js, or .gsloth.config.mjs ' +
           'in your project directory.'
       );
-
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      // The loader neither prints nor exits: the message rides on the error for the top level.
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });
 
     it('Should HARD-reject deprecated *Provider* names naming their *Source* fix (GS2-28)', async () => {
@@ -899,38 +901,33 @@ describe('config', async () => {
       expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });
 
-    it('Should error when a global config exists but lacks llm.type', async () => {
+    // CFG-47 — raised rather than exited on (see the no-config-anywhere case above).
+    it('Should raise a catchable error when a global config exists but lacks llm.type', async () => {
       setupGlobalOnly({ prompts: { guidelines: 'GLOBAL.md' } });
 
-      const { initConfig } = await import('#src/config.js');
-      try {
-        await initConfig({});
-      } catch {
-        // mock exit() does not stop execution.
-      }
+      const { initConfig, isConfigDiscoveryError } = await import('#src/config.js');
+      const error = await initConfig({}).catch((e: unknown) => e);
 
-      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
-        expect.stringContaining('not in valid format')
-      );
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toContain('not in valid format');
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });
 
-    it('Should still error "No configuration file found" when neither project nor global exists', async () => {
+    it('Should still report "No configuration file found" when neither project nor global exists', async () => {
       setupGlobalOnly(undefined);
 
-      const { initConfig } = await import('#src/config.js');
-      try {
-        await initConfig({});
-      } catch {
-        // mock exit() does not stop execution.
-      }
+      const { initConfig, isConfigDiscoveryError } = await import('#src/config.js');
+      const error = await initConfig({}).catch((e: unknown) => e);
 
-      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+      expect((error as Error).message).toBe(
         'No configuration file found. Please create one of: ' +
           '.gsloth.config.json, .gsloth.config.js, or .gsloth.config.mjs ' +
           'in your project directory.'
       );
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });
 
     it('hasAnyConfig returns false when neither project nor global config exists', async () => {
@@ -1806,28 +1803,24 @@ describe('config', async () => {
 
       // When importing a non-existent config module, it should throw
 
-      const { tryJsonConfig } = await import('#src/config.js');
+      const { tryJsonConfig, isConfigDiscoveryError } = await import('#src/config.js');
 
-      try {
-        await tryJsonConfig(jsonConfig, {});
-        // Should not reach here due to error
-        expect(true).toBe(false);
-      } catch {
-        // Expected to throw
-      }
+      const error = await tryJsonConfig(jsonConfig, {}).catch((e: unknown) => e);
 
-      // It is easier to debug if messages checked first
+      // CFG-47 — the message is unchanged and now rides on a catchable error instead of being
+      // printed here and exited on. Every display channel must stay silent: a print from the
+      // loader would mean a catch downgraded this failure on its way out.
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toContain('not supported');
+      // The resolver's own failure is reachable through `cause` rather than being discarded.
+      expect((error as Error).cause).toBeInstanceOf(Error);
       expect(consoleUtilsMock.displayDebug).not.toHaveBeenCalled();
-      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
-        expect.stringContaining('not supported')
-      );
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
       expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
       expect(consoleUtilsMock.display).not.toHaveBeenCalled();
       expect(consoleUtilsMock.displayInfo).not.toHaveBeenCalled();
       expect(consoleUtilsMock.displaySuccess).not.toHaveBeenCalled();
-
-      // Verify system exit was called
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });
 
     it('Should handle missing LLM type', async () => {
@@ -1837,28 +1830,24 @@ describe('config', async () => {
         },
       } as RawGthConfig;
 
-      const { tryJsonConfig } = await import('#src/config.js');
+      const { tryJsonConfig, isConfigDiscoveryError } = await import('#src/config.js');
 
-      try {
-        await tryJsonConfig(jsonConfig, {});
-        // Should not reach here due to error
-        expect(true).toBe(false);
-      } catch {
-        // Expected to throw
-      }
+      const error = await tryJsonConfig(jsonConfig, {}).catch((e: unknown) => e);
 
-      // It is easier to debug if messages checked first
+      // CFG-47 — the message is unchanged and now rides on a catchable error instead of being
+      // printed here and exited on. Every display channel must stay silent: a print from the
+      // loader would mean a catch downgraded this failure on its way out.
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toContain('not supported');
+      // The resolver's own failure is reachable through `cause` rather than being discarded.
+      expect((error as Error).cause).toBeInstanceOf(Error);
       expect(consoleUtilsMock.displayDebug).not.toHaveBeenCalled();
-      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
-        expect.stringContaining('not supported')
-      );
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
       expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
       expect(consoleUtilsMock.display).not.toHaveBeenCalled();
       expect(consoleUtilsMock.displayInfo).not.toHaveBeenCalled();
       expect(consoleUtilsMock.displaySuccess).not.toHaveBeenCalled();
-
-      // Verify system exit was called
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });
 
     it('Should handle config module without processJsonConfig', async () => {
@@ -1874,20 +1863,22 @@ describe('config', async () => {
         processJsonConfig: undefined,
       }));
 
-      const { tryJsonConfig } = await import('#src/config.js');
+      const { tryJsonConfig, isConfigDiscoveryError } = await import('#src/config.js');
 
-      try {
-        await tryJsonConfig(jsonConfig, {});
-        // Should not reach here due to error
-        expect(true).toBe(false);
-      } catch {
-        // Expected to throw
-      }
+      const error = await tryJsonConfig(jsonConfig, {}).catch((e: unknown) => e);
 
-      expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
+      // CFG-47 — this site was proposed as "genuinely a different case" (an internal invariant
+      // rather than a user's config). It is not: `#src/providers/<type>.js` resolves against the
+      // directory that also holds modelCatalog, modelDiscovery, geminiThinking,
+      // geminiSchemaSanitizer and configurationPassthrough, none of which export
+      // `processJsonConfig` — so an ordinary config naming any of them as `llm.type` lands here.
+      // It is a user-reachable "config present and unusable" failure and is raised like the rest.
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toBe(
         'Config module for badconfig does not have processJsonConfig function.'
       );
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });
 
     it('Should handle missing LLM configuration', async () => {
@@ -1895,20 +1886,14 @@ describe('config', async () => {
         // No llm property
       } as RawGthConfig;
 
-      const { tryJsonConfig } = await import('#src/config.js');
+      const { tryJsonConfig, isConfigDiscoveryError } = await import('#src/config.js');
 
-      try {
-        await tryJsonConfig(jsonConfig, {});
-        // Should not reach here due to error
-        expect(true).toBe(false);
-      } catch {
-        // Expected to throw
-      }
+      const error = await tryJsonConfig(jsonConfig, {}).catch((e: unknown) => e);
 
-      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
-        'No LLM configuration found in config.'
-      );
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toBe('No LLM configuration found in config.');
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });
 
     it('Should handle mcpServers and customTools', async () => {
@@ -1993,20 +1978,17 @@ describe('config', async () => {
         },
       } as RawGthConfig;
 
-      const { tryJsonConfig } = await import('#src/config.js');
+      const { tryJsonConfig, isConfigDiscoveryError } = await import('#src/config.js');
 
-      try {
-        await tryJsonConfig(jsonConfig, {});
-        // Should not reach here due to error
-        expect(true).toBe(false);
-      } catch {
-        // Expected to throw
-      }
+      const error = await tryJsonConfig(jsonConfig, {}).catch((e: unknown) => e);
 
-      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
-        'LLM type not specified in config.'
-      );
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      // CFG-47 — raised, not printed-and-exited. This one also pins `tryJsonConfig`'s own catch
+      // re-raising the class: without that re-raise this clear message would be caught two lines
+      // later, re-worded as "Error processing LLM config: …", and exited on anyway.
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toBe('LLM type not specified in config.');
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });
 
     it('Should call postProcessJsonConfig if it exists on the preset module', async () => {
@@ -2440,7 +2422,12 @@ describe('config', async () => {
         await initConfig({ customConfigPath });
         expect(true).toBe(false); // Should not reach here
       } catch (error) {
-        expect(error).toBeInstanceOf(Error);
+        // CFG-47 — a ConfigDiscoveryError, not a bare Error. As a bare Error this was invisible to
+        // the CLI's top-level guard and to `gth eval`'s harness-error classification alike, so
+        // `gth -c <missing path> code` printed a false "TUI unavailable … falling back to the
+        // readline session" and then a crash snapshot instead of this one true line.
+        const { isConfigDiscoveryError } = await import('#src/config.js');
+        expect(isConfigDiscoveryError(error)).toBe(true);
         expect((error as Error).message).toBe(
           `Provided manual config "${customConfigPath}" does not exist`
         );
@@ -2457,26 +2444,32 @@ describe('config', async () => {
         return false;
       });
 
-      const { initConfig } = await import('#src/config.js');
+      const { initConfig, isConfigDiscoveryError } = await import('#src/config.js');
 
       // Function under test - should fall back to default config loading and fail
-      try {
-        await initConfig({ customConfigPath });
-        expect(true).toBe(false); // Should not reach here
-      } catch {
-        // Expected to throw due to no config files found
-      }
+      const error = await initConfig({ customConfigPath }).catch((e: unknown) => e);
 
-      // Should show error about no configuration file found since the custom path doesn't match supported extensions
-      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+      // The custom path does not match a supported extension, so the format cascade runs and finds
+      // nothing. CFG-47 — that terminal case raises rather than exiting; the message is unchanged.
+      expect((error as Error).message).toBe(
         'No configuration file found. Please create one of: ' +
           '.gsloth.config.json, .gsloth.config.js, or .gsloth.config.mjs ' +
           'in your project directory.'
       );
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });
 
-    it('Should fall back to default config when custom JSON config is invalid', async () => {
+    // CFG-47 — RENAMED, because the behaviour it described never existed outside this file. A
+    // custom JSON config that reads fine and defines no `llm.type` used to `error(...)` + `exit(1)`
+    // and then throw a generic sentinel. In production `exit(1)` ended the run right there, so the
+    // user saw "…is not in valid format" and nothing else; only under the mocked `exit` of this
+    // suite did execution continue into the catch, get treated as an unreadable layer, and fall
+    // through to the module formats and the terminal "No configuration file found". The site now
+    // raises a ConfigDiscoveryError, which the catch re-raises rather than falling through — so
+    // production behaviour is unchanged and the test-only fall-through is gone.
+    it('Should raise, not fall through to other formats, when a custom JSON config defines no llm.type', async () => {
       const customConfigPath = customPathPrefix + '.json';
       const jsonConfig = {
         llm: {
@@ -2493,26 +2486,21 @@ describe('config', async () => {
         return '';
       });
 
-      const { initConfig } = await import('#src/config.js');
+      const { initConfig, isConfigDiscoveryError } = await import('#src/config.js');
 
       // Function under test
-      try {
-        await initConfig({ customConfigPath });
-        expect(true).toBe(false); // Should not reach here
-      } catch {
-        // Expected to throw due to invalid config falling back to no configs found
-      }
+      const error = await initConfig({ customConfigPath }).catch((e: unknown) => e);
 
-      // Should show fallback error message and then no config found error
-      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toContain('is not in valid format');
+      expect((error as Error).message).toContain('Should at least define llm.type');
+      // The format cascade must NOT run: the config was read, it is invalid, and continuing would
+      // end in "No configuration file found" — hiding the real and clearly-worded problem.
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalledWith(
         'Failed to read config from .gsloth.config.json, will try other formats.'
       );
-      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
-        'No configuration file found. Please create one of: ' +
-          '.gsloth.config.json, .gsloth.config.js, or .gsloth.config.mjs ' +
-          'in your project directory.'
-      );
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });
   });
 

@@ -369,17 +369,34 @@ function createAttackHaltBridge() {
  * Session logging note: the readline path streams the assistant delta to file as it
  * arrives; here we append the full turn (user + assistant text) on completion. Same
  * content, slightly different write timing.
+ *
+ * CFG-47 — `onRenderStart` is the seam that lets `startSession` fall back to readline for a TUI
+ * problem and ONLY for a TUI problem. It is called at the point where this function stops doing
+ * work the readline path also does and starts taking the terminal over (mouse plumbing, then Ink's
+ * mount). Before that call, a failure is one readline would hit too — a bad config, a runner that
+ * would not initialise — and falling back would print a false "TUI unavailable" and then fail again
+ * for the real reason; after it, the failure is the TUI's own and readline is the right answer.
+ *
+ * The polarity is what makes this durable: `startSession` propagates unless it has been told the
+ * render phase was reached, so a new way for the setup above to fail needs nobody to remember
+ * anything. Anything moved to before the call joins the propagating side by construction — so if
+ * you add TUI-only, terminal-touching setup, put it after the call.
  */
 export async function createTuiSession(
   sessionConfig: SessionConfig,
   commandLineConfigOverrides: CommandLineConfigOverrides,
-  message?: string
+  message?: string,
+  onRenderStart?: () => void
 ): Promise<void> {
   // Hermetic e2e seam: when GTH_TUI_E2E_FIXTURE is set, drive the real <App> (Ink renderer +
   // foldEvents) from a deterministic, key-free replay of recorded events instead of a model.
   // Production never takes this branch (the env var is set only by the PTY e2e harness).
   const fixturePath = env.GTH_TUI_E2E_FIXTURE;
   if (fixturePath) {
+    // CFG-47 — this whole branch is render: it deliberately loads no config, so there is nothing
+    // here the readline path shares. Signal immediately so the PTY harness keeps the fallback it
+    // has always had rather than silently propagating a fixture problem.
+    onRenderStart?.();
     // TUI-C35 — this branch deliberately never loads config, so there is no resolved answer to
     // consume; ask the CFG-30 ladder directly with the same inputs the loader would have given
     // it. Consuming the shared helper, not a second policy. Without this the PTY suite would run
@@ -629,6 +646,11 @@ export async function createTuiSession(
     // precedence — and the `finally` below clears it on every exit path, restoring the headless
     // stdout sink once the TUI is gone.
     setToolOutputSuppressed(true);
+    // CFG-47 — the render phase starts here. Everything above is work the readline path also does
+    // (config load, conversation, session logging, runner construction and `runner.init`); from
+    // this line on it is the TUI's own terminal takeover, so a failure past here is one falling
+    // back to readline can actually fix. See the note on this function.
+    onRenderStart?.();
     // TUI-C37 — mouse plumbing, built only when the resolved ladder says so. When it is off,
     // nothing is installed and Ink receives the real stdin, so the session is byte-identical to one
     // built before mouse existed — which is what keeps the non-TTY and piped cases honest.

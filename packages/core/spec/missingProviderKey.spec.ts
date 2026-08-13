@@ -314,7 +314,7 @@ describe('CFG-35 missing provider key', () => {
       expect((error as Error).cause).toBe(SDK_NO_KEY_ERROR);
     });
 
-    it('still exits when the provider fails WITH a key present', async () => {
+    it('still fails when the provider fails WITH a key present, but not as a missing key', async () => {
       // The control that makes the case above mean something: same provider, same throw, key
       // present. This is an outage, not a missing secret, and it must NOT be reclassified.
       systemUtilsMock.env.GROQ_API_KEY = 'present';
@@ -331,11 +331,18 @@ describe('CFG-35 missing provider key', () => {
         (e: unknown) => e
       );
 
+      // CFG-47 — the non-missing-key branch raises too. It used to print and `exit(1)` while its
+      // immediate neighbour three lines up already threw, so the file disagreed with itself about
+      // whether a provider that could not be built terminates the process. The classification is
+      // what this cell is for and it is unchanged: NOT a missing key, so the exit-2/exit-1 detail
+      // fields are absent and the outage keeps its own error as `cause`.
+      const { isConfigDiscoveryError } = await import('#src/config/configDiscovery.js');
       expect(isMissingProviderKeyError(error)).toBe(false);
-      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
-        'Error processing LLM config: 503 Service Unavailable'
-      );
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toBe('Error processing LLM config: 503 Service Unavailable');
+      expect((error as Error).cause).toBe(outage);
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });
 
     it('still reports an unsupported LLM type as unsupported, key or no key', async () => {
@@ -357,9 +364,14 @@ describe('CFG-35 missing provider key', () => {
         (e: unknown) => e
       );
 
+      const { isConfigDiscoveryError } = await import('#src/config/configDiscovery.js');
       expect(isMissingProviderKeyError(error)).toBe(false);
-      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith("LLM type 'groq' not supported.");
-      expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+      // CFG-47 — raised rather than printed-and-exited; the wording and the branch order that
+      // produces it are unchanged, which is what this cell exists to hold.
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toBe("LLM type 'groq' not supported.");
+      expect(consoleUtilsMock.displayError).not.toHaveBeenCalled();
+      expect(systemUtilsMock.exit).not.toHaveBeenCalled();
     });
 
     it('builds the model normally when the provider succeeds', async () => {
@@ -385,7 +397,8 @@ describe('CFG-35 missing provider key', () => {
     it('propagates the missing key instead of falling through to the next config format', async () => {
       // The JSON branch's catch exists to try the next FORMAT when the JSON layer cannot be read.
       // A config that read fine and named a keyless provider is not a read failure: swallowing it
-      // would end in the terminal "No configuration file found" exit — uncatchable, and wrong.
+      // would end in the terminal "No configuration file found" raise — which reports a missing
+      // config instead of the keyless provider that actually stopped the run, and is wrong.
       fsMock.existsSync.mockImplementation(
         (path: string) => !!path && path.includes('.gsloth.config.json')
       );
