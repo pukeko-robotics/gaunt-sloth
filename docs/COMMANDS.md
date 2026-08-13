@@ -233,7 +233,7 @@ gth exec [script]
 - `-m, --message <text>` - Inline prompt text to execute instead of a script file path. Cannot be combined with `[script]`.
 - `-f, --file [files...]` - Additional context files. Their content is added BEFORE the script.
 - `-t, --temperature <number>` - LLM sampling temperature for this run (`0` = most deterministic).
-- `--allow-dir <path>` - Allow filesystem access to an extra directory beyond the cwd for this run (repeatable). Removes the default cwd sandbox guardrail — use with care.
+- `--allow-dir <path>` - **Has no effect in this release** (repeatable). It widened filesystem access beyond the cwd for the deepagents backend, which has been removed; the flag still parses and warns on use, and the agent reads and writes within the working directory only.
 
 ### Description
 The script is resolved in precedence order: `-m/--message` inline text, then the `[script]` path argument, then stdin. Extra `-f` files are prepended as context. `exec` runs the same single-shot agent runtime as `ask`, tuned for reproducible "do-the-job" runs.

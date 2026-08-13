@@ -102,7 +102,8 @@ been asked anything.
 Two controls inside Gaunt Sloth remove a capability instead of reading a string:
 
 - The **file tools refuse a path outside the folder Gaunt Sloth is running in**, at every mode,
-  Bypass included — unless you widen the sandbox yourself, which `gth exec --allow-dir <path>` does.
+  Bypass included. There is currently no way to widen that boundary: `gth exec --allow-dir <path>`
+  once did, for the deepagents backend that has since been removed, and now warns and does nothing.
 - The **LLM and cloud provider keys Gaunt Sloth holds are stripped from the environment** of any
   command it runs, so the environment is not a route to them — but a key you have written into a
   config file or a `.env` is a file on disk like any other, and an approved command can read it.

@@ -105,8 +105,9 @@ export function execCommand(
     )
     .option(
       '--allow-dir <path>',
-      'Allow filesystem access to an extra directory beyond cwd for this run (repeatable). ' +
-        'Removes the default cwd sandbox guardrail — use with care.',
+      'HAS NO EFFECT in this release (repeatable). It widened filesystem access beyond cwd for ' +
+        'the removed deepagents backend; the flag still parses and warns, and the agent reads ' +
+        'and writes within the working directory only.',
       (value: string, previous: string[] = []) => [...previous, value]
     )
     .addHelpText(

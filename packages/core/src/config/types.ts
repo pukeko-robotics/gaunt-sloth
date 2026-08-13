@@ -532,9 +532,10 @@ export interface GthConfig {
    * GS2-33 — profile-backed subagents. Each entry names a subagent and the {@link
    * SubagentProfileSpec.profile named config profile} the CHILD resolves when the parent spawns it,
    * so a subagent can run under a different model/tools/prompt than the parent (a cheap profile for
-   * recall/search while the parent runs on a strong model). Honored by the deep (deepagents) backend
-   * — its `task` tool gains one selectable subagent per entry; the lean backend's own subagent
-   * primitive lands in GS2-25.
+   * recall/search while the parent runs on a strong model). **Currently honored by nothing:** its
+   * only consumer was the deep (deepagents) backend, whose `task` tool gained one selectable
+   * subagent per entry, and that backend has been removed. The key is still accepted and warns on
+   * use; the lean backend's own subagent primitive lands in GS2-25.
    */
   subagents?: SubagentProfileSpec[];
 }
