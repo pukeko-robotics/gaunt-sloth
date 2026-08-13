@@ -54,13 +54,24 @@
  *    a 120-column terminal the neutralised `Command:` line of a hostile command is ~164 columns.
  *
  * **Because half of it is the surface's job, the surfaces are enumerated rather than assumed.**
- * Every place a stop is printed to a terminal calls {@link approvalStopRows} (or the Ink
- * component): `runtime/singleShot.ts`, `runtime/conversation.ts`,
- * `agent/modules/interactiveSessionModule.ts`, `review/modules/reviewModule.ts`,
- * `app/commands/prCommand.ts` (which catches what the PR-discovery agent throws) and
- * `app/tui/components/App.tsx`. **Adding a surface that prints a stop means adding it to that
- * list.** The rest of the consumers above take {@link message} and want the string: they are not
- * terminals, and the neutralisation they inherit is the whole of what they need.
+ * Every place that catches an `ApprovalStopError` and prints it calls {@link approvalStopRows} (or
+ * the Ink component): `runtime/singleShot.ts`, `runtime/conversation.ts`,
+ * `agent/modules/interactiveSessionModule.ts` (both its per-turn catch and its outermost one, which
+ * is where the `-m` path lands), `review/modules/reviewModule.ts`, `app/commands/prCommand.ts`
+ * (which catches what the PR-discovery agent throws) and `app/tui/components/App.tsx`.
+ * **Adding a surface that catches a stop means adding it to that list.**
+ *
+ * **That list is over the ERROR, and the error is not the only way a stop reaches a screen.** Some
+ * consumers take {@link message} and hand the *string* onward, at which point no `instanceof` can
+ * find it again: `runConversation` records it as a turn's `error`, and `evalRunner` folds that into
+ * an eval case's `reasons`, which `batch/reporters/textReporter.ts` prints — a terminal, reached
+ * without any of its code ever seeing this class. That one frames the text itself. So the honest
+ * statement is not "every other consumer is a non-terminal" but: **a consumer that prints to a
+ * terminal frames what it prints, whether it holds the error or only its text**, and the ones that
+ * legitimately do neither are the file and protocol sinks (the approvals archive, the JUnit/JSON
+ * reports, the AG-UI event) plus `reviewModule`'s `displayDebug` of the raw error, which is a debug
+ * channel. All of them still inherit the neutralisation, which is what keeps the worst case a
+ * wrapped line rather than a repainted screen.
  *
  * **The structured fields stay RAW; only the message is neutralised.** That is what answers the
  * obvious objection to construction-time work — that it stops the error being a faithful record of

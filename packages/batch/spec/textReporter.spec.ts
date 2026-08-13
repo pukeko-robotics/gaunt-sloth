@@ -16,6 +16,10 @@ vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => consoleUtilsMock);
 
 const CTX: EvalRunContext = { suitePath: 'suite.yaml', outputDir: '/out/run-1' };
 
+/** Every line the reporter put on the warning channel, in order. */
+const warned = (): string[] =>
+  consoleUtilsMock.displayWarning.mock.calls.map((call) => String(call[0]));
+
 /** Drive a reporter over a summary in lifecycle order, exactly as the command's driver does, so the
  * asserted console lines are the ones a real run prints. */
 async function drive(summary: EvalSuiteSummary, ctx: EvalRunContext = CTX) {
@@ -68,7 +72,7 @@ describe('textReporter (byte-for-byte port of the former printSummary)', () => {
     expect(consoleUtilsMock.display).toHaveBeenCalledTimes(2);
   });
 
-  it('(b) a failing case joins its reasons with "; " and prints a warning total', async () => {
+  it('(b) a failing case joins its reasons with "; ", frames them, and warns a total', async () => {
     const summary: EvalSuiteSummary = {
       total: 2,
       passed: 1,
@@ -89,14 +93,59 @@ describe('textReporter (byte-for-byte port of the former printSummary)', () => {
     await drive(summary);
 
     expect(consoleUtilsMock.display).toHaveBeenCalledWith('PASS  ok');
-    expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
-      'FAIL  bad — missing "x"; forbidden "y"'
-    );
+    // [[TUI-C71]] — the verdict keeps its own row and the reasons follow it inside the framing
+    // gutter, because a reason is model-authored text and this reporter writes to a terminal.
+    expect(warned()).toContain('FAIL  bad');
+    expect(
+      warned().some((row) => /^ +\d+ │ /.test(row) && row.includes('missing "x"; forbidden "y"'))
+    ).toBe(true);
     expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
       'EVAL RESULT: 1/2 case(s) passed, 1 failed. Results written to /out/run-1'
     );
     // A failing run must NOT emit the success channel.
     expect(consoleUtilsMock.displaySuccess).not.toHaveBeenCalled();
+  });
+
+  /**
+   * [[TUI-C71]] — **the stop reaches this reporter as a STRING, never as an `ApprovalStopError`.**
+   *
+   * `runConversation` catches the stop, records `err.message` as the turn's `error`, and
+   * `evalRunner` folds that into `reasons` as `SUT run failed: …`. So `gth eval` multi-turn prints
+   * a run-ending stop here — on a terminal — without this file ever seeing the error class, which
+   * is exactly why enumerating the error object's consumers did not find this surface.
+   *
+   * **Asserted as a gutter row**, not as a surviving substring: the text is in the message either
+   * way, so a substring assertion passes on the unframed one-liner this case exists to forbid.
+   */
+  it('(b3) frames a run-ending approvals stop that arrived as a reason string', async () => {
+    const { AttackHaltError } = await import('@gaunt-sloth/core/core/shell/approvalStop.js');
+    const command = `echo eval-stop-marker | cat${String.fromCodePoint(0x0d)}Approve?  [o]nce`;
+    const stop = new AttackHaltError(command, 'pipes a remote script straight into a shell');
+    const summary: EvalSuiteSummary = {
+      total: 1,
+      passed: 0,
+      failed: 1,
+      cases: [
+        {
+          id: 'bad',
+          verdict: 'FAIL',
+          passThreshold: 6,
+          sutOk: false,
+          durationMs: 1,
+          reasons: [`SUT run failed: ${stop.message}`],
+        },
+      ],
+    };
+
+    await drive(summary);
+
+    const rows = warned();
+    expect(rows.some((row) => /^ +\d+ │ /.test(row))).toBe(true);
+    expect(rows.some((row) => row.includes('eval-stop-marker'))).toBe(true);
+    // The carriage return arrived as a printable escape (neutralised at construction) ...
+    expect(rows.some((row) => row.includes('\\x0d'))).toBe(true);
+    // ... and no row printed can be mistaken for an approval menu at the left edge.
+    for (const row of rows) expect(row.trimEnd()).not.toMatch(/^Approve\?/);
   });
 
   it('(b2) a FAIL with no recorded reasons falls back to "no reason recorded"', async () => {
