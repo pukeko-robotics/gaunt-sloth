@@ -549,7 +549,7 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
       expect(text).toContain('will change and delete things');
       // (2) The difference is stated, and so is its terminus.
       expect(text).toContain('back to the agent');
-      expect(text).toContain('stops and asks you');
+      expect(text).toContain('then asks you');
       // (3) The argument reaches the user AT the escalation — never as a running commentary.
       expect(text).toContain('when it does ask');
       expect(text).not.toMatch(/as it happens|watch|live|on screen/i);
