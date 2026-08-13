@@ -15,6 +15,11 @@
  * halves are asserted, because "it surfaces" alone would leave open the worse failure — a run that
  * suspends where the runner can see it and resumes somewhere else.
  *
+ * Every scenario is swept over BOTH constructions of the general-purpose subagent — deepagents'
+ * auto-added one and the one gsloth declares ([[CFG-42]]) — because who builds that spec is what
+ * decides its gating, and a silently ungated nested write is precisely what this file refuses to
+ * take on trust.
+ *
  * Driven against the REAL deepagents graph with a scripted model — a source read cannot answer it,
  * and the reviewer who raised this was explicit that configuration is not behaviour. Deliberately
  * no gsloth wrapper: `GthDeepAgent` would add config resolution, a real filesystem backend and a
@@ -25,6 +30,7 @@ import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from '@langcha
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { MemorySaver } from '@langchain/langgraph';
 import { createDeepAgent } from 'deepagents';
+import { buildGeneralPurposeSubagent } from '#src/core/subagentThoughtRedaction.js';
 
 /** What `GthAbstractAgent.getPendingToolInterrupts` reports, read exactly as it reads it. */
 function pendingInterruptNames(state: unknown): string[] {
@@ -106,12 +112,26 @@ class ScriptedTwoLevelModel extends BaseChatModel {
 const gated = (...names: string[]) =>
   Object.fromEntries(names.map((n) => [n, { allowedDecisions: ['approve', 'reject'] }]));
 
-/** Run until the graph stops, and report what the parent's checkpoint says is pending. */
-async function runAndInspect(interruptOn: Record<string, unknown>, threadId: string) {
+/**
+ * Run until the graph stops, and report what the parent's checkpoint says is pending.
+ *
+ * `declaredSubagent` decides who builds the general-purpose subagent: deepagents itself, or gsloth
+ * ([[CFG-42]], where declaring it is the only way to reach it with middleware). Both variants are
+ * swept below, because gating is decided by that construction and this file exists on the principle
+ * that configuration is not behaviour.
+ */
+async function runAndInspect(
+  interruptOn: Record<string, unknown>,
+  threadId: string,
+  declaredSubagent = false
+) {
   const model = new ScriptedTwoLevelModel({});
   const graph = createDeepAgent({
     model: model as never,
     interruptOn: interruptOn as never,
+    subagents: declaredSubagent
+      ? [buildGeneralPurposeSubagent({ model, tools: [] }) as never]
+      : undefined,
     checkpointer: new MemorySaver(),
   });
   const config = { configurable: { thread_id: threadId }, recursionLimit: 30 };
@@ -124,10 +144,17 @@ async function runAndInspect(interruptOn: Record<string, unknown>, threadId: str
   return { model, graph, config, state, pending: pendingInterruptNames(state) };
 }
 
-describe("EXT-80 — a subagent's own gated call, seen from the parent", () => {
+describe.each([
+  ['deepagents’ own general-purpose subagent', false],
+  ['the general-purpose subagent gsloth declares (CFG-42)', true],
+])("EXT-80 — a subagent's own gated call, seen from the parent — %s", (_label, declared) => {
   it('gates task itself, so the delegation is what the human approves', async () => {
     // The shape this branch ships: `task` has no access class, so both deterministic rungs gate it.
-    const { pending, model } = await runAndInspect(gated('write_file', 'task'), 'task-gated');
+    const { pending, model } = await runAndInspect(
+      gated('write_file', 'task'),
+      `task-gated-${declared}`,
+      declared
+    );
 
     expect(pending).toEqual(['task']);
     // The parent suspended BEFORE delegating: the child never ran.
@@ -143,7 +170,11 @@ describe("EXT-80 — a subagent's own gated call, seen from the parent", () => {
    * `manual` session and an unprompted write.
    */
   it('surfaces a nested write_file interrupt in the PARENT state, where the runner reads it', async () => {
-    const { pending, model } = await runAndInspect(gated('write_file'), 'nested-only');
+    const { pending, model } = await runAndInspect(
+      gated('write_file'),
+      `nested-only-${declared}`,
+      declared
+    );
 
     // The delegation really happened and the child really tried to write — without this the
     // assertion below would pass on a run in which nothing was delegated at all.
@@ -160,7 +191,11 @@ describe("EXT-80 — a subagent's own gated call, seen from the parent", () => {
    * write, not a better one.
    */
   it('routes the decision back into the child, so the delegation completes', async () => {
-    const { graph, config, model } = await runAndInspect(gated('write_file'), 'nested-resume');
+    const { graph, config, model } = await runAndInspect(
+      gated('write_file'),
+      `nested-resume-${declared}`,
+      declared
+    );
     const childCallsBeforeResume = model.childCalls;
 
     const { Command } = await import('@langchain/langgraph');

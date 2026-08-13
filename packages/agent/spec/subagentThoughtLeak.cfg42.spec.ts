@@ -16,7 +16,13 @@
  * test over the filter function alone would prove nothing about the path that actually leaks.
  */
 import { describe, expect, it } from 'vitest';
-import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
+import {
+  AIMessage,
+  AIMessageChunk,
+  HumanMessage,
+  ToolMessage,
+  type BaseMessage,
+} from '@langchain/core/messages';
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { tool } from '@langchain/core/tools';
 import { MemorySaver } from '@langchain/langgraph';
@@ -84,7 +90,7 @@ const CHILD_ANSWER_TURN = {
 class ScriptedDelegationModel extends BaseChatModel {
   parentCalls = 0;
   childCalls = 0;
-  constructor(private readonly childTurns: Record<string, unknown>[]) {
+  constructor(private readonly childTurns: (Record<string, unknown> | AIMessage)[]) {
     super({});
   }
   _llmType(): string {
@@ -101,7 +107,9 @@ class ScriptedDelegationModel extends BaseChatModel {
     if (isChild) {
       const turn = this.childTurns[Math.min(this.childCalls, this.childTurns.length - 1)];
       this.childCalls++;
-      message = new AIMessage(turn as never);
+      // A turn given as a message instance is used AS IS, so a spec can put an AIMessageChunk —
+      // what the streaming path leaves in state — through the very same graph.
+      message = AIMessage.isInstance(turn) ? turn : new AIMessage(turn as never);
     } else if (messages.some((m) => ToolMessage.isInstance(m))) {
       message = new AIMessage('relayed');
     } else {
@@ -207,7 +215,7 @@ describe("CFG-42 — the parent reads the subagent's answer, not its thinking", 
  * and it leaves the parts that carry thought signatures alone.
  */
 describe('CFG-42 — what the redaction does to the subagent’s own messages', () => {
-  async function runSubagent(childTurns: Record<string, unknown>[], redact: boolean) {
+  async function runSubagent(childTurns: (Record<string, unknown> | AIMessage)[], redact: boolean) {
     const model = new ScriptedDelegationModel(childTurns);
     const spec = redact
       ? buildGeneralPurposeSubagent({ model, tools: [echoTool] })
@@ -265,5 +273,44 @@ describe('CFG-42 — what the redaction does to the subagent’s own messages', 
     expect(messages.some((m) => ToolMessage.isInstance(m) && m.content === 'echoed:sheep')).toBe(
       true
     );
+  });
+
+  /**
+   * The streaming path leaves an `AIMessageChunk` in state, and `AIMessage.isInstance` matches one,
+   * so this branch runs in production on every streamed run. Two things are easy to lose in a copy
+   * and neither is visible from the parent: the concrete class, and `tool_call_chunks` — a chunk
+   * rebuilt without that field comes back with an EMPTY chunk list rather than the one it had.
+   */
+  it('keeps a streamed chunk a chunk, with its tool-call chunks intact', async () => {
+    const streamedTurn = new AIMessageChunk({
+      content: [
+        geminiThoughtBlock(THOUGHT_TEXT),
+        {
+          type: 'functionCall',
+          thoughtSignature: CALL_SIGNATURE,
+          functionCall: { name: 'echo', args: { value: 'sheep' } },
+        },
+      ] as never,
+      tool_call_chunks: [
+        {
+          type: 'tool_call_chunk',
+          name: 'echo',
+          args: '{"value":"sheep"}',
+          id: 'child-echo-1',
+          index: 0,
+        },
+      ],
+    });
+
+    const messages = await runSubagent([streamedTurn, CHILD_ANSWER_TURN], true);
+    const redactedChunk = messages.find((m) => AIMessageChunk.isInstance(m)) as AIMessageChunk;
+
+    expect(redactedChunk).toBeDefined();
+    expect(redactedChunk.constructor).toBe(AIMessageChunk);
+    expect(redactedChunk.tool_call_chunks).toEqual(streamedTurn.tool_call_chunks);
+    expect(redactedChunk.tool_calls?.[0]?.name).toBe('echo');
+    // …and it really was redacted, so this is not passing on an untouched message.
+    expect(JSON.stringify(redactedChunk.content)).not.toContain(THOUGHT_TEXT);
+    expect(JSON.stringify(redactedChunk.content)).toContain(CALL_SIGNATURE);
   });
 });

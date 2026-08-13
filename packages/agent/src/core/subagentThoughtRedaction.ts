@@ -38,7 +38,11 @@ export const SUBAGENT_THOUGHT_REDACTION_MIDDLEWARE_NAME = 'GthSubagentThoughtRed
 function redactAssistantMessage(message: AIMessage, content: unknown): AIMessage {
   // Keep the concrete class (an AIMessageChunk stays a chunk) and the id — the messages reducer
   // REPLACES by id, so a copy that lost its id would be appended beside the original instead.
+  // `tool_call_chunks` is an AIMessageChunk field and is carried only when the message has one: a
+  // chunk rebuilt without it comes back with an EMPTY chunk list, which is a silent loss on the
+  // streaming path (`AIMessage.isInstance` matches a chunk, so that path is a real one here).
   const Constructor = message.constructor as new (fields: Record<string, unknown>) => AIMessage;
+  const chunks = (message as { tool_call_chunks?: unknown }).tool_call_chunks;
   return new Constructor({
     id: message.id,
     name: message.name,
@@ -48,6 +52,7 @@ function redactAssistantMessage(message: AIMessage, content: unknown): AIMessage
     tool_calls: message.tool_calls,
     invalid_tool_calls: message.invalid_tool_calls,
     usage_metadata: message.usage_metadata,
+    ...(chunks === undefined ? {} : { tool_call_chunks: chunks }),
   });
 }
 
