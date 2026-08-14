@@ -629,8 +629,14 @@ export function approvalPostureChoices(current: ApprovalRung): ApprovalPostureCh
 }
 
 /**
- * CFG-39 — the picker as TEXT: the selectable list every non-TTY surface (ACP, AG-UI, the readline
- * `--no-tui` session, a piped stdout) prints in place of the interactive rows.
+ * CFG-39 — the picker as TEXT: the selectable list printed in place of the interactive rows. The
+ * readline session is what prints it, and that is where every `--no-tui`, piped / non-TTY, CI or
+ * missing-Ink run lands.
+ *
+ * **A surface with no slash-command layer renders nothing from here.** The ACP and AG-UI servers
+ * have none, so `/approvals` reaches them in no form at all and this list appears on neither. Do
+ * not read a server's tool-approval gate as this list arriving there: that gate asks about a single
+ * pending call in the protocol's own request shape and carries no posture copy.
  *
  * The same {@link approvalPostureChoices} the TTY picker renders, so the two cannot list different
  * modes or describe them differently — the text fallback is a rendering of the picker, not a

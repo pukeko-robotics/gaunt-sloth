@@ -78,10 +78,16 @@ unambiguous meaning — and there is no per-prompt "turn the gate down from here
   covering it**, and the claim has to be re-earned there rather than inherited from the terminal.
 - **Tone = `warn` at `bypass`.** Running with no gate is caution-worthy, so its notice is yellow and
   the status bar carries the unmissable **`⚡ Bypass`** badge; every other mode is `info`.
-- **Choosing is a picker on a TTY, a list everywhere else.** `/approvals` with no argument renders
-  `ApprovalsPicker` (four postures — Write is a modifier of Manual and stays settable by name);
-  every non-TTY surface prints the same choices as text from the same builder, so the two cannot
-  offer different modes.
+- **Choosing is a picker on a TTY, a text list off it.** `/approvals` with no argument renders
+  `ApprovalsPicker` (four postures — Write is a modifier of Manual and stays settable by name); the
+  readline session prints the same choices as text from the same builder, so the two cannot offer
+  different modes. A surface with no slash commands — the ACP and AG-UI servers — renders neither,
+  so no copy from this builder reaches a server surface, and AG-UI renders no approvals string at
+  all. **ACP renders its own, though** — the permission request's title, the explanation built from
+  the rater's verdict, the matched `approvals.escalate` entry and the grant preview, and its four
+  option labels — so there the boundary above **is** crossed, and every claim in that copy has to be
+  re-earned rather than inherited from here. One of them already is: the strongest refusal ACP
+  offers is labelled *Reject for this session*, which is the scope the gate actually persists.
 - **Invokable during inference (DL-9).** The prompt stays mounted while a turn streams, so
   `/approvals` (and the other read-only / toggle commands marked `availableDuringRun`) can be run
   mid-turn to change how the run's remaining tool calls are handled; idle-only commands (`/clear`,
