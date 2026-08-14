@@ -75,7 +75,7 @@ accumulate — see
 [Array merge policy across config layers](../MIGRATION.md#d-array-merge-policy-across-config-layers-behaviour-change).
 
 The global layer cannot be turned off: there is no flag, environment variable or config key for it,
-and neither `-c`/`--config` nor `-i`/`--identity-profile` bypasses it — each chooses the
+and neither `-c`/`--config` nor `-i`/`--identity-profile` (`--profile`) bypasses it — each chooses the
 *project*-layer config that merges over the global one. See
 [Identity profiles](profiles.md#identity-profiles) for where a profile sits in the full precedence
 chain.
