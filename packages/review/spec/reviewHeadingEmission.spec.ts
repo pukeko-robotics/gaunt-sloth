@@ -112,7 +112,15 @@ describe('REL-12 — the review heading reaches the terminal and the output file
   const expectHeadingOpensBothSurfaces = (): void => {
     expect(headingCount(terminalLines())).toBe(1);
     expect(headingCount(reportLines())).toBe(1);
-    expect(reportLines()[0]).toContain(HEADING);
+    expect(
+      reportLines()[0],
+      'the review must OPEN with the attribution (REL-12 acceptance 1) — if you added a line above the emission, move it below rather than relaxing this'
+    ).toContain(HEADING);
+    // The terminal half pins the first `console.log` write, NOT the first thing on the user's
+    // screen: `ProgressIndicator` writes straight to stdout without a newline, so a real
+    // `streamOutput: false` run shows `Reviewing.## Gaunt Sloth: Code Review`. That collision is
+    // reported separately and is not this spec's to assert away — if it is ever fixed by routing
+    // the indicator through `display`, this line reddens on the fix and should move, not relax.
     expect(terminalLines()[0]).toContain(HEADING);
   };
 
@@ -196,9 +204,12 @@ describe('REL-12 — the review heading reaches the terminal and the output file
     const { StatusLevel } = await import('@gaunt-sloth/core/core/types.js');
     const config = () => configWith({ writeOutputToFile: './rel12-review.md' });
 
-    // The CHANNEL rules out three helpers and the header gate: `displayInfo` (which is what
-    // `headerStatus` reports through, and therefore the one change that would put the heading back
-    // under `output.header`), `displayWarning` and `displayError` land on console.info/warn/error.
+    // The CHANNEL rules out two helpers, including the header gate: `displayInfo` lands on
+    // console.info — it is what `headerStatus` reports through, so it is the one change that would
+    // put the heading back under `output.header`, and therefore the load-bearing exclusion — and
+    // `displayWarning` lands on console.warn. `displaySuccess` and `displayError` are NOT excluded
+    // here: both call `su.log`, i.e. console.log, exactly as `display` does. The level halves below
+    // are what rule those two out.
     await review('review', '', 'a diff', config());
     expect(headingCount(terminalLines())).toBe(1);
     for (const spy of [infoSpy, warnSpy, errorSpy]) {
