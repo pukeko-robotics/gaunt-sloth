@@ -254,6 +254,45 @@ the ready message.
   detected (floored at basic 16-colour when it detected none), and never promotes a terminal to a
   depth it did not report.
 
+## Review attribution (DL-4 transparency, DL-6 cross-surface consistency, DL-7 graceful degradation, REL-12)
+
+`review` and `pr` open their output with a fixed heading and one attribution line:
+
+```text
+## Gaunt Sloth: Code Review
+
+stateless review · gemini-3.1-pro-preview (google-genai)
+```
+
+- **The product emits it, never the caller (DL-4).** A review is usually read where the command that
+  produced it is not visible — a pull request comment under a bot avatar, a report file attached to a
+  ticket — and an unlabelled AI review there is credited to whichever AI reviewer the reader already
+  knows. Emitting it from `review()` means every surface carrying the output carries the attribution:
+  the terminal, the `writeOutputToFile` report, and any workflow that posts that file, with nothing
+  to wire up.
+- **One emission, both surfaces (DL-6).** It goes out through `display` after `initSessionLogging`
+  and before the agent runs, so the session-log capture puts the same two lines in the report file.
+  It is the **first** thing written there: nothing may precede it, because *the review opens with the
+  attribution* is the whole rule, and a line inserted above it is the failure this exists to prevent.
+- **The heading is a constant; the mode is not in it.** `## Gaunt Sloth: Code Review` never varies —
+  its job is to be the same recognisable string to a reader who has never heard of the tool. The mode
+  (`stateless review`) lives on the attribution line, so a second review mode changes that line and
+  leaves the heading alone.
+- **Two lines and no more.** A review is read for its findings, and everything above the first
+  finding pushes that finding down. No rule, box, logo, timestamp, version, or restated
+  repo/branch/PR.
+- **The model half is the launch banner's spelling (DL-6).** `model (provider)`, from the shared
+  `modelProviderLabel` in `@gaunt-sloth/core/core/launchBanner.js` — never a second spelling of the
+  same fact on a second surface.
+- **Drop rather than mislead (DL-7).** No provider — a JS config hands us an already-built model —
+  prints the bare model, with no `(unknown)` and no empty parentheses. No model drops the label
+  altogether, leaving `stateless review` on its own: a provider name would sit exactly where a model
+  name sits and be read as one. Same rule the banner applies to a version that will not fit.
+- **It is not part of the run header.** `output.header: false` strips the technical preamble
+  (Workdir/Model/Tools/Middleware) so captured stdout stays diffable; the attribution is the first
+  line of the review document rather than preamble, and survives it. Being emitted outside the agent,
+  it is also out of `headerStatus`'s reach by construction.
+
 ## Tool-call panels (DL-2 progressive disclosure, DL-4 transparency)
 
 Tool calls render as **collapsible panels** (`tui/components/LiveTurn.tsx`), with the per-tool

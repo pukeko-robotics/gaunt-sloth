@@ -3,6 +3,13 @@
  * REL-12 — the two lines every `gth review` / `gth pr` run opens with, so a reader of the output
  * knows whose review it is.
  *
+ * User-facing CLI feedback, so it is governed by `maintenance/ux-guidelines.md` § Review
+ * attribution, and it serves three of the Design Language principles: **DL-4** (transparency — a
+ * reader of the output knows what produced it), **DL-6** (cross-surface consistency — the model half
+ * reuses the launch banner's one `model (provider)` spelling rather than a second one), and **DL-7**
+ * (graceful degradation — drop the label rather than mislead, exactly as the banner drops a version
+ * that will not fit).
+ *
  * ## Why the product emits this and not the workflow
  *
  * The review is usually read somewhere the command is not visible: a PR comment posted by a bot

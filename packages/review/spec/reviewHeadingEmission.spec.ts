@@ -65,6 +65,8 @@ describe('REL-12 — the review heading reaches the terminal and the output file
   let review: typeof import('#src/modules/reviewModule.js').review;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let infoSpy: ReturnType<typeof vi.spyOn>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
 
   const configWith = (overrides: Partial<GthConfig>): GthConfig =>
     ({
@@ -92,6 +94,28 @@ describe('REL-12 — the review heading reaches the terminal and the output file
   const reportLines = (): string[] =>
     writeToLogStreamMock.mock.calls.map((call) => String(call[0]));
 
+  /**
+   * The node's actual requirement: the review **opens** with the attribution, on both surfaces —
+   * once, and with nothing above it.
+   *
+   * The first-write assertion is the load-bearing one, and it is an assertion about **index 0**
+   * deliberately. Nothing on this path can legitimately write to the report before the heading:
+   * `initSessionLogging` is opened four lines above the emission and is called nowhere else on the
+   * review path (`reviewCommand.ts`, `prCommand.ts`, `packages/app/src/cli.ts` and
+   * `packages/review/cli.js` never open it), and the agent — whose notices are the only other
+   * plausible writer — is not constructed until thirty lines later. So index 0 is a RULE here, not
+   * an accident of what happened to run first, and a "find it wherever it is" lookup gives up the
+   * only assertion that can catch a line inserted above the emission. One `displayWarning` there
+   * leaves the whole suite green and puts an advisory at the top of the posted PR comment; this is
+   * what notices.
+   */
+  const expectHeadingOpensBothSurfaces = (): void => {
+    expect(headingCount(terminalLines())).toBe(1);
+    expect(headingCount(reportLines())).toBe(1);
+    expect(reportLines()[0]).toContain(HEADING);
+    expect(terminalLines()[0]).toContain(HEADING);
+  };
+
   beforeEach(async () => {
     vi.clearAllMocks();
     leanAgent.init.mockResolvedValue(undefined);
@@ -99,12 +123,19 @@ describe('REL-12 — the review heading reaches the terminal and the output file
     leanAgent.cleanup.mockResolvedValue(undefined);
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     ({ review } = await import('#src/modules/reviewModule.js'));
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     logSpy.mockRestore();
     infoSpy.mockRestore();
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+    // The console level is module state, so a cell that moves it must not leak into the next file.
+    const { resetConsoleLevel } = await import('@gaunt-sloth/core/utils/consoleUtils.js');
+    resetConsoleLevel();
   });
 
   // Both verbs, each with the command config it really runs under — `pr` reviews a GitHub PR, which
@@ -124,20 +155,13 @@ describe('REL-12 — the review heading reaches the terminal and the output file
         command
       );
 
-      // Terminal.
-      expect(headingCount(terminalLines())).toBe(1);
-      // The report a workflow reads back and posts.
-      expect(headingCount(reportLines())).toBe(1);
+      expectHeadingOpensBothSurfaces();
       expect(reportLines().join('')).toContain(
         'stateless review · gemini-3.1-pro-preview (google-genai)'
       );
-      // Emitted before the agent ran, so it heads the document rather than trailing the review.
-      // Located by CONTENT, not by index: anything else the run legitimately logs first (a config
-      // advisory, a subagent notice) must not turn this red — it is the ordering that matters.
-      const headingAt = writeToLogStreamMock.mock.calls.findIndex((call) =>
-        String(call[0]).includes(HEADING)
-      );
-      expect(headingAt).toBeGreaterThanOrEqual(0);
+      // Emitted before the agent ran. Located by CONTENT here, because this half is about ORDER
+      // relative to the run, and reading it off an index would make it depend on the assertion above.
+      const headingAt = reportLines().findIndex((line) => line.includes(HEADING));
       expect(writeToLogStreamMock.mock.invocationCallOrder[headingAt]).toBeLessThan(
         leanAgent.invoke.mock.invocationCallOrder[0]
       );
@@ -157,26 +181,50 @@ describe('REL-12 — the review heading reaches the terminal and the output file
       'review'
     );
 
-    expect(headingCount(terminalLines())).toBe(1);
-    expect(headingCount(reportLines())).toBe(1);
+    expectHeadingOpensBothSurfaces();
   });
 
   it('shows it exactly once — not twice — when output.header is absent', async () => {
     await review('review', '', 'a diff', configWith({ writeOutputToFile: './rel12-review.md' }));
 
-    expect(headingCount(terminalLines())).toBe(1);
-    expect(headingCount(reportLines())).toBe(1);
+    expectHeadingOpensBothSurfaces();
   });
 
-  it('emits it on the display channel, never through the header status channel', async () => {
-    await review('review', '', 'a diff', configWith({ writeOutputToFile: './rel12-review.md' }));
+  it('emits it through `display` — DISPLAY level, log channel — so no other helper passes', async () => {
+    const { setConsoleLevel, resetConsoleLevel } =
+      await import('@gaunt-sloth/core/utils/consoleUtils.js');
+    const { StatusLevel } = await import('@gaunt-sloth/core/core/types.js');
+    const config = () => configWith({ writeOutputToFile: './rel12-review.md' });
 
-    // `headerStatus` reports at INFO, which lands on `console.info`; `display` lands on
-    // `console.log`. Routing the heading through the header helper — the one change that would put
-    // it back under `output.header` — would move it to the other channel, and this is what notices.
-    const infoLines = infoSpy.mock.calls.map((call) => String(call[0]));
-    expect(headingCount(infoLines)).toBe(0);
+    // The CHANNEL rules out three helpers and the header gate: `displayInfo` (which is what
+    // `headerStatus` reports through, and therefore the one change that would put the heading back
+    // under `output.header`), `displayWarning` and `displayError` land on console.info/warn/error.
+    await review('review', '', 'a diff', config());
     expect(headingCount(terminalLines())).toBe(1);
+    for (const spy of [infoSpy, warnSpy, errorSpy]) {
+      expect(headingCount(spy.mock.calls.map((call) => String(call[0])))).toBe(0);
+    }
+
+    // The channel alone cannot tell `display` from `displaySuccess`: both write to console.log, and
+    // with colour off they are byte-identical. The console-level gate is what separates them, so it
+    // is pinned from BOTH sides — and exactly one level satisfies both halves, which is the point.
+    try {
+      // At DISPLAY, anything QUIETER is suppressed — `displayInfo` would vanish here.
+      setConsoleLevel(StatusLevel.DISPLAY);
+      logSpy.mockClear();
+      await review('review', '', 'a diff', config());
+      expect(headingCount(terminalLines())).toBe(1);
+
+      // At SUCCESS, DISPLAY is suppressed — `displaySuccess`, or anything LOUDER, would still print.
+      // (That the attribution goes quiet on a quieted console is accepted behaviour: the same gate
+      // drops a non-streamed review body too.)
+      setConsoleLevel(StatusLevel.SUCCESS);
+      logSpy.mockClear();
+      await review('review', '', 'a diff', config());
+      expect(headingCount(terminalLines())).toBe(0);
+    } finally {
+      resetConsoleLevel();
+    }
   });
 
   it('shows it on a terminal-only run, where nothing is written to a file at all', async () => {
