@@ -2,6 +2,7 @@ import type { GthConfig, RatingConfig } from '@gaunt-sloth/core/config.js';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import {
   defaultStatusCallback,
+  display,
   displayDebug,
   displayError,
   displayInfo,
@@ -11,6 +12,7 @@ import {
   initSessionLogging,
   stopSessionLogging,
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import { reviewHeadingBlock } from '#src/modules/reviewHeading.js';
 import { getCommandOutputFilePath } from '#src/utils/fileUtils.js';
 import { HumanMessage } from '@langchain/core/messages';
 import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
@@ -83,6 +85,17 @@ export async function review(
     if (filePath) {
       initSessionLogging(filePath, config.streamSessionInferenceLog);
     }
+
+    // REL-12: head the review with its attribution. It sits AFTER `initSessionLogging` on purpose —
+    // the session log is a capture of console output, so this ordering is the whole reason one
+    // emission covers both surfaces: the terminal AND the `writeOutputToFile` report a workflow
+    // reads back and posts. Emitted BEFORE the agent runs so it is the first thing in both.
+    //
+    // Through the ordinary `display` helper, never `headerStatus`: that gate belongs to the
+    // agent's technical run-header preamble, which `output.header: false` strips so captured stdout
+    // stays diffable. This is not preamble — it is the first line of the review document, and the
+    // reason a reader can tell whose review they are reading.
+    display(reviewHeadingBlock(config.modelDisplayName, config.modelProviderType));
 
     const rateConfig = config.commands?.[command]?.rating;
     if (rateConfig && rateConfig.enabled !== false) {

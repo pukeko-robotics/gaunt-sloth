@@ -49,6 +49,30 @@ Add requirements to check against, and focus the reviewer:
 gth review --content-source git -r requirements.md -m "focus on security implications"
 ```
 
+## What a review is labelled with
+
+Every `review` and `pr` run opens its output with a fixed heading and one attribution line:
+
+```text
+## Gaunt Sloth: Code Review
+
+stateless review · gemini-3.1-pro-preview (google-genai)
+```
+
+That comes from the CLI itself, so it reaches everywhere the output goes — your terminal, the
+[`writeOutputToFile`](../configuration/output.md#controlling-output-files) report, and any pull
+request comment a workflow posts from that file — with nothing to wire up. A review is usually read
+somewhere the command that produced it is not visible, and an unlabelled AI review sitting under a
+bot avatar gets credited to whichever AI reviewer the reader already knows.
+
+The heading is the same string on every run. The line under it names the review mode and the model
+that served it. The provider half is dropped when a JS config hands Gaunt Sloth an already-built
+model, because there is then no provider name to report; the model is dropped altogether when none
+resolves, leaving `stateless review` on its own rather than a placeholder.
+
+The heading belongs to the review document rather than to the technical run header, so
+[`output.header: false`](../configuration/output.md#run-header-outputheader) does not remove it.
+
 ## Examples
 
 ```bash

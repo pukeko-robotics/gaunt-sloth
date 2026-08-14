@@ -307,8 +307,12 @@ describe('reviewModule', () => {
 
     expect(consoleUtilsMock.initSessionLogging).toHaveBeenCalled();
 
-    // Since streamOutput is true, display should not be called
-    expect(consoleUtilsMock.display).not.toHaveBeenCalled();
+    // Since streamOutput is true, the model's answer is written through the STREAM channel — the
+    // only thing `display` emits on a review run is the REL-12 heading block, exactly once.
+    expect(consoleUtilsMock.display).toHaveBeenCalledTimes(1);
+    expect(consoleUtilsMock.display).toHaveBeenCalledWith(
+      expect.stringContaining('## Gaunt Sloth: Code Review')
+    );
   });
 
   it('should surface the underlying error message when the agent run fails', async () => {

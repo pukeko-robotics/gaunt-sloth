@@ -230,8 +230,10 @@ job or script that diffs, logs, or post-processes the output.
 }
 ```
 
-Only the preamble is suppressed — model/tool output, errors, and config-validation warnings always
-print. In interactive terminal runs Esc/Q interruption stays armed even though the hint box is
+Only the preamble is suppressed — model/tool output, errors, config-validation warnings, and the
+[review heading](../guides/review-code-and-prs.md#what-a-review-is-labelled-with) that `review` and
+`pr` runs open with always print; that heading belongs to the review document, not to the run
+header. In interactive terminal runs Esc/Q interruption stays armed even though the hint box is
 hidden; piped/non-TTY runs never arm Esc/Q regardless of this setting. The interactive TUI
 ignores the setting and always shows the header.
 

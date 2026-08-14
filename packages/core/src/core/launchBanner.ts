@@ -380,8 +380,13 @@ function collapseHomePrefix(directory: string, homeDir: string | undefined): str
 /**
  * Build the model/provider line: `model (provider)` when both resolve, the one that resolved when
  * only one does, and nothing at all when neither does — an empty `()` would look like a bug.
+ *
+ * Exported because it is the ONE spelling of "which model served this run" that the CLI shows a
+ * user: the launch banner renders it here, and `@gaunt-sloth/review` renders it in the review
+ * document's attribution line. A second site formatting the same two fields its own way is how a
+ * surface ends up saying `google-genai:gemini` where its neighbour says `gemini (google-genai)`.
  */
-function modelProviderLabel(model?: string, provider?: string): string | undefined {
+export function modelProviderLabel(model?: string, provider?: string): string | undefined {
   const m = model?.trim();
   const p = provider?.trim();
   if (m && p) return `${m} (${p})`;

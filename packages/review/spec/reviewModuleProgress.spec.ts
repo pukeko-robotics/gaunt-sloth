@@ -37,6 +37,7 @@ vi.mock('#src/middleware/reviewRateMiddleware.js', () => ({
 
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
   defaultStatusCallback: vi.fn(),
+  display: vi.fn(),
   displayDebug: vi.fn(),
   displayError: vi.fn(),
   displayInfo: vi.fn(),
