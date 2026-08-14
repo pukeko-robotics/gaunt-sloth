@@ -107,14 +107,20 @@ describe('REL-12 — the review heading reaches the terminal and the output file
     infoSpy.mockRestore();
   });
 
-  it.each(['review', 'pr'] as const)(
+  // Both verbs, each with the command config it really runs under — `pr` reviews a GitHub PR, which
+  // injects the `gh` file-read tool on the line above the emission, so the cell exercises that path
+  // rather than merely passing a different string.
+  it.each([
+    ['review', {}],
+    ['pr', { commands: { pr: { contentSource: 'github' } } }],
+  ] as Array<['review' | 'pr', Partial<GthConfig>]>)(
     'opens %s with the heading and the attribution on the terminal and in the report',
-    async (command) => {
+    async (command, commandConfig) => {
       await review(
         command,
         '',
         'a diff',
-        configWith({ writeOutputToFile: './rel12-review.md' }),
+        configWith({ writeOutputToFile: './rel12-review.md', ...commandConfig }),
         command
       );
 
@@ -126,9 +132,15 @@ describe('REL-12 — the review heading reaches the terminal and the output file
         'stateless review · gemini-3.1-pro-preview (google-genai)'
       );
       // Emitted before the agent ran, so it heads the document rather than trailing the review.
-      const headingCall = writeToLogStreamMock.mock.invocationCallOrder[0];
-      expect(headingCall).toBeLessThan(leanAgent.invoke.mock.invocationCallOrder[0]);
-      expect(String(writeToLogStreamMock.mock.calls[0][0])).toContain(HEADING);
+      // Located by CONTENT, not by index: anything else the run legitimately logs first (a config
+      // advisory, a subagent notice) must not turn this red — it is the ordering that matters.
+      const headingAt = writeToLogStreamMock.mock.calls.findIndex((call) =>
+        String(call[0]).includes(HEADING)
+      );
+      expect(headingAt).toBeGreaterThanOrEqual(0);
+      expect(writeToLogStreamMock.mock.invocationCallOrder[headingAt]).toBeLessThan(
+        leanAgent.invoke.mock.invocationCallOrder[0]
+      );
     }
   );
 
