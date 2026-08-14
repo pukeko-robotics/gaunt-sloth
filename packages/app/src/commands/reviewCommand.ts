@@ -18,6 +18,9 @@ import { CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
 import { wrapContent } from '@gaunt-sloth/core/utils/llmUtils.js';
 
 import { readMultipleFilesFromProjectDir } from '@gaunt-sloth/review/utils/fileUtils.js';
+// From the REVIEW package, not this package's own same-named module: both ship a
+// `commands/commandUtils`, and this helper lives only in review's (GS2-45).
+import { resolvePrIdFromArg } from '@gaunt-sloth/review/commands/commandUtils.js';
 
 interface ReviewCommandOptions {
   file?: string[];
@@ -136,7 +139,14 @@ export function reviewCommand(
         content.join('\n'),
         config,
         'review',
-        createResolvers()
+        createResolvers(),
+        // Bind GitHub-only review tools (gth_gh_read_file) to the pull request this run's DIFF
+        // came from. Without it they resolve the PR from the checked-out branch instead, so a
+        // `gth review 42 --content-source github` reviews PR 42's diff against a different pull
+        // request's files, silently. `contentId` is a content id rather than a PR id — a ref
+        // range or a file path under the other sources — so only a bare number is taken as one;
+        // anything else, including no argument at all, keeps the branch-discovery fallback.
+        { prId: resolvePrIdFromArg(contentId) }
       );
     });
 }
