@@ -4,9 +4,30 @@
  * corpus of shell commands.
  *
  * It is the {@link ../evalTypes.js RunClassifyFn} seam Half A defined, and nothing more. Every case
- * is a command string; each round is put through the SAME two functions the production gate uses —
- * `rateShellCommand` (the rating prompt) and `mapVerdictToAction` (the rung-keyed decision
- * mapping) — and what they return becomes one {@link ClassifyOutcome} per round.
+ * is a sequence of commands; each round is put through the SAME three pieces the production gate
+ * uses — `rateShellCommand` (the rating prompt), `mapVerdictToAction` (the rung-keyed decision
+ * mapping) and `ShellNegotiationState` (§5's transcript and its two bounds) — and what they return
+ * becomes one {@link ClassifyOutcome} per round.
+ *
+ * ## BATCH-34 — why the negotiation state is here and not stubbed
+ *
+ * A case's rounds used to be rated independently, so a multi-round case measured N unrelated round-1
+ * ratings rather than the thing it asserts. Two mechanisms had to be threaded to fix that, and
+ * neither is optional:
+ *
+ * 1. **The §5.1 context**, so a round from 2 onward is rated with the justification, the user
+ *    messages and the exchange so far in view. Without it the rater cannot see what the case is
+ *    about.
+ * 2. **The §5.3 bounds**, because `mapVerdictToAction` is a pure function of rung and outcome and
+ *    returns `reject` for a `destructive` command at `auto` *every* time. A round that escalates
+ *    because the argument ran out is produced nowhere else, so `neg-01-escalate` — the same command
+ *    proposed three times, ending at a human — is not expressible without it.
+ *
+ * Both come from core's own {@link import('@gaunt-sloth/core/core/shell/negotiation.js')
+ * ShellNegotiationState}, the class the production runner drives, rather than from counters of our
+ * own. Re-implementing "when is this round-1" or "when is the bound spent" here would be exactly the
+ * second opinion rule 1 below forbids — and §5.6's warning is that an implementation clearing the
+ * counter without the transcript *"looks correct and passes any obvious test"*.
  *
  * ## Two rules this file exists to keep
  *
@@ -24,10 +45,12 @@ import { checkHardline } from '@gaunt-sloth/core/core/shell/hardline.js';
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import {
   APPROVAL_RUNGS,
+  isNegotiatingRung,
   isRatedRung,
   resolveApprovals,
 } from '@gaunt-sloth/core/config/shell-policy.js';
 import type { ApprovalRung } from '@gaunt-sloth/core/config/shell-policy.js';
+import { ShellNegotiationState } from '@gaunt-sloth/core/core/shell/negotiation.js';
 import {
   FAIL_CLOSED_VERDICT,
   RATER_OUTCOMES,
@@ -49,6 +72,7 @@ import {
 import type {
   ClassifyOutcome,
   ClassifyRequest,
+  ClassifyRound,
   ForcedByMechanism,
   PreflightMechanism,
   RaterTarget,
@@ -84,6 +108,18 @@ export { HARDLINE_REFUSAL_MARKER };
  * this: what actually happened.
  */
 export const NO_RATING_CALL_MARKER = 'no rating call';
+
+/**
+ * BATCH-34 — the marker a rationale carries when the round's `reject` became an **escalation because
+ * a §5.3 bound was spent**, not because the rating said so.
+ *
+ * It exists because the action column cannot tell the two escalations apart, and they mean opposite
+ * things about the rater: `catastrophic` escalates on its own (the model judged the command
+ * unnegotiable), while this one is a `destructive` rating whose negotiation simply ran out of
+ * rounds. A corpus reader diagnosing `neg-01-escalate` needs to know which happened — the case
+ * asserts the second and would be satisfied by the first.
+ */
+export const NEGOTIATION_BOUND_MARKER = 'negotiation bound spent';
 
 /**
  * One command per deterministic preflight FINDING, used ONLY to ask core's decision mapping what
@@ -307,7 +343,8 @@ function buildRationale(
   floorDescription: string | undefined,
   decision: RaterDecision,
   noRatingReason: string | undefined,
-  ratingIn: ShellSafetyVerdict | undefined
+  ratingIn: ShellSafetyVerdict | undefined,
+  boundSpent: boolean
 ): string | undefined {
   const parts: string[] = [];
   if (floorDescription !== undefined) {
@@ -341,7 +378,55 @@ function buildRationale(
   } else if (reason !== undefined) {
     parts.push(reason);
   }
+  // BATCH-34 — last, because it is the only part that describes the ACTION rather than the rating:
+  // the rating said `destructive` and the negotiation is what turned it into a human's decision.
+  if (boundSpent) {
+    parts.push(NEGOTIATION_BOUND_MARKER);
+  }
   return parts.length > 0 ? parts.join('\n') : undefined;
+}
+
+/**
+ * BATCH-34 — record what the gate decided with §5's negotiation state, and return the action the
+ * PRODUCTION runner would have taken.
+ *
+ * It mirrors `GthAgentRunner`'s four arms and adds nothing: an approved call is progress (§5.3 —
+ * clears the transcript *and* the consecutive counter), a halt reaches a human, and a `reject` is
+ * recorded before either bound is tested, so the attempt being ruled on is itself on the transcript.
+ * `escalate` (a `catastrophic` rating, or an unrated rung) records nothing — no round was rejected
+ * and no call ran.
+ *
+ * **This is the one place the target's action can differ from `mapVerdictToAction`'s, and the
+ * difference is not a second opinion about the rating.** The mapping is a pure function of rung and
+ * outcome, and says so; it returns `reject` for `destructive` at `auto` whether it is the first
+ * attempt or the tenth. Whether another round may be *served* is the state's question, and core
+ * answers it — {@link ShellNegotiationState.recordRejection} is asked, never re-derived here.
+ *
+ * @returns the action to report, and whether a spent bound is what produced it (for the rationale).
+ */
+function advanceNegotiation(
+  negotiation: ShellNegotiationState,
+  command: string,
+  justification: string | undefined,
+  decision: RaterDecision
+): { action: string; boundSpent: boolean } {
+  if (decision.action === 'approve') {
+    negotiation.noteProgress();
+  } else if (decision.action === 'halt') {
+    negotiation.humanReached();
+  } else if (decision.action === 'reject') {
+    const served = negotiation.recordRejection({
+      command,
+      ...(justification ? { justification } : {}),
+      // Derived, never spelled — the same rule the rest of this file keeps. Core's fail-closed
+      // verdict IS the outcome a missing one is read as, so this is the value `mapVerdictToAction`
+      // just decided from rather than a second guess at it.
+      outcome: decision.verdict?.outcome ?? FAIL_CLOSED_VERDICT.outcome,
+      reason: decision.verdict?.reason ?? '',
+    });
+    if (served !== 'reject') return { action: 'escalate', boundSpent: true };
+  }
+  return { action: decision.action, boundSpent: false };
 }
 
 /**
@@ -377,17 +462,25 @@ function buildRationale(
  * from core, and it is the only way a preflight is observable at all since CFG-28. It does not
  * flatter the case — when the claimed preflight really fires the action is the same either way, and
  * when it does not, the marker and the action go red together.
+ *
+ * **BATCH-34 — the negotiation state advances on EVERY path, including the model-free one.** It is
+ * driven by the ACTION the gate returned, never by how the round was decided, for the same reason
+ * the rest of this file is: what a `reject` costs the negotiation is a property of the decision, and
+ * a target that spent the bound only on rounds it happened to ring a model for would report a
+ * different exchange than production for the same corpus. At a rung that rates nothing there is
+ * nothing to spend either way — no round is ever rejected there.
  */
 async function classifyOneRound(
-  command: string,
+  round: ClassifyRound,
   roundIndex: number,
   request: ClassifyRequest,
   rung: ApprovalRung,
+  negotiation: ShellNegotiationState,
   config: GthConfig,
   model: BaseChatModel | undefined,
   options: RaterClassifierOptions | undefined
 ): Promise<ClassifyOutcome> {
-  const trimmed = command.trim();
+  const trimmed = round.command.trim();
   if (trimmed.length === 0) {
     // Excluded from every metric denominator rather than counted as a miss: an empty round is a
     // suite-authoring error, and a corpus must never be scored on a case that was never rated.
@@ -400,6 +493,20 @@ async function classifyOneRound(
 
   // Free and deterministic, so it runs on both paths — see buildRationale.
   const floor = checkHardline(trimmed);
+
+  // BATCH-34 §5.1 — what the user said before this round enters the conversation's memory FIRST, so
+  // this round's own context can carry it. Core owns the retention bound and the last-5 window; a
+  // round declaring none adds none, which is how a single-round case keeps a byte-identical prompt.
+  negotiation.noteUserMessages(round.userMessages ?? []);
+  // §5.2 — a rejection is addressed to the AGENT only at a negotiating rung, and saying so changes
+  // the rating prompt. Read from the resolved rung rather than from whether a context exists: the
+  // two are independent by construction (a cleared transcript is still a round of a negotiation),
+  // and a corpus rated without it would be measuring a prompt production never sends.
+  const negotiable = isNegotiatingRung(rung);
+  // Gated on the rung exactly as production gates it, and handed over RAW. §5.1 withholds it from a
+  // round-1 rating, and `contextFor` is the single implementation of that rule — while the
+  // transcript records what the agent actually argued, whatever the round.
+  const justification = negotiable ? round.justification : undefined;
 
   const noRatingReason = request.modelFree
     ? 'model_free'
@@ -416,9 +523,9 @@ async function classifyOneRound(
     // would move its action. `mechanismNeedsPermissiveRating` is the whole of that rule.
     //
     // Read WITHOUT an optional chain, deliberately. `ClassifyRequest.forcedBy` is required and the
-    // runner builds it by mapping the same `turns` array it maps for `inputs`, so it is present and
+    // runner builds it by mapping the same `turns` array it maps for `rounds`, so it is present and
     // index-parallel on every path that reaches here (pinned in `evalClassifierRunner.spec.ts`) —
-    // exactly as `request.caseId`, `request.modelFree` and `request.inputs` are read unguarded.
+    // exactly as `request.caseId`, `request.modelFree` and `request.rounds` are read unguarded.
     // The `undefined` this read really meets comes from the ELEMENT, not the field: a round that
     // declared no mechanism, or an index past the end of a shorter array. A chain guards neither —
     // indexing past the end yields `undefined` by value — and neither needs guarding, because an
@@ -432,19 +539,40 @@ async function classifyOneRound(
       model,
       home: options?.home ?? env?.HOME,
       timeoutMs: options?.timeoutMs,
+      // BATCH-34 — the §5.1 context for THIS round, from core's own state, with no test of our own
+      // for which round it is: an empty negotiation has no privileged spelling, so a round-1 context
+      // is an object that adds no block to the user message.
+      //
+      // **`negotiable` DOES change what an `auto` suite sends**, and that is the point of passing
+      // it: §5.2's guidance is keyed on the mode rather than on the round, so production attaches it
+      // to every rating at `auto` including the first. A corpus rated without it was measuring a
+      // prompt no session ever sends — so an `auto` suite's numbers may move here, toward the gate
+      // it claims to describe. Nothing changes at the other rungs.
+      negotiation: negotiable ? negotiation.contextFor(justification) : undefined,
+      negotiable,
     });
     modelCalls = 1;
   }
 
   const decision = mapVerdictToAction(trimmed, verdict, { rung });
+  // BATCH-34 — record the decision with §5's state and take the action production would take. This
+  // is the only step between the mapping and the reported action; see `advanceNegotiation`.
+  const negotiated = advanceNegotiation(negotiation, trimmed, justification, decision);
   return {
     ok: true,
     // Opaque both ways: whatever the gate decided, reported verbatim. Omitted on the model-free
     // path — the docblock above says why, and a stubbed rating does not change that: the outcome it
     // would report is OUR lever floored by a preflight, never a judgement anyone rendered.
     ...(deterministicOnly ? {} : { label: decision.verdict?.outcome }),
-    action: decision.action,
-    rationale: buildRationale(trimmed, floor?.description, decision, noRatingReason, verdict),
+    action: negotiated.action,
+    rationale: buildRationale(
+      trimmed,
+      floor?.description,
+      decision,
+      noRatingReason,
+      verdict,
+      negotiated.boundSpent
+    ),
     modelCalls,
   };
 }
@@ -478,12 +606,27 @@ export async function buildRaterClassifier(
 
   return async (request: ClassifyRequest): Promise<ClassifyOutcome[]> => {
     const outcomes: ClassifyOutcome[] = [];
+    // BATCH-34 — ONE negotiation per REQUEST, i.e. per (case × cell). It is built here rather than
+    // in `buildRaterClassifier`'s body because the classifier is reused across every case of the
+    // suite and the runner may run several concurrently: a shared instance would let one case's
+    // transcript be rated into another's, and one case's rejections spend another's bound.
+    const negotiation = new ShellNegotiationState();
     // ONE outcome per round, in order, and SERIALLY: the rounds of a case are a sequence, and the
     // suite runner already parallelizes across cases (`concurrency`), so racing within a case would
-    // only make the eval's own load harder to reason about.
-    for (const [roundIndex, input] of request.inputs.entries()) {
+    // only make the eval's own load harder to reason about. Serial is now also REQUIRED rather than
+    // merely tidy — each round is rated with the exchange the rounds before it produced.
+    for (const [roundIndex, round] of request.rounds.entries()) {
       outcomes.push(
-        await classifyOneRound(input, roundIndex, request, rung, config, model, options)
+        await classifyOneRound(
+          round,
+          roundIndex,
+          request,
+          rung,
+          negotiation,
+          config,
+          model,
+          options
+        )
       );
     }
     return outcomes;

@@ -261,7 +261,15 @@ export async function runEvalSuite(
     if (classifier) {
       const outcomes = await classifier({
         caseId: unit.evalCase.id,
-        inputs: unit.evalCase.turns.map((turn) => turn.user),
+        // BATCH-34 — one round per turn, carrying the §5.1 context the turn declared. The runner
+        // still forms no opinion about it: what a round's rating may SEE is core's rule, applied in
+        // the target (see `ClassifyRound`), and a turn that declares neither field produces exactly
+        // the round this passed before it was an object.
+        rounds: unit.evalCase.turns.map((turn) => ({
+          command: turn.user,
+          ...(turn.justification !== undefined ? { justification: turn.justification } : {}),
+          ...(turn.userMessages !== undefined ? { userMessages: turn.userMessages } : {}),
+        })),
         tags: caseTags(unit.evalCase),
         modelFree: unit.evalCase.modelFree,
         // Passed on as DECLARED, per round. The runner is target-agnostic and forms no opinion

@@ -137,6 +137,11 @@ const RawExpectationSchema = RawAssertionsSchema.extend({
 const RawTurnSchema = RawAssertionsSchema.extend({
   user: z.string().optional(),
   expect: z.array(RawExpectationSchema).optional(),
+  // BATCH-34 — the §5.1 negotiation context this ROUND adds, for a `rater` target. Both are
+  // per-round rather than per-case because that is what makes a negotiation case expressible at
+  // all; see `EvalTurn.justification` / `EvalTurn.userMessages`. Rejected for every other target.
+  justification: z.string().optional(),
+  user_messages: z.array(z.string()).optional(),
 });
 
 const RawCaseSchema = RawAssertionsSchema.extend({
@@ -166,6 +171,10 @@ const RawCaseSchema = RawAssertionsSchema.extend({
   // BATCH-25: this case must be decided with zero model calls (the hardline-floor / ambiguity
   // families). Requires a target that can classify deterministically; rejected otherwise.
   model_free: z.boolean().optional(),
+  // BATCH-34: accepted at case level ONLY so a misplaced one is an error instead of a silence.
+  // Negotiation context is per-round and belongs on a `turns:` entry — see the guard in the parse.
+  justification: z.string().optional(),
+  user_messages: z.array(z.string()).optional(),
 });
 
 /** BATCH-25 — how a classification value is read from an answer: the bare string `answer` (the
@@ -596,6 +605,21 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
       );
     }
 
+    // BATCH-34 — negotiation context is a property of a ROUND, never of a case. A case-level
+    // `justification:` would have to mean "argued in every round", which is not a negotiation, and a
+    // case-level `user_messages:` would put a message that was elicited MID-case in view from the
+    // start — quietly turning `neg-02-converge` into a different case that still passes. Neither is
+    // silently dropped: an ignored key is the failure this whole file is written against.
+    if (rawCase.justification !== undefined || rawCase.user_messages !== undefined) {
+      throw new Error(
+        `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) declares case-level ` +
+          '`justification` / `user_messages` — negotiation context is per-ROUND (a round argues its ' +
+          'own command, and a user message enters the conversation at a particular round), so it ' +
+          'belongs on a `turns:` entry. A single-`prompt` case is round 1, which §5.1 rates on the ' +
+          'command alone, so neither key could reach the rater there at all.'
+      );
+    }
+
     let turns: EvalTurn[];
     if (rawCase.turns !== undefined) {
       // Multi-turn: assertions live on each turn, so case-level assertions/`expect:` are rejected
@@ -625,8 +649,41 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
               'must declare a non-empty `user` message.'
           );
         }
+        // BATCH-34 — a blank justification is an authoring error, not "no justification". §5.1
+        // admits the justification as the one channel that can LOWER an outcome, so a round that
+        // meant to argue something and shipped an empty string would be rated as one that argued
+        // nothing, and the case would still pass. `undefined` (the key absent) is the way to say a
+        // round argues nothing.
+        if (rawTurn.justification !== undefined && rawTurn.justification.trim().length === 0) {
+          throw new Error(
+            `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) turn ${turnIndex} ` +
+              'declares a blank `justification` — a round that argues nothing omits the key ' +
+              'entirely, so that a blank one is never read as one.'
+          );
+        }
+        // An empty list is normalized to absent rather than kept, so "this round adds no user
+        // message" has ONE representation downstream and a reader of a parsed suite never has to
+        // decide whether the two mean different things.
+        const userMessages = rawTurn.user_messages?.length
+          ? rawTurn.user_messages.map((message, messageIndex) => {
+              // Blank user messages are dropped by BOTH core's retention and the prompt builder's
+              // window, so one authored here would vanish without trace — and the message it displaced
+              // is the one carrying the user's mandate, which is the whole reason §5.1 admits any.
+              if (message.trim().length === 0) {
+                throw new Error(
+                  `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) turn ${turnIndex} ` +
+                    `declares a blank \`user_messages\` entry (index ${messageIndex}) — a blank message ` +
+                    'carries nothing a rater can weigh and is dropped before it reaches one, so it ' +
+                    'would silently assert nothing.'
+                );
+              }
+              return message;
+            })
+          : undefined;
         return {
           user: rawTurn.user,
+          ...(rawTurn.justification !== undefined ? { justification: rawTurn.justification } : {}),
+          ...(userMessages !== undefined ? { userMessages } : {}),
           expectations: buildTurnExpectations(rawTurn, {
             suffix,
             caseId: rawCase.id,
@@ -801,6 +858,27 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
                 "rater's own explanation with the content assertions."
             );
           }
+        }
+      }
+    }
+  }
+
+  // BATCH-34 — the honest boundary for the negotiation context. §5's exchange is a property of the
+  // approvals gate, and only the `rater` target drives one: an agent target runs a conversation, and
+  // the two external targets drive somebody else's agent entirely. A `justification:` handed to any
+  // of them would be accepted, sent nowhere, and grade the same either way — the vacuous pass this
+  // file rejects everywhere else. Named per case, like the tool-assertion guards above.
+  if (target.type !== 'rater') {
+    for (const evalCase of cases) {
+      for (const turn of evalCase.turns) {
+        if (turn.justification !== undefined || turn.userMessages !== undefined) {
+          throw new Error(
+            `Invalid eval suite${suffix}: case "${evalCase.id}" declares \`justification\` / ` +
+              `\`user_messages\` on a turn, which the "${target.type}" target cannot carry — they ` +
+              "are the approvals gate's §5.1 negotiation context, and only a `rater` target rates a " +
+              "command inside a negotiation. Use the turn's `user` message, or " +
+              '`target: { type: rater, rung: … }`.'
+          );
         }
       }
     }

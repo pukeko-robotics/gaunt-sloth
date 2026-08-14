@@ -259,6 +259,15 @@ preflight` marker only appears if the model rated that command permissively, bec
 already called the command harmful keeps its own explanation instead. So assert that mechanism on a
 `model_free` case.
 
+**A command the gate argues about needs more than one case.** At `rung: auto` a `destructive`
+command is not refused to you, it is refused to the *agent*, which may narrow it or justify it and
+be rated again. Write that as a `turns:` array — the rounds of one negotiation, each with the
+`justification:` it argued and the `user_messages:` it had by then — and the eval rates them in
+order with the exchange in view, exactly as a session does. It is the only way to ask the question
+that matters about that rung: does an argument the rater should refuse still get refused on the
+third try, and does a good one win? See
+[Commands → eval → Negotiation cases](../COMMANDS.md#negotiation-cases).
+
 `expect_label` has a matching wrinkle on the same commands. The label reported is the outcome the
 gate settled on *after* a preflight raised it, not the rating the model gave — so on a command a
 preflight floors, a rater that answered `safe` is scored as the floored outcome and its `safe` is

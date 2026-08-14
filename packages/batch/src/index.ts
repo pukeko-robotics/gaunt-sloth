@@ -98,6 +98,7 @@ export type {
 export type {
   ClassifyOutcome,
   ClassifyRequest,
+  ClassifyRound,
   EvalSweep,
   EvalSweepValue,
   RaterTarget,
@@ -109,6 +110,7 @@ export type {
 export {
   buildRaterClassifier,
   HARDLINE_REFUSAL_MARKER,
+  NEGOTIATION_BOUND_MARKER,
   NO_RATING_CALL_MARKER,
 } from '#src/raterTarget.js';
 export type { RaterClassifierOptions } from '#src/raterTarget.js';

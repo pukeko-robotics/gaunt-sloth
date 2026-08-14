@@ -394,6 +394,39 @@ export interface EvalExpectation {
  */
 export interface EvalTurn {
   user: string;
+  /**
+   * BATCH-34 — the justification the agent attaches to **this** round's command (§5.1), for a
+   * `rater` target's negotiation case. `undefined` = the round argues nothing.
+   *
+   * It is per-ROUND and not per-case because that is what a negotiation is: `neg-01-escalate`
+   * proposes the same command three times and attaches a different argument each time, and a
+   * case-level field could not express that. Rejected at parse time for every non-`rater` target —
+   * an agent turn's argument is its `user` message.
+   *
+   * **Carrying it is not the same as showing it to the rater.** §5.1 admits the justification from
+   * round 2 onward, so the round-1 rating withholds it; the target hands the whole context to core's
+   * {@link import('@gaunt-sloth/core/core/shell/negotiation.js').ShellNegotiationState}, which is
+   * the single implementation of that rule.
+   */
+  justification?: string;
+  /**
+   * BATCH-34 — the user messages the conversation gained **before** this round, oldest first.
+   * `undefined` = the round adds none, which is the shape of every turn that declares no `[[EXT-29]]`
+   * context — optional rather than `[]`-defaulted so it reads the same way as
+   * {@link justification} beside it, and so "this round adds nothing" and "this round adds an empty
+   * list" cannot be two spellings of one state.
+   *
+   * Per-round, and that is load-bearing rather than uniform-looking: `neg-02-converge`'s second user
+   * message (*"just the last two"*) is elicited mid-case and must be **out** of view for the rounds
+   * before it and **in** view for the rounds after, which is exactly the row the spec's table shows
+   * it arriving on. A case-level list would put it in view from the start and quietly turn the case
+   * into a different one.
+   *
+   * Accumulated by the target across the case, so a message declared once stays visible for every
+   * later round (core's `ShellNegotiationState` owns the retention bound and the §5.1 last-5
+   * window). `rater` target only; rejected at parse time elsewhere.
+   */
+  userMessages?: string[];
   expectations: EvalExpectation[];
 }
 
@@ -430,6 +463,26 @@ export interface TurnRunOutcome {
 export type RunConversationFn = (userMessages: string[]) => Promise<TurnRunOutcome[]>;
 
 /**
+ * BATCH-34 — **one round of a classification case**: the command, plus the §5.1 context that round
+ * adds to the negotiation.
+ *
+ * The two optional fields are the case's *authored* context, not the rater's *view* of it. What a
+ * given round's rating is allowed to see is core's rule and core's alone — §5.1 withholds both from
+ * a round-1 rating, and a reset makes a later round a round-1 rating again — so the target hands the
+ * accumulated state to `ShellNegotiationState.contextFor` rather than deciding here. A shape that
+ * carried "what the rater sees" would be this package holding a second opinion about §5.1, which is
+ * the one thing {@link ../raterTarget.js} exists not to do.
+ */
+export interface ClassifyRound {
+  /** The command the agent proposes in this round. */
+  command: string;
+  /** The justification attached to THIS command, if any — see {@link EvalTurn.justification}. */
+  justification?: string;
+  /** The user messages the conversation gained before this round — see {@link EvalTurn.userMessages}. */
+  userMessages?: readonly string[];
+}
+
+/**
  * BATCH-25 — what an injected CLASSIFIER target is asked to decide. One request per (case × cell).
  *
  * ## The Half-B seam, now filled
@@ -441,15 +494,27 @@ export type RunConversationFn = (userMessages: string[]) => Promise<TurnRunOutco
  *
  * The shape is what it is because the rater's unit is not an agent turn: it is
  * `(command, rung, [user messages], [negotiation so far]) → outcome → action`. So a request carries
- * the case's ordered inputs (the negotiation rounds, one entry for a single-round case) rather than
- * a single prompt, and the outcome carries BOTH dimensions plus its own cost.
+ * the case's ordered rounds (one entry for a single-round case) rather than a single prompt, and the
+ * outcome carries BOTH dimensions plus its own cost.
+ *
+ * ## BATCH-34 — why a round is an object rather than a string
+ *
+ * It was `inputs: string[]` — the command of each round and nothing else. Everything §5.1 admits
+ * from round 2 onward (the justification, the user messages, and the exchange so far) had no way in,
+ * so every round of every case was rated as an independent **round 1** whatever the case said it
+ * was. The three negotiation corpus cases whose whole content is the rounds
+ * (`neg-01-escalate` proposes one command three times; `neg-02-converge` turns on a reset clearing
+ * the transcript; `neg-04d` reaches a halt mid-negotiation) were unmeasurable by construction: the
+ * rater could not see the thing the case is about, so the case passed or failed for other reasons.
+ * The declared shape above already said `[user messages]` and `[negotiation so far]`; this is that
+ * sentence made true.
  */
 export interface ClassifyRequest {
   /** The case id, for the target's own diagnostics. */
   caseId: string;
-  /** The case's turn inputs in order — the command, then each negotiation round. Length 1 for a
-   * single-round case. */
-  inputs: string[];
+  /** The case's rounds in order — the command, then each negotiation round, with the §5.1 context
+   * each round adds. Length 1 for a single-round case. */
+  rounds: ClassifyRound[];
   /** The case's family tags. */
   tags: string[];
   /** The case declared `model_free: true` — the target is expected to decide with no model call,
@@ -459,7 +524,7 @@ export interface ClassifyRequest {
    * behaviour, not a claim about the gate). */
   modelFree: boolean;
   /**
-   * BATCH-25 Half B — per round, parallel to {@link inputs}: the deterministic mechanism the case
+   * BATCH-25 Half B — per round, parallel to {@link rounds}: the deterministic mechanism the case
    * declared decided that round (`forced_by:`), or `undefined` where it declared none.
    *
    * It is carried as the MECHANISM and not as a "stub this round" boolean on purpose. The runner is

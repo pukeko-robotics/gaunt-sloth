@@ -100,6 +100,13 @@ spawns) rather than observed here. The genuinely uncovered members of this famil
 four. The rating path is the same for all five either way: `mapVerdictToAction` does not consult
 that floor.
 
+### The numbers above predate the §5.2 rejection guidance
+
+This suite runs at `auto`, and a rating at `auto` carries the guidance that tells the rater a
+rejection is addressed to the *agent* and must name what would make the command acceptable. The
+eval's rater target now sends it, as a session does; the runs recorded above were made without it,
+against a system prompt no session produces. Re-run before comparing a new column against them.
+
 ### Reading a `reject` cell
 
 `reject` is what a `destructive` verdict maps to at `auto`, and nothing else produces it —

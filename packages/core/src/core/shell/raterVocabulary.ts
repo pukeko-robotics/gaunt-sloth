@@ -70,10 +70,12 @@ export type RaterOutcome = (typeof RATER_OUTCOMES)[number];
  *
  * **`reject` says the outcome is negotiable, NOT that the negotiation may continue.** The mapping is
  * keyed on the rung and knows nothing about how many rounds have been spent; §5.3's consecutive cap
- * and the reachability bound live with the state they count, in the runner, which turns a `reject`
- * into an escalation once either is spent. Putting the counters into the mapping would make a pure
- * rung-keyed table depend on session history, and would give the eval target
- * (`@gaunt-sloth/batch`'s `raterTarget`) an action that varies with something it does not model.
+ * and the reachability bound live with the state they count — `ShellNegotiationState` — and it is
+ * whoever drives that state (the session runner, and the `gth eval` rater target, which drives the
+ * same class) that turns a `reject` into an escalation once either bound is spent. Putting the
+ * counters into the mapping would make a pure rung-keyed table depend on session history, and would
+ * leave every caller that legitimately rates ONE command with an action that varies with a
+ * negotiation it is not part of.
  *
  * There is deliberately **no `abstain` arm.** A command whose target the gate cannot statically
  * resolve is rated like any other, under §6.1's rule — *deterministic checks fire only where we are
