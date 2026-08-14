@@ -30,6 +30,7 @@ import {
   narrowTerminalNotice,
   STICKY_PREVIEW_MAX_ROWS,
 } from '@gaunt-sloth/core/core/shell/framing.js';
+import { approvalPromptHeader } from '@gaunt-sloth/core/core/approvals/promptHeader.js';
 import { ApprovalStopError, approvalStopRows } from '@gaunt-sloth/core/core/shell/approvalStop.js';
 import { writeDebugDump } from '@gaunt-sloth/core/utils/debugDump.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
@@ -172,9 +173,11 @@ export async function createInteractiveSession(
       return rl.question(prompt);
     };
 
-    // Tool-approval (human-in-the-loop) prompt for gated tools — currently the opt-in
-    // `run_shell_command`. When a run suspends on such a tool call, the runner calls this with
-    // the pending command. EXT-9 Tier-2: instead of a bare y/N, offer a scoped choice so the
+    // Tool-approval (human-in-the-loop) prompt for gated tools — the shell tool, and at `manual`
+    // and `write` the built-in write tools, MCP tools and custom tools (EXT-80). When a run
+    // suspends on such a tool call, the runner calls this with the pending call. The opening
+    // sentence therefore has to say which kind it is, which is [[TUI-C67]] and core's to render.
+    // EXT-9 Tier-2: instead of a bare y/N, offer a scoped choice so the
     // human can stop re-prompting for an operation they trust:
     //   [o]nce        — approve this single invocation only (persists nothing),
     //   [s]ession     — auto-approve this exact command for the rest of the session,
@@ -199,7 +202,12 @@ export async function createInteractiveSession(
       // lines into a commit message, and a clamp discards exactly what the human must rule on.
       const frameWidth = frameWidthFor(output.columns);
       const framedCommand = frameUntrustedCommand(commandText, { width: frameWidth });
-      displayWarning(`\nThe agent wants to run a shell command via ${pending.name}:`);
+      // [[TUI-C67]] — the opening sentence is core's, branched on the `ApprovalSubject` kind the
+      // gate itself decided on, so a file write, an MCP call or a custom tool is announced as what
+      // it is rather than as a shell command. The Ink prompt renders the identical call; this
+      // surface owns only the leading blank line and the trailing colon, which is what keeps the
+      // two from describing one call two ways.
+      displayWarning(`\n${approvalPromptHeader(pending)}:`);
       // Below core's floor the frame is wider than the terminal, which wraps it and puts untrusted
       // text at the left edge. The frame is still shown — hiding what the human must rule on would
       // be worse — but the guarantee has lapsed, and it says so instead of lapsing silently.

@@ -1524,19 +1524,25 @@ export class GthAgentRunner {
     // rating, no escalate entry, no negotiation, a command that does not statically resolve — has
     // none of the other four, so without this term the interrupt would pass through unchanged and
     // the *always reject* control would vanish from exactly the case it exists for.
-    const pending: PendingToolInterrupt =
-      safetyVerdict || escalatedBy || grantPreview || denyPreview || negotiationRounds.length > 0
-        ? {
-            ...tool,
-            ...(safetyVerdict ? { safetyVerdict } : {}),
-            ...(escalatedBy ? { escalatedBy } : {}),
-            ...(grantPreview ? { grantPreview } : {}),
-            ...(grantSummary ? { grantSummary } : {}),
-            ...(denyPreview ? { denyPreview } : {}),
-            ...(denySummary ? { denySummary } : {}),
-            ...(negotiationRounds.length > 0 ? { negotiationRounds, negotiationAttempts } : {}),
-          }
-        : tool;
+    //
+    // [[TUI-C67]] — **the subject is attached unconditionally**, outside every optional term above,
+    // because the prompt's opening sentence is rendered from it on every surface and there is no
+    // call this question does not have an answer for. It cannot be one more `...(x ? {x} : {})`:
+    // an `mcpTool` call whose server could not be attributed has neither a grant nor a deny entry
+    // (§4.7.4 / the entry grammar's non-empty `server`), so at an unrated rung with no escalate
+    // entry it is exactly the call that would fall through to a bare `tool` — and it is exactly
+    // the call the new header exists for.
+    const pending: PendingToolInterrupt = {
+      ...tool,
+      subject,
+      ...(safetyVerdict ? { safetyVerdict } : {}),
+      ...(escalatedBy ? { escalatedBy } : {}),
+      ...(grantPreview ? { grantPreview } : {}),
+      ...(grantSummary ? { grantSummary } : {}),
+      ...(denyPreview ? { denyPreview } : {}),
+      ...(denySummary ? { denySummary } : {}),
+      ...(negotiationRounds.length > 0 ? { negotiationRounds, negotiationAttempts } : {}),
+    };
     const decision = await this.toolApprovalCallback(pending);
     // [[TUI-C27]] — a person was reached and answered. The STAGE stays whatever decided to ask
     // them (a rating, an escalate entry, an unrated rung): "who decided to interrupt" and "what

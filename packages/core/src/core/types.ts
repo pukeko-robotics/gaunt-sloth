@@ -1,5 +1,6 @@
 import type { GthConfig } from '#src/config.js';
 import type { DeclaredToolAnnotations } from '#src/core/approvals/annotations.js';
+import type { ApprovalSubject } from '#src/core/approvals/matcher.js';
 import type { RaterNegotiationRound, ShellSafetyVerdict } from '#src/core/shell/rater.js';
 import type { BaseMessage } from '@langchain/core/messages';
 import type { RunnableConfig } from '@langchain/core/runnables';
@@ -155,6 +156,25 @@ export interface GthCompiledGraph {
 export interface PendingToolInterrupt {
   name: string;
   args: Record<string, unknown>;
+  /**
+   * [[TUI-C67]] — **what kind of call this is, as the gate itself decided it** (§3.1/§4.7.5): a
+   * `shell` subject carrying the command, a `tool` subject, or an `mcpTool` subject carrying the
+   * user's own `mcpServers` key. It is the discriminator `decideToolApprovalInner` matched rules
+   * on, travelling to the surface so the prompt can branch on the same one.
+   *
+   * Every approval surface used to open with *the agent wants to run a shell command*, which
+   * EXT-80 made false for the most common prompt in `manual` and `write` — a file write, an MCP
+   * call or a custom tool, each announced as a shell command. `core/approvals/promptHeader.ts`
+   * renders the sentence from this field for all of them; re-deriving the kind from
+   * {@link name} on each surface would be a second classifier, free to disagree with the one that
+   * gated the call.
+   *
+   * **The runner attaches it to every interrupt it hands the approval callback**, including the
+   * plainest case where nothing else on this interface is set. Optional only because an interrupt
+   * read back out of graph state (`getPendingToolInterrupts`) is assembled before any subject
+   * exists; a surface handed one of those renders the generic tool sentence, never a wrong one.
+   */
+  subject?: ApprovalSubject;
   /**
    * CFG-26 — when the AI rater escalated this `run_shell_command` to the human (rather than
    * approving it or bouncing it back to the model), the rater's verdict is attached here so the

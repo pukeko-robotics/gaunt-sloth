@@ -18,6 +18,7 @@ import {
   narrowTerminalNotice,
   STICKY_PREVIEW_MAX_ROWS,
 } from '@gaunt-sloth/core/core/shell/framing.js';
+import { approvalPromptHeader } from '@gaunt-sloth/core/core/approvals/promptHeader.js';
 import type { PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
 
 /**
@@ -42,10 +43,16 @@ const voiceColour = (voice: NegotiationVoice): string | undefined =>
 
 /**
  * The scoped tool-approval affordance (EXT-9 Phase B2) — the Ink TUI counterpart to the readline
- * escalation prompt. Shown when a `run_shell_command` interrupt is pending; styled like a warn-tone
+ * escalation prompt. Shown whenever the gate suspends on a call a human must answer — a shell
+ * command, a built-in write tool, an MCP tool or a custom one; styled like a warn-tone
  * {@link CommandNotice} (yellow bold title + dim body bracketed by a rule) so it reads consistently
  * in the transcript dock. While it is mounted the parent `<App>` routes keyboard input here and
  * suspends the normal prompt, so the command can't be typed into the chat box.
+ *
+ * [[TUI-C67]] — **the opening sentence comes from core, not from a literal here.** It branches on
+ * the `ApprovalSubject` kind the gate itself decided on, and the readline prompt renders it through
+ * the identical call, so the two surfaces cannot come to announce one call two ways. This component
+ * owns only the punctuation and the tone around it.
  *
  * Pure/presentational: it only renders the pending command + the choices. The key handling
  * (`o` → approve once, `s`/`a` → approve with that scope, `d` → refuse for the session, anything
@@ -170,7 +177,7 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
     <Box flexDirection="column">
       <Rule />
       <Text bold color="yellow">
-        {`The agent wants to run a shell command via ${pending.name}`}
+        {approvalPromptHeader(pending)}
       </Text>
       {tooNarrow ? <Text color="yellow">{tooNarrow}</Text> : null}
       {/* Rule 3 — the flagged sites go ABOVE the body, in the warn tone, because their whole job is

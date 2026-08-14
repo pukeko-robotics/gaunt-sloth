@@ -392,6 +392,11 @@ describe('GthAgentRunner', () => {
       expect(approve).toHaveBeenCalledWith({
         name: 'run_shell_command',
         args: { command: 'ls -la' },
+        // [[TUI-C67]] — the subject the gate decided on travels to the surface, so the prompt's
+        // opening sentence can branch on the same discriminator the decision did instead of
+        // announcing every gated call as a shell command. Attached unconditionally, which is why
+        // it appears on this exact-shape assertion.
+        subject: { kind: 'shell', command: 'ls -la' },
         // EXT-71 §6 — the prompt is told what a sticky choice would store, so it can show the user
         // the thing they are agreeing to before they agree to it, and (EXT-70) the same grant in
         // the words the menu's control is written in.
@@ -3381,6 +3386,9 @@ describe('GthAgentRunner', () => {
       expect(approve).toHaveBeenCalledWith({
         name: 'run_shell_command',
         args: { command: 'ls -la' },
+        // [[TUI-C67]] — as above: the gate's own subject, attached to every interrupt a surface
+        // is asked to render.
+        subject: { kind: 'shell', command: 'ls -la' },
         grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "ls -la" }',
         grantSummary: 'ls -la',
         denyPreview: '{ "type": "shell", "matcher": "exact", "pattern": "ls -la" }',
