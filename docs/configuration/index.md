@@ -62,6 +62,32 @@ gth -c /path/to/config.json ask "who are you?"
 Use a JavaScript config (`.gsloth.config.js`/`.mjs`) when you need custom middleware or tools that
 JSON can't express — see [Providers → JavaScript configuration](providers.md#javascript-configuration).
 
+## The global config and your project config
+
+The global `~/.gsloth/.gsloth.config.*` loads first and your project config merges on top of it, on
+every run. The project config does not replace the global one — it overrides only the keys it sets,
+and the global's other keys stand. So settings you want everywhere (your provider and model, `tui`,
+`writeOutputToFile`) belong in the global config, and a project config only has to state what it
+changes. With no project config anywhere up-tree, the global config is used on its own.
+
+Arrays are the exception to the merge: most replace across layers instead of combining, and a few
+accumulate — see
+[Array merge policy across config layers](../MIGRATION.md#d-array-merge-policy-across-config-layers-behaviour-change).
+
+The global layer cannot be turned off: there is no flag, environment variable or config key for it,
+and neither `-c`/`--config` nor `-i`/`--identity-profile` bypasses it — each chooses the
+*project*-layer config that merges over the global one. See
+[Identity profiles](profiles.md#identity-profiles) for where a profile sits in the full precedence
+chain.
+
+To see what a run actually resolves to, print the effective merged config; to find which file to fix
+when a key is wrong, validate each layer on its own:
+
+```bash
+gth config print
+gth config validate
+```
+
 ## Using the `.gsloth` directory
 
 Create a `.gsloth` directory in your project root for a tidier layout. When it exists, Gaunt Sloth:

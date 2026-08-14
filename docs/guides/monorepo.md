@@ -82,4 +82,4 @@ cd packages/ml && gth ask "which model is configured here?"
 - Give a team its own config block under `.gsloth/.gsloth-settings/<name>/`:
   [Identity profiles](../configuration/profiles.md).
 - Settings shared across every repo go in the global config:
-  [Providers & global config](../configuration/providers.md).
+  [The global config and your project config](../configuration/index.md#the-global-config-and-your-project-config).
