@@ -34,7 +34,8 @@ the server, your browser opens automatically; complete the Atlassian OAuth login
 become available. Tokens are cached (see [Token storage](#token-storage) below), so later sessions
 skip the browser step.
 
-For a complete working example, see [examples/jira-mcp](../../examples/jira-mcp).
+For a complete working example, see
+[examples/jira-mcp](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/examples/jira-mcp).
 
 ## Static auth headers (bearer tokens)
 
@@ -176,7 +177,8 @@ file:
 
 Each agent becomes available as a tool named `a2a_agent_<agentId>` in `chat` and `code` commands.
 
-See [examples/a2a](../../examples/a2a) for a working example.
+See [examples/a2a](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/examples/a2a) for a
+working example.
 
 ---
 
