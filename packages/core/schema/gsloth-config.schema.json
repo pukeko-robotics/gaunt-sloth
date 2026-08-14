@@ -382,6 +382,9 @@
                   "maxOutputBytes": {
                     "type": "number"
                   },
+                  "maxBytes": {
+                    "type": "number"
+                  },
                   "fileSet": {
                     "type": "string",
                     "enum": [
@@ -728,6 +731,9 @@
                           "maxOutputBytes": {
                             "type": "number"
                           },
+                          "maxBytes": {
+                            "type": "number"
+                          },
                           "fileSet": {
                             "type": "string",
                             "enum": [
@@ -1046,6 +1052,9 @@
                           "maxOutputBytes": {
                             "type": "number"
                           },
+                          "maxBytes": {
+                            "type": "number"
+                          },
                           "fileSet": {
                             "type": "string",
                             "enum": [
@@ -1355,6 +1364,9 @@
                           "maxOutputBytes": {
                             "type": "number"
                           },
+                          "maxBytes": {
+                            "type": "number"
+                          },
                           "fileSet": {
                             "type": "string",
                             "enum": [
@@ -1642,6 +1654,9 @@
                             "type": "number"
                           },
                           "maxOutputBytes": {
+                            "type": "number"
+                          },
+                          "maxBytes": {
                             "type": "number"
                           },
                           "fileSet": {
@@ -1933,6 +1948,9 @@
                           "maxOutputBytes": {
                             "type": "number"
                           },
+                          "maxBytes": {
+                            "type": "number"
+                          },
                           "fileSet": {
                             "type": "string",
                             "enum": [
@@ -2222,6 +2240,9 @@
                           "maxOutputBytes": {
                             "type": "number"
                           },
+                          "maxBytes": {
+                            "type": "number"
+                          },
                           "fileSet": {
                             "type": "string",
                             "enum": [
@@ -2509,6 +2530,9 @@
                             "type": "number"
                           },
                           "maxOutputBytes": {
+                            "type": "number"
+                          },
+                          "maxBytes": {
                             "type": "number"
                           },
                           "fileSet": {

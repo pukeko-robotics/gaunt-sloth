@@ -50,6 +50,15 @@ export interface BuiltInToolConfig {
   /** `run_shell_command`: captured-output byte budget. See {@link SHELL_DEFAULT_MAX_OUTPUT_BYTES}. */
   maxOutputBytes?: number;
   /**
+   * `gth_gh_read_file` (CFG-52): ceiling on the DECODED file text the tool returns, in bytes.
+   * Over it, the content is truncated at the boundary and carries a marker naming the tool and the
+   * cap, so the model knows the file is incomplete. See {@link GH_READ_FILE_DEFAULT_MAX_BYTES}.
+   *
+   * Named `maxBytes` rather than the shell's `maxOutputBytes` because this is a file read (cf.
+   * `read_file`'s byte cap) rather than captured command output.
+   */
+  maxBytes?: number;
+  /**
    * `gth_grep` (GS2-51): which corpus the content-search tool scans, applied consistently to BOTH
    * execution engines (native ripgrep and the in-process JS fallback):
    * - `gitignore` (DEFAULT) — respect `.gitignore`/`.ignore` and skip hidden dot-files. This is the
@@ -107,6 +116,97 @@ export const SHELL_TOOL_NAME = 'run_shell_command';
  * "unknown built-in tool").
  */
 export const DEV_TOOL_NAMES: readonly string[] = [...DEV_COMMAND_TOOL_NAMES, SHELL_TOOL_NAME];
+
+/**
+ * CFG-52 — the `gh api` file-read tool the review agent gets on a GitHub PR. The tool itself is
+ * built in `@gaunt-sloth/review` and stays there: it binds to the PR under review, which the
+ * `AVAILABLE_BUILT_IN_TOOLS` factory contract (`tool.get(config)`) cannot supply. Only its NAME
+ * lives here, because two packages need it and neither may depend on the other — `review` to decide
+ * whether to inject it, and `agent`'s `getBuiltInTools` to SKIP it (see
+ * {@link EXTERNALLY_EMITTED_BUILT_IN_TOOL_NAMES}).
+ */
+export const GH_READ_FILE_TOOL_NAME = 'gth_gh_read_file';
+
+/**
+ * Built-in tool names that are legitimate {@link GthConfig.builtInTools} entries but are NOT loaded
+ * by `getBuiltInTools`, because the tool is constructed elsewhere: the dev/shell tools come from
+ * {@link GthDevToolkit}, and {@link GH_READ_FILE_TOOL_NAME} is built by the review module with the
+ * PR context bound in. Without the skip, configuring one of these prints
+ * `Unknown built-in tool: <name>` on EVERY command's run — including the ones that never load it.
+ */
+export const EXTERNALLY_EMITTED_BUILT_IN_TOOL_NAMES: readonly string[] = [
+  ...DEV_TOOL_NAMES,
+  GH_READ_FILE_TOOL_NAME,
+];
+
+/**
+ * CFG-52 — default ceiling on the DECODED file text {@link GH_READ_FILE_TOOL_NAME} returns:
+ * 600 KiB, roughly 10K lines of code. Deliberately generous, because the tool exists precisely for
+ * the case where the diff truncated and the reviewer needs the whole file; a cap that bites in
+ * normal use would defeat it. Override per entry with
+ * `{ "builtInTools": { "gth_gh_read_file": { "maxBytes": 200000 } } }`.
+ */
+export const GH_READ_FILE_DEFAULT_MAX_BYTES = 614400;
+
+/** The commands that can carry {@link GH_READ_FILE_TOOL_NAME}; it is inert everywhere else. */
+export type GhReadFileCommand = 'pr' | 'review';
+
+/**
+ * The `builtInTools` registry that applies to a review/pr run: the per-command registry if the
+ * command sets one, else the root one — the SAME precedence {@link getEffectiveDevToolsConfig}
+ * uses, and picked WHOLESALE rather than per key. A per-command object replaces the root set
+ * entirely (the documented CFG-18 merge semantic), so a root entry for a tool the per-command
+ * registry does not name is not inherited.
+ */
+function effectiveBuiltInToolsRegistry(
+  config: Pick<GthConfig, 'commands' | 'builtInTools'> | undefined,
+  command: GhReadFileCommand
+): Record<string, boolean | BuiltInToolConfig> {
+  const cmdConfig = config?.commands?.[command];
+  return normalizeBuiltInTools(cmdConfig?.builtInTools ?? config?.builtInTools);
+}
+
+/**
+ * CFG-52 — whether the review agent gets {@link GH_READ_FILE_TOOL_NAME} on this run.
+ *
+ * **Opt-OUT: absence means enabled.** The tool is bound to the PR's own head repo and ref, reads
+ * nothing local, and no-ops gracefully when `gh` is missing — the content it can reach is the
+ * content the review is already about — so making it opt-in would turn it off for every existing
+ * `gth pr` user in exchange for a flag most would never find. That is why absence is resolved here
+ * rather than through {@link isBuiltInToolEntryEnabled}, which reads an absent entry as OFF.
+ *
+ * `{ "builtInTools": { "gth_gh_read_file": false } }` turns it off; an object entry configures it
+ * (and, like any other tool, `{ "enabled": false }` also disables).
+ */
+export function isGhReadFileToolEnabled(
+  config: Pick<GthConfig, 'commands' | 'builtInTools'> | undefined,
+  command: GhReadFileCommand
+): boolean {
+  const registry = effectiveBuiltInToolsRegistry(config, command);
+  if (!Object.prototype.hasOwnProperty.call(registry, GH_READ_FILE_TOOL_NAME)) {
+    return true;
+  }
+  return isBuiltInToolEntryEnabled(registry[GH_READ_FILE_TOOL_NAME]);
+}
+
+/**
+ * CFG-52 — the decoded-text byte ceiling for {@link GH_READ_FILE_TOOL_NAME}, falling back to
+ * {@link GH_READ_FILE_DEFAULT_MAX_BYTES}. Only the object form can override it, and an
+ * out-of-range / non-numeric value falls back to the default — the same guard
+ * {@link getShellMaxOutputBytes} applies.
+ */
+export function getGhReadFileMaxBytes(
+  config: Pick<GthConfig, 'commands' | 'builtInTools'> | undefined,
+  command: GhReadFileCommand
+): number {
+  const entry = effectiveBuiltInToolsRegistry(config, command)[GH_READ_FILE_TOOL_NAME];
+  if (entry && typeof entry === 'object' && typeof entry.maxBytes === 'number') {
+    if (Number.isFinite(entry.maxBytes) && entry.maxBytes > 0) {
+      return entry.maxBytes;
+    }
+  }
+  return GH_READ_FILE_DEFAULT_MAX_BYTES;
+}
 
 /**
  * Normalize the widened {@link BuiltInToolsSetting} to a plain lookup keyed by tool name. The array

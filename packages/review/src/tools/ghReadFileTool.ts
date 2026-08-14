@@ -2,6 +2,12 @@ import { z } from 'zod';
 import { tool } from '@langchain/core/tools';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
+import {
+  GH_READ_FILE_DEFAULT_MAX_BYTES,
+  GH_READ_FILE_TOOL_NAME,
+  getGhReadFileMaxBytes,
+  type GhReadFileCommand,
+} from '@gaunt-sloth/core/config.js';
 import { execAsync } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
 
@@ -24,6 +30,10 @@ import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
  * into the review. Binding them to the PR context also closes the footgun of reading arbitrary
  * files from any public repo the model can name.
  *
+ * It is configured through the unified `builtInTools` registry (CFG-52) and is **opt-out**: absent
+ * from the registry it is ON, `{ "gth_gh_read_file": false }` turns it off, and
+ * `{ "gth_gh_read_file": { "maxBytes": N } }` sets the ceiling on the decoded text it returns.
+ *
  * The tool is OPTIONAL and self-guarding:
  * - The path is strictly validated so nothing LLM-supplied can inject shell metacharacters
  *   into the `gh api` invocation; the resolved owner/repo/ref are validated too.
@@ -32,7 +42,7 @@ import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
  *   continue with the (truncated) diff it already has.
  */
 
-const TOOL_NAME = 'gth_gh_read_file';
+const TOOL_NAME = GH_READ_FILE_TOOL_NAME;
 
 // PR ids reach us from the CLI; keep strict so nothing but a number can reach execAsync.
 const PR_ID_PATTERN = /^\d+$/;
@@ -44,6 +54,20 @@ const REF_PATTERN = /^[A-Za-z0-9-_./]+$/;
 // Repo-relative path. Allow slashes and common filename characters, but no shell metachars,
 // no whitespace, and no parent-directory traversal.
 const PATH_PATTERN = /^[A-Za-z0-9-_./]+$/;
+
+/**
+ * CFG-52 — cut `text` down to at most `maxBytes` UTF-8 bytes without leaving a split multi-byte
+ * character at the end. Slicing a Buffer at an arbitrary byte boundary can land mid-sequence, and
+ * decoding that produces a replacement character that is itself WIDER than the bytes it replaced —
+ * so the result is re-measured and trimmed until it genuinely fits the cap.
+ */
+function truncateToBytes(text: string, maxBytes: number): string {
+  let out = Buffer.from(text, 'utf8').subarray(0, maxBytes).toString('utf8');
+  while (out.length > 0 && Buffer.byteLength(out, 'utf8') > maxBytes) {
+    out = out.slice(0, -1);
+  }
+  return out;
+}
 
 const toolSchema = z.object({
   path: z
@@ -129,10 +153,16 @@ export async function resolvePrRepoContext(
  * Fetches the full contents of a single file from GitHub via the `gh api` CLI and decodes it.
  * Returns the decoded text, or a human/agent-readable explanation string on any failure
  * (graceful skip — never throws). owner/repo/ref come from the resolved PR context, not the LLM.
+ *
+ * CFG-52 — the decoded text is capped at `maxBytes`. Over the cap it is truncated rather than
+ * refused (a truncated file still reviews better than no file), and the result says so in its
+ * heading AND in a trailing marker naming the tool and the cap, so the model cannot silently
+ * reason about a file it only half received.
  */
 export async function ghReadFileImpl(
   args: GhReadFileArgs,
-  context: PrRepoContext
+  context: PrRepoContext,
+  maxBytes: number = GH_READ_FILE_DEFAULT_MAX_BYTES
 ): Promise<string> {
   const { path } = args;
   const { owner, repo, ref } = context;
@@ -184,7 +214,14 @@ export async function ghReadFileImpl(
 
     const decoded = Buffer.from(parsed.content, 'base64').toString('utf8');
     const label = `${owner}/${repo}/${path}${ref ? `@${ref}` : ''}`;
-    return `Full contents of ${label}:\n\n${decoded}`;
+    if (Buffer.byteLength(decoded, 'utf8') <= maxBytes) {
+      return `Full contents of ${label}:\n\n${decoded}`;
+    }
+    return (
+      `Partial contents of ${label} (truncated):\n\n${truncateToBytes(decoded, maxBytes)}` +
+      `\n... [${TOOL_NAME}: file truncated at the ${maxBytes}-byte cap ` +
+      `(builtInTools.${TOOL_NAME}.maxBytes) — this file is INCOMPLETE, the rest was not returned] ...`
+    );
   } catch (error) {
     // Graceful skip: gh missing/unauthenticated, file not found, or no GitHub context.
     const reason = error instanceof Error ? error.message : String(error);
@@ -202,8 +239,16 @@ export async function ghReadFileImpl(
  * `prId` identifies the PR under review (undefined in `gth pr` discovery mode → current branch).
  * The owner/repo/ref are resolved from it once, lazily, and memoised for the run, so the agent
  * cannot read files from any repo other than the one being reviewed.
+ *
+ * CFG-52 — `command` selects which `builtInTools` registry the byte cap is read from, so
+ * `commands.pr` and `commands.review` each configure their own run.
  */
-export function get(_: GthConfig, prId?: string): StructuredToolInterface {
+export function get(
+  config: GthConfig,
+  prId?: string,
+  command: GhReadFileCommand = 'pr'
+): StructuredToolInterface {
+  const maxBytes = getGhReadFileMaxBytes(config, command);
   let contextPromise: Promise<PrRepoContext | string> | undefined;
   const getContext = (): Promise<PrRepoContext | string> => {
     if (!contextPromise) {
@@ -218,7 +263,7 @@ export function get(_: GthConfig, prId?: string): StructuredToolInterface {
       if (typeof context === 'string') {
         return context; // resolution failed — return the explanation as a graceful skip.
       }
-      return ghReadFileImpl(args, context);
+      return ghReadFileImpl(args, context, maxBytes);
     },
     {
       name: TOOL_NAME,
@@ -227,7 +272,9 @@ export function get(_: GthConfig, prId?: string): StructuredToolInterface {
         'GitHub API. Use this when the PR diff is truncated and you need to see the complete ' +
         'file. Supply only the repository-relative path; the repository and ref are bound to ' +
         'the PR automatically. Reads through the GitHub API, not the local filesystem, so it is ' +
-        'safe in pull_request_target CI.',
+        `safe in pull_request_target CI. At most ${maxBytes} bytes of file text are returned: a ` +
+        'larger file may come back truncated, and says so in its heading and in a trailing marker ' +
+        'when it does. A very large file may not be readable through this endpoint at all.',
       schema: toolSchema,
     }
   ) as StructuredToolInterface;

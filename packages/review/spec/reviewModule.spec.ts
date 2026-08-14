@@ -143,8 +143,11 @@ const mockConfig: GthConfig = {
   }) as BaseChatModel<BaseChatModelCallOptions, AIMessageChunk>,
 } as GthConfig;
 
-// Mock config module
-vi.mock('#src/config.js', () => ({
+// Mock config module. CFG-52 — this is a PARTIAL mock: the module now also supplies the built-in
+// tool resolvers the review module calls, and these tests assert what config actually resolves to,
+// so those must be the real implementations rather than stubs.
+vi.mock('#src/config.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('#src/config.js')>()),
   GthConfig: {},
 }));
 
@@ -607,6 +610,80 @@ describe('reviewModule', () => {
         (t) => typeof t === 'object' && t !== null && 'name' in t && t.name === 'gth_gh_read_file'
       ).length;
       expect(count).toBe(1);
+    });
+  });
+
+  /**
+   * CFG-52 — the tool is now gated on the unified `builtInTools` registry, resolved per-command
+   * first and then root. Each case is a PAIR: the "off" half alone would also pass against an
+   * implementation that never injects, and the "on" half alone against one that never reads config.
+   */
+  describe('CFG-52 builtInTools gating of the gh api file-read tool', () => {
+    const hasGhReadFile = (config: GthConfig) =>
+      (config.tools ?? []).some(
+        (t) => typeof t === 'object' && t !== null && 'name' in t && t.name === 'gth_gh_read_file'
+      );
+
+    const runPr = async (extra: Record<string, unknown>) => {
+      const config = {
+        ...mockConfig,
+        tools: undefined,
+        commands: { pr: { contentSource: 'github' } },
+        ...extra,
+      } as unknown as GthConfig;
+      const { review } = await import('#src/modules/reviewModule.js');
+      await review('PR-1', 'preamble', 'diff', config, 'pr');
+      return config;
+    };
+
+    it('injects it with the default registry and NOT when the registry disables it', async () => {
+      // Opt-out: the shipped default names other tools, never this one, and it is still injected.
+      expect(hasGhReadFile(await runPr({ builtInTools: ['gth_checklist', 'gth_grep'] }))).toBe(
+        true
+      );
+      // …and a user who writes it as false gets no tool.
+      expect(hasGhReadFile(await runPr({ builtInTools: { gth_gh_read_file: false } }))).toBe(false);
+    });
+
+    it('lets commands.pr disable it over a root entry enabling it, and applies the root entry alone', async () => {
+      const perCommandWins = await runPr({
+        builtInTools: { gth_gh_read_file: true },
+        commands: {
+          pr: { contentSource: 'github', builtInTools: { gth_gh_read_file: false } },
+        },
+      });
+      expect(hasGhReadFile(perCommandWins)).toBe(false);
+
+      // No per-command registry at all → the root entry governs the pr run.
+      const rootApplies = await runPr({ builtInTools: { gth_gh_read_file: false } });
+      expect(hasGhReadFile(rootApplies)).toBe(false);
+      const rootEnables = await runPr({ builtInTools: { gth_gh_read_file: true } });
+      expect(hasGhReadFile(rootEnables)).toBe(true);
+    });
+
+    it('gates the review command on its own commands.review registry', async () => {
+      const base = {
+        ...mockConfig,
+        tools: undefined,
+        contentSource: 'github',
+      };
+      const { review } = await import('#src/modules/reviewModule.js');
+
+      const disabled = {
+        ...base,
+        commands: {
+          review: { contentSource: 'github', builtInTools: { gth_gh_read_file: false } },
+        },
+      } as unknown as GthConfig;
+      await review('src', 'preamble', 'diff', disabled, 'review');
+      expect(hasGhReadFile(disabled)).toBe(false);
+
+      const enabled = {
+        ...base,
+        commands: { review: { contentSource: 'github' } },
+      } as unknown as GthConfig;
+      await review('src', 'preamble', 'diff', enabled, 'review');
+      expect(hasGhReadFile(enabled)).toBe(true);
     });
   });
 });

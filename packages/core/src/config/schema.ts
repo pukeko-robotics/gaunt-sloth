@@ -598,6 +598,10 @@ const builtInToolConfigSchema = z.object({
   command: z.string().optional(),
   timeout: z.number().optional(),
   maxOutputBytes: z.number().optional(),
+  // CFG-52 — `gth_gh_read_file`: ceiling on the DECODED file text the GitHub-API file-read tool
+  // returns (default 600 KiB). A file read, not captured command output, hence `maxBytes` rather
+  // than `maxOutputBytes`. See BuiltInToolConfig.
+  maxBytes: z.number().optional(),
   // GS2-51 — `gth_grep`: which corpus to search. `gitignore` (default) respects .gitignore/.ignore
   // and skips hidden dot-files; `all` scans everything but the noise dirs. See BuiltInToolConfig.
   fileSet: z.enum(['gitignore', 'all']).optional(),

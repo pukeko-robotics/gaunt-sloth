@@ -139,6 +139,29 @@ describe('Config Tool Functions', () => {
       expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
     });
 
+    // CFG-52 — gth_gh_read_file is a legitimate registry entry but is built by the review module
+    // (it binds to the PR under review), so this loader must SKIP it rather than warn. Asserted on
+    // `code`, a command that never loads the tool at all: that is where a stray "Unknown built-in
+    // tool" would surface for a user who only ever meant to configure their PR reviews.
+    it('should skip gth_gh_read_file without warning, on a command that never loads it', async () => {
+      const result = await getDefaultTools({
+        filesystem: 'none',
+        builtInTools: { gth_gh_read_file: false, gth_status_update: true },
+      } as Partial<GthConfig> as GthConfig);
+      expect(result.map((t) => t.name)).toEqual(['gth_status_update']);
+      expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+    });
+
+    it('should skip a CONFIGURED gth_gh_read_file entry without warning or loading it', async () => {
+      const result = await getDefaultTools({
+        filesystem: 'none',
+        builtInTools: { gth_gh_read_file: { maxBytes: 200000 } },
+      } as Partial<GthConfig> as GthConfig);
+      // Enabled in the registry, but still not emitted here — the review module builds it.
+      expect(result).toEqual([]);
+      expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+    });
+
     it('should still warn only for genuinely unknown built-in tools', async () => {
       const result = await getDefaultTools({
         filesystem: 'none',

@@ -227,6 +227,42 @@ describe('config schema (GS2-1 B1)', () => {
         expect((result.data as Record<string, unknown>).builtInTools).toEqual(builtInTools);
       }
     });
+
+    // CFG-52 — `builtInToolConfigSchema` is a plain `z.object`, which SILENTLY STRIPS a key it does
+    // not know. That is what makes this a discriminating pair rather than a tautology: `maxBytes`
+    // survives the parse only because the schema now declares it, while a neighbouring typo is
+    // dropped on the floor. Without the schema change, the first half fails.
+    it("carries gth_gh_read_file's maxBytes through the parse, at the root and per command", () => {
+      const builtInTools = {
+        gth_checklist: true,
+        gth_gh_read_file: { maxBytes: 200000 },
+      };
+      const result = rawGthConfigSchema.safeParse({
+        llm: { type: 'openai' },
+        builtInTools,
+        commands: { pr: { builtInTools: { gth_gh_read_file: { maxBytes: 50000 } } } },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const data = result.data as {
+          builtInTools?: unknown;
+          commands?: { pr?: { builtInTools?: unknown } };
+        };
+        expect(data.builtInTools).toEqual(builtInTools);
+        expect(data.commands?.pr?.builtInTools).toEqual({ gth_gh_read_file: { maxBytes: 50000 } });
+      }
+
+      const typo = rawGthConfigSchema.safeParse({
+        llm: { type: 'openai' },
+        builtInTools: { gth_gh_read_file: { maxByte: 200000 } },
+      });
+      expect(typo.success).toBe(true);
+      if (typo.success) {
+        expect((typo.data as { builtInTools?: Record<string, unknown> }).builtInTools).toEqual({
+          gth_gh_read_file: {},
+        });
+      }
+    });
   });
 
   describe('deprecated-shape rejection (GS2-28)', () => {

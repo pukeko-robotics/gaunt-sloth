@@ -12,7 +12,7 @@ import {
   normalizeBuiltInTools,
   isBuiltInToolEntryEnabled,
   isFilesystemToolRegistered,
-  DEV_TOOL_NAMES,
+  EXTERNALLY_EMITTED_BUILT_IN_TOOL_NAMES,
   type FilesystemToolsConfig,
 } from '@gaunt-sloth/core/config.js';
 import { displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
@@ -170,12 +170,15 @@ async function getBuiltInTools(config: GthConfig): Promise<StructuredToolInterfa
   const tools: StructuredToolInterface[] = [];
 
   // CFG-18: `builtInTools` may be a string[] or the widened registry — normalize to a name→value
-  // lookup. Dev/shell tools (run_*, run_shell_command) are emitted by GthDevToolkit via the dev
-  // bucket, so skip them here (a registry entry for them is legitimate, not an unknown built-in).
+  // lookup. Tools constructed OUTSIDE this loader are skipped here: the dev/shell tools (run_*,
+  // run_shell_command) come from GthDevToolkit, and gth_gh_read_file is built by the review module
+  // with the PR context bound in. A registry entry for one of them is legitimate config, not an
+  // unknown built-in, and warning about it would fire on every command — including the ones that
+  // never load the tool.
   const registry = normalizeBuiltInTools(config.builtInTools);
 
   for (const [toolName, value] of Object.entries(registry)) {
-    if (DEV_TOOL_NAMES.includes(toolName)) {
+    if (EXTERNALLY_EMITTED_BUILT_IN_TOOL_NAMES.includes(toolName)) {
       continue;
     }
     if (!isBuiltInToolEntryEnabled(value)) {
