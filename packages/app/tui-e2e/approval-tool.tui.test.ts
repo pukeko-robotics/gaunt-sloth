@@ -19,12 +19,18 @@ import { test, expect } from '@microsoft/tui-test';
  * **The call is always refused**, so the write never executes: this is a test about the question,
  * not about the answer, and refusing leaves nothing behind in the working directory the session
  * ran in.
+ *
+ * [[TUI-C88]] adds the second block below, for the `mcpTool` arm. It lives here rather than in a
+ * file of its own because it is the same subject — a gated non-shell call announced as what it is —
+ * and because `test.use` is describe-scoped, so a second block carries its own program and config
+ * without a second test file's worth of module loading in the run.
  */
 
 // tui-test keeps process.cwd() at the invocation dir (this folder); the cli lives one level up.
 const e2eDir = process.cwd();
 const cli = path.resolve(e2eDir, '..', 'cli.js');
 const toolConfig = path.resolve(e2eDir, 'fixtures', 'approval-tool.gsloth.config.mjs');
+const mcpConfig = path.resolve(e2eDir, 'fixtures', 'approval-mcp.gsloth.config.mjs');
 /**
  * Where the refused `write_file` would really have landed — **the session's working directory, not
  * the fixtures directory.**
@@ -99,5 +105,77 @@ test.describe('gth code TUI — [[TUI-C67]] a gated non-shell tool call names th
     // assertion here that observes the ANSWER rather than the question, and it is pointed at the
     // path the tool would really have used (see `neverWritten`).
     expect(fs.existsSync(neverWritten)).toBe(false);
+  });
+});
+
+/**
+ * [[TUI-C88]] PTY e2e: **the `mcpTool` arm — the one approval sentence a lost subject cannot
+ * forge.**
+ *
+ * The block above proves a `write_file` call is announced as `write_file`, but for that tool the
+ * `tool` arm and the **no-subject fallback** render the *identical* sentence, so it passes whether
+ * or not `subject` survived the trip through the real TUI approval bridge. The `mcpTool` arm is the
+ * one whose sentence is distinguishable: it names the **server** the call reaches, in a connective
+ * phrase — *on the MCP server `<key>`, via* — that the fallback has no way to produce. The fallback
+ * for this same call would read *The agent wants to use the mcp__fixture__ping tool*, which contains
+ * the server key only as a substring of the registered name, so an assertion on the key alone would
+ * still pass; the assertion below is anchored on the whole sentence, and the negative is anchored on
+ * the fallback's own opening words.
+ *
+ * **This needs a real MCP server, not a config entry.** The approval interrupt is wired over the
+ * BOUND tool names, so a tool reaches the gate only if an MCP client really registered it —
+ * `fixtures/mcpFixtureServer.mjs` is a zero-dependency JSON-RPC stdio server that exists for exactly
+ * that, and `fixtures/approval-mcp.gsloth.config.mjs` attaches it under the key `fixture`.
+ *
+ * As above, the whole seam is real — no `GTH_TUI_E2E_FIXTURE` — and **the call is always refused**,
+ * so the MCP tool never executes.
+ */
+test.describe('gth code TUI — [[TUI-C88]] a gated MCP tool call names the server it reaches', () => {
+  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gth-e2e-approval-mcp-home-'));
+
+  test.use({
+    program: { file: 'node', args: [cli, 'code', '--tui', '-c', mcpConfig] },
+    env: realAgentEnv(tmpHome),
+    columns: 120,
+    rows: 40,
+  });
+
+  test.afterAll(() => {
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  test('a gated MCP tool call is announced with its server, never as a bare tool or a shell command', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to code')).toBeVisible();
+
+    terminal.write('ping it');
+    await expect(terminal.getByText('> ping it')).toBeVisible();
+    terminal.submit();
+
+    // The ruled `mcpTool` sentence, verbatim and whole. 78 columns at the 120 this terminal runs
+    // at, so it occupies one row — a wrapped sentence would never match, since the locator searches
+    // the rows joined end to end.
+    await expect(
+      terminal.getByText(
+        'The agent wants to call ping on the MCP server fixture, via mcp__fixture__ping'
+      )
+    ).toBeVisible();
+    await expect(terminal.getByText('[o]nce', { strict: false })).toBeVisible();
+    // The negatives are the reason this case exists. The first is the fallback's opening words, so
+    // this assertion goes red the moment `subject` stops travelling — whatever tool name the
+    // fallback would then interpolate. The second is the sentence EXT-80 made false.
+    await expect(
+      terminal.getByText('The agent wants to use the', { strict: false })
+    ).not.toBeVisible();
+    await expect(
+      terminal.getByText('The agent wants to run a shell command', { strict: false })
+    ).not.toBeVisible();
+
+    // Refuse. The MCP call never runs, and the model observes the rejection and concludes.
+    terminal.write('n');
+    await expect(
+      terminal.getByText('approval-mcp-final-answer-marker', { strict: false })
+    ).toBeVisible();
   });
 });
