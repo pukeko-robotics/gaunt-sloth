@@ -321,7 +321,8 @@ Then edit your configuration file to point to your LM Studio server:
 - **Important:** The model must support tool calling. Tested models include:
   gpt-oss, granite, nemotron, seed, qwen3
 
-For a complete example, see [examples/lmstudio/.gsloth.config.json](../../examples/lmstudio/.gsloth.config.json).
+For a complete example, see
+[examples/lmstudio/.gsloth.config.json](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/examples/lmstudio/.gsloth.config.json).
 
 ### Other OpenAI-compatible providers (Inception, etc.)
 
@@ -562,8 +563,8 @@ JavaScript configuration provides more flexibility than JSON configuration, allo
 
 **For a complete working example** demonstrating custom middleware and custom tools, see:
 
-- [JavaScript Config Example README](../../examples/js-config/README.md) - Full documentation and usage guide
-- [Example Config File](../../examples/js-config/.gsloth.config.js) - Complete working example with custom logging middleware and custom logger tool
+- [JavaScript Config Example README](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/examples/js-config/README.md) - Full documentation and usage guide
+- [Example Config File](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/examples/js-config/.gsloth.config.js) - Complete working example with custom logging middleware and custom logger tool
 
 The example demonstrates:
 
