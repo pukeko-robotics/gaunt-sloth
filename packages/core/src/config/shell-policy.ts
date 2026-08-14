@@ -583,8 +583,17 @@ export const APPROVAL_WRITE_MODIFIER_HINT =
  *    surface that renders them is a session a person is sitting in, so a claim scoped to *this
  *    session* describes the only place the sentence appears rather than hedging around a
  *    falsehood. Unscoped it would not: a sentence whose subject is "Gaunt Sloth" and whose claim
- *    is that it always asks is false over the AG-UI and ACP servers, which never drain an approval
- *    interrupt ([[EXT-54]] — worth fixing on its own merits, never as a gate on this copy).
+ *    is that it always asks is false over the AG-UI server, which drives the agent itself and
+ *    drains no approval interrupt ([[EXT-54]] — worth fixing on its own merits, never as a gate on
+ *    this copy).
+ *
+ *    **The ACP server does ask, and that does not re-open this rule.** It drives
+ *    `GthAgentRunner`, registers a per-turn tool-approval callback and raises
+ *    `session/request_permission`, so a human there really is asked. What it puts in front of them
+ *    is assembled from the rater's verdict, the matched `approvals.escalate` entry and the grant
+ *    preview — never from `APPROVAL_RUNG_DESCRIPTIONS` or any other posture copy — so no string
+ *    governed here renders on a server surface, and the ruling's conclusion is untouched.
+ *
  *    **That is also the boundary: the moment an approvals string is rendered by a server surface
  *    this ruling stops covering it**, and the scoped sentence has to be re-earned there rather
  *    than inherited from here.
