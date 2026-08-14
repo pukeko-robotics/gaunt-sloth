@@ -179,12 +179,11 @@ produce no line at all:
   does not exist, so that entry renders nothing. This is how the gate goes quiet: it keeps passing
   while covering less than it claims.
 - **`… links to <target>, but the anchor does not exist`** — a cross-link whose `#anchor` misses.
-  **Check it against the renderer the reader uses before changing it.** These pages are read both
-  on the published site and on GitHub, and the two slug headings differently: TypeDoc drops the
-  text inside an inline code span, GitHub keeps it, so a heading like **AI ignore (`.aiignore`)**
-  anchors as `#ai-ignore-` on the site and `#ai-ignore-aiignore` on GitHub. A link that satisfies
-  one renderer is reported broken by the other, and "fixing" the warning breaks the link where it
-  currently works. Only edit the link when the anchor is wrong in *both*.
+  Write the anchor the way **GitHub** slugs the heading: rule 10 makes GitHub's slug the
+  authoritative one and configures TypeDoc to agree with it, so a warning here is a genuinely wrong
+  anchor and not the two renderers disagreeing. The single shape that still disagrees is a slug
+  carrying a run of two or more hyphens — rule 10 says what to do about it — so check that case on
+  both renderers before editing anything.
 - **Nothing at all** — the failure mode with no warning. A relative link to a `.md` file that
   `projectDocuments` does not match is not an error to TypeDoc: it copies the target into
   `docs-generated/media/` and links to the raw markdown, which a reader gets as a download rather
@@ -195,11 +194,9 @@ produce no line at all:
 - **Nothing at all, again — a link into the page's own headings.** TypeDoc checks the anchor of a
   link that crosses to another page, and says nothing whatsoever about one pointing into the page
   it sits on. A clean warning stream is therefore no evidence that a page's own internal links
-  resolve. The slug divergence above applies to these too and bites harder here, because nothing
-  prompts you to look: a same-page link TypeDoc renders dead is very often exactly the one GitHub
-  resolves. Check both renderers, edit only when it is wrong in both — and **fix the link, never
-  the heading**. Renaming a heading breaks every inbound link from outside this repo, which is a
-  worse failure than the anchor you set out to repair.
+  resolve, so run the sweep below rather than reading the warning stream as coverage. When one is
+  wrong, **fix the link, never the heading** — renaming a heading breaks every inbound link from
+  outside this repo, which is a worse failure than the anchor you set out to repair.
 
 Since no warning names them, enumerate the same-page links yourself. For the page you changed,
 `grep -on '](#[^)]*' docs/configuration/tools.md` prints each internal link with its line number,
@@ -264,3 +261,45 @@ can never express.
 **Self-check (must pass before you ship):** `grep -nE '\]\(\.\.?/' packages/*/README.md` returns
 nothing. Every match is a relative link that will misresolve on npm; replace it with the absolute
 npm+GitHub form above.
+
+## 10. GitHub's heading slug is the authoritative anchor
+
+Every page here is rendered by more than one thing — GitHub, the generated site, npm for a package
+README — and each of them turns a heading into an `#anchor` by its own rules. **Write every anchor
+the way GitHub slugs the heading, and make the other renderers agree with GitHub** rather than
+editing links to suit whichever one you happened to check.
+
+GitHub is the authoritative one because its slugs are the ones already pointed at from outside this
+repo — bookmarks, issue comments, chat messages, other projects' docs. Those links cannot be found
+or fixed, so anything that changes a GitHub anchor breaks them permanently, while an anchor on a
+generated site can be regenerated at will.
+
+Two consequences, both easy to get backwards:
+
+- **Never rename a heading to repair an anchor.** The rename fixes one link and silently breaks
+  every inbound one.
+- **Never edit a link to satisfy one renderer.** If a link resolves on GitHub and not on the site,
+  the renderer is what needs configuring; editing the link just moves the breakage to the surface
+  where it currently works.
+
+**How TypeDoc is made to agree.** TypeDoc builds a heading's anchor from that heading's text tokens
+only, so an inline code span would contribute nothing and `The ladder: ` + `` `approvals` `` would
+anchor as `#the-ladder` while GitHub anchors it as `#the-ladder-approvals`.
+`scripts/typedoc-github-heading-anchors.mjs` — registered in `typedoc.json`'s `plugin` array and
+covered by `packages/core/spec/typedocHeadingAnchors.spec.ts` — closes that gap by feeding the code
+span's text to the anchor generator, without changing a byte of the rendered heading. `pnpm typedoc`
+is not a CI job, so if you change how docs are built, keep that plugin registered: dropping it
+re-breaks every link into a code-span heading, and the only symptom is a link that stops resolving.
+
+**The one shape that still disagrees: a slug containing a run of two or more hyphens.** TypeDoc
+collapses the first such run to a single hyphen and GitHub keeps it, so `Local & free models`
+anchors as `#local--free-models` on GitHub and `#local-free-models` on the site. Any heading with
+`&`, an em dash, an arrow, or a `/` surrounded by spaces produces one.
+
+- **When you write or rename a heading, keep those characters out of it** — `Local and free models`
+  slugs identically everywhere and reads better in a link.
+- **When one already exists, leave it alone** (renaming it is the failure above) and simply don't
+  deep-link it from a page that has to resolve on both surfaces; link the section above it instead.
+
+**Self-check (must pass before you ship):** `pnpm typedoc` reports no `anchor does not exist`
+warnings, and rule 8's sweep over `docs-generated` prints no pages.

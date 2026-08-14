@@ -4,6 +4,7 @@
   "entryPoints": ["packages/*"],
   "entryPointStrategy": "packages",
   "categorizeByGroup": false,
+  "plugin": ["./scripts/typedoc-github-heading-anchors.mjs"],
   "out": "./docs-generated",
   "projectDocuments": [
     "docs/quickstart.md",
