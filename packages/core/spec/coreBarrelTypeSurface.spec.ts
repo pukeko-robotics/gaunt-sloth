@@ -28,14 +28,29 @@ import { fileURLToPath } from 'node:url';
  * system temp dir: the package name resolves from here (through the package's own `exports`, and
  * through the workspace link), and from an unrelated directory it would not resolve at all.
  *
- * It needs `dist/` to exist. `pnpm test` builds first; a bare `pnpm run unit` on a never-built tree
- * fails here with the message below rather than with a type error, so the cause is named.
+ * It needs `dist/` to exist. `pnpm test` builds first — including both CI unit jobs — and a bare
+ * `pnpm run unit` on a never-built tree fails here with the message below rather than with a type
+ * error, so the cause is named. It reads whatever `dist/` holds: on a tree built before an edit to
+ * `src/`, this checks the older declarations, as any artifact probe does.
+ *
+ * **Windows reads a failure here the same way it reads a real one.** Resolving the package by name
+ * from inside the package is what a red cell would break first, and an unresolved import surfaces
+ * as the same TS2305/TS2307 a dropped export does. A cell that is red only on Windows is about
+ * resolution, not about the barrel.
  */
 
 const CORE_DIR = fileURLToPath(new URL('..', import.meta.url));
 const DIST_BARREL = path.join(CORE_DIR, 'dist', 'index.d.ts');
 
-/** The TypeScript compiler's own CLI entry, run through `process.execPath` so Windows agrees. */
+/**
+ * The TypeScript compiler's own CLI entry, run through `process.execPath` so Windows agrees — a
+ * `.bin` shim is a shell script there and would not spawn.
+ *
+ * This is the repo's `typescript` devDependency, which is the JS compiler; the build runs the
+ * native one, which publishes no resolvable subpath. Both check the same language, but the flags
+ * and the diagnostic text asserted below are this compiler's: moving the pin to another one means
+ * re-reading its output rather than assuming these strings survive.
+ */
 const TSC_ENTRY = createRequire(import.meta.url).resolve('typescript/lib/tsc.js');
 
 /**
@@ -54,8 +69,13 @@ const PINNED_TYPE_EXPORTS = [
   'DeclaredToolAnnotations',
 ] as const;
 
-/** The already-public names that reach the pinned ones, and the reason they need naming at all. */
+/**
+ * The already-public names that reach the pinned ones, and the reason they need naming at all.
+ * Both reaching surfaces are here, not just the interrupt: the agent interface is where
+ * `DeclaredToolAnnotations` is met.
+ */
 const REACHING_EXPORTS = [
+  'GthAgentInterface',
   'PendingToolInterrupt',
   'ToolApprovalCallback',
   'ToolApprovalDecision',
@@ -72,6 +92,7 @@ const REACHING_EXPORTS = [
 const PROBE = `import type {
   ApprovalSubject,
   DeclaredToolAnnotations,
+  GthAgentInterface,
   McpToolApprovalSubject,
   PendingToolInterrupt,
   RaterNegotiationRound,
@@ -99,6 +120,11 @@ export const round: RaterNegotiationRound = {
   reason: 'a reason',
 };
 export const declared: DeclaredToolAnnotations = { openWorldHint: true };
+
+export const declaredBy = (
+  agent: GthAgentInterface
+): ReadonlyMap<string, DeclaredToolAnnotations> | undefined =>
+  agent.getDeclaredMcpToolAnnotations?.();
 
 export const decide: ToolApprovalCallback = (
   pending: PendingToolInterrupt
