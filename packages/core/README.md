@@ -50,6 +50,19 @@ All config keys (providers, prompts, tools, per-command settings) are documented
 - `@gaunt-sloth/core` (the root export) is the public API: config
   (`initConfig`, `GthConfig`, defaults), constants, core types, the lean agent factory, model
   discovery, and session history.
+- **A type the Zod schema declares is re-exported, so a value you can set is a value you can name.**
+  Some types in this package's public surface are declared by the schema rather than beside the
+  interface that uses them; those are re-exported from the root and from
+  `@gaunt-sloth/core/config.js` — `GthOutputHeaderRung`, the type of `GthConfig`'s `output.header`,
+  and `RawConfigValidationResult`, the interface `ConfigLayerValidationReport` extends. The schema's
+  runtime surface (`rawGthConfigSchema`, `generateConfigJsonSchema`, `validateRawGthConfig`,
+  `KNOWN_TOP_LEVEL_KEYS`, the deprecation scanners) is validator internals and is not part of the
+  root export; reach it through the deep path below if you need it.
+- **The approval and shell types are not covered by that yet.** The types reached through
+  `PendingToolInterrupt` and `GthAgentInterface` — the approval subject and its variants, the rater's
+  safety verdict and outcome, the negotiation round, the declared tool annotations — are declared
+  under `core/approvals/` and `core/shell/` and are **not** re-exported from the root. Writing a
+  typed `ToolApprovalCallback` therefore still needs the deep path each is declared in.
 - `@gaunt-sloth/core/<path>.js` deep paths (e.g. `@gaunt-sloth/core/config.js`,
   `@gaunt-sloth/core/utils/consoleUtils.js`) mirror the internal `dist/` layout 1:1 and are a
   deliberate part of the contract — the other `@gaunt-sloth/*` packages and downstream consumers
