@@ -1459,6 +1459,30 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
     });
 
     /**
+     * An escalation reaches a human, and §5.3 makes that the one event which ends the negotiation
+     * outright — transcript, consecutive count and reachability bound together. No corpus case has a
+     * round after an escalation today (`neg-01` and `neg-05` both end at one), so this is pinned from
+     * the runner's behaviour rather than from a case: a fourth round here must be rated as blindly as
+     * a first, and must be SERVED rather than escalated by a bound the human already answered.
+     */
+    it('ends the negotiation at an escalation — the round after it argues from nothing', async () => {
+      const { result, prompts } = await grade('neg-01-escalate', [
+        ...NEG_01,
+        { command: HARD_RESET, expectAction: 'reject', mustContain: [RANGE_GROUND] },
+      ]);
+
+      expect(result.verdict).toBe('PASS');
+      expect(result.turns?.map((turn) => turn.classification?.actualAction)).toEqual([
+        'reject',
+        'reject',
+        'escalate',
+        'reject',
+      ]);
+      expect(prompts[3]).not.toContain('negotiation_so_far');
+      expect(prompts[3]).not.toContain(MANDATE);
+    });
+
+    /**
      * The negotiation belongs to ONE case. The classifier is built once and reused for every case of
      * a suite, and the runner may have several in flight, so a shared transcript would let one
      * case's rejections spend another's bound — silently turning an unrelated `reject` into an

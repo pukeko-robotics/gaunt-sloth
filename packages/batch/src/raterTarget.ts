@@ -393,8 +393,13 @@ function buildRationale(
  * It mirrors `GthAgentRunner`'s four arms and adds nothing: an approved call is progress (§5.3 —
  * clears the transcript *and* the consecutive counter), a halt reaches a human, and a `reject` is
  * recorded before either bound is tested, so the attempt being ruled on is itself on the transcript.
- * `escalate` (a `catastrophic` rating, or an unrated rung) records nothing — no round was rejected
- * and no call ran.
+ *
+ * **Every escalation reaches a human, so every escalation ends the negotiation** — the `catastrophic`
+ * rating that never had rounds, and the spent bound that had three. The runner spends it
+ * unconditionally on the way out to the person, one line after reading the count it shows them, and
+ * a later round must not argue from a transcript a human has already answered. No corpus case has a
+ * round AFTER an escalation today, so nothing here would notice if this were missing — which is the
+ * reason to write it from the runner rather than from the cases.
  *
  * **This is the one place the target's action can differ from `mapVerdictToAction`'s, and the
  * difference is not a second opinion about the rating.** The mapping is a pure function of rung and
@@ -412,9 +417,14 @@ function advanceNegotiation(
 ): { action: string; boundSpent: boolean } {
   if (decision.action === 'approve') {
     negotiation.noteProgress();
-  } else if (decision.action === 'halt') {
+    return { action: decision.action, boundSpent: false };
+  }
+  if (decision.action === 'halt') {
     negotiation.humanReached();
-  } else if (decision.action === 'reject') {
+    return { action: decision.action, boundSpent: false };
+  }
+  let boundSpent = false;
+  if (decision.action === 'reject') {
     const served = negotiation.recordRejection({
       command,
       ...(justification ? { justification } : {}),
@@ -424,9 +434,14 @@ function advanceNegotiation(
       outcome: decision.verdict?.outcome ?? FAIL_CLOSED_VERDICT.outcome,
       reason: decision.verdict?.reason ?? '',
     });
-    if (served !== 'reject') return { action: 'escalate', boundSpent: true };
+    // A served round is the whole of it: the refusal goes back to the agent and the argument
+    // continues. Anything else means the bound is spent, and the round falls through to the
+    // escalation below exactly as the runner's own `reject` arm does.
+    if (served === 'reject') return { action: 'reject', boundSpent: false };
+    boundSpent = true;
   }
-  return { action: decision.action, boundSpent: false };
+  negotiation.humanReached();
+  return { action: 'escalate', boundSpent };
 }
 
 /**
