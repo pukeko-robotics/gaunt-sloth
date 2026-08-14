@@ -53,9 +53,6 @@ import type { PendingToolInterrupt } from '#src/core/types.js';
  */
 const identifier = (value: string): string => neutralizeToOneLine(value);
 
-/** What a pending call needs to carry for a header to be rendered for it. */
-export type ApprovalPromptSubjectSource = Pick<PendingToolInterrupt, 'name' | 'subject'>;
-
 /**
  * The opening sentence of the approval prompt for one gated call, **without** any surface's own
  * punctuation or styling.
@@ -69,28 +66,39 @@ export type ApprovalPromptSubjectSource = Pick<PendingToolInterrupt, 'name' | 's
  *   carries it, and which server a call reaches is the one load-bearing fact the old prompt hid.
  * - `tool` — *The agent wants to use the `<tool>` tool*.
  *
- * **An unattributable MCP call falls to the `tool` arm.** `UNRESOLVED_MCP_SERVER` is the empty
- * string (it is the one identity a user cannot spell in config), so the `mcpTool` sentence would
- * read "on the MCP server , via …" — a blank where the most important word is. The `tool` arm names
- * the full registered name instead, which still carries the visible `mcp__` namespace, and invents
- * no prose claiming a server nothing could attribute.
+ * **An MCP call whose server would print as a blank falls to the `tool` arm.** The `mcpTool`
+ * sentence would otherwise read "on the MCP server , via …" — nothing where the decisive word goes.
+ * The `tool` arm names the full registered name instead, which still carries the visible `mcp__`
+ * namespace, and invents no prose claiming a server nothing could attribute.
  *
  * **A pending call with no subject also falls to the `tool` arm**, which is true of any gated call
  * and false of none. The runner attaches a subject to every interrupt it hands the approval
  * callback (asserted in `packages/core/spec/approvalPromptHeader.spec.ts`), so this is a floor
  * rather than a path: a surface handed a hand-built interrupt gets the vague sentence, never a
  * wrong one.
+ *
+ * @param pending The gated call — its registered name, and the subject the gate decided on.
  */
-export function approvalPromptHeader(pending: ApprovalPromptSubjectSource): string {
+export function approvalPromptHeader(
+  pending: Pick<PendingToolInterrupt, 'name' | 'subject'>
+): string {
   const tool = identifier(pending.name);
   const subject: ApprovalSubject | undefined = pending.subject;
   if (subject?.kind === 'shell') {
     return `The agent wants to run a shell command via ${tool}`;
   }
-  if (subject?.kind === 'mcpTool' && subject.server !== UNRESOLVED_MCP_SERVER) {
-    const name = identifier(subject.name);
+  if (subject?.kind === 'mcpTool') {
     const server = identifier(subject.server);
-    return `The agent wants to call ${name} on the MCP server ${server}, via ${tool}`;
+    // **The guard is on the RENDERED server, not the raw one.** `UNRESOLVED_MCP_SERVER` is the
+    // empty string — the one identity a user cannot spell in config — but it is not the only value
+    // that reaches the screen as a blank: `neutralizeToOneLine` ends in a trim, so a server key of
+    // whitespace alone, which `z.string().min(1)` admits, is empty by the time it would be printed.
+    // Comparing the value before neutralisation lets exactly that key render the sentence with a
+    // hole in it, which is the output this fallback exists to prevent.
+    if (server !== UNRESOLVED_MCP_SERVER) {
+      const name = identifier(subject.name);
+      return `The agent wants to call ${name} on the MCP server ${server}, via ${tool}`;
+    }
   }
   return `The agent wants to use the ${tool} tool`;
 }

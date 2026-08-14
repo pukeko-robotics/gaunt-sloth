@@ -284,6 +284,28 @@ Sloth to cover the rest, is
 Switch mode for the current session with `/approvals manual|write|assisted|auto|bypass`
 (see [Interactive sessions](interactive-sessions.md#slash-commands)).
 
+### Answering a prompt that is not a shell command
+
+At `manual` and `write`, most of what stops to ask you is not a shell command — it is a file write,
+an MCP call, or a tool you wired in yourself. The prompt's opening line names the call: a gated
+write reads *The agent wants to use the `write_file` tool*, with the arguments framed beneath it the
+same way a command is.
+
+**An MCP call also names the server it reaches**, which is usually what you need in order to answer
+at all — `create_issue` against a scratch tracker and `create_issue` against the one your team runs
+on are the same tool name and a different decision:
+
+```
+The agent wants to call create_issue on the MCP server jira, via mcp__jira__create_issue
+  1 │ {"summary":"ship it"}
+```
+
+`jira` is your own key under `mcpServers`, so it is the name you gave that server yourself, and
+`mcp__jira__create_issue` is the registered tool name the agent called. The answers are the same
+ones listed [at the top of this page](#the-main-use-case-let-the-agent-run-your-tests-on-your-terms)
+— and **session** / **always** remember *that tool on that server*, so approving `create_issue` on
+`jira` says nothing about the same tool name on any other server.
+
 ## The agent knows which of its tools cost you a prompt
 
 The cheapest approval is the one that never happens, so the agent is told the posture up front: at

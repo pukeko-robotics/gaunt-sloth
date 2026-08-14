@@ -10,9 +10,9 @@
  * and the TUI renders whatever the gate handed it.
  *
  * **The write never happens, by design.** Every case in the suite answers the prompt with a
- * refusal, so the tool is not executed and no file is created next to these fixtures. The prompt is
- * the whole subject here; executing the write would only add a way for the suite to dirty a tracked
- * directory.
+ * refusal, so the tool is not executed and no file is created. The prompt is the whole subject
+ * here; executing the write would only add a way for the suite to leave a file behind in whatever
+ * directory it was started from — which, not this folder, is where the tool would put it.
  *
  * Imports resolve from this file's location up to packages/app's own @langchain/core dependency,
  * so no extra devDependency is needed.
@@ -43,7 +43,8 @@ class ScriptedWriteCallingModel extends BaseChatModel {
             {
               name: 'write_file',
               args: {
-                // Relative to the session's project dir. It is never created — every case refuses.
+                // Relative, so the tool resolves it against the session's WORKING dir
+                // (`INIT_CWD ?? cwd`), not the project dir. Never created — every case refuses.
                 path: 'approval-tool-e2e-never-written.txt',
                 content: 'approval-tool-write-marker',
               },

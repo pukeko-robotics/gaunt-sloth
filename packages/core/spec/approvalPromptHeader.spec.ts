@@ -59,6 +59,26 @@ describe('approvalPromptHeader — one sentence per subject kind', () => {
   });
 
   /**
+   * **The branch is the subject's `kind`, and no name may be substituted for it.** Re-deriving the
+   * kind from the tool name would be a second classifier, free to disagree with the one that
+   * actually gated the call — and the renderer's every other fixture has a shell subject under the
+   * shell tool's own name, so a name-based branch (`pending.name === 'run_shell_command'`) renders
+   * all of them identically and no assertion notices.
+   *
+   * `approvalSubjectFor` pairs the two today, so this case is a guard rather than a live path: it
+   * fails the moment someone "simplifies" the branch into a name test, which is what the pairing
+   * would otherwise make invisible.
+   */
+  it('reads the kind off the subject rather than off the tool name', () => {
+    expect(
+      approvalPromptHeader({
+        name: 'shell',
+        subject: { kind: 'shell', command: 'npm test' },
+      })
+    ).toBe('The agent wants to run a shell command via shell');
+  });
+
+  /**
    * Naming the server is the deliberate addition: the subject already carried it, and which server
    * a call reaches is the one load-bearing thing the old prompt hid.
    */
@@ -101,6 +121,24 @@ describe('approvalPromptHeader — one sentence per subject kind', () => {
     ).toBe(`The agent wants to use the ${name} tool`);
   });
 
+  /**
+   * The same fallback, reached by the value the guard is easy to write past. A server key of
+   * whitespace alone is **not** `UNRESOLVED_MCP_SERVER` and is admitted by the `z.string().min(1)`
+   * every server name is validated with — but `neutralizeToOneLine` ends in a trim, so it is blank
+   * by the time it would reach the screen. A guard reading the raw value lets precisely this key
+   * render "on the MCP server , via …", the hole the fallback exists to prevent, so the guard reads
+   * the rendered server instead.
+   */
+  it('falls back to the tool sentence when the server would render as a blank', () => {
+    const name = 'mcp__ __do_thing';
+    expect(
+      approvalPromptHeader({
+        name,
+        subject: { kind: 'mcpTool', server: ' ', name: 'do_thing' },
+      })
+    ).toBe(`The agent wants to use the ${name} tool`);
+  });
+
   /** The floor for an interrupt built without a subject: vague, and true of every gated call. */
   it('falls back to the tool sentence when no subject travelled with the call', () => {
     expect(approvalPromptHeader({ name: 'gth_web_fetch' })).toBe(
@@ -113,15 +151,20 @@ describe('approvalPromptHeader — one sentence per subject kind', () => {
    * two identifiers a third party supplies (an MCP server's tool listing names them). A newline in
    * one lays down a row that looks exactly like the prompt's own; a carriage return walks the
    * cursor back over it. Both arrive as printable escapes instead, on one line.
+   *
+   * **All three interpolations are exercised, the server included.** It is the one the renderer has
+   * the best excuse to trust — it is the user's own config key rather than anything a server said —
+   * and that is exactly why it is pinned here: a neutralisation applied to two of three identifiers
+   * is one a later reader drops from the third as redundant, and nothing would have noticed.
    */
-  it('neutralises a tool or server name that forges a row of the dialog', () => {
+  it('neutralises every identifier it interpolates, including the server', () => {
     const CR = String.fromCodePoint(0x0d);
     const LF = String.fromCodePoint(0x0a);
     const header = approvalPromptHeader({
       name: `mcp__ops__deploy${LF}Approve?  [o]nce`,
       subject: {
         kind: 'mcpTool',
-        server: 'ops',
+        server: `ops${LF}Approve? [a]lways`,
         name: `deploy${CR}${String.fromCodePoint(0x1b)}[2J`,
       },
     });
@@ -129,6 +172,7 @@ describe('approvalPromptHeader — one sentence per subject kind', () => {
     // The forged break and the screen-clear are printable escapes, not control codes.
     expect(header).toContain('deploy\\x0d\\x1b[2J');
     expect(header).toContain('mcp__ops__deploy\\x0aApprove? [o]nce');
+    expect(header).toContain('on the MCP server ops\\x0aApprove? [a]lways,');
     expect(header).not.toContain(CR);
     expect(header).not.toContain(LF);
   });
@@ -226,7 +270,7 @@ describe('GthAgentRunner — the subject travels to the approval surface', () =>
   });
 
   it('hands the tool subject to the surface for a built-in write tool', async () => {
-    const pending = await shownFor({ name: 'write_file', args: { file_path: 'a.ts' } });
+    const pending = await shownFor({ name: 'write_file', args: { path: 'a.ts', content: '' } });
     expect(pending.subject).toMatchObject({ kind: 'tool', name: 'write_file' });
     expect(approvalPromptHeader(pending)).toBe('The agent wants to use the write_file tool');
   });

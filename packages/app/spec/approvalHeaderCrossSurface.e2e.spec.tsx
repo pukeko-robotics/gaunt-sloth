@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import chalk from 'chalk';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import stripAnsi from 'strip-ansi';
@@ -22,9 +23,18 @@ import { ApprovalPrompt } from '#src/tui/components/ApprovalPrompt.js';
  *
  * **Each surface keeps its own chrome, and that is what the normalisation below is for.** The
  * readline prompt opens with a blank line and closes the sentence with a colon before the framed
- * command; the Ink prompt draws a rule above it and paints it bold. Neither is the *wording*, so
- * both are stripped before the comparison — and only those two, spelled out one at a time, so a
- * normaliser cannot quietly absorb a real difference.
+ * command; the Ink prompt draws a rule above it and paints it bold and yellow. Neither is the
+ * *wording*, so each is taken off before the comparison — spelled out one at a time, and **every
+ * one of them asserted to have been there first**. That is what stops a normaliser quietly
+ * absorbing a real difference: a strip that is free to match nothing is a strip that keeps passing
+ * after the surface it describes has changed.
+ *
+ * **The readline half resolves through `dist/`.** Its import of
+ * `@gaunt-sloth/agent/modules/interactiveSessionModule.js` goes through that package's exports, and
+ * `pnpm run unit` is a bare `vitest run` with no build — so this spec sees that surface's *last
+ * built* code. `pnpm test` (and therefore CI) builds first, which is what makes the gate sound;
+ * locally, a result that disagrees with the source you are reading is a stale build, not a phantom.
+ * Run `pnpm run build` before believing either outcome.
  */
 
 // ── the readline surface's environment ────────────────────────────────────────
@@ -129,14 +139,37 @@ async function readlineHeader(pending: PendingToolInterrupt): Promise<string> {
  * Taken by position rather than by searching for the expected text — a search would find the
  * sentence anywhere on the dialog and would pass if the header row had been dropped while some
  * other line happened to carry the words.
+ *
+ * **Colour is pinned on for the render, and the escapes are asserted present before they are taken
+ * off**, which is the same standard the readline side's chrome is held to. A vitest worker's stdout
+ * is a pipe, so chalk detects no colour and Ink emits none — leaving that to the environment makes
+ * the strip inert, and an inert normalisation is one nobody notices has stopped matching the
+ * surface. Pinning it also means the row under test is the one a user actually sees: the dialog's
+ * own bold, yellow header row.
+ *
+ * **Nothing else is normalised, and that is deliberate.** Ink pads no trailing space onto this row,
+ * so there is nothing for a right-trim to remove and a right-trim would only be able to absorb a
+ * real difference. The absence is asserted rather than assumed.
  */
 function tuiHeader(pending: PendingToolInterrupt): string {
-  const { lastFrame, unmount } = render(<ApprovalPrompt pending={pending} />);
-  const rows = stripAnsi(lastFrame() ?? '')
-    .split('\n')
-    .map((row) => row.replace(/\s+$/u, ''));
-  unmount();
-  return rows[1] ?? '';
+  const priorLevel = chalk.level;
+  chalk.level = 1;
+  let frame: string;
+  try {
+    const { lastFrame, unmount } = render(<ApprovalPrompt pending={pending} />);
+    frame = lastFrame() ?? '';
+    unmount();
+  } finally {
+    chalk.level = priorLevel;
+  }
+  const row = frame.split('\n')[1] ?? '';
+  const plain = stripAnsi(row);
+  // The strip removed something: this row IS the dialog's styled header, not an unstyled line that
+  // drifted into position 1 while the header row was dropped.
+  expect(plain).not.toBe(row);
+  // ...and the row carries no trailing whitespace, so the comparison below has nothing to swallow.
+  expect(plain).toBe(plain.replace(/\s+$/u, ''));
+  return plain;
 }
 
 /** The three ruled sentences, typed out here rather than rebuilt from the renderer's own parts. */
@@ -164,7 +197,7 @@ const CASES: ReadonlyArray<{ kind: string; pending: PendingToolInterrupt; header
     kind: 'tool',
     pending: {
       name: 'write_file',
-      args: { file_path: 'src/a.ts' },
+      args: { path: 'src/a.ts', content: 'x' },
       subject: { kind: 'tool', name: 'write_file' },
     },
     header: 'The agent wants to use the write_file tool',

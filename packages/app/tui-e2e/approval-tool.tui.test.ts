@@ -17,13 +17,34 @@ import { test, expect } from '@microsoft/tui-test';
  * `fixtures/approval-tool.gsloth.config.mjs`) so the run stays hermetic and key-free.
  *
  * **The call is always refused**, so the write never executes: this is a test about the question,
- * not about the answer, and refusing keeps the fixtures directory clean.
+ * not about the answer, and refusing leaves nothing behind in the working directory the session
+ * ran in.
  */
 
 // tui-test keeps process.cwd() at the invocation dir (this folder); the cli lives one level up.
 const e2eDir = process.cwd();
 const cli = path.resolve(e2eDir, '..', 'cli.js');
 const toolConfig = path.resolve(e2eDir, 'fixtures', 'approval-tool.gsloth.config.mjs');
+/**
+ * Where the refused `write_file` would really have landed — **the session's working directory, not
+ * the fixtures directory.**
+ *
+ * The tool resolves a relative path against `getCurrentWorkDir()`, which is
+ * `process.env.INIT_CWD ?? process.cwd()`, and that is also the only entry in the filesystem
+ * toolkit's `allowedDirectories`. The project dir (this file's `fixtures/`, since a `-c <path>`
+ * config makes its own folder the project) governs config-relative artifacts and has no say here.
+ *
+ * So the location depends on how the suite was started, and both spellings are covered: under
+ * `pnpm run it-tui`, pnpm sets `INIT_CWD` to the invocation dir and it survives both the runner's
+ * env pass-through and `realAgentEnv` below, so the file would land at the repo root; started
+ * directly with no `INIT_CWD`, it lands in this folder. Asserting against `fixtures/` instead
+ * asserts nothing at all — the tool under test cannot reach that path, so the check passes whether
+ * or not the refusal was honoured.
+ */
+const neverWritten = path.resolve(
+  process.env.INIT_CWD ?? e2eDir,
+  'approval-tool-e2e-never-written.txt'
+);
 
 /** Child env for the REAL-agent session — the same shape `approval.tui.test.ts` uses. */
 const realAgentEnv = (tmpHome: string): Record<string, string | undefined> => {
@@ -74,9 +95,9 @@ test.describe('gth code TUI — [[TUI-C67]] a gated non-shell tool call names th
     await expect(
       terminal.getByText('approval-tool-final-answer-marker', { strict: false })
     ).toBeVisible();
-    // The tool was refused, so nothing was written next to the fixtures.
-    expect(
-      fs.existsSync(path.join(e2eDir, 'fixtures', 'approval-tool-e2e-never-written.txt'))
-    ).toBe(false);
+    // The refusal was honoured: the file the tool asked to write does not exist. This is the only
+    // assertion here that observes the ANSWER rather than the question, and it is pointed at the
+    // path the tool would really have used (see `neverWritten`).
+    expect(fs.existsSync(neverWritten)).toBe(false);
   });
 });
