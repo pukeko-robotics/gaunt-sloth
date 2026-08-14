@@ -8,6 +8,43 @@ import type { StructuredToolInterface } from '@langchain/core/tools';
 import type { IterableReadableStream } from '@langchain/core/utils/stream';
 import type { BaseCheckpointSaver } from '@langchain/langgraph';
 
+/**
+ * The approval and shell types this module's own surface is written in, re-exported so a consumer
+ * of the root barrel can NAME each of them. Every one is the declared type of something already
+ * reachable here — {@link PendingToolInterrupt}'s `subject`, `safetyVerdict` and
+ * `negotiationRounds`, and {@link GthAgentInterface#getDeclaredMcpToolAnnotations} — so without
+ * them an embedder receives values it cannot type, which is precisely what writing a typed
+ * {@link ToolApprovalCallback} asks of it.
+ *
+ * They stay declared where they are: the matcher owns the subject it matches on and the rater owns
+ * the verdict it returns, so a type moved here to become exportable would sit apart from the code
+ * that decides it. The re-export is type-only and erases at emit, so the barrel gains no runtime
+ * edge.
+ *
+ * The two modules' **runtime** surface is deliberately not re-exported, including the closed
+ * vocabularies `RATER_OUTCOMES` and `ShellSafetyVerdictSchema` that {@link RaterOutcome} and
+ * {@link ShellSafetyVerdict} are derived from: a type alias resolves its referent inside the
+ * declaration file it is emitted into, so naming either type needs neither value in scope. Values
+ * stay reachable at their own deep paths (`@gaunt-sloth/core/core/shell/rater.js`,
+ * `@gaunt-sloth/core/core/approvals/matcher.js`) at the usual deep-path risk.
+ *
+ * `packages/core/spec/coreBarrelTypeSurface.spec.ts` pins this: it type-checks a probe against the
+ * built `dist/` declarations, so dropping a name here fails as a named missing export rather than
+ * as a later consumer's problem.
+ */
+export type { DeclaredToolAnnotations } from '#src/core/approvals/annotations.js';
+export type {
+  ApprovalSubject,
+  McpToolApprovalSubject,
+  ShellApprovalSubject,
+  ToolApprovalSubject,
+} from '#src/core/approvals/matcher.js';
+export type {
+  RaterNegotiationRound,
+  RaterOutcome,
+  ShellSafetyVerdict,
+} from '#src/core/shell/rater.js';
+
 export type Message = BaseMessage;
 
 export type StatusUpdateCallback = (level: StatusLevel, message: string) => void;
