@@ -268,4 +268,111 @@ describe('ghReadFileTool', () => {
       );
     });
   });
+
+  /**
+   * CFG-52 — the decoded text is capped so one call on a large file cannot take an unbounded bite
+   * out of the context window. Each case is a PAIR (over the cap AND under it), because the "over"
+   * half alone also passes against an implementation that truncates everything, and the "under"
+   * half alone against one that never truncates.
+   */
+  describe('maxBytes cap on the decoded content (CFG-52)', () => {
+    const MARKER = 'gth_gh_read_file: file truncated at the';
+
+    it('truncates at the configured boundary with a marker, and leaves smaller files untouched', async () => {
+      const { ghReadFileImpl } = await import('#src/tools/ghReadFileTool.js');
+
+      const over = 'x'.repeat(500);
+      execAsyncMock.mockResolvedValue(contentsResponse(over));
+      const truncated = await ghReadFileImpl({ path: 'src/index.ts' }, CTX, 100);
+
+      expect(truncated).toContain(MARKER);
+      // The body is cut exactly at the cap — not at the whole file, and not at some other number.
+      const body = truncated.split('\n\n')[1].split('\n... [')[0];
+      expect(Buffer.byteLength(body, 'utf8')).toBe(100);
+      expect(body).toBe('x'.repeat(100));
+      // The model must not be told it received the FULL file when it did not.
+      expect(truncated).not.toContain('Full contents of');
+      expect(truncated).toContain('Partial contents of octocat/hello-world/src/index.ts');
+      // The WHOLE marker, once: the cap it names must be the cap that was applied, and the config
+      // key must be the one a user can actually turn. Matching only the prefix (as the other cases
+      // here do) passes against an implementation that reports the wrong number or points the user
+      // at a key that does not exist — the marker is the sole channel by which the model, and
+      // through it the reader, learns the file is incomplete and which knob controls that.
+      expect(truncated).toBe(
+        'Partial contents of octocat/hello-world/src/index.ts (truncated):\n\n' +
+          'x'.repeat(100) +
+          '\n... [gth_gh_read_file: file truncated at the 100-byte cap ' +
+          '(builtInTools.gth_gh_read_file.maxBytes) — this file is INCOMPLETE, ' +
+          'the rest was not returned] ...'
+      );
+
+      // Under the cap: byte-identical to the decoded file, and no marker at all.
+      const under = 'y'.repeat(99);
+      execAsyncMock.mockResolvedValue(contentsResponse(under));
+      const whole = await ghReadFileImpl({ path: 'src/index.ts' }, CTX, 100);
+
+      expect(whole).not.toContain(MARKER);
+      expect(whole).toBe(`Full contents of octocat/hello-world/src/index.ts:\n\n${under}`);
+    });
+
+    it('does not truncate content sitting exactly on the cap', async () => {
+      const { ghReadFileImpl } = await import('#src/tools/ghReadFileTool.js');
+
+      const exact = 'z'.repeat(100);
+      execAsyncMock.mockResolvedValue(contentsResponse(exact));
+      const result = await ghReadFileImpl({ path: 'src/index.ts' }, CTX, 100);
+
+      expect(result).not.toContain(MARKER);
+      expect(result).toBe(`Full contents of octocat/hello-world/src/index.ts:\n\n${exact}`);
+    });
+
+    it('never returns more bytes than the cap when the boundary falls mid-character', async () => {
+      const { ghReadFileImpl } = await import('#src/tools/ghReadFileTool.js');
+
+      // Each "é" is 2 UTF-8 bytes, so a cap of 5 lands inside the third one. Slicing the buffer
+      // there and decoding yields a replacement character WIDER than the bytes it replaced, which
+      // is how a naive cap overshoots.
+      execAsyncMock.mockResolvedValue(contentsResponse('é'.repeat(10)));
+      const result = await ghReadFileImpl({ path: 'src/index.ts' }, CTX, 5);
+
+      const body = result.split('\n\n')[1].split('\n... [')[0];
+      expect(Buffer.byteLength(body, 'utf8')).toBeLessThanOrEqual(5);
+      expect(body).toBe('éé');
+      expect(result).toContain(MARKER);
+    });
+
+    it('applies the default cap when the caller passes none', async () => {
+      const { ghReadFileImpl } = await import('#src/tools/ghReadFileTool.js');
+      const { GH_READ_FILE_DEFAULT_MAX_BYTES } = await import('@gaunt-sloth/core/config.js');
+
+      execAsyncMock.mockResolvedValue(contentsResponse('a'.repeat(GH_READ_FILE_DEFAULT_MAX_BYTES)));
+      expect(await ghReadFileImpl({ path: 'src/index.ts' }, CTX)).not.toContain(MARKER);
+
+      execAsyncMock.mockResolvedValue(
+        contentsResponse('a'.repeat(GH_READ_FILE_DEFAULT_MAX_BYTES + 1))
+      );
+      expect(await ghReadFileImpl({ path: 'src/index.ts' }, CTX)).toContain(MARKER);
+    });
+
+    it('reads the cap for the command it was built for, from the builtInTools registry', async () => {
+      execAsyncMock.mockImplementation(async (cmd: string) => {
+        if (cmd.startsWith('gh pr view')) return prViewResponse('octocat', 'hello-world');
+        return contentsResponse('q'.repeat(60));
+      });
+
+      const { get } = await import('#src/tools/ghReadFileTool.js');
+      const config = {
+        builtInTools: { gth_gh_read_file: { maxBytes: 500 } },
+        commands: { pr: { builtInTools: { gth_gh_read_file: { maxBytes: 50 } } } },
+      } as unknown as GthConfig;
+
+      // `pr` takes its own 50-byte cap and truncates…
+      const prTool = get(config, '7', 'pr');
+      expect((await prTool.invoke({ path: 'a.txt' })) as string).toContain(MARKER);
+
+      // …while `review` falls back to the root 500-byte cap and returns the file whole.
+      const reviewTool = get(config, '7', 'review');
+      expect((await reviewTool.invoke({ path: 'a.txt' })) as string).not.toContain(MARKER);
+    });
+  });
 });

@@ -29,6 +29,15 @@ Two prerequisites for `gth pr`:
 Run with no arguments — `gth pr` — and it discovers the current branch's PR and its requirements
 for you, which is handy in a job that already knows its own branch.
 
+When a large PR's diff comes back truncated, the reviewer can pull a whole changed file from the
+PR's own repository over the GitHub API rather than review a hunk blind — the `gth_gh_read_file`
+built-in tool, on by default for `gth pr` and using the same `gh` login. Turn it off, or cap how
+much one call may return, through
+[`builtInTools`](../configuration/tools.md#github-file-reads-during-a-pr-review-gth_gh_read_file).
+(It follows the **configured** content source: `gth review` gets it too when your config sets that
+command's content source to `github`, but the `--content-source github` flag does not switch it on
+for a single run.)
+
 ## Review a local diff before you push
 
 You don't need a PR to review. Pipe any diff in:

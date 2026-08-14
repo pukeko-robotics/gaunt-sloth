@@ -40,11 +40,14 @@ const pathMock = {
 };
 vi.mock('node:path', () => pathMock);
 
-// Mock systemUtils module
+// Mock systemUtils module. `execAsync` is here because the gh read-file tool the review module
+// injects shells out through this same module; the CFG-52 cap test below actually INVOKES that
+// tool, so the `gh` calls have to land on a mock rather than the machine's real GitHub CLI.
 const systemUtilsMock = {
   getCurrentWorkDir: vi.fn(),
   exit: vi.fn(),
   setExitCode: vi.fn(),
+  execAsync: vi.fn(),
   stdout: {
     write: vi.fn(),
   },
@@ -143,8 +146,11 @@ const mockConfig: GthConfig = {
   }) as BaseChatModel<BaseChatModelCallOptions, AIMessageChunk>,
 } as GthConfig;
 
-// Mock config module
-vi.mock('#src/config.js', () => ({
+// Mock config module. CFG-52 — this is a PARTIAL mock: the module now also supplies the built-in
+// tool resolvers the review module calls, and these tests assert what config actually resolves to,
+// so those must be the real implementations rather than stubs.
+vi.mock('#src/config.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('#src/config.js')>()),
   GthConfig: {},
 }));
 
@@ -607,6 +613,163 @@ describe('reviewModule', () => {
         (t) => typeof t === 'object' && t !== null && 'name' in t && t.name === 'gth_gh_read_file'
       ).length;
       expect(count).toBe(1);
+    });
+  });
+
+  /**
+   * CFG-52 — the tool is now gated on the unified `builtInTools` registry, resolved per-command
+   * first and then root. Each case is a PAIR: the "off" half alone would also pass against an
+   * implementation that never injects, and the "on" half alone against one that never reads config.
+   */
+  describe('CFG-52 builtInTools gating of the gh api file-read tool', () => {
+    const hasGhReadFile = (config: GthConfig) =>
+      (config.tools ?? []).some(
+        (t) => typeof t === 'object' && t !== null && 'name' in t && t.name === 'gth_gh_read_file'
+      );
+
+    const runPr = async (extra: Record<string, unknown>) => {
+      const config = {
+        ...mockConfig,
+        tools: undefined,
+        commands: { pr: { contentSource: 'github' } },
+        ...extra,
+      } as unknown as GthConfig;
+      const { review } = await import('#src/modules/reviewModule.js');
+      await review('PR-1', 'preamble', 'diff', config, 'pr');
+      return config;
+    };
+
+    it('injects it with the default registry and NOT when the registry disables it', async () => {
+      // Opt-out: the shipped default names other tools, never this one, and it is still injected.
+      expect(hasGhReadFile(await runPr({ builtInTools: ['gth_checklist', 'gth_grep'] }))).toBe(
+        true
+      );
+      // …and a user who writes it as false gets no tool.
+      expect(hasGhReadFile(await runPr({ builtInTools: { gth_gh_read_file: false } }))).toBe(false);
+    });
+
+    it('lets commands.pr disable it over a root entry enabling it, and applies the root entry alone', async () => {
+      const perCommandWins = await runPr({
+        builtInTools: { gth_gh_read_file: true },
+        commands: {
+          pr: { contentSource: 'github', builtInTools: { gth_gh_read_file: false } },
+        },
+      });
+      expect(hasGhReadFile(perCommandWins)).toBe(false);
+
+      // No per-command registry at all → the root entry governs the pr run.
+      const rootApplies = await runPr({ builtInTools: { gth_gh_read_file: false } });
+      expect(hasGhReadFile(rootApplies)).toBe(false);
+      const rootEnables = await runPr({ builtInTools: { gth_gh_read_file: true } });
+      expect(hasGhReadFile(rootEnables)).toBe(true);
+    });
+
+    it('gates the review command on its own commands.review registry', async () => {
+      const base = {
+        ...mockConfig,
+        tools: undefined,
+        contentSource: 'github',
+      };
+      const { review } = await import('#src/modules/reviewModule.js');
+
+      const disabled = {
+        ...base,
+        commands: {
+          review: { contentSource: 'github', builtInTools: { gth_gh_read_file: false } },
+        },
+      } as unknown as GthConfig;
+      await review('src', 'preamble', 'diff', disabled, 'review');
+      expect(hasGhReadFile(disabled)).toBe(false);
+
+      const enabled = {
+        ...base,
+        commands: { review: { contentSource: 'github' } },
+      } as unknown as GthConfig;
+      await review('src', 'preamble', 'diff', enabled, 'review');
+      expect(hasGhReadFile(enabled)).toBe(true);
+    });
+
+    /**
+     * The injected tool must carry the cap from the registry of the command it was injected FOR.
+     * The tool factory defaults its `command` argument to `pr`, so an injection site that does not
+     * pass one still compiles and still injects — and a `gth review` then silently runs under
+     * `commands.pr`'s cap. Every other cap test calls the factory directly and therefore cannot
+     * see that wiring at all; this one goes through the review module, which is where it lives.
+     *
+     * ONE file, over BOTH caps, so each command truncates and the marker it returns names its own
+     * cap number. Sizing the file between the two caps would only BOUND the `review` half — "some
+     * cap at least as big as this file" — which any larger cap satisfies, including the shipped
+     * 600 KiB default a `gth review` gets when it ignores its configured `maxBytes` entirely.
+     * Naming the number is what closes that. The whole-file (under-cap) path is covered directly
+     * in `ghReadFileTool.spec.ts` and is not what this case is for.
+     */
+    it('gives each command the cap from its OWN registry, through the injected tool', async () => {
+      const PR_CAP = 40;
+      const REVIEW_CAP = 400;
+      const FILE_TEXT = 'w'.repeat(500); // over BOTH caps, so each marker names its own number
+
+      systemUtilsMock.execAsync.mockImplementation(async (command: string) => {
+        if (command.startsWith('gh pr view')) {
+          return JSON.stringify({
+            headRefName: 'main',
+            headRepository: { name: 'hello-world' },
+            headRepositoryOwner: { login: 'octocat' },
+          });
+        }
+        return JSON.stringify({
+          type: 'file',
+          encoding: 'base64',
+          path: 'a.txt',
+          content: Buffer.from(FILE_TEXT, 'utf8').toString('base64'),
+        });
+      });
+
+      const commands = {
+        pr: {
+          contentSource: 'github',
+          builtInTools: { gth_gh_read_file: { maxBytes: PR_CAP } },
+        },
+        review: {
+          contentSource: 'github',
+          builtInTools: { gth_gh_read_file: { maxBytes: REVIEW_CAP } },
+        },
+      };
+
+      const { review } = await import('#src/modules/reviewModule.js');
+
+      const readOneFileVia = async (command: 'pr' | 'review'): Promise<string> => {
+        // A FRESH config per run: the injector appends into `config.tools` in place and dedupes by
+        // tool name, so a reused object would hand the second command the FIRST command's tool.
+        const config = {
+          ...mockConfig,
+          tools: undefined,
+          commands,
+        } as unknown as GthConfig;
+        await review('src', 'preamble', 'diff', config, command);
+        const injected = (config.tools ?? []).find(
+          (t) => typeof t === 'object' && t !== null && 'name' in t && t.name === 'gth_gh_read_file'
+        ) as unknown as { invoke: (args: { path: string }) => Promise<string> } | undefined;
+        expect(injected).toBeDefined();
+        return await injected!.invoke({ path: 'a.txt' });
+      };
+
+      // `pr`'s own 40-byte cap bites, and the marker names that cap rather than some other one…
+      const asPr = await readOneFileVia('pr');
+      expect(asPr).toContain('Partial contents of');
+      expect(asPr).toContain(`gth_gh_read_file: file truncated at the ${PR_CAP}-byte cap`);
+
+      // …and the very same file comes back cut at `review`'s own 400-byte cap, named as such.
+      const asReview = await readOneFileVia('review');
+      expect(asReview).toContain('Partial contents of');
+      expect(
+        asReview,
+        `The review run did not truncate at its own ${REVIEW_CAP}-byte cap. Two causes produce an ` +
+          `IDENTICAL failure here, so rule out both before looking further: (a) production — the ` +
+          `review module stopped passing the command to the tool factory, whose argument defaults ` +
+          `to pr; (b) this test — the fresh config per run above was removed, so the review run ` +
+          `got back the tool the pr run had already injected. Otherwise read the cap the marker ` +
+          `above actually names; it says which one was applied.`
+      ).toContain(`gth_gh_read_file: file truncated at the ${REVIEW_CAP}-byte cap`);
     });
   });
 });

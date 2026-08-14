@@ -598,6 +598,10 @@ const builtInToolConfigSchema = z.object({
   command: z.string().optional(),
   timeout: z.number().optional(),
   maxOutputBytes: z.number().optional(),
+  // CFG-52 — `gth_gh_read_file`: ceiling on the DECODED file text the GitHub-API file-read tool
+  // returns (default 600 KiB). A file read, not captured command output, hence `maxBytes` rather
+  // than `maxOutputBytes`. See BuiltInToolConfig.
+  maxBytes: z.number().optional(),
   // GS2-51 — `gth_grep`: which corpus to search. `gitignore` (default) respects .gitignore/.ignore
   // and skips hidden dot-files; `all` scans everything but the noise dirs. See BuiltInToolConfig.
   fileSet: z.enum(['gitignore', 'all']).optional(),
@@ -1038,9 +1042,10 @@ const REMOVED_COMMAND_KEYS: ReadonlyArray<readonly [string, string]> = [
 /**
  * CFG-26 — approval knobs retired from the `builtInTools.run_shell_command` entry and moved to the
  * top-level `approvals` block. `[retired, "how to say it now"]`. Rejected pre-parse for the same
- * reason as {@link REMOVED_COMMAND_KEYS}: `builtInToolConfigSchema` is a strict `z.object`, so once
- * the field is gone zod SILENTLY STRIPS it and an old config would run with its approval posture
- * quietly ignored — the worst possible failure for a safety gate.
+ * reason as {@link REMOVED_COMMAND_KEYS}: these knobs lived under `builtInToolConfigSchema`, a
+ * plain `z.object`, which SILENTLY STRIPS unknown keys — so once the field is gone an old config
+ * would parse clean and run with its approval posture quietly ignored, the worst possible failure
+ * for a safety gate.
  *
  * `judge.autoApproveLow` / `judge.blockHigh` have no 1:1 successor (the rung replaced the
  * `low/medium/high` × `destructive` conjunction), so `judge`'s message points at `approvals.mode`

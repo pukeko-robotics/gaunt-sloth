@@ -1,4 +1,5 @@
 import type { GthConfig, RatingConfig } from '@gaunt-sloth/core/config.js';
+import { isGhReadFileToolEnabled } from '@gaunt-sloth/core/config.js';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import {
   defaultStatusCallback,
@@ -190,6 +191,9 @@ export async function review(
  *
  * The tool reads file contents via the GitHub API (`gh api`), never the workspace filesystem, so
  * it remains safe under `pull_request_target` CI where the untrusted PR head is not checked out.
+ *
+ * CFG-52 — it is also gated on the unified `builtInTools` registry, resolved per-command first and
+ * then root by {@link isGhReadFileToolEnabled}. Absence means enabled, so this stays opt-OUT.
  */
 function maybeAddGhReadFileTool(
   config: GthConfig,
@@ -200,6 +204,10 @@ function maybeAddGhReadFileTool(
   const contentSource = commandConfig?.contentSource ?? config.contentSource;
 
   if (contentSource !== 'github') {
+    return;
+  }
+
+  if (!isGhReadFileToolEnabled(config, command)) {
     return;
   }
 
@@ -217,7 +225,7 @@ function maybeAddGhReadFileTool(
     return;
   }
 
-  config.tools = [...existingTools, getGhReadFileTool(config, prId)];
+  config.tools = [...existingTools, getGhReadFileTool(config, prId, command)];
 }
 
 function handleRatingResult(rateConfig: RatingConfig | undefined, command: 'pr' | 'review'): void {

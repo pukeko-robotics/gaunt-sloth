@@ -139,6 +139,52 @@ describe('Config Tool Functions', () => {
       expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
     });
 
+    // CFG-52 — gth_gh_read_file is a legitimate registry entry but is built by the review module
+    // (it binds to the PR under review), so this loader must SKIP it rather than warn. Asserted on
+    // `code`, a command that never loads the tool at all: that is where a stray "Unknown built-in
+    // tool" would surface for a user who only ever meant to configure their PR reviews.
+    //
+    // In the loader the skip runs FIRST — ahead of the enablement check and of the
+    // AVAILABLE_BUILT_IN_TOOLS lookup — so in shipped code this entry is intercepted by name and
+    // never reaches either, whichever form it is written in. The entry is nonetheless written in
+    // an ENABLED form on purpose, because what this case can be evidence about is what happens
+    // WITHOUT the skip: `true` then clears the enablement check, reaches the lookup, finds this
+    // name deliberately absent, and warns — the case goes red. A `false` entry would instead be
+    // dropped by the enablement check before the lookup and stay green, so the disabled form
+    // cannot discriminate here.
+    it('should skip gth_gh_read_file without warning, on a command that never loads it', async () => {
+      const result = await getDefaultTools({
+        filesystem: 'none',
+        builtInTools: { gth_gh_read_file: true, gth_status_update: true },
+      } as Partial<GthConfig> as GthConfig);
+      expect(result.map((t) => t.name)).toEqual(['gth_status_update']);
+      expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+    });
+
+    // What intercepts this entry is the SKIP, which runs first and matches on the name alone — the
+    // enablement check is never reached for this tool. The case is still not evidence about the
+    // skip: with the skip removed the enablement check catches the disabled entry instead, and it
+    // stays green either way. It earns its place as the plain guarantee that a registry entry
+    // written as `false` loads nothing and says nothing.
+    it('does not load a DISABLED gth_gh_read_file entry, and does not warn about it', async () => {
+      const result = await getDefaultTools({
+        filesystem: 'none',
+        builtInTools: { gth_gh_read_file: false, gth_status_update: true },
+      } as Partial<GthConfig> as GthConfig);
+      expect(result.map((t) => t.name)).toEqual(['gth_status_update']);
+      expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+    });
+
+    it('should skip a CONFIGURED gth_gh_read_file entry without warning or loading it', async () => {
+      const result = await getDefaultTools({
+        filesystem: 'none',
+        builtInTools: { gth_gh_read_file: { maxBytes: 200000 } },
+      } as Partial<GthConfig> as GthConfig);
+      // Enabled in the registry, but still not emitted here — the review module builds it.
+      expect(result).toEqual([]);
+      expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+    });
+
     it('should still warn only for genuinely unknown built-in tools', async () => {
       const result = await getDefaultTools({
         filesystem: 'none',

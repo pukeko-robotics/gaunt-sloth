@@ -61,6 +61,7 @@ top-level one. Available tools:
 | `gth_checklist` | Planning / todo checklist for multi-step work. Renders as a live checkbox panel in the TUI. **Enabled by default.** |
 | `gth_grep` | Regex search over file **contents** (ripgrep-backed, with an in-process fallback) — finds where a symbol or string appears, complementing `search_files`, which matches file **names**. Available in every mode; needs no shell approval. **Enabled by default.** Honors `.aiignore` and takes a `fileSet` option — see [Content search (`gth_grep`)](#content-search-gth_grep) below. |
 | `gth_web_fetch` | Fetch content from an HTTP/HTTPS URL. |
+| `gth_gh_read_file` | Read a whole file from the pull request under review, through the GitHub API. Loaded by `gth pr`, and by `gth review` when your **config** sets its content source to `github`; needs an authenticated `gh`. **Enabled by default** on those runs. Takes `enabled` and `maxBytes` options — see [GitHub file reads during a PR review](#github-file-reads-during-a-pr-review-gth_gh_read_file) below. |
 | `gth_status_update` | Print a short status line to the console. |
 | `show_a2ui_surface` | (AG-UI) render an A2UI surface in the web client. |
 | `run_tests` / `run_lint` / `run_build` / `run_single_test` | Dev-command tools — run the configured shell command. Only active in `code` / `exec` (and `ask --write`). See [Development Tools](#development-tools-configuration). |
@@ -132,6 +133,66 @@ boundary as the filesystem tools: a file hidden by `.aiignore` is never searched
 under `fileSet: "all"`. (`.gitignore` decides what stays out of version control; `.aiignore` decides
 what the AI may read at all — so a tracked, non-ignored file can still be kept out of `gth_grep` by
 `.aiignore`.)
+
+### GitHub file reads during a PR review (`gth_gh_read_file`)
+
+A large pull request arrives as a truncated diff, which leaves the reviewer judging a hunk whose
+surrounding file it cannot see. `gth_gh_read_file` closes that gap: the review agent asks for one
+repository-relative path and gets the whole file back, fetched from the pull request's own head
+repository and ref through the GitHub API using the authenticated `gh` CLI that `gth pr` already
+requires. It never touches your working copy — which is what makes it safe in a
+`pull_request_target` job, where the untrusted head is deliberately not checked out — and when `gh`
+is missing or unauthenticated it returns an explanation instead of failing the review.
+
+It is enabled by default on `gth pr`, whose content source is `github`, and on `gth review` when
+your config sets `commands.review.contentSource` (or the root `contentSource`) to `github`. The
+`--content-source` flag chooses where a single run's diff comes from and does **not** switch this
+tool on. No other command loads it.
+
+Say your CI review must not call the GitHub contents API at all. Turn it off for `gth pr`:
+
+```json
+{
+  "commands": {
+    "pr": {
+      "builtInTools": {
+        "gth_gh_read_file": false,
+        "gth_checklist": true,
+        "gth_grep": true
+      }
+    }
+  }
+}
+```
+
+`{ "gth_gh_read_file": { "enabled": false } }` disables it the same way, and is the form to use when
+the entry also carries `maxBytes`.
+
+`gth_checklist` and `gth_grep` are re-listed because a `builtInTools` object **replaces** the set it
+would otherwise inherit rather than extending it. Writing only the one key you meant to change is
+the easy mistake here: it silently drops both defaults from your PR reviews. The same rule decides
+what a per-command registry inherits — nothing. A root `builtInTools` entry for a tool that
+`commands.pr.builtInTools` does not name does not carry over into `pr`; that tool falls back to its
+default, which for this one means enabled.
+
+To keep the tool but bound how much of the context window a single call can consume, set `maxBytes`
+— the ceiling on the decoded file text, `614400` (600 KiB) by default. It is deliberately generous,
+because the tool exists for exactly the case where the diff truncated. A file over the ceiling comes
+back cut at it and carries a marker naming the tool and the cap, so the model knows it is reading an
+incomplete file rather than reasoning about one it only half received:
+
+```json
+{
+  "builtInTools": {
+    "gth_gh_read_file": { "maxBytes": 200000 },
+    "gth_checklist": true,
+    "gth_grep": true
+  }
+}
+```
+
+Set at the root like this it applies to both `review` and `pr`. An out-of-range or non-numeric
+`maxBytes` falls back to the default.
 
 ## Development Tools Configuration
 

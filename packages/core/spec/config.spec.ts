@@ -2141,6 +2141,69 @@ describe('config', async () => {
     });
   });
 
+  /**
+   * CFG-52 — the resolver's own spec (builtInToolsResolver.spec.ts) exercises hand-built configs,
+   * which cannot see what the LOADER does to `builtInTools`: GS2-60 bakes the 4-layer precedence
+   * into every command, so after a real load `commands.pr.builtInTools` is ALWAYS defined and the
+   * per-command-vs-root ternary never falls through. These pin the resolver against the shape the
+   * loader actually produces, which is the only shape production ever sees.
+   */
+  describe('gh read-file tool enablement against a loaded config (CFG-52)', () => {
+    const loadWith = async (raw: Partial<RawGthConfig>) => {
+      vi.doMock('#src/providers/vertexai.js', () => ({
+        processJsonConfig: vi.fn().mockResolvedValue({ type: 'vertexai' }),
+        postProcessJsonConfig: undefined,
+      }));
+      const { tryJsonConfig } = await import('#src/config.js');
+      return tryJsonConfig(
+        { llm: { type: 'vertexai', model: 'test-model' }, ...raw } as RawGthConfig,
+        {}
+      );
+    };
+
+    it('is ON for pr and review with no builtInTools configured anywhere', async () => {
+      const config = await loadWith({});
+      const { isGhReadFileToolEnabled } = await import('#src/config.js');
+
+      // The shipped default registry never names this tool, so absence-means-enabled is the
+      // normal production path, not an edge case.
+      expect(config.commands?.pr?.builtInTools).toEqual(['gth_checklist', 'gth_grep']);
+      expect(isGhReadFileToolEnabled(config, 'pr')).toBe(true);
+      expect(isGhReadFileToolEnabled(config, 'review')).toBe(true);
+    });
+
+    it('a ROOT-only disable reaches pr and review, because the loader bakes root into each command', async () => {
+      const config = await loadWith({ builtInTools: { gth_gh_read_file: false } });
+      const { isGhReadFileToolEnabled } = await import('#src/config.js');
+
+      expect(config.commands?.pr?.builtInTools).toEqual({ gth_gh_read_file: false });
+      expect(isGhReadFileToolEnabled(config, 'pr')).toBe(false);
+      expect(isGhReadFileToolEnabled(config, 'review')).toBe(false);
+    });
+
+    it('a commands.pr disable wins over a root enable and leaves review alone', async () => {
+      const config = await loadWith({
+        builtInTools: { gth_gh_read_file: true },
+        commands: { pr: { builtInTools: { gth_gh_read_file: false } } },
+      });
+      const { isGhReadFileToolEnabled } = await import('#src/config.js');
+
+      expect(isGhReadFileToolEnabled(config, 'pr')).toBe(false);
+      expect(isGhReadFileToolEnabled(config, 'review')).toBe(true);
+    });
+
+    it('carries a per-command maxBytes through the loader, defaulting where none is set', async () => {
+      const config = await loadWith({
+        builtInTools: { gth_gh_read_file: { maxBytes: 111 } },
+        commands: { pr: { builtInTools: { gth_gh_read_file: { maxBytes: 222 } } } },
+      });
+      const { getGhReadFileMaxBytes } = await import('#src/config.js');
+
+      expect(getGhReadFileMaxBytes(config, 'pr')).toBe(222);
+      expect(getGhReadFileMaxBytes(config, 'review')).toBe(111);
+    });
+  });
+
   describe('custom config path', () => {
     it('Should use custom config path when specified', async () => {
       const customConfigPath = customPathPrefix + '.json';
