@@ -34,9 +34,8 @@ PR's own repository over the GitHub API rather than review a hunk blind — the 
 built-in tool, on by default for `gth pr` and using the same `gh` login. Turn it off, or cap how
 much one call may return, through
 [`builtInTools`](../configuration/tools.md#github-file-reads-during-a-pr-review-gth_gh_read_file).
-(It follows the **configured** content source: `gth review` gets it too when your config sets that
-command's content source to `github`, but the `--content-source github` flag does not switch it on
-for a single run.)
+(It follows the content source: `gth review` gets it too whenever that run's content source is
+`github`, whether your config sets it or you pass `--content-source github` for the one run.)
 
 ## Review a local diff before you push
 

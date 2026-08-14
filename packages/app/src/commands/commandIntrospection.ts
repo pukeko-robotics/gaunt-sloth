@@ -115,6 +115,43 @@ export function getEffectiveContentSource(
   );
 }
 
+/**
+ * Return a config whose `commands.review.contentSource` IS the source this run resolved to,
+ * so that everything reading the config downstream sees the same source the diff came from.
+ *
+ * `--content-source` is a per-run override of a config field, and {@link getEffectiveContentSource}
+ * alone only hands the answer to the caller that fetches the content. Anything deciding on
+ * *config* cannot see the flag at all. Today that is the `gth_gh_read_file` gate in the review
+ * module, which reads `commands.review.contentSource` and falls back to the root `contentSource`.
+ * Without this, a `gth review --content-source github` gets a reviewer with no way to read the
+ * files it is reviewing, and a `--content-source git` over a github-configured review gets a
+ * GitHub file-read tool pointed at no pull request.
+ *
+ * It lands on the COMMAND rather than the root because the flag is per-command: a root-level
+ * override would still be shadowed by a user's own `commands.review.contentSource`, which is the
+ * one layer the flag most needs to outrank. For the same reason this cannot travel through
+ * `CommandLineConfigOverrides` — that type is applied by `resolveConfig`, which does not know
+ * which command is running.
+ *
+ * Returns a copy: `resolveConfig` can hand back `DEFAULT_CONFIG`'s own per-command object, and
+ * writing through that would corrupt the shared default for the rest of the process.
+ */
+export function withReviewContentSource(
+  config: GthConfig,
+  contentSource: ContentSourceType | undefined
+): GthConfig {
+  if (contentSource === undefined) {
+    return config;
+  }
+  return {
+    ...config,
+    commands: {
+      ...config.commands,
+      review: { ...config.commands?.review, contentSource },
+    },
+  };
+}
+
 export async function getCommandSourceInput(
   command: SourceCommandType,
   inputType: SourceInputType,

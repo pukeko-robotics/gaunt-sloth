@@ -61,7 +61,7 @@ top-level one. Available tools:
 | `gth_checklist` | Planning / todo checklist for multi-step work. Renders as a live checkbox panel in the TUI. **Enabled by default.** |
 | `gth_grep` | Regex search over file **contents** (ripgrep-backed, with an in-process fallback) — finds where a symbol or string appears, complementing `search_files`, which matches file **names**. Available in every mode; needs no shell approval. **Enabled by default.** Honors `.aiignore` and takes a `fileSet` option — see [Content search (`gth_grep`)](#content-search-gth_grep) below. |
 | `gth_web_fetch` | Fetch content from an HTTP/HTTPS URL. |
-| `gth_gh_read_file` | Read a whole file from the pull request under review, through the GitHub API. Loaded by `gth pr`, and by `gth review` when your **config** sets its content source to `github`; needs an authenticated `gh`. **Enabled by default** on those runs. Takes `enabled` and `maxBytes` options — see [GitHub file reads during a PR review](#github-file-reads-during-a-pr-review-gth_gh_read_file) below. |
+| `gth_gh_read_file` | Read a whole file from the pull request under review, through the GitHub API. Loaded by `gth pr`, and by any `gth review` whose content source is `github` — from config or from `--content-source github`; needs an authenticated `gh`. **Enabled by default** on those runs. Takes `enabled` and `maxBytes` options — see [GitHub file reads during a PR review](#github-file-reads-during-a-pr-review-gth_gh_read_file) below. |
 | `gth_status_update` | Print a short status line to the console. |
 | `show_a2ui_surface` | (AG-UI) render an A2UI surface in the web client. |
 | `run_tests` / `run_lint` / `run_build` / `run_single_test` | Dev-command tools — run the configured shell command. Only active in `code` / `exec` (and `ask --write`). See [Development Tools](#development-tools-configuration). |
@@ -144,10 +144,12 @@ requires. It never touches your working copy — which is what makes it safe in 
 `pull_request_target` job, where the untrusted head is deliberately not checked out — and when `gh`
 is missing or unauthenticated it returns an explanation instead of failing the review.
 
-It is enabled by default on `gth pr`, whose content source is `github`, and on `gth review` when
-your config sets `commands.review.contentSource` (or the root `contentSource`) to `github`. The
-`--content-source` flag chooses where a single run's diff comes from and does **not** switch this
-tool on. No other command loads it.
+It is enabled by default on `gth pr`, whose content source is `github`, and on any `gth review`
+whose content source is `github` — set by `commands.review.contentSource`, by the root
+`contentSource`, or by `--content-source github` on the run itself. The flag outranks both config
+layers in both directions, so `gth review --content-source git` in a project whose config selects
+`github` loads no GitHub tool: that run reviews a local diff with no pull request behind it. No
+other command loads it.
 
 Say your CI review must not call the GitHub contents API at all. Turn it off for `gth pr`:
 

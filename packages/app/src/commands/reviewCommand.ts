@@ -6,6 +6,7 @@ import {
   getEffectiveContentSource,
   getEffectiveRequirementSource,
   getReviewSystemPrompt,
+  withReviewContentSource,
 } from '#src/commands/commandIntrospection.js';
 import {
   REQUIREMENTS_SOURCES,
@@ -68,15 +69,23 @@ export function reviewCommand(
     )
     .action(async (contentId: string | undefined, options: ReviewCommandOptions) => {
       const { initConfig } = await import('@gaunt-sloth/core/config.js');
-      const config = await initConfig(cliConfigOverrides); // Initialize and get config
+      const initialConfig = await initConfig(cliConfigOverrides); // Initialize and get config
       const content: string[] = [];
       const requirementsId = options.requirements;
       const requirementSource = getEffectiveRequirementSource(
         'review',
-        config,
+        initialConfig,
         options.requirementsSource
       );
-      const contentSource = getEffectiveContentSource('review', config, options.contentSource);
+      const contentSource = getEffectiveContentSource(
+        'review',
+        initialConfig,
+        options.contentSource
+      );
+      // Everything below runs against a config that AGREES with the source above, so a decision
+      // made on config (the review module's `gth_gh_read_file` gate) can never disagree with where
+      // the diff actually came from.
+      const config = withReviewContentSource(initialConfig, contentSource);
 
       const requirements = await getCommandSourceInput(
         'review',
