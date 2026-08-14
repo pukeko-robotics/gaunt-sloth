@@ -58,6 +58,7 @@ these before you upgrade.
 | Change | What breaks | Fix |
 | --- | --- | --- |
 | `rating` is now an object | `rating: false` (or any boolean) is a validation abort: `expected object, received boolean` | `rating: { enabled: false }` |
+| `output.header` is a three-rung enum | A boolean is a validation abort: `output.header is no longer a boolean: it is one of none, compact, debug.` | `"none"` for `false`, `"debug"` for `true` — or `"compact"`, which is new (see section K) |
 | Command configs must nest under `commands.*` | A top-level command key (e.g. `pr`) is a validation abort: `Top-level command config "pr" is no longer supported in 2.0. Move it under "commands.pr".` | Move it under `commands.<cmd>` |
 | Per-command `devTools` folded into `builtInTools` | `commands.<cmd>.devTools` is a validation abort: `Config property "devTools" in commands.code is no longer supported in 2.0. Configure tools under "builtInTools" instead.` | Move the dev/shell tools into the `builtInTools` registry (see section G) |
 | Approval knobs moved off `run_shell_command` | `yolo` / `judge` / `allowlist` / `persistAllowlist` on that entry are a validation abort: `Config property "yolo" in builtInTools.run_shell_command is no longer supported in 2.0. Use "approvals": "bypass" instead.` | Move them into the top-level `approvals` setting (see section I) |
@@ -597,6 +598,23 @@ the shape this serves.
 If you would rather not use ACP: `gth api` runs the AG-UI server for a programmatic front door, and
 `gth chat` / `gth code` run in a terminal.
 
+## K. `output.header` is a three-rung enum (HARD)
+
+`output.header` accepted a boolean, so the only way to quieten the run header was to remove all of
+it — including the line saying who reviewed this and with which model. It is now one of `none`,
+`compact` or `debug`, and a boolean fails validation with a message naming its replacement:
+
+- `false` → `"none"` — nothing at all, including the `review`/`pr` attribution block that the
+  boolean's `false` left in place. This is the one difference in behaviour rather than spelling: if
+  you set `false` to keep captured stdout diffable and still want the review labelled, you want
+  `"compact"`.
+- `true` → `"debug"` — the full Workdir/Model/Tools/Middleware preamble, unchanged. This is also the
+  default, so a config that never set the key needs no edit and renders exactly what it did before.
+
+`"compact"` is the new rung, and for most people it is the one worth moving to: no preamble, and one
+line naming the command and the model — `Gaunt Sloth: ask · gemini-3.1-pro (google-genai)`. See
+[Configuration → Run header](configuration/output.md#run-header-outputheader).
+
 ## Interactive slash commands (renames)
 
 Inside `chat`/`code` sessions (both the TUI and the plain `--no-tui` readline surface, which now
@@ -639,4 +657,6 @@ share one command registry):
    `prompts.review` (H).
 9. Remove `agent.backend: "deep"` (or set it to `"lean"`), and move off the ACP server if you
    were driving Gaunt Sloth from an ACP host (J).
-10. Run `gth config validate` (and optionally `gth config print`) to confirm the result.
+10. Convert any `output.header: false` / `true` to `"none"` / `"debug"` — and consider `"compact"`,
+    which drops the preamble but keeps the model attribution (K).
+11. Run `gth config validate` (and optionally `gth config print`) to confirm the result.

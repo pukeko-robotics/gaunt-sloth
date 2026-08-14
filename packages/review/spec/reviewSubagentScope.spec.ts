@@ -53,7 +53,7 @@ describe('EXT-114 — review tells the user declared subagents are not dispatche
       canInterruptInferenceWithEsc: false,
       includeCurrentDateAfterGuidelines: false,
       noDefaultPrompts: true,
-      output: { header: false },
+      output: { header: 'none' },
       ...(subagents ? { subagents } : {}),
     }) as unknown as GthConfig;
 

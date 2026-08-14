@@ -355,7 +355,7 @@ describe('§4.5 wiring — the suffix follows the RESOLVED rung', () => {
       streamSessionInferenceLog: false,
       canInterruptInferenceWithEsc: false,
       includeCurrentDateAfterGuidelines: false,
-      output: { header: false },
+      output: { header: 'none' },
     }) as unknown as GthConfig;
 
   /** The tool descriptions actually handed to `createAgent`. */

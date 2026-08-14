@@ -96,7 +96,7 @@ describe('EXT-80 — the lean backend wires the interrupt on the whole gated set
       streamSessionInferenceLog: false,
       canInterruptInferenceWithEsc: false,
       includeCurrentDateAfterGuidelines: false,
-      output: { header: false },
+      output: { header: 'none' },
     }) as unknown as GthConfig;
 
   /** The tool names actually wired into the approval interrupt, or null when none was installed. */

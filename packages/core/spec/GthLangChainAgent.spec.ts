@@ -5,7 +5,12 @@ import type { GthConfig } from '#src/config.js';
 import type { BaseToolkit, StructuredToolInterface } from '@langchain/core/tools';
 import { FakeListChatModel, FakeStreamingChatModel } from '@langchain/core/utils/testing';
 import type { RunnableConfig } from '@langchain/core/runnables';
-import { StatusLevel, type AgentStreamEvent, type StatusUpdateCallback } from '#src/core/types.js';
+import {
+  StatusLevel,
+  type AgentStreamEvent,
+  type GthCommand,
+  type StatusUpdateCallback,
+} from '#src/core/types.js';
 
 const systemUtilsMock = {
   getCurrentWorkDir: vi.fn(),
@@ -235,55 +240,207 @@ describe('GthLangChainAgent', () => {
       );
     });
 
-    describe('GS2-63: output.header run-header preamble opt-out', () => {
-      it('emits the Workdir/Model/Middleware header by default (output.header unset)', async () => {
-        const agent = new GthLangChainAgent(statusUpdateCallback);
-        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+    describe('GS2-93: the output.header rungs (none · compact · debug)', () => {
+      /**
+       * Every INFO line the run emitted, in emission order. The rungs are defined by WHAT IS ON
+       * SCREEN, so the assertions below compare this whole array with `toEqual` rather than probing
+       * for individual calls: a `toHaveBeenCalledWith` per line cannot see a line inserted between
+       * two it does check, and an inserted line is exactly the drift `debug` promises not to have.
+       */
+      const infoLines = (): string[] =>
+        statusUpdateCallback.mock.calls
+          .filter(([level]) => level === StatusLevel.INFO)
+          .map(([, message]) => String(message));
 
-        await agent.init(undefined, { ...mockConfig, modelDisplayName: 'test-model' } as GthConfig);
-
-        expect(statusUpdateCallback).toHaveBeenCalledWith(StatusLevel.INFO, 'Workdir: /test/dir');
-        expect(statusUpdateCallback).toHaveBeenCalledWith(StatusLevel.INFO, 'Model: test-model');
-        expect(statusUpdateCallback).toHaveBeenCalledWith(
-          StatusLevel.INFO,
-          expect.stringContaining('Loaded middleware:')
-        );
-      });
-
-      it('still emits the header when output is present but header is unset', async () => {
-        const agent = new GthLangChainAgent(statusUpdateCallback);
-        mcpClientInstanceMock.getTools.mockResolvedValue([]);
-
-        await agent.init(undefined, { ...mockConfig, output: {} } as GthConfig);
-
-        expect(statusUpdateCallback).toHaveBeenCalledWith(StatusLevel.INFO, 'Workdir: /test/dir');
-      });
-
-      it('suppresses the whole header block when output.header is false (text mode)', async () => {
-        const agent = new GthLangChainAgent(statusUpdateCallback);
-        mcpClientInstanceMock.getTools.mockResolvedValue([]);
-
-        await agent.init(undefined, {
+      /** A config that exercises every preamble line: model, tools and middleware all resolve. */
+      const headerConfig = (output?: GthConfig['output']): GthConfig =>
+        ({
           ...mockConfig,
           modelDisplayName: 'test-model',
-          output: { header: false },
-        } as GthConfig);
+          modelProviderType: 'google-genai',
+          tools: [
+            { name: 'custom_tool_1', invoke: vi.fn(), description: 'Test tool 1' },
+            { name: 'custom_tool_2', invoke: vi.fn(), description: 'Test tool 2' },
+          ],
+          ...(output ? { output } : {}),
+        }) as unknown as GthConfig;
 
-        expect(statusUpdateCallback).not.toHaveBeenCalledWith(
-          StatusLevel.INFO,
-          'Workdir: /test/dir'
-        );
-        expect(statusUpdateCallback).not.toHaveBeenCalledWith(
-          StatusLevel.INFO,
-          'Model: test-model'
-        );
-        expect(statusUpdateCallback).not.toHaveBeenCalledWith(
-          StatusLevel.INFO,
-          expect.stringContaining('Loaded middleware:')
-        );
-        expect(statusUpdateCallback).not.toHaveBeenCalledWith(
-          StatusLevel.INFO,
-          expect.stringContaining('Loaded tools:')
+      /**
+       * THE PIN for "`debug` is byte-identical to today's output". These four literals were
+       * captured from the rendered preamble, not from the code that renders it — so any drift in
+       * the preamble (a line added, dropped, reordered or reworded) reddens this, which is the
+       * whole point. If you are here because you changed the preamble on purpose, re-capture the
+       * literals; do not relax the comparison.
+       */
+      const DEBUG_PREAMBLE = [
+        'Workdir: /test/dir',
+        'Model: test-model',
+        'Loaded tools: custom_tool_1, custom_tool_2',
+        'Loaded middleware: GthLeanShellExitSoftening, GthMcpToolErrorSoftening, ' +
+          'GthLeanToolErrorBudget, GthLeanToolLoopGuard, HumanInTheLoopMiddleware, ' +
+          'GthMiddlewareToolCallStatusUpdate, GthMiddlewareToolCallRepair, ' +
+          'GthMiddlewareDebugCapture',
+      ];
+
+      it('renders the whole preamble, and only it, on the debug rung', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+        await agent.init('ask', headerConfig({ header: 'debug' }));
+
+        expect(infoLines()).toEqual(DEBUG_PREAMBLE);
+      });
+
+      it('renders the same preamble when output.header is unset — debug is the default', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+        await agent.init('ask', headerConfig());
+
+        expect(infoLines()).toEqual(DEBUG_PREAMBLE);
+      });
+
+      it('renders the same preamble when output is present but header is unset', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+        await agent.init('ask', headerConfig({}));
+
+        expect(infoLines()).toEqual(DEBUG_PREAMBLE);
+      });
+
+      // The verb is the one the run was initialised with — there is no label table, so a new verb
+      // needs no wiring here and cannot be spelt differently from the command the user typed.
+      it.each([
+        ['ask', 'Gaunt Sloth: ask · test-model (google-genai)'],
+        ['exec', 'Gaunt Sloth: exec · test-model (google-genai)'],
+        ['chat', 'Gaunt Sloth: chat · test-model (google-genai)'],
+      ] as Array<[GthCommand, string]>)(
+        'replaces the preamble with one attribution line on compact (%s)',
+        async (command, expected) => {
+          const agent = new GthLangChainAgent(statusUpdateCallback);
+          mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+          await agent.init(command, headerConfig({ header: 'compact' }));
+
+          expect(infoLines()).toEqual([expected]);
+        }
+      );
+
+      /**
+       * `code` resolves the shell tool, so it also opens with the approvals notice below. That
+       * notice is a **run notice, not run header** — the pair of cells is what proves the claim
+       * rather than asserting it in a comment: it is present on `compact` beside the attribution,
+       * and still present on `none` where the header emits nothing at all. If a rung ever swallowed
+       * it, the second cell reddens, and that would be a real defect: silently dropping the
+       * sentence that tells a user their shell calls are being rated is not "less noise".
+       */
+      const CODE_APPROVALS_NOTICE =
+        'Shell tool (run_shell_command) rated by the auto-rater (approvals: assisted); ' +
+        'anything it does not rate safe is still refused or escalated to you.';
+
+      it('replaces the preamble with one attribution line on compact (code)', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+        await agent.init('code', headerConfig({ header: 'compact' }));
+
+        expect(infoLines()).toEqual([
+          'Gaunt Sloth: code · test-model (google-genai)',
+          CODE_APPROVALS_NOTICE,
+        ]);
+      });
+
+      it('leaves the approvals notice alone on none — the rungs grade the header, not notices', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+        await agent.init('code', headerConfig({ header: 'none' }));
+
+        expect(infoLines()).toEqual([CODE_APPROVALS_NOTICE]);
+      });
+
+      // `review`/`pr` render `reviewHeadingBlock` instead (proven in @gaunt-sloth/review's
+      // reviewHeadingEmission.spec.ts). A line here as well would be the duplicate model line the
+      // node forbids, so the agent must stay silent for those two verbs.
+      it.each(['review', 'pr'] as GthCommand[])(
+        'emits no attribution line on compact for %s — the review block is the attribution',
+        async (command) => {
+          const agent = new GthLangChainAgent(statusUpdateCallback);
+          mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+          await agent.init(command, headerConfig({ header: 'compact' }));
+
+          expect(infoLines()).toEqual([]);
+        }
+      );
+
+      // The pr-discovery sub-agent runs with no command (`prDiscovery.ts`) inside a `pr` run, whose
+      // attribution is already on screen. There is no verb to name, so there is no line — the
+      // alternative would be inventing a label, which this node explicitly forbids.
+      it('emits no attribution line on compact when the run has no command verb', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+        await agent.init(undefined, headerConfig({ header: 'compact' }));
+
+        expect(infoLines()).toEqual([]);
+      });
+
+      // DL-7 (drop rather than mislead), the same rule `modelProviderLabel` applies to the banner:
+      // with nothing to attribute the model half goes, and the verb still names the run.
+      it('drops the model half of the compact line when no model resolves', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+        await agent.init('ask', {
+          ...headerConfig({ header: 'compact' }),
+          modelDisplayName: undefined,
+          modelProviderType: undefined,
+        } as unknown as GthConfig);
+
+        expect(infoLines()).toEqual(['Gaunt Sloth: ask']);
+      });
+
+      it('emits nothing at all on the none rung', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+        await agent.init('ask', headerConfig({ header: 'none' }));
+
+        expect(infoLines()).toEqual([]);
+      });
+
+      /**
+       * The `Press Escape or Q to interrupt` hint box is preamble too, and it is emitted from the
+       * stream path rather than from `init` — `waitForEscape`'s third argument is the show-the-hint
+       * flag (its own behaviour is pinned in `systemUtils.spec.ts`). Only `debug` shows it; the
+       * handler stays armed at every rung, which is what the second half of each row asserts by
+       * the call happening at all.
+       */
+      it.each([
+        [undefined, true],
+        [{ header: 'debug' } as const, true],
+        [{ header: 'compact' } as const, false],
+        [{ header: 'none' } as const, false],
+      ])('passes showHint=%o -> %s to waitForEscape', async (output, showHint) => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+        agentMock.stream.mockResolvedValue([]);
+
+        await agent.init('ask', {
+          ...headerConfig(output as GthConfig['output']),
+          canInterruptInferenceWithEsc: true,
+        } as GthConfig);
+        await agent.stream([new HumanMessage('hi')], {
+          recursionLimit: 1000,
+          configurable: { thread_id: 'test-thread-id' },
+        });
+
+        expect(systemUtilsMock.waitForEscape).toHaveBeenCalledWith(
+          expect.any(Function),
+          true,
+          showHint
         );
       });
     });

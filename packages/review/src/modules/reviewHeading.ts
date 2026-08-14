@@ -26,11 +26,16 @@
  * turning the constant into a branch, and the reader gains nothing from a distinction they cannot
  * make. The attribution line is dynamic anyway — it renders the live model.
  *
- * ## Why it is deliberately two lines and no more
+ * ## Why it is two lines and no more, and when it is none
  *
  * A review is read for its findings. Everything above the first finding pushes that finding down,
  * so the block is a heading plus one line: no rule, no box, no timestamp, no version, no restated
  * repo/branch/PR. The cost of a bigger banner is paid by every reader of every review.
+ *
+ * It is not, however, unconditional. `output.header: none` drops it (the gate is at the emission
+ * site in `reviewModule.ts`, not here — this module builds the block and does not decide whether it
+ * is shown), because a caller piping a review into their own template needs a byte-clean stream.
+ * That rung is opt-in precisely so the reasoning above survives for everyone who does not set it.
  */
 import { modelProviderLabel } from '@gaunt-sloth/core/core/launchBanner.js';
 

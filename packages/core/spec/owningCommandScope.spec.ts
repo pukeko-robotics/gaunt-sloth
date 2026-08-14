@@ -62,7 +62,7 @@ describe('GS2-81 — owningCommand labels the run without steering it', () => {
       canInterruptInferenceWithEsc: false,
       includeCurrentDateAfterGuidelines: false,
       noDefaultPrompts: true,
-      output: { header: false },
+      output: { header: 'none' },
     }) as unknown as GthConfig;
 
   const resolvers = { resolveTools: async () => [] };

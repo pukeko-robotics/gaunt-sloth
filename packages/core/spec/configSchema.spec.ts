@@ -9,6 +9,7 @@ import {
   formatConfigValidationError,
   formatDeprecatedConfigIssues,
   generateConfigJsonSchema,
+  OUTPUT_HEADER_RUNGS,
   rawGthConfigSchema,
   unresolvedRaterProfileMessage,
   validateRawGthConfig,
@@ -37,18 +38,46 @@ describe('config schema (GS2-1 B1)', () => {
       expect(result.success).toBe(true);
     });
 
-    it('GS2-63: accepts output.header and rejects a non-boolean header', () => {
+    it.each(OUTPUT_HEADER_RUNGS)('GS2-93: accepts the %s run-header rung', (rung) => {
       expect(
-        rawGthConfigSchema.safeParse({ llm: { type: 'anthropic' }, output: { header: false } })
+        rawGthConfigSchema.safeParse({ llm: { type: 'anthropic' }, output: { header: rung } })
           .success
       ).toBe(true);
+    });
+
+    /**
+     * The key was a boolean before it was a ladder, and 2.0 coerces nothing. What makes that
+     * survivable is the error naming the rung that replaces the value the user WROTE — so the
+     * assertion is on the message text, not merely on `success === false`. A message that only
+     * listed the vocabulary would pass a `success` check and still leave the user guessing which
+     * of three rungs their `false` meant.
+     */
+    it.each([
+      [false, 'none'],
+      [true, 'debug'],
+    ])('GS2-93: rejects output.header %s, naming %s as the replacement', (written, replacement) => {
+      const bad = rawGthConfigSchema.safeParse({
+        llm: { type: 'anthropic' },
+        output: { header: written },
+      });
+      expect(bad.success).toBe(false);
+      if (!bad.success) {
+        const message = formatConfigValidationError(bad.error);
+        expect(message).toContain('output.header');
+        expect(message).toContain(`Use "${replacement}" instead of ${written}.`);
+      }
+    });
+
+    it('GS2-93: rejects an unknown run-header rung, listing the vocabulary', () => {
       const bad = rawGthConfigSchema.safeParse({
         llm: { type: 'anthropic' },
         output: { header: 'nope' },
       });
       expect(bad.success).toBe(false);
       if (!bad.success) {
-        expect(formatConfigValidationError(bad.error)).toContain('output.header');
+        const message = formatConfigValidationError(bad.error);
+        expect(message).toContain('output.header');
+        expect(message).toContain('none, compact, debug');
       }
     });
 

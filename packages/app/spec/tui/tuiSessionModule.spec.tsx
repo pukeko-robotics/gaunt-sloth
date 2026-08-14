@@ -228,18 +228,23 @@ describe('createTuiSession — the full-screen surface (TUI-C48)', () => {
     expect(runnerCall[2]).toBe(resolvedFactory);
   });
 
-  it('GS2-63: forces output.header ON for the TUI even when config opts it out', async () => {
-    // The `output.header: false` opt-out only applies to non-TUI text modes; the interactive
-    // TUI must ALWAYS show the run-header preamble, so createTuiSession overrides the setting.
-    initConfigMock.mockResolvedValue({ output: { header: false } });
-    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+  // Both quieter rungs, because the override has to beat the whole ladder and not just the one
+  // value someone happened to write a cell for.
+  it.each(['none', 'compact'] as const)(
+    'GS2-93: forces the debug run-header rung for the TUI even when config sets %s',
+    async (rung) => {
+      // The `output.header` rungs grade non-TUI text modes only; the interactive TUI must ALWAYS
+      // show the full run-header preamble, so createTuiSession overrides the setting.
+      initConfigMock.mockResolvedValue({ output: { header: rung } });
+      const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
 
-    await createTuiSession(sessionConfig, overrides);
+      await createTuiSession(sessionConfig, overrides);
 
-    expect(runnerInitMock).toHaveBeenCalledTimes(1);
-    const initConfigArg = runnerInitMock.mock.calls[0][1] as { output?: { header?: boolean } };
-    expect(initConfigArg.output?.header).toBe(true);
-  });
+      expect(runnerInitMock).toHaveBeenCalledTimes(1);
+      const initConfigArg = runnerInitMock.mock.calls[0][1] as { output?: { header?: string } };
+      expect(initConfigArg.output?.header).toBe('debug');
+    }
+  );
 
   // CFG-25 — call-site wiring: createTuiSession must pass sessionConfig.mode into the (real,
   // unmocked) formatConfigSummary so the /config panel prop carries the EFFECTIVE per-command

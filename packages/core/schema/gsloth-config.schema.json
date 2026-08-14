@@ -2717,7 +2717,12 @@
       "type": "object",
       "properties": {
         "header": {
-          "type": "boolean"
+          "type": "string",
+          "enum": [
+            "none",
+            "compact",
+            "debug"
+          ]
         }
       }
     },
