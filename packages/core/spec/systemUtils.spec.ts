@@ -106,7 +106,8 @@ describe('systemUtils', () => {
 
       const callback = vi.fn();
 
-      // Act — enabled, but the run-header preamble is opted out (output.header: false).
+      // Act — enabled, but the run-header preamble is opted out (output.header on any rung but
+      // debug, i.e. compact or none).
       waitForEscape(callback, true, false);
 
       // The Esc/Q handler is still armed so interrupts keep working …

@@ -60,7 +60,8 @@ gth review --content-source git -r requirements.md -m "focus on security implica
 
 ## What a review is labelled with
 
-Every `review` and `pr` run opens its output with a fixed heading and one attribution line:
+By default, every `review` and `pr` run opens its output with a fixed heading and one attribution
+line:
 
 ```text
 ## Gaunt Sloth: Code Review
@@ -80,7 +81,10 @@ model, because there is then no provider name to report; the model is dropped al
 resolves, leaving `stateless review` on its own rather than a placeholder.
 
 The heading belongs to the review document rather than to the technical run header, so
-[`output.header: false`](../configuration/output.md#run-header-outputheader) does not remove it.
+[`output.header: "compact"`](../configuration/output.md#run-header-outputheader) keeps it while
+dropping the Workdir/Model/Tools preamble — on a review, this block *is* the compact header. Only
+`output.header: "none"` removes it, for a caller who is piping the review into a template of their
+own; set that deliberately, because a review posted without it is a review nobody can attribute.
 
 ## Examples
 

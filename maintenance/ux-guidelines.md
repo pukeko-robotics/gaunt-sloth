@@ -282,16 +282,23 @@ stateless review · gemini-3.1-pro-preview (google-genai)
   finding pushes that finding down. No rule, box, logo, timestamp, version, or restated
   repo/branch/PR.
 - **The model half is the launch banner's spelling (DL-6).** `model (provider)`, from the shared
-  `modelProviderLabel` in `@gaunt-sloth/core/core/launchBanner.js` — never a second spelling of the
-  same fact on a second surface.
+  `modelProviderLabel` in `@gaunt-sloth/core/core/modelLabel.js` (`launchBanner.js` re-exports it) —
+  never a second spelling of the same fact on a second surface.
 - **Drop rather than mislead (DL-7).** No provider — a JS config hands us an already-built model —
   prints the bare model, with no `(unknown)` and no empty parentheses. No model drops the label
   altogether, leaving `stateless review` on its own: a provider name would sit exactly where a model
   name sits and be read as one. Same rule the banner applies to a version that will not fit.
-- **It is not part of the run header.** `output.header: false` strips the technical preamble
-  (Workdir/Model/Tools/Middleware) so captured stdout stays diffable; the attribution is the first
-  line of the review document rather than preamble, and survives it. Being emitted outside the agent,
-  it is also out of `headerStatus`'s reach by construction.
+- **It is not part of the run header — it is what the run header becomes.** `output.header:
+  "compact"` strips the technical preamble (Workdir/Model/Tools/Middleware) so captured stdout stays
+  diffable, and the attribution survives it: it is the first line of the review document, not
+  preamble, and being emitted outside the agent it is out of `headerStatus`'s reach by construction.
+  On that rung it also serves as the run's attribution, which is why `review`/`pr` are the two verbs
+  the agent emits no `Gaunt Sloth: <verb> · model (provider)` line for — a second model line beside
+  this block would say the same thing twice.
+- **`output.header: "none"` drops it, and that is intended.** A caller piping a review into their own
+  template needs a byte-clean stream, and the rung is opt-in: nobody loses attribution without asking
+  for it. The gate is at the emission site in `reviewModule.ts`; `reviewHeading.ts` builds the block
+  and never decides whether it is shown.
 
 ## Tool-call panels (DL-2 progressive disclosure, DL-4 transparency)
 

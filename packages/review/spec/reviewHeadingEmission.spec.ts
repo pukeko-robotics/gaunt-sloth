@@ -176,21 +176,50 @@ describe('REL-12 — the review heading reaches the terminal and the output file
     }
   );
 
-  it('still shows the heading when output.header is false', async () => {
-    // GS2-63's `output.header: false` strips the agent's technical run-header preamble
-    // (Workdir/Model/Tools/Middleware) so captured stdout stays diffable — proven in
+  it('still shows the heading on the compact run-header rung', async () => {
+    // GS2-93's `compact` rung strips the agent's technical preamble (Workdir/Model/Tools/
+    // Middleware) so captured stdout stays diffable — proven in
     // `packages/core/spec/GthLangChainAgent.spec.ts`. The Gaunt Sloth heading is not preamble: it is
-    // the first line of the review document, so that switch must not reach it.
+    // the first line of the review document, and on this rung it IS the run's attribution, which is
+    // why the agent emits no second `Gaunt Sloth: <verb>` line for review/pr.
     await review(
       'review',
       '',
       'a diff',
-      configWith({ writeOutputToFile: './rel12-review.md', output: { header: false } }),
+      configWith({ writeOutputToFile: './rel12-review.md', output: { header: 'compact' } }),
       'review'
     );
 
     expectHeadingOpensBothSurfaces();
   });
+
+  // GS2-93 — `none` is the one rung that reaches the attribution, and it takes the WHOLE block:
+  // heading and line, terminal and report. The report half is the load-bearing one, because that is
+  // the stream a caller pipes into their own template or diffs.
+  it.each([
+    ['review', {}],
+    ['pr', { commands: { pr: { contentSource: 'github' } } }],
+  ] as Array<['review' | 'pr', Partial<GthConfig>]>)(
+    'drops the whole attribution block on the none rung (%s), on both surfaces',
+    async (command, commandConfig) => {
+      await review(
+        command,
+        '',
+        'a diff',
+        configWith({
+          writeOutputToFile: './rel12-review.md',
+          output: { header: 'none' },
+          ...commandConfig,
+        }),
+        command
+      );
+
+      expect(headingCount(terminalLines())).toBe(0);
+      expect(headingCount(reportLines())).toBe(0);
+      expect(terminalLines().join('')).not.toContain('stateless review');
+      expect(reportLines().join('')).not.toContain('stateless review');
+    }
+  );
 
   it('shows it exactly once — not twice — when output.header is absent', async () => {
     await review('review', '', 'a diff', configWith({ writeOutputToFile: './rel12-review.md' }));
@@ -206,7 +235,7 @@ describe('REL-12 — the review heading reaches the terminal and the output file
 
     // The CHANNEL rules out two helpers, including the header gate: `displayInfo` lands on
     // console.info — it is what `headerStatus` reports through, so it is the one change that would
-    // put the heading back under `output.header`, and therefore the load-bearing exclusion — and
+    // put the heading back under the preamble gate, and therefore the load-bearing exclusion — and
     // `displayWarning` lands on console.warn. `displaySuccess` and `displayError` are NOT excluded
     // here: both call `su.log`, i.e. console.log, exactly as `display` does. The level halves below
     // are what rule those two out.

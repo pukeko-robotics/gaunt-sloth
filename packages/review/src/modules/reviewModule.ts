@@ -92,11 +92,18 @@ export async function review(
     // emission covers both surfaces: the terminal AND the `writeOutputToFile` report a workflow
     // reads back and posts. Emitted BEFORE the agent runs so it is the first thing in both.
     //
-    // Through the ordinary `display` helper, never `headerStatus`: that gate belongs to the
-    // agent's technical run-header preamble, which `output.header: false` strips so captured stdout
-    // stays diffable. This is not preamble — it is the first line of the review document, and the
-    // reason a reader can tell whose review they are reading.
-    display(reviewHeadingBlock(config.modelDisplayName, config.modelProviderType));
+    // Through the ordinary `display` helper, never `headerStatus`: this is not the agent's
+    // technical preamble but the first line of the review document, so it survives the `compact`
+    // rung that strips the preamble — and on that rung it IS the attribution, which is why the
+    // agent emits no `Gaunt Sloth: <verb>` line for `review`/`pr`.
+    //
+    // GS2-93: `none` is the one rung that reaches it, and it silences the block outright. That
+    // deliberately reverses REL-12 for a user who asks for it: a caller piping a review into their
+    // own template or diffing captured stdout needs a byte-clean stream, and nobody loses
+    // attribution without setting this key.
+    if (config.output?.header !== 'none') {
+      display(reviewHeadingBlock(config.modelDisplayName, config.modelProviderType));
+    }
 
     const rateConfig = config.commands?.[command]?.rating;
     if (rateConfig && rateConfig.enabled !== false) {

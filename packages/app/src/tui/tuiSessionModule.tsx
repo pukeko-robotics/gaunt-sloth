@@ -502,12 +502,12 @@ export async function createTuiSession(
   // createResolvers() is unchanged, so a lean session keeps the full toolset.
   const runner = new GthAgentRunner(bridge.emit, resolvers, resolveAgentFactory(config, 'lean'));
 
-  // GS2-63: the interactive TUI ALWAYS shows the technical run-header preamble (Workdir/Model/
-  // Tools/Middleware). The `output.header: false` opt-out applies to non-TUI text modes only, so
-  // the config handed to the agent forces it on regardless of the user's setting — the header
-  // lines route through the status bridge into the notice surface here, not raw stdout. A fresh
-  // object (not an in-place mutation) so nothing else that already captured `config` is affected.
-  const agentConfig: GthConfig = { ...config, output: { ...config.output, header: true } };
+  // GS2-93: the interactive TUI ALWAYS shows the technical run-header preamble (Workdir/Model/
+  // Tools/Middleware). The `output.header` rungs grade non-TUI text modes only, so the config
+  // handed to the agent forces the full rung regardless of the user's setting — the header lines
+  // route through the status bridge into the notice surface here, not raw stdout. A fresh object
+  // (not an in-place mutation) so nothing else that already captured `config` is affected.
+  const agentConfig: GthConfig = { ...config, output: { ...config.output, header: 'debug' } };
 
   // TUI-C37 — declared out here so the catch path can tear the terminal back down too. A throw
   // between render and unmount is exactly when a terminal gets left in mouse-reporting mode.

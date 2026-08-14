@@ -216,26 +216,40 @@ restarting — see [interactive sessions](../guides/interactive-sessions.md#mous
 ## Run Header (output.header)
 
 Non-TUI text runs — `ask`, `exec`, `eval`, `pr`, `review`, and `chat`/`code` with `--no-tui` or
-piped output (e.g. in CI) — open with a technical run-header preamble: the
-Workdir/Model/Tools/Middleware status lines, plus (in interactive terminal runs only) the
-`Press Escape or Q to interrupt Agent` hint box. This is **on by default**. Set
-`output.header: false` to suppress the preamble when captured stdout should stay clean — a CI
-job or script that diffs, logs, or post-processes the output.
+piped output (e.g. in CI) — open with a run header. `output.header` grades how much of it you get,
+across three rungs:
+
+| rung | what the run opens with |
+| --- | --- |
+| `debug` (default) | The Workdir/Model/Tools/Middleware status lines, plus — in interactive terminal runs — the `Press Escape or Q to interrupt Agent` hint box. |
+| `compact` | One line naming the agent mode the run was started in and the model: `Gaunt Sloth: ask · gemini-3.1-pro (google-genai)`. For `ask`, `exec`, `chat` and `code` that is the command's own name; `eval` runs its cases in `ask` mode, so it shows `ask`. On `review` and `pr`, their [review heading](../guides/review-code-and-prs.md#what-a-review-is-labelled-with) is that line instead, so there is never a duplicate model line. |
+| `none` | Nothing — including, on `review` and `pr`, the review heading. |
+
+Reach for `compact` when the preamble is noise but you still want to know which model answered —
+which is most of the time. A `gth ask` piped into a review thread reads as an unattributed answer
+without it:
 
 ```json
 {
   "output": {
-    "header": false
+    "header": "compact"
   }
 }
 ```
 
-Only the preamble is suppressed — model/tool output, errors, config-validation warnings, and the
-[review heading](../guides/review-code-and-prs.md#what-a-review-is-labelled-with) that `review` and
-`pr` runs open with always print; that heading belongs to the review document, not to the run
-header. In interactive terminal runs Esc/Q interruption stays armed even though the hint box is
-hidden; piped/non-TTY runs never arm Esc/Q regardless of this setting. The interactive TUI
-ignores the setting and always shows the header.
+`none` is for a byte-clean stream you post-process yourself — piping `gth review` into your own
+comment template, or diffing captured stdout between runs. It is the only rung that removes the
+review attribution, so a workflow that posts the output to a pull request should set `compact`
+rather than `none`: an unlabelled AI review gets credited to whichever AI reviewer the reader
+already knows.
+
+Whatever the rung, model and tool output, errors, and config-validation warnings always print, and
+Esc/Q interruption stays armed in interactive terminal runs even when the hint box is hidden.
+Piped/non-TTY runs never arm Esc/Q regardless of this setting. The interactive TUI ignores the
+setting and always shows the full header.
+
+A boolean fails config validation, with a message naming the rung that replaces it — see
+[Migrating to 2.0](../MIGRATION.md).
 
 ## Debug Dump Redaction (debugDump.redact)
 

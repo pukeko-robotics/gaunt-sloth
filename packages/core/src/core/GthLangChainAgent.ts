@@ -145,8 +145,8 @@ export interface ToolLoopGuardOptions {
 /**
  * EXT-36 — normalise the `toolLoopGuard` config union (`false | true | { warn?, halt?, threshold? }`)
  * into concrete {@link ToolLoopGuardOptions}, applying the WARN-ON-by-default policy at the read site
- * (mirrors how `output.header` / `debugDump.redact` default with `!== false`, NOT in DEFAULT_CONFIG,
- * so the effective-config snapshot never churns).
+ * (mirrors how `debugDump.redact` defaults with `!== false`, NOT in DEFAULT_CONFIG, so the
+ * effective-config snapshot never churns).
  * - `false` → both modes off (a no-op guard);
  * - `true` / absent → warn on, halt off, default threshold;
  * - object → per-field, with warn defaulting ON and halt defaulting OFF.
@@ -348,6 +348,10 @@ export class GthLangChainAgent extends GthAbstractAgent {
       debugLog: this.config.debugLog,
     });
 
+    // GS2-93: the run header opens here. Exactly one of these two speaks, decided by the rung —
+    // `compact` emits the attribution line and nothing else, every `headerStatus` below is the
+    // `debug` rung's preamble, and `none` silences both.
+    this.compactHeaderStatus();
     this.headerStatus(`Workdir: ${getCurrentWorkDir()}`);
 
     if (this.config.modelDisplayName) {

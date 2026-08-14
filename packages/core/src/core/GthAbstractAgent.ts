@@ -23,9 +23,11 @@ import {
   finalizeRunStats,
   type RunStatsAccumulator,
 } from '#src/core/runStats.js';
+import type { GthOutputHeaderRung } from '#src/config/schema.js';
 import type { DeclaredToolAnnotations } from '#src/core/approvals/annotations.js';
 import { collectDeclaredMcpToolAnnotations } from '#src/core/approvals/toolAnnotationSources.js';
 import type { DebugCapture, DebugRequestExtras, LastModelRequest } from '#src/core/debugCapture.js';
+import { modelProviderLabel } from '#src/core/modelLabel.js';
 import { createPlainToolIndication } from '#src/core/plainToolIndication.js';
 import { debugLog, debugLogError, debugLogObject } from '#src/utils/debugUtils.js';
 import { ProgressIndicator } from '#src/utils/ProgressIndicator.js';
@@ -232,16 +234,54 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   }
 
   /**
-   * GS2-63 — emit one line of the technical run-header preamble (the Workdir/Model/Tools/Middleware
-   * block) UNLESS it is opted out via `output.header: false`. The opt-out only ever reaches here in
-   * non-TUI text modes: the interactive TUI forces `output.header` on before init (see
+   * GS2-93 — the run-header rung in force. Defaulted HERE rather than in `DEFAULT_CONFIG` (the
+   * convention `injectModelContext` and `debugDump.redact` also follow) so the effective-config
+   * snapshot `gth config` prints does not grow a key nobody set.
+   */
+  protected get headerRung(): GthOutputHeaderRung {
+    return this.config?.output?.header ?? 'debug';
+  }
+
+  /**
+   * GS2-93 — emit one line of the technical run-header preamble (the Workdir/Model/Tools/Middleware
+   * block). Only the `debug` rung shows it; `compact` replaces the whole block with
+   * {@link compactHeaderStatus}'s single line and `none` shows nothing. A non-`debug` rung only ever
+   * reaches here in non-TUI text modes: the interactive TUI forces `debug` before init (see
    * `createTuiSession`), and the TUI event path never goes through the interrupt-hint site, so the
    * whole preamble stays visible there. Only INFO header lines route through this — real model/tool
    * output, warnings and errors keep using {@link statusUpdate} directly.
    */
   protected headerStatus(message: string): void {
-    if (this.config?.output?.header === false) return;
+    if (this.headerRung !== 'debug') return;
     this.statusUpdate(StatusLevel.INFO, message);
+  }
+
+  /**
+   * GS2-93 — the `compact` rung's whole output: one line naming the command and the model that
+   * served it, in place of the preamble. Called once from the backend's `init`, after the command
+   * and effective config are in place.
+   *
+   * Two runs deliberately emit nothing here:
+   *
+   * - **`review` and `pr`** already open with `reviewHeadingBlock`'s attribution, which names the
+   *   same model. A line here as well would be a second model line on the same screen.
+   * - **A run with no command verb** — the `pr` command's discovery sub-agent is the one such
+   *   caller, and it runs inside a `pr` whose attribution is already on screen. The verb is what
+   *   this line names, so with no verb there is nothing to name; inventing a word for it would be
+   *   naming a user-facing surface from inside the agent.
+   *
+   * The model half is the shared {@link modelProviderLabel} spelling (DL-6), and it is dropped
+   * rather than faked when nothing resolves (DL-7), leaving the verb on its own.
+   */
+  protected compactHeaderStatus(): void {
+    if (this.headerRung !== 'compact') return;
+    const command = this.command;
+    if (!command || command === 'review' || command === 'pr') return;
+    const label = modelProviderLabel(this.config?.modelDisplayName, this.config?.modelProviderType);
+    this.statusUpdate(
+      StatusLevel.INFO,
+      label ? `Gaunt Sloth: ${command} · ${label}` : `Gaunt Sloth: ${command}`
+    );
   }
 
   /**
@@ -556,10 +596,11 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
         }
       },
       this.config.canInterruptInferenceWithEsc,
-      // GS2-63: the interrupt hint is part of the run-header preamble. Suppress the hint box (while
-      // still arming the Esc/Q handler) when the header is opted out. This site only runs in the
-      // non-TUI text path (`streamFromInput`); the TUI event path never reaches it.
-      this.config.output?.header !== false
+      // GS2-93: the interrupt hint is part of the run-header preamble, so only the `debug` rung
+      // prints it. The Esc/Q handler stays armed at every rung — the hint box is what goes, not the
+      // interrupt. This site only runs in the non-TUI text path (`streamFromInput`); the TUI event
+      // path never reaches it.
+      this.headerRung === 'debug'
     );
 
     let stream;

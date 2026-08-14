@@ -114,6 +114,43 @@ const APPROVAL_RUNG_VALUES = ['manual', 'write', 'assisted', 'auto', 'bypass'] a
 const APPROVAL_RUNG_LIST = APPROVAL_RUNG_VALUES.join(', ');
 
 /**
+ * GS2-93 — the three rungs `output.header` accepts, in increasing verbosity: `none` opens a run
+ * with nothing at all (including the review attribution), `compact` with one attribution line, and
+ * `debug` with the full technical preamble. `debug` is the default, so an unset key renders exactly
+ * what it always has.
+ */
+export const OUTPUT_HEADER_RUNGS = ['none', 'compact', 'debug'] as const;
+
+/** The run-header rung, as a type. The read-site default is `debug`. */
+export type GthOutputHeaderRung = (typeof OUTPUT_HEADER_RUNGS)[number];
+
+/**
+ * The message a rejected `output.header` carries.
+ *
+ * The key was a boolean before it was a ladder, and 2.0 has NO back-compat coercion — a boolean is
+ * a hard validation failure exactly as `rating: false` and the retired approval modes are. What
+ * makes that survivable is that the error names the rung that replaces the value the user actually
+ * wrote, rather than only listing the vocabulary: someone who wrote `false` wanted silence and is
+ * told `none`, someone who wrote `true` wanted the preamble and is told `debug`.
+ *
+ * Neither branch names the key. Every renderer of this message puts it behind the issue's path
+ * (`formatIssueLines`, so `  - output.header: …`), and the path here is always exactly
+ * `output.header` — repeating it in the sentence only stutters.
+ */
+function describeBadHeaderRung(issue: { input: unknown }): string {
+  if (typeof issue.input === 'boolean') {
+    return (
+      `no longer a boolean: it is one of ${OUTPUT_HEADER_RUNGS.join(', ')}. ` +
+      `Use "${issue.input ? 'debug' : 'none'}" instead of ${issue.input}.`
+    );
+  }
+  return (
+    `${JSON.stringify(issue.input)} is not a run-header rung — the rungs are ` +
+    `${OUTPUT_HEADER_RUNGS.join(', ')}.`
+  );
+}
+
+/**
  * EXT-71 §3.1 — the **subject** axis of a rule entry, and only that: `shell` is a command, `tool`
  * a built-in or custom in-process tool, `mcpTool` a server's tool. The hand-written twin is
  * `ApprovalEntryType` in `shell-policy.ts`. What holds the two together is
@@ -916,17 +953,17 @@ export const rawGthConfigSchema = z.looseObject({
     .optional(),
   allowDirs: z.array(z.string()).optional(),
   askWriteMode: z.boolean().optional(),
-  // GS2-63 — output surface controls. `header` DEFAULTS ON (omitted = show); set `false` to
-  // suppress the technical run-header preamble (the Workdir/Model/Tools/Middleware block, the
-  // `Press Escape or Q to interrupt` hint, and their surrounding blank lines) in NON-TUI text
-  // modes (`--no-tui`, `ask`, `exec`, `eval`, `pr`, `review`, piped/CI), keeping captured stdout /
-  // log diffs clean. The interactive TUI ignores it and always shows the header. Suppresses ONLY
-  // that preamble — never model/tool output, errors, or config-validation warnings. Defaulted at
-  // the read site (`!== false`), not in DEFAULT_CONFIG, to avoid churning the effective-config
-  // snapshot (à la GS2-34 injectModelContext).
+  // GS2-93 — output surface controls. `header` is one of {@link OUTPUT_HEADER_RUNGS} and DEFAULTS
+  // to `debug` (omitted = the full preamble, unchanged). It grades what a NON-TUI text run
+  // (`--no-tui`, `ask`, `exec`, `eval`, `pr`, `review`, piped/CI) opens with: `debug` the full
+  // Workdir/Model/Tools/Middleware block plus the `Press Escape or Q to interrupt` hint, `compact`
+  // one attribution line instead, `none` nothing. The interactive TUI ignores it and always shows
+  // the full header. Only that opening is graded — never model/tool output, errors, or
+  // config-validation warnings. Defaulted at the read site, not in DEFAULT_CONFIG, to avoid
+  // churning the effective-config snapshot (à la GS2-34 injectModelContext).
   output: z
     .object({
-      header: z.boolean().optional(),
+      header: z.enum(OUTPUT_HEADER_RUNGS, { error: describeBadHeaderRung }).optional(),
     })
     .optional(),
   // EXT-36 — tool-loop guard (repeated identical (tool, args) / no-progress detector), the sibling

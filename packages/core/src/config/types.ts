@@ -8,6 +8,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { BaseToolkit, StructuredToolInterface } from '@langchain/core/tools';
 import type { StatusLevel } from '#src/core/types.js';
 import type { ApprovalsConfig, BuiltInToolsSetting } from '#src/config/shell-policy.js';
+import type { GthOutputHeaderRung } from '#src/config/schema.js';
 
 /**
  * GS2-43 — the seven configurable prompt segments. Each maps to a prompt file with a
@@ -473,19 +474,26 @@ export interface GthConfig {
    */
   askWriteMode?: boolean;
   /**
-   * GS2-63 — output surface controls.
+   * GS2-93 — output surface controls.
    *
-   * `output.header` DEFAULTS ON (omitted = show). Set `false` to suppress the technical run-header
-   * preamble — the Workdir/Model/Tools/Middleware status block, the `Press Escape or Q to interrupt`
-   * hint, and their surrounding blank lines — in NON-TUI text modes (`--no-tui`, `ask`, `exec`,
-   * `eval`, `pr`, `review`, piped/CI), so captured stdout and log diffs stay clean. The interactive
-   * TUI ignores the setting and always shows the header. Only the preamble is suppressed — never
-   * model/tool output, errors, or config-validation warnings, and never the live `Thinking…`
-   * indicator. Defaulted at the read site (`!== false`), not in {@link DEFAULT_CONFIG}, to avoid
+   * `output.header` grades what a NON-TUI text run (`--no-tui`, `ask`, `exec`, `eval`, `pr`,
+   * `review`, piped/CI) opens with, across three rungs:
+   *
+   * - `debug` (the DEFAULT, so an unset key renders what it always has) — the full technical
+   *   preamble: the Workdir/Model/Tools/Middleware status block, the
+   *   `Press Escape or Q to interrupt` hint, and their surrounding blank lines.
+   * - `compact` — no preamble, and one attribution line naming the command and the model that
+   *   served it. `review`/`pr` render their existing attribution block instead of this line.
+   * - `none` — nothing at all, including the review attribution block, for a byte-clean stream a
+   *   caller can diff or template.
+   *
+   * The interactive TUI ignores the setting and always shows the full header. Only the opening is
+   * graded — never model/tool output, errors, or config-validation warnings, and never the live
+   * `Thinking…` indicator. Defaulted at the read site, not in {@link DEFAULT_CONFIG}, to avoid
    * churning the effective-config snapshot.
    */
   output?: {
-    header?: boolean;
+    header?: GthOutputHeaderRung;
   };
   /**
    * EXT-36 — the tool-loop guard: a repeated-identical-`(tool, args)` / no-progress detector that
