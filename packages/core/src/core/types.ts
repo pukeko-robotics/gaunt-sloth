@@ -162,17 +162,25 @@ export interface PendingToolInterrupt {
    * user's own `mcpServers` key. It is the discriminator `decideToolApprovalInner` matched rules
    * on, travelling to the surface so the prompt can branch on the same one.
    *
-   * Every approval surface used to open with *the agent wants to run a shell command*, which
-   * EXT-80 made false for the most common prompt in `manual` and `write` — a file write, an MCP
-   * call or a custom tool, each announced as a shell command. `core/approvals/promptHeader.ts`
-   * renders the sentence from this field for all of them; re-deriving the kind from
-   * {@link name} on each surface would be a second classifier, free to disagree with the one that
-   * gated the call.
+   * Both terminal approval surfaces used to open with *the agent wants to run a shell command*,
+   * which EXT-80 made false for the most common prompt in `manual` and `write` — a file write, an
+   * MCP call or a custom tool, each announced as a shell command.
+   * `core/approvals/promptHeader.ts` renders the sentence from this field for both of them;
+   * re-deriving the kind from {@link name} on each surface would be a second classifier, free to
+   * disagree with the one that gated the call.
+   *
+   * **The ACP server is currently that second classifier, and the rule above still stands.**
+   * `acpPermissions.ts` titles its permission request from its own `shellCommandOf`, keyed on
+   * {@link name} rather than on this field, which it never reads — a divergence pinned by an
+   * assertion in `packages/agent/spec/acpServer.spec.ts`. Closing it means reading this field there
+   * rather than the tool name, and that is [[TUI-C89]]'s work; do not read the divergence's
+   * existence as licence to re-derive the kind anywhere else.
    *
    * **The runner attaches it to every interrupt it hands the approval callback**, including the
    * plainest case where nothing else on this interface is set. Optional only because an interrupt
    * read back out of graph state (`getPendingToolInterrupts`) is assembled before any subject
-   * exists; a surface handed one of those renders the generic tool sentence, never a wrong one.
+   * exists; a surface that renders through `promptHeader` and is handed one of those renders the
+   * generic tool sentence, never a wrong one.
    */
   subject?: ApprovalSubject;
   /**
