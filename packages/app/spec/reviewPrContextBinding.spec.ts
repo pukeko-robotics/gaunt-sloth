@@ -220,6 +220,14 @@ describe('CFG-54 the pull request the gh read-file tool is bound to', () => {
     expect(await ghPrViewCommandFor(['review', '42', '--content-source', 'github'])).toBe(
       PR_VIEW(' 42')
     );
+
+    // BOTH ends of the divergence, not just the one that was broken. The invariant is that the two
+    // wires name the SAME pull request, so asserting only the tool's end would let the mirror-image
+    // defect — the diff drifting to a different id while the tool stays right — pass in silence.
+    expect(
+      ghPrDiffGetMock.mock.calls.at(-1)?.[1],
+      'the diff was fetched for a different pull request than the files'
+    ).toBe('42');
   });
 
   it('still discovers the pull request from the branch when `gth review` is given no id', async () => {
