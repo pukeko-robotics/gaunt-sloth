@@ -293,6 +293,18 @@ describe('ghReadFileTool', () => {
       // The model must not be told it received the FULL file when it did not.
       expect(truncated).not.toContain('Full contents of');
       expect(truncated).toContain('Partial contents of octocat/hello-world/src/index.ts');
+      // The WHOLE marker, once: the cap it names must be the cap that was applied, and the config
+      // key must be the one a user can actually turn. Matching only the prefix (as the other cases
+      // here do) passes against an implementation that reports the wrong number or points the user
+      // at a key that does not exist — the marker is the sole channel by which the model, and
+      // through it the reader, learns the file is incomplete and which knob controls that.
+      expect(truncated).toBe(
+        'Partial contents of octocat/hello-world/src/index.ts (truncated):\n\n' +
+          'x'.repeat(100) +
+          '\n... [gth_gh_read_file: file truncated at the 100-byte cap ' +
+          '(builtInTools.gth_gh_read_file.maxBytes) — this file is INCOMPLETE, ' +
+          'the rest was not returned] ...'
+      );
 
       // Under the cap: byte-identical to the decoded file, and no marker at all.
       const under = 'y'.repeat(99);

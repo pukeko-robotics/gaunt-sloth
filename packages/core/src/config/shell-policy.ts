@@ -6,6 +6,12 @@
  * {@link resolveApprovals} (the five-rung ladder, the rater's identity profile, and the declared
  * allow/deny lists).
  *
+ * It also hosts the GitHub review-tool registry resolvers — {@link isGhReadFileToolEnabled} and
+ * {@link getGhReadFileMaxBytes} — which read the same {@link GthConfig.builtInTools} registry
+ * through the same per-command-then-root pick as the shell accessors. They live here, in core,
+ * rather than beside the tool itself because `@gaunt-sloth/review` (which injects the tool) and
+ * `@gaunt-sloth/agent` (which must skip it) both need them and neither may depend on the other.
+ *
  * CFG-18 — the dev/shell tools are now configured through the unified {@link GthConfig.builtInTools}
  * registry (`string[] | Record<string, boolean | BuiltInToolConfig>`), NOT the removed per-command
  * `commands.<mode>.devTools` key. {@link GthDevToolsConfig} is therefore no longer an on-disk shape:

@@ -40,11 +40,14 @@ const pathMock = {
 };
 vi.mock('node:path', () => pathMock);
 
-// Mock systemUtils module
+// Mock systemUtils module. `execAsync` is here because the gh read-file tool the review module
+// injects shells out through this same module; the CFG-52 cap test below actually INVOKES that
+// tool, so the `gh` calls have to land on a mock rather than the machine's real GitHub CLI.
 const systemUtilsMock = {
   getCurrentWorkDir: vi.fn(),
   exit: vi.fn(),
   setExitCode: vi.fn(),
+  execAsync: vi.fn(),
   stdout: {
     write: vi.fn(),
   },
@@ -684,6 +687,78 @@ describe('reviewModule', () => {
       } as unknown as GthConfig;
       await review('src', 'preamble', 'diff', enabled, 'review');
       expect(hasGhReadFile(enabled)).toBe(true);
+    });
+
+    /**
+     * The injected tool must carry the cap from the registry of the command it was injected FOR.
+     * The tool factory defaults its `command` argument to `pr`, so an injection site that does not
+     * pass one still compiles and still injects — and a `gth review` then silently runs under
+     * `commands.pr`'s cap. Every other cap test calls the factory directly and therefore cannot
+     * see that wiring at all; this one goes through the review module, which is where it lives.
+     *
+     * A PAIR on one file: over `pr`'s cap and under `review`'s. The "review is whole" half alone
+     * passes against an implementation that never truncates, and the "pr truncates" half alone
+     * against one that always does.
+     */
+    it('gives each command the cap from its OWN registry, through the injected tool', async () => {
+      const PR_CAP = 40;
+      const REVIEW_CAP = 400;
+      const FILE_TEXT = 'w'.repeat(100); // over pr's cap, under review's
+
+      systemUtilsMock.execAsync.mockImplementation(async (command: string) => {
+        if (command.startsWith('gh pr view')) {
+          return JSON.stringify({
+            headRefName: 'main',
+            headRepository: { name: 'hello-world' },
+            headRepositoryOwner: { login: 'octocat' },
+          });
+        }
+        return JSON.stringify({
+          type: 'file',
+          encoding: 'base64',
+          path: 'a.txt',
+          content: Buffer.from(FILE_TEXT, 'utf8').toString('base64'),
+        });
+      });
+
+      const commands = {
+        pr: {
+          contentSource: 'github',
+          builtInTools: { gth_gh_read_file: { maxBytes: PR_CAP } },
+        },
+        review: {
+          contentSource: 'github',
+          builtInTools: { gth_gh_read_file: { maxBytes: REVIEW_CAP } },
+        },
+      };
+
+      const { review } = await import('#src/modules/reviewModule.js');
+
+      const readOneFileVia = async (command: 'pr' | 'review'): Promise<string> => {
+        // A FRESH config per run: the injector appends into `config.tools` in place and dedupes by
+        // tool name, so a reused object would hand the second command the FIRST command's tool.
+        const config = {
+          ...mockConfig,
+          tools: undefined,
+          commands,
+        } as unknown as GthConfig;
+        await review('src', 'preamble', 'diff', config, command);
+        const injected = (config.tools ?? []).find(
+          (t) => typeof t === 'object' && t !== null && 'name' in t && t.name === 'gth_gh_read_file'
+        ) as unknown as { invoke: (args: { path: string }) => Promise<string> } | undefined;
+        expect(injected).toBeDefined();
+        return await injected!.invoke({ path: 'a.txt' });
+      };
+
+      // `pr`'s own 40-byte cap bites, and the marker names that cap rather than some other one…
+      const asPr = await readOneFileVia('pr');
+      expect(asPr).toContain(`gth_gh_read_file: file truncated at the ${PR_CAP}-byte cap`);
+      expect(asPr).toContain('Partial contents of');
+
+      // …while `review`'s own 400-byte cap leaves the very same file whole.
+      const asReview = await readOneFileVia('review');
+      expect(asReview).not.toContain('truncated');
+      expect(asReview).toBe(`Full contents of octocat/hello-world/a.txt@main:\n\n${FILE_TEXT}`);
     });
   });
 });

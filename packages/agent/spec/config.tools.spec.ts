@@ -143,7 +143,25 @@ describe('Config Tool Functions', () => {
     // (it binds to the PR under review), so this loader must SKIP it rather than warn. Asserted on
     // `code`, a command that never loads the tool at all: that is where a stray "Unknown built-in
     // tool" would surface for a user who only ever meant to configure their PR reviews.
+    //
+    // The entry is written in an ENABLED form on purpose. A disabled entry is dropped by the
+    // enablement check that runs BEFORE the unknown-tool branch, so `false` never warns and would
+    // pass against a loader carrying no skip at all. `true` reaches the AVAILABLE_BUILT_IN_TOOLS
+    // lookup, where this name is deliberately absent — the skip is then the only thing between the
+    // user and the warning, which is what makes this case discriminate.
     it('should skip gth_gh_read_file without warning, on a command that never loads it', async () => {
+      const result = await getDefaultTools({
+        filesystem: 'none',
+        builtInTools: { gth_gh_read_file: true, gth_status_update: true },
+      } as Partial<GthConfig> as GthConfig);
+      expect(result.map((t) => t.name)).toEqual(['gth_status_update']);
+      expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+    });
+
+    // Not the skip: a disabled entry never reaches it. This is the enablement check doing the
+    // work, and it is worth its own case — a registry entry written as `false` must load nothing
+    // and say nothing, whatever the skip list happens to contain.
+    it('does not load a DISABLED gth_gh_read_file entry, and does not warn about it', async () => {
       const result = await getDefaultTools({
         filesystem: 'none',
         builtInTools: { gth_gh_read_file: false, gth_status_update: true },

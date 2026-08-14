@@ -223,6 +223,15 @@ describe('isGhReadFileToolEnabled (CFG-52 — opt-out through the builtInTools r
 });
 
 describe('getGhReadFileMaxBytes (CFG-52)', () => {
+  // The LITERAL, deliberately not `GH_READ_FILE_DEFAULT_MAX_BYTES` — every other case here reads
+  // the default back from the constant it is asserting, which is a value compared against itself
+  // and stays green for any value at all. `docs/configuration/tools.md` promises this number to
+  // users in words, so this is the only gate standing between a silent edit of the constant and a
+  // shipped doc that lies about the shipped default.
+  it('ships a default cap of 614400 bytes (600 KiB) — the number the docs promise', () => {
+    expect(GH_READ_FILE_DEFAULT_MAX_BYTES).toBe(614400);
+  });
+
   it('returns the configured cap, and the default when nothing configures one', () => {
     expect(
       getGhReadFileMaxBytes({ builtInTools: { gth_gh_read_file: { maxBytes: 200000 } } }, 'pr')

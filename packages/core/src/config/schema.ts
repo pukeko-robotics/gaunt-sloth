@@ -1042,9 +1042,10 @@ const REMOVED_COMMAND_KEYS: ReadonlyArray<readonly [string, string]> = [
 /**
  * CFG-26 — approval knobs retired from the `builtInTools.run_shell_command` entry and moved to the
  * top-level `approvals` block. `[retired, "how to say it now"]`. Rejected pre-parse for the same
- * reason as {@link REMOVED_COMMAND_KEYS}: `builtInToolConfigSchema` is a strict `z.object`, so once
- * the field is gone zod SILENTLY STRIPS it and an old config would run with its approval posture
- * quietly ignored — the worst possible failure for a safety gate.
+ * reason as {@link REMOVED_COMMAND_KEYS}: these knobs lived under `builtInToolConfigSchema`, a
+ * plain `z.object`, which SILENTLY STRIPS unknown keys — so once the field is gone an old config
+ * would parse clean and run with its approval posture quietly ignored, the worst possible failure
+ * for a safety gate.
  *
  * `judge.autoApproveLow` / `judge.blockHigh` have no 1:1 successor (the rung replaced the
  * `low/medium/high` × `destructive` conjunction), so `judge`'s message points at `approvals.mode`
