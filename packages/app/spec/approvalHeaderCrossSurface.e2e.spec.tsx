@@ -29,12 +29,15 @@ import { ApprovalPrompt } from '#src/tui/components/ApprovalPrompt.js';
  * absorbing a real difference: a strip that is free to match nothing is a strip that keeps passing
  * after the surface it describes has changed.
  *
- * **The readline half resolves through `dist/`.** Its import of
- * `@gaunt-sloth/agent/modules/interactiveSessionModule.js` goes through that package's exports, and
- * `pnpm run unit` is a bare `vitest run` with no build — so this spec sees that surface's *last
- * built* code. `pnpm test` (and therefore CI) builds first, which is what makes the gate sound;
- * locally, a result that disagrees with the source you are reading is a stale build, not a phantom.
- * Run `pnpm run build` before believing either outcome.
+ * **Both surfaces are read from source, with no build.** `pnpm run unit` is a bare `vitest run`,
+ * and `vitest.config.ts`'s `resolveWorkspaceImports` plugin rewrites `#src/…` and
+ * `@gaunt-sloth/<pkg>/….js` to that package's TypeScript file whenever one exists — so the Ink
+ * half's `#src/tui/components/ApprovalPrompt.js` comes from `packages/app/src` and the readline
+ * half's `@gaunt-sloth/agent/modules/interactiveSessionModule.js` from `packages/agent/src`, in
+ * both cases ahead of the `dist/` each package's own `exports`/`imports` map would reach. A result
+ * that disagrees with the source you are reading is therefore a real result: rebuilding cannot
+ * change it, and this spec is not the place to look for a stale build. `dist/` is what the PTY
+ * suite runs — `cli.js` delegates to it — and `pnpm run it-tui` builds first.
  */
 
 // ── the readline surface's environment ────────────────────────────────────────

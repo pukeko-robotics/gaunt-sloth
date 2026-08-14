@@ -286,10 +286,10 @@ Switch mode for the current session with `/approvals manual|write|assisted|auto|
 
 ### Answering a prompt that is not a shell command
 
-At `manual` and `write`, most of what stops to ask you is not a shell command — it is a file write,
-an MCP call, or a tool you wired in yourself. The prompt's opening line names the call: a gated
-write reads *The agent wants to use the `write_file` tool*, with the arguments framed beneath it the
-same way a command is.
+At `manual` and `write`, most of what stops to ask you is not a shell command — it is an MCP call, a
+tool you wired in yourself, or, at `manual`, a file write. The prompt's opening line names the call:
+a gated write reads *The agent wants to use the `write_file` tool*, with the arguments framed
+beneath it the same way a command is.
 
 **An MCP call also names the server it reaches**, which is usually what you need in order to answer
 at all — `create_issue` against a scratch tracker and `create_issue` against the one your team runs
