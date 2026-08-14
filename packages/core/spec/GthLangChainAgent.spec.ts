@@ -402,6 +402,48 @@ describe('GthLangChainAgent', () => {
         expect(infoLines()).toEqual(['Gaunt Sloth: ask']);
       });
 
+      /**
+       * The preamble has a fifth line that only a config with an empty allow-list reaches (the
+       * tool-loading notice in `init`). It routes through `headerStatus`, so it is preamble by
+       * construction — and the acceptance clause is "byte-identical on EVERY command", which the
+       * cells above cannot cover because none of them disables tools. Captured the same way as
+       * `DEBUG_PREAMBLE`, from the rendered output.
+       */
+      const DISABLED_TOOLS_PREAMBLE = [
+        'Workdir: /test/dir',
+        'Model: test-model',
+        'Tool loading disabled by allowedTools: []; MCP/A2A servers will not be contacted. ' +
+          'Omit allowedTools for no filtering.',
+        'Loaded middleware: GthLeanShellExitSoftening, GthMcpToolErrorSoftening, ' +
+          'GthLeanToolErrorBudget, GthLeanToolLoopGuard, GthMiddlewareToolCallStatusUpdate, ' +
+          'GthMiddlewareToolCallRepair, GthMiddlewareDebugCapture',
+      ];
+
+      const noToolsConfig = (output?: GthConfig['output']): GthConfig =>
+        ({ ...headerConfig(output), allowedTools: [] }) as unknown as GthConfig;
+
+      it('renders the empty-allow-list preamble line on debug', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+        await agent.init('ask', noToolsConfig({ header: 'debug' }));
+
+        expect(infoLines()).toEqual(DISABLED_TOOLS_PREAMBLE);
+      });
+
+      // …and it is preamble, so the quieter rungs must not leak it.
+      it.each([
+        [{ header: 'compact' } as const, ['Gaunt Sloth: ask · test-model (google-genai)']],
+        [{ header: 'none' } as const, []],
+      ])('drops the empty-allow-list preamble line on %o', async (output, expected) => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+        await agent.init('ask', noToolsConfig(output as GthConfig['output']));
+
+        expect(infoLines()).toEqual(expected);
+      });
+
       it('emits nothing at all on the none rung', async () => {
         const agent = new GthLangChainAgent(statusUpdateCallback);
         mcpClientInstanceMock.getTools.mockResolvedValue([]);
