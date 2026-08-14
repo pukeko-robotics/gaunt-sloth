@@ -1526,8 +1526,11 @@ export class GthAgentRunner {
     // the *always reject* control would vanish from exactly the case it exists for.
     //
     // [[TUI-C67]] — **the subject is attached unconditionally**, outside every optional term above,
-    // because the prompt's opening sentence is rendered from it on every surface and there is no
-    // call this question does not have an answer for. It cannot be one more `...(x ? {x} : {})`:
+    // because the terminal surfaces render the prompt's opening sentence from it and there is no
+    // call this question does not have an answer for. (The ACP server does not read it yet, and
+    // titles its permission request from its own classifier — [[TUI-C89]]. That narrows who
+    // consumes the field, never whether it has to be set.) It cannot be one more
+    // `...(x ? {x} : {})`:
     // an `mcpTool` call whose server could not be attributed has neither a grant nor a deny entry
     // (§4.7.4 / the entry grammar's non-empty `server`), so at an unrated rung with no escalate
     // entry it is exactly the call that would fall through to a bare `tool` — and it is exactly
