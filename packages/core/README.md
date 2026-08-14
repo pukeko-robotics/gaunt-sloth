@@ -50,6 +50,12 @@ All config keys (providers, prompts, tools, per-command settings) are documented
 - `@gaunt-sloth/core` (the root export) is the public API: config
   (`initConfig`, `GthConfig`, defaults), constants, core types, the lean agent factory, model
   discovery, and session history.
+- **Anything you can set, you can name.** Where a config field's type is declared by the Zod schema
+  rather than beside the interface, that *type* is re-exported from the root and from
+  `@gaunt-sloth/core/config.js` — e.g. `GthOutputHeaderRung`, the type of `GthConfig`'s
+  `output.header`. The schema's runtime surface (`rawGthConfigSchema`, `generateConfigJsonSchema`,
+  `validateRawGthConfig`, `KNOWN_TOP_LEVEL_KEYS`, the deprecation scanners) is validator internals
+  and is not part of the root export; reach it through the deep path below if you need it.
 - `@gaunt-sloth/core/<path>.js` deep paths (e.g. `@gaunt-sloth/core/config.js`,
   `@gaunt-sloth/core/utils/consoleUtils.js`) mirror the internal `dist/` layout 1:1 and are a
   deliberate part of the contract — the other `@gaunt-sloth/*` packages and downstream consumers
