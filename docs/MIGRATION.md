@@ -58,7 +58,7 @@ these before you upgrade.
 | Change | What breaks | Fix |
 | --- | --- | --- |
 | `rating` is now an object | `rating: false` (or any boolean) is a validation abort: `expected object, received boolean` | `rating: { enabled: false }` |
-| `output.header` is a three-rung enum | A boolean is a validation abort: `output.header is no longer a boolean: it is one of none, compact, debug.` | `"none"` for `false`, `"debug"` for `true` — or `"compact"`, which is new (see section K) |
+| `output.header` is a three-rung enum | A boolean is a validation abort: `output.header: no longer a boolean: it is one of none, compact, debug.` | `"none"` for `false`, `"debug"` for `true` — or `"compact"`, which is new (see section K) |
 | Command configs must nest under `commands.*` | A top-level command key (e.g. `pr`) is a validation abort: `Top-level command config "pr" is no longer supported in 2.0. Move it under "commands.pr".` | Move it under `commands.<cmd>` |
 | Per-command `devTools` folded into `builtInTools` | `commands.<cmd>.devTools` is a validation abort: `Config property "devTools" in commands.code is no longer supported in 2.0. Configure tools under "builtInTools" instead.` | Move the dev/shell tools into the `builtInTools` registry (see section G) |
 | Approval knobs moved off `run_shell_command` | `yolo` / `judge` / `allowlist` / `persistAllowlist` on that entry are a validation abort: `Config property "yolo" in builtInTools.run_shell_command is no longer supported in 2.0. Use "approvals": "bypass" instead.` | Move them into the top-level `approvals` setting (see section I) |

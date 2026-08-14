@@ -60,7 +60,8 @@ gth review --content-source git -r requirements.md -m "focus on security implica
 
 ## What a review is labelled with
 
-Every `review` and `pr` run opens its output with a fixed heading and one attribution line:
+By default, every `review` and `pr` run opens its output with a fixed heading and one attribution
+line:
 
 ```text
 ## Gaunt Sloth: Code Review

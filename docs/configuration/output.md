@@ -222,7 +222,7 @@ across three rungs:
 | rung | what the run opens with |
 | --- | --- |
 | `debug` (default) | The Workdir/Model/Tools/Middleware status lines, plus — in interactive terminal runs — the `Press Escape or Q to interrupt Agent` hint box. |
-| `compact` | One line naming the command and the model: `Gaunt Sloth: ask · gemini-3.1-pro (google-genai)`. On `review` and `pr`, their [review heading](../guides/review-code-and-prs.md#what-a-review-is-labelled-with) is that line instead, so there is never a duplicate model line. |
+| `compact` | One line naming the agent mode the run was started in and the model: `Gaunt Sloth: ask · gemini-3.1-pro (google-genai)`. For `ask`, `exec`, `chat` and `code` that is the command's own name; `eval` runs its cases in `ask` mode, so it shows `ask`. On `review` and `pr`, their [review heading](../guides/review-code-and-prs.md#what-a-review-is-labelled-with) is that line instead, so there is never a duplicate model line. |
 | `none` | Nothing — including, on `review` and `pr`, the review heading. |
 
 Reach for `compact` when the preamble is noise but you still want to know which model answered —

@@ -282,8 +282,8 @@ stateless review · gemini-3.1-pro-preview (google-genai)
   finding pushes that finding down. No rule, box, logo, timestamp, version, or restated
   repo/branch/PR.
 - **The model half is the launch banner's spelling (DL-6).** `model (provider)`, from the shared
-  `modelProviderLabel` in `@gaunt-sloth/core/core/launchBanner.js` — never a second spelling of the
-  same fact on a second surface.
+  `modelProviderLabel` in `@gaunt-sloth/core/core/modelLabel.js` (`launchBanner.js` re-exports it) —
+  never a second spelling of the same fact on a second surface.
 - **Drop rather than mislead (DL-7).** No provider — a JS config hands us an already-built model —
   prints the bare model, with no `(unknown)` and no empty parentheses. No model drops the label
   altogether, leaving `stateless review` on its own: a provider name would sit exactly where a model

@@ -51,6 +51,10 @@ describe('config schema (GS2-1 B1)', () => {
      * assertion is on the message text, not merely on `success === false`. A message that only
      * listed the vocabulary would pass a `success` check and still leave the user guessing which
      * of three rungs their `false` meant.
+     *
+     * The `output.header` half comes from the rendered PATH prefix, not from the message body —
+     * `formatConfigValidationError` is what puts the key in front of every issue, and the message
+     * deliberately does not repeat it.
      */
     it.each([
       [false, 'none'],

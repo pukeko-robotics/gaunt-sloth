@@ -309,8 +309,10 @@ describe('GthLangChainAgent', () => {
         expect(infoLines()).toEqual(DEBUG_PREAMBLE);
       });
 
-      // The verb is the one the run was initialised with — there is no label table, so a new verb
-      // needs no wiring here and cannot be spelt differently from the command the user typed.
+      // The verb is the one the run was INITIALISED with — there is no label table, so a new verb
+      // needs no wiring here. That is not always the word the user typed: a command is free to run
+      // its work through a different agent mode, and several do — for example `gth eval` inits
+      // `ask` and `gth batch` inits `exec` — so those runs open with the mode, not their own name.
       it.each([
         ['ask', 'Gaunt Sloth: ask · test-model (google-genai)'],
         ['exec', 'Gaunt Sloth: exec · test-model (google-genai)'],

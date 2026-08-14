@@ -68,12 +68,13 @@ process.exit(process.exitCode ?? 0);
 ```
 
 The review text is written to stdout, opening with a fixed `## Gaunt Sloth: Code Review` heading and
-one line naming the review mode and the model that served the run. That attribution is
-unconditional — an embedder gets it, so anything posting this output identifies its reviewer without
-adding a header of its own. With rating enabled, `review()` sets `process.exitCode = 1` when the
-rating comes back below `passThreshold` (or when the model fails to produce a rating), so the script
-exits non-zero exactly when `gth review` would. Those two — the attributed text on stdout and the
-exit code — are the whole embed contract.
+one line naming the review mode and the model that served the run. An embedder gets that attribution
+by default, so anything posting this output identifies its reviewer without adding a header of its
+own; `output.header: "none"` on the config you pass to `review()` is the one setting that removes
+it, for a caller piping the review into a template of their own. With rating enabled, `review()`
+sets `process.exitCode = 1` when the rating comes back below `passThreshold` (or when the model
+fails to produce a rating), so the script exits non-zero exactly when `gth review` would. Those
+two — the attributed text on stdout and the exit code — are the whole embed contract.
 Configuration (provider, prompts, rating thresholds) is the standard Gaunt Sloth config, see
 [the configuration guide](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/docs/configuration/index.md).
 

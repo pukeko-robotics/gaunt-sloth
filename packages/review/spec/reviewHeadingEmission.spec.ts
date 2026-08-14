@@ -235,7 +235,7 @@ describe('REL-12 — the review heading reaches the terminal and the output file
 
     // The CHANNEL rules out two helpers, including the header gate: `displayInfo` lands on
     // console.info — it is what `headerStatus` reports through, so it is the one change that would
-    // put the heading back under `output.header`, and therefore the load-bearing exclusion — and
+    // put the heading back under the preamble gate, and therefore the load-bearing exclusion — and
     // `displayWarning` lands on console.warn. `displaySuccess` and `displayError` are NOT excluded
     // here: both call `su.log`, i.e. console.log, exactly as `display` does. The level halves below
     // are what rule those two out.

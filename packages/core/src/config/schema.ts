@@ -132,16 +132,20 @@ export type GthOutputHeaderRung = (typeof OUTPUT_HEADER_RUNGS)[number];
  * makes that survivable is that the error names the rung that replaces the value the user actually
  * wrote, rather than only listing the vocabulary: someone who wrote `false` wanted silence and is
  * told `none`, someone who wrote `true` wanted the preamble and is told `debug`.
+ *
+ * Neither branch names the key. Every renderer of this message puts it behind the issue's path
+ * (`formatIssueLines`, so `  - output.header: …`), and the path here is always exactly
+ * `output.header` — repeating it in the sentence only stutters.
  */
 function describeBadHeaderRung(issue: { input: unknown }): string {
   if (typeof issue.input === 'boolean') {
     return (
-      `output.header is no longer a boolean: it is one of ${OUTPUT_HEADER_RUNGS.join(', ')}. ` +
+      `no longer a boolean: it is one of ${OUTPUT_HEADER_RUNGS.join(', ')}. ` +
       `Use "${issue.input ? 'debug' : 'none'}" instead of ${issue.input}.`
     );
   }
   return (
-    `${JSON.stringify(issue.input)} is not a run-header rung. output.header is one of ` +
+    `${JSON.stringify(issue.input)} is not a run-header rung — the rungs are ` +
     `${OUTPUT_HEADER_RUNGS.join(', ')}.`
   );
 }
