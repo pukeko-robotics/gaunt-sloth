@@ -1,8 +1,11 @@
 /**
  * @module core/approvals/promptHeader
  *
- * [[TUI-C67]] — **the one sentence every approval surface opens with**, branched on the
- * {@link ApprovalSubject} kind the decision itself already ran on.
+ * [[TUI-C67]] — **the one sentence the terminal approval surfaces open with**, branched on the
+ * {@link ApprovalSubject} kind the decision itself already ran on. Its callers are the readline
+ * session and the Ink TUI. The ACP server asks a human too but renders this sentence nowhere — it
+ * builds its own permission title instead, which is [[TUI-C89]]'s to fix — so do not read "every
+ * approval surface" into the line above.
  *
  * ## Why this is shared rather than written per surface
  *
