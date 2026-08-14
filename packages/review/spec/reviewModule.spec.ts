@@ -696,14 +696,17 @@ describe('reviewModule', () => {
      * `commands.pr`'s cap. Every other cap test calls the factory directly and therefore cannot
      * see that wiring at all; this one goes through the review module, which is where it lives.
      *
-     * A PAIR on one file: over `pr`'s cap and under `review`'s. The "review is whole" half alone
-     * passes against an implementation that never truncates, and the "pr truncates" half alone
-     * against one that always does.
+     * ONE file, over BOTH caps, so each command truncates and the marker it returns names its own
+     * cap number. Sizing the file between the two caps would only BOUND the `review` half — "some
+     * cap at least as big as this file" — which any larger cap satisfies, including the shipped
+     * 600 KiB default a `gth review` gets when it ignores its configured `maxBytes` entirely.
+     * Naming the number is what closes that. The whole-file (under-cap) path is covered directly
+     * in `ghReadFileTool.spec.ts` and is not what this case is for.
      */
     it('gives each command the cap from its OWN registry, through the injected tool', async () => {
       const PR_CAP = 40;
       const REVIEW_CAP = 400;
-      const FILE_TEXT = 'w'.repeat(100); // over pr's cap, under review's
+      const FILE_TEXT = 'w'.repeat(500); // over BOTH caps, so each marker names its own number
 
       systemUtilsMock.execAsync.mockImplementation(async (command: string) => {
         if (command.startsWith('gh pr view')) {
@@ -752,13 +755,21 @@ describe('reviewModule', () => {
 
       // `pr`'s own 40-byte cap bites, and the marker names that cap rather than some other one…
       const asPr = await readOneFileVia('pr');
-      expect(asPr).toContain(`gth_gh_read_file: file truncated at the ${PR_CAP}-byte cap`);
       expect(asPr).toContain('Partial contents of');
+      expect(asPr).toContain(`gth_gh_read_file: file truncated at the ${PR_CAP}-byte cap`);
 
-      // …while `review`'s own 400-byte cap leaves the very same file whole.
+      // …and the very same file comes back cut at `review`'s own 400-byte cap, named as such.
       const asReview = await readOneFileVia('review');
-      expect(asReview).not.toContain('truncated');
-      expect(asReview).toBe(`Full contents of octocat/hello-world/a.txt@main:\n\n${FILE_TEXT}`);
+      expect(asReview).toContain('Partial contents of');
+      expect(
+        asReview,
+        `The review run did not truncate at its own ${REVIEW_CAP}-byte cap. Two causes produce an ` +
+          `IDENTICAL failure here, so rule out both before looking further: (a) production — the ` +
+          `review module stopped passing the command to the tool factory, whose argument defaults ` +
+          `to pr; (b) this test — the fresh config per run above was removed, so the review run ` +
+          `got back the tool the pr run had already injected. Otherwise read the cap the marker ` +
+          `above actually names; it says which one was applied.`
+      ).toContain(`gth_gh_read_file: file truncated at the ${REVIEW_CAP}-byte cap`);
     });
   });
 });

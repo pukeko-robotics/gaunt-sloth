@@ -144,11 +144,14 @@ describe('Config Tool Functions', () => {
     // `code`, a command that never loads the tool at all: that is where a stray "Unknown built-in
     // tool" would surface for a user who only ever meant to configure their PR reviews.
     //
-    // The entry is written in an ENABLED form on purpose. A disabled entry is dropped by the
-    // enablement check that runs BEFORE the unknown-tool branch, so `false` never warns and would
-    // pass against a loader carrying no skip at all. `true` reaches the AVAILABLE_BUILT_IN_TOOLS
-    // lookup, where this name is deliberately absent — the skip is then the only thing between the
-    // user and the warning, which is what makes this case discriminate.
+    // In the loader the skip runs FIRST — ahead of the enablement check and of the
+    // AVAILABLE_BUILT_IN_TOOLS lookup — so in shipped code this entry is intercepted by name and
+    // never reaches either, whichever form it is written in. The entry is nonetheless written in
+    // an ENABLED form on purpose, because what this case can be evidence about is what happens
+    // WITHOUT the skip: `true` then clears the enablement check, reaches the lookup, finds this
+    // name deliberately absent, and warns — the case goes red. A `false` entry would instead be
+    // dropped by the enablement check before the lookup and stay green, so the disabled form
+    // cannot discriminate here.
     it('should skip gth_gh_read_file without warning, on a command that never loads it', async () => {
       const result = await getDefaultTools({
         filesystem: 'none',
@@ -158,9 +161,11 @@ describe('Config Tool Functions', () => {
       expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
     });
 
-    // Not the skip: a disabled entry never reaches it. This is the enablement check doing the
-    // work, and it is worth its own case — a registry entry written as `false` must load nothing
-    // and say nothing, whatever the skip list happens to contain.
+    // What intercepts this entry is the SKIP, which runs first and matches on the name alone — the
+    // enablement check is never reached for this tool. The case is still not evidence about the
+    // skip: with the skip removed the enablement check catches the disabled entry instead, and it
+    // stays green either way. It earns its place as the plain guarantee that a registry entry
+    // written as `false` loads nothing and says nothing.
     it('does not load a DISABLED gth_gh_read_file entry, and does not warn about it', async () => {
       const result = await getDefaultTools({
         filesystem: 'none',

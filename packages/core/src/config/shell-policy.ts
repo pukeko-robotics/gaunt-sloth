@@ -9,8 +9,9 @@
  * It also hosts the GitHub review-tool registry resolvers — {@link isGhReadFileToolEnabled} and
  * {@link getGhReadFileMaxBytes} — which read the same {@link GthConfig.builtInTools} registry
  * through the same per-command-then-root pick as the shell accessors. They live here, in core,
- * rather than beside the tool itself because `@gaunt-sloth/review` (which injects the tool) and
- * `@gaunt-sloth/agent` (which must skip it) both need them and neither may depend on the other.
+ * rather than beside the tool in `@gaunt-sloth/review` (their only caller), so that one place owns
+ * how a `builtInTools` entry is normalised and resolved; a copy sitting next to the tool would be
+ * free to drift from the precedence every other tool in the registry obeys.
  *
  * CFG-18 — the dev/shell tools are now configured through the unified {@link GthConfig.builtInTools}
  * registry (`string[] | Record<string, boolean | BuiltInToolConfig>`), NOT the removed per-command
