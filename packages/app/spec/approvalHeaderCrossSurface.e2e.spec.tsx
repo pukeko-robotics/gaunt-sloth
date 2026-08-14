@@ -41,9 +41,17 @@ import { ApprovalPrompt } from '#src/tui/components/ApprovalPrompt.js';
  */
 
 // ── the readline surface's environment ────────────────────────────────────────
-// The mock set of `packages/agent/spec/interactiveSessionApprovalFraming.spec.ts`, by the bare
-// specifiers the built agent module imports — so the mocks bind to the same resolved files whether
-// the importer is this spec or the agent's own dist.
+// The mock set of `packages/agent/spec/interactiveSessionApprovalFraming.spec.ts`. A `vi.mock` binds
+// by RESOLVED FILE, not by spelling: these paths and the agent module's own imports go through the
+// same rewrite described above, so `@gaunt-sloth/core/utils/consoleUtils.js` here and in
+// `interactiveSessionModule.ts` is one file — `packages/core/src/utils/consoleUtils.ts` — and the
+// two spellings need not match. `interactiveSessionModule.ts` reaches its resolvers as
+// `#src/resolvers.js`; the scoped `@gaunt-sloth/agent/resolvers.js` below mocks it, because both
+// land on `packages/agent/src/resolvers.ts`. Scoped is the spelling that says WHICH package,
+// though: `#src/…` resolves against the importer's own package first, so from this spec it would
+// reach `agent` only for want of an `app` or `core` file at that path. A specifier that lands
+// anywhere else fails silently — the mock is never consulted and the module under test keeps the
+// real module.
 const rlQuestionMock = vi.fn(async (prompt: string) => {
   if (typeof prompt === 'string' && prompt.includes('>')) return 'exit';
   return '';
