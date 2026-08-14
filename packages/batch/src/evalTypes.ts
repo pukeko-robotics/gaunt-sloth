@@ -425,8 +425,14 @@ export interface EvalTurn {
    * Accumulated by the target across the case, so a message declared once stays visible for every
    * later round (core's `ShellNegotiationState` owns the retention bound and the §5.1 last-5
    * window). `rater` target only; rejected at parse time elsewhere.
+   *
+   * **`readonly` because this array is handed to the target by REFERENCE**, not copied: the runner
+   * puts it straight onto the round ({@link ClassifyRound.userMessages}), and a parsed suite is run
+   * once per sweep cell. A target that sorted, truncated or appended to it would be editing the
+   * suite every later cell is still going to be graded from — a corruption that shows up as one
+   * cell's context leaking into another's and nothing pointing at the line that did it.
    */
-  userMessages?: string[];
+  userMessages?: readonly string[];
   expectations: EvalExpectation[];
 }
 
@@ -478,7 +484,9 @@ export interface ClassifyRound {
   command: string;
   /** The justification attached to THIS command, if any — see {@link EvalTurn.justification}. */
   justification?: string;
-  /** The user messages the conversation gained before this round — see {@link EvalTurn.userMessages}. */
+  /** The user messages the conversation gained before this round — see
+   * {@link EvalTurn.userMessages}, which is the array this one usually IS (handed over by reference)
+   * and which says why neither end of that hand-over is writable. */
   userMessages?: readonly string[];
 }
 

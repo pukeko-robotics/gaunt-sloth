@@ -393,6 +393,9 @@ function buildRationale(
  * It mirrors `GthAgentRunner`'s four arms and adds nothing: an approved call is progress (§5.3 —
  * clears the transcript *and* the consecutive counter), a halt reaches a human, and a `reject` is
  * recorded before either bound is tested, so the attempt being ruled on is itself on the transcript.
+ * The remaining arm carries the one assumption in here — that an action which is neither approved,
+ * halted nor rejected has already reached a person — so it ends the negotiation and hands the
+ * action back untouched.
  *
  * **Every escalation reaches a human, so every escalation ends the negotiation** — the `catastrophic`
  * rating that never had rounds, and the spent bound that had three. The runner spends it
@@ -423,7 +426,6 @@ function advanceNegotiation(
     negotiation.humanReached();
     return { action: decision.action, boundSpent: false };
   }
-  let boundSpent = false;
   if (decision.action === 'reject') {
     const served = negotiation.recordRejection({
       command,
@@ -435,13 +437,19 @@ function advanceNegotiation(
       reason: decision.verdict?.reason ?? '',
     });
     // A served round is the whole of it: the refusal goes back to the agent and the argument
-    // continues. Anything else means the bound is spent, and the round falls through to the
-    // escalation below exactly as the runner's own `reject` arm does.
-    if (served === 'reject') return { action: 'reject', boundSpent: false };
-    boundSpent = true;
+    // continues. Anything else means the bound is spent and this round goes out to a person, exactly
+    // as the runner's own `reject` arm does — and the action is core's answer to that question,
+    // relayed like every other decision here rather than written down a second time.
+    if (served === 'reject') return { action: served, boundSpent: false };
+    negotiation.humanReached();
+    return { action: served, boundSpent: true };
   }
+  // Everything left already reaches a person — today that is the `catastrophic` rating's own
+  // escalation, and the arm is written to hold for anything core's vocabulary gains beside it. The
+  // action is RELAYED, never re-chosen: rule 1 above is the whole reason, and a hardcoded one here
+  // would answer for an action this file has never seen.
   negotiation.humanReached();
-  return { action: 'escalate', boundSpent };
+  return { action: decision.action, boundSpent: false };
 }
 
 /**
@@ -484,6 +492,16 @@ function advanceNegotiation(
  * a target that spent the bound only on rounds it happened to ring a model for would report a
  * different exchange than production for the same corpus. At a rung that rates nothing there is
  * nothing to spend either way — no round is ever rejected there.
+ *
+ * **At a rung that DOES rate, `model_free` spends the bound for real, and that is worth knowing
+ * before authoring one.** With no verdict, `mapVerdictToAction` reads core's fail-closed verdict,
+ * whose outcome is `destructive`; at a negotiating rung that is a `reject`, so every model-free round
+ * of such a case is recorded as one and the third ends at a human carrying
+ * {@link NEGOTIATION_BOUND_MARKER} — a full §5.3 negotiation for zero model calls. The rounds are
+ * not fabrications (this is production's own action for a rating nobody rendered) but they are
+ * indistinguishable from one another, so an author reading only the action column sees an escalation
+ * the corpus never argued for. `model_free` is CASE-level, so it costs a multi-round case all of its
+ * ratings or none: a case that wants one deterministic round beside rated ones cannot say so.
  */
 async function classifyOneRound(
   round: ClassifyRound,
