@@ -64,11 +64,12 @@ JSON can't express — see [Providers → JavaScript configuration](providers.md
 
 ## The global config and your project config
 
-The global `~/.gsloth/.gsloth.config.*` loads first and your project config merges on top of it, on
-every run. The project config does not replace the global one — it overrides only the keys it sets,
-and the global's other keys stand. So settings you want everywhere (your provider and model, `tui`,
-`writeOutputToFile`) belong in the global config, and a project config only has to state what it
-changes. With no project config anywhere up-tree, the global config is used on its own.
+Your project config wins, but it does not replace the global one — it overrides only the keys it
+sets, and the global's other keys stand. The global `~/.gsloth/.gsloth.config.*` loads first and
+your project config merges on top of it, on every run. So settings you want everywhere (your
+provider and model, `tui`, `writeOutputToFile`) belong in the global config, and a project config
+only has to state what it changes. With no project config anywhere up-tree, the global config is
+used on its own.
 
 Arrays are the exception to the merge: most replace across layers instead of combining, and a few
 accumulate — see
