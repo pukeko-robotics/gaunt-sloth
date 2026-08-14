@@ -302,4 +302,6 @@ anchors as `#local--free-models` on GitHub and `#local-free-models` on the site.
   deep-link it from a page that has to resolve on both surfaces; link the section above it instead.
 
 **Self-check (must pass before you ship):** `pnpm typedoc` reports no `anchor does not exist`
-warnings, and rule 8's sweep over `docs-generated` prints no pages.
+warnings, and rule 8's sweep prints no pages. That sweep covers the whole generated tree, API
+reference pages included, so if it ever does name one, check that it is not a page you touched
+before treating it as this rule.
