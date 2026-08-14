@@ -132,14 +132,25 @@ A new or modified page is not done when the markdown diff looks right — it is 
 been **visually checked as rendered HTML**. A markdown diff cannot show you a code fence that
 swallowed the next heading, a table that didn't parse, or a cross-link that 404s.
 
-Until the PLAT-10 Starlight docs site exists, do this locally before calling a doc page finished:
+### The route for `docs/` pages
+
+TypeDoc renders every page listed in `typedoc.json`'s `projectDocuments`, which is the same build
+that produces the published site. Until the PLAT-10 Starlight docs site exists:
 
 ```bash
 pnpm typedoc
-npx serve docs-generated    # or: python3 -m http.server <port> --directory docs-generated
 ```
 
-Then load the changed page in a browser and confirm:
+Then open the changed page from `docs-generated/documents/` in a browser. Opening the file
+directly over `file://` is enough — every asset TypeDoc emits is pulled in by a script tag, so
+navigation and search work with no server. The generated name flattens the path, so
+`docs/configuration/tools.md` is `docs-generated/documents/docs_configuration_tools.html`. If you
+want it over http instead, serve the directory with something already installed —
+`python3 -m http.server 8099 --directory docs-generated`. Do not reach for `npx serve` or a `dlx`
+equivalent: that downloads and executes an unpinned package off the registry to look at files you
+already have on disk.
+
+In the browser, confirm:
 
 - every heading renders as a heading (not swallowed inside the previous code fence);
 - code fences render as code blocks, and the heading *after* a fence actually renders as a heading
@@ -147,6 +158,36 @@ Then load the changed page in a browser and confirm:
 - tables render as tables, not literal pipe-and-dash text;
 - every cross-link you added or changed actually resolves (no 404) — click it, don't eyeball the
   href.
+
+### Read the run's warnings, not only the page
+
+`pnpm typedoc` exits 0 with hundreds of warnings, so nothing stops on your page's behalf. Three
+lines in that stream are about your page, and `grep` finds them:
+
+- **`The glob …/docs/<page>.md did not match any files`** — `projectDocuments` names a path that
+  does not exist, so that entry renders nothing. This is how the gate goes quiet: it keeps passing
+  while covering less than it claims.
+- **`… links to <target>, but the anchor does not exist`** — a cross-link whose `#anchor` misses.
+  **Check it against the renderer the reader uses before changing it.** These pages are read both
+  on the published site and on GitHub, and the two slug headings differently: TypeDoc drops the
+  text inside an inline code span, GitHub keeps it, so a heading like **AI ignore (`.aiignore`)**
+  anchors as `#ai-ignore-` on the site and `#ai-ignore-aiignore` on GitHub. A link that satisfies
+  one renderer is reported broken by the other, and "fixing" the warning breaks the link where it
+  currently works. Only edit the link when the anchor is wrong in *both*.
+- **Nothing at all** — the failure mode with no warning. A relative link to a `.md` file that
+  `projectDocuments` does not match is not an error to TypeDoc: it copies the target into
+  `docs-generated/media/` and links to the raw markdown, which a reader gets as a download rather
+  than a page. So when you add a page under `docs/`, add it to `projectDocuments` in the same
+  change — the `docs/configuration/*.md` and `docs/guides/*.md` globs already cover those two
+  trees, and `packages/core/spec/typedocProjectDocuments.spec.ts` fails the unit suite if any
+  `docs/` page is left unmatched or any listed path stops existing.
+
+### Pages TypeDoc does not render
+
+`docs/DOC-STYLE.md` and everything under `maintenance/` are contributor docs, read on GitHub rather
+than on the docs site — check those as **GitHub** renders them (open the file on your pushed
+branch, or the PR's Files-changed view), against the same four points above. A published package's
+`README.md` is read on npm, so check its rendered page there as well as rule 9's link self-check.
 
 Record what you checked and what you saw (which page, which browser/tooling, screenshot if
 available) in the PR description or task report — "I looked at a diff" is not evidence this gate

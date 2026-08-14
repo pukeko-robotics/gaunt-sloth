@@ -6,9 +6,13 @@
   "categorizeByGroup": false,
   "out": "./docs-generated",
   "projectDocuments": [
+    "docs/quickstart.md",
     "docs/COMMANDS.md",
-    "docs/CONFIGURATION.md",
+    "docs/configuration/*.md",
+    "docs/guides/*.md",
+    "docs/custom-tool-example-jira-log-work.md",
     "docs/debug-dump.md",
+    "docs/MIGRATION.md",
     "CONTRIBUTING.md"
   ],
   "sourceLinkExternal": true,
