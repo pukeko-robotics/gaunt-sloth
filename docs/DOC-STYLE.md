@@ -141,11 +141,21 @@ that produces the published site. Until the PLAT-10 Starlight docs site exists:
 pnpm typedoc
 ```
 
-Then open the changed page from `docs-generated/documents/` in a browser. Opening the file
-directly over `file://` is enough — every asset TypeDoc emits is pulled in by a script tag, so
-navigation and search work with no server. The generated name flattens the path, so
-`docs/configuration/tools.md` is `docs-generated/documents/docs_configuration_tools.html`. If you
-want it over http instead, serve the directory with something already installed —
+Then open the changed page in a browser. Opening the file directly over `file://` is enough —
+every asset TypeDoc emits is pulled in by a script tag, so navigation and search work with no
+server. Which file to open depends on where the page lives, and only the first of the three lands
+under `documents/`:
+
+- a page under `docs/` renders to `docs-generated/documents/<flattened path>.html`, so
+  `docs/configuration/tools.md` is `docs-generated/documents/docs_configuration_tools.html`;
+- the **root `README.md`** renders as the project index, `docs-generated/index.html`;
+- a **published package's `README.md`** renders as that package's module page under
+  `docs-generated/modules/`, named after the package with `@` and `/` replaced by `_` — so
+  `packages/core/README.md` is `docs-generated/modules/_gaunt-sloth_core.html` and
+  `packages/app/README.md` is `docs-generated/modules/gaunt-sloth.html`. That same README is the
+  package's npm landing page, so check it there too, against rule 9's link self-check.
+
+If you want it over http instead, serve the directory with something already installed —
 `python3 -m http.server 8099 --directory docs-generated`. Do not reach for `npx serve` or a `dlx`
 equivalent: that downloads and executes an unpinned package off the registry to look at files you
 already have on disk.
@@ -161,8 +171,9 @@ In the browser, confirm:
 
 ### Read the run's warnings, not only the page
 
-`pnpm typedoc` exits 0 with hundreds of warnings, so nothing stops on your page's behalf. Three
-lines in that stream are about your page, and `grep` finds them:
+`pnpm typedoc` exits 0 with hundreds of warnings, so nothing stops on your page's behalf. Two of
+the lines in that stream are about your page and `grep` finds them; two further failure modes
+produce no line at all:
 
 - **`The glob …/docs/<page>.md did not match any files`** — `projectDocuments` names a path that
   does not exist, so that entry renders nothing. This is how the gate goes quiet: it keeps passing
@@ -181,13 +192,33 @@ lines in that stream are about your page, and `grep` finds them:
   change — the `docs/configuration/*.md` and `docs/guides/*.md` globs already cover those two
   trees, and `packages/core/spec/typedocProjectDocuments.spec.ts` fails the unit suite if any
   `docs/` page is left unmatched or any listed path stops existing.
+- **Nothing at all, again — a link into the page's own headings.** TypeDoc checks the anchor of a
+  link that crosses to another page, and says nothing whatsoever about one pointing into the page
+  it sits on. A clean warning stream is therefore no evidence that a page's own internal links
+  resolve. The slug divergence above applies to these too and bites harder here, because nothing
+  prompts you to look: a same-page link TypeDoc renders dead is very often exactly the one GitHub
+  resolves. Check both renderers, edit only when it is wrong in both — and **fix the link, never
+  the heading**. Renaming a heading breaks every inbound link from outside this repo, which is a
+  worse failure than the anchor you set out to repair.
+
+Since no warning names them, enumerate the same-page links yourself. For the page you changed,
+`grep -on '](#[^)]*' docs/configuration/tools.md` prints each internal link with its line number,
+and you click each one in the rendered HTML. To sweep every rendered page at once — the whole tree,
+not just `documents/`:
+
+```bash
+node -e 'const fs=require("fs"),walk=(d)=>fs.readdirSync(d,{withFileTypes:true}).flatMap((e)=>e.isDirectory()?walk(d+"/"+e.name):[d+"/"+e.name]);for(const f of walk("docs-generated")){if(!f.endsWith(".html"))continue;const h=fs.readFileSync(f,"utf8"),ids=new Set([...h.matchAll(/ id="([^"]+)"/g)].map((m)=>m[1])),bad=[...new Set([...h.matchAll(/href="#([^"]+)"/g)].map((m)=>decodeURIComponent(m[1])))].filter((a)=>!ids.has(a));if(bad.length)console.log(f,bad.join(", "))}'
+```
+
+Each line of output is a page and the anchors on it that point at no heading, so find the one you
+changed rather than reading it as a to-do list.
 
 ### Pages TypeDoc does not render
 
 `docs/DOC-STYLE.md` and everything under `maintenance/` are contributor docs, read on GitHub rather
 than on the docs site — check those as **GitHub** renders them (open the file on your pushed
-branch, or the PR's Files-changed view), against the same four points above. A published package's
-`README.md` is read on npm, so check its rendered page there as well as rule 9's link self-check.
+branch, or the PR's Files-changed view), against the same four points above — as is any other
+markdown the run does not turn into a page, such as `examples/*/README.md`.
 
 Record what you checked and what you saw (which page, which browser/tooling, screenshot if
 available) in the PR description or task report — "I looked at a diff" is not evidence this gate
