@@ -180,10 +180,10 @@ produce no line at all:
   while covering less than it claims.
 - **`… links to <target>, but the anchor does not exist`** — a cross-link whose `#anchor` misses.
   Write the anchor the way **GitHub** slugs the heading: rule 10 makes GitHub's slug the
-  authoritative one and configures TypeDoc to agree with it, so a warning here is a genuinely wrong
-  anchor and not the two renderers disagreeing. The single shape that still disagrees is a slug
-  carrying a run of two or more hyphens — rule 10 says what to do about it — so check that case on
-  both renderers before editing anything.
+  authoritative one and configures TypeDoc to agree with it, so a warning here is normally a
+  genuinely wrong anchor and not the two renderers disagreeing. Rule 10 lists the heading shapes
+  where they still do disagree — check the target heading against that list, on both renderers,
+  before editing anything.
 - **Nothing at all** — the failure mode with no warning. A relative link to a `.md` file that
   `projectDocuments` does not match is not an error to TypeDoc: it copies the target into
   `docs-generated/media/` and links to the raw markdown, which a reader gets as a download rather
@@ -196,7 +196,10 @@ produce no line at all:
   it sits on. A clean warning stream is therefore no evidence that a page's own internal links
   resolve, so run the sweep below rather than reading the warning stream as coverage. When one is
   wrong, **fix the link, never the heading** — renaming a heading breaks every inbound link from
-  outside this repo, which is a worse failure than the anchor you set out to repair.
+  outside this repo, which is a worse failure than the anchor you set out to repair. Check both
+  renderers before you decide it is wrong: a link the sweep reports dead on the site but that
+  resolves on GitHub is one of rule 10's diverging shapes, where neither the link nor the heading
+  is the thing to edit.
 
 Since no warning names them, enumerate the same-page links yourself. For the page you changed,
 `grep -on '](#[^)]*' docs/configuration/tools.md` prints each internal link with its line number,
@@ -291,17 +294,37 @@ span's text to the anchor generator, without changing a byte of the rendered hea
 is not a CI job, so if you change how docs are built, keep that plugin registered: dropping it
 re-breaks every link into a code-span heading, and the only symptom is a link that stops resolving.
 
-**The one shape that still disagrees: a slug containing a run of two or more hyphens.** TypeDoc
-collapses the first such run to a single hyphen and GitHub keeps it, so `Local & free models`
-anchors as `#local--free-models` on GitHub and `#local-free-models` on the site. Any heading with
-`&`, an em dash, an arrow, or a `/` surrounded by spaces produces one.
+**Where the two still disagree.** The plugin feeds TypeDoc the same heading *text* GitHub slugs; it
+does not give TypeDoc GitHub's slug algorithm, and the two algorithms are different functions.
+TypeDoc strips a fixed punctuation set, turns whitespace into hyphens, collapses the **first** run
+of two or more hyphens, and falls back to `_` when nothing survives. GitHub strips a wider set,
+collapses nothing, and emits no anchor you can link to when nothing survives. They therefore agree
+on a heading of letters, digits and single spaces, and three shapes are measured to diverge:
 
-- **When you write or rename a heading, keep those characters out of it** — `Local and free models`
-  slugs identically everywhere and reads better in a link.
+- **A slug that ends up with a run of two or more hyphens** — `Local & free models` anchors as
+  `#local--free-models` on GitHub and `#local-free-models` on the site. Any heading with `&`, an em
+  dash, or a `/` surrounded by spaces produces one, because both renderers drop the character and
+  leave the spaces either side of it. Only TypeDoc's *first* run collapses, so a site slug can
+  itself carry `----` and still not match GitHub's.
+- **A character TypeDoc keeps and GitHub strips** — an arrow or an emoji. Nothing is collapsed
+  here; the character simply survives into one slug and not the other. `Old → new` is `#old-→-new`
+  on the site and `#old--new` on GitHub; `Party 🎉` is `#party-🎉` and `#party-`.
+- **A heading that slugs to nothing at all**, such as one that is a single punctuation-only code
+  span: the site anchors it as `#_`, and GitHub gives it no anchor to link to.
+
+Three shapes measured on both renderers, not a proof that there is no fourth: anything in a heading
+beyond letters, digits and single spaces is worth checking on both before you link to it.
+
+**What to do about all three:**
+
+- **When you write or rename a heading, keep it to letters, digits and single spaces** —
+  `Local and free models` slugs identically everywhere and reads better in a link than
+  `Local & free models` does.
 - **When one already exists, leave it alone** (renaming it is the failure above) and simply don't
   deep-link it from a page that has to resolve on both surfaces; link the section above it instead.
 
 **Self-check (must pass before you ship):** `pnpm typedoc` reports no `anchor does not exist`
-warnings, and rule 8's sweep prints no pages. That sweep covers the whole generated tree, API
-reference pages included, so if it ever does name one, check that it is not a page you touched
-before treating it as this rule.
+warnings, and rule 8's sweep prints no pages — with no exception for a page you did not write. The
+sweep covers the whole generated tree, API reference pages included, so it can name a generated
+page rather than one of yours; that is a separate defect to raise, and still not something to ship
+past.
