@@ -54,20 +54,36 @@ import { fileURLToPath } from 'node:url';
  *   surface reaches, which a name-only comparison reads as satisfied.
  * - A break in the package `exports` map or the declaration emit, because the probe imports by
  *   package name from outside rather than by path from inside.
+ * - A type referenced through the inline `import("./other").MyType` form the emitter reaches for
+ *   when a declaration has no top-level import to reuse, as well as through an ordinary named
+ *   reference or a heritage clause.
+ * - **Its own collapse.** {@link assertNonDegenerate} runs inside {@link deriveSurface}, before the
+ *   result is memoised, so a derivation that walked nothing, resolved a reference shape it did not
+ *   recognise, fell under the floor, or missed a whole tree is refused rather than handed out. That
+ *   placement is deliberate: the pin below type-checks a *generated* probe, and an empty probe
+ *   type-checks clean, so a check that lived only beside it would let the assertion this file
+ *   exists for pass while the derivation had collapsed.
  *
  * ## What it does NOT catch — stated because the temptation is to overstate it
  *
  * - **Narrowing the barrel itself.** The walk is seeded from the barrel's exports, so deleting a
  *   public export removes both the name and every obligation its type graph created. "Reachable
  *   implies nameable" has nothing to say once a thing stops being reachable, and no derivation
- *   from the built artifact can distinguish a deliberate narrowing from a smaller API.
+ *   from the built artifact can distinguish a deliberate narrowing from a smaller API. The
+ *   magnitude is worth knowing rather than guessing: deleting one `export *` line from
+ *   `src/index.ts` drops 22 names from the barrel and the whole unit suite stays green.
+ * - **A rename at the declaration.** Renaming a public type breaks every embedder's import, and
+ *   the derivation simply follows the new name, so nothing here reacts. It is irreducible for a
+ *   derived oracle — the only defence is naming a type in text, which is what the handwritten
+ *   probe below does for the twelve names it carries.
  * - **A type emitted without an `export` modifier at its own declaration.** It is nameable by no
  *   route at all, so no barrel re-export could fix it, and it is excluded here on that mechanism —
  *   the modifier flags read off the emitted node, not an opinion about the type.
  *   `ApprovalEntryCommon` in `config/shell-policy.d.ts` is the standing instance, and a failure
- *   below names whatever the current set is. Dropping `export` from a type the barrel
- *   currently re-exports fails the build instead; dropping it from one reached only by an inline
- *   reference would move that type into this exclusion silently.
+ *   below names whatever the current set is. This is a standing escape hatch, not just a listing
+ *   quirk: deleting that one keyword removes a type from the public surface with no test reaction.
+ *   Dropping it from a type the barrel currently re-exports fails the build instead; dropping it
+ *   from one reached only by an inline reference is silent.
  * - **Values named only through `typeof`.** A `typeof X` query in an emitted `.d.ts` resolves
  *   inside the file it was emitted into, so an embedder naming the alias never needs `X` in scope
  *   — measured by the handwritten probe below, which uses `RaterOutcome` and `ShellSafetyVerdict`
@@ -75,6 +91,9 @@ import { fileURLToPath } from 'node:url';
  *   nothing about whether those values themselves can be imported.
  * - **Anonymous structure.** Only named types can be exported, so an inlined object type is
  *   reachable, nameable by nobody, and correctly not required.
+ * - **A type nothing hands out.** `ToolApprovalCallback` is the case to know: an embedder passes
+ *   one IN, so no reachable declaration is typed as one and the derivation cannot require it. It
+ *   is named in the handwritten probe for exactly that reason.
  *
  * It needs `dist/` to exist. `pnpm test` builds first — including both CI unit jobs — and a bare
  * `pnpm run unit` on a never-built tree fails here with the message below rather than with a type
@@ -141,6 +160,69 @@ interface DerivedSurface {
   typeofReferents: string[];
   /** Declarations the walk visited. Zero would mean it never started. */
   walked: number;
+  /**
+   * Nodes met in a type-reference position whose form the resolver could not turn into a name.
+   * Must be zero: an unrecognised shape is a type this walk skipped **silently**, which shrinks the
+   * derived surface without shrinking the barrel — the failure mode this whole spec exists to stop,
+   * arriving through the walk instead of through a list.
+   */
+  unresolvedReferences: number;
+}
+
+/**
+ * A floor, not a pin on the size of the API. It exists for one failure only: a derivation that
+ * returns nothing — a walk that never starts, a resolver that stops seeing this package's own
+ * files, a filter inverted — makes every assertion below pass by checking nothing, exactly the way
+ * an empty probe type-checks clean. The public surface reaches roughly a hundred named types, so a
+ * legitimate API is nowhere near this number, and a broken walk yields zero or a handful.
+ */
+const MIN_DERIVED_TYPES = 40;
+
+/**
+ * Directories the walk must have reached, selected by where a declaration lives rather than by its
+ * name. A count floor alone is not enough and that is measured, not assumed: dropping the whole
+ * `config` tree still leaves 47 types, which clears the floor while silently un-checking more than
+ * half the surface. Each entry here is a tree the public surface is genuinely written in, so a
+ * derivation that missed one crossed fewer module boundaries than the barrel does.
+ */
+const REQUIRED_TREES = ['config', 'core/approvals', 'core/shell'];
+
+/**
+ * Refuse a derivation that is degenerate rather than merely small.
+ *
+ * This is called by {@link deriveSurface} **before it memoises**, so every consumer inherits it and
+ * no edit to a single test can make the pin vacuous. That placement is the point: the pin itself —
+ * type-checking the generated probe — passes on an empty probe, so if this check lived only beside
+ * it, the assertion that is the reason for this file could hold while the derivation had collapsed,
+ * and only some other test's failure would say so.
+ *
+ * It throws rather than returning a verdict because a degenerate derivation is not a result.
+ */
+function assertNonDegenerate(surface: DerivedSurface): void {
+  if (surface.walked === 0) {
+    throw new Error(
+      'the type-surface walk never started: no barrel export resolved to a declaration inside this package'
+    );
+  }
+  if (surface.unresolvedReferences > 0) {
+    throw new Error(
+      `the type-surface walk met ${surface.unresolvedReferences} reference position(s) it could not resolve to a name, so it skipped them silently — teach the resolver that shape rather than letting the derived surface shrink`
+    );
+  }
+  if (surface.required.length < MIN_DERIVED_TYPES) {
+    throw new Error(
+      `the type-surface walk derived only ${surface.required.length} types, below the floor of ${MIN_DERIVED_TYPES} — this is a broken walk, not a small API`
+    );
+  }
+  const reachedTrees = new Set(surface.required.map((type) => path.posix.dirname(type.file)));
+  const missing = REQUIRED_TREES.filter(
+    (tree) => ![...reachedTrees].some((dir) => dir === tree || dir.startsWith(`${tree}/`))
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `the type-surface walk reached no declaration under ${missing.join(', ')} — it did not cross the module boundaries the public surface is written across`
+    );
+  }
 }
 
 let derived: DerivedSurface | undefined;
@@ -208,6 +290,7 @@ function deriveSurface(): DerivedSurface {
   const reached = new Map<any, Omit<SurfaceType, 'nameable'> & { exported: boolean }>();
   const walked = new Set<any>();
   const typeofReferents = new Set<string>();
+  let unresolvedReferences = 0;
   const queue: { declaration: any; reachedFrom: string }[] = [];
 
   for (const exported of barrelExports) {
@@ -231,30 +314,55 @@ function deriveSurface(): DerivedSurface {
       }
       let named: any = null;
       if (ts.isTypeReferenceNode(node)) named = node.typeName;
-      else if (ts.isExpressionWithTypeArguments(node) && ts.isIdentifier(node.expression)) {
-        named = node.expression; // `extends Foo` / `implements Foo`
+      else if (ts.isExpressionWithTypeArguments(node)) {
+        // `extends Foo` / `implements Foo`. Taken whatever its shape: a dotted heritage name is a
+        // PropertyAccessExpression here rather than a QualifiedName, and an identifier-only guard
+        // would drop it without a word.
+        named = node.expression;
+      } else if (ts.isImportTypeNode(node) && node.qualifier) {
+        // `import("./other").MyType` — the inline form the emitter reaches for when a declaration
+        // has no top-level import to reuse. It is an ordinary type reference wearing a module
+        // specifier, and skipping it would let a type leave the barrel unnoticed.
+        if (node.isTypeOf) {
+          // `typeof import("./other").thing` is a value query, and follows the rule below it.
+          typeofReferents.add(node.getText());
+          return;
+        }
+        named = node.qualifier;
       }
       if (named) {
-        // `A.B.C` resolves on its last identifier; a bare name resolves on itself.
-        const token = ts.isIdentifier(named) ? named : named.right;
-        const symbol = checker.getSymbolAtLocation(token);
-        const target = symbol ? unalias(symbol) : undefined;
-        // A type parameter is a name, not an export; NAMED_TYPE is what filters it out.
-        if (target && target.flags & NAMED_TYPE) {
-          for (const found of target.declarations ?? []) {
-            const file = found.getSourceFile().fileName;
-            if (!insideThisPackage(file)) continue;
-            if (!reached.has(found)) {
-              reached.set(found, {
-                name: target.name,
-                file: path.relative(DIST_DIR, file).split(path.sep).join('/'),
-                reachedFrom,
-                arity: (found.typeParameters ?? []).filter((parameter: any) => !parameter.default)
-                  .length,
-                exported: Boolean(ts.getCombinedModifierFlags(found) & ts.ModifierFlags.Export),
-              });
+        // A bare name resolves on itself; `A.B.C` resolves on its last identifier, which is spelled
+        // `right` in a type position and `name` in an expression position.
+        let token: any;
+        if (ts.isIdentifier(named)) token = named;
+        else if (ts.isQualifiedName(named)) token = named.right;
+        else if (ts.isPropertyAccessExpression(named)) token = named.name;
+
+        if (!token) {
+          // Counted, never ignored: see DerivedSurface.unresolvedReferences.
+          unresolvedReferences += 1;
+        } else {
+          const symbol = checker.getSymbolAtLocation(token);
+          const target = symbol ? unalias(symbol) : undefined;
+          // A type parameter is a name, not an export; NAMED_TYPE is what filters it out.
+          if (target && target.flags & NAMED_TYPE) {
+            for (const found of target.declarations ?? []) {
+              const file = found.getSourceFile().fileName;
+              if (!insideThisPackage(file)) continue;
+              // Enqueued exactly when first reached — `walked` already makes a second visit a
+              // no-op, so a repeat push is only queue bloat for a widely referenced type.
+              if (!reached.has(found)) {
+                reached.set(found, {
+                  name: target.name,
+                  file: path.relative(DIST_DIR, file).split(path.sep).join('/'),
+                  reachedFrom,
+                  arity: (found.typeParameters ?? []).filter((parameter: any) => !parameter.default)
+                    .length,
+                  exported: Boolean(ts.getCombinedModifierFlags(found) & ts.ModifierFlags.Export),
+                });
+                queue.push({ declaration: found, reachedFrom });
+              }
             }
-            queue.push({ declaration: found, reachedFrom });
           }
         }
       }
@@ -278,23 +386,18 @@ function deriveSurface(): DerivedSurface {
   required.sort((a, b) => a.name.localeCompare(b.name));
   unexported.sort((a, b) => a.name.localeCompare(b.name));
 
-  derived = {
+  const surface: DerivedSurface = {
     required,
     unexported,
     typeofReferents: [...typeofReferents].sort(),
     walked: walked.size,
+    unresolvedReferences,
   };
+  // Before the memo, so no consumer can ever read a degenerate surface.
+  assertNonDegenerate(surface);
+  derived = surface;
   return derived;
 }
-
-/**
- * A floor, not a pin on the size of the API. It exists for one failure only: a derivation that
- * returns nothing — a walk that never starts, a resolver that stops seeing this package's own
- * files, a filter inverted — makes every assertion below pass by checking nothing, exactly the way
- * an empty probe type-checks clean. The public surface reaches roughly a hundred named types, so a
- * legitimate API is nowhere near this number, and a broken walk yields zero or a handful.
- */
-const MIN_DERIVED_TYPES = 40;
 
 /** Prefix for the generated aliases. No exported type is named this way, so nothing collides. */
 const ALIAS_PREFIX = 'Named_';
@@ -307,6 +410,13 @@ const ALIAS_PREFIX = 'Named_';
  * whether or not the name is used. The alias line is what makes a green run legible, and it is
  * emitted only for a type that takes no required type argument, since `type X = Generic;` is an
  * arity error rather than a statement about the barrel.
+ *
+ * **Two branches here are unexercised and will stay that way until the surface changes shape**: the
+ * current surface has no generic and no repeated name, so the arity filter and the `byName` dedup
+ * both measure zero. Neither is speculative — a generic public type is ordinary and a name collision
+ * across two modules is what test 4 exists for — but treat them as untested when either first fires.
+ * The dedup in particular keeps the FIRST declaration seen for a name, so if a name ever does arrive
+ * from two declarations with different arities it can alias the wrong one.
  */
 function renderSurfaceProbe(required: SurfaceType[]): string {
   const byName = new Map<string, SurfaceType>();
@@ -443,22 +553,28 @@ function typeCheck(source: string): TypeCheckResult {
 }
 
 describe('@gaunt-sloth/core root barrel type surface', () => {
-  it('derives a public type surface from the built declarations rather than an empty set', () => {
-    const { required, walked } = deriveSurface();
-    expect(walked).toBeGreaterThan(0);
-    expect(required.length).toBeGreaterThanOrEqual(MIN_DERIVED_TYPES);
+  it('refuses a degenerate derivation, and rejects each shape one can take', () => {
+    // `deriveSurface` has already run this on the real surface — reaching this line at all is the
+    // positive half. The rest is the half that matters: a guard nothing ever fails is a guard
+    // nobody can trust, so each degenerate shape is fed in by hand and must be named in the throw.
+    const real = deriveSurface();
+    expect(() => assertNonDegenerate(real)).not.toThrow();
 
-    // Selected by declaring directory, not by name: the walk has to leave the barrel's own file
-    // and cross into the trees the public types are actually declared in, or it derived nothing
-    // that a hand-written list would not already have contained.
-    const treesReached = new Set(required.map((type) => path.posix.dirname(type.file)));
-    expect(
-      [...treesReached].filter((dir) => dir.startsWith('core/approvals')).length
-    ).toBeGreaterThan(0);
-    expect([...treesReached].filter((dir) => dir.startsWith('core/shell')).length).toBeGreaterThan(
-      0
+    expect(() => assertNonDegenerate({ ...real, walked: 0 })).toThrow(/never started/);
+    expect(() => assertNonDegenerate({ ...real, unresolvedReferences: 1 })).toThrow(
+      /could not resolve to a name/
     );
-    expect([...treesReached].filter((dir) => dir.startsWith('config')).length).toBeGreaterThan(0);
+    expect(() => assertNonDegenerate({ ...real, required: real.required.slice(0, 1) })).toThrow(
+      /derived only 1 types, below the floor/
+    );
+
+    // The case a count floor cannot see, and the reason the tree check exists: dropping the whole
+    // `config` tree silently un-checks more than half the surface and still clears the floor.
+    const withoutConfig = real.required.filter((type) => !type.file.startsWith('config/'));
+    expect(withoutConfig.length).toBeGreaterThanOrEqual(MIN_DERIVED_TYPES);
+    expect(() => assertNonDegenerate({ ...real, required: withoutConfig })).toThrow(
+      /reached no declaration under config/
+    );
   });
 
   it('names every derived type in the generated probe', () => {
@@ -507,10 +623,13 @@ describe('@gaunt-sloth/core root barrel type surface', () => {
     expect(status).toBe(0);
   }, 120_000);
 
-  it('names the typeof-derived types without their runtime referents in scope', () => {
-    // This pairs with the test above and is what licenses the `typeof` exclusion in the docblock:
-    // the probe compiles while naming neither value, so excluding them from the derived surface is
-    // a measured mechanism rather than an opinion.
+  it('pins the handwritten probe: the typeof mechanism, and the name no derivation can require', () => {
+    // The test above only says the probe compiles, and it would compile just as happily with names
+    // quietly removed from it. This reads it as text, for the two things the derived pin cannot
+    // cover on its own.
+
+    // One: what licenses the `typeof` exclusion in the docblock. The probe compiles while naming
+    // neither runtime value, so the exclusion is a measured mechanism rather than an opinion.
     expect(PROBE).toContain(': RaterOutcome');
     expect(PROBE).toContain(': ShellSafetyVerdict');
     expect(PROBE).not.toContain('RATER_OUTCOMES');
@@ -518,6 +637,13 @@ describe('@gaunt-sloth/core root barrel type surface', () => {
     expect(deriveSurface().typeofReferents).toEqual(
       expect.arrayContaining(['RATER_OUTCOMES', 'ShellSafetyVerdictSchema'])
     );
+
+    // Two: `ToolApprovalCallback` is the one name in the embedder scenario the derivation can never
+    // demand. Nothing reachable from the barrel is declared to be one — it is a callback an
+    // embedder passes IN — so it is absent from `required` by construction, and deleting it from
+    // the probe would otherwise leave every test green. This line is its only guard.
+    expect(PROBE).toContain('  ToolApprovalCallback,\n');
+    expect(PROBE).toContain(': ToolApprovalCallback');
   });
 
   it('goes red on a missing export, a bad literal and a wrong discriminator', () => {
