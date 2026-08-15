@@ -57,15 +57,31 @@ import { fileURLToPath } from 'node:url';
  * - A type referenced through the inline `import("./other").MyType` form the emitter reaches for
  *   when a declaration has no top-level import to reuse, as well as through an ordinary named
  *   reference or a heritage clause.
- * - **Its own collapse.** {@link assertNonDegenerate} runs inside {@link deriveSurface}, before the
- *   result is memoised, so a derivation that walked nothing, resolved a reference shape it did not
- *   recognise, fell under the floor, or missed a whole tree is refused rather than handed out. That
- *   placement is deliberate: the pin below type-checks a *generated* probe, and an empty probe
- *   type-checks clean, so a check that lived only beside it would let the assertion this file
- *   exists for pass while the derivation had collapsed.
+ * - **Its own TOTAL collapse.** {@link assertNonDegenerate} runs inside {@link deriveSurface},
+ *   before the result is memoised, so a derivation that walked nothing, resolved a reference shape
+ *   it did not recognise, fell under the floor, or missed a whole tree is refused rather than
+ *   handed out. That placement is deliberate: the pin below type-checks a *generated* probe, and an
+ *   empty probe type-checks clean, so a check that lived only beside it would let the assertion
+ *   this file exists for pass while the derivation had collapsed. The word `total` is doing real
+ *   work — a derivation that shrinks without emptying is a different case, and it is the first
+ *   entry in the list below.
  *
  * ## What it does NOT catch — stated because the temptation is to overstate it
  *
+ * - **A PARTIAL collapse of the derivation.** The guards above refuse a walk that returns nothing
+ *   or misses a whole tree; they do not notice one that returns most of itself. Both
+ *   {@link MIN_DERIVED_TYPES} and {@link REQUIRED_TREES} are thresholds, and a threshold cannot see
+ *   a proportional loss: the floor sits at 40 against a real 103, and one surviving declaration
+ *   satisfies a tree. The measurement, because the size of the hole is the point — dropping a
+ *   single flag from `NAMED_TYPE` (the `TypeAlias` bit) leaves `walked` at 225 and no unresolved
+ *   reference, so all four guards pass and THE PIN ITSELF STAYS GREEN, while `required` falls from
+ *   103 to 65: 38 types silently stop being checked, among them `RaterOutcome`,
+ *   `ShellSafetyVerdict` and `GthOutputHeaderRung`. Closing this needs a guard measured against
+ *   something that moves with the API rather than a fixed number, and the obvious candidate — the
+ *   barrel's own export count — would put part of the expectation back where this file spent its
+ *   whole existence taking it out of. So it is stated here rather than half-solved. What the guards
+ *   below give you is that an emptied derivation cannot be handed out as a result; they do not tell
+ *   you the derived set is the whole surface.
  * - **Narrowing the barrel itself.** The walk is seeded from the barrel's exports, so deleting a
  *   public export removes both the name and every obligation its type graph created. "Reachable
  *   implies nameable" has nothing to say once a thing stops being reachable, and no derivation
@@ -94,6 +110,15 @@ import { fileURLToPath } from 'node:url';
  * - **A type nothing hands out.** `ToolApprovalCallback` is the case to know: an embedder passes
  *   one IN, so no reachable declaration is typed as one and the derivation cannot require it. It
  *   is named in the handwritten probe for exactly that reason.
+ *
+ * **A reference shape the walk cannot name is a hard red, and it is not a barrel regression.** The
+ * resolver takes a heritage clause in whatever form it arrives and counts anything it cannot turn
+ * into a name, and {@link assertNonDegenerate} refuses a derivation with any such count — so a
+ * future emitter that writes a shape this walk has never met fails every derivation-driven test
+ * here at once, with no public type having moved. That is the intended trade: the alternative is a
+ * shape skipped in silence, which shrinks the derived surface without shrinking the barrel and is
+ * the exact failure this file exists to stop. Read that message as a resolver to teach, not as an
+ * export to restore.
  *
  * It needs `dist/` to exist. `pnpm test` builds first — including both CI unit jobs — and a bare
  * `pnpm run unit` on a never-built tree fails here with the message below rather than with a type
@@ -165,6 +190,11 @@ interface DerivedSurface {
    * Must be zero: an unrecognised shape is a type this walk skipped **silently**, which shrinks the
    * derived surface without shrinking the barrel — the failure mode this whole spec exists to stop,
    * arriving through the walk instead of through a list.
+   *
+   * It counts the positions the walk **enters**. A node form the walk does not recognise as a
+   * reference position at all never reaches the counter — see the qualifier-less `typeof
+   * import(...)` noted at the import-type branch — so zero here says the resolver named everything
+   * it looked at, which is a weaker statement than nothing having escaped it.
    */
   unresolvedReferences: number;
 }
@@ -195,6 +225,9 @@ const REQUIRED_TREES = ['config', 'core/approvals', 'core/shell'];
  * type-checking the generated probe — passes on an empty probe, so if this check lived only beside
  * it, the assertion that is the reason for this file could hold while the derivation had collapsed,
  * and only some other test's failure would say so.
+ *
+ * Its reach is stated where the rest of the file's limits are: these four checks refuse a walk that
+ * collapsed to nothing, not one that came back smaller than it should have.
  *
  * It throws rather than returning a verdict because a degenerate derivation is not a result.
  */
@@ -323,6 +356,15 @@ function deriveSurface(): DerivedSurface {
         // `import("./other").MyType` — the inline form the emitter reaches for when a declaration
         // has no top-level import to reuse. It is an ordinary type reference wearing a module
         // specifier, and skipping it would let a type leave the barrel unnoticed.
+        //
+        // Unexercised in both directions today, and worth knowing before trusting it: this package
+        // emits six inline imports, all in one file, and every one resolves outside the package, so
+        // the branch contributes no name and the `isTypeOf` arm just below has never run. The one
+        // shape deliberately left outside the count is a qualifier-less `typeof import("./other")`,
+        // which names a whole MODULE rather than a type: the test above does not admit it, nothing
+        // after it does either, and it is therefore skipped without reaching
+        // `unresolvedReferences`. Zero of those are emitted here — a known hole, not a measured
+        // one, and the honest edge on "counted, never ignored" below.
         if (node.isTypeOf) {
           // `typeof import("./other").thing` is a value query, and follows the rule below it.
           typeofReferents.add(node.getText());
@@ -339,7 +381,8 @@ function deriveSurface(): DerivedSurface {
         else if (ts.isPropertyAccessExpression(named)) token = named.name;
 
         if (!token) {
-          // Counted, never ignored: see DerivedSurface.unresolvedReferences.
+          // Counted, never ignored — for every position the walk enters, which is the whole of
+          // what the counter claims: see DerivedSurface.unresolvedReferences.
           unresolvedReferences += 1;
         } else {
           const symbol = checker.getSymbolAtLocation(token);
@@ -351,6 +394,14 @@ function deriveSurface(): DerivedSurface {
               if (!insideThisPackage(file)) continue;
               // Enqueued exactly when first reached — `walked` already makes a second visit a
               // no-op, so a repeat push is only queue bloat for a widely referenced type.
+              //
+              // The transitive step this push exists for is INERT on today's surface, which is
+              // measured rather than assumed: every required type is itself a barrel export and so
+              // is already a seed, and deleting the push leaves the derived set byte-identical —
+              // the same 103 required, the same one unexported, no name lost — moving only `walked`
+              // (225 to 224). The property is right and will earn its keep the first time a type
+              // reaches the surface without being exported from the barrel in its own right; until
+              // then, treat the line as correct and untested rather than as dead code to tidy away.
               if (!reached.has(found)) {
                 reached.set(found, {
                   name: target.name,
@@ -558,7 +609,6 @@ describe('@gaunt-sloth/core root barrel type surface', () => {
     // positive half. The rest is the half that matters: a guard nothing ever fails is a guard
     // nobody can trust, so each degenerate shape is fed in by hand and must be named in the throw.
     const real = deriveSurface();
-    expect(() => assertNonDegenerate(real)).not.toThrow();
 
     expect(() => assertNonDegenerate({ ...real, walked: 0 })).toThrow(/never started/);
     expect(() => assertNonDegenerate({ ...real, unresolvedReferences: 1 })).toThrow(
