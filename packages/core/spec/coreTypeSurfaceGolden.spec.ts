@@ -19,6 +19,14 @@ import {
  * the loss. So the message has to say which happened, and that message is the only thing standing
  * between a reader and the wrong reflex.
  *
+ * **A third situation is not either of those, and the cells below are as much about that one.** A
+ * name that is still on the surface but bound differently — moved to another declaration file, or
+ * gaining or losing a required type parameter — was neither lost nor added. Handed the addition
+ * advice, a reader regenerates and an arity break ships behind a green suite; handed the loss
+ * advice, a reader hunts a type that never went anywhere. Which is why the branch has a headline
+ * and advice of its own, and why the advice is built from the fields that actually differ rather
+ * than being one paragraph that mentions everything.
+ *
  * A failure message is untested by construction: it is emitted on the path the suite never takes
  * when it is green. These cells take that path deliberately, feeding synthetic golden documents in
  * so the report is exercised against every shape it claims to distinguish. Each pair below is
@@ -59,10 +67,14 @@ describe('type-surface golden drift report', () => {
     it('tells the reader to investigate rather than to regenerate', () => {
       expect(drift).toContain('LOST names');
       expect(drift).toContain('Investigate before you regenerate');
-      // The two benign causes, named so the reader can rule them out instead of guessing.
+      // The three benign causes, named so the reader can rule them out instead of guessing. The
+      // third is the one nobody reconstructs unaided: the derivation is reference-based, so a type
+      // that is still exported but that nothing exported points at drops out of it — a loss
+      // report for a type an embedder can still import.
       expect(drift).toContain('STALE');
       expect(drift).toContain(BUILD_COMMAND);
       expect(drift).toContain('deliberate narrowing');
+      expect(drift).toContain('NO LONGER REFERENCED');
     });
 
     it('still names the regeneration command, for after the reader has established the cause', () => {
@@ -93,6 +105,12 @@ describe('type-surface golden drift report', () => {
       expect(drift).not.toContain('LOST names');
       expect(drift).not.toContain('Investigate before you regenerate');
       expect(drift).not.toContain('GONE from the derived surface');
+    });
+
+    it('does NOT read as a rebinding — the control for the cells below', () => {
+      expect(drift).not.toContain('BOUND');
+      expect(drift).not.toContain('REQUIRED TYPE PARAMETER');
+      expect(drift).not.toContain('MOVED to another declaration file');
     });
   });
 
@@ -131,23 +149,156 @@ describe('type-surface golden drift report', () => {
     expect(drift).toContain('nothing was lost');
   });
 
-  it('reports a name that moved file, or changed arity, as one change naming both sides', () => {
+  describe('a type that is BOUND DIFFERENTLY — neither lost nor added', () => {
+    const withGeneric = document([
+      entry('AlphaConfig', 'config/types.d.ts'),
+      entry('BetaVerdict', undefined, 1),
+    ]);
     const moved = describeSurfaceDrift(
       BASE,
       document([entry('AlphaConfig', 'config/types.d.ts'), entry('BetaVerdict', 'core/shell.d.ts')])
     );
-    // Keyed by name, so this is ONE change — not a removal plus an unrelated addition, which is
-    // what a name+file key would produce and what would send the reader hunting a vanished type.
-    expect(moved).toContain('BOUND DIFFERENTLY (1)');
-    expect(moved).toContain('BetaVerdict (core/types.d.ts) -> BetaVerdict (core/shell.d.ts)');
-    expect(moved).not.toContain('GONE from the derived surface');
+    const gainedParameter = describeSurfaceDrift(BASE, withGeneric);
+    const lostParameter = describeSurfaceDrift(withGeneric, BASE);
 
-    const regeneric = describeSurfaceDrift(
-      BASE,
-      document([entry('AlphaConfig', 'config/types.d.ts'), entry('BetaVerdict', undefined, 1)])
+    it('reports a move as one change naming both sides, and says which field moved', () => {
+      // Keyed by name, so this is ONE change — not a removal plus an unrelated addition, which is
+      // what a name+file key would produce and what would send the reader hunting a vanished type.
+      expect(moved).toContain('BOUND DIFFERENTLY (1)');
+      expect(moved).toContain('BetaVerdict (core/types.d.ts) -> BetaVerdict (core/shell.d.ts)');
+      expect(moved).toContain('[moved file]');
+      expect(moved).not.toContain('GONE from the derived surface');
+    });
+
+    it('reports an arity change in both directions, naming arity as the field', () => {
+      // Both directions break an embedder that writes the type bare, and only one of them prints
+      // the word "arity" in the entry itself: a parameter list going 1 -> 0 renders as a bare
+      // name on the right. The field tag is what makes the two read the same way.
+      expect(gainedParameter).toContain('BOUND DIFFERENTLY (1)');
+      expect(gainedParameter).toContain('[arity]');
+      expect(gainedParameter).toContain('BetaVerdict (core/types.d.ts, arity 1)');
+      expect(lostParameter).toContain('BOUND DIFFERENTLY (1)');
+      expect(lostParameter).toContain('[arity]');
+      expect(lostParameter).toContain('BetaVerdict (core/types.d.ts, arity 1) -> BetaVerdict');
+    });
+
+    it('has a headline of its own that says the name was neither lost nor added', () => {
+      for (const drift of [moved, gainedParameter, lostParameter]) {
+        expect(drift).toContain('BOUND 1 name DIFFERENTLY');
+        expect(drift).toContain('neither lost nor added');
+      }
+    });
+
+    it('gives the breaking-change advice for arity and the refactor advice for a move, never the wrong one', () => {
+      // The pair is the point. A single paragraph carrying both sentences would satisfy either
+      // assertion on its own, which is how the addition advice came to be handed to an arity
+      // change in the first place.
+      expect(gainedParameter).toContain('REQUIRED TYPE PARAMETER');
+      expect(gainedParameter).toContain('breaks every embedder');
+      expect(gainedParameter).not.toContain('MOVED to another declaration file');
+      expect(gainedParameter).not.toContain('deep-importing');
+
+      expect(moved).toContain('MOVED to another declaration file');
+      expect(moved).toContain('deep-importing');
+      expect(moved).toContain(BUILD_COMMAND);
+      expect(moved).not.toContain('REQUIRED TYPE PARAMETER');
+      expect(moved).not.toContain('breaks every embedder');
+    });
+
+    it('names the regeneration command, but only after the change is established as intended', () => {
+      expect(moved).toContain(REGENERATE_COMMAND);
+      expect(moved).toContain('established as intended');
+    });
+
+    it('does NOT tell the reader this is an addition to regenerate away — the control', () => {
+      // An arity change told "that is what a deliberate API addition looks like" is a breaking
+      // change with a one-command fix attached to it.
+      for (const drift of [moved, gainedParameter, lostParameter]) {
+        expect(drift).not.toContain('nothing was lost');
+        expect(drift).not.toContain('deliberate API addition');
+        expect(drift).not.toContain('ADDED to the derived surface');
+      }
+    });
+
+    it('does NOT read as a loss either — the other control', () => {
+      for (const drift of [moved, gainedParameter, lostParameter]) {
+        expect(drift).not.toContain('LOST names');
+        expect(drift).not.toContain('Investigate before you regenerate');
+        expect(drift).not.toContain('GONE from the derived surface');
+      }
+    });
+  });
+
+  it('leads with the loss when one name went and another is bound differently', () => {
+    // Three branches means three orderings to pin. Without this cell, wiring the rebinding branch
+    // ahead of the loss branch passes the whole file.
+    const drift = describeSurfaceDrift(
+      document([...BASE.required, entry('GammaHint')]),
+      document([entry('AlphaConfig', 'config/types.d.ts'), entry('BetaVerdict', 'core/shell.d.ts')])
     );
-    expect(regeneric).toContain('BOUND DIFFERENTLY (1)');
-    expect(regeneric).toContain('arity 1');
+    expect(drift).toContain('GONE from the derived surface (1)');
+    expect(drift).toContain('BOUND DIFFERENTLY (1)');
+    expect(drift).toContain('Investigate before you regenerate');
+    expect(drift).not.toContain('neither lost nor added');
+  });
+
+  it('leads with the rebinding when one name was added and another is bound differently', () => {
+    const drift = describeSurfaceDrift(
+      BASE,
+      document([
+        entry('AlphaConfig', 'config/types.d.ts'),
+        entry('BetaVerdict', 'core/shell.d.ts'),
+        entry('GammaHint'),
+      ])
+    );
+    expect(drift).toContain('ADDED to the derived surface (1)');
+    expect(drift).toContain('BOUND DIFFERENTLY (1)');
+    // The headline speaks about the rebound name, so it must not claim of the whole report that
+    // nothing was added — the sections directly below it say otherwise.
+    expect(drift).toContain('BOUND 1 name DIFFERENTLY');
+    expect(drift).not.toContain('nothing was lost');
+    expect(drift).not.toContain('deliberate API addition');
+  });
+
+  it('does not invent a change when one name carries two declarations in one file', () => {
+    // No name on today's surface is declared twice, so this is the case the pairing has to be
+    // right about before anyone hits it. Same declarations in a different order are not a change;
+    // pairing them by an order that ignored arity would tie and could report one.
+    const twoDeclarations = document([
+      entry('DupSignal', 'core/types.d.ts', 0),
+      entry('DupSignal', 'core/types.d.ts', 2),
+    ]);
+    const reordered = document([
+      entry('DupSignal', 'core/types.d.ts', 2),
+      entry('DupSignal', 'core/types.d.ts', 0),
+    ]);
+    expect(describeSurfaceDrift(twoDeclarations, reordered)).toBeNull();
+
+    const oneArityChanged = document([
+      entry('DupSignal', 'core/types.d.ts', 0),
+      entry('DupSignal', 'core/types.d.ts', 3),
+    ]);
+    const drift = describeSurfaceDrift(twoDeclarations, oneArityChanged);
+    expect(drift).toContain('BOUND DIFFERENTLY (1)');
+    expect(drift).toContain('[arity]');
+  });
+
+  it('reports a name declared a different number of times as exactly that', () => {
+    const drift = describeSurfaceDrift(
+      BASE,
+      document([
+        entry('AlphaConfig', 'config/types.d.ts'),
+        entry('BetaVerdict'),
+        entry('BetaVerdict', 'core/shell.d.ts'),
+      ])
+    );
+    // There is no pairing to make, so the report says so and prints both sides rather than
+    // guessing which declaration became which.
+    expect(drift).toContain('[declaration count]');
+    expect(drift).toContain('DECLARED A DIFFERENT NUMBER OF TIMES');
+    expect(drift).toContain(
+      'BetaVerdict (core/types.d.ts) -> BetaVerdict (core/types.d.ts) + BetaVerdict (core/shell.d.ts)'
+    );
   });
 });
 

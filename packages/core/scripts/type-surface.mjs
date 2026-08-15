@@ -362,14 +362,21 @@ export function deriveSurface() {
  * platform ships. A golden regenerated on Windows and compared on Linux must be byte-identical, so
  * the file's order is fixed here and never inherited from the walk.
  *
- * The two fields are compared one after the other rather than joined into a single key. A joined
- * key needs a separator that sorts below every character a name can contain, which is a constraint
+ * The fields are compared one after the other rather than joined into a single key. A joined key
+ * needs a separator that sorts below every character a name can contain, which is a constraint
  * nobody reading the line can check; comparing field by field needs no separator and no argument.
+ *
+ * **The order runs over all three pinned fields on purpose, not just the two that identify a
+ * declaration to a human.** Same-named entries are paired positionally by this order before they
+ * are compared (see `differingFields`), so the order has to be total over everything a pair can
+ * differ in. Two declarations of one name in one file — which today's surface does not have —
+ * would otherwise tie, and a tie means the pairing depends on input order, which is how a report
+ * invents a change that did not happen.
  */
-function byNameThenFile(a, b) {
+function byNameFileArity(a, b) {
   if (a.name !== b.name) return a.name < b.name ? -1 : 1;
   if (a.file !== b.file) return a.file < b.file ? -1 : 1;
-  return 0;
+  return (a.arity ?? 0) - (b.arity ?? 0);
 }
 
 /**
@@ -392,7 +399,7 @@ export function toGoldenDocument(surface) {
   const project = (types) =>
     types
       .map((type) => ({ name: type.name, file: type.file, arity: type.arity }))
-      .sort(byNameThenFile);
+      .sort(byNameFileArity);
   return {
     $comment: GOLDEN_COMMENT,
     required: project(surface.required),
@@ -434,27 +441,55 @@ function indexByName(document) {
   return index;
 }
 
-/** Do two groups of same-named entries describe the same declarations? */
-function sameEntries(left, right) {
-  if (left.length !== right.length) return false;
-  const sortedLeft = [...left].sort(byNameThenFile);
-  const sortedRight = [...right].sort(byNameThenFile);
-  return sortedLeft.every(
-    (entry, i) => entry.file === sortedRight[i].file && entry.arity === sortedRight[i].arity
-  );
+/** How a differing field is named in a drift report. */
+const CHANGED_FIELD_LABEL = {
+  file: 'moved file',
+  arity: 'arity',
+  declarations: 'declaration count',
+};
+
+/**
+ * Which pinned fields differ between two groups of same-named entries — `[]` when none do.
+ *
+ * **Which fields, not merely whether any:** a name that moved file and a name that changed arity
+ * are different events with different answers (one is usually a refactor, the other breaks every
+ * embedder that writes the type bare), so the report cannot say what happened unless the
+ * comparison keeps hold of that. Entries are paired positionally after a sort that is total over
+ * the pinned fields, so the pairing is deterministic; when the two sides do not even hold the same
+ * number of declarations there is no pairing to make, and the whole group is reported as one
+ * `declarations` difference with both sides printed in full.
+ */
+function differingFields(left, right) {
+  if (left.length !== right.length) return ['declarations'];
+  const sortedLeft = [...left].sort(byNameFileArity);
+  const sortedRight = [...right].sort(byNameFileArity);
+  /** @type {Set<'file' | 'arity'>} */
+  const fields = new Set();
+  sortedLeft.forEach((entry, i) => {
+    if (entry.file !== sortedRight[i].file) fields.add('file');
+    if (entry.arity !== sortedRight[i].arity) fields.add('arity');
+  });
+  return [...fields];
 }
 
 /**
  * Say, in words a reader can act on, how the derived surface differs from the committed golden —
  * or `null` when it does not.
  *
- * **The whole reason this is not a bare deep-equality assertion:** an addition and a removal look
- * identical to `toEqual`, and they are opposite situations. Adding a public type is ordinary work
- * and the only correct response is to regenerate the golden and commit it. Losing one is the
- * failure this golden exists to catch — the derivation quietly stopping seeing part of the surface
- * while every other check in the spec stays green — and regenerating there would erase the
- * evidence and re-bless the loss. So the message leads with which of the two happened, and only
- * the removal branch tells the reader not to reach for the command first.
+ * **The whole reason this is not a bare deep-equality assertion:** the situations behind an
+ * equality failure demand opposite responses, and `toEqual` renders them identically. Adding a
+ * public type is ordinary work whose only correct answer is to regenerate the golden and commit
+ * it. Losing one is the failure this golden exists to catch — the derivation quietly stopping
+ * seeing part of the surface while every other check in the spec stays green — where regenerating
+ * would erase the evidence and re-bless the loss.
+ *
+ * **There is a third case, and collapsing it into either of those is the same mistake one level
+ * down.** A name that is still on the surface but bound differently — moved to another declaration
+ * file, or gaining or losing a required type parameter — was neither lost nor added. Told it is an
+ * addition, a reader regenerates and an arity break ships silently; told it is a loss, a reader
+ * hunts a type that never went anywhere. So the report has three branches, it leads with the most
+ * careful one that applies (loss, then rebinding, then addition), and only the addition branch
+ * says the command is the whole answer.
  *
  * @param {ReturnType<typeof toGoldenDocument>} committed
  * @param {ReturnType<typeof toGoldenDocument>} current
@@ -489,15 +524,18 @@ export function describeSurfaceDrift(committed, current) {
       gainedExport.push(...is.required);
       continue;
     }
-    if (!sameEntries(was.required, is.required) || !sameEntries(was.unexported, is.unexported)) {
-      changed.push(
-        `${name}: ${[...was.required, ...was.unexported].map(label).join(' + ')} -> ${[
-          ...is.required,
-          ...is.unexported,
-        ]
-          .map(label)
-          .join(' + ')}`
-      );
+    const fields = [
+      ...new Set([
+        ...differingFields(was.required, is.required),
+        ...differingFields(was.unexported, is.unexported),
+      ]),
+    ];
+    if (fields.length > 0) {
+      const side = (group) => [...group.required, ...group.unexported].map(label).join(' + ');
+      changed.push({
+        fields,
+        text: `${name} [${fields.map((field) => CHANGED_FIELD_LABEL[field]).join(' + ')}]: ${side(was)} -> ${side(is)}`,
+      });
     }
   }
 
@@ -512,7 +550,11 @@ export function describeSurfaceDrift(committed, current) {
     );
   }
   if (changed.length > 0) {
-    sections.push(`BOUND DIFFERENTLY (${changed.length}): ${changed.sort().join('; ')}`);
+    const text = changed
+      .map((change) => change.text)
+      .sort()
+      .join('; ');
+    sections.push(`BOUND DIFFERENTLY (${changed.length}): ${text}`);
   }
   if (gainedExport.length > 0) {
     sections.push(
@@ -525,22 +567,61 @@ export function describeSurfaceDrift(committed, current) {
   if (sections.length === 0) return null;
 
   const lost = gone.length > 0 || lostExport.length > 0;
-  const headline = lost
-    ? 'The derived public type surface LOST names the committed golden lists. Investigate before you regenerate.'
-    : 'The derived public type surface no longer matches the committed golden, and nothing was lost.';
-  const advice = lost
-    ? [
-        'A type dropping out of the derivation is the failure this golden exists to catch: the walk',
-        'stops seeing part of the surface, every other check in this spec stays green, and those',
-        'types quietly stop being checked at all. Two benign causes to rule out first — a STALE',
-        `dist/ (the walk reads the built declarations as-is, so rebuild and run again: ${BUILD_COMMAND}),`,
-        'and a deliberate narrowing of the public API. Only once you have established which it is,',
-        `and the removal is intended, regenerate the golden and commit it: ${REGENERATE_COMMAND}`,
-      ].join('\n')
-    : [
-        'That is what a deliberate API addition looks like from here. Regenerate the golden and',
-        `commit it alongside the change: ${REGENERATE_COMMAND}`,
-      ].join('\n');
+  const reboundFields = new Set(changed.flatMap((change) => change.fields));
 
-  return [headline, '', ...sections, '', advice].join('\n');
+  let headline;
+  /** @type {string[]} */
+  let advice;
+  if (lost) {
+    headline =
+      'The derived public type surface LOST names the committed golden lists. Investigate before you regenerate.';
+    advice = [
+      'A type dropping out of the derivation is the failure this golden exists to catch: the walk',
+      'stops seeing part of the surface, every other check in this spec stays green, and those',
+      'types quietly stop being checked at all. Three benign causes to rule out first — a STALE',
+      `dist/ (the walk reads the built declarations as-is, so rebuild and run again: ${BUILD_COMMAND}),`,
+      'a deliberate narrowing of the public API, and a type that is still exported but',
+      'NO LONGER REFERENCED by anything the barrel hands out: the derivation follows references, so',
+      'a type nothing points at leaves the surface even though an embedder can still import it.',
+      'Only once you have established which it is, and the removal is intended, regenerate the',
+      `golden and commit it: ${REGENERATE_COMMAND}`,
+    ];
+  } else if (changed.length > 0) {
+    headline = `The derived public type surface BOUND ${changed.length} name${changed.length === 1 ? '' : 's'} DIFFERENTLY than the committed golden. A name bound differently was neither lost nor added, so neither of the usual answers fits it.`;
+    advice = [];
+    if (reboundFields.has('arity')) {
+      advice.push(
+        'A type that gained or lost a REQUIRED TYPE PARAMETER breaks every embedder that writes it',
+        'bare, which is the whole reason the golden pins arity. Establish that the new parameter',
+        'list is what you meant before you accept it.'
+      );
+    }
+    if (reboundFields.has('file')) {
+      advice.push(
+        'A type that MOVED to another declaration file is usually a refactor, and usually harmless:',
+        'an embedder importing from the package root follows the move. It is not harmless for',
+        'anything deep-importing the old path, and a half-rebuilt dist/ can move a declaration on',
+        `its own, so rebuild and run again if the move is news: ${BUILD_COMMAND}`
+      );
+    }
+    if (reboundFields.has('declarations')) {
+      advice.push(
+        'A name is DECLARED A DIFFERENT NUMBER OF TIMES than the golden records, so the two sides',
+        'cannot be paired declaration by declaration; both are printed above in full.'
+      );
+    }
+    advice.push(
+      'Once the change is established as intended, regenerate the golden and commit it:',
+      REGENERATE_COMMAND
+    );
+  } else {
+    headline =
+      'The derived public type surface no longer matches the committed golden, and nothing was lost.';
+    advice = [
+      'That is what a deliberate API addition looks like from here. Regenerate the golden and',
+      `commit it alongside the change: ${REGENERATE_COMMAND}`,
+    ];
+  }
+
+  return [headline, '', ...sections, '', advice.join('\n')].join('\n');
 }

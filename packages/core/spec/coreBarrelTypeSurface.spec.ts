@@ -94,9 +94,10 @@ import type { SurfaceType } from '../scripts/type-surface.mjs';
  *
  * **The cost, stated rather than hidden:** every legitimate addition to the public surface now
  * regenerates the golden. That is one command and a reviewable diff, and the failure message names
- * it. The message also distinguishes the two directions, because an equality failure looks
- * identical for "you added a type" and "types vanished" while the correct response to each is the
- * opposite of the other.
+ * it. The message also says which kind of drift it is, because an equality failure looks identical
+ * for "you added a type", "types vanished" and "a type is still here but bound differently", while
+ * the right response to each is a different one — and for a vanished type, reaching for the
+ * regeneration command first is precisely the wrong move.
  *
  * ## What this pin catches
  *
@@ -110,8 +111,8 @@ import type { SurfaceType } from '../scripts/type-surface.mjs';
  *   when a declaration has no top-level import to reuse, as well as through an ordinary named
  *   reference or a heritage clause.
  * - **A PARTIAL collapse of the derivation** — the golden's own reason to exist. Any change to the
- *   derived set, in either direction and at any size, fails the comparison cell and is named in its
- *   message.
+ *   derived set at any size fails the comparison cell and is named in its message: a name lost, a
+ *   name added, or a name still present but bound to another file or another arity.
  * - **Its own TOTAL collapse.** {@link assertNonDegenerate} runs inside {@link deriveSurface},
  *   before the result is memoised, so a derivation that walked nothing, resolved a reference shape
  *   it did not recognise, fell under the floor, or missed a whole tree is refused rather than
@@ -138,6 +139,19 @@ import type { SurfaceType } from '../scripts/type-surface.mjs';
  *   reads it as a change, not as a break; only a human knows an embedder's import broke. Naming a
  *   type in text is the other defence, which is what the handwritten probe below does for the
  *   twelve names it carries.
+ * - **A shape change to a still-named type.** What is pinned is the set of names, the file each
+ *   binds to and its arity — never its members. Measured: rewriting `BinaryFormatType` in `dist`
+ *   from its union of string literals to `number`, a hard break for every embedder, leaves this
+ *   whole spec green. This is a pin on what an embedder can *name*, not on what those names mean;
+ *   member lists are the compiler's job, and the compiler checks them against this package's own
+ *   callers rather than anybody else's.
+ * - **A value export becoming type-only.** The derivation asks the compiler only about types, so
+ *   turning an `export *` into `export type *` is invisible to it. Measured on
+ *   `#src/history/historyStore.js`: every cell here stays green while `new HistoryStore(...)` from
+ *   the package root stops compiling for an embedder. Three entries in the golden are classes
+ *   (`ConfigDiscoveryError`, `HistoryStore`, `MissingProviderKeyError`) whose value half this pin
+ *   cannot see, and no spec in this package imports the barrel for its runtime exports, so that
+ *   half is unguarded rather than guarded elsewhere.
  * - **A type emitted without an `export` modifier at its own declaration.** It is nameable by no
  *   route at all, so no barrel re-export could fix it, and it is excluded from `required` on that
  *   mechanism — the modifier flags read off the emitted node, not an opinion about the type.
@@ -348,8 +362,9 @@ function typeCheck(source: string): TypeCheckResult {
 describe('@gaunt-sloth/core root barrel type surface', () => {
   it('matches the committed golden of the derived surface, name for name', () => {
     // The primary guard, and the only one here that sees a derivation which came back SMALLER than
-    // it should have. `describeSurfaceDrift` is what turns the two situations an equality failure
-    // conflates — a type added, a type vanished — into different sentences with different advice;
+    // it should have. `describeSurfaceDrift` is what turns the situations an equality failure
+    // conflates — a type added, a type vanished, a type still here but bound to a different
+    // declaration — into different sentences with different advice;
     // the drift specs in coreTypeSurfaceGolden.spec.ts pin that wording, because a message nobody
     // ever reads is a message nobody notices going wrong.
     const derived = toGoldenDocument(deriveSurface());
