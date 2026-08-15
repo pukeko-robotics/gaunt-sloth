@@ -24,8 +24,8 @@
  * impersonate the request's title.
  */
 
+import type { PermissionOption } from '@agentclientprotocol/sdk';
 import type {
-  PermissionOption,
   PermissionOptionId,
   RequestPermissionOutcome,
   RequestPermissionRequest,
@@ -33,7 +33,7 @@ import type {
   SessionId,
 } from '@agentclientprotocol/sdk/experimental/v2';
 import type { PendingToolInterrupt, ToolApprovalDecision } from '@gaunt-sloth/core/core/types.js';
-import { toolKindFor } from '#src/modules/acp/acpUpdates.js';
+import { toolKindFor } from '#src/modules/acp/acpToolCalls.js';
 
 /** The gated tool whose argument is a shell command, and so has an ACP `command` subject. */
 const SHELL_TOOL = 'run_shell_command';
@@ -45,6 +45,10 @@ const SHELL_TOOL = 'run_shell_command';
  * appears and disappears per call is a menu a user cannot learn. What each one MEANS is in
  * {@link decisionForOutcome}; the labels say it in words, since a bare kind hint does not tell
  * anyone what "always" persists to.
+ *
+ * **Both dialects offer this same menu, so it is typed against v1's `PermissionOption`** — the
+ * stricter of the two, since v2 widens `PermissionOptionKind` with a catch-all. A value valid for
+ * v1 is valid for v2; the reverse would not compile, which is the point of choosing this direction.
  */
 export const ACP_PERMISSION_OPTIONS: readonly PermissionOption[] = [
   { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },

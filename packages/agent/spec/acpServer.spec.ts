@@ -6,7 +6,12 @@
  * The SDK's `acp.client()` builds a `ClientApp`, and `AgentApp.connect()` accepts one directly —
  * "useful for tests and in-process examples that do not need a transport". So the whole protocol
  * can be exercised with no subprocess, no stdio and no editor, which means these tests depend on
- * no third party at all: the reason ship-v2-only is a cheap bet rather than a reckless one.
+ * no third party at all.
+ *
+ * That independence is also what let this suite stay green while shipping v2-only against an editor
+ * that could not speak it. Depending on no third party is a property of the tests, never evidence
+ * about the clients — the v1 surface exists because a real client was measured, not because a suite
+ * went red. The companion v1 suite is `acpServerV1.spec.ts`.
  *
  * The SDK also ships an `ActiveSession` helper that would drive the lifecycle for us. It is
  * deliberately NOT used. It routes `session/update` into its own queue and applies its own

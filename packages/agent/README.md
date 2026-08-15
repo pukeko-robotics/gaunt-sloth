@@ -46,11 +46,12 @@ not expose it to public networks. Port and CORS come from `commands.api.*` in th
 - **`gaunt-sloth-api`** — starts the AG-UI server standalone (the code above as a command):
   `gaunt-sloth-api` (defaults to the `ag-ui` server on `commands.api.port`, 3000 by default).
 - **`gaunt-sloth-acp`** — serves the [Agent Client Protocol](https://agentclientprotocol.com/) over
-  stdio, for an editor that spawns the agent as a subprocess. **ACP v2 only**; a v1-only host
-  cannot connect. Takes no arguments, and roots the session at the working directory the host
-  supplies. Gated tools are escalated to the host as `session/request_permission`. The same server
-  is reachable programmatically as `startAcpServer()`, and as `createAcpAgentApp()` when you want
-  to serve it over a transport of your own.
+  stdio, for an editor that spawns the agent as a subprocess. Serves **both ACP v1 and ACP v2**,
+  choosing the version from the host's own `initialize`. Takes no arguments, and roots the session
+  at the working directory the host supplies. Gated tools are escalated to the host as
+  `session/request_permission`. The same server is reachable programmatically as
+  `startAcpServer()`, and as `createAcpAgentRouter()` when you want to serve it over a transport of
+  your own (or `createAcpAgentApp()` / `createAcpV1AgentApp()` for one dialect on its own).
 
 ## Exports
 
