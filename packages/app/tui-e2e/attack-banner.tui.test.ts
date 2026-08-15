@@ -60,13 +60,16 @@ async function waitForExit(
 const BANNER_TITLE = 'RUN HALTED';
 
 /**
- * The banner's buffer, as it reads on screen.
+ * The banner's buffer **on the Ink surface**, as it reads on screen: `AttackBanner.tsx` paints the
+ * label and what has been typed as ONE string, so they share a row.
  *
  * Anchored on the prompt label rather than searching for the typed text loose: a one-letter buffer
  * matches somewhere on almost any screen, so a loose search would be satisfied without the key ever
  * having reached the banner — and it is used as the sync point before Enter is sent, which would
  * then make the commit racy. It is a literal here on purpose: a change to the shared copy must come
  * with a change to the e2e that asserts it.
+ *
+ * The plain surface lays the same two strings out differently; see {@link expectAnswerBelowLabel}.
  */
 const buffer = (typed: string): string => `Your answer: ${typed}`;
 
@@ -82,6 +85,64 @@ const screenRows = (terminal: Terminal): string[] =>
     .view.split('\n')
     .slice(1, -1)
     .map((line) => line.replace(/^│/, '').replace(/│$/, ''));
+
+/**
+ * The answer label, alone on its row, as the plain surface prints it.
+ *
+ * The shared copy is `'Your answer: '` with a trailing space — the Ink surface concatenates the
+ * buffer onto it. `serialize()` does not keep trailing blanks, so the constant is written without
+ * one and compared against a `trimEnd()`ed row.
+ */
+const ANSWER_LABEL = 'Your answer:';
+
+/**
+ * Is the typed answer sitting at column 0 of the row directly BELOW the label?
+ *
+ * **Scanned from the end.** This surface scrolls rather than repainting, so an earlier turn's label
+ * is still on the screen; anchoring on the first match lets a stale row satisfy the check while the
+ * current one is still empty — the same measured cross-platform race the one-turn-per-test rule
+ * below exists for.
+ */
+const answerIsBelowLabel = (rows: string[], typed: string): boolean => {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (rows[i].trimEnd() !== ANSWER_LABEL) continue;
+    return (rows[i + 1] ?? '').startsWith(typed);
+  }
+  return false;
+};
+
+/**
+ * Wait until the plain surface shows the answer in the TWO-ROW layout it has: the label alone on
+ * one row, the typed text at column 0 of the next.
+ *
+ * [[EXT-105]] moved every line of the dialog onto one stream, which means this surface prints the
+ * label itself and hands readline an empty prompt — so the echo begins at column 0 of the following
+ * row instead of continuing the label's. Asserted as ADJACENCY, and as precisely as {@link buffer}
+ * asserts the Ink surface's one-row shape: a row that IS the label, and the answer at the start of
+ * the row under it. Both halves are load-bearing — `getByText('run anyway')` would be satisfied by
+ * the banner's own instruction row telling the human what to type, so a loose search could pass
+ * with the keystrokes never having reached the program, and this is the sync point before Enter.
+ */
+async function expectAnswerBelowLabel(
+  terminal: Terminal,
+  typed: string,
+  timeoutMs = 10_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let rows = screenRows(terminal);
+  while (!answerIsBelowLabel(rows, typed)) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `the answer never reached its two-row layout within ${timeoutMs}ms.\n` +
+          `expected a row equal to ${JSON.stringify(ANSWER_LABEL)}, with ` +
+          `${JSON.stringify(typed)} at column 0 of the row below it.\n` +
+          `screen:\n${rows.map((row, i) => `  ${i}: ${JSON.stringify(row)}`).join('\n')}`
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    rows = screenRows(terminal);
+  }
+}
 
 test.describe('gth code TUI — [[TUI-C68]] §6.1 the banner appears and says what it must', () => {
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gth-e2e-attack-home-'));
@@ -390,7 +451,7 @@ test.describe('gth chat readline — [[TUI-C68]] §5 the banner on the plain sur
 
     // A near miss stops the run: the halt lands, and this surface then asks whether to retry.
     terminal.write('run anyw');
-    await expect(terminal.getByText(buffer('run anyw'), { strict: false })).toBeVisible();
+    await expectAnswerBelowLabel(terminal, 'run anyw');
     terminal.submit();
     await expect(terminal.getByText('Run halted', { strict: false })).toBeVisible();
     await expect(terminal.getByText('attack-out-marker', { strict: false })).not.toBeVisible();
@@ -414,8 +475,13 @@ test.describe('gth chat readline — [[TUI-C68]] §5 the banner on the plain sur
     await expect(terminal.getByText('attack-out-marker', { strict: false })).not.toBeVisible();
 
     terminal.write('run anyway');
-    await expect(terminal.getByText(buffer('run anyway'), { strict: false })).toBeVisible();
+    await expectAnswerBelowLabel(terminal, 'run anyway');
     terminal.submit();
     await expect(terminal.getByText('attack-out-marker', { strict: false })).toBeVisible();
+    // The grant NOTICE, not only the grant's side effect. It is one of the lines [[EXT-105]] moved
+    // onto the dialog's stream, and the marker above would still appear if it had been lost — so
+    // without this the only PTY proof of the notice is the Ink surface's. Matched as a short
+    // fragment because the sentence is long enough for the pty to wrap it.
+    await expect(terminal.getByText('Running this ONE command', { strict: false })).toBeVisible();
   });
 });

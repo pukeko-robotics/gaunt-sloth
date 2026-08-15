@@ -255,7 +255,9 @@ const DIALOG_TONE_COLOURS: Record<DialogTone, keyof typeof ANSI_COLORS | null> =
  * it is not block-buffered, and it leaves stdout carrying only what the run produced. The cost is
  * real and is documented for users: piping stdout (`gth code --no-tui | tee log`) no longer captures
  * the dialog — the terminal still shows it, `2>` still collects it, and an enabled session log still
- * records it, because this writes there like every other channel.
+ * records it. The log write here is UNCONDITIONAL, which the gated helpers' is not: theirs sits
+ * behind the level guard, so a quieted console drops those lines from the transcript as well as
+ * from the screen. A dialog stays whole in both places.
  *
  * ## Not level-gated, on purpose
  *

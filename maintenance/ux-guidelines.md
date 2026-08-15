@@ -166,6 +166,11 @@ argument.** Nothing else may write a line of one.
 - **Not level-gated.** A dialog is a question; the level filter is per line, so gating it prints the
   parts above the threshold and drops the rest — a severity heading with no command under it. Half a
   dialog is worse than none, because it still looks like a whole one.
+- **The stop message is not part of this rule.** It is the third member of the family named above,
+  but it is not a dialog: nothing is asked and nothing is typed, so no answer can arrive out of
+  order. Its two paths each write on one stream already — stdout inside the session loop, stderr on
+  the one-shot `-m` path — and that difference is a property of the two callers, not a split within
+  one message.
 
 ## `/clear` (DL-3 preserve context, DL-5 respect host)
 

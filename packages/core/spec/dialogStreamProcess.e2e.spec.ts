@@ -22,6 +22,20 @@ const here = dirname(fileURLToPath(import.meta.url));
 const consoleUtilsDist = resolve(here, '../dist/utils/consoleUtils.js');
 const systemUtilsDist = resolve(here, '../dist/utils/systemUtils.js');
 
+/**
+ * A stream's own lines, with anything **Node itself** printed removed.
+ *
+ * Node writes its warnings to stderr — `(node:1234) ExperimentalWarning: …`, followed by a
+ * `(Use \`node --trace-warnings …\`)` line — and a new one appears the moment an API the runtime
+ * touches is newly flagged, which is what the `node: latest` CI cell exists to find early. Exact
+ * equality on the whole line list is the assertion worth keeping here, so the runtime's noise is
+ * filtered out rather than the assertion loosened into "contains". Both patterns are Node's own
+ * prefixes and cannot match a dialog line, every one of which is a literal in this file.
+ */
+const NODE_NOISE = /^\((?:node:\d+\)|Use )/;
+const linesOf = (stream: string): string[] =>
+  stream.split('\n').filter((line) => Boolean(line) && !NODE_NOISE.test(line));
+
 function runFixture(body: string): { status: number | null; stdout: string; stderr: string } {
   const script = `
 import { display, displayDialogLine, displayError, displayInfo, displayWarning } from ${JSON.stringify(
@@ -53,8 +67,8 @@ displayError('error-line');
 displayWarning('warn-line');
 `);
     expect(status).toBe(0);
-    expect(stdout.split('\n').filter(Boolean)).toEqual(['plain-line', 'info-line', 'error-line']);
-    expect(stderr.split('\n').filter(Boolean)).toEqual(['warn-line']);
+    expect(linesOf(stdout)).toEqual(['plain-line', 'info-line', 'error-line']);
+    expect(linesOf(stderr)).toEqual(['warn-line']);
   });
 
   it('every tone goes to stderr, in order, and nothing at all to stdout', () => {
@@ -69,7 +83,7 @@ displayDialogLine('prompt-tone', 'prompt');
     // Content, not call count: an empty write is still a write, so "never called" would be the
     // weaker claim and the one a zero-byte flush could satisfy.
     expect(stdout).toBe('');
-    expect(stderr.split('\n').filter(Boolean)).toEqual([
+    expect(linesOf(stderr)).toEqual([
       'plain-tone',
       'notice-tone',
       'warn-tone',

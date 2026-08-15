@@ -11,6 +11,7 @@ const systemUtilsMock = {
   warn: vi.fn(),
   info: vi.fn(),
   debug: vi.fn(),
+  error: vi.fn(),
   stream: vi.fn(),
 };
 
@@ -336,6 +337,61 @@ describe('consoleUtils', () => {
         expect(systemUtilsMock.log).not.toHaveBeenCalled();
         expect(systemUtilsMock.writeToLogStream).not.toHaveBeenCalled();
       });
+    });
+
+    /**
+     * [[EXT-105]] — `displayDialogLine` is the only `display*` helper in this file WITHOUT a
+     * `shouldDisplayLevel` guard, and that omission is not an oversight: it is the fix.
+     *
+     * The level filter is per line, so a gated dialog prints the parts above the threshold and
+     * drops the rest — which is how an approval prompt comes to show a severity heading with no
+     * command under it and still look complete. A later pass making the nine helpers uniform would
+     * restore exactly that, in good faith, on a security path. These cells are what stops it.
+     */
+    describe('displayDialogLine (EXT-105) — deliberately not level-gated', () => {
+      /**
+       * ERROR and STREAM, not one of them: a reinstated guard would most likely be written at
+       * DISPLAY level, which is silent at both — but a guard written at ERROR would still print at
+       * ERROR, and only STREAM catches that one. The pair covers every threshold anyone would
+       * plausibly add.
+       */
+      it.each([
+        ['error', StatusLevel.ERROR],
+        ['stream', StatusLevel.STREAM],
+      ])(
+        'prints the whole dialog at consoleLevel %s, where a gated helper is silent',
+        async (_name, level) => {
+          const { displayDialogLine, display, setConsoleLevel } =
+            await import('#src/utils/consoleUtils.js');
+          setConsoleLevel(level);
+
+          // The CONTROL, and it is load-bearing: without it this cell would still pass if
+          // `setConsoleLevel` had quietly done nothing, which is the shape of an assertion that
+          // cannot fail. `display` is the helper the framed command used to go through.
+          display('the framed command, through the gated helper');
+          expect(systemUtilsMock.log).not.toHaveBeenCalled();
+
+          // The two lines whose separation is the defect: a heading is useless without the command
+          // it is about, so the writer must not be able to emit one and drop the other.
+          displayDialogLine('⚠ Auto-rater (destructive): this can destroy work or data.', 'warn');
+          displayDialogLine('  1 │ rm -rf build');
+
+          expect(systemUtilsMock.error).toHaveBeenCalledTimes(2);
+          expect(systemUtilsMock.error).toHaveBeenNthCalledWith(
+            1,
+            '⚠ Auto-rater (destructive): this can destroy work or data.'
+          );
+          expect(systemUtilsMock.error).toHaveBeenNthCalledWith(2, '  1 │ rm -rf build');
+
+          // ...and the session log keeps the whole dialog. The gated helpers put their log write
+          // BEHIND the guard, so a quieted console dropped those lines from the transcript too.
+          expect(systemUtilsMock.writeToLogStream).toHaveBeenCalledTimes(2);
+          expect(systemUtilsMock.writeToLogStream).toHaveBeenNthCalledWith(
+            2,
+            '  1 │ rm -rf build\n'
+          );
+        }
+      );
     });
 
     describe('display', () => {

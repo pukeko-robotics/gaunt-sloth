@@ -19,7 +19,7 @@ gth code "add a retry to fetchOrders and make the tests pass"
 
 Every session starts at **`assisted`**, the default mode: the auto-rater rates each command before
 it runs. A command it rates safe (running your tests, `git status`) executes with no prompt.
-Anything else stops and asks you:
+Anything else stops and asks you, on the full-screen interface `gth code` starts in by default:
 
 ```
 The agent wants to run a shell command via run_shell_command
@@ -35,8 +35,11 @@ The agent wants to run a shell command via run_shell_command
   1 │ rm -rf node_modules
     recorded as:
   1 │ { "type": "shell", "matcher": "exact", "pattern": "rm -rf node_modules" }
-Approve? [o]nce / [s]ession / [a]lways / [N]o / [d]eny always:
+Approve?  [o]nce   [s]ession   [a]lways   [N]o   [d]eny always
 ```
+
+The plain surface (`--no-tui`) asks the same question and takes the same answers; it spaces the menu
+differently, as `Approve? [o]nce / [s]ession / [a]lways / [N]o / [d]eny always:`.
 
 The command and the rater's explanation are written by a model, so they are shown inside a numbered
 frame: a line of either one can never sit flush-left where the prompt's own lines are, and a
@@ -63,17 +66,30 @@ command that spans twenty lines is shown whole rather than cut down to its first
 
 ### Where the prompt is written
 
-Every line of it goes to **stderr**, including the `Approve?` menu — a prompt is not program output,
-and one written across both streams cannot promise the order its lines arrive in once they are going
-to different places.
+This depends on which surface you are in, and it matters only when you are capturing a session to a
+file.
 
-The consequence to know about: piping stdout captures the session but **not** the prompt, so
-`gth code --no-tui | tee session.log` leaves the log without the command you were asked about or the
-rating on it. To keep both in one file, redirect stderr as well:
+**On the plain surface (`--no-tui`)** every line of the prompt goes to **stderr**, including the
+`Approve?` menu — a prompt is not program output, and one written across both streams cannot
+promise the order its lines arrive in once they are going to different places.
 
-```bash
-gth code --no-tui 2>&1 | tee session.log
-```
+Two consequences to know about:
+
+- Piping stdout captures the session but **not** the prompt, so `gth code --no-tui | tee session.log`
+  leaves the log without the command you were asked about or the rating on it. To keep both in one
+  file, redirect stderr as well:
+
+  ```bash
+  gth code --no-tui 2>&1 | tee session.log
+  ```
+
+- Discarding stderr (`2>/dev/null`) hides the prompt while the session still waits for your answer,
+  so the run looks hung when it is simply asking you something you cannot see. Redirect it to a file
+  rather than throwing it away.
+
+**On the default full-screen interface** the whole session, prompt included, is painted to stdout,
+so `2>` collects nothing of it. That interface repaints rather than scrolling, and is not what you
+want to capture to a file — use `--no-tui` when you need a log.
 
 ### What the rater can say
 
@@ -155,7 +171,7 @@ The agent wants to run a shell command via run_shell_command
 ⚠ Auto-rater (destructive): this can destroy work or data, but undoing it is possible from inside this session.
     the rater's own words:
   1 │ This command names a host (https://registry.npmjs.ag/lodash) in a fetch or transfer position, so it is never auto-approved.
-Approve? [o]nce / [s]ession / [a]lways / [N]o / [d]eny always:
+Approve?  [o]nce   [s]ession   [a]lways   [N]o   [d]eny always
 ```
 
 (The two lines naming what `[s]`/`[a]` and `[d]` would remember are on that screen too; they are

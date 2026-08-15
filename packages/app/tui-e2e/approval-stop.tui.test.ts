@@ -71,6 +71,56 @@ const screenRows = (terminal: Terminal): string[] =>
     .map((line) => line.replace(/^│/, '').replace(/│$/, ''));
 
 /**
+ * The answer label, alone on its row, as the plain surface prints it. The shared copy carries a
+ * trailing space (the Ink surface concatenates the buffer onto it) and `serialize()` does not keep
+ * trailing blanks, so this is written without one and compared against a `trimEnd()`ed row.
+ */
+const ANSWER_LABEL = 'Your answer:';
+
+/**
+ * Is the typed answer at column 0 of the row directly BELOW the label? Scanned from the end,
+ * because this surface scrolls rather than repainting and an earlier turn's label is still on the
+ * screen — anchoring on the first match would let a stale row satisfy the check.
+ */
+const answerIsBelowLabel = (rows: string[], typed: string): boolean => {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (rows[i].trimEnd() !== ANSWER_LABEL) continue;
+    return (rows[i + 1] ?? '').startsWith(typed);
+  }
+  return false;
+};
+
+/**
+ * Wait until the plain surface shows the answer in its two-row layout.
+ *
+ * [[EXT-105]] moved every line of the dialog onto one stream, so this surface prints the label
+ * itself and hands readline an empty prompt — the echo begins at column 0 of the row below rather
+ * than continuing the label's. Asserted as adjacency rather than by searching for the typed text
+ * loose: the banner's own instruction row contains the phrase, so a loose search could be satisfied
+ * while the keystrokes never reached the program, and this is the sync point before Enter.
+ */
+async function expectAnswerBelowLabel(
+  terminal: Terminal,
+  typed: string,
+  timeoutMs = 10_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let rows = screenRows(terminal);
+  while (!answerIsBelowLabel(rows, typed)) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `the answer never reached its two-row layout within ${timeoutMs}ms.\n` +
+          `expected a row equal to ${JSON.stringify(ANSWER_LABEL)}, with ` +
+          `${JSON.stringify(typed)} at column 0 of the row below it.\n` +
+          `screen:\n${rows.map((row, i) => `  ${i}: ${JSON.stringify(row)}`).join('\n')}`
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    rows = screenRows(terminal);
+  }
+}
+
+/**
  * The stop message's own rows: everything from its first sentence downward.
  *
  * **Anchored, and that is load-bearing rather than tidy.** The §6.1 banner renders the same command
@@ -271,7 +321,7 @@ test.describe('gth code readline — [[TUI-C71]] the halt message is framed on t
     // A near miss: not the phrase, so the run stops. `rl.question` reads a whole line here, so
     // there is no keystroke to intercept — this is text that simply is not the phrase.
     terminal.write('run anyw');
-    await expect(terminal.getByText('Your answer: run anyw', { strict: false })).toBeVisible();
+    await expectAnswerBelowLabel(terminal, 'run anyw');
     terminal.submit();
     await expect(terminal.getByText('Run halted', { strict: false })).toBeVisible();
     // **This surface writes one row per `display()` call**, so the framed rows arrive as separate
