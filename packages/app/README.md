@@ -73,8 +73,10 @@ commands, and it can edit and delete files in the directory the session was open
 
 At the default approvals rung, `assisted`, the gate holds only the **shell** — a command it does not
 clear reaches the editor as a permission request. **File changes are not prompted:** the agent
-rewrites and deletes files in that directory without asking. `"approvals": "manual"` is the rung
-that sends the file tools to the editor as well. For a read-only editor agent instead, set the mode:
+rewrites and deletes files in that directory without asking. `manual` is the rung that sends the
+file tools to the editor as well — set `"approvals": "manual"` under `commands.code` to scope that
+to editor sessions, or at the root to apply it everywhere. For a read-only editor agent instead, set
+the mode:
 
 ```json
 { "acp": { "mode": "chat" } }
