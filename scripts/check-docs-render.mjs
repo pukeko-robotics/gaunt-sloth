@@ -27,7 +27,11 @@
  *   what the link intends;
  * - the exact wording of the two warnings above. They are matched as substrings, so a TypeDoc
  *   reword would silence those two checks; the sweep and the summary-line check are what would
- *   still be standing. Re-read this list when bumping TypeDoc.
+ *   still be standing. Re-read this list when bumping TypeDoc;
+ * - options set anywhere other than `typedoc.json`. The two refusals below read that file only,
+ *   while TypeDoc would also honour a `typedocOptions` block in `package.json` or in `tsconfig.json`
+ *   — neither of which this repo uses. Introducing one puts `out` and `cleanOutputDir` somewhere
+ *   these refusals cannot see, so read them before you do.
  */
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
