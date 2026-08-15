@@ -317,6 +317,14 @@ test.describe('gth code readline — [[TUI-C71]] the halt message is framed on t
     await expect(terminal.getByText('> run it')).toBeVisible();
     terminal.submit();
     await expect(terminal.getByText(BANNER_TITLE, { strict: false })).toBeVisible();
+    // **Wait for the LAST row of the dialog, not its headline, before typing.** The banner title is
+    // the first of many rows this surface emits one `display()` call at a time, and the echo of a
+    // keystroke lands wherever the cursor has got to — so typing against the headline races the
+    // rest of the dialog, and on a slow runner the answer is echoed into the middle of the framed
+    // rows and can never migrate down to where the assertion below looks for it. The answer label
+    // is the last thing printed before the read, and it is emitted from exactly one place in
+    // production, so waiting on it cannot be satisfied early.
+    await expect(terminal.getByText(ANSWER_LABEL, { strict: false })).toBeVisible();
 
     // A near miss: not the phrase, so the run stops. `rl.question` reads a whole line here, so
     // there is no keystroke to intercept — this is text that simply is not the phrase.

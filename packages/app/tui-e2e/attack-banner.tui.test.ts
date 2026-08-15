@@ -472,6 +472,11 @@ test.describe('gth chat readline — [[TUI-C68]] §5 the banner on the plain sur
     await expect(terminal.getByText('> run it')).toBeVisible();
     terminal.submit();
     await expect(terminal.getByText(BANNER_TITLE, { strict: false })).toBeVisible();
+    // The answer label, not just the headline — same reason as the sibling test above, which
+    // already waits for it: the dialog arrives one `display()` row at a time and a keystroke echoes
+    // at wherever the cursor has reached, so typing against the banner title races the rows below
+    // it and the echo can land in the middle of them, where it stays.
+    await expect(terminal.getByText(ANSWER_LABEL, { strict: false })).toBeVisible();
     await expect(terminal.getByText('attack-out-marker', { strict: false })).not.toBeVisible();
 
     terminal.write('run anyway');
